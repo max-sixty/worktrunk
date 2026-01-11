@@ -279,7 +279,7 @@ pub enum StateCommand {
 git rebase $(wt config state default-branch)
 ```
 
-Without a subcommand, runs `get`. Use `set` to override, `get --refresh` to re-detect, or `clear` to reset.
+Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
 
 ## Detection
 
@@ -344,7 +344,7 @@ Without a subcommand, runs `get`. Use `set` to override or `clear` to reset."#
 
 See [`wt list` CI status](@/list.md#ci-status) for display symbols and colors.
 
-Without a subcommand, runs `get` for the current branch. Use `get --refresh` to force re-fetch or `clear --all` to reset cache."#
+Without a subcommand, runs `get` for the current branch. Use `clear` to reset cache for a branch or `clear --all` to reset all."#
     )]
     CiStatus {
         #[command(subcommand)]
@@ -496,15 +496,11 @@ Get the default branch:
 wt config state default-branch
 ```
 
-Force refresh from remote:
+Clear cache and re-detect:
 ```console
-wt config state default-branch get --refresh
+wt config state default-branch clear && wt config state default-branch get
 ```"#)]
-    Get {
-        /// Force refresh from remote
-        #[arg(long)]
-        refresh: bool,
-    },
+    Get,
 
     /// Set the default branch
     #[command(after_long_help = r#"## Examples
@@ -564,21 +560,17 @@ Get CI status for current branch:
 wt config state ci-status
 ```
 
-Force refresh from GitHub/GitLab:
-```console
-wt config state ci-status get --refresh
-```
-
 Get CI status for a specific branch:
 ```console
 wt config state ci-status get --branch=feature
+```
+
+Clear cache and re-fetch:
+```console
+wt config state ci-status clear && wt config state ci-status get
 ```"#
     )]
     Get {
-        /// Force refresh from GitHub/GitLab
-        #[arg(long)]
-        refresh: bool,
-
         /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer())]
         branch: Option<String>,

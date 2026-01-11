@@ -49,7 +49,7 @@ Useful in scripts to avoid hardcoding [2mmain[0m or [2mmaster[0m:
 
   [2mgit rebase $(wt config state default-branch)
 
-Without a subcommand, runs [2mget[0m. Use [2mset[0m to override, [2mget --refresh[0m to re-detect, or [2mclear[0m to reset.
+Without a subcommand, runs [2mget[0m. Use [2mset[0m to override, or [2mclear[0m then [2mget[0m to re-detect.
 
 [32mDetection
 

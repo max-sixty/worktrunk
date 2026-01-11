@@ -1002,10 +1002,9 @@ fn main() {
             ConfigCommand::Show { full } => handle_config_show(full),
             ConfigCommand::State { action } => match action {
                 StateCommand::DefaultBranch { action } => match action {
-                    Some(DefaultBranchAction::Get { refresh }) => {
-                        handle_state_get("default-branch", refresh, None)
+                    Some(DefaultBranchAction::Get) | None => {
+                        handle_state_get("default-branch", None)
                     }
-                    None => handle_state_get("default-branch", false, None),
                     Some(DefaultBranchAction::Set { branch }) => {
                         handle_state_set("default-branch", branch, None)
                     }
@@ -1015,7 +1014,7 @@ fn main() {
                 },
                 StateCommand::PreviousBranch { action } => match action {
                     Some(PreviousBranchAction::Get) | None => {
-                        handle_state_get("previous-branch", false, None)
+                        handle_state_get("previous-branch", None)
                     }
                     Some(PreviousBranchAction::Set { branch }) => {
                         handle_state_set("previous-branch", branch, None)
@@ -1025,17 +1024,15 @@ fn main() {
                     }
                 },
                 StateCommand::CiStatus { action } => match action {
-                    Some(CiStatusAction::Get { refresh, branch }) => {
-                        handle_state_get("ci-status", refresh, branch)
-                    }
-                    None => handle_state_get("ci-status", false, None),
+                    Some(CiStatusAction::Get { branch }) => handle_state_get("ci-status", branch),
+                    None => handle_state_get("ci-status", None),
                     Some(CiStatusAction::Clear { branch, all }) => {
                         handle_state_clear("ci-status", branch, all)
                     }
                 },
                 StateCommand::Marker { action } => match action {
-                    Some(MarkerAction::Get { branch }) => handle_state_get("marker", false, branch),
-                    None => handle_state_get("marker", false, None),
+                    Some(MarkerAction::Get { branch }) => handle_state_get("marker", branch),
+                    None => handle_state_get("marker", None),
                     Some(MarkerAction::Set { value, branch }) => {
                         handle_state_set("marker", value, branch)
                     }
@@ -1044,7 +1041,7 @@ fn main() {
                     }
                 },
                 StateCommand::Logs { action } => match action {
-                    Some(LogsAction::Get) | None => handle_state_get("logs", false, None),
+                    Some(LogsAction::Get) | None => handle_state_get("logs", None),
                     Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
                 },
                 StateCommand::Hints { action } => match action {

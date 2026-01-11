@@ -317,8 +317,8 @@ impl Repository {
 
     /// Detect the default branch without using worktrunk's cache.
     ///
-    /// Used by `default_branch()` to populate the cache, and by
-    /// `wt config state get default-branch --refresh` to force re-detection.
+    /// Used by `default_branch()` to populate the cache, and after
+    /// `wt config state default-branch clear` to force re-detection.
     pub fn detect_default_branch(&self) -> anyhow::Result<String> {
         // Try to get from the primary remote
         if let Ok(remote) = self.primary_remote() {

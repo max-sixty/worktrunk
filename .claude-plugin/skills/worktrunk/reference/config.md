@@ -752,7 +752,7 @@ Useful in scripts to avoid hardcoding `main` or `master`:
 git rebase $(wt config state default-branch)
 ```
 
-Without a subcommand, runs `get`. Use `set` to override, `get --refresh` to re-detect, or `clear` to reset.
+Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
 
 ### Detection
 
@@ -820,7 +820,7 @@ Caches GitHub/GitLab CI status for display in [`wt list`](https://worktrunk.dev/
 
 See [`wt list` CI status](https://worktrunk.dev/list/#ci-status) for display symbols and colors.
 
-Without a subcommand, runs `get` for the current branch. Use `get --refresh` to force re-fetch or `clear --all` to reset cache.
+Without a subcommand, runs `get` for the current branch. Use `clear` to reset cache for a branch or `clear --all` to reset all.
 
 ### Command reference
 

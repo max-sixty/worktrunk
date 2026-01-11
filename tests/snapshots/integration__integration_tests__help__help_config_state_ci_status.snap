@@ -9,7 +9,7 @@ info:
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
@@ -66,4 +66,4 @@ Caches GitHub/GitLab CI status for display in [2mwt list[0m.
 
 See [2mwt list[0m CI status for display symbols and colors.
 
-Without a subcommand, runs [2mget[0m for the current branch. Use [2mget --refresh[0m to force re-fetch or [2mclear --all[0m to reset cache.
+Without a subcommand, runs [2mget[0m for the current branch. Use [2mclear[0m to reset cache for a branch or [2mclear --all[0m to reset all.

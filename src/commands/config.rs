@@ -11,7 +11,7 @@ use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{Shell, scan_for_detection_details};
 use worktrunk::styling::{
     error_message, format_bash_with_gutter, format_heading, format_toml, format_with_gutter,
-    hint_message, info_message, progress_message, success_message, warning_message,
+    hint_message, info_message, success_message, warning_message,
 };
 use worktrunk::utils::get_now;
 
@@ -962,19 +962,14 @@ fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
 }
 
 /// Handle the state get command
-pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> anyhow::Result<()> {
+pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()> {
     use super::list::ci_status::PrStatus;
 
     let repo = Repository::current()?;
 
     match key {
         "default-branch" => {
-            let branch_name = if refresh {
-                crate::output::print(progress_message("Querying remote for default branch..."))?;
-                repo.refresh_default_branch()?
-            } else {
-                repo.default_branch()?
-            };
+            let branch_name = repo.default_branch()?;
             crate::output::stdout(branch_name)?;
         }
         "previous-branch" => match repo.get_switch_previous() {
@@ -1008,13 +1003,6 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
                     reference: branch_name,
                 }
                 .into());
-            }
-
-            if refresh {
-                crate::output::print(progress_message("Fetching CI status..."))?;
-                // Clear cache to force refresh
-                let config_key = format!("worktrunk.state.{branch_name}.ci-status");
-                let _ = repo.run_command(&["config", "--unset", &config_key]);
             }
 
             let has_upstream = repo.upstream_branch(&branch_name).ok().flatten().is_some();

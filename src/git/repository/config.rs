@@ -115,26 +115,10 @@ impl Repository {
         Ok(count)
     }
 
-    /// Refresh the default branch cache by querying the remote.
-    ///
-    /// This forces a network call to `git ls-remote` to fetch the current default
-    /// branch from the remote, then updates the local cache. Use this when you
-    /// suspect the cached default branch is stale (e.g., after a repository's
-    /// default branch has been changed on the remote).
-    ///
-    /// Returns the refreshed default branch name.
-    pub fn refresh_default_branch(&self) -> anyhow::Result<String> {
-        let remote = self.primary_remote()?;
-        let branch = self.query_remote_default_branch(&remote)?;
-        // Update worktrunk's cache
-        let _ = self.run_command(&["config", "worktrunk.default-branch", &branch]);
-        Ok(branch)
-    }
-
     /// Set the default branch manually.
     ///
-    /// This sets worktrunk's cache (`worktrunk.default-branch`). Use `--refresh`
-    /// to re-query the remote and update git's cache.
+    /// This sets worktrunk's cache (`worktrunk.default-branch`). Use `clear` then
+    /// `get` to re-detect from remote.
     pub fn set_default_branch(&self, branch: &str) -> anyhow::Result<()> {
         self.run_command(&["config", "worktrunk.default-branch", branch])?;
         Ok(())
