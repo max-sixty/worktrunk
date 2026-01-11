@@ -54,18 +54,24 @@ jobs:
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
 
-    - name: Install shells (zsh, fish, nushell) - Ubuntu
+    - name: Install shells (zsh, fish) - Ubuntu
       if: runner.os == 'Linux'
       uses: awalsh128/cache-apt-pkgs-action@latest
       with:
-        packages: zsh fish nushell
+        packages: zsh fish
         version: 1.0
 
-    - name: Install shells (bash, zsh, fish, nushell) - macOS
+    - name: Install shells (fish) - macOS
       if: runner.os == 'macOS'
       run: |
-        brew install fish nushell
+        brew install fish
         # bash and zsh are pre-installed on macOS
+
+    - name: Install nushell
+      if: runner.os != 'Windows'
+      uses: hustcer/setup-nu@v3
+      with:
+        version: '*'
 
     - name: Install shells - Windows
       if: runner.os == 'Windows'
@@ -179,11 +185,16 @@ jobs:
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
 
-    - name: Install shells (zsh, fish, nushell)
+    - name: Install shells (zsh, fish)
       uses: awalsh128/cache-apt-pkgs-action@latest
       with:
-        packages: zsh fish nushell
+        packages: zsh fish
         version: 1.0
+
+    - name: Install nushell
+      uses: hustcer/setup-nu@v3
+      with:
+        version: '*'
 
     - name: 📊 Run benchmarks
       uses: clechasseur/rs-cargo@v4
@@ -207,11 +218,16 @@ jobs:
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
-    - name: Install shells (zsh, fish, nushell)
+    - name: Install shells (zsh, fish)
       uses: awalsh128/cache-apt-pkgs-action@latest
       with:
-        packages: zsh fish nushell
+        packages: zsh fish
         version: 1.0
+
+    - name: Install nushell
+      uses: hustcer/setup-nu@v3
+      with:
+        version: '*'
 
     # Ensure nothing remains from caching
     - run: cargo llvm-cov clean --workspace
