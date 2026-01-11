@@ -2417,3 +2417,20 @@ fn test_list_with_nonexistent_default_branch(repo: TestRepo) {
     // main-related data) when configured default branch doesn't exist locally
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
+
+/// Tests that wt list --full works correctly when the configured default branch doesn't exist.
+///
+/// The --full flag enables expensive tasks like BranchDiff and WorkingTreeConflicts.
+/// These should also degrade gracefully when default_branch is None.
+#[rstest]
+fn test_list_full_with_nonexistent_default_branch(repo: TestRepo) {
+    // Set default branch to a non-existent branch
+    repo.run_git(&["config", "worktrunk.default-branch", "nonexistent"]);
+
+    // wt list --full should also work, with expensive tasks returning defaults
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--full");
+        cmd
+    });
+}
