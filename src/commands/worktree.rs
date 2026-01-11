@@ -188,92 +188,16 @@ pub fn resolve_worktree_arg(
 ///
 /// For the default branch, returns the repo root (main worktree location).
 /// For other branches, applies the `worktree-path` template from config.
+///
+/// Uses cached values from Repository for `default_branch` and `is_bare`.
 pub fn compute_worktree_path(
     repo: &Repository,
     branch: &str,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<PathBuf> {
+    let repo_root = repo.worktree_base()?;
     let default_branch = repo.default_branch().unwrap_or_default();
     let is_bare = repo.is_bare()?;
-    compute_worktree_path_with(repo, branch, config, &default_branch, is_bare)
-}
-
-/// Check if a worktree is at its expected path based on config template.
-///
-/// Returns true if the worktree's actual path matches what `compute_worktree_path`
-/// would generate for its branch. Detached HEAD always returns false (no expected path).
-///
-/// Uses canonicalization to handle symlinks and relative paths correctly.
-///
-/// Note: For hot paths where default_branch and is_bare are already known,
-/// use `is_worktree_at_expected_path_with` to avoid redundant git calls.
-fn is_worktree_at_expected_path(
-    wt: &worktrunk::git::WorktreeInfo,
-    repo: &Repository,
-    config: &WorktrunkConfig,
-) -> bool {
-    // Compute default_branch and is_bare once, then delegate to the optimized variant
-    let default_branch = repo.default_branch().unwrap_or_default();
-    let is_bare = repo.is_bare().unwrap_or(false);
-    is_worktree_at_expected_path_with(wt, repo, config, &default_branch, is_bare)
-}
-
-/// Compare two paths for equality, canonicalizing to handle symlinks and relative paths.
-///
-/// Returns `true` if the paths resolve to the same location.
-fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
-    use dunce::canonicalize;
-    let a_canonical = canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
-    let b_canonical = canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
-    a_canonical == b_canonical
-}
-
-/// Check if a worktree is at its expected path, with pre-computed values.
-///
-/// Use this when `default_branch` and `is_bare` are already known (e.g., in list command)
-/// to avoid redundant git calls.
-pub fn is_worktree_at_expected_path_with(
-    wt: &worktrunk::git::WorktreeInfo,
-    repo: &Repository,
-    config: &WorktrunkConfig,
-    default_branch: &str,
-    is_bare: bool,
-) -> bool {
-    match &wt.branch {
-        Some(branch) => compute_worktree_path_with(repo, branch, config, default_branch, is_bare)
-            .map(|expected| paths_match(&wt.path, &expected))
-            .unwrap_or(false),
-        None => false,
-    }
-}
-
-/// Returns the expected path if `actual_path` differs from the template-computed path.
-///
-/// Returns `Some(expected_path)` when there's a mismatch, `None` when paths match.
-/// Used to show path mismatch warnings in `wt remove` and `wt merge`.
-pub fn get_path_mismatch(
-    repo: &Repository,
-    branch: &str,
-    actual_path: &std::path::Path,
-    config: &WorktrunkConfig,
-) -> Option<PathBuf> {
-    compute_worktree_path(repo, branch, config)
-        .ok()
-        .filter(|expected| !paths_match(actual_path, expected))
-}
-
-/// Optimized variant of `compute_worktree_path` that accepts pre-computed values.
-///
-/// Use this when `default_branch` and `is_bare` are already known to avoid
-/// redundant git calls.
-fn compute_worktree_path_with(
-    repo: &Repository,
-    branch: &str,
-    config: &WorktrunkConfig,
-    default_branch: &str,
-    is_bare: bool,
-) -> anyhow::Result<PathBuf> {
-    let repo_root = repo.worktree_base()?;
 
     // Default branch lives at repo root (main worktree), not a templated path.
     // Exception: bare repos have no main worktree, so all branches use templated paths.
@@ -297,6 +221,51 @@ fn compute_worktree_path_with(
         .map_err(|e| anyhow::anyhow!("Failed to format worktree path: {e}"))?;
 
     Ok(repo_root.join(relative_path).normalize())
+}
+
+/// Check if a worktree is at its expected path based on config template.
+///
+/// Returns true if the worktree's actual path matches what `compute_worktree_path`
+/// would generate for its branch. Detached HEAD always returns false (no expected path).
+///
+/// Uses canonicalization to handle symlinks and relative paths correctly.
+/// Uses cached values from Repository for `default_branch` and `is_bare`.
+pub fn is_worktree_at_expected_path(
+    wt: &worktrunk::git::WorktreeInfo,
+    repo: &Repository,
+    config: &WorktrunkConfig,
+) -> bool {
+    match &wt.branch {
+        Some(branch) => compute_worktree_path(repo, branch, config)
+            .map(|expected| paths_match(&wt.path, &expected))
+            .unwrap_or(false),
+        None => false,
+    }
+}
+
+/// Compare two paths for equality, canonicalizing to handle symlinks and relative paths.
+///
+/// Returns `true` if the paths resolve to the same location.
+fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
+    use dunce::canonicalize;
+    let a_canonical = canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
+    let b_canonical = canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
+    a_canonical == b_canonical
+}
+
+/// Returns the expected path if `actual_path` differs from the template-computed path.
+///
+/// Returns `Some(expected_path)` when there's a mismatch, `None` when paths match.
+/// Used to show path mismatch warnings in `wt remove` and `wt merge`.
+pub fn get_path_mismatch(
+    repo: &Repository,
+    branch: &str,
+    actual_path: &std::path::Path,
+    config: &WorktrunkConfig,
+) -> Option<PathBuf> {
+    compute_worktree_path(repo, branch, config)
+        .ok()
+        .filter(|expected| !paths_match(actual_path, expected))
 }
 
 /// Compute a user-facing display name for a worktree.

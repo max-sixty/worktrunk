@@ -41,6 +41,8 @@ struct RepoCache {
     integration_target: OnceCell<String>,
     /// Primary remote name (None if no remotes configured)
     primary_remote: OnceCell<Option<String>>,
+    /// Primary remote URL (None if no remotes configured or no URL)
+    primary_remote_url: OnceCell<Option<String>>,
     /// Project identifier derived from remote URL
     project_identifier: OnceCell<String>,
     /// Base path for worktrees (repo root for normal repos, bare repo path for bare)
@@ -538,10 +540,17 @@ impl Repository {
     }
 
     /// Get the URL for the primary remote, if configured.
+    ///
+    /// Result is cached in the repository's shared cache (same for all clones).
     pub fn primary_remote_url(&self) -> Option<String> {
-        self.primary_remote()
-            .ok()
-            .and_then(|remote| self.remote_url(&remote))
+        self.cache
+            .primary_remote_url
+            .get_or_init(|| {
+                self.primary_remote()
+                    .ok()
+                    .and_then(|remote| self.remote_url(&remote))
+            })
+            .clone()
     }
 
     /// Check if a local git branch exists.
@@ -2075,10 +2084,8 @@ impl Repository {
         self.cache
             .project_identifier
             .get_or_try_init(|| {
-                // Try to get the remote URL first
-                if let Ok(remote) = self.primary_remote()
-                    && let Some(url) = self.remote_url(&remote)
-                {
+                // Try to get the remote URL first (cached)
+                if let Some(url) = self.primary_remote_url() {
                     if let Some(parsed) = GitRemoteUrl::parse(url.trim()) {
                         return Ok(parsed.project_identifier());
                     }

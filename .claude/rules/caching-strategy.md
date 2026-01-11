@@ -30,6 +30,7 @@ shares the cache — all clones see the same cached values.
 - `current_branch()` — per-worktree, keyed by path
 - `project_identifier()` — derived from remote URL
 - `primary_remote()` — git config, doesn't change
+- `primary_remote_url()` — derived from primary_remote, doesn't change
 - `default_branch()` — from git config or detection, doesn't change
 - `integration_target()` — effective target for integration checks (local default or upstream if ahead)
 - `merge_base()` — keyed by (commit1, commit2) pair

@@ -78,7 +78,7 @@ use rayon_join_macro::join;
 use worktrunk::git::{LineDiff, Repository, WorktreeInfo};
 use worktrunk::styling::{INFO_SYMBOL, format_with_gutter, warning_message};
 
-use crate::commands::is_worktree_at_expected_path_with;
+use crate::commands::is_worktree_at_expected_path;
 
 use super::ci_status::PrStatus;
 use super::model::{
@@ -713,12 +713,11 @@ pub fn collect(
     // Phase 2: Parallel fetch of independent git data
     // These operations don't depend on each other, only on worktree list.
     // Running them in parallel reduces pre-skeleton time (e.g., ~46ms to ~28ms).
-    let (default_branch, is_bare, branches_without_worktrees, remote_branches) = join!(
+    let (default_branch, branches_without_worktrees, remote_branches) = join!(
         || {
             repo.default_branch()
                 .context("Failed to determine default branch")
         },
-        || repo.is_bare().unwrap_or(false),
         || {
             if show_branches {
                 get_branches_without_worktrees(repo, &worktrees)
@@ -812,9 +811,7 @@ pub fn collect(
             let is_previous = false;
 
             // Check if worktree is at its expected path based on config template
-            // Use optimized variant with pre-computed default_branch and is_bare
-            let branch_worktree_mismatch =
-                !is_worktree_at_expected_path_with(wt, repo, config, &default_branch, is_bare);
+            let branch_worktree_mismatch = !is_worktree_at_expected_path(wt, repo, config);
 
             let mut worktree_data =
                 WorktreeData::from_worktree(wt, is_main, is_current, is_previous);
@@ -954,7 +951,8 @@ pub fn collect(
     // Effective target for integration checks: upstream if ahead of local, else local.
     // This handles the case where a branch was merged remotely but user hasn't pulled yet.
     // Deferred until after skeleton to avoid blocking initial render.
-    let integration_target = repo.effective_integration_target(&default_branch);
+    // Uses cached integration_target() which computes the same value from default_branch().
+    let integration_target = repo.integration_target()?;
 
     // Batch-fetch ahead/behind counts to identify branches that are far behind.
     // This allows skipping expensive merge-base operations for diverged branches, dramatically
