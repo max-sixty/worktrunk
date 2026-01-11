@@ -75,6 +75,20 @@ pub fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf>, std:
                     .join(format!("{}.fish", cmd)),
             ]
         }
+        super::Shell::Nushell => {
+            // Nushell uses ~/.config/nushell/ for config files
+            // We write to a vendor autoload directory to avoid modifying config.nu directly
+            let config_home = std::env::var("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| home.join(".config"));
+            vec![
+                config_home
+                    .join("nushell")
+                    .join("vendor")
+                    .join("autoload")
+                    .join(format!("{}.nu", cmd)),
+            ]
+        }
         super::Shell::PowerShell => powershell_profile_paths(&home),
     })
 }
@@ -131,6 +145,19 @@ pub fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf, std::i
                 .join("fish")
                 .join("completions")
                 .join(format!("{}.fish", cmd))
+        }
+        super::Shell::Nushell => {
+            // Nushell completions are defined inline in the init script
+            // Return a path in the vendor autoload directory (same as config)
+            let config_home = strategy
+                .as_ref()
+                .map(|s| s.config_dir())
+                .unwrap_or_else(|| home.join(".config"));
+            config_home
+                .join("nushell")
+                .join("vendor")
+                .join("autoload")
+                .join(format!("{}.nu", cmd))
         }
         super::Shell::PowerShell => {
             // PowerShell doesn't use a separate completion file - completions are

@@ -324,6 +324,9 @@ eval "$(wt config shell init zsh)"
 
 # For fish: add to ~/.config/fish/config.fish
 wt config shell init fish | source
+
+# For nushell: save to vendor autoload directory
+wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/autoload/wt.nu)
 ```
 
 Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.

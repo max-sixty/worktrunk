@@ -73,11 +73,17 @@ jobs:
         packages: zsh fish
         version: 1.0
 
-    - name: Install shells (bash, zsh, fish) - macOS
+    - name: Install shells (fish) - macOS
       if: runner.os == 'macOS'
       run: |
         brew install fish
         # bash and zsh are pre-installed on macOS
+
+    - name: Install nushell
+      if: runner.os != 'Windows'
+      uses: hustcer/setup-nu@v3
+      with:
+        version: '*'
 
     - name: Install shells - Windows
       if: runner.os == 'Windows'
@@ -204,6 +210,11 @@ jobs:
         packages: zsh fish
         version: 1.0
 
+    - name: Install nushell
+      uses: hustcer/setup-nu@v3
+      with:
+        version: '*'
+
     - name: 💰 Rust repo cache
       uses: actions/cache@v5
       with:
@@ -233,6 +244,11 @@ jobs:
       with:
         packages: zsh fish
         version: 1.0
+
+    - name: Install nushell
+      uses: hustcer/setup-nu@v3
+      with:
+        version: '*'
 
     # Ensure nothing remains from caching
     - run: cargo llvm-cov clean --workspace

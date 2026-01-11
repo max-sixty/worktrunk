@@ -23,7 +23,7 @@ pub use utils::{current_shell, detect_zsh_compinit, extract_filename_from_path};
 
 /// Supported shells
 ///
-/// Currently supported: bash, fish, zsh, powershell
+/// Currently supported: bash, fish, nushell, zsh, powershell
 ///
 /// On Windows, Git Bash users should use `bash` for shell integration.
 /// PowerShell integration is available for native Windows users without Git Bash.
@@ -32,6 +32,9 @@ pub use utils::{current_shell, detect_zsh_compinit, extract_filename_from_path};
 pub enum Shell {
     Bash,
     Fish,
+    #[strum(serialize = "nu")]
+    #[clap(name = "nu")]
+    Nushell,
     Zsh,
     #[strum(serialize = "powershell")]
     #[clap(name = "powershell")]
@@ -88,6 +91,11 @@ impl Shell {
                 format!(
                     "if type -q {cmd}; command {cmd} config shell init {} | source; end",
                     self
+                )
+            }
+            Self::Nushell => {
+                format!(
+                    "if (which {cmd} | is-not-empty) {{ {cmd} config shell init nu | save --force $nu.default-config-dir/vendor/autoload/{cmd}.nu }}",
                 )
             }
             Self::PowerShell => {
@@ -168,6 +176,10 @@ impl ShellInit {
                 let template = FishTemplate { cmd: &self.cmd };
                 template.render()
             }
+            Shell::Nushell => {
+                let template = NushellTemplate { cmd: &self.cmd };
+                template.render()
+            }
             Shell::PowerShell => {
                 let template = PowerShellTemplate { cmd: &self.cmd };
                 template.render()
@@ -216,6 +228,13 @@ struct FishTemplate<'a> {
 #[derive(Template)]
 #[template(path = "fish_wrapper.fish", escape = "none")]
 struct FishWrapperTemplate<'a> {
+    cmd: &'a str,
+}
+
+/// Nushell template
+#[derive(Template)]
+#[template(path = "nushell.nu", escape = "none")]
+struct NushellTemplate<'a> {
     cmd: &'a str,
 }
 

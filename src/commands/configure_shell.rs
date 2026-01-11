@@ -330,7 +330,7 @@ pub fn scan_shell_configs(
     cmd: &str,
 ) -> Result<ScanResult, String> {
     // Base shells to check
-    let mut default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
+    let mut default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Nushell];
 
     // Add PowerShell if we detect we're in a PowerShell-compatible environment.
     // - Non-Windows: PSModulePath reliably indicates PowerShell Core
@@ -353,9 +353,9 @@ pub fn scan_shell_configs(
         // Find the first existing config file
         let target_path = paths.iter().find(|p| p.exists());
 
-        // For Fish, also check if the parent directory (functions/) exists
+        // For Fish/Nushell, also check if the parent directory exists
         // since we create the file there rather than modifying an existing one
-        let has_config_location = if matches!(shell, Shell::Fish) {
+        let has_config_location = if matches!(shell, Shell::Fish | Shell::Nushell) {
             paths
                 .first()
                 .and_then(|p| p.parent())
@@ -397,8 +397,8 @@ pub fn scan_shell_configs(
             }
         } else if shell_filter.is_none() {
             // Track skipped shells (only when not explicitly filtering)
-            // For Fish, we check for functions/ directory; for others, the config file
-            let skipped_path = if matches!(shell, Shell::Fish) {
+            // For Fish/Nushell, we check for parent directory; for others, the config file
+            let skipped_path = if matches!(shell, Shell::Fish | Shell::Nushell) {
                 paths
                     .first()
                     .and_then(|p| p.parent())
@@ -934,7 +934,7 @@ fn scan_for_uninstall(
     cmd: &str,
 ) -> Result<UninstallScanResult, String> {
     // For uninstall, always include PowerShell to clean up any existing profiles
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
+    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Nushell, Shell::PowerShell];
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
@@ -1024,6 +1024,39 @@ fn scan_for_uninstall(
 
             if !found_any && let Some(fish_path) = paths.first() {
                 not_found.push((shell, fish_path.clone()));
+            }
+            continue;
+        }
+
+        // For Nushell, delete entire config file
+        if matches!(shell, Shell::Nushell) {
+            if let Some(config_path) = paths.first() {
+                if config_path.exists() {
+                    if dry_run {
+                        results.push(UninstallResult {
+                            shell,
+                            path: config_path.clone(),
+                            action: UninstallAction::WouldRemove,
+                            superseded_by: None,
+                        });
+                    } else {
+                        fs::remove_file(config_path).map_err(|e| {
+                            format!(
+                                "Failed to remove {}: {}",
+                                format_path_for_display(config_path),
+                                e
+                            )
+                        })?;
+                        results.push(UninstallResult {
+                            shell,
+                            path: config_path.clone(),
+                            action: UninstallAction::Removed,
+                            superseded_by: None,
+                        });
+                    }
+                } else {
+                    not_found.push((shell, config_path.clone()));
+                }
             }
             continue;
         }

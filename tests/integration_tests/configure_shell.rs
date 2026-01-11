@@ -35,6 +35,7 @@ fn test_configure_shell_with_yes(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mSkipped [90mbash[39m; [90m~/.bashrc[39m not found[22m
         [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/functions[39m not found[22m
+        [2m↳[22m [2mSkipped [90mnu[39m; [90m~/.config/nushell/vendor/autoload[39m not found[22m
 
         [32m✓[39m [32mConfigured 1 shell[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
@@ -607,6 +608,7 @@ fn test_configure_shell_no_files(repo: TestRepo, temp_home: TempDir) {
         [2m↳[22m [2mSkipped [90mbash[39m; [90m~/.bashrc[39m not found[22m
         [2m↳[22m [2mSkipped [90mzsh[39m; [90m~/.zshrc[39m not found[22m
         [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/functions[39m not found[22m
+        [2m↳[22m [2mSkipped [90mnu[39m; [90m~/.config/nushell/vendor/autoload[39m not found[22m
         [31m✗[39m [31mNo shell config files found[39m
         ");
     });
@@ -643,6 +645,7 @@ fn test_configure_shell_multiple_configs(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/functions[39m not found[22m
+        [2m↳[22m [2mSkipped [90mnu[39m; [90m~/.config/nushell/vendor/autoload[39m not found[22m
 
         [32m✓[39m [32mConfigured 2 shells[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
@@ -702,6 +705,7 @@ fn test_configure_shell_mixed_states(repo: TestRepo, temp_home: TempDir) {
         [2m○[22m Already configured shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/functions[39m not found[22m
+        [2m↳[22m [2mSkipped [90mnu[39m; [90m~/.config/nushell/vendor/autoload[39m not found[22m
 
         [32m✓[39m [32mConfigured 1 shell[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
@@ -757,6 +761,7 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mNo [90mbash[39m shell extension & completions in ~/.bashrc[22m
         [2m↳[22m [2mNo [90mfish[39m shell extension in ~/.config/fish/functions/wt.fish[22m
+        [2m↳[22m [2mNo [90mnu[39m shell extension in ~/.config/nushell/vendor/autoload/wt.nu[22m
         [2m↳[22m [2mNo [90mfish[39m completions in ~/.config/fish/completions/wt.fish[22m
 
         [32m✓[39m [32mRemoved integration from 1 shell[39m
@@ -813,6 +818,7 @@ fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mRemoved shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mNo [90mfish[39m shell extension in ~/.config/fish/functions/wt.fish[22m
+        [2m↳[22m [2mNo [90mnu[39m shell extension in ~/.config/nushell/vendor/autoload/wt.nu[22m
         [2m↳[22m [2mNo [90mfish[39m completions in ~/.config/fish/completions/wt.fish[22m
 
         [32m✓[39m [32mRemoved integration from 2 shells[39m
@@ -1110,6 +1116,7 @@ fn test_configure_shell_no_warning_for_bash_user(repo: TestRepo, temp_home: Temp
         [32m✓[39m [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/functions[39m not found[22m
+        [2m↳[22m [2mSkipped [90mnu[39m; [90m~/.config/nushell/vendor/autoload[39m not found[22m
 
         [32m✓[39m [32mConfigured 2 shells[39m
         [2m↳[22m [2mRestart shell to activate shell integration[22m
@@ -1265,6 +1272,7 @@ fn test_configure_shell_no_warning_when_shell_unset(repo: TestRepo, temp_home: T
         [32m✓[39m [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/functions[39m not found[22m
+        [2m↳[22m [2mSkipped [90mnu[39m; [90m~/.config/nushell/vendor/autoload[39m not found[22m
 
         [32m✓[39m [32mConfigured 2 shells[39m
         ");

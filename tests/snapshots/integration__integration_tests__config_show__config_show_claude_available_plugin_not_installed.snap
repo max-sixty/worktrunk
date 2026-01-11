@@ -13,23 +13,21 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
-    PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
+    SOURCE_DATE_EPOCH: "1735776000"
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
-    WORKTRUNK_TEST_CLAUDE_INSTALLED: "1"
-    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
+    WT_TEST_DELAYED_STREAM_MS: "999999"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -47,17 +45,15 @@ exit_code: 0
 [33m▲[39m [33mShell integration not active[39m
 [107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
 
-[2m○[22m [2mbash: Skipped; ~/.bashrc not found[22m
-[2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
-[2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
-
-[36mCLAUDE CODE[39m
-[2m↳[22m [2mPlugin not installed. To install, run:[22m
-[107m [0m [2m[0m[2m[34mclaude[0m[2m plugin marketplace add max-sixty/worktrunk
-[107m [0m [2m[0m[2m[34mclaude[0m[2m plugin install worktrunk@worktrunk
-[2m↳[22m [2mStatusline not configured. See https://worktrunk.dev/claude-code/#statusline[22m
+[2m○[22m [2mSkipped bash; ~/.bashrc not found[22m
+[2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
+[2m○[22m [2mSkipped fish; ~/.config/fish/functions not found[22m
+[2m○[22m [2mSkipped nu; ~/.config/nushell/vendor/autoload not found[22m
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m
 [2m○[22m git: [1m[VERSION][22m
+[2m↳[22m [2mClaude Code plugin not installed. To install, run:[22m
+[107m [0m [2m[0m[2m[34mclaude[0m[2m plugin marketplace add max-sixty/worktrunk
+[107m [0m [2m[0m[2m[34mclaude[0m[2m plugin install worktrunk@worktrunk
 [2m○[22m Hyperlinks: [1minactive[22m

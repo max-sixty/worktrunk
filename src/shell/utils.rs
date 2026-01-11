@@ -49,6 +49,8 @@ pub fn shell_from_name(shell_name: &str) -> Option<Shell> {
         Some(Shell::Bash)
     } else if name_lower.starts_with("fish") {
         Some(Shell::Fish)
+    } else if name_lower.starts_with("nu") {
+        Some(Shell::Nushell)
     } else if name_lower.starts_with("pwsh") || name_lower.starts_with("powershell") {
         Some(Shell::PowerShell)
     } else {

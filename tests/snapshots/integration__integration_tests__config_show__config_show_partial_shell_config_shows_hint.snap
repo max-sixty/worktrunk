@@ -13,24 +13,22 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
-    PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
+    SOURCE_DATE_EPOCH: "1735776000"
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
-    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_COMPINIT_CONFIGURED: "1"
-    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
+    WT_TEST_DELAYED_STREAM_MS: "999999"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -48,17 +46,16 @@ exit_code: 0
 [33m▲[39m [33mShell integration not active[39m
 [107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
 
-[2m↳[22m [2mbash: Not configured shell extension & completions[22m
-[2m○[22m [1mzsh[22m: Already configured shell extension & completions @ ~/.zshrc:2
+[2m↳[22m [2mNot configured shell extension & completions for bash[22m
+[2m○[22m Already configured shell extension & completions for [1mzsh[22m @ ~/.zshrc:2
 [107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init zsh)"[0m[2m; [0m[2m[35mfi[0m[2m
-[2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
+[2m○[22m [2mSkipped fish; ~/.config/fish/functions not found[22m
+[2m○[22m [2mSkipped nu; ~/.config/nushell/vendor/autoload not found[22m
 
 [2m↳[22m [2mTo configure, run [90mwt config shell install[39m[22m
-
-[36mCLAUDE CODE[39m
-[2m○[22m [1mclaude[22m CLI not installed
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m
 [2m○[22m git: [1m[VERSION][22m
+[2m↳[22m [2mClaude Code plugin not installed ([1mclaude[22m not found)[22m
 [2m○[22m Hyperlinks: [1minactive[22m
