@@ -148,29 +148,29 @@ pub(super) enum TaskResult {
         item_idx: usize,
         commit: CommitDetails,
     },
-    /// Ahead/behind counts vs main
+    /// Ahead/behind counts vs default branch
     AheadBehind {
         item_idx: usize,
         counts: AheadBehind,
     },
-    /// Whether HEAD's tree SHA matches main's tree SHA (committed content identical)
+    /// Whether HEAD's tree SHA matches integration target's tree SHA (committed content identical)
     CommittedTreesMatch {
         item_idx: usize,
         committed_trees_match: bool,
     },
-    /// Whether branch has file changes beyond the merge-base (three-dot diff)
+    /// Whether branch has file changes beyond the merge-base with integration target (three-dot diff)
     HasFileChanges {
         item_idx: usize,
         has_file_changes: bool,
     },
-    /// Whether merging branch into main would add changes (merge simulation)
+    /// Whether merging branch into integration target would add changes (merge simulation)
     WouldMergeAdd {
         item_idx: usize,
         would_merge_add: bool,
     },
-    /// Whether branch HEAD is ancestor of main (same commit or already merged)
+    /// Whether branch HEAD is ancestor of integration target (same commit or already merged)
     IsAncestor { item_idx: usize, is_ancestor: bool },
-    /// Line diff vs main branch
+    /// Line diff vs default branch
     BranchDiff {
         item_idx: usize,
         branch_diff: BranchDiffTotals,
@@ -184,7 +184,7 @@ pub(super) enum TaskResult {
         working_tree_status: WorkingTreeStatus,
         has_conflicts: bool,
     },
-    /// Potential merge conflicts with main (merge-tree simulation on committed HEAD)
+    /// Potential merge conflicts with default branch (merge-tree simulation on committed HEAD)
     MergeTreeConflicts {
         item_idx: usize,
         has_merge_tree_conflicts: bool,
@@ -749,8 +749,8 @@ pub fn collect(
     let branches_without_worktrees = branches_without_worktrees?;
     let remote_branches = remote_branches?;
 
-    // Main worktree is the worktree on the default branch (if exists), else first worktree.
-    // find_home returns None only if worktrees is empty, which shouldn't happen for wt list.
+    // Main worktree is the worktree on the default branch (if exists), else first non-prunable worktree.
+    // find_home returns None if all worktrees are prunable or the list is empty.
     let main_worktree = WorktreeInfo::find_home(&worktrees, &default_branch)
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;

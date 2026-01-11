@@ -58,7 +58,7 @@ pub enum StepCommand {
     /// Fast-forward target to current branch
     ///
     /// Updates the local target branch (e.g., `main`) to include current commits.
-    /// Similar to `git push . HEAD:<target>` but uses
+    /// Similar to `git push . HEAD:<target>`, but uses
     /// `receive.denyCurrentBranch=updateInstead` internally.
     Push {
         /// Target branch
