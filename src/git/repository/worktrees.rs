@@ -27,7 +27,7 @@ impl Repository {
     /// Returns `None` if not in a worktree (e.g., in bare repo directory).
     ///
     /// Note: For worktree-specific operations, use [`current_worktree()`](Self::current_worktree)
-    /// to get a [`WorkingTree`] instead.
+    /// to get a [`WorkingTree`](super::WorkingTree) instead.
     pub fn current_worktree_info(&self) -> anyhow::Result<Option<WorktreeInfo>> {
         let current_path = match self.current_worktree().root() {
             Ok(p) => p.to_path_buf(),
