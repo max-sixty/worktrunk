@@ -54,7 +54,7 @@ wt switch --create temp --no-verify      # Skip hooks
 
 | Shortcut | Meaning |
 |----------|---------|
-| `^` | Default branch (main/master) |
+| `^` | Default branch (`main`/`master`) |
 | `@` | Current branch/worktree |
 | `-` | Previous worktree (like `cd -`) |
 

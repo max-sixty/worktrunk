@@ -216,7 +216,7 @@ Use `wt config show` to view file-based configuration.
 
 ## Keys
 
-- **default-branch**: The repository's default branch (main, master, etc.)
+- **default-branch**: The repository's default branch (`main`, `master`, etc.)
 - **previous-branch**: Previous branch for `wt switch -`
 - **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
@@ -296,7 +296,7 @@ The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
 - For bare repos or empty repos, checks `symbolic-ref HEAD`
 - Checks `git config init.defaultBranch`
-- Looks for common names: main, master, develop, trunk"#
+- Looks for common names: `main`, `master`, `develop`, `trunk`"#
     )]
     DefaultBranch {
         #[command(subcommand)]
