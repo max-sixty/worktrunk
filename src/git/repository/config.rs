@@ -1,10 +1,10 @@
-//! Git config, hints, and marker operations for Repository.
+//! Git config, hints, marker, and default branch operations for Repository.
 
 use anyhow::Context;
 
 use crate::config::ProjectConfig;
 
-use super::Repository;
+use super::{DefaultBranchName, GitError, Repository};
 
 impl Repository {
     /// Get a git config value. Returns None if the key doesn't exist.
@@ -115,6 +115,153 @@ impl Repository {
         Ok(count)
     }
 
+    // =========================================================================
+    // Default branch detection
+    // =========================================================================
+
+    /// Get the default branch name for the repository.
+    ///
+    /// **Performance note:** This method may trigger a network call on first invocation
+    /// if the remote HEAD is not cached locally. The result is then cached in git's
+    /// config for subsequent calls. To minimize latency:
+    /// - Defer calling this until after fast, local checks (see e497f0f for example)
+    /// - Consider passing the result as a parameter if needed multiple times
+    /// - For optional operations, provide a fallback (e.g., `.unwrap_or("main")`)
+    ///
+    /// Uses a hybrid approach:
+    /// 1. Check worktrunk cache (`git config worktrunk.default-branch`) — single command
+    /// 2. Detect primary remote, try its cache (e.g., `origin/HEAD`)
+    /// 3. Query remote (`git ls-remote`) — may take 100ms-2s
+    /// 4. Infer from local branches if no remote
+    ///
+    /// Detection results are cached to `worktrunk.default-branch` for future calls.
+    /// Result is cached in the shared repo cache (shared across all worktrees).
+    pub fn default_branch(&self) -> anyhow::Result<String> {
+        self.cache
+            .default_branch
+            .get_or_try_init(|| {
+                // Fast path: check worktrunk's persistent cache (git config)
+                if let Ok(branch) =
+                    self.run_command(&["config", "--get", "worktrunk.default-branch"])
+                {
+                    let branch = branch.trim();
+                    if !branch.is_empty() {
+                        return Ok(branch.to_string());
+                    }
+                }
+
+                // Detect and persist to git config for future processes
+                let branch = self.detect_default_branch()?;
+                let _ = self.run_command(&["config", "worktrunk.default-branch", &branch]);
+                Ok(branch)
+            })
+            .cloned()
+    }
+
+    /// Detect the default branch without using worktrunk's cache.
+    ///
+    /// Used by `default_branch()` to populate the cache, and after
+    /// `wt config state default-branch clear` to force re-detection.
+    pub fn detect_default_branch(&self) -> anyhow::Result<String> {
+        // Try to get from the primary remote
+        if let Ok(remote) = self.primary_remote() {
+            // Try git's cache for this remote (e.g., origin/HEAD)
+            if let Ok(branch) = self.get_local_default_branch(&remote) {
+                return Ok(branch);
+            }
+
+            // Query remote (no caching to git's remote HEAD - we only manage worktrunk's cache)
+            if let Ok(branch) = self.query_remote_default_branch(&remote) {
+                return Ok(branch);
+            }
+        }
+
+        // Fallback: No remote or remote query failed, try to infer locally
+        // TODO: Show message to user when using inference fallback:
+        //   "No remote configured. Using inferred default branch: {branch}"
+        //   "To set explicitly, run: wt config state default-branch set <branch>"
+        // Problem: git.rs is in lib crate, output module is in binary.
+        // Options: (1) Return info about whether fallback was used, let callers show message
+        //          (2) Add messages in specific commands (merge.rs, worktree.rs)
+        //          (3) Move output abstraction to lib crate
+        self.infer_default_branch_locally()
+    }
+
+    /// Resolve a target branch from an optional override
+    ///
+    /// If target is Some, expands special symbols ("@", "-", "^") via `resolve_worktree_name`.
+    /// Otherwise, queries the default branch.
+    /// This is a common pattern used throughout commands that accept an optional --target flag.
+    pub fn resolve_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
+        target.map_or_else(|| self.default_branch(), |b| self.resolve_worktree_name(b))
+    }
+
+    /// Infer the default branch locally (without remote).
+    ///
+    /// Uses local heuristics when no remote is available:
+    /// 1. If only one local branch exists, use it
+    /// 2. Check symbolic-ref HEAD (authoritative for bare repos, works before first commit)
+    /// 3. Check user's git config init.defaultBranch (if branch exists)
+    /// 4. Look for common branch names (main, master, develop, trunk)
+    /// 5. Fail if none of the above work
+    fn infer_default_branch_locally(&self) -> anyhow::Result<String> {
+        // 1. If there's only one local branch, use it
+        let branches = self.local_branches()?;
+        if branches.len() == 1 {
+            return Ok(branches[0].clone());
+        }
+
+        // 2. Check symbolic-ref HEAD - authoritative for bare repos and empty repos
+        // - Bare repo directory: HEAD always points to the default branch
+        // - Empty repos: No branches exist yet, but HEAD tells us the intended default
+        // - Linked worktrees: HEAD points to CURRENT branch, so skip this heuristic
+        // - Normal repos: HEAD points to CURRENT branch, so skip this heuristic
+        let is_bare = self.is_bare().unwrap_or(false);
+        let in_linked_worktree = self.current_worktree().is_linked().unwrap_or(false);
+        if ((is_bare && !in_linked_worktree) || branches.is_empty())
+            && let Ok(head_ref) = self.run_command(&["symbolic-ref", "HEAD"])
+            && let Some(branch) = head_ref.trim().strip_prefix("refs/heads/")
+        {
+            return Ok(branch.to_string());
+        }
+
+        // 3. Check git config init.defaultBranch (if branch exists)
+        if let Ok(default) = self.run_command(&["config", "--get", "init.defaultBranch"]) {
+            let branch = default.trim().to_string();
+            if !branch.is_empty() && branches.contains(&branch) {
+                return Ok(branch);
+            }
+        }
+
+        // 4. Look for common branch names
+        for name in ["main", "master", "develop", "trunk"] {
+            if branches.contains(&name.to_string()) {
+                return Ok(name.to_string());
+            }
+        }
+
+        // 5. Give up — can't infer
+        Err(GitError::Other {
+            message:
+                "Could not infer default branch. Please specify target branch explicitly or set up a remote."
+                    .into(),
+        }
+        .into())
+    }
+
+    // Private helpers for default_branch detection
+
+    fn get_local_default_branch(&self, remote: &str) -> anyhow::Result<String> {
+        let stdout =
+            self.run_command(&["rev-parse", "--abbrev-ref", &format!("{}/HEAD", remote)])?;
+        DefaultBranchName::from_local(remote, &stdout).map(DefaultBranchName::into_string)
+    }
+
+    pub(super) fn query_remote_default_branch(&self, remote: &str) -> anyhow::Result<String> {
+        let stdout = self.run_command(&["ls-remote", "--symref", remote, "HEAD"])?;
+        DefaultBranchName::from_remote(&stdout).map(DefaultBranchName::into_string)
+    }
+
     /// Set the default branch manually.
     ///
     /// This sets worktrunk's cache (`worktrunk.default-branch`). Use `clear` then
@@ -135,6 +282,10 @@ impl Repository {
             .run_command(&["config", "--unset", "worktrunk.default-branch"])
             .is_ok())
     }
+
+    // =========================================================================
+    // Project config
+    // =========================================================================
 
     /// Load the project configuration (.config/wt.toml) if it exists.
     ///
