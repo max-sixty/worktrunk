@@ -89,7 +89,7 @@ git branch -d feat</pre></td>
 
 A demo with some advanced features:
 
-![Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow](https://raw.githubusercontent.com/max-sixty/worktrunk-assets/main/demos/docs/light/wt-zellij-omnibus.gif)
+![Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow](https://raw.githubusercontent.com/max-sixty/worktrunk-assets/main/assets/docs/light/wt-zellij-omnibus.gif)
 
 <!-- END AUTO-GENERATED -->
 
