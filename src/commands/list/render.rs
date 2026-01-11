@@ -271,7 +271,8 @@ impl LayoutConfig {
 
     /// Render a skeleton row showing known data (branch, path) with placeholders for other columns.
     ///
-    /// Only called for worktrees (not branches), so we can extract is_current/is_previous from WorktreeData.
+    /// Used for both worktrees and branch-only items; branch-only rows render an empty path
+    /// and a blank gutter placeholder.
     pub fn format_skeleton_row(&self, item: &super::model::ListItem) -> String {
         use crate::display::shorten_path;
 

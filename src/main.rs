@@ -153,7 +153,7 @@ pub fn was_invoked_with_explicit_path() -> bool {
 /// Custom help handling for pager support and markdown rendering.
 ///
 /// We intercept help requests to provide:
-/// 1. **Pager support**: Help is shown through `less` (like git)
+/// 1. **Pager support**: Help is shown through the detected pager (git-style precedence)
 /// 2. **Markdown rendering**: `## Headers` become green, code blocks are dimmed
 ///
 /// Uses `Error::render()` to get clap's pre-formatted help, which already

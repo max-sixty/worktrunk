@@ -1,7 +1,7 @@
 //! Cross-platform shell execution
 //!
 //! Provides a unified interface for executing shell commands across platforms:
-//! - Unix: Uses `/bin/sh -c`
+//! - Unix: Uses `sh -c` (resolved via PATH)
 //! - Windows: Prefers Git Bash if available, falls back to PowerShell
 //!
 //! This enables hooks and commands to use the same bash syntax on all platforms,

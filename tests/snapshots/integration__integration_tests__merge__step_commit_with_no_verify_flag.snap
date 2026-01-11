@@ -9,7 +9,7 @@ info:
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -22,6 +22,7 @@ info:
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_COMMIT_GENERATION__ARGS: "feat: add file"
     WORKTRUNK_COMMIT_GENERATION__COMMAND: echo
@@ -34,7 +35,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Skipping pre-commit hooks ([90m--no-verify[39m)
+[2m○[22m Skipping pre-commit hooks (--no-verify)
 [33m▲[39m [33mAuto-staging 2 untracked paths:[39m
 [107m [0m .config/
 [107m [0m file1.txt
