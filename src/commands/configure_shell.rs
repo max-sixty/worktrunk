@@ -221,9 +221,15 @@ pub fn scan_shell_configs(
     cmd: &str,
 ) -> Result<ScanResult, String> {
     #[cfg(windows)]
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
+    let default_shells = vec![
+        Shell::Bash,
+        Shell::Zsh,
+        Shell::Fish,
+        Shell::Nushell,
+        Shell::PowerShell,
+    ];
     #[cfg(not(windows))]
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
+    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Nushell];
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
@@ -238,9 +244,9 @@ pub fn scan_shell_configs(
         // Find the first existing config file
         let target_path = paths.iter().find(|p| p.exists());
 
-        // For Fish, also check if the parent directory (conf.d/) exists
+        // For Fish/Nushell, also check if the parent directory exists
         // since we create the file there rather than modifying an existing one
-        let has_config_location = if matches!(shell, Shell::Fish) {
+        let has_config_location = if matches!(shell, Shell::Fish | Shell::Nushell) {
             paths
                 .first()
                 .and_then(|p| p.parent())
@@ -269,8 +275,8 @@ pub fn scan_shell_configs(
             }
         } else if shell_filter.is_none() {
             // Track skipped shells (only when not explicitly filtering)
-            // For Fish, we check for conf.d directory; for others, the config file
-            let skipped_path = if matches!(shell, Shell::Fish) {
+            // For Fish/Nushell, we check for parent directory; for others, the config file
+            let skipped_path = if matches!(shell, Shell::Fish | Shell::Nushell) {
                 paths
                     .first()
                     .and_then(|p| p.parent())
@@ -741,9 +747,15 @@ fn scan_for_uninstall(
     cmd: &str,
 ) -> Result<UninstallScanResult, String> {
     #[cfg(windows)]
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
+    let default_shells = vec![
+        Shell::Bash,
+        Shell::Zsh,
+        Shell::Fish,
+        Shell::Nushell,
+        Shell::PowerShell,
+    ];
     #[cfg(not(windows))]
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
+    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Nushell];
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
@@ -755,32 +767,32 @@ fn scan_for_uninstall(
             .config_paths(cmd)
             .map_err(|e| format!("Failed to get config paths for {}: {}", shell, e))?;
 
-        // For Fish, delete entire {cmd}.fish file
-        if matches!(shell, Shell::Fish) {
-            if let Some(fish_path) = paths.first() {
-                if fish_path.exists() {
+        // For Fish/Nushell, delete entire config file
+        if matches!(shell, Shell::Fish | Shell::Nushell) {
+            if let Some(config_path) = paths.first() {
+                if config_path.exists() {
                     if dry_run {
                         results.push(UninstallResult {
                             shell,
-                            path: fish_path.clone(),
+                            path: config_path.clone(),
                             action: UninstallAction::WouldRemove,
                         });
                     } else {
-                        fs::remove_file(fish_path).map_err(|e| {
+                        fs::remove_file(config_path).map_err(|e| {
                             format!(
                                 "Failed to remove {}: {}",
-                                format_path_for_display(fish_path),
+                                format_path_for_display(config_path),
                                 e
                             )
                         })?;
                         results.push(UninstallResult {
                             shell,
-                            path: fish_path.clone(),
+                            path: config_path.clone(),
                             action: UninstallAction::Removed,
                         });
                     }
                 } else {
-                    not_found.push((shell, fish_path.clone()));
+                    not_found.push((shell, config_path.clone()));
                 }
             }
             continue;

@@ -477,6 +477,9 @@ pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>,
 pub enum Shell {
     Bash,
     Fish,
+    #[strum(serialize = "nu")]
+    #[clap(name = "nu")]
+    Nushell,
     Zsh,
     #[strum(serialize = "powershell")]
     #[clap(name = "powershell")]
@@ -510,6 +513,20 @@ impl Shell {
                         .join("fish")
                         .join("conf.d")
                         .join(format!("{}.fish", cmd)),
+                ]
+            }
+            Self::Nushell => {
+                // Nushell uses ~/.config/nushell/ for config files
+                // We write to a vendor autoload directory to avoid modifying config.nu directly
+                let config_home = std::env::var("XDG_CONFIG_HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|_| home.join(".config"));
+                vec![
+                    config_home
+                        .join("nushell")
+                        .join("vendor")
+                        .join("autoload")
+                        .join(format!("{}.nu", cmd)),
                 ]
             }
             Self::PowerShell => powershell_profile_paths(&home),
@@ -554,6 +571,19 @@ impl Shell {
                     .join("completions")
                     .join(format!("{}.fish", cmd))
             }
+            Self::Nushell => {
+                // Nushell completions are defined inline in the init script
+                // Return a path in the vendor autoload directory (same as config)
+                let config_home = strategy
+                    .as_ref()
+                    .map(|s| s.config_dir())
+                    .unwrap_or_else(|| home.join(".config"));
+                config_home
+                    .join("nushell")
+                    .join("vendor")
+                    .join("autoload")
+                    .join(format!("{}.nu", cmd))
+            }
             Self::PowerShell => {
                 // PowerShell doesn't use a separate completion file - completions are
                 // registered inline in the profile using Register-ArgumentCompleter
@@ -582,6 +612,11 @@ impl Shell {
                 format!(
                     "if type -q {cmd}; command {cmd} config shell init {} | source; end",
                     self
+                )
+            }
+            Self::Nushell => {
+                format!(
+                    "if (which {cmd} | is-not-empty) {{ {cmd} config shell init nu | save --force $nu.default-config-dir/vendor/autoload/{cmd}.nu }}",
                 )
             }
             Self::PowerShell => {
@@ -638,6 +673,10 @@ impl ShellInit {
                 let template = FishTemplate { cmd: &self.cmd };
                 template.render()
             }
+            Shell::Nushell => {
+                let template = NushellTemplate { cmd: &self.cmd };
+                template.render()
+            }
             Shell::PowerShell => {
                 let template = PowerShellTemplate { cmd: &self.cmd };
                 template.render()
@@ -665,6 +704,13 @@ struct ZshTemplate<'a> {
 #[derive(Template)]
 #[template(path = "fish.fish", escape = "none")]
 struct FishTemplate<'a> {
+    cmd: &'a str,
+}
+
+/// Nushell template
+#[derive(Template)]
+#[template(path = "nushell.nu", escape = "none")]
+struct NushellTemplate<'a> {
     cmd: &'a str,
 }
 
@@ -803,6 +849,8 @@ fn shell_from_name(shell_name: &str) -> Option<Shell> {
         Some(Shell::Bash)
     } else if name_lower.starts_with("fish") {
         Some(Shell::Fish)
+    } else if name_lower.starts_with("nu") {
+        Some(Shell::Nushell)
     } else if name_lower.starts_with("pwsh") || name_lower.starts_with("powershell") {
         Some(Shell::PowerShell)
     } else {
