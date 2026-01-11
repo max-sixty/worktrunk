@@ -883,7 +883,7 @@ Toggle between views with number keys:
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
-Branches without worktrees are included — selecting one creates a worktree. (`wt list` requires `--branches` to show them.)
+With `--branches`, branches without worktrees are included — selecting one creates a worktree. This matches `wt list --branches`.
 
 ## Configuration
 
@@ -904,7 +904,15 @@ This is useful when the default pager doesn't render correctly in the embedded p
 - [`wt switch`](@/switch.md) — Direct switching to a known target branch
 "#
     )]
-    Select,
+    Select {
+        /// Include branches without worktrees
+        #[arg(long)]
+        branches: bool,
+
+        /// Include remote branches
+        #[arg(long)]
+        remotes: bool,
+    },
 
     /// Run individual operations
     #[command(

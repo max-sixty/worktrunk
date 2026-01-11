@@ -378,7 +378,7 @@ fn test_select_with_branches(mut repo: TestRepo) {
     let env_vars = repo.test_env_vars();
     let (raw_output, exit_code) = exec_in_pty_with_input(
         get_cargo_bin("wt").to_str().unwrap(),
-        &["select"],
+        &["select", "--branches"],
         repo.root_path(),
         &env_vars,
         "\x1b", // Escape to abort
@@ -582,4 +582,44 @@ fn test_new_feature() {
     let screen = render_terminal_screen(&raw_output);
     let normalized = normalize_output(&screen);
     assert_snapshot!("select_preview_main_diff", normalized);
+}
+
+#[rstest]
+fn test_select_respects_list_config(mut repo: TestRepo) {
+    repo.add_worktree("active-worktree");
+    // Create a branch without a worktree
+    let output = repo
+        .git_command()
+        .args(["branch", "orphan-branch"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "Failed to create branch");
+
+    // Write user config with [list] branches = true
+    // This should enable branches in wt select without the --branches flag
+    repo.write_test_config(
+        r#"
+[list]
+branches = true
+"#,
+    );
+
+    let env_vars = repo.test_env_vars();
+    let (raw_output, exit_code) = exec_in_pty_with_input(
+        get_cargo_bin("wt").to_str().unwrap(),
+        &["select"], // No --branches flag - config should enable it
+        repo.root_path(),
+        &env_vars,
+        "\x1b", // Escape to abort
+    );
+
+    assert_valid_abort_exit_code(exit_code);
+
+    let screen = render_terminal_screen(&raw_output);
+    // Verify that orphan-branch appears (enabled by config, not CLI flag)
+    assert!(
+        screen.contains("orphan-branch"),
+        "orphan-branch should appear when [list] branches = true in config.\nScreen:\n{}",
+        screen
+    );
 }
