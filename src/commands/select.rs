@@ -852,7 +852,11 @@ where
     }
 }
 
-pub fn handle_select() -> anyhow::Result<()> {
+pub fn handle_select(
+    show_branches: bool,
+    show_remotes: bool,
+    config: &WorktrunkConfig,
+) -> anyhow::Result<()> {
     use std::io::IsTerminal;
 
     // Select requires an interactive terminal for the TUI
@@ -864,11 +868,6 @@ pub fn handle_select() -> anyhow::Result<()> {
 
     // Initialize preview mode state file (auto-cleanup on drop)
     let state = PreviewState::new();
-
-    // Load config (or use default) for path mismatch detection
-    let config = WorktrunkConfig::load()
-        .inspect_err(|e| log::warn!("Config load failed, using defaults: {}", e))
-        .unwrap_or_default();
 
     // Gather list data using simplified collection (buffered mode)
     // Skip expensive operations not needed for select UI
@@ -888,12 +887,12 @@ pub fn handle_select() -> anyhow::Result<()> {
 
     let Some(list_data) = collect::collect(
         &repo,
-        true,  // show_branches (include branches without worktrees)
-        false, // show_remotes (local branches only, not remote branches)
+        show_branches,
+        show_remotes,
         &skip_tasks,
         false, // show_progress (no progress bars)
         false, // render_table (select renders its own UI)
-        &config,
+        config,
         command_timeout,
         true, // skip_expensive_for_stale (faster for repos with many stale branches)
     )?

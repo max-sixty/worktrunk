@@ -46,7 +46,7 @@ Toggle between views with number keys:
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
-Branches without worktrees are included — selecting one creates a worktree. (`wt list` requires `--branches` to show them.)
+With `--branches`, branches without worktrees are included — selecting one creates a worktree. This matches `wt list --branches`.
 
 ## Configuration
 
@@ -76,6 +76,12 @@ Browse and switch worktrees with live preview.
 Usage: <b><span class=c>wt select</span></b> <span class=c>[OPTIONS]</span>
 
 <b><span class=g>Options:</span></b>
+      <b><span class=c>--branches</span></b>
+          Include branches without worktrees
+
+      <b><span class=c>--remotes</span></b>
+          Include remote branches
+
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 

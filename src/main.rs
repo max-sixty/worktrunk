@@ -1203,9 +1203,26 @@ fn main() {
             },
         },
         #[cfg(unix)]
-        Commands::Select => handle_select(),
+        Commands::Select { branches, remotes } => {
+            WorktrunkConfig::load()
+                .context("Failed to load config")
+                .and_then(|config| {
+                    // Get config values from [list] config (shared with wt list)
+                    let (show_branches_config, show_remotes_config) = config
+                        .list
+                        .as_ref()
+                        .map(|l| (l.branches.unwrap_or(false), l.remotes.unwrap_or(false)))
+                        .unwrap_or((false, false));
+
+                    // CLI flags override config
+                    let show_branches = branches || show_branches_config;
+                    let show_remotes = remotes || show_remotes_config;
+
+                    handle_select(show_branches, show_remotes, &config)
+                })
+        }
         #[cfg(not(unix))]
-        Commands::Select => {
+        Commands::Select { .. } => {
             let _ = output::print(error_message("wt select is not available on Windows"));
             let _ = output::print(hint_message(cformat!(
                 "To see all worktrees, run <bright-black>wt list</>; to switch directly, run <bright-black>wt switch BRANCH</>"
