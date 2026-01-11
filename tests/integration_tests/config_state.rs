@@ -79,6 +79,30 @@ fn test_state_get_default_branch_no_remote(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_state_get_default_branch_fails_when_undetermined(repo: TestRepo) {
+    // Rename main to something non-standard so default branch can't be determined
+    repo.git_command()
+        .args(["branch", "-m", "main", "xyz"])
+        .status()
+        .unwrap();
+    repo.git_command().args(["branch", "abc"]).status().unwrap();
+    repo.git_command().args(["branch", "def"]).status().unwrap();
+
+    // Now we have: xyz, abc, def - no common names, no init.defaultBranch
+    // wt config state default-branch get should fail with an error
+    let output = wt_state_cmd(&repo, "default-branch", "get", &[])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Cannot determine default branch"),
+        "Expected error message about cannot determine default branch, got: {}",
+        stderr
+    );
+}
+
+#[rstest]
 fn test_state_set_default_branch(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "default-branch", "set", &["develop"])
         .output()

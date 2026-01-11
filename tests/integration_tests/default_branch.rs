@@ -265,3 +265,28 @@ fn test_get_default_branch_no_remote_fails_when_no_match(repo: TestRepo) {
         result
     );
 }
+
+#[rstest]
+fn test_resolve_caret_fails_when_default_branch_unavailable(repo: TestRepo) {
+    // Rename main to something non-standard so default branch can't be determined
+    repo.git_command()
+        .args(["branch", "-m", "main", "xyz"])
+        .status()
+        .unwrap();
+    repo.git_command().args(["branch", "abc"]).status().unwrap();
+    repo.git_command().args(["branch", "def"]).status().unwrap();
+
+    // Now resolving "^" should fail with an error
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let result = git_repo.resolve_worktree_name("^");
+    assert!(
+        result.is_err(),
+        "Expected error when resolving ^ without default branch"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("Cannot determine default branch"),
+        "Error should mention cannot determine default branch, got: {}",
+        err_msg
+    );
+}
