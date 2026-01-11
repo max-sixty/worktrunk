@@ -262,10 +262,10 @@ impl TaskKind {
 }
 
 /// Detect if a worktree is in the middle of a git operation (rebase/merge).
-pub(super) fn detect_git_operation(repo: &Repository) -> GitOperationState {
-    if repo.current_worktree().is_rebasing().unwrap_or(false) {
+pub(super) fn detect_git_operation(wt: &worktrunk::git::WorktreeView<'_>) -> GitOperationState {
+    if wt.is_rebasing().unwrap_or(false) {
         GitOperationState::Rebase
-    } else if repo.current_worktree().is_merging().unwrap_or(false) {
+    } else if wt.is_merging().unwrap_or(false) {
         GitOperationState::Merge
     } else {
         GitOperationState::None
@@ -1026,8 +1026,9 @@ pub fn collect(
     let default_branch_clone = default_branch.clone();
     let target_clone = integration_target.clone();
     let expected_results_clone = expected_results.clone();
-    // Move options into the worker thread (not cloned - contains stale_branches set)
-    let main_path = main_worktree.path.clone();
+
+    // Clone repo for the worker thread (shares cache via Arc)
+    let repo_clone = repo.clone();
 
     // Prepare branch data if needed (before moving into closure)
     let branch_data: Vec<(usize, String, String)> = if show_branches || show_remotes {
@@ -1063,6 +1064,7 @@ pub fn collect(
         // Worktree work items
         for (idx, wt) in sorted_worktrees_clone.iter().enumerate() {
             all_work_items.extend(work_items_for_worktree(
+                &repo_clone,
                 wt,
                 idx,
                 &default_branch_clone,
@@ -1076,9 +1078,9 @@ pub fn collect(
         // Branch work items (local + remote)
         for (item_idx, branch_name, commit_sha) in &branch_data {
             all_work_items.extend(work_items_for_branch(
+                &repo_clone,
                 branch_name,
                 commit_sha,
-                &main_path,
                 *item_idx,
                 &default_branch_clone,
                 &target_clone,
@@ -1407,12 +1409,14 @@ pub fn build_worktree_item(
 /// with: commit details, ahead/behind, diffs, upstream, CI, etc.
 ///
 /// # Parameters
+/// - `repo`: Repository handle (cloned into background thread, shares cache via Arc)
 /// - `default_branch`: Local default branch for informational stats (ahead/behind, branch diff)
 /// - `target`: Effective target for integration checks (may be upstream if ahead)
 ///
 /// This is the blocking version used by statusline. For progressive rendering
 /// with callbacks, see the `collect()` function.
 pub fn populate_item(
+    repo: &Repository,
     item: &mut ListItem,
     default_branch: &str,
     target: &str,
@@ -1444,6 +1448,7 @@ pub fn populate_item(
         locked: None,
         prunable: None,
     };
+    let repo_clone = repo.clone();
     let default_branch_clone = default_branch.to_string();
     let target_clone = target.to_string();
     let expected_results_clone = expected_results.clone();
@@ -1454,6 +1459,7 @@ pub fn populate_item(
 
         // Generate work items for this single worktree
         let mut work_items = work_items_for_worktree(
+            &repo_clone,
             &wt,
             0, // Single item, always index 0
             &default_branch_clone,

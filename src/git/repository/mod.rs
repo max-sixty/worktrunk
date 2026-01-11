@@ -1,10 +1,9 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 
 use dashmap::DashMap;
-use once_cell::sync::{Lazy, OnceCell};
+use once_cell::sync::OnceCell;
 
 use anyhow::{Context, bail};
 use normalize_path::NormalizePath;
@@ -20,40 +19,8 @@ use super::{
 };
 
 // ============================================================================
-// Global Cache
+// Repository Cache
 // ============================================================================
-
-/// Global cache keyed by `git_common_dir`.
-///
-/// NOTE: Using a HashMap is slightly wasteful since every Repository instance
-/// must compute `git rev-parse --git-common-dir` to look up the cache. However,
-/// tests require isolation (each test creates different repos that need their
-/// own cached values), and the HashMap approach is the simplest way to achieve
-/// this. Alternative approaches (test-only cache clearing with RwLock instead
-/// of OnceCell) have their own trade-offs.
-static REPO_CACHE: Lazy<RwLock<HashMap<PathBuf, Arc<RepoCache>>>> = Lazy::new(Default::default);
-
-/// Get the shared cache for a repository, creating it if needed.
-///
-/// Returns an Arc to the cache, allowing the caller to release the HashMap
-/// lock before accessing cached values. This prevents deadlocks when cached
-/// methods call each other.
-fn get_cache(key: PathBuf) -> Arc<RepoCache> {
-    // Try read-only first
-    {
-        let caches = REPO_CACHE.read().unwrap();
-        if let Some(cache) = caches.get(&key) {
-            return Arc::clone(cache);
-        }
-    }
-
-    // Cache miss - need write lock to insert
-    let mut caches = REPO_CACHE.write().unwrap();
-    let cache = caches
-        .entry(key)
-        .or_insert_with(|| Arc::new(RepoCache::default()));
-    Arc::clone(cache)
-}
 
 /// Cached data for a single repository.
 ///
@@ -159,8 +126,9 @@ pub struct Repository {
     /// For repo-wide operations, any path within the repo works.
     discovery_path: PathBuf,
     /// The shared .git directory, computed at construction time.
-    /// Used as key for global cache lookup.
     git_common_dir: PathBuf,
+    /// Cached data for this repository. Shared across clones via Arc.
+    cache: Arc<RepoCache>,
 }
 
 /// A view into a specific worktree within a repository.
@@ -245,11 +213,11 @@ impl<'a> WorktreeView<'a> {
 
     /// Get the branch checked out in this worktree, or None if in detached HEAD state.
     ///
-    /// Result is cached in the global shared cache (keyed by worktree path).
+    /// Result is cached in the repository's shared cache (keyed by worktree path).
     pub fn branch(&self) -> anyhow::Result<Option<String>> {
-        let cache = get_cache(self.repo.git_common_dir.clone());
-
-        Ok(cache
+        Ok(self
+            .repo
+            .cache
             .current_branches
             .entry(self.path.clone())
             .or_insert_with(|| {
@@ -277,11 +245,11 @@ impl<'a> WorktreeView<'a> {
     ///
     /// Returns the canonicalized absolute path to the top-level directory.
     /// This could be the main worktree or a linked worktree.
-    /// Result is cached in the global shared cache (keyed by worktree path).
+    /// Result is cached in the repository's shared cache (keyed by worktree path).
     pub fn root(&self) -> anyhow::Result<PathBuf> {
-        let cache = get_cache(self.repo.git_common_dir.clone());
-
-        Ok(cache
+        Ok(self
+            .repo
+            .cache
             .worktree_roots
             .entry(self.path.clone())
             .or_insert_with(|| {
@@ -352,6 +320,59 @@ impl<'a> WorktreeView<'a> {
         }
         Ok(())
     }
+
+    /// Get line diff statistics for working tree changes (unstaged + staged).
+    pub fn working_tree_diff_stats(&self) -> anyhow::Result<LineDiff> {
+        let stdout = self.run_command(&["diff", "--numstat", "HEAD"])?;
+        LineDiff::from_numstat(&stdout)
+    }
+
+    /// Get line diff statistics between working tree and a specific ref.
+    pub fn working_tree_diff_vs_ref(&self, ref_name: &str) -> anyhow::Result<LineDiff> {
+        let stdout = self.run_command(&["diff", "--numstat", ref_name])?;
+        LineDiff::from_numstat(&stdout)
+    }
+
+    /// Get working tree diff stats vs a base branch, if trees differ.
+    ///
+    /// When `base_branch` is `None` (main worktree), returns `Some(LineDiff::default())`.
+    /// If the base branch tree matches HEAD and the working tree is dirty, computes
+    /// the precise diff; otherwise returns zero to indicate trees match.
+    /// When trees differ, returns `None` so callers can skip expensive comparisons.
+    pub fn working_tree_diff_with_base(
+        &self,
+        base_branch: Option<&str>,
+        working_tree_dirty: bool,
+    ) -> anyhow::Result<Option<LineDiff>> {
+        let Some(branch) = base_branch else {
+            // Main worktree has no base to compare against
+            return Ok(Some(LineDiff::default()));
+        };
+
+        // Check if branch exists
+        if self
+            .run_command(&["rev-parse", "--verify", branch])
+            .is_err()
+        {
+            return Ok(None);
+        }
+
+        // Check if trees match
+        let trees_match = self
+            .run_command(&["diff-tree", "--quiet", "HEAD", branch])
+            .is_ok();
+
+        if trees_match {
+            // Trees identical - if working tree is dirty, compute the diff
+            if working_tree_dirty {
+                Ok(Some(self.working_tree_diff_vs_ref(branch)?))
+            } else {
+                Ok(Some(LineDiff::default()))
+            }
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 impl Repository {
@@ -368,22 +389,34 @@ impl Repository {
 
     /// Discover the repository from the specified path.
     ///
-    /// **For background tasks and tests only.** Inline production code should use
-    /// [`Repository::current()`] combined with [`Repository::worktree_at()`] for
-    /// worktree-specific operations.
+    /// Creates a new Repository with its own cache. For sharing cache across
+    /// operations (e.g., parallel tasks in `wt list`), clone an existing
+    /// Repository instead of calling `at()` multiple times.
     ///
     /// Use cases:
-    /// - **Background tasks**: Tasks spawned to operate on specific worktrees
-    ///   (e.g., `wt list` tasks that analyze each worktree in parallel)
-    /// - **Tests**: Tests run from the project directory but need to operate on
-    ///   test repositories in temporary directories
+    /// - **Command entry points**: Starting a new command that needs a Repository
+    /// - **Tests**: Tests that need to operate on test repositories
+    ///
+    /// For worktree-specific operations within an existing Repository context,
+    /// use [`Repository::worktree_at()`] instead.
     pub fn at(path: impl Into<PathBuf>) -> anyhow::Result<Self> {
         let discovery_path = path.into();
         let git_common_dir = Self::resolve_git_common_dir(&discovery_path)?;
         Ok(Self {
             discovery_path,
             git_common_dir,
+            cache: Arc::new(RepoCache::default()),
         })
+    }
+
+    /// Check if this repository shares its cache with another.
+    ///
+    /// Returns true if both repositories point to the same underlying cache.
+    /// This is primarily useful for testing that cloned repositories share
+    /// cached data.
+    #[doc(hidden)]
+    pub fn shares_cache_with(&self, other: &Repository) -> bool {
+        Arc::ptr_eq(&self.cache, &other.cache)
     }
 
     /// Resolve the git common directory for a path.
@@ -453,8 +486,7 @@ impl Repository {
     ///
     /// [1]: https://git-scm.com/docs/git-config#Documentation/git-config.txt-checkoutdefaultRemote
     pub fn primary_remote(&self) -> anyhow::Result<String> {
-        let cache = get_cache(self.git_common_dir.clone());
-        cache
+        self.cache
             .primary_remote
             .get_or_init(|| {
                 // Check git's checkout.defaultRemote config
@@ -778,8 +810,7 @@ impl Repository {
     /// Detection results are cached to `worktrunk.default-branch` for future calls.
     /// Result is cached in the shared repo cache (shared across all worktrees).
     pub fn default_branch(&self) -> anyhow::Result<String> {
-        let cache = get_cache(self.git_common_dir.clone());
-        cache
+        self.cache
             .default_branch
             .get_or_try_init(|| {
                 // Fast path: check worktrunk's persistent cache (git config)
@@ -927,10 +958,9 @@ impl Repository {
     /// For bare repositories: the bare repository directory itself.
     ///
     /// This is the path that should be used when constructing worktree paths.
-    /// Result is cached in the global shared cache (same for all worktrees in a repo).
+    /// Result is cached in the repository's shared cache (same for all clones).
     pub fn worktree_base(&self) -> anyhow::Result<PathBuf> {
-        let cache = get_cache(self.git_common_dir.clone());
-        cache
+        self.cache
             .worktree_base
             .get_or_try_init(|| {
                 let git_common_dir =
@@ -978,10 +1008,9 @@ impl Repository {
     ///
     /// Bare repositories have no main worktree — all worktrees are linked
     /// worktrees at templated paths, including the default branch.
-    /// Result is cached in the shared repo cache (shared across all worktrees).
+    /// Result is cached in the repository's shared cache (same for all clones).
     pub fn is_bare(&self) -> anyhow::Result<bool> {
-        let cache = get_cache(self.git_common_dir.clone());
-        cache
+        self.cache
             .is_bare
             .get_or_try_init(|| {
                 let output = self.run_command(&["config", "--bool", "core.bare"])?;
@@ -1320,9 +1349,6 @@ impl Repository {
             }
         };
 
-        // Get cache keyed by git_common_dir
-        let cache = Some(get_cache(self.git_common_dir().to_path_buf()));
-
         let results: std::collections::HashMap<String, (usize, usize)> = output
             .lines()
             .filter_map(|line| {
@@ -1332,11 +1358,9 @@ impl Repository {
                 let ahead: usize = parts.next()?.parse().ok()?;
                 let branch = parts.next()?.to_string();
                 // Cache each result for later lookup
-                if let Some(ref cache) = cache {
-                    cache
-                        .ahead_behind
-                        .insert((base.to_string(), branch.clone()), (ahead, behind));
-                }
+                self.cache
+                    .ahead_behind
+                    .insert((base.to_string(), branch.clone()), (ahead, behind));
                 Some((branch, (ahead, behind)))
             })
             .collect();
@@ -1349,8 +1373,7 @@ impl Repository {
     /// Returns cached results from a prior `batch_ahead_behind()` call, or None
     /// if the branch wasn't in the batch or batch wasn't run.
     pub fn get_cached_ahead_behind(&self, base: &str, branch: &str) -> Option<(usize, usize)> {
-        let cache = get_cache(self.git_common_dir().to_path_buf());
-        cache
+        self.cache
             .ahead_behind
             .get(&(base.to_string(), branch.to_string()))
             .map(|r| *r)
@@ -1753,9 +1776,8 @@ impl Repository {
             (commit2.to_string(), commit1.to_string())
         };
 
-        let cache = get_cache(self.git_common_dir.clone());
-
-        Ok(cache
+        Ok(self
+            .cache
             .merge_base
             .entry(key)
             .or_insert_with(|| {
@@ -2028,10 +2050,9 @@ impl Repository {
     /// This identifier is used to track which commands have been approved
     /// for execution in this project.
     ///
-    /// Result is cached in the shared repo cache (shared across all worktrees).
+    /// Result is cached in the repository's shared cache (same for all clones).
     pub fn project_identifier(&self) -> anyhow::Result<String> {
-        let cache = get_cache(self.git_common_dir.clone());
-        cache
+        self.cache
             .project_identifier
             .get_or_try_init(|| {
                 // Try to get the remote URL first
@@ -2076,11 +2097,10 @@ impl Repository {
 
     /// Load the project configuration (.config/wt.toml) if it exists.
     ///
-    /// Result is cached in the global shared cache (same config for all worktrees).
+    /// Result is cached in the repository's shared cache (same for all clones).
     /// Returns `None` if not in a worktree or if no config file exists.
     pub fn load_project_config(&self) -> anyhow::Result<Option<ProjectConfig>> {
-        let cache = get_cache(self.git_common_dir.clone());
-        cache
+        self.cache
             .project_config
             .get_or_try_init(|| {
                 match self.current_worktree().root() {

@@ -306,7 +306,13 @@ fn get_git_status_segments(
     // Compute everything (same as --full) for complete status symbols
     // Pass default_branch for stable informational stats,
     // and integration_target for integration status checks.
-    list::populate_item(&mut item, &default_branch, &integration_target, options)?;
+    list::populate_item(
+        repo,
+        &mut item,
+        &default_branch,
+        &integration_target,
+        options,
+    )?;
 
     // Get prioritized segments
     let segments = item.format_statusline_segments(include_links);

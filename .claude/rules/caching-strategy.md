@@ -12,19 +12,18 @@ Everything else (remote URLs, project config, branch metadata) is read-only.
 
 ## Caching Implementation
 
-`Repository` uses a global cache keyed by `git_common_dir`. The cache is
-shared across all `Repository` instances within a process.
+`Repository` holds its cache directly via `Arc<RepoCache>`. Cloning a Repository
+shares the cache — all clones see the same cached values.
 
-**Architecture note:** Using a HashMap keyed by `git_common_dir` is slightly
-wasteful since every `Repository` instance must compute `git rev-parse
---git-common-dir` to look up the cache. However, tests require isolation (each
-test creates different repos that need their own cached values), and the
-HashMap approach is the simplest way to achieve this. Alternative approaches
-(test-only cache clearing with RwLock instead of OnceCell) have their own
-trade-offs.
+**Key patterns:**
+
+- **Command entry points** create Repository via `Repository::current()` or `Repository::at(path)`
+- **Parallel tasks** (e.g., `wt list`) clone the Repository, sharing the cache
+- **Tests** naturally get isolation since each test creates its own Repository
 
 **Currently cached:**
-- `git_common_dir()` — cached per-instance (also used as HashMap key)
+
+- `git_common_dir` — computed at construction, stored on struct
 - `worktree_root()` — per-worktree, keyed by path
 - `worktree_base()` — derived from git_common_dir and is_bare
 - `is_bare()` — git config, doesn't change
@@ -34,46 +33,35 @@ trade-offs.
 - `default_branch()` — from git config or detection, doesn't change
 - `merge_base()` — keyed by (commit1, commit2) pair
 - `ahead_behind` — keyed by (base_ref, branch_name), populated by `batch_ahead_behind()`
+- `project_config` — loaded from .config/wt.toml
 
 **Not cached (intentionally):**
+
 - `is_dirty()` — changes as we stage/commit
 - `list_worktrees()` — changes as we create/remove worktrees
 
 **Adding new cached methods:**
 
 1. Add field to `RepoCache` struct: `field_name: OnceCell<T>`
-2. Use `with_cache()` helper to access the shared cache
+2. Access via `self.cache.field_name`
 3. Return owned values (String, PathBuf, bool)
 
 ```rust
-// For repo-wide values (same for all worktrees)
+// For repo-wide values (same for all clones)
 pub fn cached_value(&self) -> anyhow::Result<String> {
-    self.with_cache(|cache| {
-        cache
-            .field_name
-            .get_or_init(|| { /* compute value */ })
-            .clone()
-    })
+    self.cache
+        .field_name
+        .get_or_init(|| { /* compute value */ })
+        .clone()
 }
 
 // For per-worktree values (different per worktree path)
-pub fn cached_per_worktree(&self) -> anyhow::Result<String> {
-    let worktree_key = self.path.clone();
-
-    self.with_cache(|cache| {
-        // Check cache first
-        if let Ok(map) = cache.field_name.read()
-            && let Some(cached) = map.get(&worktree_key)
-        {
-            return cached.clone();
-        }
-
-        // Cache miss - compute and store
-        let result = /* compute value */;
-        if let Ok(mut map) = cache.field_name.write() {
-            map.insert(worktree_key, result.clone());
-        }
-        result
-    })
+// Use DashMap for concurrent access
+pub fn cached_per_worktree(&self, path: &Path) -> String {
+    self.cache
+        .field_name
+        .entry(path.to_path_buf())
+        .or_insert_with(|| { /* compute value */ })
+        .clone()
 }
 ```
