@@ -565,7 +565,7 @@ pub fn handle_switch(
             let path_display = worktrunk::path::format_path_for_display(&worktree_path);
             let backup_display = worktrunk::path::format_path_for_display(&backup_path);
             crate::output::print(warning_message(cformat!(
-                "Moving <bold>{path_display}</> to <bold>{backup_display}</> (<bright-black>--clobber</>)"
+                "Moving <bold>{path_display}</> to <bold>{backup_display}</> (--clobber)"
             )))?;
 
             std::fs::rename(&worktree_path, &backup_path)
