@@ -734,12 +734,10 @@ pub fn collect(
     );
     // Show warning if user configured a default branch that doesn't exist locally
     if let Some(configured) = repo.invalid_default_branch_config() {
-        crate::output::print(warning_message(cformat!(
-            "Configured default branch <bold>{configured}</> does not exist locally"
-        )))?;
-        crate::output::print(worktrunk::styling::hint_message(cformat!(
-            "Run <bright-black>wt config state default-branch clear</> to reset"
-        )))?;
+        let msg = cformat!("Configured default branch <bold>{configured}</> does not exist locally");
+        crate::output::print(warning_message(msg))?;
+        let hint = cformat!("Run <bright-black>wt config state default-branch clear</> to reset");
+        crate::output::print(worktrunk::styling::hint_message(hint))?;
     }
 
     let branches_without_worktrees = branches_without_worktrees?;
