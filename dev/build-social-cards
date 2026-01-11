@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate social card PNGs from SVG sources
+# Regenerate social card ONGs from SVG sources
 # Requires: rsvg-convert (from librsvg)
 # Fonts are downloaded automatically if not installed
 
