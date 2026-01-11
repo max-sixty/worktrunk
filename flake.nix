@@ -48,8 +48,6 @@
             # Required for tree-sitter (syntax-highlighting feature, enabled by default)
             tree-sitter
           ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            darwin.apple_sdk.frameworks.Security
-            darwin.apple_sdk.frameworks.SystemConfiguration
             libiconv
           ];
 
