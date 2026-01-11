@@ -7,7 +7,10 @@
 //   - real_repo: rust-lang/rust clone (1, 4, 8 worktrees; warm + cold)
 //   - many_branches: 100 branches (warm + cold)
 //   - divergent_branches: 200 branches × 20 commits on synthetic repo (warm + cold)
-//   - real_repo_many_branches: 50 branches at different history depths / GH #461 (warm only)
+//   - real_repo_many_branches: 50 branches at different history depths / GH #461
+//       - warm: baseline (~15-18s)
+//       - warm_optimized: with skip_expensive_for_stale (~2-3s)
+//       - warm_worktrees_only: no branch enumeration (~600ms)
 //   - timeout_effect: Compare with/without 500ms command timeout on rust repo / GH #461 fix
 //
 // Run examples:
@@ -634,14 +637,14 @@ fn setup_rust_workspace_with_branches(temp: &tempfile::TempDir, num_branches: us
 /// This reproduces the `wt select` delay reported in #461. The key factor is NOT commits
 /// per branch, but rather how far back in history branches diverge from each other.
 ///
-/// Scaling (rust-lang/rust repo):
-/// - 20 branches at different depths: ~5s
-/// - 50 branches at different depths: ~11s
-/// - 100 branches at different depths: ~24s
-/// - 200 branches at different depths: >30s (times out)
+/// Benchmarks three modes:
+/// - `warm`: baseline with all branches, no optimization (~15-18s)
+/// - `warm_optimized`: with skip_expensive_for_stale (what `wt select` uses, ~2-3s)
+/// - `warm_worktrees_only`: no branch enumeration (~600ms)
 ///
-/// The slowdown comes from expensive merge-base calculations when branches have very different
-/// ancestry depths in the commit graph.
+/// Key insight: `git for-each-ref %(ahead-behind:BASE)` is O(commits), not O(refs).
+/// It must walk the commit graph to compute divergence, so it takes ~2s on rust-lang/rust
+/// regardless of how many refs are queried. Skipping branch enumeration entirely avoids this.
 fn bench_real_repo_many_branches(c: &mut Criterion) {
     let mut group = c.benchmark_group("real_repo_many_branches");
     group.measurement_time(std::time::Duration::from_secs(60));
@@ -649,14 +652,60 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
 
     let binary = get_release_binary();
 
-    // Only test warm cache - cold cache would be extremely slow
-    group.bench_function("warm", |b| {
+    // Setup function - each bench_function creates its own fresh workspace
+    // Uses setup_rust_workspace_with_branches plus a worktree for worktrees_only test
+    let setup_workspace = || {
         let temp = tempfile::tempdir().unwrap();
         let workspace_main = setup_rust_workspace_with_branches(&temp, 50);
 
+        // Add a second worktree (needed for worktrees_only to not auto-show branches)
+        let wt_path = temp.path().join("wt-test");
+        run_git(
+            &workspace_main,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "test-worktree",
+                wt_path.to_str().unwrap(),
+                "HEAD",
+            ],
+        );
+
+        (temp, workspace_main)
+    };
+
+    // Baseline: all branches, no optimization
+    group.bench_function("warm", |b| {
+        let (_temp, workspace_main) = setup_workspace();
         b.iter(|| {
             Command::new(&binary)
                 .args(["list", "--branches"])
+                .current_dir(&workspace_main)
+                .output()
+                .unwrap();
+        });
+    });
+
+    // With skip_expensive_for_stale optimization (simulates wt select behavior)
+    group.bench_function("warm_optimized", |b| {
+        let (_temp, workspace_main) = setup_workspace();
+        b.iter(|| {
+            Command::new(&binary)
+                .args(["list", "--branches"])
+                .env("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD", "1")
+                .current_dir(&workspace_main)
+                .output()
+                .unwrap();
+        });
+    });
+
+    // Worktrees only: no branch enumeration, skips expensive %(ahead-behind) batch
+    group.bench_function("warm_worktrees_only", |b| {
+        let (_temp, workspace_main) = setup_workspace();
+        b.iter(|| {
+            Command::new(&binary)
+                .arg("list") // no --branches
                 .current_dir(&workspace_main)
                 .output()
                 .unwrap();

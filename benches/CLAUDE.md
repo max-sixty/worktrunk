@@ -50,3 +50,35 @@ cargo bench --bench list -- --skip cold  # Warm cache only
 - Results: `target/criterion/`
 - Cached rust repo: `target/bench-repos/rust/`
 - HTML reports: `target/criterion/*/report/index.html`
+
+## Performance Investigation with analyze-trace
+
+Use `analyze-trace` to understand where time goes in git operations:
+
+```bash
+# Capture trace and analyze
+RUST_LOG=debug wt list --branches 2>&1 | grep '\[wt-trace\]' > /tmp/trace.log
+cargo run --release --bin analyze-trace -- /tmp/trace.log
+
+# Or pipe directly
+RUST_LOG=debug wt list --branches 2>&1 | grep '\[wt-trace\]' | cargo run --bin analyze-trace
+```
+
+The output shows:
+- **Command breakdown**: total time per git command type
+- **Duration histogram**: distribution of command times
+- **Timeout impact**: how much time could be saved with timeouts
+- **Top 10 slowest**: specific commands taking the most time
+
+## Key Performance Insights
+
+**`git for-each-ref %(ahead-behind:BASE)` is O(commits), not O(refs)**
+
+This command walks the commit graph to compute divergence. On rust-lang/rust:
+- Takes ~2s regardless of how many refs are queried
+- Only way to avoid it is to not enumerate branches at all
+
+**Branch enumeration costs** (rust-lang/rust with 50 branches):
+- No optimization: ~15-18s (expensive merge-base/merge-tree per branch)
+- With skip_expensive_for_stale: ~2-3s (skips expensive ops for stale branches)
+- Worktrees only: ~600ms (no branch enumeration)
