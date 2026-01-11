@@ -292,9 +292,11 @@ For detailed demo development guidelines (timing, debugging, environment setup),
 
 ## Social card workflow
 
-Social cards (Open Graph/Twitter preview images) follow the same assets pattern as demos.
+Social cards follow the same assets pattern as demos.
 
-**Source files:** `docs/static/social-card.svg` and `github-social-card.svg`
+**Source files:**
+- `social-card.svg` (1200×630) — Open Graph/Twitter link previews, referenced in `base.html`
+- `github-social-card.svg` (1280×640) — GitHub repository preview, uploaded manually in repo Settings → Social preview
 
 **To regenerate** (after changing tagline, logo, or layout):
 

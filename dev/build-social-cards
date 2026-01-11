@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate social card ONGs from SVG sources
+# Regenerate social card PNGs from SVG sources
 # Requires: rsvg-convert (from librsvg)
 # Fonts are downloaded automatically if not installed
 
@@ -10,7 +10,7 @@ STATIC_DIR="$SCRIPT_DIR/../docs/static"
 OUTPUT_DIR="$STATIC_DIR/assets/social"
 FONT_DIR="$SCRIPT_DIR/../.fonts"
 
-# Download font from Google Fonts if not installed
+# Download font from GitHub releases if not installed
 ensure_font() {
     local name="$1"
     local url="$2"
@@ -22,7 +22,7 @@ ensure_font() {
     echo "Downloading $name..."
     mkdir -p "$FONT_DIR"
     local zip="$FONT_DIR/${name// /_}.zip"
-    curl -sL "$url" -o "$zip"
+    curl -fsSL "$url" -o "$zip"
     unzip -qo "$zip" -d "$FONT_DIR"
     rm "$zip"
 }
