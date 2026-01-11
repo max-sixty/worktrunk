@@ -195,10 +195,10 @@ pub struct WorktreeData {
     pub prunable: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_tree_diff: Option<LineDiff>,
-    /// Diff between working tree and main branch.
+    /// Diff between working tree and default branch.
     /// `None` means "not computed yet" or "not computed" (optimization: skipped when trees differ).
-    /// `Some(Some((0, 0)))` means working tree matches main exactly.
-    /// `Some(Some((a, d)))` means a lines added, d deleted vs main.
+    /// `Some(Some((0, 0)))` means working tree matches default branch exactly.
+    /// `Some(Some((a, d)))` means a lines added, d deleted vs default branch.
     /// `Some(None)` means computation was skipped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_tree_diff_with_main: Option<Option<LineDiff>>,
@@ -206,10 +206,10 @@ pub struct WorktreeData {
     #[serde(skip_serializing_if = "GitOperationState::is_none")]
     pub git_operation: GitOperationState,
     pub is_main: bool,
-    /// Whether this is the current worktree (matches $PWD)
+    /// Whether this is the current worktree (matches repo discovery path: PWD or `-C`)
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub is_current: bool,
-    /// Whether this was the previous worktree (from WT_PREVIOUS_BRANCH)
+    /// Whether this was the previous worktree (from `worktrunk.history`)
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub is_previous: bool,
     /// Whether the worktree is at an unexpected location (branch-worktree mismatch).
@@ -334,23 +334,23 @@ pub struct ListItem {
     pub counts: Option<AheadBehind>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub branch_diff: Option<BranchDiffTotals>,
-    /// Whether HEAD's tree SHA matches main's tree SHA.
+    /// Whether HEAD's tree SHA matches the integration target's tree SHA.
     /// True when committed content is identical regardless of commit history.
     /// Internal field used to compute `BranchState::Integrated(TreesMatch)`.
     #[serde(skip)]
     pub committed_trees_match: Option<bool>,
-    /// Whether branch has file changes beyond the merge-base with main.
-    /// False when three-dot diff (`main...branch`) is empty.
+    /// Whether branch has file changes beyond the merge-base with the integration target.
+    /// False when three-dot diff (`<integration-target>...branch`) is empty.
     /// Internal field used for integration detection (no unique content).
     #[serde(skip)]
     pub has_file_changes: Option<bool>,
-    /// Whether merging branch into main would add changes (merge simulation).
-    /// False when `git merge-tree --write-tree main branch` produces same tree as main.
-    /// Catches squash-merged branches where main advanced.
+    /// Whether merging branch into the integration target would add changes (merge simulation).
+    /// False when `git merge-tree --write-tree <integration-target> branch` produces the same tree
+    /// as the integration target. Catches squash-merged branches where the integration target advanced.
     #[serde(skip)]
     pub would_merge_add: Option<bool>,
-    /// Whether branch HEAD is an ancestor of main (or same commit).
-    /// True means branch is already part of main's history.
+    /// Whether branch HEAD is an ancestor of the integration target (or same commit).
+    /// True means branch is already part of the integration target's history.
     /// This is the cheapest integration check (~1ms).
     #[serde(skip)]
     pub is_ancestor: Option<bool>,
@@ -462,21 +462,21 @@ impl ListItem {
     /// Determine if the item contains no unique work and can likely be removed.
     ///
     /// Returns:
-    /// - `Some(true)` - confirmed removable (branch integrated into main)
+    /// - `Some(true)` - confirmed removable (branch integrated into integration target)
     /// - `Some(false)` - confirmed not removable (has unique work)
     /// - `None` - data still loading, cannot determine yet
     ///
     /// Checks (in order):
-    /// 1. **Same commit** - branch HEAD is ancestor of main or same commit.
-    ///    The branch is already part of main's history.
-    /// 2. **No file changes** - three-dot diff (`main...branch`) is empty.
+    /// 1. **Same commit** - ahead/behind vs default branch is 0.
+    ///    The branch is already part of the default branch's history.
+    /// 2. **No file changes** - three-dot diff (`<integration-target>...branch`) is empty.
     ///    Catches squash-merged branches where commits exist but add no files.
-    /// 3. **Tree matches main** - tree SHA equals main's tree SHA.
+    /// 3. **Tree matches integration target** - tree SHA equals the target's tree SHA.
     ///    Catches rebased/squash-merged branches with identical content.
-    /// 4. **Merge simulation** - merging branch into main wouldn't change main's
-    ///    tree. Catches squash-merged branches where main has advanced.
-    /// 5. **Working tree matches main** (worktrees only) - uncommitted changes
-    ///    don't diverge from main.
+    /// 4. **Merge simulation** - merging branch into the integration target wouldn't change the
+    ///    target's tree. Catches squash-merged branches where the integration target advanced.
+    /// 5. **Working tree matches default branch** (worktrees only) - uncommitted changes
+    ///    don't diverge from the default branch.
     pub(crate) fn is_potentially_removable(&self) -> Option<bool> {
         // Use already-computed status_symbols if available
         let main_state = self.status_symbols.as_ref()?.main_state;
@@ -754,11 +754,11 @@ impl ListItem {
         }
     }
 
-    /// Check if branch content is integrated into main (safe to delete).
+    /// Check if branch content is integrated into the default branch (safe to delete).
     ///
     /// Returns `Some(MainState)` only for truly integrated states:
-    /// - `Empty` = same commit as main with clean working tree
-    /// - `Integrated(...)` = content in main via different history
+    /// - `Empty` = same commit as default branch with clean working tree
+    /// - `Integrated(...)` = content in default branch via different history
     ///
     /// Does NOT detect `SameCommit` (same commit with dirty working tree) -
     /// that's handled separately in the caller since it's not an integration state.
@@ -916,46 +916,46 @@ impl serde::Serialize for WorktreeState {
     }
 }
 
-/// Main branch relationship state
+/// Default branch relationship state
 ///
-/// Represents the combined relationship to the main branch in a single position.
+/// Represents the combined relationship to the default branch in a single position.
 /// Uses horizontal arrows (vs vertical arrows for Remote column).
 ///
 /// Priority order determines which symbol is shown:
-/// 1. IsMain (^) - this IS the main branch
+/// 1. IsMain (^) - this IS the main worktree
 /// 2. WouldConflict (✗) - merge-tree simulation shows conflicts
-/// 3. Empty (_) - same commit as main AND clean working tree (safe to delete)
-/// 4. SameCommit (–) - same commit as main with uncommitted changes
-/// 5. Integrated (⊂) - content is in main via different history
-/// 6. Diverged (↕) - both ahead and behind main
-/// 7. Ahead (↑) - has commits main doesn't have
-/// 8. Behind (↓) - missing commits from main
+/// 3. Empty (_) - same commit as default branch AND clean working tree (safe to delete)
+/// 4. SameCommit (–) - same commit as default branch with uncommitted changes
+/// 5. Integrated (⊂) - content is in default branch via different history
+/// 6. Diverged (↕) - both ahead and behind default branch
+/// 7. Ahead (↑) - has commits default branch doesn't have
+/// 8. Behind (↓) - missing commits from default branch
 ///
 /// The `Integrated` variant carries an [`IntegrationReason`] explaining how the
 /// content was integrated (ancestor, trees match, no added changes, or merge adds nothing).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum MainState {
-    /// Normal working branch (up-to-date with main, no special state)
+    /// Normal working branch (up-to-date with default branch, no special state)
     #[default]
     #[strum(serialize = "")]
     None,
-    /// This IS the main branch
+    /// This IS the main worktree
     IsMain,
-    /// Merge-tree conflicts with main (simulated via git merge-tree)
+    /// Merge-tree conflicts with default branch (simulated via git merge-tree)
     WouldConflict,
-    /// Branch HEAD is same commit as main AND working tree is clean (safe to delete)
+    /// Branch HEAD is same commit as default branch AND working tree is clean (safe to delete)
     Empty,
-    /// Branch HEAD is same commit as main but has uncommitted changes
+    /// Branch HEAD is same commit as default branch but has uncommitted changes
     SameCommit,
-    /// Content is integrated into main via different history
+    /// Content is integrated into default branch via different history
     #[strum(serialize = "integrated")]
     Integrated(IntegrationReason),
-    /// Both ahead and behind main
+    /// Both ahead and behind default branch
     Diverged,
-    /// Has commits main doesn't have
+    /// Has commits default branch doesn't have
     Ahead,
-    /// Missing commits from main
+    /// Missing commits from default branch
     Behind,
 }
 
@@ -1183,7 +1183,7 @@ impl PositionMask {
 /// Display order (left to right):
 /// - Working tree: +, !, ? (staged, modified, untracked - NOT mutually exclusive)
 /// - Worktree state: ✘, ⤴, ⤵, /, ⚑, ⊟, ⊞ (operations + location)
-/// - Main state: ^, ✗, _, ⊂, ↕, ↑, ↓ (relationship to main branch - single-stroke vertical arrows)
+/// - Main state: ^, ✗, _, ⊂, ↕, ↑, ↓ (relationship to default branch - single-stroke vertical arrows)
 /// - Upstream divergence: |, ⇅, ⇡, ⇣ (relationship to remote - vertical arrows)
 /// - User marker: custom labels, emoji
 ///
@@ -1201,14 +1201,14 @@ impl PositionMask {
 ///
 /// **Main state (single position with priority):**
 /// Priority: ^ > ✗ > _ > – > ⊂ > ↕ > ↑ > ↓
-/// - ^: This IS the main branch
-/// - ✗: Would conflict if merged to main
-/// - _: Same commit as main, clean working tree (removable)
-/// - –: Same commit as main, uncommitted changes (NOT removable)
+/// - ^: This IS the main worktree
+/// - ✗: Would conflict if merged to default branch
+/// - _: Same commit as default branch, clean working tree (removable)
+/// - –: Same commit as default branch, uncommitted changes (NOT removable)
 /// - ⊂: Content integrated (removable)
-/// - ↕: Diverged from main
-/// - ↑: Ahead of main
-/// - ↓: Behind main
+/// - ↕: Diverged from default branch
+/// - ↑: Ahead of default branch
+/// - ↓: Behind default branch
 ///
 /// **Upstream divergence (enforced by type system):**
 /// - |: In sync with remote
