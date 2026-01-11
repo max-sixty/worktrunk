@@ -1,5 +1,5 @@
 #!/bin/bash
-# Fetch demo assets from worktrunk-assets repo for local development
+# Fetch assets from worktrunk-assets repo for local development
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,15 +10,10 @@ echo "Fetching assets..."
 rm -rf "$ASSETS_DIR"
 mkdir -p "$ASSETS_DIR"
 
-# Download and extract the full assets archive
+# Download and extract
 TMPFILE=$(mktemp)
 curl -fsSL "https://github.com/max-sixty/worktrunk-assets/archive/refs/heads/main.tar.gz" -o "$TMPFILE"
-
-# Extract demos
-tar -xzf "$TMPFILE" --strip-components=2 -C "$ASSETS_DIR" "worktrunk-assets-main/demos" 2>/dev/null || true
-
-# Extract social cards
-tar -xzf "$TMPFILE" --strip-components=1 -C "$ASSETS_DIR" "worktrunk-assets-main/social" 2>/dev/null || true
-
+tar -xzf "$TMPFILE" --strip-components=2 -C "$ASSETS_DIR" "worktrunk-assets-main/assets"
 rm "$TMPFILE"
+
 echo "Done. Assets in $ASSETS_DIR/"

@@ -1,11 +1,11 @@
 #!/bin/bash
-# Publish demo assets to the worktrunk-assets repo
+# Publish assets to the worktrunk-assets repo
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 ASSETS_REPO="$REPO_ROOT/../worktrunk-assets"
-DEMOS_DIR="$REPO_ROOT/docs/static/assets"
+LOCAL_ASSETS="$REPO_ROOT/docs/static/assets"
 
 # Clone assets repo if needed
 if [[ ! -d "$ASSETS_REPO/.git" ]]; then
@@ -27,15 +27,8 @@ if ! git pull --ff-only; then
     exit 1
 fi
 
-# Copy demo assets
-if [[ -d "$DEMOS_DIR/docs" ]] && [[ -n "$(ls -A "$DEMOS_DIR/docs" 2>/dev/null)" ]]; then
-    rsync -av --delete "$DEMOS_DIR/docs/" "$ASSETS_REPO/demos/docs/"
-fi
-
-# Copy social card assets
-if [[ -d "$DEMOS_DIR/social" ]] && [[ -n "$(ls -A "$DEMOS_DIR/social" 2>/dev/null)" ]]; then
-    rsync -av --delete "$DEMOS_DIR/social/" "$ASSETS_REPO/social/"
-fi
+# Sync local assets to repo
+rsync -av --delete "$LOCAL_ASSETS/" "$ASSETS_REPO/assets/"
 
 # Check for changes
 if git diff --quiet; then
