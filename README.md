@@ -17,7 +17,7 @@ Worktrunk's three core commands make worktrees as easy as branches. Plus, Worktr
 
 Scaling agents becomes trivial. A quick demo:
 
-![Worktrunk Demo](https://cdn.jsdelivr.net/gh/max-sixty/worktrunk-assets@main/demos/docs/light/wt-core.gif)
+![Worktrunk Demo](https://cdn.jsdelivr.net/gh/max-sixty/worktrunk-assets@main/assets/docs/light/wt-core.gif)
 
 > ## 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚
 
