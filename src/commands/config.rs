@@ -969,7 +969,9 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
 
     match key {
         "default-branch" => {
-            let branch_name = repo.default_branch()?;
+            let branch_name = repo.default_branch().ok_or_else(|| {
+                anyhow::anyhow!("Cannot determine default branch. Run 'wt config state default-branch set <branch>' to configure.")
+            })?;
             crate::output::stdout(branch_name)?;
         }
         "previous-branch" => match repo.get_switch_previous() {
@@ -1037,6 +1039,12 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
 
     match key {
         "default-branch" => {
+            // Warn if the branch doesn't exist locally
+            if !repo.local_branch_exists(&value)? {
+                crate::output::print(warning_message(cformat!(
+                    "Branch <bold>{value}</> does not exist locally"
+                )))?;
+            }
             repo.set_default_branch(&value)?;
             crate::output::print(success_message(cformat!(
                 "Set default branch to <bold>{value}</>"
@@ -1309,7 +1317,7 @@ pub fn handle_state_show(format: crate::cli::OutputFormat) -> anyhow::Result<()>
 /// Output state as JSON
 fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
     // Get default branch
-    let default_branch = repo.default_branch().ok();
+    let default_branch = repo.default_branch();
 
     // Get previous branch
     let previous_branch = repo.get_switch_previous();
@@ -1414,8 +1422,8 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     // Show default branch cache
     writeln!(out, "{}", format_heading("DEFAULT BRANCH", None))?;
     match repo.default_branch() {
-        Ok(branch) => writeln!(out, "{}", format_with_gutter(&branch, None))?,
-        Err(_) => writeln!(out, "{}", format_with_gutter("(not cached)", None))?,
+        Some(branch) => writeln!(out, "{}", format_with_gutter(&branch, None))?,
+        None => writeln!(out, "{}", format_with_gutter("(not available)", None))?,
     }
     writeln!(out)?;
 

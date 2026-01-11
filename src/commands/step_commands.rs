@@ -437,7 +437,11 @@ pub fn step_copy_ignored(
             })?;
             (path, branch.to_string())
         }
-        None => (repo.worktree_base()?, repo.default_branch()?.to_string()),
+        None => (
+            repo.worktree_base()?,
+            repo.default_branch()
+                .ok_or_else(|| anyhow::anyhow!("Cannot determine default branch"))?,
+        ),
     };
 
     let dest_path = match to {

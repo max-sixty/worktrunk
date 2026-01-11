@@ -714,10 +714,7 @@ pub fn collect(
     // These operations don't depend on each other, only on worktree list.
     // Running them in parallel reduces pre-skeleton time (e.g., ~46ms to ~28ms).
     let (default_branch, branches_without_worktrees, remote_branches) = join!(
-        || {
-            repo.default_branch()
-                .context("Failed to determine default branch")
-        },
+        || repo.default_branch(),
         || {
             if show_branches {
                 get_branches_without_worktrees(repo, &worktrees)
@@ -733,25 +730,26 @@ pub fn collect(
             }
         }
     );
-    // TODO: Make default_branch optional so wt list can gracefully degrade when detection fails.
-    // Currently, ambiguous repos (multiple non-standard branches, no remote) fail entirely.
-    // With symbolic-ref HEAD heuristic added, this is less common but still possible.
-    // Required changes:
-    // 1. Make default_branch Option<String> here
-    // 2. find_home() already handles empty default_branch (falls back to first)
-    // 3. Make main_worktree optional or use first worktree when default_branch is None
-    // 4. Update TaskContext.require_default_branch() callers to handle None gracefully
-    //    (skip ahead/behind, integration status, etc. instead of failing)
-    // 5. Show warning when default_branch couldn't be determined
-    let default_branch = default_branch?;
+    // Show warning if user configured a default branch that doesn't exist locally
+    if let Some(configured) = repo.invalid_default_branch_config() {
+        crate::output::print(warning_message(cformat!(
+            "Configured default branch <bold>{configured}</> does not exist locally"
+        )))?;
+        crate::output::print(worktrunk::styling::hint_message(cformat!(
+            "Run <bright-black>wt config state default-branch clear</> to reset"
+        )))?;
+    }
+
     let branches_without_worktrees = branches_without_worktrees?;
     let remote_branches = remote_branches?;
 
     // Main worktree is the worktree on the default branch (if exists), else first worktree.
     // find_home returns None only if worktrees is empty, which shouldn't happen for wt list.
-    let main_worktree = WorktreeInfo::find_home(&worktrees, &default_branch)
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
+    // TODO: show ellipsis or indicator when default_branch is None and columns are empty
+    let main_worktree =
+        WorktreeInfo::find_home(&worktrees, default_branch.as_deref().unwrap_or(""))
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
 
     // Defer previous_branch lookup until after skeleton - set is_previous later
     // (skeleton shows placeholder gutter, actual symbols appear when data loads)
@@ -951,8 +949,8 @@ pub fn collect(
     // Effective target for integration checks: upstream if ahead of local, else local.
     // This handles the case where a branch was merged remotely but user hasn't pulled yet.
     // Deferred until after skeleton to avoid blocking initial render.
-    // Uses cached integration_target() which computes the same value from default_branch().
-    let integration_target = repo.integration_target()?;
+    // Uses cached integration_target() which returns None if default_branch unknown.
+    let integration_target = repo.integration_target();
 
     // Batch-fetch ahead/behind counts to identify branches that are far behind.
     // This allows skipping expensive merge-base operations for diverged branches, dramatically
@@ -960,7 +958,8 @@ pub fn collect(
     //
     // Uses `git for-each-ref --format='%(ahead-behind:...)'` (git 2.36+) which gets all
     // counts in a single command. On older git versions, returns empty and all tasks run.
-    if skip_expensive_for_stale {
+    // Skip if default_branch is unknown.
+    if skip_expensive_for_stale && let Some(ref db) = default_branch {
         // Branches more than 50 commits behind skip expensive merge-base operations.
         // 50 is low enough to catch truly stale branches while keeping info for
         // recently-diverged ones. The "behind" count is the primary expense driver -
@@ -970,7 +969,7 @@ pub fn collect(
             .and_then(|s| s.parse().ok())
             .unwrap_or(50);
         // batch_ahead_behind populates the Repository cache with all counts
-        let ahead_behind = repo.batch_ahead_behind(&default_branch);
+        let ahead_behind = repo.batch_ahead_behind(db);
         // Filter to stale branches (behind > threshold). The set indicates which
         // branches should skip expensive tasks; counts come from the cache.
         options.stale_branches = ahead_behind
@@ -1104,7 +1103,9 @@ pub fn collect(
         |item_idx, item, ctx| {
             // Compute/recompute status symbols as data arrives (both modes).
             // This is idempotent and updates status as new data (like upstream) arrives.
-            ctx.apply_to(item, integration_target.as_str());
+            if let Some(ref target) = integration_target {
+                ctx.apply_to(item, target.as_str());
+            }
 
             // Progressive mode only: update UI
             if let Some(ref mut table) = progressive_table {
@@ -1193,7 +1194,9 @@ pub fn collect(
         {
             // Use default context - no tasks ran, so no conflict/status info
             let ctx = StatusContext::default();
-            ctx.apply_to(item, integration_target.as_str());
+            if let Some(ref target) = integration_target {
+                ctx.apply_to(item, target.as_str());
+            }
         }
     }
 
@@ -1414,7 +1417,8 @@ pub fn populate_item(
     };
 
     // Get integration target for status symbol computation (cached in repo)
-    let target = repo.integration_target()?;
+    // None if default branch cannot be determined - status symbols will be skipped
+    let target = repo.integration_target();
 
     // Create channel for task results
     let (tx, rx) = chan::unbounded::<Result<TaskResult, TaskError>>();
@@ -1469,7 +1473,9 @@ pub fn populate_item(
         &mut errors,
         &expected_results,
         |_item_idx, item, ctx| {
-            ctx.apply_to(item, &target);
+            if let Some(ref t) = target {
+                ctx.apply_to(item, t);
+            }
         },
     );
 

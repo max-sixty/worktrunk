@@ -266,8 +266,8 @@ fn get_git_status_segments(
 
     // Get default branch for comparisons
     let default_branch = match repo.default_branch() {
-        Ok(b) => b,
-        Err(_) => {
+        Some(b) => b,
+        None => {
             // Can't determine default branch - just show current branch
             return Ok(vec![StatuslineSegment::from_column(
                 wt.branch.as_deref().unwrap_or("HEAD").to_string(),

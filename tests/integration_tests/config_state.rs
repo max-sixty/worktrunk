@@ -84,7 +84,10 @@ fn test_state_set_default_branch(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mSet default branch to [1mdevelop[22m[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mBranch [1mdevelop[22m does not exist locally[39m
+    [32m✓[39m [32mSet default branch to [1mdevelop[22m[39m
+    ");
 
     // Verify it was set in worktrunk's cache
     let output = repo

@@ -2402,3 +2402,18 @@ fn test_list_skips_expensive_for_stale_branches_only(repo: TestRepo) {
         cmd
     });
 }
+
+/// Tests that wt list works correctly when the configured default branch doesn't exist.
+///
+/// When a user sets `wt config state default-branch set develop` but the `develop`
+/// branch doesn't exist locally, `wt list` should show a warning and degrade gracefully
+/// (empty cells for columns needing default branch) rather than failing with git errors.
+#[rstest]
+fn test_list_with_nonexistent_default_branch(repo: TestRepo) {
+    // Set default branch to a non-existent branch
+    repo.run_git(&["config", "worktrunk.default-branch", "nonexistent"]);
+
+    // wt list should show a warning and degrade gracefully (empty columns for
+    // main-related data) when configured default branch doesn't exist locally
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
+}

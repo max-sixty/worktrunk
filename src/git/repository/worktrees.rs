@@ -120,7 +120,12 @@ impl Repository {
                     .into()
                 })
             }
-            "^" => self.default_branch(),
+            "^" => self.default_branch().ok_or_else(|| {
+                GitError::Other {
+                    message: "Cannot determine default branch. Specify target explicitly or run 'wt config state default-branch set <branch>'.".into(),
+                }
+                .into()
+            }),
             _ => Ok(name.to_string()),
         }
     }

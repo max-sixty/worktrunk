@@ -205,7 +205,7 @@ pub fn run_hook(
             require_hooks(user_config, project_config, hook_type)?;
             // Pre-commit hook can optionally use target branch context
             // Custom vars take precedence (added last)
-            let target_branch = repo.default_branch().ok();
+            let target_branch = repo.default_branch();
             let mut extra_vars: Vec<(&str, &str)> = target_branch
                 .as_deref()
                 .into_iter()
@@ -603,7 +603,7 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
     use super::command_executor::build_hook_context;
 
     // Build extra vars based on hook type (same logic as run_hook approval)
-    let default_branch = ctx.repo.default_branch().ok();
+    let default_branch = ctx.repo.default_branch();
     let extra_vars: Vec<(&str, &str)> = match hook_type {
         HookType::PreCommit => {
             // Pre-commit uses default branch as target (for comparison context)

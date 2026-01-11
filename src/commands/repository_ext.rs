@@ -173,8 +173,7 @@ impl RepositoryCliExt for Repository {
 
         // Resolve target branch for integration reason display
         // Skip if removing the default branch itself (avoids tautological "main (ancestor of main)")
-        // Use .ok() to treat errors as unknown - safer than empty string for integration checks
-        let default_branch = self.default_branch().ok();
+        let default_branch = self.default_branch();
         let target_branch = match (&default_branch, &branch_name) {
             (Some(db), Some(bn)) if db == bn => None,
             _ => default_branch,

@@ -178,15 +178,17 @@ impl Repository {
     /// This is the effective target for integration checks (status symbols, safe deletion).
     /// May be upstream (e.g., "origin/main") if it's ahead of local, catching remotely-merged branches.
     ///
+    /// Returns None if the default branch cannot be determined.
+    ///
     /// Result is cached in the shared repo cache (shared across all worktrees).
-    pub fn integration_target(&self) -> anyhow::Result<String> {
+    pub fn integration_target(&self) -> Option<String> {
         self.cache
             .integration_target
-            .get_or_try_init(|| {
+            .get_or_init(|| {
                 let default_branch = self.default_branch()?;
-                Ok(self.effective_integration_target(&default_branch))
+                Some(self.effective_integration_target(&default_branch))
             })
-            .cloned()
+            .clone()
     }
 
     /// Parse a tree ref to get its SHA.

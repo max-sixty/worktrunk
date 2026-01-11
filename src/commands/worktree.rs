@@ -585,6 +585,20 @@ pub fn handle_switch(
     let worktree_path_str = worktree_path.to_string_lossy();
     let mut args = vec!["worktree", "add", worktree_path_str.as_ref()];
 
+    // Check for invalid configured default branch when creating without explicit --base.
+    // Show warning if user's configured default branch doesn't exist locally.
+    if create
+        && resolved_base.is_none()
+        && let Some(configured) = repo.invalid_default_branch_config()
+    {
+        crate::output::print(warning_message(cformat!(
+            "Configured default branch <bold>{configured}</> does not exist locally"
+        )))?;
+        crate::output::print(hint_message(cformat!(
+            "Run <bright-black>wt config state default-branch clear</> to reset"
+        )))?;
+    }
+
     // Use the resolved base, or default to default branch if creating without a base.
     // For bare repos with no branches yet (bootstrap case), allow None to create orphan branch.
     let base_for_creation = if create {

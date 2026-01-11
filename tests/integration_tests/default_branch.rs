@@ -71,7 +71,7 @@ fn test_get_default_branch_no_remote(repo: TestRepo) {
     // No remote configured, should infer from local branches
     // Since there's only one local branch, it should return that
     let result = Repository::at(repo.root_path()).unwrap().default_branch();
-    assert!(result.is_ok());
+    assert!(result.is_some());
 
     // The inferred branch should match the current branch
     let inferred_branch = result.unwrap();
@@ -194,6 +194,57 @@ fn test_default_branch_no_remote_uses_init_config(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_configured_default_branch_does_not_exist_returns_none(repo: TestRepo) {
+    // Configure a non-existent branch
+    repo.git_command()
+        .args(["config", "worktrunk.default-branch", "nonexistent-branch"])
+        .status()
+        .unwrap();
+
+    // Should return None when configured branch doesn't exist locally
+    let result = Repository::at(repo.root_path()).unwrap().default_branch();
+    assert!(
+        result.is_none(),
+        "Expected None when configured branch doesn't exist, got: {:?}",
+        result
+    );
+}
+
+#[rstest]
+fn test_invalid_default_branch_config_returns_configured_value(repo: TestRepo) {
+    // Configure a non-existent branch
+    repo.git_command()
+        .args(["config", "worktrunk.default-branch", "nonexistent-branch"])
+        .status()
+        .unwrap();
+
+    // Should report the invalid configuration
+    let invalid = Repository::at(repo.root_path())
+        .unwrap()
+        .invalid_default_branch_config();
+    assert_eq!(invalid, Some("nonexistent-branch".to_string()));
+}
+
+#[rstest]
+fn test_invalid_default_branch_config_returns_none_when_valid(repo: TestRepo) {
+    // Configure the existing "main" branch
+    repo.git_command()
+        .args(["config", "worktrunk.default-branch", "main"])
+        .status()
+        .unwrap();
+
+    // Should return None since the configured branch exists
+    let invalid = Repository::at(repo.root_path())
+        .unwrap()
+        .invalid_default_branch_config();
+    assert!(
+        invalid.is_none(),
+        "Expected None when configured branch exists, got: {:?}",
+        invalid
+    );
+}
+
+#[rstest]
 fn test_get_default_branch_no_remote_fails_when_no_match(repo: TestRepo) {
     // Rename main to something non-standard
     repo.git_command()
@@ -206,13 +257,11 @@ fn test_get_default_branch_no_remote_fails_when_no_match(repo: TestRepo) {
     // Now we have: xyz, abc, def - no common names, no init.defaultBranch
     // In normal repos (not bare), symbolic-ref HEAD isn't used because HEAD
     // points to the current branch, not the default branch.
-    // Should fail with an error
+    // Should return None when default branch cannot be determined
     let result = Repository::at(repo.root_path()).unwrap().default_branch();
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("Could not infer default branch"),
-        "Expected error about inferring default branch, got: {}",
-        err
+        result.is_none(),
+        "Expected None when default branch cannot be determined, got: {:?}",
+        result
     );
 }

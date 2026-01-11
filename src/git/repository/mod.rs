@@ -63,10 +63,12 @@ pub(super) struct RepoCache {
     // ========== Repo-wide values (same for all worktrees) ==========
     /// Whether this is a bare repository
     pub(super) is_bare: OnceCell<bool>,
-    /// Default branch (main, master, etc.)
-    pub(super) default_branch: OnceCell<String>,
-    /// Effective integration target (local default branch or upstream if ahead)
-    pub(super) integration_target: OnceCell<String>,
+    /// Default branch (main, master, etc.). None if configured branch doesn't exist
+    /// or detection failed.
+    pub(super) default_branch: OnceCell<Option<String>>,
+    /// Effective integration target (local default branch or upstream if ahead).
+    /// None if default branch cannot be determined.
+    pub(super) integration_target: OnceCell<Option<String>>,
     /// Primary remote name (None if no remotes configured)
     pub(super) primary_remote: OnceCell<Option<String>>,
     /// Primary remote URL (None if no remotes configured or no URL)
@@ -144,8 +146,10 @@ fn base_path() -> &'static PathBuf {
 /// let repo = Repository::current()?;
 /// let wt = repo.current_worktree();
 ///
-/// // Repo-wide operations
-/// let default = repo.default_branch()?;
+/// // Repo-wide operations (default_branch returns Option)
+/// if let Some(default) = repo.default_branch() {
+///     println!("Default branch: {}", default);
+/// }
 ///
 /// // Worktree-specific operations
 /// let branch = wt.branch()?;
@@ -293,26 +297,61 @@ impl Repository {
     ///
     /// Detection results are cached to `worktrunk.default-branch` for future calls.
     /// Result is cached in the shared repo cache (shared across all worktrees).
-    pub fn default_branch(&self) -> anyhow::Result<String> {
+    pub fn default_branch(&self) -> Option<String> {
         self.cache
             .default_branch
-            .get_or_try_init(|| {
+            .get_or_init(|| {
                 // Fast path: check worktrunk's persistent cache (git config)
-                if let Ok(branch) =
-                    self.run_command(&["config", "--get", "worktrunk.default-branch"])
-                {
-                    let branch = branch.trim();
-                    if !branch.is_empty() {
-                        return Ok(branch.to_string());
+                let configured = self
+                    .run_command(&["config", "--get", "worktrunk.default-branch"])
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+
+                // If configured, validate it exists locally
+                if let Some(ref branch) = configured {
+                    if self.local_branch_exists(branch).unwrap_or(false) {
+                        return Some(branch.clone());
                     }
+                    // Configured branch doesn't exist - return None (don't fall back)
+                    log::debug!(
+                        "Configured default branch '{}' doesn't exist locally",
+                        branch
+                    );
+                    return None;
                 }
 
-                // Detect and persist to git config for future processes
-                let branch = self.detect_default_branch()?;
-                let _ = self.run_command(&["config", "worktrunk.default-branch", &branch]);
-                Ok(branch)
+                // Not configured - detect and persist to git config
+                if let Ok(branch) = self.detect_default_branch() {
+                    let _ = self.run_command(&["config", "worktrunk.default-branch", &branch]);
+                    return Some(branch);
+                }
+
+                None
             })
-            .cloned()
+            .clone()
+    }
+
+    /// Check if user configured an invalid default branch.
+    ///
+    /// Returns `Some(branch_name)` if user set `worktrunk.default-branch` to a branch
+    /// that doesn't exist locally. Returns `None` if:
+    /// - No branch is configured (detection will be used)
+    /// - Configured branch exists locally
+    ///
+    /// Used to show warnings when the configured branch is invalid.
+    pub fn invalid_default_branch_config(&self) -> Option<String> {
+        let configured = self
+            .run_command(&["config", "--get", "worktrunk.default-branch"])
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())?;
+
+        if self.local_branch_exists(&configured).unwrap_or(false) {
+            None
+        } else {
+            Some(configured)
+        }
     }
 
     /// Detect the default branch without using worktrunk's cache.
@@ -349,7 +388,15 @@ impl Repository {
     /// Otherwise, queries the default branch.
     /// This is a common pattern used throughout commands that accept an optional --target flag.
     pub fn resolve_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
-        target.map_or_else(|| self.default_branch(), |b| self.resolve_worktree_name(b))
+        match target {
+            Some(b) => self.resolve_worktree_name(b),
+            None => self.default_branch().ok_or_else(|| {
+                GitError::Other {
+                    message: "Cannot determine default branch. Specify target explicitly or run 'wt config state default-branch set <branch>'.".into(),
+                }
+                .into()
+            }),
+        }
     }
 
     /// Infer the default branch locally (without remote).

@@ -506,7 +506,7 @@ fn handle_branch_only_output(
 
     // Get default branch for integration check and reason display
     // Falls back to HEAD if default branch can't be determined
-    let default_branch = repo.default_branch().ok();
+    let default_branch = repo.default_branch();
     let check_target = default_branch.as_deref().unwrap_or("HEAD");
 
     let result = delete_branch_if_safe(&repo, branch_name, check_target, deletion_mode.is_force());

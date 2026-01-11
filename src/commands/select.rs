@@ -520,7 +520,7 @@ impl WorktreeSkimItem {
         let Ok(repo) = Repository::current() else {
             return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of main\n");
         };
-        let Ok(default_branch) = repo.default_branch() else {
+        let Some(default_branch) = repo.default_branch() else {
             return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of main\n");
         };
         if self.item.counts().ahead == 0 {
@@ -618,7 +618,7 @@ impl WorktreeSkimItem {
             ));
             return output;
         };
-        let Ok(default_branch) = repo.default_branch() else {
+        let Some(default_branch) = repo.default_branch() else {
             output.push_str(&cformat!(
                 "{INFO_SYMBOL} <bold>{branch}</> has no commits\n"
             ));
