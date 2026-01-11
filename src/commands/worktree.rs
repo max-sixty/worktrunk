@@ -208,7 +208,7 @@ pub fn compute_worktree_path(
 /// Note: For hot paths where default_branch and is_bare are already known,
 /// use `is_worktree_at_expected_path_with` to avoid redundant git calls.
 fn is_worktree_at_expected_path(
-    wt: &worktrunk::git::Worktree,
+    wt: &worktrunk::git::WorktreeInfo,
     repo: &Repository,
     config: &WorktrunkConfig,
 ) -> bool {
@@ -233,7 +233,7 @@ fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
 /// Use this when `default_branch` and `is_bare` are already known (e.g., in list command)
 /// to avoid redundant git calls.
 pub fn is_worktree_at_expected_path_with(
-    wt: &worktrunk::git::Worktree,
+    wt: &worktrunk::git::WorktreeInfo,
     repo: &Repository,
     config: &WorktrunkConfig,
     default_branch: &str,
@@ -309,7 +309,7 @@ fn compute_worktree_path_with(
 /// "Consistent" means the worktree path matches `compute_worktree_path(branch)`,
 /// which returns repo root for default branch and templated path for others.
 pub fn worktree_display_name(
-    wt: &worktrunk::git::Worktree,
+    wt: &worktrunk::git::WorktreeInfo,
     repo: &Repository,
     config: &WorktrunkConfig,
 ) -> String {

@@ -1156,10 +1156,8 @@ impl PrStatus {
         local_head: &str,
         has_upstream: bool,
     ) -> Option<Self> {
-        use worktrunk::config::ProjectConfig;
-
-        // Load project config for platform override
-        let project_config = ProjectConfig::load(repo, false).ok().flatten();
+        // Load project config for platform override (cached in Repository)
+        let project_config = repo.load_project_config().ok().flatten();
         let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
 
         // Determine platform (config override or URL detection)

@@ -41,7 +41,7 @@ pub use error::{
     exit_code,
 };
 pub use parse::{parse_porcelain_z, parse_untracked_files};
-pub use repository::{Repository, ResolvedWorktree, WorktreeView, set_base_path};
+pub use repository::{Repository, ResolvedWorktree, WorkingTree, set_base_path};
 pub use url::{GitRemoteUrl, parse_owner_repo, parse_remote_host, parse_remote_owner};
 /// Why branch content is considered integrated into the target branch.
 ///
@@ -279,8 +279,8 @@ pub struct CompletionBranch {
 // Re-export parsing helpers for internal use
 pub(crate) use parse::DefaultBranchName;
 
-// Note: HookType and Worktree are defined in this module and are already public.
-// They're accessible as git::HookType and git::Worktree without needing re-export.
+// Note: HookType and WorktreeInfo are defined in this module and are already public.
+// They're accessible as git::HookType and git::WorktreeInfo without needing re-export.
 
 /// Hook types for git operations
 #[derive(
@@ -305,9 +305,78 @@ pub enum HookType {
     PreRemove,
 }
 
-/// Worktree information
+/// Reference to a branch for parallel task execution.
+///
+/// Works for both worktree items (has path) and branch-only items (no worktree).
+/// The `Option<PathBuf>` makes the worktree distinction explicit instead of using
+/// empty paths as a sentinel value.
+///
+/// # Construction
+///
+/// - From a worktree: `BranchRef::from(&worktree_info)`
+/// - For a branch-only item: `BranchRef::branch_only("feature", "abc123")`
+///
+/// # Working Tree Access
+///
+/// For worktree-specific operations, use [`working_tree()`](Self::working_tree)
+/// which returns `Some(WorkingTree)` only when this ref has a worktree path.
+#[derive(Debug, Clone)]
+pub struct BranchRef {
+    /// Branch name (e.g., "main", "feature/auth").
+    /// None for detached HEAD.
+    pub branch: Option<String>,
+    /// Commit SHA this branch/worktree points to.
+    pub commit_sha: String,
+    /// Path to worktree, if this branch has one.
+    /// None for branch-only items (remote branches, local branches without worktrees).
+    pub worktree_path: Option<PathBuf>,
+}
+
+impl BranchRef {
+    /// Create a BranchRef for a branch without a worktree.
+    ///
+    /// Used for remote-only branches or local branches that don't have a worktree.
+    pub fn branch_only(branch: &str, commit_sha: &str) -> Self {
+        Self {
+            branch: Some(branch.to_string()),
+            commit_sha: commit_sha.to_string(),
+            worktree_path: None,
+        }
+    }
+
+    /// Get a working tree handle for this branch's worktree.
+    ///
+    /// Returns `Some(WorkingTree)` if this branch has a worktree path,
+    /// `None` for branch-only items.
+    pub fn working_tree<'a>(&self, repo: &'a Repository) -> Option<WorkingTree<'a>> {
+        self.worktree_path
+            .as_ref()
+            .map(|p| repo.worktree_at(p.clone()))
+    }
+
+    /// Returns true if this branch has a worktree.
+    pub fn has_worktree(&self) -> bool {
+        self.worktree_path.is_some()
+    }
+}
+
+impl From<&WorktreeInfo> for BranchRef {
+    fn from(wt: &WorktreeInfo) -> Self {
+        Self {
+            branch: wt.branch.clone(),
+            commit_sha: wt.head.clone(),
+            worktree_path: Some(wt.path.clone()),
+        }
+    }
+}
+
+/// Parsed worktree data from `git worktree list --porcelain`.
+///
+/// This is a data record containing metadata about a worktree.
+/// For running commands in a worktree, use [`WorkingTree`] via
+/// [`Repository::worktree_at()`] or [`BranchRef::working_tree()`].
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct Worktree {
+pub struct WorktreeInfo {
     pub path: PathBuf,
     pub head: String,
     pub branch: Option<String>,
@@ -327,7 +396,7 @@ pub fn path_dir_name(path: &std::path::Path) -> &str {
         .unwrap_or("(unknown)")
 }
 
-impl Worktree {
+impl WorktreeInfo {
     /// Returns true if this worktree is prunable (directory deleted but git still tracks metadata).
     ///
     /// Prunable worktrees cannot be operated on - the directory doesn't exist.
@@ -361,7 +430,10 @@ impl Worktree {
     /// Returns `None` if all worktrees are prunable or `worktrees` is empty.
     /// If `default_branch` doesn't match any non-prunable worktree, returns the
     /// first non-prunable worktree.
-    pub fn find_home<'a>(worktrees: &'a [Worktree], default_branch: &str) -> Option<&'a Worktree> {
+    pub fn find_home<'a>(
+        worktrees: &'a [WorktreeInfo],
+        default_branch: &str,
+    ) -> Option<&'a WorktreeInfo> {
         // Filter out prunable worktrees (directory deleted but git still tracks metadata).
         // Can't cd to a worktree that doesn't exist.
         worktrees
@@ -376,10 +448,10 @@ impl Worktree {
 //
 // These live in mod.rs rather than parse.rs because they bridge multiple concerns:
 // - read_rebase_branch() uses Repository (from repository.rs) to access git internals
-// - finalize_worktree() operates on Worktree (defined here in mod.rs)
-// - Both are tightly coupled to the Worktree type definition
+// - finalize_worktree() operates on WorktreeInfo (defined here in mod.rs)
+// - Both are tightly coupled to the WorktreeInfo type definition
 //
-// Placing them here avoids circular dependencies and keeps them close to Worktree.
+// Placing them here avoids circular dependencies and keeps them close to WorktreeInfo.
 
 /// Helper function to read rebase branch information
 fn read_rebase_branch(worktree_path: &PathBuf) -> Option<String> {
@@ -404,7 +476,7 @@ fn read_rebase_branch(worktree_path: &PathBuf) -> Option<String> {
 }
 
 /// Finalize a worktree after parsing, filling in branch name from rebase state if needed.
-pub(crate) fn finalize_worktree(mut wt: Worktree) -> Worktree {
+pub(crate) fn finalize_worktree(mut wt: WorktreeInfo) -> WorktreeInfo {
     // If detached but no branch, check if we're rebasing
     if wt.detached
         && wt.branch.is_none()
@@ -492,8 +564,8 @@ mod tests {
         assert_eq!(path_dir_name(&PathBuf::from("/")), "(unknown)");
         assert!(!path_dir_name(&PathBuf::from("/home/user/repo/")).is_empty());
 
-        // Worktree::dir_name
-        let wt = Worktree {
+        // WorktreeInfo::dir_name
+        let wt = WorktreeInfo {
             path: PathBuf::from("/repos/myrepo.feature"),
             head: "abc123".into(),
             branch: Some("feature".into()),
@@ -521,7 +593,7 @@ mod tests {
 
     #[test]
     fn test_find_home() {
-        let make_wt = |branch: Option<&str>| Worktree {
+        let make_wt = |branch: Option<&str>| WorktreeInfo {
             path: PathBuf::from(format!("/repo.{}", branch.unwrap_or("detached"))),
             head: "abc123".into(),
             branch: branch.map(String::from),
@@ -532,34 +604,86 @@ mod tests {
         };
 
         // Empty list returns None
-        assert!(Worktree::find_home(&[], "main").is_none());
+        assert!(WorktreeInfo::find_home(&[], "main").is_none());
 
         // Single worktree on default branch
         let wts = vec![make_wt(Some("main"))];
         assert_eq!(
-            Worktree::find_home(&wts, "main").unwrap().path.to_str(),
+            WorktreeInfo::find_home(&wts, "main").unwrap().path.to_str(),
             Some("/repo.main")
         );
 
         // Default branch not first - should still find it
         let wts = vec![make_wt(Some("feature")), make_wt(Some("main"))];
         assert_eq!(
-            Worktree::find_home(&wts, "main").unwrap().path.to_str(),
+            WorktreeInfo::find_home(&wts, "main").unwrap().path.to_str(),
             Some("/repo.main")
         );
 
         // No default branch match - returns first
         let wts = vec![make_wt(Some("feature")), make_wt(Some("bugfix"))];
         assert_eq!(
-            Worktree::find_home(&wts, "main").unwrap().path.to_str(),
+            WorktreeInfo::find_home(&wts, "main").unwrap().path.to_str(),
             Some("/repo.feature")
         );
 
         // Empty default branch - returns first
         let wts = vec![make_wt(Some("feature"))];
         assert_eq!(
-            Worktree::find_home(&wts, "").unwrap().path.to_str(),
+            WorktreeInfo::find_home(&wts, "").unwrap().path.to_str(),
             Some("/repo.feature")
         );
+    }
+
+    #[test]
+    fn test_branch_ref_from_worktree_info() {
+        let wt = WorktreeInfo {
+            path: PathBuf::from("/repo.feature"),
+            head: "abc123".into(),
+            branch: Some("feature".into()),
+            bare: false,
+            detached: false,
+            locked: None,
+            prunable: None,
+        };
+
+        let branch_ref = BranchRef::from(&wt);
+
+        assert_eq!(branch_ref.branch, Some("feature".to_string()));
+        assert_eq!(branch_ref.commit_sha, "abc123");
+        assert_eq!(
+            branch_ref.worktree_path,
+            Some(PathBuf::from("/repo.feature"))
+        );
+        assert!(branch_ref.has_worktree());
+    }
+
+    #[test]
+    fn test_branch_ref_branch_only() {
+        let branch_ref = BranchRef::branch_only("feature", "abc123");
+
+        assert_eq!(branch_ref.branch, Some("feature".to_string()));
+        assert_eq!(branch_ref.commit_sha, "abc123");
+        assert_eq!(branch_ref.worktree_path, None);
+        assert!(!branch_ref.has_worktree());
+    }
+
+    #[test]
+    fn test_branch_ref_detached_head() {
+        let wt = WorktreeInfo {
+            path: PathBuf::from("/repo.detached"),
+            head: "def456".into(),
+            branch: None, // Detached HEAD
+            bare: false,
+            detached: true,
+            locked: None,
+            prunable: None,
+        };
+
+        let branch_ref = BranchRef::from(&wt);
+
+        assert_eq!(branch_ref.branch, None);
+        assert_eq!(branch_ref.commit_sha, "def456");
+        assert!(branch_ref.has_worktree());
     }
 }

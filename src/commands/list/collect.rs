@@ -75,7 +75,7 @@ use crossbeam_channel as chan;
 use dunce::canonicalize;
 use rayon::prelude::*;
 use rayon_join_macro::join;
-use worktrunk::git::{LineDiff, Repository, Worktree};
+use worktrunk::git::{LineDiff, Repository, WorktreeInfo};
 use worktrunk::styling::{INFO_SYMBOL, format_with_gutter, warning_message};
 
 use crate::commands::is_worktree_at_expected_path_with;
@@ -262,7 +262,7 @@ impl TaskKind {
 }
 
 /// Detect if a worktree is in the middle of a git operation (rebase/merge).
-pub(super) fn detect_git_operation(wt: &worktrunk::git::WorktreeView<'_>) -> GitOperationState {
+pub(super) fn detect_git_operation(wt: &worktrunk::git::WorkingTree<'_>) -> GitOperationState {
     if wt.is_rebasing().unwrap_or(false) {
         GitOperationState::Rebase
     } else if wt.is_merging().unwrap_or(false) {
@@ -639,7 +639,7 @@ fn drain_results(
 /// Returns (branch_name, commit_sha) pairs for all branches without associated worktrees.
 fn get_branches_without_worktrees(
     repo: &Repository,
-    worktrees: &[Worktree],
+    worktrees: &[WorktreeInfo],
 ) -> anyhow::Result<Vec<(String, String)>> {
     // Get all local branches
     let all_branches = repo.list_local_branches()?;
@@ -656,7 +656,7 @@ fn get_branches_without_worktrees(
     Ok(branches_without_worktrees)
 }
 
-fn worktree_branch_set(worktrees: &[Worktree]) -> std::collections::HashSet<&str> {
+fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> std::collections::HashSet<&str> {
     worktrees
         .iter()
         .filter_map(|wt| wt.branch.as_deref())
@@ -750,7 +750,7 @@ pub fn collect(
 
     // Main worktree is the worktree on the default branch (if exists), else first worktree.
     // find_home returns None only if worktrees is empty, which shouldn't happen for wt list.
-    let main_worktree = Worktree::find_home(&worktrees, &default_branch)
+    let main_worktree = WorktreeInfo::find_home(&worktrees, &default_branch)
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
 
@@ -792,11 +792,7 @@ pub fn collect(
 
     // Check if URL template is configured (for layout column allocation).
     // Template expansion is deferred to post-skeleton to minimize time-to-skeleton.
-    let url_template = worktrunk::config::ProjectConfig::load(repo, true)
-        .ok()
-        .flatten()
-        .and_then(|config| config.list)
-        .and_then(|list| list.url);
+    let url_template = repo.url_template();
     // Initialize worktree items with identity fields and None for computed fields
     let mut all_items: Vec<ListItem> = sorted_worktrees
         .iter()
@@ -1023,8 +1019,6 @@ pub fn collect(
     // which could create 100+ threads. Instead, we have one pool with ~8 threads.
     let sorted_worktrees_clone = sorted_worktrees.clone();
     let tx_worker = tx.clone();
-    let default_branch_clone = default_branch.clone();
-    let target_clone = integration_target.clone();
     let expected_results_clone = expected_results.clone();
 
     // Clone repo for the worker thread (shares cache via Arc)
@@ -1067,8 +1061,6 @@ pub fn collect(
                 &repo_clone,
                 wt,
                 idx,
-                &default_branch_clone,
-                &target_clone,
                 &options,
                 &expected_results_clone,
                 &tx_worker,
@@ -1082,8 +1074,6 @@ pub fn collect(
                 branch_name,
                 commit_sha,
                 *item_idx,
-                &default_branch_clone,
-                &target_clone,
                 &options,
                 &expected_results_clone,
             ));
@@ -1337,11 +1327,11 @@ where
 /// Sort worktrees: current first, main second, then by timestamp descending.
 /// Uses pre-fetched timestamps for efficiency.
 fn sort_worktrees_with_cache(
-    worktrees: Vec<Worktree>,
-    main_worktree: &Worktree,
+    worktrees: Vec<WorktreeInfo>,
+    main_worktree: &WorktreeInfo,
     current_path: Option<&std::path::PathBuf>,
     timestamps: &std::collections::HashMap<String, i64>,
-) -> Vec<Worktree> {
+) -> Vec<WorktreeInfo> {
     // Embed timestamp and priority in tuple to avoid parallel Vec and index lookups
     let mut with_sort_key: Vec<_> = worktrees
         .into_iter()
@@ -1373,7 +1363,7 @@ pub use super::collect_progressive_impl::CollectOptions;
 /// Computed fields (counts, diffs, CI) are left as None. Use `populate_item()`
 /// to fill them in.
 pub fn build_worktree_item(
-    wt: &Worktree,
+    wt: &WorktreeInfo,
     is_main: bool,
     is_current: bool,
     is_previous: bool,
@@ -1410,16 +1400,12 @@ pub fn build_worktree_item(
 ///
 /// # Parameters
 /// - `repo`: Repository handle (cloned into background thread, shares cache via Arc)
-/// - `default_branch`: Local default branch for informational stats (ahead/behind, branch diff)
-/// - `target`: Effective target for integration checks (may be upstream if ahead)
 ///
 /// This is the blocking version used by statusline. For progressive rendering
 /// with callbacks, see the `collect()` function.
 pub fn populate_item(
     repo: &Repository,
     item: &mut ListItem,
-    default_branch: &str,
-    target: &str,
     options: CollectOptions,
 ) -> anyhow::Result<()> {
     use std::sync::Arc;
@@ -1428,6 +1414,9 @@ pub fn populate_item(
     let Some(data) = item.worktree_data() else {
         return Ok(());
     };
+
+    // Get integration target for status symbol computation (cached in repo)
+    let target = repo.integration_target()?;
 
     // Create channel for task results
     let (tx, rx) = chan::unbounded::<Result<TaskResult, TaskError>>();
@@ -1439,7 +1428,7 @@ pub fn populate_item(
     let mut errors: Vec<TaskError> = Vec::new();
 
     // Extract data for background thread (can't send borrows across threads)
-    let wt = Worktree {
+    let wt = WorktreeInfo {
         path: data.path.clone(),
         head: item.head.clone(),
         branch: item.branch.clone(),
@@ -1449,8 +1438,6 @@ pub fn populate_item(
         prunable: None,
     };
     let repo_clone = repo.clone();
-    let default_branch_clone = default_branch.to_string();
-    let target_clone = target.to_string();
     let expected_results_clone = expected_results.clone();
 
     // Spawn collection in background thread
@@ -1462,8 +1449,6 @@ pub fn populate_item(
             &repo_clone,
             &wt,
             0, // Single item, always index 0
-            &default_branch_clone,
-            &target_clone,
             &options,
             &expected_results_clone,
             &tx,
@@ -1486,7 +1471,7 @@ pub fn populate_item(
         &mut errors,
         &expected_results,
         |_item_idx, item, ctx| {
-            ctx.apply_to(item, target);
+            ctx.apply_to(item, &target);
         },
     );
 

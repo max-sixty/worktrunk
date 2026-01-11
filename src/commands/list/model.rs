@@ -226,9 +226,9 @@ impl WorktreeData {
         self.prunable.is_some()
     }
 
-    /// Create WorktreeData from a Worktree, with all computed fields set to None.
+    /// Create WorktreeData from a WorktreeInfo, with all computed fields set to None.
     pub(crate) fn from_worktree(
-        wt: &worktrunk::git::Worktree,
+        wt: &worktrunk::git::WorktreeInfo,
         is_main: bool,
         is_current: bool,
         is_previous: bool,

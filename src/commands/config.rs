@@ -277,13 +277,12 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
 /// Run full diagnostic checks (CI tools, commit generation) and render to buffer
 fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     use super::list::ci_status::{CiPlatform, CiToolsStatus, get_platform_for_repo};
-    use worktrunk::config::ProjectConfig;
 
     writeln!(out, "{}", format_heading("DIAGNOSTICS", None))?;
 
     // Check CI tool based on detected platform (with config override support)
     let repo = Repository::current()?;
-    let project_config = ProjectConfig::load(&repo, true).ok().flatten();
+    let project_config = repo.load_project_config().ok().flatten();
     let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
     let platform = get_platform_for_repo(&repo, platform_override);
 

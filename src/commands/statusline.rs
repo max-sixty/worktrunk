@@ -11,8 +11,7 @@ use anyhow::{Context, Result};
 use std::env;
 use std::io::{self, Read};
 use std::path::Path;
-use worktrunk::config::ProjectConfig;
-use worktrunk::git::{Repository, Worktree};
+use worktrunk::git::{Repository, WorktreeInfo};
 use worktrunk::styling::{get_terminal_width, truncate_visible};
 
 use super::list::{self, CollectOptions, StatuslineSegment};
@@ -276,25 +275,19 @@ fn get_git_status_segments(
             )]);
         }
     };
-    // Effective target for integration checks: upstream if ahead of local, else local.
-    let integration_target = repo.effective_integration_target(&default_branch);
 
     // Determine if this is the home worktree (default branch's worktree, or first if none)
     // Use the already-fetched worktrees to avoid a redundant git command
     // Note: called `is_home` here because bare repos have no git "main worktree" -
     // all worktrees are linked. The `is_main` param in build_worktree_item is for display.
-    let home_worktree = Worktree::find_home(&worktrees, &default_branch);
+    let home_worktree = WorktreeInfo::find_home(&worktrees, &default_branch);
     let is_home = home_worktree.is_some_and(|hw| wt.path == hw.path);
 
     // Build item with identity fields
     let mut item = list::build_worktree_item(wt, is_home, true, false);
 
     // Load URL template from project config (if configured)
-    let url_template = ProjectConfig::load(repo, true)
-        .ok()
-        .flatten()
-        .and_then(|config| config.list)
-        .and_then(|list| list.url);
+    let url_template = repo.url_template();
 
     // Build collect options with URL template
     let options = CollectOptions {
@@ -304,15 +297,7 @@ fn get_git_status_segments(
 
     // Populate computed fields (parallel git operations)
     // Compute everything (same as --full) for complete status symbols
-    // Pass default_branch for stable informational stats,
-    // and integration_target for integration status checks.
-    list::populate_item(
-        repo,
-        &mut item,
-        &default_branch,
-        &integration_target,
-        options,
-    )?;
+    list::populate_item(repo, &mut item, options)?;
 
     // Get prioritized segments
     let segments = item.format_statusline_segments(include_links);

@@ -15,7 +15,7 @@ use crate::config::ProjectConfig;
 // Import types and functions from parent module (mod.rs)
 use super::{
     BranchCategory, CompletionBranch, DefaultBranchName, DiffStats, GitError, GitRemoteUrl,
-    LineDiff, Worktree,
+    LineDiff, WorktreeInfo,
 };
 
 // ============================================================================
@@ -37,6 +37,8 @@ struct RepoCache {
     is_bare: OnceCell<bool>,
     /// Default branch (main, master, etc.)
     default_branch: OnceCell<String>,
+    /// Effective integration target (local default branch or upstream if ahead)
+    integration_target: OnceCell<String>,
     /// Primary remote name (None if no remotes configured)
     primary_remote: OnceCell<Option<String>>,
     /// Project identifier derived from remote URL
@@ -101,7 +103,7 @@ fn base_path() -> &'static PathBuf {
 /// Repository state for git operations.
 ///
 /// Represents the shared state of a git repository (the `.git` directory).
-/// For worktree-specific operations, use [`WorktreeView`] obtained via
+/// For worktree-specific operations, use [`WorkingTree`] obtained via
 /// [`current_worktree()`](Self::current_worktree) or [`worktree_at()`](Self::worktree_at).
 ///
 /// # Examples
@@ -131,10 +133,12 @@ pub struct Repository {
     cache: Arc<RepoCache>,
 }
 
-/// A view into a specific worktree within a repository.
+/// A borrowed handle for running git commands in a specific worktree.
 ///
 /// This type borrows a [`Repository`] and holds a path to a specific worktree.
 /// All worktree-specific operations (like `branch`, `is_dirty`) are on this type.
+///
+/// For an owned equivalent that can be cloned across threads, see [`super::BranchRef`].
 ///
 /// # Examples
 ///
@@ -154,7 +158,7 @@ pub struct Repository {
 /// ```
 #[derive(Debug)]
 #[must_use]
-pub struct WorktreeView<'a> {
+pub struct WorkingTree<'a> {
     repo: &'a Repository,
     path: PathBuf,
 }
@@ -171,7 +175,7 @@ fn path_to_logging_context(path: &Path) -> String {
     }
 }
 
-impl<'a> WorktreeView<'a> {
+impl<'a> WorkingTree<'a> {
     /// Run a git command in this worktree and return stdout.
     pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
         use crate::shell_exec::run;
@@ -382,7 +386,7 @@ impl Repository {
     /// this uses that path instead of the actual current directory.
     ///
     /// For worktree-specific operations on paths other than cwd, use
-    /// `repo.worktree_at(path)` to get a [`WorktreeView`].
+    /// `repo.worktree_at(path)` to get a [`WorkingTree`].
     pub fn current() -> anyhow::Result<Self> {
         Self::at(base_path().clone())
     }
@@ -421,7 +425,7 @@ impl Repository {
 
     /// Resolve the git common directory for a path.
     // TODO: Consolidate the "Failed to execute: git ..." context pattern.
-    // Currently duplicated in WorktreeView::run_command, Repository::run_command, and here.
+    // Currently duplicated in WorkingTree::run_command, Repository::run_command, and here.
     // Consider extracting a helper that handles the context message consistently.
     fn resolve_git_common_dir(discovery_path: &Path) -> anyhow::Result<PathBuf> {
         use crate::shell_exec::run;
@@ -458,16 +462,16 @@ impl Repository {
 
     /// Get a worktree view at the current directory.
     ///
-    /// This is the primary way to get a [`WorktreeView`] for worktree-specific operations.
-    pub fn current_worktree(&self) -> WorktreeView<'_> {
+    /// This is the primary way to get a [`WorkingTree`] for worktree-specific operations.
+    pub fn current_worktree(&self) -> WorkingTree<'_> {
         self.worktree_at(base_path().clone())
     }
 
     /// Get a worktree view at a specific path.
     ///
     /// Use this when you need to operate on a worktree other than the current one.
-    pub fn worktree_at(&self, path: impl Into<PathBuf>) -> WorktreeView<'_> {
-        WorktreeView {
+    pub fn worktree_at(&self, path: impl Into<PathBuf>) -> WorkingTree<'_> {
+        WorkingTree {
             repo: self,
             path: path.into(),
         }
@@ -996,7 +1000,7 @@ impl Repository {
         let worktrees = self.list_worktrees()?;
         let default_branch = self.default_branch().unwrap_or_default();
 
-        if let Some(home) = Worktree::find_home(&worktrees, &default_branch) {
+        if let Some(home) = WorktreeInfo::find_home(&worktrees, &default_branch) {
             return Ok(home.path.clone());
         }
 
@@ -1241,6 +1245,22 @@ impl Repository {
         }
 
         local_target.to_string()
+    }
+
+    /// Get the cached integration target for this repository.
+    ///
+    /// This is the effective target for integration checks (status symbols, safe deletion).
+    /// May be upstream (e.g., "origin/main") if it's ahead of local, catching remotely-merged branches.
+    ///
+    /// Result is cached in the shared repo cache (shared across all worktrees).
+    pub fn integration_target(&self) -> anyhow::Result<String> {
+        self.cache
+            .integration_target
+            .get_or_try_init(|| {
+                let default_branch = self.default_branch()?;
+                Ok(self.effective_integration_target(&default_branch))
+            })
+            .cloned()
     }
 
     /// Get merge/rebase status for the worktree at this repository's discovery path.
@@ -1862,19 +1882,19 @@ impl Repository {
     /// is the first linked worktree (no semantic "main" exists).
     ///
     /// Returns an empty vec for bare repos with no linked worktrees.
-    pub fn list_worktrees(&self) -> anyhow::Result<Vec<Worktree>> {
+    pub fn list_worktrees(&self) -> anyhow::Result<Vec<WorktreeInfo>> {
         let stdout = self.run_command(&["worktree", "list", "--porcelain"])?;
-        let raw_worktrees = Worktree::parse_porcelain_list(&stdout)?;
+        let raw_worktrees = WorktreeInfo::parse_porcelain_list(&stdout)?;
         Ok(raw_worktrees.into_iter().filter(|wt| !wt.bare).collect())
     }
 
-    /// Get the Worktree info struct for the current worktree, if we're inside one.
+    /// Get the WorktreeInfo struct for the current worktree, if we're inside one.
     ///
     /// Returns `None` if not in a worktree (e.g., in bare repo directory).
     ///
     /// Note: For worktree-specific operations, use [`current_worktree()`](Self::current_worktree)
-    /// to get a [`WorktreeView`] instead.
-    pub fn current_worktree_info(&self) -> anyhow::Result<Option<Worktree>> {
+    /// to get a [`WorkingTree`] instead.
+    pub fn current_worktree_info(&self) -> anyhow::Result<Option<WorktreeInfo>> {
         let current_path = match self.current_worktree().root() {
             Ok(p) => p.to_path_buf(),
             Err(_) => return Ok(None),
@@ -2111,6 +2131,18 @@ impl Repository {
                 }
             })
             .cloned()
+    }
+
+    /// Get the URL template from project config, if configured.
+    ///
+    /// Convenience method that extracts `list.url` from the project config.
+    /// Returns `None` if no config exists or no URL template is configured.
+    pub fn url_template(&self) -> Option<String> {
+        self.load_project_config()
+            .ok()
+            .flatten()
+            .and_then(|config| config.list)
+            .and_then(|list| list.url)
     }
 
     /// Get a short display name for this repository, used in logging context.
