@@ -29,10 +29,10 @@
         # Filter source to include Cargo files plus templates (needed by askama)
         src = pkgs.lib.cleanSourceWith {
           src = ./.;
-          filter = path: type:
-            (craneLib.filterCargoSources path type)
-            || (pkgs.lib.hasInfix "/templates/" path)
-            || (builtins.baseNameOf (builtins.dirOf path) == "templates");
+          filter = p: type:
+            (craneLib.filterCargoSources p type)
+            || (pkgs.lib.hasInfix "/templates/" p)
+            || (baseNameOf (dirOf p) == "templates");
         };
 
         # Common arguments for crane builds
