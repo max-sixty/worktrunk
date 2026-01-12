@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,7 @@ SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from shared import (  # noqa: E402
+    FIXTURES_DIR,
     VALIDATION_RS,
     DemoEnv,
     DemoSize,
@@ -454,7 +456,11 @@ Examples:
 
     # Output goes to mode/theme subdirectories
     mode_out_dir = OUT_DIR / args.target
-    starship_config = setup_demo_output(mode_out_dir)
+    mode_out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy starship config to docs/ only
+    if args.target == "docs":
+        shutil.copy(FIXTURES_DIR / "starship.toml", mode_out_dir / "starship.toml")
 
     target_config = TARGETS[args.target]
     demos = target_config["demos"]
@@ -478,7 +484,7 @@ Examples:
         env = DemoEnv(name=output_name, out_dir=demo_env_dir, repo_name="acme")
         setup_func(env)
         print(f"Demo repo: {env.repo}")
-        spawn_debug_shell(env, starship_config)
+        spawn_debug_shell(env, FIXTURES_DIR / "starship.toml")
         return
 
     # Record demos

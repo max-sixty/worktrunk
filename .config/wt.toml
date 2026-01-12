@@ -1,7 +1,7 @@
 [post-start]
 # Copy target/ from main worktree using CoW (~3s vs ~68s full rebuild)
 deps = "wt step copy-ignored"
-assets = "./dev/fetch-assets"
+assets = "task fetch-assets"
 docs = "cd docs && zola serve -p {{ branch | hash_port }}"
 
 [post-merge]

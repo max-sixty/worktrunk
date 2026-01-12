@@ -95,19 +95,28 @@ Worktrunk checks five conditions (in order of cost):
 4. [1mTrees match[0m — Branch tree SHA equals target tree SHA. Shows [2m⊂[0m.
 5. [1mMerge adds nothing[0m — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows [2m⊂[0m.
 
-The "same commit" check uses the local default branch; for other checks, [1mtarget[0m means the default branch, or its upstream (e.g., [2morigin/main[0m) when strictly ahead.
+The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., [2morigin/main[0m) when strictly ahead.
 
 Branches showing [2m_[0m or [2m⊂[0m are dimmed as safe to delete.
 
-Use [2m-D[0m to force-delete branches with unmerged changes. Use [2m--no-delete-branch[0m to keep the branch regardless of status.
+[32mForce flags
+
+Worktrunk has two force flags for different situations:
+
+          Flag          Scope                          When to use                         
+   ─────────────────── ──────── ────────────────────────────────────────────────────────── 
+   --force (-f)        Worktree Worktree has untracked files (build artifacts, IDE config) 
+   --force-delete (-D) Branch   Branch has unmerged commits                                
+
+  [2mwt remove feature --force       # Remove worktree with untracked files
+  [2mwt remove feature -D            # Delete unmerged branch
+  [2mwt remove feature --force -D    # Both
+
+Without [2m--force[0m, removal fails if the worktree contains untracked files. Without [2m-D[0m, removal keeps branches with unmerged changes. Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
 
 [32mBackground removal
 
 Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt-logs/{branch}-remove.log[0m. Use [2m--foreground[0m to run in the foreground.
-
-[32mShortcuts
-
-[2m@[0m (current), [2m-[0m (previous), [2m^[0m (default branch). See [2mwt switch[0m.
 
 [32mSee also
 

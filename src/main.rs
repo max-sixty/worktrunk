@@ -1793,8 +1793,10 @@ fn write_vv_diagnostic(verbose: u8, command_line: &str, error_msg: Option<&str>)
             if is_gh_installed() {
                 // Escape single quotes for shell: 'it'\''s' -> it's
                 let path_str = path.to_string_lossy().replace('\'', "'\\''");
+                // URL with prefilled body: ## Gist\n\n[Paste URL]\n\n## Description\n\n[Describe the issue]
+                let issue_url = "https://github.com/max-sixty/worktrunk/issues/new?body=%23%23%20Gist%0A%0A%5BPaste%20gist%20URL%5D%0A%0A%23%23%20Description%0A%0A%5BDescribe%20the%20issue%5D";
                 let _ = output::print(hint_message(cformat!(
-                    "If this is a bug, draft an issue: <bright-black>gh issue create --web -R max-sixty/worktrunk -t 'Bug report' --body-file '{path_str}'</>"
+                    "To report a bug, create a secret gist with <bright-black>gh gist create --web '{path_str}'</> and reference it from an issue at <bright-black>{issue_url}</>"
                 )));
             }
         }

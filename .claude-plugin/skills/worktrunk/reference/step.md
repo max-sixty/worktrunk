@@ -137,6 +137,16 @@ Only gitignored files are copied — tracked files are never touched. If `.workt
 - Skips existing files (safe to re-run)
 - Skips symlinks and `.git` entries
 
+### Performance
+
+Reflink copies share disk blocks until modified — no data is actually copied. For a 31GB `target/` directory with 110k files:
+
+| Method | Time |
+|--------|------|
+| Full copy (`cp -R`) | 2m 5s |
+| COW copy (`cp -Rc`) | ~60s |
+| `wt step copy-ignored` | ~31s |
+
 ### Language-specific notes
 
 #### Rust
