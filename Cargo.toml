@@ -1,11 +1,11 @@
 [workspace]
-members = ["tests/helpers/setup-select-test", "tests/helpers/dev-detach", "tests/helpers/mock-stub"]
-# Include helpers so `cargo test` builds their binaries (via their integration tests)
-default-members = [".", "tests/helpers/dev-detach", "tests/helpers/mock-stub"]
+members = ["tests/helpers/setup-select-test", "tests/helpers/mock-stub"]
+# Include mock-stub so `cargo test` builds its binary (via its integration test)
+default-members = [".", "tests/helpers/mock-stub"]
 
 [package]
 name = "worktrunk"
-version = "0.10.0"
+version = "0.12.0"
 edition = "2024"
 rust-version = "1.89"
 build = "build.rs"
@@ -60,6 +60,11 @@ name = "git-wt"
 path = "src/git_wt.rs"
 required-features = ["git-wt"]
 
+# Trace log analyzer for performance debugging
+[[bin]]
+name = "analyze-trace"
+path = "src/bin/analyze-trace.rs"
+test = false
 
 [dependencies]
 anyhow = "1.0"
@@ -71,14 +76,16 @@ askama = { version = "0.15", default-features = false, features = ["derive", "st
 chrono = "0.4"
 clap = { version = "4.5", features = ["derive", "unstable-ext", "wrap_help"] }
 clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
-config = { version = "0.15", features = ["convert-case"] }
+# Only enable TOML format - saves ~250KB by excluding yaml, ron, json5, ini parsers
+config = { version = "0.15", default-features = false, features = ["toml", "convert-case"] }
 crossbeam-channel = "0.5"
 crossterm = "0.29"
 env_logger = "0.11"
 indexmap = { version = "2.12", features = ["serde"] }
 etcetera = "0.11"
 log = "0.4"
-minijinja = "2.14"
+# Only enable needed features - saves ~200KB by excluding debug, macros, multi_template
+minijinja = { version = "2.14", default-features = false, features = ["builtins", "serde", "std_collections"] }
 rayon = "1.11"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -115,6 +122,7 @@ urlencoding = "2.1"
 regex = "1.12"
 ignore = "0.4"
 reflink-copy = "0.1"
+dashmap = "6.1.0"
 
 [target.'cfg(unix)'.dependencies]
 skim = "0.20"

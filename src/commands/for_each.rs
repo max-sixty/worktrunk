@@ -45,7 +45,7 @@ use crate::output;
 ///
 /// All template variables from hooks are available, and context JSON is piped to stdin.
 pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
     // Filter out prunable worktrees (directory deleted) - can't run commands there
     let worktrees: Vec<_> = repo
         .list_worktrees()?
@@ -67,13 +67,10 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
         let display_name = worktree_display_name(wt, &repo, &config);
         output::print(progress_message(format!("Running in {display_name}...")))?;
 
-        // Open repository at worktree path to get worktree-specific context (commit, etc.)
-        let wt_repo = Repository::at(&wt.path);
-
         // Build full hook context for this worktree
         // Pass wt.branch directly (not the display string) so detached HEAD maps to None -> "HEAD"
         let ctx = CommandContext::new(
-            &wt_repo,
+            &repo,
             &config,
             wt.branch.as_deref(),
             &wt.path,

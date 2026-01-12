@@ -88,16 +88,11 @@ pre-merge = "cargo test"
 
     #[test]
     fn test_collect_commands_for_hooks_all_hook_types() {
+        use strum::IntoEnumIterator;
+
         let config = ProjectConfig::default();
         // All hooks should work even when empty
-        let hooks = [
-            HookType::PostCreate,
-            HookType::PostStart,
-            HookType::PreCommit,
-            HookType::PreMerge,
-            HookType::PostMerge,
-            HookType::PreRemove,
-        ];
+        let hooks: Vec<_> = HookType::iter().collect();
         let commands = collect_commands_for_hooks(&config, &hooks);
         assert!(commands.is_empty());
     }

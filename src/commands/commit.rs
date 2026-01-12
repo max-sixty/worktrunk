@@ -80,7 +80,7 @@ impl<'a> CommitGenerator<'a> {
         show_no_squash_note: bool,
         stage_mode: StageMode,
     ) -> anyhow::Result<()> {
-        let repo = Repository::current();
+        let repo = Repository::current()?;
 
         // Fail early if nothing is staged (avoids confusing LLM prompt with empty diff)
         if !repo.has_staged_changes()? {
@@ -154,9 +154,7 @@ impl CommitOptions<'_> {
 
         // Show skip message
         if self.no_verify && any_hooks_exist {
-            crate::output::print(info_message(cformat!(
-                "Skipping pre-commit hooks (<bright-black>--no-verify</>)"
-            )))?;
+            crate::output::print(info_message("Skipping pre-commit hooks (--no-verify)"))?;
         }
 
         if !self.no_verify {

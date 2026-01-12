@@ -14,9 +14,10 @@
 //!    - Uses ref cache, very fast
 //!
 //! 2. **Default branch lookup** (~1-5ms)
-//!    - Reads cached value from `.git/refs/remotes/origin/HEAD`
-//!    - Falls back to `git remote show origin` if not cached (~100-300ms network)
-//!    - Refresh with `wt config state get default-branch --refresh`
+//!    - Reads cached value from `git config worktrunk.default-branch`
+//!    - Falls back to git's remote HEAD ref (e.g., `origin/HEAD`) if available
+//!    - If still unknown, queries `git ls-remote --symref <remote> HEAD` (~100ms-2s network)
+//!    - Clear cache with `wt config state default-branch clear` to force re-detection
 //!
 //! 3. **Sort worktrees** (<1ms)
 //!    - Orders by: current → main → rest by timestamp (most recent first)
@@ -91,11 +92,12 @@
 //!
 //! ## Worktrunk's Only Cache: Default Branch
 //!
-//! Worktrunk caches only the default branch name (main/master) using `git remote set-head`.
-//! This is a git-native cache stored in `.git/refs/remotes/origin/HEAD`. All other data is
-//! fetched fresh on each `wt list` invocation.
+//! Worktrunk caches only the default branch name (main/master) in
+//! `git config worktrunk.default-branch`. The remote HEAD ref (e.g., `origin/HEAD`)
+//! is git's cache; worktrunk reads it but does not set it. All other data is fetched
+//! fresh on each `wt list` invocation.
 //!
-//! Refresh with: `wt config state get default-branch --refresh`
+//! Clear cache with: `wt config state default-branch clear`
 //!
 //! ## Performance Characteristics
 //!
@@ -150,7 +152,7 @@ pub fn handle_list(
 ) -> anyhow::Result<()> {
     use collect::TaskKind;
 
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Build skip set based on flags
     // Without --full: skip expensive operations (BranchDiff, CiStatus, WorkingTreeConflicts)
@@ -178,6 +180,9 @@ pub fn handle_list(
     // Render table in collect() for all table modes (progressive + buffered)
     let render_table = matches!(format, crate::OutputFormat::Table);
 
+    // For testing: allow enabling skip_expensive_for_stale via env var
+    let skip_expensive_for_stale = std::env::var("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD").is_ok();
+
     let list_data = collect::collect(
         &repo,
         show_branches,
@@ -187,6 +192,7 @@ pub fn handle_list(
         render_table,
         config,
         None, // No timeout for wt list
+        skip_expensive_for_stale,
     )?;
 
     let Some(ListData { items, .. }) = list_data else {
@@ -204,78 +210,6 @@ pub fn handle_list(
         crate::OutputFormat::Table => {
             // Table and summary already rendered in collect() for all modes
             // Nothing to do here - collect() handles the complete table rendering
-        }
-    }
-
-    // Show hint if CI status was requested but no tools can fetch it.
-    // Skip the check if any items already have CI status (tools must be available).
-    if show_full {
-        // pr_status semantics: None = not fetched, Some(None) = fetched but no PR,
-        // Some(Some(status)) = fetched with status. If any item is Some(_), we
-        // successfully communicated with CI tools, so they're available.
-        let any_ci_fetched = items.iter().any(|item| item.pr_status.is_some());
-
-        if any_ci_fetched {
-            log::debug!("Skipping CI tools detection - CI status already fetched");
-        } else {
-            // No CI was fetched - run full detection to show helpful hint
-            let gitlab_host = repo
-                .worktree_root()
-                .ok()
-                .and_then(|p| p.to_str().map(|s| s.to_string()))
-                .and_then(|p| ci_status::get_gitlab_host_for_repo(&p));
-            let ci_tools = ci_status::CiToolsStatus::detect(gitlab_host.as_deref());
-
-            if !ci_tools.any_available() {
-                use ci_status::{CiPlatform, get_platform_for_repo};
-                use color_print::cformat;
-                use worktrunk::config::ProjectConfig;
-                use worktrunk::styling::hint_message;
-
-                // Detect platform from repo's remote URL (with config override support)
-                let project_config = ProjectConfig::load(&repo, true).ok().flatten();
-                let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
-                let platform = repo
-                    .worktree_root()
-                    .ok()
-                    .and_then(|root| get_platform_for_repo(root.to_str()?, platform_override));
-
-                // Only show hint for the relevant platform's tool
-                let hint = match platform {
-                    Some(CiPlatform::GitHub) => {
-                        if ci_tools.gh_installed && !ci_tools.gh_authenticated {
-                            Some(cformat!(
-                                "CI status unavailable; run <bright-black>gh auth login</> to authenticate"
-                            ))
-                        } else if !ci_tools.gh_installed {
-                            Some(cformat!(
-                                "CI status unavailable; install <bright-black>gh</>"
-                            ))
-                        } else {
-                            None
-                        }
-                    }
-                    Some(CiPlatform::GitLab) => {
-                        if ci_tools.glab_installed && !ci_tools.glab_authenticated {
-                            Some(cformat!(
-                                "CI status unavailable; run <bright-black>glab auth login</> to authenticate"
-                            ))
-                        } else if !ci_tools.glab_installed {
-                            Some(cformat!(
-                                "CI status unavailable; install <bright-black>glab</>"
-                            ))
-                        } else {
-                            None
-                        }
-                    }
-                    None => None, // Unknown platform - don't show any hint
-                };
-
-                if let Some(message) = hint {
-                    crate::output::blank()?;
-                    crate::output::print(hint_message(message))?;
-                }
-            }
         }
     }
 

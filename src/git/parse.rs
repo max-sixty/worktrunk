@@ -2,12 +2,12 @@
 
 use std::path::PathBuf;
 
-use super::{GitError, Worktree, finalize_worktree};
+use super::{GitError, WorktreeInfo, finalize_worktree};
 
-impl Worktree {
+impl WorktreeInfo {
     pub(crate) fn parse_porcelain_list(output: &str) -> anyhow::Result<Vec<Self>> {
         let mut worktrees = Vec::new();
-        let mut current: Option<Worktree> = None;
+        let mut current: Option<WorktreeInfo> = None;
 
         for line in output.lines() {
             if line.is_empty() {
@@ -30,7 +30,7 @@ impl Worktree {
                         }
                         .into());
                     };
-                    current = Some(Worktree {
+                    current = Some(WorktreeInfo {
                         path: PathBuf::from(path),
                         head: String::new(),
                         branch: None,
@@ -291,13 +291,13 @@ mod tests {
     }
 
     // ============================================================================
-    // Worktree::parse_porcelain_list Tests
+    // WorktreeInfo::parse_porcelain_list Tests
     // ============================================================================
 
     #[test]
     fn test_parse_porcelain_list_single_worktree() {
         let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\n\n";
-        let result = Worktree::parse_porcelain_list(output);
+        let result = WorktreeInfo::parse_porcelain_list(output);
         assert!(result.is_ok());
         let worktrees = result.unwrap();
         assert_eq!(worktrees.len(), 1);
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn test_parse_porcelain_list_multiple_worktrees() {
         let output = "worktree /path/main\nHEAD aaa\nbranch refs/heads/main\n\nworktree /path/feature\nHEAD bbb\nbranch refs/heads/feature\n\n";
-        let result = Worktree::parse_porcelain_list(output);
+        let result = WorktreeInfo::parse_porcelain_list(output);
         assert!(result.is_ok());
         let worktrees = result.unwrap();
         assert_eq!(worktrees.len(), 2);
@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn test_parse_porcelain_list_bare_repo() {
         let output = "worktree /path/to/repo.git\nHEAD abc123\nbare\n\n";
-        let result = Worktree::parse_porcelain_list(output);
+        let result = WorktreeInfo::parse_porcelain_list(output);
         assert!(result.is_ok());
         let worktrees = result.unwrap();
         assert_eq!(worktrees.len(), 1);
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn test_parse_porcelain_list_detached() {
         let output = "worktree /path/to/repo\nHEAD abc123\ndetached\n\n";
-        let result = Worktree::parse_porcelain_list(output);
+        let result = WorktreeInfo::parse_porcelain_list(output);
         assert!(result.is_ok());
         let worktrees = result.unwrap();
         assert_eq!(worktrees.len(), 1);
@@ -341,7 +341,7 @@ mod tests {
     #[test]
     fn test_parse_porcelain_list_locked() {
         let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nlocked reason for lock\n\n";
-        let result = Worktree::parse_porcelain_list(output);
+        let result = WorktreeInfo::parse_porcelain_list(output);
         assert!(result.is_ok());
         let worktrees = result.unwrap();
         assert_eq!(worktrees.len(), 1);
@@ -351,7 +351,7 @@ mod tests {
     #[test]
     fn test_parse_porcelain_list_prunable() {
         let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nprunable gitdir file missing\n\n";
-        let result = Worktree::parse_porcelain_list(output);
+        let result = WorktreeInfo::parse_porcelain_list(output);
         assert!(result.is_ok());
         let worktrees = result.unwrap();
         assert_eq!(worktrees.len(), 1);
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn test_parse_porcelain_list_empty() {
-        let result = Worktree::parse_porcelain_list("");
+        let result = WorktreeInfo::parse_porcelain_list("");
         assert!(result.is_ok());
         let worktrees = result.unwrap();
         assert!(worktrees.is_empty());
@@ -373,7 +373,7 @@ mod tests {
     fn test_parse_porcelain_list_no_trailing_blank() {
         // Git output may not always end with a blank line
         let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main";
-        let result = Worktree::parse_porcelain_list(output);
+        let result = WorktreeInfo::parse_porcelain_list(output);
         assert!(result.is_ok());
         let worktrees = result.unwrap();
         assert_eq!(worktrees.len(), 1);
@@ -382,14 +382,14 @@ mod tests {
     #[test]
     fn test_parse_porcelain_list_missing_worktree_path() {
         let output = "worktree\nHEAD abc123\n\n";
-        let result = Worktree::parse_porcelain_list(output);
+        let result = WorktreeInfo::parse_porcelain_list(output);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_porcelain_list_missing_head_sha() {
         let output = "worktree /path\nHEAD\n\n";
-        let result = Worktree::parse_porcelain_list(output);
+        let result = WorktreeInfo::parse_porcelain_list(output);
         assert!(result.is_err());
     }
 
@@ -397,7 +397,7 @@ mod tests {
     fn test_parse_porcelain_list_branch_without_refs_prefix() {
         // This can happen in some edge cases
         let output = "worktree /path/to/repo\nHEAD abc123\nbranch main\n\n";
-        let result = Worktree::parse_porcelain_list(output);
+        let result = WorktreeInfo::parse_porcelain_list(output);
         assert!(result.is_ok());
         let worktrees = result.unwrap();
         // Should use the branch name as-is when no refs/heads/ prefix

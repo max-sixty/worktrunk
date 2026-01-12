@@ -387,7 +387,7 @@ pub fn prompt_shell_integration(
     }
 
     // Install for all shells with config files (same as `wt config shell install`)
-    let install_result = handle_configure_shell(None, true, binary_name.to_string())
+    let install_result = handle_configure_shell(None, true, false, binary_name.to_string())
         .map_err(|e| anyhow::anyhow!("Failed to configure shell integration: {e}"))?;
 
     print_shell_install_result(&install_result)?;

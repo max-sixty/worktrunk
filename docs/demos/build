@@ -137,15 +137,26 @@ def prepare_merge_demo(
 
 def prepare_switch(env: DemoEnv):
     """Switch demo with Claude Code UI."""
-    hooks_config = '[post-start]\ndeps = "npm install"\n'
+    dev_cmd = "npm run dev -- --port {{ branch | hash_port }}"
+    hooks_config = f"""[post-start]
+copy = "wt step copy-ignored"
+dev = "{dev_cmd}"
+"""
     prepare_demo_repo(env, REPO_ROOT, hooks_config=hooks_config)
-    _write_user_config(env, ["npm install"])
+    _write_user_config(env, [dev_cmd, "wt step copy-ignored"])
+
+    # Create .env file (gitignored) so copy-ignored has something to copy
+    gitignore = env.repo / ".gitignore"
+    gitignore.write_text(gitignore.read_text() + ".env\n")
+    env_file = env.repo / ".env"
+    env_file.write_text("DATABASE_URL=postgres://localhost/acme_dev\nAPI_KEY=dev-key-123\n")
 
     setup_claude_code_config(
         env,
         [
             str(env.repo),
             str(env.work_base / "acme.alpha"),
+            str(env.work_base / "acme.api"),
             str(env.work_base / "acme.dashboard"),
         ],
     )

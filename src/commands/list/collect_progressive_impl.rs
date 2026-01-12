@@ -11,7 +11,8 @@
 //!    generate `WorkItem` instances for each task, registering expected results upfront.
 //!
 //! 2. **Parallel execution**: All work items are collected into a `Vec` and processed
-//!    via `into_par_iter()`. Rayon schedules optimally across its thread pool (~8 threads).
+//!    via `into_par_iter()`. Rayon schedules across its thread pool (size set at startup,
+//!    defaulting to 2x CPU cores unless `RAYON_NUM_THREADS` is set).
 //!
 //! 3. **Result delivery**: Each `WorkItem::execute()` returns a result; the caller sends it.
 //!
@@ -19,9 +20,8 @@
 
 use crossbeam_channel::Sender;
 use std::fmt::Display;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use worktrunk::git::{LineDiff, Repository, Worktree};
+use worktrunk::git::{BranchRef, LineDiff, Repository, WorktreeInfo};
 
 use super::ci_status::PrStatus;
 use super::collect::{ExpectedResults, TaskError, TaskKind, TaskResult, detect_git_operation};
@@ -35,8 +35,8 @@ use super::model::{
 
 /// Options for controlling what data to collect.
 ///
-/// Uses a skip set to control which tasks are spawned. Tasks not in the set
-/// will be computed; tasks in the set will be skipped.
+/// This is operation parameters for a single `wt list` invocation, not a cache.
+/// For cached repo data, see Repository's global cache.
 #[derive(Clone, Default)]
 pub struct CollectOptions {
     /// Tasks to skip (not compute). Empty set means compute everything.
@@ -49,22 +49,46 @@ pub struct CollectOptions {
     /// URL template from project config (e.g., "http://localhost:{{ branch | hash_port }}").
     /// Expanded per-item in task spawning (post-skeleton) to minimize time-to-skeleton.
     pub url_template: Option<String>,
+
+    /// Branches to skip expensive tasks for (behind > threshold).
+    ///
+    /// Presence in set = skip expensive tasks for this branch (HasFileChanges,
+    /// IsAncestor, WouldMergeAdd, BranchDiff, MergeTreeConflicts).
+    ///
+    /// Built by filtering `batch_ahead_behind()` results on local branches only.
+    /// Remote-only branches are never in this set (they use individual git commands).
+    /// The threshold (default 50) is applied at construction time. Ahead/behind
+    /// counts are cached in Repository and looked up by AheadBehindTask.
+    ///
+    /// **Display implications:** When tasks are skipped:
+    /// - BranchDiff column shows `…` instead of diff stats
+    /// - Status symbols (conflict `✗`, integrated `⊂`) may be missing or incorrect
+    ///   since they depend on skipped tasks
+    ///
+    /// Note: `wt select` doesn't show the BranchDiff column, so `…` isn't visible there.
+    /// This is similar to how `✗` conflict only shows with `--full` even in `wt list`.
+    ///
+    /// TODO: Consider adding a visible indicator in Status column when integration
+    /// checks are skipped, so users know the `⊂` symbol may be incomplete.
+    pub stale_branches: std::collections::HashSet<String>,
 }
 
 /// Context for task computation. Cloned and moved into spawned threads.
 ///
-/// Contains all data needed by any task.
+/// Contains all data needed by any task. The `repo` field shares its cache
+/// across all clones via `Arc<RepoCache>`, so parallel tasks benefit from
+/// cached merge-base results, ahead/behind counts, default branch, and
+/// integration target.
 #[derive(Clone)]
 pub struct TaskContext {
-    pub repo_path: PathBuf,
-    pub commit_sha: String,
-    pub branch: Option<String>,
-    /// Local default branch for informational stats (ahead/behind, branch diff).
-    /// Always the local ref (e.g., "main"), providing stable comparisons.
-    pub default_branch: Option<String>,
-    /// Effective target for integration checks (status symbols, safe deletion).
-    /// May be upstream (e.g., "origin/main") if it's ahead of local, catching remotely-merged branches.
-    pub target: Option<String>,
+    /// Shared repository handle. All clones share the same cache via Arc.
+    pub repo: Repository,
+    /// The branch this task operates on. Contains branch name, commit SHA,
+    /// and optional worktree path.
+    ///
+    /// For worktree-specific operations, use `self.worktree()` which returns
+    /// `Some(WorkingTree)` only when this ref has a worktree path.
+    pub branch_ref: BranchRef,
     pub item_idx: usize,
     /// Expanded URL for this item (from project config template).
     /// UrlStatusTask uses this to check if the port is listening.
@@ -72,24 +96,24 @@ pub struct TaskContext {
 }
 
 impl TaskContext {
-    fn repo(&self) -> Repository {
-        Repository::at(&self.repo_path)
-    }
-
     fn error(&self, kind: TaskKind, message: impl Display) -> TaskError {
         TaskError::new(self.item_idx, kind, message.to_string())
     }
 
-    fn require_default_branch(&self, kind: TaskKind) -> Result<&str, TaskError> {
-        self.default_branch
-            .as_deref()
-            .ok_or_else(|| self.error(kind, "no default branch"))
+    /// Get the default branch (cached in Repository).
+    ///
+    /// Used for informational stats (ahead/behind, branch diff).
+    /// Returns None if default branch cannot be determined.
+    fn default_branch(&self) -> Option<String> {
+        self.repo.default_branch()
     }
 
-    fn require_target(&self, kind: TaskKind) -> Result<&str, TaskError> {
-        self.target
-            .as_deref()
-            .ok_or_else(|| self.error(kind, "no target branch"))
+    /// Get the integration target (cached in Repository).
+    ///
+    /// Used for integration checks (status symbols, safe deletion).
+    /// Returns None if default branch cannot be determined.
+    fn integration_target(&self) -> Option<String> {
+        self.repo.integration_target()
     }
 }
 
@@ -161,16 +185,29 @@ fn dispatch_task(kind: TaskKind, ctx: TaskContext) -> Result<TaskResult, TaskErr
     }
 }
 
+// Tasks that are expensive because they require merge-base computation or merge simulation.
+// These are skipped for branches that are far behind the default branch (in wt select).
+// AheadBehind is NOT here - we use batch data for it instead of skipping.
+// CommittedTreesMatch is NOT here - it's a cheap tree comparison that aids integration detection.
+const EXPENSIVE_TASKS: &[TaskKind] = &[
+    TaskKind::HasFileChanges,     // git diff with three-dot range
+    TaskKind::IsAncestor,         // git merge-base --is-ancestor
+    TaskKind::WouldMergeAdd,      // git merge-tree simulation
+    TaskKind::BranchDiff,         // git diff with three-dot range
+    TaskKind::MergeTreeConflicts, // git merge-tree simulation
+];
+
 /// Generate work items for a worktree.
 ///
 /// Returns a list of work items representing all tasks that should run for this
 /// worktree. Expected results are registered internally as each work item is added.
 /// The caller is responsible for executing the work items.
+///
+/// The `repo` parameter is cloned into each TaskContext, sharing its cache via Arc.
 pub fn work_items_for_worktree(
-    wt: &Worktree,
+    repo: &Repository,
+    wt: &WorktreeInfo,
     item_idx: usize,
-    default_branch: &str,
-    target: &str,
     options: &CollectOptions,
     expected_results: &Arc<ExpectedResults>,
     tx: &Sender<Result<TaskResult, TaskError>>,
@@ -179,6 +216,8 @@ pub fn work_items_for_worktree(
     if wt.is_prunable() {
         return vec![];
     }
+
+    let skip = &options.skip_tasks;
 
     // Expand URL template for this item
     let item_url = options.url_template.as_ref().and_then(|template| {
@@ -201,16 +240,18 @@ pub fn work_items_for_worktree(
     }
 
     let ctx = TaskContext {
-        repo_path: wt.path.clone(),
-        commit_sha: wt.head.clone(),
-        branch: wt.branch.clone(),
-        default_branch: Some(default_branch.to_string()),
-        target: Some(target.to_string()),
+        repo: repo.clone(),
+        branch_ref: BranchRef::from(wt),
         item_idx,
         item_url,
     };
 
-    let skip = &options.skip_tasks;
+    // Check if this branch is stale and should skip expensive tasks.
+    let is_stale = wt
+        .branch
+        .as_deref()
+        .is_some_and(|b| options.stale_branches.contains(b));
+
     let mut items = Vec::with_capacity(15);
 
     // Helper to add a work item and register the expected result
@@ -238,9 +279,14 @@ pub fn work_items_for_worktree(
         TaskKind::CiStatus,
         TaskKind::WouldMergeAdd,
     ] {
-        if !skip.contains(&kind) {
-            add_item(kind);
+        if skip.contains(&kind) {
+            continue;
         }
+        // Skip expensive tasks for stale branches (far behind default branch)
+        if is_stale && EXPENSIVE_TASKS.contains(&kind) {
+            continue;
+        }
+        add_item(kind);
     }
     // URL status health check task (if we have a URL).
     // Note: We already registered and sent an immediate UrlStatus above with url + active=None.
@@ -261,28 +307,28 @@ pub fn work_items_for_worktree(
 ///
 /// Returns a list of work items representing all tasks that should run for this
 /// branch. Branches have fewer tasks than worktrees (no working tree operations).
-#[allow(clippy::too_many_arguments)]
+///
+/// The `repo` parameter is cloned into each TaskContext, sharing its cache via Arc.
 pub fn work_items_for_branch(
+    repo: &Repository,
     branch_name: &str,
     commit_sha: &str,
-    repo_path: &std::path::Path,
     item_idx: usize,
-    default_branch: &str,
-    target: &str,
     options: &CollectOptions,
     expected_results: &Arc<ExpectedResults>,
 ) -> Vec<WorkItem> {
+    let skip = &options.skip_tasks;
+
     let ctx = TaskContext {
-        repo_path: repo_path.to_path_buf(),
-        commit_sha: commit_sha.to_string(),
-        branch: Some(branch_name.to_string()),
-        default_branch: Some(default_branch.to_string()),
-        target: Some(target.to_string()),
+        repo: repo.clone(),
+        branch_ref: BranchRef::branch_only(branch_name, commit_sha),
         item_idx,
         item_url: None, // Branches without worktrees don't have URLs
     };
 
-    let skip = &options.skip_tasks;
+    // Check if this branch is stale and should skip expensive tasks.
+    let is_stale = options.stale_branches.contains(branch_name);
+
     let mut items = Vec::with_capacity(11);
 
     // Helper to add a work item and register the expected result
@@ -306,9 +352,14 @@ pub fn work_items_for_branch(
         TaskKind::CiStatus,
         TaskKind::WouldMergeAdd,
     ] {
-        if !skip.contains(&kind) {
-            add_item(kind);
+        if skip.contains(&kind) {
+            continue;
         }
+        // Skip expensive tasks for stale branches (far behind default branch)
+        if is_stale && EXPENSIVE_TASKS.contains(&kind) {
+            continue;
+        }
+        add_item(kind);
     }
 
     items
@@ -325,12 +376,12 @@ impl Task for CommitDetailsTask {
     const KIND: TaskKind = TaskKind::CommitDetails;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        let repo = ctx.repo();
+        let repo = &ctx.repo;
         let timestamp = repo
-            .commit_timestamp(&ctx.commit_sha)
+            .commit_timestamp(&ctx.branch_ref.commit_sha)
             .map_err(|e| ctx.error(Self::KIND, e))?;
         let commit_message = repo
-            .commit_message(&ctx.commit_sha)
+            .commit_message(&ctx.branch_ref.commit_sha)
             .map_err(|e| ctx.error(Self::KIND, e))?;
         Ok(TaskResult::CommitDetails {
             item_idx: ctx.item_idx,
@@ -349,11 +400,30 @@ impl Task for AheadBehindTask {
     const KIND: TaskKind = TaskKind::AheadBehind;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        let base = ctx.require_default_branch(Self::KIND)?;
-        let repo = ctx.repo();
-        let (ahead, behind) = repo
-            .ahead_behind(base, &ctx.commit_sha)
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+        // When default_branch is None, return zero counts (cells show empty)
+        let Some(base) = ctx.default_branch() else {
+            return Ok(TaskResult::AheadBehind {
+                item_idx: ctx.item_idx,
+                counts: AheadBehind::default(),
+            });
+        };
+        let repo = &ctx.repo;
+
+        // Check cache first (populated by batch_ahead_behind if it ran).
+        // Cache lookup has minor overhead (rev-parse for cache key + allocations),
+        // but saves the expensive ahead_behind computation on cache hit.
+        let (ahead, behind) = if let Some(branch) = ctx.branch_ref.branch.as_deref() {
+            if let Some(counts) = repo.get_cached_ahead_behind(&base, branch) {
+                counts
+            } else {
+                repo.ahead_behind(&base, &ctx.branch_ref.commit_sha)
+                    .map_err(|e| ctx.error(Self::KIND, e))?
+            }
+        } else {
+            repo.ahead_behind(&base, &ctx.branch_ref.commit_sha)
+                .map_err(|e| ctx.error(Self::KIND, e))?
+        };
+
         Ok(TaskResult::AheadBehind {
             item_idx: ctx.item_idx,
             counts: AheadBehind { ahead, behind },
@@ -370,12 +440,18 @@ impl Task for CommittedTreesMatchTask {
     const KIND: TaskKind = TaskKind::CommittedTreesMatch;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        let base = ctx.require_target(Self::KIND)?;
-        let repo = ctx.repo();
-        // Use ctx.commit_sha (the item's commit) instead of HEAD,
-        // since for branches without worktrees, HEAD is the main worktree's HEAD
+        // When integration_target is None, return false (conservative: don't mark as integrated)
+        let Some(base) = ctx.integration_target() else {
+            return Ok(TaskResult::CommittedTreesMatch {
+                item_idx: ctx.item_idx,
+                committed_trees_match: false,
+            });
+        };
+        let repo = &ctx.repo;
+        // Use the item's commit instead of HEAD, since for branches without
+        // worktrees, HEAD is the main worktree's HEAD.
         let committed_trees_match = repo
-            .trees_match(&ctx.commit_sha, base)
+            .trees_match(&ctx.branch_ref.commit_sha, &base)
             .map_err(|e| ctx.error(Self::KIND, e))?;
         Ok(TaskResult::CommittedTreesMatch {
             item_idx: ctx.item_idx,
@@ -402,17 +478,24 @@ impl Task for HasFileChangesTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         // No branch name (detached HEAD) - return conservative default (assume has changes)
-        let Some(branch) = ctx.branch.as_deref() else {
+        let Some(branch) = ctx.branch_ref.branch.as_deref() else {
             return Ok(TaskResult::HasFileChanges {
                 item_idx: ctx.item_idx,
                 has_file_changes: true,
             });
         };
-        let base = ctx.require_target(Self::KIND)?;
-        let repo = ctx.repo();
+        // When integration_target is None, return true (conservative: assume has changes)
+        let Some(target) = ctx.integration_target() else {
+            return Ok(TaskResult::HasFileChanges {
+                item_idx: ctx.item_idx,
+                has_file_changes: true,
+            });
+        };
+        let repo = &ctx.repo;
         let has_file_changes = repo
-            .has_added_changes(branch, base)
+            .has_added_changes(branch, &target)
             .map_err(|e| ctx.error(Self::KIND, e))?;
+
         Ok(TaskResult::HasFileChanges {
             item_idx: ctx.item_idx,
             has_file_changes,
@@ -438,16 +521,22 @@ impl Task for WouldMergeAddTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         // No branch name (detached HEAD) - return conservative default (assume would add)
-        let Some(branch) = ctx.branch.as_deref() else {
+        let Some(branch) = ctx.branch_ref.branch.as_deref() else {
             return Ok(TaskResult::WouldMergeAdd {
                 item_idx: ctx.item_idx,
                 would_merge_add: true,
             });
         };
-        let base = ctx.require_target(Self::KIND)?;
-        let repo = ctx.repo();
+        // When integration_target is None, return true (conservative: assume would add)
+        let Some(base) = ctx.integration_target() else {
+            return Ok(TaskResult::WouldMergeAdd {
+                item_idx: ctx.item_idx,
+                would_merge_add: true,
+            });
+        };
+        let repo = &ctx.repo;
         let would_merge_add = repo
-            .would_merge_add_to_target(branch, base)
+            .would_merge_add_to_target(branch, &base)
             .map_err(|e| ctx.error(Self::KIND, e))?;
         Ok(TaskResult::WouldMergeAdd {
             item_idx: ctx.item_idx,
@@ -470,11 +559,18 @@ impl Task for IsAncestorTask {
     const KIND: TaskKind = TaskKind::IsAncestor;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        let base = ctx.require_target(Self::KIND)?;
-        let repo = ctx.repo();
+        // When integration_target is None, return false (conservative: don't mark as ancestor)
+        let Some(base) = ctx.integration_target() else {
+            return Ok(TaskResult::IsAncestor {
+                item_idx: ctx.item_idx,
+                is_ancestor: false,
+            });
+        };
+        let repo = &ctx.repo;
         let is_ancestor = repo
-            .is_ancestor(&ctx.commit_sha, base)
+            .is_ancestor(&ctx.branch_ref.commit_sha, &base)
             .map_err(|e| ctx.error(Self::KIND, e))?;
+
         Ok(TaskResult::IsAncestor {
             item_idx: ctx.item_idx,
             is_ancestor,
@@ -489,11 +585,18 @@ impl Task for BranchDiffTask {
     const KIND: TaskKind = TaskKind::BranchDiff;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        let base = ctx.require_default_branch(Self::KIND)?;
-        let repo = ctx.repo();
+        // When default_branch is None, return empty diff (cells show empty)
+        let Some(base) = ctx.default_branch() else {
+            return Ok(TaskResult::BranchDiff {
+                item_idx: ctx.item_idx,
+                branch_diff: BranchDiffTotals::default(),
+            });
+        };
+        let repo = &ctx.repo;
         let diff = repo
-            .branch_diff_stats(base, &ctx.commit_sha)
+            .branch_diff_stats(&base, &ctx.branch_ref.commit_sha)
             .map_err(|e| ctx.error(Self::KIND, e))?;
+
         Ok(TaskResult::BranchDiff {
             item_idx: ctx.item_idx,
             branch_diff: BranchDiffTotals { diff },
@@ -508,24 +611,31 @@ impl Task for WorkingTreeDiffTask {
     const KIND: TaskKind = TaskKind::WorkingTreeDiff;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        let repo = ctx.repo();
-        let status_output = repo
-            .run_command(&["status", "--porcelain"])
+        // This task is only spawned for worktree items, so worktree path is always present.
+        let wt = ctx
+            .branch_ref
+            .working_tree(&ctx.repo)
+            .expect("WorkingTreeDiffTask requires a worktree");
+        // Use --no-optional-locks to avoid index lock contention with WorkingTreeConflictsTask's
+        // `git stash create` which needs the index lock.
+        let status_output = wt
+            .run_command(&["--no-optional-locks", "status", "--porcelain"])
             .map_err(|e| ctx.error(Self::KIND, e))?;
 
         let (working_tree_status, is_dirty, has_conflicts) =
             parse_working_tree_status(&status_output);
 
         let working_tree_diff = if is_dirty {
-            repo.working_tree_diff_stats()
+            wt.working_tree_diff_stats()
                 .map_err(|e| ctx.error(Self::KIND, e))?
         } else {
             LineDiff::default()
         };
 
         // Use default_branch (local default branch) for informational display
-        let working_tree_diff_with_main = repo
-            .working_tree_diff_with_base(ctx.default_branch.as_deref(), is_dirty)
+        let default_branch = ctx.default_branch();
+        let working_tree_diff_with_main = wt
+            .working_tree_diff_with_base(default_branch.as_deref(), is_dirty)
             .map_err(|e| ctx.error(Self::KIND, e))?;
 
         Ok(TaskResult::WorkingTreeDiff {
@@ -548,10 +658,16 @@ impl Task for MergeTreeConflictsTask {
     const KIND: TaskKind = TaskKind::MergeTreeConflicts;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        let base = ctx.require_default_branch(Self::KIND)?;
-        let repo = ctx.repo();
+        // When default_branch is None, return false (no conflicts can be detected)
+        let Some(base) = ctx.default_branch() else {
+            return Ok(TaskResult::MergeTreeConflicts {
+                item_idx: ctx.item_idx,
+                has_merge_tree_conflicts: false,
+            });
+        };
+        let repo = &ctx.repo;
         let has_merge_tree_conflicts = repo
-            .has_merge_conflicts(base, &ctx.commit_sha)
+            .has_merge_conflicts(&base, &ctx.branch_ref.commit_sha)
             .map_err(|e| ctx.error(Self::KIND, e))?;
         Ok(TaskResult::MergeTreeConflicts {
             item_idx: ctx.item_idx,
@@ -571,12 +687,23 @@ impl Task for WorkingTreeConflictsTask {
     const KIND: TaskKind = TaskKind::WorkingTreeConflicts;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        let base = ctx.require_default_branch(Self::KIND)?;
-        let repo = ctx.repo();
+        // When default_branch is None, return None (skip conflict check)
+        let Some(base) = ctx.default_branch() else {
+            return Ok(TaskResult::WorkingTreeConflicts {
+                item_idx: ctx.item_idx,
+                has_working_tree_conflicts: None,
+            });
+        };
+        // This task is only spawned for worktree items, so worktree path is always present.
+        let wt = ctx
+            .branch_ref
+            .working_tree(&ctx.repo)
+            .expect("WorkingTreeConflictsTask requires a worktree");
 
-        // Quick check if working tree is dirty via git status
-        let status_output = repo
-            .run_command(&["status", "--porcelain"])
+        // Use --no-optional-locks to avoid index lock contention with WorkingTreeDiffTask.
+        // Both tasks run in parallel, and `git stash create` below needs the index lock.
+        let status_output = wt
+            .run_command(&["--no-optional-locks", "status", "--porcelain"])
             .map_err(|e| ctx.error(Self::KIND, e))?;
 
         let is_dirty = !status_output.trim().is_empty();
@@ -594,7 +721,7 @@ impl Task for WorkingTreeConflictsTask {
         //
         // Note: stash create fails when there are unmerged files (merge conflict in progress).
         // In that case, fall back to the commit-based check.
-        let stash_result = repo.run_command(&["stash", "create"]);
+        let stash_result = wt.run_command(&["stash", "create"]);
 
         let stash_sha = match stash_result {
             Ok(sha) => sha,
@@ -618,9 +745,10 @@ impl Task for WorkingTreeConflictsTask {
             });
         }
 
-        // Run merge-tree with the stash commit
-        let has_conflicts = repo
-            .has_merge_conflicts(base, stash_sha)
+        // Run merge-tree with the stash commit (repo-wide operation, doesn't need worktree)
+        let has_conflicts = ctx
+            .repo
+            .has_merge_conflicts(&base, stash_sha)
             .map_err(|e| ctx.error(Self::KIND, e))?;
 
         Ok(TaskResult::WorkingTreeConflicts {
@@ -637,8 +765,12 @@ impl Task for GitOperationTask {
     const KIND: TaskKind = TaskKind::GitOperation;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        let repo = ctx.repo();
-        let git_operation = detect_git_operation(&repo);
+        // This task is only spawned for worktree items, so worktree path is always present.
+        let wt = ctx
+            .branch_ref
+            .working_tree(&ctx.repo)
+            .expect("GitOperationTask requires a worktree");
+        let git_operation = detect_git_operation(&wt);
         Ok(TaskResult::GitOperation {
             item_idx: ctx.item_idx,
             git_operation,
@@ -653,8 +785,8 @@ impl Task for UserMarkerTask {
     const KIND: TaskKind = TaskKind::UserMarker;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        let repo = ctx.repo();
-        let user_marker = repo.user_marker(ctx.branch.as_deref());
+        let repo = &ctx.repo;
+        let user_marker = repo.user_marker(ctx.branch_ref.branch.as_deref());
         Ok(TaskResult::UserMarker {
             item_idx: ctx.item_idx,
             user_marker,
@@ -669,10 +801,10 @@ impl Task for UpstreamTask {
     const KIND: TaskKind = TaskKind::Upstream;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        let repo = ctx.repo();
+        let repo = &ctx.repo;
 
         // No branch means no upstream
-        let Some(branch) = ctx.branch.as_deref() else {
+        let Some(branch) = ctx.branch_ref.branch.as_deref() else {
             return Ok(TaskResult::Upstream {
                 item_idx: ctx.item_idx,
                 upstream: UpstreamStatus::default(),
@@ -692,7 +824,7 @@ impl Task for UpstreamTask {
 
         let remote = upstream_branch.split_once('/').map(|(r, _)| r.to_string());
         let (ahead, behind) = repo
-            .ahead_behind(&upstream_branch, &ctx.commit_sha)
+            .ahead_behind(&upstream_branch, &ctx.branch_ref.commit_sha)
             .map_err(|e| ctx.error(Self::KIND, e))?;
 
         Ok(TaskResult::Upstream {
@@ -717,16 +849,10 @@ impl Task for CiStatusTask {
     const KIND: TaskKind = TaskKind::CiStatus;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        let repo = ctx.repo();
-        let repo_path = repo
-            .worktree_root()
-            .ok()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| ctx.repo_path.clone());
-
-        let pr_status = ctx.branch.as_deref().and_then(|branch| {
+        let repo = &ctx.repo;
+        let pr_status = ctx.branch_ref.branch.as_deref().and_then(|branch| {
             let has_upstream = repo.upstream_branch(branch).ok().flatten().is_some();
-            PrStatus::detect(branch, &ctx.commit_sha, &repo_path, has_upstream)
+            PrStatus::detect(repo, branch, &ctx.branch_ref.commit_sha, has_upstream)
         });
 
         Ok(TaskResult::CiStatus {

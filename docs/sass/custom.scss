@@ -395,12 +395,9 @@ main {
 // Links
 .content a {
     color: var(--wt-color-link);
-    transition: color 150ms, text-decoration 150ms;
-
-    &:hover {
-        text-decoration: underline;
-        text-decoration-thickness: 1.5px;
-    }
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
 }
 
 // ============================================================================
@@ -408,13 +405,16 @@ main {
 // ============================================================================
 
 .content code {
-    background-color: var(--wt-color-code-bg);
-    border-radius: 0.2rem;
-    padding: 0.05rem 0.25rem;
-    color: var(--wt-color-text);
+    padding: 0.1rem 0.3rem;
+    color: var(--wt-color-code-inline-text);
     font-family: var(--wt-font-mono);
     font-size: 0.92rem;
     font-weight: 400;
+}
+
+// Remove padding from code inside links so underline animation matches text width
+.content a code {
+    padding: 0;
 }
 
 // ============================================================================
@@ -1223,7 +1223,8 @@ input:focus-visible {
     box-shadow: 0 0 0 3px var(--wt-shadow-accent);
 }
 
-// Content links - animated underline
+// Content links - animated underline flourish on hover
+// Permanent underline via text-decoration; ::after adds animated thickening
 .content a:not(.button):not(.heading-anchor):not(.zola-anchor) {
     position: relative;
 
@@ -1231,19 +1232,15 @@ input:focus-visible {
         content: "";
         position: absolute;
         left: 0;
-        bottom: -1px;
+        bottom: 0;
         width: 0;
-        height: 1.5px;
-        background: var(--wt-color-accent);
+        height: 2px;
+        background: var(--wt-color-link);
         transition: width 200ms ease-out;
     }
 
     &:hover::after {
         width: 100%;
-    }
-
-    &:hover {
-        text-decoration: none;
     }
 }
 

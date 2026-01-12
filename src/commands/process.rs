@@ -44,7 +44,7 @@ pub fn spawn_detached(
     context_json: Option<&str>,
 ) -> anyhow::Result<std::path::PathBuf> {
     // Create log directory in the common git directory
-    let log_dir = repo.wt_logs_dir()?;
+    let log_dir = repo.wt_logs_dir();
     fs::create_dir_all(&log_dir).with_context(|| {
         format!(
             "Failed to create log directory {}",

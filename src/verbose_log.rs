@@ -66,18 +66,12 @@ pub fn log_file_path() -> Option<PathBuf> {
 
 /// Try to create the verbose log file in the repo's wt-logs directory.
 ///
-/// TODO: This uses current_dir() which ignores the `-C` flag. If a user runs
-/// `wt -C /other/repo list --verbose` from outside the repo, the log file
-/// will be created in the wrong location (or not at all). To fix this,
-/// verbose_log::init() would need to run after set_base_path(), or accept
-/// a repository parameter.
 fn try_create_log_file() -> Option<(PathBuf, File)> {
     // Find the git repo from current directory
-    let cwd = std::env::current_dir().ok()?;
-    let repo = worktrunk::git::Repository::at(cwd);
+    let repo = worktrunk::git::Repository::current().ok()?;
 
     // Get the wt-logs directory (creates it if needed)
-    let log_dir = repo.wt_logs_dir().ok()?;
+    let log_dir = repo.wt_logs_dir();
     std::fs::create_dir_all(&log_dir).ok()?;
 
     let path = log_dir.join("verbose.log");

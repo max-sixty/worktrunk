@@ -69,6 +69,10 @@ Use --yes to skip confirmation."#
         #[arg(short, long)]
         yes: bool,
 
+        /// Show what would be changed
+        #[arg(long)]
+        dry_run: bool,
+
         /// Command name for shell integration (defaults to binary name)
         ///
         /// Use this to create shell integration for an alternate command name.
@@ -113,6 +117,10 @@ Detects various forms of the integration pattern regardless of:
         /// Skip confirmation prompt
         #[arg(short, long)]
         yes: bool,
+
+        /// Show what would be changed
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Show output theme samples
@@ -216,7 +224,7 @@ Use `wt config show` to view file-based configuration.
 
 ## Keys
 
-- **default-branch**: The repository's default branch (main, master, etc.)
+- **default-branch**: The repository's default branch (`main`, `master`, etc.)
 - **previous-branch**: Previous branch for `wt switch -`
 - **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
@@ -279,7 +287,7 @@ pub enum StateCommand {
 git rebase $(wt config state default-branch)
 ```
 
-Without a subcommand, runs `get`. Use `set` to override, `get --refresh` to re-detect, or `clear` to reset.
+Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
 
 ## Detection
 
@@ -296,7 +304,7 @@ The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
 - For bare repos or empty repos, checks `symbolic-ref HEAD`
 - Checks `git config init.defaultBranch`
-- Looks for common names: main, master, develop, trunk"#
+- Looks for common names: `main`, `master`, `develop`, `trunk`"#
     )]
     DefaultBranch {
         #[command(subcommand)]
@@ -344,7 +352,7 @@ Without a subcommand, runs `get`. Use `set` to override or `clear` to reset."#
 
 See [`wt list` CI status](@/list.md#ci-status) for display symbols and colors.
 
-Without a subcommand, runs `get` for the current branch. Use `get --refresh` to force re-fetch or `clear --all` to reset cache."#
+Without a subcommand, runs `get` for the current branch. Use `clear` to reset cache for a branch or `clear --all` to reset all."#
     )]
     CiStatus {
         #[command(subcommand)]
@@ -496,15 +504,11 @@ Get the default branch:
 wt config state default-branch
 ```
 
-Force refresh from remote:
+Clear cache and re-detect:
 ```console
-wt config state default-branch get --refresh
+wt config state default-branch clear && wt config state default-branch get
 ```"#)]
-    Get {
-        /// Force refresh from remote
-        #[arg(long)]
-        refresh: bool,
-    },
+    Get,
 
     /// Set the default branch
     #[command(after_long_help = r#"## Examples
@@ -564,21 +568,17 @@ Get CI status for current branch:
 wt config state ci-status
 ```
 
-Force refresh from GitHub/GitLab:
-```console
-wt config state ci-status get --refresh
-```
-
 Get CI status for a specific branch:
 ```console
 wt config state ci-status get --branch=feature
+```
+
+Clear cache and re-fetch:
+```console
+wt config state ci-status clear && wt config state ci-status get
 ```"#
     )]
     Get {
-        /// Force refresh from GitHub/GitLab
-        #[arg(long)]
-        refresh: bool,
-
         /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer())]
         branch: Option<String>,

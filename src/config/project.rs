@@ -123,7 +123,8 @@ impl ProjectConfig {
         write_hints: bool,
     ) -> Result<Option<Self>, ConfigError> {
         let repo_root = repo
-            .worktree_root()
+            .current_worktree()
+            .root()
             .map_err(|e| ConfigError::Message(format!("Failed to get worktree root: {}", e)))?;
         let config_path = repo_root.join(".config").join("wt.toml");
 

@@ -62,10 +62,15 @@ cargo test --test integration --features shell-integration-tests
 
 ### Claude Code Web Environment
 
-When working in Claude Code web, run the setup script first:
+When working in Claude Code web, install the task runner and run setup:
 
 ```bash
-./dev/setup-claude-code-web.sh
+# Install task (go-task) - https://taskfile.dev
+sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin
+export PATH="$HOME/bin:$PATH"
+
+# Run setup
+task setup-web
 ```
 
 This installs required shells (zsh, fish) for shell integration tests and builds the project. Also installs `gh` and other dev tools—run this if any command is not found. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) automatically skip when running as root, which is common in containerized environments.
@@ -166,24 +171,31 @@ Examples: `feature-user-post-start-npm.log`, `feature-project-post-start-build.l
 
 ## Coverage
 
-The `codecov/patch` CI check enforces coverage on changed lines — respond to failures by writing tests, not by ignoring them.
+The `codecov/patch` CI check enforces coverage on changed lines — respond to failures by writing tests, not by ignoring them. If code is unused, remove it. This includes specialized error handlers for rare cases when falling through to a more general handler is sufficient.
 
 ### Running Coverage Locally
 
-- Install once: `cargo install cargo-llvm-cov`
-- Run: `./dev/coverage.sh` — generates HTML (`target/llvm-cov/html/index.html`) and LCOV
-- Filter tests: `./dev/coverage.sh -- --test test_name`
+```bash
+task coverage
+# Report: target/llvm-cov/html/index.html
+```
+
+Install once: `cargo install cargo-llvm-cov`
 
 ### Investigating codecov/patch Failures
 
-```bash
-# Find uncovered lines
-./dev/coverage.sh
-cargo llvm-cov report --show-missing-lines | grep <file>
+When CI shows a codecov/patch failure, investigate before declaring "ready to merge" — even if the check is marked "not required":
 
-# Compare against your diff (three-dot for PR changes)
-git diff main...HEAD -- path/to/file.rs
-```
+1. Identify uncovered lines in your changes:
+   ```bash
+   task coverage
+   cargo llvm-cov report --show-missing-lines | grep <file>
+   git diff main...HEAD -- path/to/file.rs
+   ```
+
+2. For each uncovered function/method you added, either:
+   - Write a test that exercises it, or
+   - Document why it's intentionally untested (e.g., error paths requiring external system mocks)
 
 ## Benchmarks
 

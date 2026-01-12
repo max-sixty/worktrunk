@@ -265,7 +265,7 @@ wt switch --create temp --no-verify      # Skip hooks
 
 | Shortcut | Meaning |
 |----------|---------|
-| `^` | Default branch (main/master) |
+| `^` | Default branch (`main`/`master`) |
 | `@` | Current branch/worktree |
 | `-` | Previous worktree (like `cd -`) |
 
@@ -883,7 +883,7 @@ Toggle between views with number keys:
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
-Branches without worktrees are included — selecting one creates a worktree. (`wt list` requires `--branches` to show them.)
+With `--branches`, branches without worktrees are included — selecting one creates a worktree. This matches `wt list --branches`.
 
 ## Configuration
 
@@ -904,7 +904,15 @@ This is useful when the default pager doesn't render correctly in the embedded p
 - [`wt switch`](@/switch.md) — Direct switching to a known target branch
 "#
     )]
-    Select,
+    Select {
+        /// Include branches without worktrees
+        #[arg(long)]
+        branches: bool,
+
+        /// Include remote branches
+        #[arg(long)]
+        remotes: bool,
+    },
 
     /// Run individual operations
     #[command(
@@ -1142,8 +1150,6 @@ Hooks can use template variables that expand at runtime:
 
 See [Designing effective hooks](#designing-effective-hooks) for `main_worktree_path` patterns.
 
-**Deprecated:** `repo_root` (use `repo_path`), `worktree` (use `worktree_path`), `main_worktree` (use `repo`). These still work but emit warnings.
-
 ### Filters
 
 Templates support Jinja2 filters for transforming values:
@@ -1151,9 +1157,10 @@ Templates support Jinja2 filters for transforming values:
 | Filter | Example | Description |
 |--------|---------|-------------|
 | `sanitize` | `{{ branch \| sanitize }}` | Replace `/` and `\` with `-` |
+| `sanitize_db` | `{{ branch \| sanitize_db }}` | Database-safe identifier with hash suffix (`[a-z0-9_]`, max 63 chars) |
 | `hash_port` | `{{ branch \| hash_port }}` | Hash to port 10000-19999 |
 
-The `sanitize` filter makes branch names safe for filesystem paths. The `hash_port` filter is useful for running dev servers on unique ports per worktree:
+The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers (lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words). The `hash_port` filter is useful for running dev servers on unique ports per worktree:
 
 ```toml
 [post-start]
@@ -1236,7 +1243,7 @@ db = """
 docker run -d --rm \
   --name {{ repo }}-{{ branch | sanitize }}-postgres \
   -p {{ ('db-' ~ branch) | hash_port }}:5432 \
-  -e POSTGRES_DB={{ repo }} \
+  -e POSTGRES_DB={{ branch | sanitize_db }} \
   -e POSTGRES_PASSWORD=dev \
   postgres:16
 """
@@ -1254,7 +1261,7 @@ Generate `.env.local` with the connection string:
 [post-create]
 env = """
 cat > .env.local << EOF
-DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ repo }}
+DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}
 DEV_PORT={{ branch | hash_port }}
 EOF
 """
@@ -1577,7 +1584,7 @@ The `[list]` section adds a URL column to `wt list`:
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-URLs are dimmed when the port isn't listening. The template supports `{{ branch }}` with filters `hash_port` (port 10000-19999) and `sanitize` (filesystem-safe).
+URLs are dimmed when the port isn't listening.
 
 ### CI platform override
 

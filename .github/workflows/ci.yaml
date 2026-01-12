@@ -100,6 +100,13 @@ jobs:
     - name: 🧪 Pre-merge hooks
       run: wt hook pre-merge --yes
 
+    - name: 📊 Upload test timing
+      if: always()
+      uses: actions/upload-artifact@v6
+      with:
+        name: junit-${{ matrix.os }}
+        path: target/nextest/default/junit.xml
+
   # Check if Cargo files changed (for conditional jobs below)
   changes:
     runs-on: ubuntu-latest

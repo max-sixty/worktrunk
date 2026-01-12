@@ -76,7 +76,7 @@ impl RepositoryCliExt for Repository {
         force_worktree: bool,
         config: &WorktrunkConfig,
     ) -> anyhow::Result<RemoveResult> {
-        let current_path = self.worktree_root()?.to_path_buf();
+        let current_path = self.current_worktree().root()?.to_path_buf();
         let worktrees = self.list_worktrees()?;
         // Home worktree: prefer default branch's worktree, fall back to first worktree,
         // then repo base for bare repos with no worktrees.
@@ -155,16 +155,14 @@ impl RepositoryCliExt for Repository {
             }
         };
 
-        // Create Repository at target for validation
-        let target_repo = Repository::at(&worktree_path);
-
         // Cannot remove the main working tree (only linked worktrees can be removed)
-        if !target_repo.is_in_worktree()? {
+        let target_wt = self.worktree_at(&worktree_path);
+        if !target_wt.is_linked()? {
             return Err(GitError::CannotRemoveMainWorktree.into());
         }
 
         // Ensure the working tree is clean
-        target_repo.ensure_clean_working_tree("remove worktree", branch_name.as_deref())?;
+        target_wt.ensure_clean("remove worktree", branch_name.as_deref())?;
 
         // Compute main_path and changed_directory based on whether we're removing current
         let (main_path, changed_directory) = if is_current {
@@ -175,8 +173,7 @@ impl RepositoryCliExt for Repository {
 
         // Resolve target branch for integration reason display
         // Skip if removing the default branch itself (avoids tautological "main (ancestor of main)")
-        // Use .ok() to treat errors as unknown - safer than empty string for integration checks
-        let default_branch = self.default_branch().ok();
+        let default_branch = self.default_branch();
         let target_branch = match (&default_branch, &branch_name) {
             (Some(db), Some(bn)) if db == bn => None,
             _ => default_branch,
@@ -224,15 +221,15 @@ impl RepositoryCliExt for Repository {
             return Ok(None);
         }
 
-        let wt_repo = Repository::at(wt_path);
-        if !wt_repo.is_dirty()? {
+        let wt = self.worktree_at(wt_path);
+        if !wt.is_dirty()? {
             return Ok(None);
         }
 
         let push_files = self.changed_files(target_branch, "HEAD")?;
         // Use -z for NUL-separated output: handles filenames with spaces and renames correctly
         // Format: "XY path\0" for normal files, "XY new_path\0old_path\0" for renames/copies
-        let wt_status_output = wt_repo.run_command(&["status", "--porcelain", "-z"])?;
+        let wt_status_output = wt.run_command(&["status", "--porcelain", "-z"])?;
 
         let wt_files: Vec<String> = parse_porcelain_z(&wt_status_output);
 
@@ -268,13 +265,13 @@ impl RepositoryCliExt for Repository {
         )))?;
 
         let stash_output =
-            wt_repo.run_command(&["stash", "push", "--include-untracked", "-m", &stash_name])?;
+            wt.run_command(&["stash", "push", "--include-untracked", "-m", &stash_name])?;
 
         if stash_output.contains("No local changes to save") {
             return Ok(None);
         }
 
-        let list_output = wt_repo.run_command(&["stash", "list", "--format=%gd%x00%gs%x00"])?;
+        let list_output = wt.run_command(&["stash", "list", "--format=%gd%x00%gs%x00"])?;
         let mut parts = list_output.split('\0');
         let mut stash_ref = None;
         while let Some(id) = parts.next() {
@@ -339,10 +336,12 @@ fn compute_integration_reason(
         return None;
     }
     let (branch, target) = branch_name.zip(target_branch)?;
-    let main_repo = Repository::at(main_path);
-    let effective_target = main_repo.effective_integration_target(target);
-    let mut provider =
-        worktrunk::git::LazyGitIntegration::new(&main_repo, branch, &effective_target);
+    // Use main_path for git operations - this is where the user will end up,
+    // and integration checks need to run from a stable location that won't be
+    // removed during the operation.
+    let repo = Repository::at(main_path).ok()?;
+    let effective_target = repo.effective_integration_target(target);
+    let mut provider = worktrunk::git::LazyGitIntegration::new(&repo, branch, &effective_target);
     worktrunk::git::check_integration(&mut provider)
 }
 
@@ -378,7 +377,6 @@ pub(crate) struct TargetWorktreeStash {
 }
 
 struct StashData {
-    repo: Repository,
     path: PathBuf,
     stash_ref: String,
 }
@@ -391,9 +389,17 @@ impl StashData {
             format_path_for_display(&self.path)
         )));
 
-        if let Err(_e) = self
-            .repo
-            .run_command(&["stash", "pop", "--quiet", &self.stash_ref])
+        let Ok(repo) = Repository::current() else {
+            let _ = crate::output::print(warning_message(cformat!(
+                "Failed to restore stash <bold>{stash_ref}</> - run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
+                stash_ref = self.stash_ref,
+                path = format_path_for_display(&self.path),
+            )));
+            return;
+        };
+        if let Err(_e) =
+            repo.worktree_at(&self.path)
+                .run_command(&["stash", "pop", "--quiet", &self.stash_ref])
         {
             let _ = crate::output::print(warning_message(cformat!(
                 "Failed to restore stash <bold>{stash_ref}</> - run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
@@ -416,7 +422,6 @@ impl TargetWorktreeStash {
     pub(crate) fn new(path: &Path, stash_ref: String) -> Self {
         Self {
             inner: Some(StashData {
-                repo: Repository::at(path),
                 path: path.to_path_buf(),
                 stash_ref,
             }),

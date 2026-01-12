@@ -9,6 +9,7 @@
 use anyhow::Context;
 use color_print::cformat;
 use std::fmt::Write as _;
+use strum::IntoEnumIterator;
 use worktrunk::HookType;
 use worktrunk::config::{CommandConfig, ProjectConfig, WorktrunkConfig};
 use worktrunk::git::{GitError, Repository};
@@ -204,7 +205,7 @@ pub fn run_hook(
             require_hooks(user_config, project_config, hook_type)?;
             // Pre-commit hook can optionally use target branch context
             // Custom vars take precedence (added last)
-            let target_branch = repo.default_branch().ok();
+            let target_branch = repo.default_branch();
             let mut extra_vars: Vec<(&str, &str)> = target_branch
                 .as_deref()
                 .into_iter()
@@ -263,24 +264,22 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     use super::command_approval::approve_command_batch;
     use worktrunk::config::WorktrunkConfig;
 
-    let repo = Repository::current();
+    let repo = Repository::current()?;
     let project_id = repo.project_identifier()?;
     let config = WorktrunkConfig::load().context("Failed to load config")?;
 
     // Load project config (error if missing - this command requires it)
-    let config_path = repo.worktree_root()?.join(".config").join("wt.toml");
+    let config_path = repo
+        .current_worktree()
+        .root()?
+        .join(".config")
+        .join("wt.toml");
     let project_config = repo
         .load_project_config()?
         .ok_or(GitError::ProjectConfigNotFound { config_path })?;
 
     // Collect all commands from the project config
-    let all_hooks = [
-        HookType::PostCreate,
-        HookType::PostStart,
-        HookType::PreCommit,
-        HookType::PreMerge,
-        HookType::PostMerge,
-    ];
+    let all_hooks: Vec<_> = HookType::iter().collect();
     let commands = collect_commands_for_hooks(&project_config, &all_hooks);
 
     if commands.is_empty() {
@@ -292,7 +291,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     let commands_to_approve = if !show_all {
         let unapproved: Vec<_> = commands
             .into_iter()
-            .filter(|cmd| !config.is_command_approved(project_id, &cmd.command.template))
+            .filter(|cmd| !config.is_command_approved(&project_id, &cmd.command.template))
             .collect();
 
         if unapproved.is_empty() {
@@ -309,7 +308,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     // When show_all=true, we've already included all commands in commands_to_approve
     // When show_all=false, we've already filtered to unapproved commands
     // So we pass skip_approval_filter=true to prevent double-filtering
-    let approved = approve_command_batch(&commands_to_approve, project_id, &config, false, true)?;
+    let approved = approve_command_batch(&commands_to_approve, &project_id, &config, false, true)?;
 
     // Show result
     if approved {
@@ -345,11 +344,11 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
         )))?;
     } else {
         // Clear approvals for current project (default)
-        let repo = Repository::current();
+        let repo = Repository::current()?;
         let project_id = repo.project_identifier()?;
 
         // Check if project has any approvals
-        let had_approvals = config.projects.contains_key(project_id);
+        let had_approvals = config.projects.contains_key(&project_id);
 
         if !had_approvals {
             crate::output::print(info_message("No approvals to clear for this project"))?;
@@ -359,12 +358,12 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
         // Count approvals before removing
         let approval_count = config
             .projects
-            .get(project_id)
+            .get(&project_id)
             .map(|p| p.approved_commands.len())
             .unwrap_or(0);
 
         config
-            .revoke_project(project_id, None)
+            .revoke_project(&project_id, None)
             .context("Failed to clear project approvals")?;
 
         crate::output::print(success_message(format!(
@@ -380,7 +379,7 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
 pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyhow::Result<()> {
     use crate::help_pager::show_help_in_pager;
 
-    let repo = Repository::current();
+    let repo = Repository::current()?;
     let config = WorktrunkConfig::load().context("Failed to load user config")?;
     let project_config = repo.load_project_config()?;
     let project_id = repo.project_identifier().ok();
@@ -419,7 +418,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
         &repo,
         project_config.as_ref(),
         &config,
-        project_id,
+        project_id.as_deref(),
         filter,
         ctx.as_ref(),
     )?;
@@ -498,7 +497,7 @@ fn render_project_hooks(
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
-    let repo_root = repo.worktree_root()?;
+    let repo_root = repo.current_worktree().root()?;
     let config_path = repo_root.join(".config").join("wt.toml");
 
     writeln!(
@@ -604,7 +603,7 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
     use super::command_executor::build_hook_context;
 
     // Build extra vars based on hook type (same logic as run_hook approval)
-    let default_branch = ctx.repo.default_branch().ok();
+    let default_branch = ctx.repo.default_branch();
     let extra_vars: Vec<(&str, &str)> = match hook_type {
         HookType::PreCommit => {
             // Pre-commit uses default branch as target (for comparison context)

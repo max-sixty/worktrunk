@@ -174,7 +174,7 @@ The `[list]` section adds a URL column to `wt list`:
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-URLs are dimmed when the port isn't listening. The template supports `{{ branch }}` with filters `hash_port` (port 10000-19999) and `sanitize` (filesystem-safe).
+URLs are dimmed when the port isn't listening.
 
 ### CI platform override
 
@@ -339,9 +339,10 @@ Creates `~/.config/worktrunk/config.toml` with the following content:
 
 # Worktree Path Template
 # Variables:
-#   {{ repo }}              - Repository directory name (e.g., "myproject")
-#   {{ branch }}            - Raw branch name (e.g., "feature/auth")
-#   {{ branch | sanitize }} - Branch name with / and \ replaced by - (e.g., "feature-auth")
+#   {{ repo }}                 - Repository directory name (e.g., "myproject")
+#   {{ branch }}               - Raw branch name (e.g., "feature/auth")
+#   {{ branch | sanitize }}    - Filesystem-safe: / and \ replaced by - (e.g., "feature-auth")
+#   {{ branch | sanitize_db }} - Database-safe: lowercase, underscores, hash suffix (e.g., "feature_auth_x7k")
 #
 # Paths are relative to the main worktree root (original repository directory).
 #
@@ -532,21 +533,20 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 # Named commands appear in output, making it easier to identify failures.
 
 # ============================================================================
-# Template Variables
+# Template Variables — see https://worktrunk.dev/hook/#template-variables
 # ============================================================================
-# All hooks support these variables:
+# Common variables:
 #   {{ repo }}               - Repository directory name (e.g., "myproject")
 #   {{ branch }}             - Branch name (e.g., "feature/auth")
 #   {{ worktree_path }}      - Absolute path to worktree
 #   {{ main_worktree_path }} - Absolute path to main worktree
 #   {{ default_branch }}     - Default branch name (e.g., "main")
-#
-# Merge hooks (pre-commit, pre-merge, post-merge) also support:
-#   {{ target }}             - Target branch for the merge
+#   {{ target }}             - Target branch (merge hooks only)
 #
 # Filters:
-#   {{ branch | sanitize }}  - Replace / and \ with - (e.g., "feature-auth")
-#   {{ branch | hash_port }} - Deterministic port 10000-19999
+#   {{ branch | sanitize }}     - Replace / and \ with - (e.g., "feature-auth")
+#   {{ branch | sanitize_db }}  - Database-safe identifier with hash suffix (e.g., "feature_auth_x7k")
+#   {{ branch | hash_port }}    - Deterministic port 10000-19999
 
 # ============================================================================
 # Hooks
@@ -690,7 +690,7 @@ Use `wt config show` to view file-based configuration.
 
 ### Keys
 
-- **default-branch**: The repository's default branch (main, master, etc.)
+- **default-branch**: The repository's default branch (`main`, `master`, etc.)
 - **previous-branch**: Previous branch for `wt switch -`
 - **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
@@ -768,7 +768,7 @@ Useful in scripts to avoid hardcoding `main` or `master`:
 git rebase $(wt config state default-branch)
 ```
 
-Without a subcommand, runs `get`. Use `set` to override, `get --refresh` to re-detect, or `clear` to reset.
+Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
 
 ### Detection
 
@@ -785,7 +785,7 @@ The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
 - For bare repos or empty repos, checks `symbolic-ref HEAD`
 - Checks `git config init.defaultBranch`
-- Looks for common names: main, master, develop, trunk
+- Looks for common names: `main`, `master`, `develop`, `trunk`
 
 ### Command reference
 
@@ -839,7 +839,7 @@ Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 
 See [`wt list` CI status](@/list.md#ci-status) for display symbols and colors.
 
-Without a subcommand, runs `get` for the current branch. Use `get --refresh` to force re-fetch or `clear --all` to reset cache.
+Without a subcommand, runs `get` for the current branch. Use `clear` to reset cache for a branch or `clear --all` to reset all.
 
 ### Command reference
 

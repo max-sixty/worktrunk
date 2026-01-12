@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::super::{DefaultBranchName, Worktree, finalize_worktree};
+use super::super::{DefaultBranchName, WorktreeInfo, finalize_worktree};
 
 #[test]
 fn test_parse_worktree_list() {
@@ -14,7 +14,7 @@ branch refs/heads/feature
 
 ";
 
-    let worktrees = Worktree::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
     assert_eq!(worktrees.len(), 2);
 
     assert_eq!(worktrees[0].path, PathBuf::from("/path/to/main"));
@@ -36,7 +36,7 @@ detached
 
 ";
 
-    let worktrees = Worktree::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
     assert_eq!(worktrees.len(), 1);
     assert!(worktrees[0].detached);
     assert_eq!(worktrees[0].branch, None);
@@ -45,7 +45,7 @@ detached
 #[test]
 fn test_finalize_worktree_with_branch() {
     // Worktree with a branch should not be modified
-    let wt = Worktree {
+    let wt = WorktreeInfo {
         path: PathBuf::from("/path/to/worktree"),
         head: "abcd1234".to_string(),
         branch: Some("feature".to_string()),
@@ -62,7 +62,7 @@ fn test_finalize_worktree_with_branch() {
 #[test]
 fn test_finalize_worktree_detached_with_branch() {
     // Detached worktree with a branch (unusual but possible) should keep the branch
-    let wt = Worktree {
+    let wt = WorktreeInfo {
         path: PathBuf::from("/path/to/worktree"),
         head: "abcd1234".to_string(),
         branch: Some("feature".to_string()),
@@ -82,7 +82,7 @@ fn test_finalize_worktree_detached_no_branch() {
     // Note: This test validates the logic flow but doesn't test actual file reading
     // since that would require setting up git rebase state files.
     // Actual rebase detection has been manually verified.
-    let wt = Worktree {
+    let wt = WorktreeInfo {
         path: PathBuf::from("/nonexistent/path"),
         head: "abcd1234".to_string(),
         branch: None,
@@ -107,7 +107,7 @@ locked reason for lock
 
 ";
 
-    let worktrees = Worktree::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
     assert_eq!(worktrees.len(), 1);
     assert_eq!(worktrees[0].locked, Some("reason for lock".to_string()));
 }
@@ -120,7 +120,7 @@ bare
 
 ";
 
-    let worktrees = Worktree::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
     assert_eq!(worktrees.len(), 1);
     assert!(worktrees[0].bare);
 }
@@ -331,7 +331,7 @@ locked
 
 ";
 
-    let worktrees = Worktree::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
     assert_eq!(worktrees.len(), 1);
     // Empty lock reason should still be recorded
     assert_eq!(worktrees[0].locked, Some(String::new()));
@@ -346,7 +346,7 @@ prunable gitdir file points to non-existent location
 
 ";
 
-    let worktrees = Worktree::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
     assert_eq!(worktrees.len(), 1);
     assert!(worktrees[0].prunable.is_some());
     assert!(
@@ -378,7 +378,7 @@ detached
 
 ";
 
-    let worktrees = Worktree::parse_porcelain_list(output).unwrap();
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
     assert_eq!(worktrees.len(), 4);
     assert_eq!(worktrees[0].branch, Some("main".to_string()));
     assert_eq!(worktrees[1].branch, Some("feature-a".to_string()));

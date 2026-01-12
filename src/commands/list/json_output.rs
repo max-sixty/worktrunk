@@ -9,9 +9,9 @@
 //!
 //! Fields are organized by concept, matching the status display subcolumns:
 //! - `working_tree`: staged/modified/untracked changes
-//! - `main_state`: relationship to main (would_conflict, same_commit, integrated, diverged, ahead, behind)
+//! - `main_state`: relationship to the default branch (would_conflict, same_commit, integrated, diverged, ahead, behind)
 //! - `operation_state`: git operations in progress (conflicts, rebase, merge)
-//! - `main`: relationship to main branch (ahead/behind/diff counts)
+//! - `main`: relationship to the default branch (ahead/behind/diff counts)
 //! - `remote`: relationship to tracking branch
 //! - `worktree`: worktree-specific state (locked, prunable, etc.)
 
@@ -43,8 +43,8 @@ pub struct JsonItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_tree: Option<JsonWorkingTree>,
 
-    /// Main branch relationship: would_conflict, same_commit, integrated, diverged, ahead, behind
-    /// (null for main branch itself)
+    /// Default branch relationship: would_conflict, same_commit, integrated, diverged, ahead, behind
+    /// (null for default branch itself)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub main_state: Option<&'static str>,
 
@@ -57,7 +57,7 @@ pub struct JsonItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_state: Option<&'static str>,
 
-    /// Relationship to main branch (absent when is_main == true)
+    /// Relationship to default branch (absent when is_main == true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub main: Option<JsonMain>,
 
@@ -72,10 +72,10 @@ pub struct JsonItem {
     /// This is the main worktree
     pub is_main: bool,
 
-    /// This is the current worktree (matches $PWD)
+    /// This is the current worktree (matches repo discovery path: PWD or `-C`)
     pub is_current: bool,
 
-    /// This was the previous worktree (from wt switch)
+    /// This was the previous worktree (from `worktrunk.history`)
     pub is_previous: bool,
 
     /// CI status from PR or branch workflow
@@ -137,7 +137,7 @@ pub struct JsonWorkingTree {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff: Option<JsonDiff>,
 
-    /// Lines added/deleted in working tree vs main branch
+    /// Lines added/deleted in working tree vs default branch
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff_vs_main: Option<JsonDiff>,
 }
@@ -158,16 +158,16 @@ impl From<LineDiff> for JsonDiff {
     }
 }
 
-/// Relationship to main branch
+/// Relationship to default branch
 #[derive(Debug, Clone, Serialize)]
 pub struct JsonMain {
-    /// Commits ahead of main
+    /// Commits ahead of default branch
     pub ahead: usize,
 
-    /// Commits behind main
+    /// Commits behind default branch
     pub behind: usize,
 
-    /// Lines added/deleted vs main branch
+    /// Lines added/deleted vs default branch
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff: Option<JsonDiff>,
 }
@@ -191,7 +191,7 @@ pub struct JsonRemote {
 /// Worktree-specific state
 #[derive(Debug, Clone, Serialize)]
 pub struct JsonWorktree {
-    /// Worktree state: "no_worktree", "branch_worktree_mismatch", "prunable", "locked" (absent when normal)
+    /// Worktree state: "branch_worktree_mismatch", "prunable", "locked" (absent when normal)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<&'static str>,
 

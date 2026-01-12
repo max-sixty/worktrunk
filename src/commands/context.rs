@@ -30,7 +30,7 @@ impl CommandEnv {
     /// `action` describes what command is running (e.g., "merge", "squash").
     /// Used in error messages when the environment can't be loaded.
     pub fn for_action(action: &str) -> anyhow::Result<Self> {
-        let repo = Repository::current();
+        let repo = Repository::current()?;
         let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
         let branch = repo.require_current_branch(action)?;
         let config = WorktrunkConfig::load().context("Failed to load config")?;
@@ -52,13 +52,13 @@ impl CommandEnv {
     /// Use this for commands that can operate in detached HEAD state,
     /// such as running hooks (where `{{ branch }}` expands to "HEAD" if detached).
     pub fn for_action_branchless() -> anyhow::Result<Self> {
-        let repo = Repository::current();
+        let repo = Repository::current()?;
         let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
         // Propagate git errors (broken repo, missing git) but allow None for detached HEAD
         let branch = repo
-            .current_branch()
-            .context("Failed to determine current branch")?
-            .map(str::to_string);
+            .current_worktree()
+            .branch()
+            .context("Failed to determine current branch")?;
         let config = WorktrunkConfig::load().context("Failed to load config")?;
         let repo_root = repo
             .worktree_base()

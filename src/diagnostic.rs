@@ -170,7 +170,7 @@ impl DiagnosticReport {
 
     /// Write the diagnostic report to a file.
     fn write_file(&self, repo: &Repository) -> Option<PathBuf> {
-        let log_dir = repo.wt_logs_dir().ok()?;
+        let log_dir = repo.wt_logs_dir();
         std::fs::create_dir_all(&log_dir).ok()?;
 
         let path = log_dir.join("diagnostic.md");
@@ -258,7 +258,7 @@ fn get_config_show_output(repo: &Repository) -> Option<String> {
     }
 
     // Project config
-    if let Ok(root) = repo.worktree_root() {
+    if let Ok(root) = repo.current_worktree().root() {
         let project_config_path = root.join(".config/wt.toml");
         output.push_str(&format!(
             "\n{}",

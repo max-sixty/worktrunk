@@ -57,8 +57,9 @@ pub enum StepCommand {
 
     /// Fast-forward target to current branch
     ///
-    /// Updates the local target branch (e.g., main) to include current commits.
-    /// Equivalent to `git push . HEAD:main`.
+    /// Updates the local target branch (e.g., `main`) to include current commits.
+    /// Similar to `git push . HEAD:<target>`, but uses
+    /// `receive.denyCurrentBranch=updateInstead` internally.
     Push {
         /// Target branch
         ///
@@ -171,25 +172,7 @@ Context JSON is piped to stdin for scripts that need structured data.
 
 ## Template variables
 
-All variables are shell-escaped:
-
-| Variable | Description |
-|----------|-------------|
-| `{{ branch }}` | Branch name (raw, e.g., `feature/auth`) |
-| `{{ branch \| sanitize }}` | Branch name with `/` and `\` replaced by `-` |
-| `{{ repo }}` | Repository directory name (e.g., `myproject`) |
-| `{{ repo_path }}` | Absolute path to repository root |
-| `{{ worktree_name }}` | Worktree directory name |
-| `{{ worktree_path }}` | Absolute path to current worktree |
-| `{{ main_worktree_path }}` | Default branch worktree path |
-| `{{ commit }}` | Current HEAD commit SHA (full) |
-| `{{ short_commit }}` | Current HEAD commit SHA (7 chars) |
-| `{{ default_branch }}` | Default branch name (e.g., "main") |
-| `{{ remote }}` | Primary remote name (e.g., "origin") |
-| `{{ remote_url }}` | Primary remote URL |
-| `{{ upstream }}` | Upstream tracking branch, if configured |
-
-**Deprecated:** `repo_root` (use `repo_path`), `worktree` (use `worktree_path`), `main_worktree` (use `repo`).
+All variables are shell-escaped. See [`wt hook` template variables](@/hook.md#template-variables) for the complete list and filters.
 
 ## Examples
 

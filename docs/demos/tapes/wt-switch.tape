@@ -26,8 +26,8 @@ Type "wt switch --create api"
 Enter
 Sleep 1.5s
 
-# Create with specific command execution - launch Claude Code UI
-Type "wt switch --execute claude --create dashboard"
-Sleep 1s
+# Create with specific command execution - launch Claude with initial prompt
+Type "wt switch --execute claude --create dashboard -- 'Add settings page'"
+Sleep 500ms
 Enter
 Sleep 6s

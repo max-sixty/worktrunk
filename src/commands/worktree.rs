@@ -188,92 +188,16 @@ pub fn resolve_worktree_arg(
 ///
 /// For the default branch, returns the repo root (main worktree location).
 /// For other branches, applies the `worktree-path` template from config.
+///
+/// Uses cached values from Repository for `default_branch` and `is_bare`.
 pub fn compute_worktree_path(
     repo: &Repository,
     branch: &str,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<PathBuf> {
+    let repo_root = repo.worktree_base()?;
     let default_branch = repo.default_branch().unwrap_or_default();
     let is_bare = repo.is_bare()?;
-    compute_worktree_path_with(repo, branch, config, &default_branch, is_bare)
-}
-
-/// Check if a worktree is at its expected path based on config template.
-///
-/// Returns true if the worktree's actual path matches what `compute_worktree_path`
-/// would generate for its branch. Detached HEAD always returns false (no expected path).
-///
-/// Uses canonicalization to handle symlinks and relative paths correctly.
-///
-/// Note: For hot paths where default_branch and is_bare are already known,
-/// use `is_worktree_at_expected_path_with` to avoid redundant git calls.
-fn is_worktree_at_expected_path(
-    wt: &worktrunk::git::Worktree,
-    repo: &Repository,
-    config: &WorktrunkConfig,
-) -> bool {
-    // Compute default_branch and is_bare once, then delegate to the optimized variant
-    let default_branch = repo.default_branch().unwrap_or_default();
-    let is_bare = repo.is_bare().unwrap_or(false);
-    is_worktree_at_expected_path_with(wt, repo, config, &default_branch, is_bare)
-}
-
-/// Compare two paths for equality, canonicalizing to handle symlinks and relative paths.
-///
-/// Returns `true` if the paths resolve to the same location.
-fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
-    use dunce::canonicalize;
-    let a_canonical = canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
-    let b_canonical = canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
-    a_canonical == b_canonical
-}
-
-/// Check if a worktree is at its expected path, with pre-computed values.
-///
-/// Use this when `default_branch` and `is_bare` are already known (e.g., in list command)
-/// to avoid redundant git calls.
-pub fn is_worktree_at_expected_path_with(
-    wt: &worktrunk::git::Worktree,
-    repo: &Repository,
-    config: &WorktrunkConfig,
-    default_branch: &str,
-    is_bare: bool,
-) -> bool {
-    match &wt.branch {
-        Some(branch) => compute_worktree_path_with(repo, branch, config, default_branch, is_bare)
-            .map(|expected| paths_match(&wt.path, &expected))
-            .unwrap_or(false),
-        None => false,
-    }
-}
-
-/// Returns the expected path if `actual_path` differs from the template-computed path.
-///
-/// Returns `Some(expected_path)` when there's a mismatch, `None` when paths match.
-/// Used to show path mismatch warnings in `wt remove` and `wt merge`.
-pub fn get_path_mismatch(
-    repo: &Repository,
-    branch: &str,
-    actual_path: &std::path::Path,
-    config: &WorktrunkConfig,
-) -> Option<PathBuf> {
-    compute_worktree_path(repo, branch, config)
-        .ok()
-        .filter(|expected| !paths_match(actual_path, expected))
-}
-
-/// Optimized variant of `compute_worktree_path` that accepts pre-computed values.
-///
-/// Use this when `default_branch` and `is_bare` are already known to avoid
-/// redundant git calls.
-fn compute_worktree_path_with(
-    repo: &Repository,
-    branch: &str,
-    config: &WorktrunkConfig,
-    default_branch: &str,
-    is_bare: bool,
-) -> anyhow::Result<PathBuf> {
-    let repo_root = repo.worktree_base()?;
 
     // Default branch lives at repo root (main worktree), not a templated path.
     // Exception: bare repos have no main worktree, so all branches use templated paths.
@@ -299,6 +223,51 @@ fn compute_worktree_path_with(
     Ok(repo_root.join(relative_path).normalize())
 }
 
+/// Check if a worktree is at its expected path based on config template.
+///
+/// Returns true if the worktree's actual path matches what `compute_worktree_path`
+/// would generate for its branch. Detached HEAD always returns false (no expected path).
+///
+/// Uses canonicalization to handle symlinks and relative paths correctly.
+/// Uses cached values from Repository for `default_branch` and `is_bare`.
+pub fn is_worktree_at_expected_path(
+    wt: &worktrunk::git::WorktreeInfo,
+    repo: &Repository,
+    config: &WorktrunkConfig,
+) -> bool {
+    match &wt.branch {
+        Some(branch) => compute_worktree_path(repo, branch, config)
+            .map(|expected| paths_match(&wt.path, &expected))
+            .unwrap_or(false),
+        None => false,
+    }
+}
+
+/// Compare two paths for equality, canonicalizing to handle symlinks and relative paths.
+///
+/// Returns `true` if the paths resolve to the same location.
+fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
+    use dunce::canonicalize;
+    let a_canonical = canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
+    let b_canonical = canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
+    a_canonical == b_canonical
+}
+
+/// Returns the expected path if `actual_path` differs from the template-computed path.
+///
+/// Returns `Some(expected_path)` when there's a mismatch, `None` when paths match.
+/// Used to show path mismatch warnings in `wt remove` and `wt merge`.
+pub fn get_path_mismatch(
+    repo: &Repository,
+    branch: &str,
+    actual_path: &std::path::Path,
+    config: &WorktrunkConfig,
+) -> Option<PathBuf> {
+    compute_worktree_path(repo, branch, config)
+        .ok()
+        .filter(|expected| !paths_match(actual_path, expected))
+}
+
 /// Compute a user-facing display name for a worktree.
 ///
 /// Returns styled content with branch names bolded:
@@ -309,7 +278,7 @@ fn compute_worktree_path_with(
 /// "Consistent" means the worktree path matches `compute_worktree_path(branch)`,
 /// which returns repo root for default branch and templated path for others.
 pub fn worktree_display_name(
-    wt: &worktrunk::git::Worktree,
+    wt: &worktrunk::git::WorktreeInfo,
     repo: &Repository,
     config: &WorktrunkConfig,
 ) -> String {
@@ -453,11 +422,11 @@ pub fn handle_switch(
     no_verify: bool,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<(SwitchResult, SwitchBranchInfo)> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Get the actual current branch BEFORE switching.
     // This is what we'll record as "previous" in history for `wt switch -` support.
-    let actual_current_branch = repo.current_branch().ok().flatten();
+    let actual_current_branch = repo.current_worktree().branch().ok().flatten();
 
     // Resolve special branch names ("@" for current, "-" for previous)
     let resolved_branch = repo
@@ -540,7 +509,7 @@ pub fn handle_switch(
     // Branch-first lookup: check if branch has a worktree anywhere
     match repo.worktree_for_branch(&resolved_branch)? {
         Some(existing_path) if existing_path.exists() => {
-            let _ = repo.record_switch_previous(new_previous);
+            let _ = repo.record_switch_previous(new_previous.as_deref());
             return Ok(switch_to_existing(existing_path));
         }
         Some(_) => {
@@ -596,7 +565,7 @@ pub fn handle_switch(
             let path_display = worktrunk::path::format_path_for_display(&worktree_path);
             let backup_display = worktrunk::path::format_path_for_display(&backup_path);
             crate::output::print(warning_message(cformat!(
-                "Moving <bold>{path_display}</> to <bold>{backup_display}</> (<bright-black>--clobber</>)"
+                "Moving <bold>{path_display}</> to <bold>{backup_display}</> (--clobber)"
             )))?;
 
             std::fs::rename(&worktree_path, &backup_path)
@@ -615,6 +584,20 @@ pub fn handle_switch(
     // Build git worktree add command
     let worktree_path_str = worktree_path.to_string_lossy();
     let mut args = vec!["worktree", "add", worktree_path_str.as_ref()];
+
+    // Check for invalid configured default branch when creating without explicit --base.
+    // Show warning if user's configured default branch doesn't exist locally.
+    if create
+        && resolved_base.is_none()
+        && let Some(configured) = repo.invalid_default_branch_config()
+    {
+        crate::output::print(warning_message(cformat!(
+            "Configured default branch <bold>{configured}</> does not exist locally"
+        )))?;
+        crate::output::print(hint_message(cformat!(
+            "Run <bright-black>wt config state default-branch clear</> to reset"
+        )))?;
+    }
 
     // Use the resolved base, or default to default branch if creating without a base.
     // For bare repos with no branches yet (bootstrap case), allow None to create orphan branch.
@@ -689,8 +672,7 @@ pub fn handle_switch(
     // This happens when we don't use --create and the branch exists on a remote
     let from_remote = if !create {
         // Query the new worktree for its upstream tracking branch
-        let worktree_repo = Repository::at(&worktree_path);
-        worktree_repo.upstream_branch(&resolved_branch)?
+        repo.upstream_branch(&resolved_branch)?
     } else {
         None
     };
@@ -732,7 +714,7 @@ pub fn handle_switch(
     // (see main.rs switch handler for temporal locality)
 
     // Record successful switch in history for `wt switch -` support
-    let _ = repo.record_switch_previous(new_previous);
+    let _ = repo.record_switch_previous(new_previous.as_deref());
 
     Ok((
         SwitchResult::Created {
@@ -754,18 +736,11 @@ pub fn handle_remove(
     no_delete_branch: bool,
     force_delete: bool,
     force_worktree: bool,
-    background: bool,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<RemoveResult> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
-    // Show progress (unless running in background - output handler will show command)
-    if !background {
-        crate::output::print(progress_message(cformat!(
-            "Removing <bold>{worktree_name}</> worktree..."
-        )))?;
-    }
-
+    // Progress message is shown in handle_removed_worktree_output() after pre-remove hooks run
     repo.prepare_worktree_removal(
         RemoveTarget::Branch(worktree_name),
         BranchDeletionMode::from_flags(no_delete_branch, force_delete),
@@ -782,16 +757,11 @@ pub fn handle_remove_current(
     no_delete_branch: bool,
     force_delete: bool,
     force_worktree: bool,
-    background: bool,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<RemoveResult> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
-    // Show progress (unless running in background - output handler will show command)
-    if !background {
-        crate::output::print(progress_message("Removing current worktree..."))?;
-    }
-
+    // Progress message is shown in handle_removed_worktree_output() after pre-remove hooks run
     repo.prepare_worktree_removal(
         RemoveTarget::Current,
         BranchDeletionMode::from_flags(no_delete_branch, force_delete),
@@ -895,7 +865,7 @@ pub fn handle_push(
     verb: &str,
     operations: Option<MergeOperations>,
 ) -> anyhow::Result<()> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Get target branch (default to default branch if not provided)
     let target_branch = repo.resolve_target_branch(target)?;
@@ -1001,7 +971,7 @@ pub fn handle_push(
     }
 
     // Get git common dir for the push
-    let git_common_dir = repo.git_common_dir()?;
+    let git_common_dir = repo.git_common_dir();
     let git_common_dir_str = git_common_dir.to_string_lossy();
 
     // Perform the push - stash guard will auto-restore on any exit path

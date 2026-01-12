@@ -451,7 +451,7 @@ pub fn generate_commit_message(
     }
 
     // Fallback: generate a descriptive commit message based on changed files
-    let repo = Repository::current();
+    let repo = Repository::current()?;
     // Use -z for NUL-separated output to handle filenames with spaces/newlines
     let file_list = repo.run_command(&["diff", "--staged", "--name-only", "-z"])?;
     let staged_files = file_list
@@ -494,7 +494,7 @@ fn try_generate_commit_message(
 /// Gathers the staged diff, branch name, repo name, and recent commits, then renders
 /// the prompt template. Used by both normal commit generation and `--show-prompt`.
 pub fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<String> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Get staged diff and diffstat
     // Use -c flags to ensure consistent format regardless of user's git config
@@ -514,10 +514,13 @@ pub fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<St
     let prepared = prepare_diff(diff_output, diff_stat);
 
     // Get current branch
-    let current_branch = repo.current_branch()?.unwrap_or("HEAD");
+    let current_branch = repo
+        .current_worktree()
+        .branch()?
+        .unwrap_or_else(|| "HEAD".to_string());
 
     // Get repo name from directory
-    let repo_root = repo.worktree_root()?;
+    let repo_root = repo.current_worktree().root()?;
     let repo_name = repo_root
         .file_name()
         .and_then(|n| n.to_str())
@@ -528,7 +531,7 @@ pub fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<St
     let context = TemplateContext {
         git_diff: &prepared.diff,
         git_diff_stat: &prepared.stat,
-        branch: current_branch,
+        branch: &current_branch,
         recent_commits: recent_commits.as_ref(),
         repo_name,
         commits: &[],
@@ -592,7 +595,7 @@ pub fn build_squash_prompt(
     repo_name: &str,
     config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Get the combined diff and diffstat for all commits being squashed
     // Use -c flags to ensure consistent format regardless of user's git config

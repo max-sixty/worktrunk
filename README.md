@@ -17,9 +17,9 @@ Worktrunk's three core commands make worktrees as easy as branches. Plus, Worktr
 
 Scaling agents becomes trivial. A quick demo:
 
-![Worktrunk Demo](https://cdn.jsdelivr.net/gh/max-sixty/worktrunk-assets@main/demos/docs/light/wt-core.gif)
+![Worktrunk Demo](https://cdn.jsdelivr.net/gh/max-sixty/worktrunk-assets@main/assets/docs/light/wt-core.gif)
 
-> ## 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚
+> ### 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚
 
 <!-- ⚠️ AUTO-GENERATED from docs/content/worktrunk.md#context-git-worktrees..worktrunk-makes-git-worktrees-as-easy-as-branches — edit source to update -->
 
@@ -89,7 +89,7 @@ git branch -d feat</pre></td>
 
 A demo with some advanced features:
 
-![Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow](https://raw.githubusercontent.com/max-sixty/worktrunk-assets/main/demos/docs/light/wt-zellij-omnibus.gif)
+![Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow](https://raw.githubusercontent.com/max-sixty/worktrunk-assets/main/assets/docs/light/wt-zellij-omnibus.gif)
 
 <!-- END AUTO-GENERATED -->
 
@@ -135,4 +135,4 @@ cargo install worktrunk && wt config shell install
 - [Open an issue](https://github.com/max-sixty/worktrunk/issues/new?title=&body=%23%23%20Description%0A%0A%3C!--%20Describe%20the%20bug%20or%20feature%20request%20--%3E%0A%0A%23%23%20Context%0A%0A%3C!--%20Any%20relevant%20context%3A%20your%20workflow%2C%20what%20you%20were%20trying%20to%20do%2C%20etc.%20--%3E) — feedback, feature requests, even a small friction or imperfect user message, or [a worktree pain not yet solved](https://github.com/max-sixty/worktrunk/issues/new?title=Worktree%20friction%3A%20&body=%23%23%20The%20friction%0A%0A%3C!--%20What%20worktree-related%20task%20is%20still%20painful%3F%20--%3E%0A%0A%23%23%20Current%20workaround%0A%0A%3C!--%20How%20do%20you%20handle%20this%20today%3F%20--%3E%0A%0A%23%23%20Ideal%20solution%0A%0A%3C!--%20What%20would%20make%20this%20easier%3F%20--%3E)
 - Share: [X](https://twitter.com/intent/tweet?text=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management&url=https%3A%2F%2Fworktrunk.dev) · [Reddit](https://www.reddit.com/submit?url=https%3A%2F%2Fworktrunk.dev&title=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management) · [LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fworktrunk.dev)
 
-> ## 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚
+> ### 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚

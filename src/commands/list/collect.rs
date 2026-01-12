@@ -21,10 +21,10 @@
 //!
 //! | Command | Purpose |
 //! |---------|---------|
-//! | `git worktree list` | Enumerate worktrees |
+//! | `git worktree list --porcelain` | Enumerate worktrees |
 //! | `git config worktrunk.default-branch` | Cached default branch |
 //! | `git show -s --format='%H %ct' SHA1 SHA2 ...` | **Batched** timestamps for sorting |
-//! | `git rev-parse --is-bare-repository` | Layout decision (show Path column?) |
+//! | `git config --bool core.bare` | Bare repo check for expected-path logic |
 //! | `git for-each-ref refs/heads` | Only with `--branches` flag |
 //! | `git for-each-ref refs/remotes` | Only with `--remotes` flag |
 //!
@@ -57,14 +57,16 @@
 //!
 //! Progressive and buffered modes use the same collection and rendering code.
 //! The only difference is whether intermediate updates are shown during collection:
-//! - Progressive: shows progress bars with updates, then finalizes in place (TTY) or redraws (non-TTY)
+//! - Progressive: renders a skeleton table and updates rows/footer as data arrives (TTY),
+//!   or renders once at the end (non-TTY)
 //! - Buffered: collects silently, then renders the final table
 //!
 //! Both modes render the final table in `collect()`, ensuring a single canonical rendering path.
 //!
 //! **Flat parallelism**: All tasks (for all worktrees and branches) are collected into a single
-//! work queue and processed via Rayon's thread pool. This avoids nested parallelism and ensures
-//! optimal CPU utilization (~8 threads) regardless of worktree count.
+//! work queue and processed via Rayon's thread pool. This avoids nested parallelism and keeps
+//! utilization high regardless of worktree count (pool size is set at startup; default is 2x CPU
+//! cores unless `RAYON_NUM_THREADS` is set).
 //!
 //! **Task ordering**: Work items are sorted so local git operations run first, network tasks
 //! (CI status, URL health checks) run last. This ensures the table fills in quickly with local
@@ -75,10 +77,10 @@ use crossbeam_channel as chan;
 use dunce::canonicalize;
 use rayon::prelude::*;
 use rayon_join_macro::join;
-use worktrunk::git::{LineDiff, Repository, Worktree};
+use worktrunk::git::{LineDiff, Repository, WorktreeInfo};
 use worktrunk::styling::{INFO_SYMBOL, format_with_gutter, warning_message};
 
-use crate::commands::is_worktree_at_expected_path_with;
+use crate::commands::is_worktree_at_expected_path;
 
 use super::ci_status::PrStatus;
 use super::model::{
@@ -146,29 +148,29 @@ pub(super) enum TaskResult {
         item_idx: usize,
         commit: CommitDetails,
     },
-    /// Ahead/behind counts vs main
+    /// Ahead/behind counts vs default branch
     AheadBehind {
         item_idx: usize,
         counts: AheadBehind,
     },
-    /// Whether HEAD's tree SHA matches main's tree SHA (committed content identical)
+    /// Whether HEAD's tree SHA matches integration target's tree SHA (committed content identical)
     CommittedTreesMatch {
         item_idx: usize,
         committed_trees_match: bool,
     },
-    /// Whether branch has file changes beyond the merge-base (three-dot diff)
+    /// Whether branch has file changes beyond the merge-base with integration target (three-dot diff)
     HasFileChanges {
         item_idx: usize,
         has_file_changes: bool,
     },
-    /// Whether merging branch into main would add changes (merge simulation)
+    /// Whether merging branch into integration target would add changes (merge simulation)
     WouldMergeAdd {
         item_idx: usize,
         would_merge_add: bool,
     },
-    /// Whether branch HEAD is ancestor of main (same commit or already merged)
+    /// Whether branch HEAD is ancestor of integration target (same commit or already merged)
     IsAncestor { item_idx: usize, is_ancestor: bool },
-    /// Line diff vs main branch
+    /// Line diff vs default branch
     BranchDiff {
         item_idx: usize,
         branch_diff: BranchDiffTotals,
@@ -182,7 +184,7 @@ pub(super) enum TaskResult {
         working_tree_status: WorkingTreeStatus,
         has_conflicts: bool,
     },
-    /// Potential merge conflicts with main (merge-tree simulation on committed HEAD)
+    /// Potential merge conflicts with default branch (merge-tree simulation on committed HEAD)
     MergeTreeConflicts {
         item_idx: usize,
         has_merge_tree_conflicts: bool,
@@ -253,17 +255,19 @@ impl TaskResult {
 }
 
 impl TaskKind {
-    /// Whether this task requires network I/O (slow).
-    fn is_network(self) -> bool {
+    /// Whether this task requires network access.
+    ///
+    /// Network tasks are sorted to run last to avoid blocking local tasks.
+    pub fn is_network(self) -> bool {
         matches!(self, TaskKind::CiStatus | TaskKind::UrlStatus)
     }
 }
 
 /// Detect if a worktree is in the middle of a git operation (rebase/merge).
-pub(super) fn detect_git_operation(repo: &Repository) -> GitOperationState {
-    if repo.is_rebasing().unwrap_or(false) {
+pub(super) fn detect_git_operation(wt: &worktrunk::git::WorkingTree<'_>) -> GitOperationState {
+    if wt.is_rebasing().unwrap_or(false) {
         GitOperationState::Rebase
-    } else if repo.is_merging().unwrap_or(false) {
+    } else if wt.is_merging().unwrap_or(false) {
         GitOperationState::Merge
     } else {
         GitOperationState::None
@@ -380,7 +384,7 @@ fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], 
             items[idx].is_ancestor = Some(false);
         }
         TaskKind::BranchDiff => {
-            items[idx].branch_diff = Some(BranchDiffTotals::default());
+            // Leave as None — UI shows `…` for skipped/failed tasks
         }
         TaskKind::WorkingTreeDiff => {
             if let ItemKind::Worktree(data) = &mut items[idx].kind {
@@ -411,8 +415,9 @@ fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], 
             items[idx].upstream = Some(UpstreamStatus::default());
         }
         TaskKind::CiStatus => {
-            // Some(None) means "loaded but no CI"
-            items[idx].pr_status = Some(None);
+            // Leave as None (not fetched) on error. This allows the hint path
+            // in mod.rs to run and show "install gh/glab" when CI tools fail.
+            // Some(None) means "CI tool ran successfully but found no PR".
         }
         TaskKind::UrlStatus => {
             // URL is set at item creation, only default url_active
@@ -426,7 +431,7 @@ fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], 
 /// This is the shared logic between progressive and buffered collection modes.
 /// The `on_result` callback is called after each result is processed with the
 /// item index and a reference to the updated item, allowing progressive mode
-/// to update progress bars while buffered mode does nothing.
+/// to update the live table while buffered mode does nothing.
 ///
 /// Uses a 30-second deadline to prevent infinite hangs if git commands stall.
 /// When timeout occurs, returns `DrainOutcome::TimedOut` with diagnostic info.
@@ -636,7 +641,7 @@ fn drain_results(
 /// Returns (branch_name, commit_sha) pairs for all branches without associated worktrees.
 fn get_branches_without_worktrees(
     repo: &Repository,
-    worktrees: &[Worktree],
+    worktrees: &[WorktreeInfo],
 ) -> anyhow::Result<Vec<(String, String)>> {
     // Get all local branches
     let all_branches = repo.list_local_branches()?;
@@ -653,7 +658,7 @@ fn get_branches_without_worktrees(
     Ok(branches_without_worktrees)
 }
 
-fn worktree_branch_set(worktrees: &[Worktree]) -> std::collections::HashSet<&str> {
+fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> std::collections::HashSet<&str> {
     worktrees
         .iter()
         .filter_map(|wt| wt.branch.as_deref())
@@ -669,6 +674,13 @@ fn worktree_branch_set(worktrees: &[Worktree]) -> std::collections::HashSet<&str
 ///
 /// The `command_timeout` parameter, if set, limits how long individual git commands can run.
 /// This is useful for `wt select` to show the TUI faster by skipping slow operations.
+///
+/// TODO: Now that we skip expensive tasks for stale branches (see `skip_expensive_for_stale`),
+/// the timeout may be unnecessary. Consider removing it if it doesn't provide value.
+///
+/// The `skip_expensive_for_stale` parameter enables batch-fetching ahead/behind counts and
+/// skipping expensive merge-base operations for branches far behind the default branch.
+/// This dramatically improves performance for repos with many stale branches.
 #[allow(clippy::too_many_arguments)]
 pub fn collect(
     repo: &Repository,
@@ -679,6 +691,7 @@ pub fn collect(
     render_table: bool,
     config: &worktrunk::config::WorktrunkConfig,
     command_timeout: Option<std::time::Duration>,
+    skip_expensive_for_stale: bool,
 ) -> anyhow::Result<Option<super::model::ListData>> {
     use super::progressive_table::ProgressiveTable;
 
@@ -690,7 +703,7 @@ pub fn collect(
 
     // Detect current worktree by checking if repo path is inside any worktree.
     // This avoids a git command - we just compare canonicalized paths.
-    let repo_path_canonical = canonicalize(repo.base_path()).ok();
+    let repo_path_canonical = canonicalize(repo.discovery_path()).ok();
     let current_worktree_path = repo_path_canonical.as_ref().and_then(|repo_path| {
         worktrees.iter().find_map(|wt| {
             canonicalize(&wt.path)
@@ -702,12 +715,8 @@ pub fn collect(
     // Phase 2: Parallel fetch of independent git data
     // These operations don't depend on each other, only on worktree list.
     // Running them in parallel reduces pre-skeleton time (e.g., ~46ms to ~28ms).
-    let (default_branch, is_bare, branches_without_worktrees, remote_branches) = join!(
-        || {
-            repo.default_branch()
-                .context("Failed to determine default branch")
-        },
-        || repo.is_bare().unwrap_or(false),
+    let (default_branch, branches_without_worktrees, remote_branches) = join!(
+        || repo.default_branch(),
         || {
             if show_branches {
                 get_branches_without_worktrees(repo, &worktrees)
@@ -723,25 +732,25 @@ pub fn collect(
             }
         }
     );
-    // TODO: Make default_branch optional so wt list can gracefully degrade when detection fails.
-    // Currently, ambiguous repos (multiple non-standard branches, no remote) fail entirely.
-    // With symbolic-ref HEAD heuristic added, this is less common but still possible.
-    // Required changes:
-    // 1. Make default_branch Option<String> here
-    // 2. find_home() already handles empty default_branch (falls back to first)
-    // 3. Make main_worktree optional or use first worktree when default_branch is None
-    // 4. Update TaskContext.require_default_branch() callers to handle None gracefully
-    //    (skip ahead/behind, integration status, etc. instead of failing)
-    // 5. Show warning when default_branch couldn't be determined
-    let default_branch = default_branch?;
+    // Show warning if user configured a default branch that doesn't exist locally
+    if let Some(configured) = repo.invalid_default_branch_config() {
+        let msg =
+            cformat!("Configured default branch <bold>{configured}</> does not exist locally");
+        crate::output::print(warning_message(msg))?;
+        let hint = cformat!("Run <bright-black>wt config state default-branch clear</> to reset");
+        crate::output::print(worktrunk::styling::hint_message(hint))?;
+    }
+
     let branches_without_worktrees = branches_without_worktrees?;
     let remote_branches = remote_branches?;
 
-    // Main worktree is the worktree on the default branch (if exists), else first worktree.
-    // find_home returns None only if worktrees is empty, which shouldn't happen for wt list.
-    let main_worktree = Worktree::find_home(&worktrees, &default_branch)
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
+    // Main worktree is the worktree on the default branch (if exists), else first non-prunable worktree.
+    // find_home returns None if all worktrees are prunable or the list is empty.
+    // TODO: show ellipsis or indicator when default_branch is None and columns are empty
+    let main_worktree =
+        WorktreeInfo::find_home(&worktrees, default_branch.as_deref().unwrap_or(""))
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
 
     // Defer previous_branch lookup until after skeleton - set is_previous later
     // (skeleton shows placeholder gutter, actual symbols appear when data loads)
@@ -781,11 +790,7 @@ pub fn collect(
 
     // Check if URL template is configured (for layout column allocation).
     // Template expansion is deferred to post-skeleton to minimize time-to-skeleton.
-    let url_template = worktrunk::config::ProjectConfig::load(repo, true)
-        .ok()
-        .flatten()
-        .and_then(|config| config.list)
-        .and_then(|list| list.url);
+    let url_template = repo.url_template();
     // Initialize worktree items with identity fields and None for computed fields
     let mut all_items: Vec<ListItem> = sorted_worktrees
         .iter()
@@ -805,9 +810,7 @@ pub fn collect(
             let is_previous = false;
 
             // Check if worktree is at its expected path based on config template
-            // Use optimized variant with pre-computed default_branch and is_bare
-            let branch_worktree_mismatch =
-                !is_worktree_at_expected_path_with(wt, repo, config, &default_branch, is_bare);
+            let branch_worktree_mismatch = !is_worktree_at_expected_path(wt, repo, config);
 
             let mut worktree_data =
                 WorktreeData::from_worktree(wt, is_main, is_current, is_previous);
@@ -868,9 +871,10 @@ pub fn collect(
     let max_width = crate::display::get_terminal_width();
 
     // Create collection options from skip set
-    let options = super::collect_progressive_impl::CollectOptions {
+    let mut options = super::collect_progressive_impl::CollectOptions {
         skip_tasks: effective_skip_tasks,
         url_template: url_template.clone(),
+        ..Default::default()
     };
 
     // Track expected results per item - populated as spawns are queued
@@ -946,7 +950,34 @@ pub fn collect(
     // Effective target for integration checks: upstream if ahead of local, else local.
     // This handles the case where a branch was merged remotely but user hasn't pulled yet.
     // Deferred until after skeleton to avoid blocking initial render.
-    let integration_target = repo.effective_integration_target(&default_branch);
+    // Uses cached integration_target() which returns None if default_branch unknown.
+    let integration_target = repo.integration_target();
+
+    // Batch-fetch ahead/behind counts to identify branches that are far behind.
+    // This allows skipping expensive merge-base operations for diverged branches, dramatically
+    // improving performance on repos with many stale branches (e.g., wt select).
+    //
+    // Uses `git for-each-ref --format='%(ahead-behind:...)'` (git 2.36+) which gets all
+    // counts in a single command. On older git versions, returns empty and all tasks run.
+    // Skip if default_branch is unknown.
+    if skip_expensive_for_stale && let Some(ref db) = default_branch {
+        // Branches more than 50 commits behind skip expensive merge-base operations.
+        // 50 is low enough to catch truly stale branches while keeping info for
+        // recently-diverged ones. The "behind" count is the primary expense driver -
+        // git must traverse all those commits to find the merge-base.
+        let threshold: usize = std::env::var("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(50);
+        // batch_ahead_behind populates the Repository cache with all counts
+        let ahead_behind = repo.batch_ahead_behind(db);
+        // Filter to stale branches (behind > threshold). The set indicates which
+        // branches should skip expensive tasks; counts come from the cache.
+        options.stale_branches = ahead_behind
+            .into_iter()
+            .filter_map(|(branch, (_, behind))| (behind > threshold).then_some(branch))
+            .collect();
+    }
 
     // Note: URL template expansion is deferred to task spawning (in collect_worktree_progressive
     // and collect_branch_progressive). This parallelizes the work and minimizes time-to-skeleton.
@@ -962,12 +993,11 @@ pub fn collect(
     // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same issue)
     #[cfg(target_os = "macos")]
     {
-        let main_repo = Repository::at(&main_worktree.path);
-        if main_repo.is_builtin_fsmonitor_enabled() {
+        if repo.is_builtin_fsmonitor_enabled() {
             for wt in &sorted_worktrees {
                 // Skip prunable worktrees (directory missing)
                 if !wt.is_prunable() {
-                    Repository::at(&wt.path).start_fsmonitor_daemon();
+                    repo.start_fsmonitor_daemon_at(&wt.path);
                 }
             }
         }
@@ -984,14 +1014,14 @@ pub fn collect(
 
     // Collect all work items upfront, then execute in a single Rayon pool.
     // This avoids nested parallelism (Rayon par_iter → thread::scope per worktree)
-    // which could create 100+ threads. Instead, we have one pool with ~8 threads.
+    // which could create 100+ threads. Instead, we have one pool with the configured
+    // thread count (default 2x CPU cores unless overridden by RAYON_NUM_THREADS).
     let sorted_worktrees_clone = sorted_worktrees.clone();
     let tx_worker = tx.clone();
-    let default_branch_clone = default_branch.clone();
-    let target_clone = integration_target.clone();
     let expected_results_clone = expected_results.clone();
-    let options_clone = options.clone();
-    let main_path = main_worktree.path.clone();
+
+    // Clone repo for the worker thread (shares cache via Arc)
+    let repo_clone = repo.clone();
 
     // Prepare branch data if needed (before moving into closure)
     let branch_data: Vec<(usize, String, String)> = if show_branches || show_remotes {
@@ -1027,11 +1057,10 @@ pub fn collect(
         // Worktree work items
         for (idx, wt) in sorted_worktrees_clone.iter().enumerate() {
             all_work_items.extend(work_items_for_worktree(
+                &repo_clone,
                 wt,
                 idx,
-                &default_branch_clone,
-                &target_clone,
-                &options_clone,
+                &options,
                 &expected_results_clone,
                 &tx_worker,
             ));
@@ -1040,22 +1069,19 @@ pub fn collect(
         // Branch work items (local + remote)
         for (item_idx, branch_name, commit_sha) in &branch_data {
             all_work_items.extend(work_items_for_branch(
+                &repo_clone,
                 branch_name,
                 commit_sha,
-                &main_path,
                 *item_idx,
-                &default_branch_clone,
-                &target_clone,
-                &options_clone,
+                &options,
                 &expected_results_clone,
             ));
         }
 
-        // Sort: local git ops first, network ops (CI, URL) last.
+        // Sort work items: network tasks last to avoid blocking local operations
         all_work_items.sort_by_key(|item| item.kind.is_network());
 
-        // Phase 2: Execute all work items in Rayon's thread pool
-        // Set thread-local timeout for each worker (used by shell_exec::run)
+        // Phase 2: Execute all work items in parallel
         all_work_items.into_par_iter().for_each(|item| {
             worktrunk::shell_exec::set_command_timeout(command_timeout);
             let result = item.execute();
@@ -1079,7 +1105,9 @@ pub fn collect(
         |item_idx, item, ctx| {
             // Compute/recompute status symbols as data arrives (both modes).
             // This is idempotent and updates status as new data (like upstream) arrives.
-            ctx.apply_to(item, integration_target.as_str());
+            if let Some(ref target) = integration_target {
+                ctx.apply_to(item, target.as_str());
+            }
 
             // Progressive mode only: update UI
             if let Some(ref mut table) = progressive_table {
@@ -1168,7 +1196,9 @@ pub fn collect(
         {
             // Use default context - no tasks ran, so no conflict/status info
             let ctx = StatusContext::default();
-            ctx.apply_to(item, integration_target.as_str());
+            if let Some(ref target) = integration_target {
+                ctx.apply_to(item, target.as_str());
+            }
         }
     }
 
@@ -1266,8 +1296,8 @@ pub fn collect(
 
     // Table rendering complete (when render_table=true):
     // - Progressive + TTY: rows morphed in place, footer became summary
-    // - Progressive + Non-TTY: cleared progress bars, rendered final table
-    // - Buffered: rendered final table (no progress bars)
+    // - Progressive + Non-TTY: rendered final table (no intermediate output)
+    // - Buffered: rendered final table
     // JSON mode (render_table=false): no rendering, data returned for serialization
 
     Ok(Some(super::model::ListData {
@@ -1300,11 +1330,11 @@ where
 /// Sort worktrees: current first, main second, then by timestamp descending.
 /// Uses pre-fetched timestamps for efficiency.
 fn sort_worktrees_with_cache(
-    worktrees: Vec<Worktree>,
-    main_worktree: &Worktree,
+    worktrees: Vec<WorktreeInfo>,
+    main_worktree: &WorktreeInfo,
     current_path: Option<&std::path::PathBuf>,
     timestamps: &std::collections::HashMap<String, i64>,
-) -> Vec<Worktree> {
+) -> Vec<WorktreeInfo> {
     // Embed timestamp and priority in tuple to avoid parallel Vec and index lookups
     let mut with_sort_key: Vec<_> = worktrees
         .into_iter()
@@ -1336,7 +1366,7 @@ pub use super::collect_progressive_impl::CollectOptions;
 /// Computed fields (counts, diffs, CI) are left as None. Use `populate_item()`
 /// to fill them in.
 pub fn build_worktree_item(
-    wt: &Worktree,
+    wt: &WorktreeInfo,
     is_main: bool,
     is_current: bool,
     is_previous: bool,
@@ -1372,15 +1402,13 @@ pub fn build_worktree_item(
 /// with: commit details, ahead/behind, diffs, upstream, CI, etc.
 ///
 /// # Parameters
-/// - `default_branch`: Local default branch for informational stats (ahead/behind, branch diff)
-/// - `target`: Effective target for integration checks (may be upstream if ahead)
+/// - `repo`: Repository handle (cloned into background thread, shares cache via Arc)
 ///
 /// This is the blocking version used by statusline. For progressive rendering
 /// with callbacks, see the `collect()` function.
 pub fn populate_item(
+    repo: &Repository,
     item: &mut ListItem,
-    default_branch: &str,
-    target: &str,
     options: CollectOptions,
 ) -> anyhow::Result<()> {
     use std::sync::Arc;
@@ -1389,6 +1417,10 @@ pub fn populate_item(
     let Some(data) = item.worktree_data() else {
         return Ok(());
     };
+
+    // Get integration target for status symbol computation (cached in repo)
+    // None if default branch cannot be determined - status symbols will be skipped
+    let target = repo.integration_target();
 
     // Create channel for task results
     let (tx, rx) = chan::unbounded::<Result<TaskResult, TaskError>>();
@@ -1400,7 +1432,7 @@ pub fn populate_item(
     let mut errors: Vec<TaskError> = Vec::new();
 
     // Extract data for background thread (can't send borrows across threads)
-    let wt = Worktree {
+    let wt = WorktreeInfo {
         path: data.path.clone(),
         head: item.head.clone(),
         branch: item.branch.clone(),
@@ -1409,8 +1441,7 @@ pub fn populate_item(
         locked: None,
         prunable: None,
     };
-    let default_branch_clone = default_branch.to_string();
-    let target_clone = target.to_string();
+    let repo_clone = repo.clone();
     let expected_results_clone = expected_results.clone();
 
     // Spawn collection in background thread
@@ -1419,19 +1450,18 @@ pub fn populate_item(
 
         // Generate work items for this single worktree
         let mut work_items = work_items_for_worktree(
+            &repo_clone,
             &wt,
             0, // Single item, always index 0
-            &default_branch_clone,
-            &target_clone,
             &options,
             &expected_results_clone,
             &tx,
         );
 
-        // Sort: local git ops first, network ops last
+        // Sort: network tasks last
         work_items.sort_by_key(|item| item.kind.is_network());
 
-        // Execute all work items in Rayon's thread pool
+        // Execute all tasks in parallel
         work_items.into_par_iter().for_each(|item| {
             let result = item.execute();
             let _ = tx.send(result);
@@ -1445,7 +1475,9 @@ pub fn populate_item(
         &mut errors,
         &expected_results,
         |_item_idx, item, ctx| {
-            ctx.apply_to(item, target);
+            if let Some(ref t) = target {
+                ctx.apply_to(item, t);
+            }
         },
     );
 

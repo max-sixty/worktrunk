@@ -79,12 +79,39 @@ fn test_state_get_default_branch_no_remote(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_state_get_default_branch_fails_when_undetermined(repo: TestRepo) {
+    // Rename main to something non-standard so default branch can't be determined
+    repo.git_command()
+        .args(["branch", "-m", "main", "xyz"])
+        .status()
+        .unwrap();
+    repo.git_command().args(["branch", "abc"]).status().unwrap();
+    repo.git_command().args(["branch", "def"]).status().unwrap();
+
+    // Now we have: xyz, abc, def - no common names, no init.defaultBranch
+    // wt config state default-branch get should fail with an error
+    let output = wt_state_cmd(&repo, "default-branch", "get", &[])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Cannot determine default branch"),
+        "Expected error message about cannot determine default branch, got: {}",
+        stderr
+    );
+}
+
+#[rstest]
 fn test_state_set_default_branch(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "default-branch", "set", &["develop"])
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mSet default branch to [1mdevelop[22m[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [33m▲[39m [33mBranch [1mdevelop[22m does not exist locally[39m
+    [32m✓[39m [32mSet default branch to [1mdevelop[22m[39m
+    ");
 
     // Verify it was set in worktrunk's cache
     let output = repo

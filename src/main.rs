@@ -1,7 +1,7 @@
 use anyhow::Context;
 use clap::FromArgMatches;
 use color_print::cformat;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process;
 use worktrunk::config::{WorktrunkConfig, set_config_path};
 use worktrunk::git::{Repository, exit_code, set_base_path};
@@ -153,7 +153,7 @@ pub fn was_invoked_with_explicit_path() -> bool {
 /// Custom help handling for pager support and markdown rendering.
 ///
 /// We intercept help requests to provide:
-/// 1. **Pager support**: Help is shown through `less` (like git)
+/// 1. **Pager support**: Help is shown through the detected pager (git-style precedence)
 /// 2. **Markdown rendering**: `## Headers` become green, code blocks are dimmed
 ///
 /// Uses `Error::render()` to get clap's pre-formatted help, which already
@@ -849,10 +849,15 @@ fn main() {
                         let cmd = cmd.unwrap_or_else(binary_name);
                         handle_init(shell, cmd).map_err(|e| anyhow::anyhow!("{}", e))
                     }
-                    ConfigShellCommand::Install { shell, yes, cmd } => {
+                    ConfigShellCommand::Install {
+                        shell,
+                        yes,
+                        dry_run,
+                        cmd,
+                    } => {
                         // Auto-write to shell config files and completions
                         let cmd = cmd.unwrap_or_else(binary_name);
-                        handle_configure_shell(shell, yes, cmd)
+                        handle_configure_shell(shell, yes, dry_run, cmd)
                             .map_err(|e| anyhow::anyhow!("{}", e))
                             .and_then(|scan_result| {
                                 // Exit with error if no shells configured
@@ -864,14 +869,27 @@ fn main() {
                                     }
                                     .into());
                                 }
+                                // For --dry-run, preview was already shown by handler
+                                if dry_run {
+                                    return Ok(());
+                                }
                                 crate::output::print_shell_install_result(&scan_result)
                             })
                     }
-                    ConfigShellCommand::Uninstall { shell, yes } => {
+                    ConfigShellCommand::Uninstall {
+                        shell,
+                        yes,
+                        dry_run,
+                    } => {
                         let explicit_shell = shell.is_some();
-                        handle_unconfigure_shell(shell, yes, &binary_name())
+                        handle_unconfigure_shell(shell, yes, dry_run, &binary_name())
                             .map_err(|e| anyhow::anyhow!("{}", e))
                             .and_then(|scan_result| {
+                                // For --dry-run, preview was already shown by handler
+                                if dry_run {
+                                    return Ok(());
+                                }
+
                                 let shell_count = scan_result.results.len();
                                 let completion_count = scan_result.completion_results.len();
                                 let total_changes = shell_count + completion_count;
@@ -1002,10 +1020,9 @@ fn main() {
             ConfigCommand::Show { full } => handle_config_show(full),
             ConfigCommand::State { action } => match action {
                 StateCommand::DefaultBranch { action } => match action {
-                    Some(DefaultBranchAction::Get { refresh }) => {
-                        handle_state_get("default-branch", refresh, None)
+                    Some(DefaultBranchAction::Get) | None => {
+                        handle_state_get("default-branch", None)
                     }
-                    None => handle_state_get("default-branch", false, None),
                     Some(DefaultBranchAction::Set { branch }) => {
                         handle_state_set("default-branch", branch, None)
                     }
@@ -1015,7 +1032,7 @@ fn main() {
                 },
                 StateCommand::PreviousBranch { action } => match action {
                     Some(PreviousBranchAction::Get) | None => {
-                        handle_state_get("previous-branch", false, None)
+                        handle_state_get("previous-branch", None)
                     }
                     Some(PreviousBranchAction::Set { branch }) => {
                         handle_state_set("previous-branch", branch, None)
@@ -1025,17 +1042,15 @@ fn main() {
                     }
                 },
                 StateCommand::CiStatus { action } => match action {
-                    Some(CiStatusAction::Get { refresh, branch }) => {
-                        handle_state_get("ci-status", refresh, branch)
-                    }
-                    None => handle_state_get("ci-status", false, None),
+                    Some(CiStatusAction::Get { branch }) => handle_state_get("ci-status", branch),
+                    None => handle_state_get("ci-status", None),
                     Some(CiStatusAction::Clear { branch, all }) => {
                         handle_state_clear("ci-status", branch, all)
                     }
                 },
                 StateCommand::Marker { action } => match action {
-                    Some(MarkerAction::Get { branch }) => handle_state_get("marker", false, branch),
-                    None => handle_state_get("marker", false, None),
+                    Some(MarkerAction::Get { branch }) => handle_state_get("marker", branch),
+                    None => handle_state_get("marker", None),
                     Some(MarkerAction::Set { value, branch }) => {
                         handle_state_set("marker", value, branch)
                     }
@@ -1044,7 +1059,7 @@ fn main() {
                     }
                 },
                 StateCommand::Logs { action } => match action {
-                    Some(LogsAction::Get) | None => handle_state_get("logs", false, None),
+                    Some(LogsAction::Get) | None => handle_state_get("logs", None),
                     Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
                 },
                 StateCommand::Hints { action } => match action {
@@ -1206,9 +1221,26 @@ fn main() {
             },
         },
         #[cfg(unix)]
-        Commands::Select => handle_select(),
+        Commands::Select { branches, remotes } => {
+            WorktrunkConfig::load()
+                .context("Failed to load config")
+                .and_then(|config| {
+                    // Get config values from [list] config (shared with wt list)
+                    let (show_branches_config, show_remotes_config) = config
+                        .list
+                        .as_ref()
+                        .map(|l| (l.branches.unwrap_or(false), l.remotes.unwrap_or(false)))
+                        .unwrap_or((false, false));
+
+                    // CLI flags override config
+                    let show_branches = branches || show_branches_config;
+                    let show_remotes = remotes || show_remotes_config;
+
+                    handle_select(show_branches, show_remotes, &config)
+                })
+        }
         #[cfg(not(unix))]
-        Commands::Select => {
+        Commands::Select { .. } => {
             let _ = output::print(error_message("wt select is not available on Windows"));
             let _ = output::print(hint_message(cformat!(
                 "To see all worktrees, run <bright-black>wt list</>; to switch directly, run <bright-black>wt switch BRANCH</>"
@@ -1286,7 +1318,7 @@ fn main() {
                 // This ensures approval happens once at the command entry point
                 // If user declines, skip hooks but continue with worktree operation
                 let approved = if verify {
-                    let repo = Repository::current();
+                    let repo = Repository::current().context("Failed to switch worktree")?;
                     let repo_root = repo.worktree_base().context("Failed to switch worktree")?;
                     // Compute worktree path for template expansion in approval prompt
                     let worktree_path = compute_worktree_path(&repo, &branch, &config)?;
@@ -1359,7 +1391,7 @@ fn main() {
                 // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
                 // - post-start: runs only when creating a NEW worktree
                 if !skip_hooks {
-                    let repo = Repository::current();
+                    let repo = Repository::current()?;
                     let repo_root = repo.worktree_base().context("Failed to switch worktree")?;
                     let ctx = CommandContext::new(
                         &repo,
@@ -1451,19 +1483,21 @@ fn main() {
                 // TODO(pre-remove-context): The approval context uses current worktree (cwd + current_branch),
                 // but hooks execute in each target worktree. When removing another worktree, the approval
                 // preview shows the wrong branch/path. Consider building approval context per target worktree.
-                let repo = Repository::current();
+                let repo = Repository::current().context("Failed to remove worktree")?;
                 let verify = if verify {
                     // Create context for template expansion in approval prompt
                     let worktree_path =
                         std::env::current_dir().context("Failed to get current directory")?;
                     let repo_root = repo.worktree_base().context("Failed to remove worktree")?;
                     // Keep as Option so detached HEAD maps to None -> "HEAD" via branch_or_head()
-                    let current_branch =
-                        repo.current_branch().context("Failed to remove worktree")?;
+                    let current_branch = repo
+                        .current_worktree()
+                        .branch()
+                        .context("Failed to remove worktree")?;
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
-                        current_branch,
+                        current_branch.as_deref(),
                         &worktree_path,
                         &repo_root,
                         yes,
@@ -1484,14 +1518,9 @@ fn main() {
                 if branches.is_empty() {
                     // No branches specified, remove current worktree
                     // Uses path-based removal to handle detached HEAD state
-                    let result = handle_remove_current(
-                        !delete_branch,
-                        force_delete,
-                        force,
-                        background,
-                        &config,
-                    )
-                    .context("Failed to remove worktree")?;
+                    let result =
+                        handle_remove_current(!delete_branch, force_delete, force, &config)
+                            .context("Failed to remove worktree")?;
                     // Approval was handled at the gate
                     // Post-switch hooks are spawned internally by handle_remove_output
                     handle_remove_output(&result, background, verify)
@@ -1499,7 +1528,7 @@ fn main() {
                     use worktrunk::git::ResolvedWorktree;
                     // When removing multiple worktrees, we need to handle the current worktree last
                     // to avoid deleting the directory we're currently in
-                    let current_worktree = repo.worktree_root().ok().map(Path::to_path_buf);
+                    let current_worktree = repo.current_worktree().root().ok();
 
                     // Partition branches into current worktree, others, and branch-only.
                     // Track all errors (resolution + removal) so we can report them and continue.
@@ -1545,7 +1574,6 @@ fn main() {
                             !delete_branch,
                             force_delete,
                             force,
-                            background,
                             &config,
                         ) {
                             Ok(result) => {
@@ -1560,14 +1588,7 @@ fn main() {
 
                     // Handle branch-only cases (no worktree)
                     for branch in &branch_only {
-                        match handle_remove(
-                            branch,
-                            !delete_branch,
-                            force_delete,
-                            force,
-                            background,
-                            &config,
-                        ) {
+                        match handle_remove(branch, !delete_branch, force_delete, force, &config) {
                             Ok(result) => {
                                 handle_remove_output(&result, background, verify)?;
                             }
@@ -1581,13 +1602,7 @@ fn main() {
                     // Remove current worktree last (if it was in the list)
                     // Post-switch hooks are spawned internally by handle_remove_output
                     if let Some((_path, _branch)) = current {
-                        match handle_remove_current(
-                            !delete_branch,
-                            force_delete,
-                            force,
-                            background,
-                            &config,
-                        ) {
+                        match handle_remove_current(!delete_branch, force_delete, force, &config) {
                             Ok(result) => {
                                 handle_remove_output(&result, background, verify)?;
                             }
@@ -1737,10 +1752,12 @@ fn write_vv_diagnostic(verbose: u8, command_line: &str, error_msg: Option<&str>)
     }
 
     // Use Repository::current() which honors the -C flag
-    let repo = worktrunk::git::Repository::current();
+    let Ok(repo) = worktrunk::git::Repository::current() else {
+        return;
+    };
 
     // Check if we're actually in a git repo
-    if repo.git_dir().is_err() {
+    if repo.current_worktree().git_dir().is_err() {
         return;
     }
 
@@ -1762,7 +1779,7 @@ fn write_vv_diagnostic(verbose: u8, command_line: &str, error_msg: Option<&str>)
                 // Escape single quotes for shell: 'it'\''s' -> it's
                 let path_str = path.to_string_lossy().replace('\'', "'\\''");
                 let _ = output::print(hint_message(cformat!(
-                    "If this is a bug, create an issue: <bright-black>gh issue create -R max-sixty/worktrunk -t 'Bug report' --body-file '{path_str}'</>"
+                    "If this is a bug, draft an issue: <bright-black>gh issue create --web -R max-sixty/worktrunk -t 'Bug report' --body-file '{path_str}'</>"
                 )));
             }
         }

@@ -453,7 +453,9 @@ impl WorktreeSkimItem {
     /// Common diff rendering pattern: check stat, show stat + full diff if non-empty
     fn render_diff_preview(&self, args: &[&str], no_changes_msg: &str, width: usize) -> String {
         let mut output = String::new();
-        let repo = Repository::current();
+        let Ok(repo) = Repository::current() else {
+            return no_changes_msg.to_string();
+        };
 
         // Check stat output first
         let mut stat_args = args.to_vec();
@@ -515,8 +517,10 @@ impl WorktreeSkimItem {
         use worktrunk::styling::INFO_SYMBOL;
 
         let branch = self.item.branch_name();
-        let repo = Repository::current();
-        let Ok(default_branch) = repo.default_branch() else {
+        let Ok(repo) = Repository::current() else {
+            return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of main\n");
+        };
+        let Some(default_branch) = repo.default_branch() else {
             return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of main\n");
         };
         if self.item.counts().ahead == 0 {
@@ -606,10 +610,15 @@ impl WorktreeSkimItem {
         let show_timestamps = width >= TIMESTAMP_WIDTH_THRESHOLD;
         // Calculate how many log lines fit in preview (height minus header)
         let log_limit = height.saturating_sub(HEADER_LINES).max(1);
-        let repo = Repository::current();
         let head = self.item.head();
         let branch = self.item.branch_name();
-        let Ok(default_branch) = repo.default_branch() else {
+        let Ok(repo) = Repository::current() else {
+            output.push_str(&cformat!(
+                "{INFO_SYMBOL} <bold>{branch}</> has no commits\n"
+            ));
+            return output;
+        };
+        let Some(default_branch) = repo.default_branch() else {
             output.push_str(&cformat!(
                 "{INFO_SYMBOL} <bold>{branch}</> has no commits\n"
             ));
@@ -843,7 +852,11 @@ where
     }
 }
 
-pub fn handle_select() -> anyhow::Result<()> {
+pub fn handle_select(
+    show_branches: bool,
+    show_remotes: bool,
+    config: &WorktrunkConfig,
+) -> anyhow::Result<()> {
     use std::io::IsTerminal;
 
     // Select requires an interactive terminal for the TUI
@@ -851,15 +864,10 @@ pub fn handle_select() -> anyhow::Result<()> {
         anyhow::bail!("wt select requires an interactive terminal");
     }
 
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Initialize preview mode state file (auto-cleanup on drop)
     let state = PreviewState::new();
-
-    // Load config (or use default) for path mismatch detection
-    let config = WorktrunkConfig::load()
-        .inspect_err(|e| log::warn!("Config load failed, using defaults: {}", e))
-        .unwrap_or_default();
 
     // Gather list data using simplified collection (buffered mode)
     // Skip expensive operations not needed for select UI
@@ -879,13 +887,14 @@ pub fn handle_select() -> anyhow::Result<()> {
 
     let Some(list_data) = collect::collect(
         &repo,
-        true,  // show_branches (include branches without worktrees)
-        false, // show_remotes (local branches only, not remote branches)
+        show_branches,
+        show_remotes,
         &skip_tasks,
         false, // show_progress (no progress bars)
         false, // render_table (select renders its own UI)
-        &config,
+        config,
         command_timeout,
+        true, // skip_expensive_for_stale (faster for repos with many stale branches)
     )?
     else {
         return Ok(());

@@ -1,9 +1,6 @@
 use crate::common::{
     TestRepo, make_snapshot_cmd, merge_scenario,
-    mock_commands::{
-        create_mock_cargo, create_mock_llm_api, create_mock_llm_auth, create_mock_pytest,
-        create_mock_ruff, create_mock_uv_pytest_ruff, create_mock_uv_sync,
-    },
+    mock_commands::{create_mock_cargo, create_mock_llm_auth},
     repo, repo_with_alternate_primary, repo_with_feature_worktree, repo_with_main_worktree,
     repo_with_multi_commit_feature, setup_snapshot_settings,
 };
@@ -11,23 +8,6 @@ use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-fn snapshot_switch_with_env(
-    test_name: &str,
-    repo: &TestRepo,
-    args: &[&str],
-    cwd: Option<&std::path::Path>,
-    env_vars: &[(&str, &str)],
-) {
-    let settings = setup_snapshot_settings(repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(repo, "switch", args, cwd);
-        for (key, value) in env_vars {
-            cmd.env(key, value);
-        }
-        assert_cmd_snapshot!(test_name, cmd);
-    });
-}
 
 /// Create a PATH with the given mock bin directory prepended, preserving variable case.
 ///
@@ -1114,189 +1094,9 @@ command = "{llm_path_str}"
     );
 }
 
-/// Generate README example: Creating worktree with post-create and post-start hooks
-/// This demonstrates the hooks feature with realistic tool output (uv sync, dev server).
-///
-/// Output is used in README.md "Project Hooks" section.
-/// Source: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_post_create.snap
-#[rstest]
-fn test_readme_example_hooks_post_create(repo: TestRepo) {
-    // Create project config with post-create and post-start hooks
-    let config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&config_dir).unwrap();
-
-    // Create mock commands for realistic output (cross-platform)
-    let bin_dir = repo.root_path().join(".bin");
-    fs::create_dir_all(&bin_dir).unwrap();
-
-    create_mock_uv_sync(&bin_dir);
-
-    let config_content = r#"
-[post-create]
-"install" = "uv sync"
-
-[post-start]
-"dev" = "uv run dev"
-"#;
-
-    fs::write(config_dir.join("wt.toml"), config_content).unwrap();
-
-    // Commit the config
-    repo.run_git(&["add", ".config/wt.toml", ".bin"]);
-    repo.run_git(&["commit", "-m", "Add project hooks"]);
-
-    // Set PATH to include mock commands and run switch --create with --yes
-    let (path_var, path_with_bin) = make_path_with_mock_bin(&bin_dir);
-    snapshot_switch_with_env(
-        "readme_example_hooks_post_create",
-        &repo,
-        &["--create", "feature-x", "--yes"],
-        None,
-        &[(&path_var, &path_with_bin)],
-    );
-}
-
-/// Generate README example: Merging with pre-merge hooks (test and lint)
-/// This demonstrates the pre-merge hooks feature with realistic pytest and ruff output.
-///
-/// Output is used in README.md "Project Hooks" section.
-/// Source: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_pre_merge.snap
-#[rstest]
-fn test_readme_example_hooks_pre_merge(mut repo: TestRepo) {
-    // Create project config with pre-merge hooks
-    let config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&config_dir).unwrap();
-
-    // Create mock commands for realistic output (cross-platform)
-    let bin_dir = repo.root_path().join(".bin");
-    fs::create_dir_all(&bin_dir).unwrap();
-
-    create_mock_pytest(&bin_dir);
-    create_mock_ruff(&bin_dir);
-    create_mock_llm_api(&bin_dir);
-    create_mock_uv_pytest_ruff(&bin_dir);
-
-    let config_content = r#"
-[pre-merge]
-"test" = "uv run pytest"
-"lint" = "uv run ruff check"
-"#;
-
-    fs::write(config_dir.join("wt.toml"), config_content).unwrap();
-
-    // Commit the config
-    repo.run_git(&["add", ".config/wt.toml", ".bin"]);
-    repo.run_git(&["commit", "-m", "Add pre-merge hooks"]);
-
-    // Create a feature worktree and make multiple commits
-    let feature_wt = repo.add_worktree("feature-auth");
-
-    // First commit - create initial auth.py with login endpoint
-    fs::create_dir_all(feature_wt.join("api")).unwrap();
-    let auth_py_v1 = r#"# Authentication API endpoints
-from typing import Dict, Optional
-import jwt
-from datetime import datetime, timedelta, timezone
-
-def login(username: str, password: str) -> Optional[Dict]:
-    """Authenticate user and return JWT token."""
-    # Validate credentials (stub)
-    if not username or not password:
-        return None
-
-    # Generate JWT token
-    payload = {
-        'sub': username,
-        'exp': datetime.now(timezone.utc) + timedelta(hours=1)
-    }
-    token = jwt.encode(payload, 'secret', algorithm='HS256')
-    return {'token': token, 'expires_in': 3600}
-"#;
-    std::fs::write(feature_wt.join("api/auth.py"), auth_py_v1).unwrap();
-    repo.run_git_in(&feature_wt, &["add", "api/auth.py"]);
-    repo.run_git_in(&feature_wt, &["commit", "-m", "Add login endpoint"]);
-
-    // Second commit - add tests
-    fs::create_dir_all(feature_wt.join("tests")).unwrap();
-    let test_auth_py = r#"# Authentication endpoint tests
-import pytest
-from api.auth import login
-
-def test_login_success():
-    result = login('user', 'pass')
-    assert result and 'token' in result
-
-def test_login_invalid_password():
-    result = login('user', '')
-    assert result is None
-
-def test_token_validation():
-    assert login('valid_user', 'valid_pass')['expires_in'] == 3600
-"#;
-    std::fs::write(feature_wt.join("tests/test_auth.py"), test_auth_py).unwrap();
-    repo.run_git_in(&feature_wt, &["add", "tests/test_auth.py"]);
-    repo.run_git_in(&feature_wt, &["commit", "-m", "Add authentication tests"]);
-
-    // Third commit - add refresh endpoint
-    let auth_py_v2 = r#"# Authentication API endpoints
-from typing import Dict, Optional
-import jwt
-from datetime import datetime, timedelta, timezone
-
-def login(username: str, password: str) -> Optional[Dict]:
-    """Authenticate user and return JWT token."""
-    # Validate credentials (stub)
-    if not username or not password:
-        return None
-
-    # Generate JWT token
-    payload = {
-        'sub': username,
-        'exp': datetime.now(timezone.utc) + timedelta(hours=1)
-    }
-    token = jwt.encode(payload, 'secret', algorithm='HS256')
-    return {'token': token, 'expires_in': 3600}
-
-def refresh_token(token: str) -> Optional[Dict]:
-    """Refresh an existing JWT token."""
-    try:
-        payload = jwt.decode(token, 'secret', algorithms=['HS256'])
-        new_payload = {
-            'sub': payload['sub'],
-            'exp': datetime.now(timezone.utc) + timedelta(hours=1)
-        }
-        new_token = jwt.encode(new_payload, 'secret', algorithm='HS256')
-        return {'token': new_token, 'expires_in': 3600}
-    except jwt.InvalidTokenError:
-        return None
-"#;
-    std::fs::write(feature_wt.join("api/auth.py"), auth_py_v2).unwrap();
-    repo.run_git_in(&feature_wt, &["add", "api/auth.py"]);
-    repo.run_git_in(&feature_wt, &["commit", "-m", "Add validation"]);
-
-    // Configure LLM in worktrunk config
-    // On Windows, direct execution needs .cmd extension; use forward slashes for shell compatibility
-    let llm_name = if cfg!(windows) { "llm.cmd" } else { "llm" };
-    let llm_path = bin_dir.join(llm_name);
-    let llm_path_str = llm_path.to_string_lossy().replace('\\', "/");
-    let worktrunk_config = format!(
-        r#"
-[commit-generation]
-command = "{llm_path_str}"
-"#
-    );
-    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
-
-    // Set PATH and merge with --yes
-    let (path_var, path_with_bin) = make_path_with_mock_bin(&bin_dir);
-    snapshot_merge_with_env(
-        "readme_example_hooks_pre_merge",
-        &repo,
-        &["main", "--yes"],
-        Some(&feature_wt),
-        &[(&path_var, &path_with_bin)],
-    );
-}
+// NOTE: test_readme_example_hooks_post_create and test_readme_example_hooks_pre_merge
+// were removed - they're covered by PTY-based tests in shell_wrapper.rs that capture
+// combined stdout/stderr for README examples.
 
 #[rstest]
 fn test_merge_no_commit_with_clean_tree(mut repo_with_feature_worktree: TestRepo) {

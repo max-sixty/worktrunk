@@ -13,7 +13,7 @@ use crate::common::TestRepo;
 #[test]
 fn test_worktree_state_normal() {
     let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
 
     // Normal state - no special files
     let state = repository.worktree_state().unwrap();
@@ -23,7 +23,7 @@ fn test_worktree_state_normal() {
 #[test]
 fn test_worktree_state_merging() {
     let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
 
     // Simulate merge state by creating MERGE_HEAD
     let git_dir = repo.root_path().join(".git");
@@ -36,7 +36,7 @@ fn test_worktree_state_merging() {
 #[test]
 fn test_worktree_state_rebasing_with_progress() {
     let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
 
     // Simulate rebase state with progress
     let git_dir = repo.root_path().join(".git");
@@ -52,7 +52,7 @@ fn test_worktree_state_rebasing_with_progress() {
 #[test]
 fn test_worktree_state_rebasing_apply() {
     let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
 
     // Simulate rebase-apply state (git am or git rebase without -m)
     let git_dir = repo.root_path().join(".git");
@@ -68,7 +68,7 @@ fn test_worktree_state_rebasing_apply() {
 #[test]
 fn test_worktree_state_rebasing_no_progress() {
     let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
 
     // Simulate rebase state without progress files
     let git_dir = repo.root_path().join(".git");
@@ -83,7 +83,7 @@ fn test_worktree_state_rebasing_no_progress() {
 #[test]
 fn test_worktree_state_cherry_picking() {
     let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
 
     // Simulate cherry-pick state
     let git_dir = repo.root_path().join(".git");
@@ -96,7 +96,7 @@ fn test_worktree_state_cherry_picking() {
 #[test]
 fn test_worktree_state_reverting() {
     let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
 
     // Simulate revert state
     let git_dir = repo.root_path().join(".git");
@@ -109,7 +109,7 @@ fn test_worktree_state_reverting() {
 #[test]
 fn test_worktree_state_bisecting() {
     let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
 
     // Simulate bisect state
     let git_dir = repo.root_path().join(".git");
@@ -130,7 +130,7 @@ fn test_available_branches_all_have_worktrees() {
     // Create feature branch with worktree
     repo.add_worktree("feature");
 
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let available = repository.available_branches().unwrap();
 
     // Both main and feature have worktrees, so nothing should be available
@@ -146,7 +146,7 @@ fn test_available_branches_some_without_worktrees() {
         .output()
         .unwrap();
 
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let available = repository.available_branches().unwrap();
 
     // orphan-branch has no worktree, so it should be available
@@ -172,7 +172,7 @@ fn test_all_branches() {
         .output()
         .unwrap();
 
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let branches = repository.all_branches().unwrap();
 
     assert!(branches.contains(&"main".to_string()));
@@ -199,7 +199,7 @@ fn test_project_identifier_https() {
         .output()
         .unwrap();
 
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let id = repository.project_identifier().unwrap();
     assert_eq!(id, "github.com/user/repo");
 }
@@ -219,7 +219,7 @@ fn test_project_identifier_http() {
         .output()
         .unwrap();
 
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let id = repository.project_identifier().unwrap();
     assert_eq!(id, "gitlab.example.com/team/project");
 }
@@ -239,7 +239,7 @@ fn test_project_identifier_ssh_colon() {
         .output()
         .unwrap();
 
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let id = repository.project_identifier().unwrap();
     assert_eq!(id, "github.com/user/repo");
 }
@@ -259,7 +259,7 @@ fn test_project_identifier_ssh_protocol() {
         .output()
         .unwrap();
 
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let id = repository.project_identifier().unwrap();
     // ssh://git@github.com/user/repo.git -> github.com/user/repo
     assert_eq!(id, "github.com/user/repo");
@@ -280,7 +280,7 @@ fn test_project_identifier_ssh_protocol_with_port() {
         .output()
         .unwrap();
 
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let id = repository.project_identifier().unwrap();
     // The port colon gets converted to /
     assert_eq!(id, "gitlab.example.com/2222/team/project");
@@ -291,7 +291,7 @@ fn test_project_identifier_no_remote_fallback() {
     let repo = TestRepo::new();
     // Don't create a remote - should fall back to directory name
 
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let id = repository.project_identifier().unwrap();
     // Should be the repo directory name
     assert_eq!(id, "repo");
@@ -309,7 +309,7 @@ fn test_get_config_exists() {
         .output()
         .unwrap();
 
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let value = repository.get_config("test.key").unwrap();
     assert_eq!(value, Some("test-value".to_string()));
 }
@@ -318,7 +318,7 @@ fn test_get_config_exists() {
 fn test_get_config_not_exists() {
     let repo = TestRepo::new();
 
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let value = repository.get_config("nonexistent.key").unwrap();
     assert!(value.is_none());
 }
@@ -327,7 +327,7 @@ fn test_get_config_not_exists() {
 fn test_set_config() {
     let repo = TestRepo::new();
 
-    let repository = Repository::at(repo.root_path().to_path_buf());
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     repository.set_config("test.setting", "new-value").unwrap();
 
     // Verify it was set

@@ -11,7 +11,7 @@ use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{Shell, scan_for_detection_details};
 use worktrunk::styling::{
     error_message, format_bash_with_gutter, format_heading, format_toml, format_with_gutter,
-    hint_message, info_message, progress_message, success_message, warning_message,
+    hint_message, info_message, success_message, warning_message,
 };
 use worktrunk::utils::get_now;
 
@@ -55,8 +55,8 @@ fn comment_out_config(content: &str) -> String {
 /// Handle the config create command
 pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
     if project {
-        let repo = Repository::current();
-        let config_path = repo.worktree_root()?.join(".config/wt.toml");
+        let repo = Repository::current()?;
+        let config_path = repo.current_worktree().root()?.join(".config/wt.toml");
         create_config_file(
             config_path,
             PROJECT_CONFIG_EXAMPLE,
@@ -191,17 +191,47 @@ fn is_plugin_installed() -> bool {
     content.contains("\"worktrunk@worktrunk\"")
 }
 
+/// Get the git version string (e.g., "2.47.1")
+fn get_git_version() -> Option<String> {
+    use std::process::Command;
+    use worktrunk::shell_exec::run;
+
+    let mut cmd = Command::new("git");
+    cmd.args(["--version"]);
+
+    let output = run(&mut cmd, None).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    // Parse "git version 2.47.1" -> "2.47.1"
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .trim()
+        .strip_prefix("git version ")
+        .map(|s| s.to_string())
+}
+
 /// Render OTHER section (version, Claude plugin, hyperlinks)
 fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
     let cmd = crate::binary_name();
     let version = version_str();
 
-    // Version as suffix to heading
+    writeln!(out, "{}", format_heading("OTHER", None))?;
+
+    // Version info
     writeln!(
         out,
         "{}",
-        format_heading("OTHER", Some(&cformat!("{cmd} {version}")))
+        info_message(cformat!("{cmd}: <bold>{version}</>"))
     )?;
+    if let Some(git_version) = get_git_version() {
+        writeln!(
+            out,
+            "{}",
+            info_message(cformat!("git: <bold>{git_version}</>"))
+        )?;
+    }
 
     // Claude Code plugin status
     let plugin_installed = is_plugin_installed();
@@ -247,18 +277,14 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
 /// Run full diagnostic checks (CI tools, commit generation) and render to buffer
 fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     use super::list::ci_status::{CiPlatform, CiToolsStatus, get_platform_for_repo};
-    use worktrunk::config::ProjectConfig;
 
     writeln!(out, "{}", format_heading("DIAGNOSTICS", None))?;
 
     // Check CI tool based on detected platform (with config override support)
-    let repo = Repository::current();
-    let project_config = ProjectConfig::load(&repo, true).ok().flatten();
+    let repo = Repository::current()?;
+    let project_config = repo.load_project_config().ok().flatten();
     let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
-    let platform = repo
-        .worktree_root()
-        .ok()
-        .and_then(|root| get_platform_for_repo(root.to_str()?, platform_override));
+    let platform = get_platform_for_repo(&repo, platform_override);
 
     match platform {
         Some(CiPlatform::GitHub) => {
@@ -394,8 +420,7 @@ fn warn_unknown_keys(out: &mut String, unknown_keys: &[String]) -> anyhow::Resul
 
 fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     // Try to get current repository root
-    let repo = Repository::current();
-    let repo_root = match repo.worktree_root() {
+    let repo_root = match Repository::current().and_then(|repo| repo.current_worktree().root()) {
         Ok(root) => root,
         Err(_) => {
             writeln!(
@@ -846,7 +871,7 @@ fn require_user_config_path() -> anyhow::Result<PathBuf> {
 
 /// Clear all log files from the wt-logs directory
 fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
-    let log_dir = repo.wt_logs_dir()?;
+    let log_dir = repo.wt_logs_dir();
 
     if !log_dir.exists() {
         return Ok(0);
@@ -872,7 +897,7 @@ fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
 
 /// Render the LOG FILES section (heading + table or "(none)") into the output buffer
 fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
-    let log_dir = repo.wt_logs_dir()?;
+    let log_dir = repo.wt_logs_dir();
     let log_dir_display = format_path_for_display(&log_dir);
 
     writeln!(
@@ -937,19 +962,16 @@ fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
 }
 
 /// Handle the state get command
-pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> anyhow::Result<()> {
+pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()> {
     use super::list::ci_status::PrStatus;
 
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     match key {
         "default-branch" => {
-            let branch_name = if refresh {
-                crate::output::print(progress_message("Querying remote for default branch..."))?;
-                repo.refresh_default_branch()?
-            } else {
-                repo.default_branch()?
-            };
+            let branch_name = repo.default_branch().ok_or_else(|| {
+                anyhow::anyhow!("Cannot determine default branch. Run 'wt config state default-branch set <branch>' to configure.")
+            })?;
             crate::output::stdout(branch_name)?;
         }
         "previous-branch" => match repo.get_switch_previous() {
@@ -972,8 +994,6 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
                 None => repo.require_current_branch("get ci-status for current branch")?,
             };
 
-            let repo_root = repo.worktree_root()?;
-
             // Get the HEAD commit for this branch
             let head = repo
                 .run_command(&["rev-parse", &branch_name])
@@ -987,15 +1007,8 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
                 .into());
             }
 
-            if refresh {
-                crate::output::print(progress_message("Fetching CI status..."))?;
-                // Clear cache to force refresh
-                let config_key = format!("worktrunk.state.{branch_name}.ci-status");
-                let _ = repo.run_command(&["config", "--unset", &config_key]);
-            }
-
             let has_upstream = repo.upstream_branch(&branch_name).ok().flatten().is_some();
-            let ci_status = PrStatus::detect(&branch_name, &head, repo_root, has_upstream)
+            let ci_status = PrStatus::detect(&repo, &branch_name, &head, has_upstream)
                 .map_or(super::list::ci_status::CiStatus::NoCI, |s| s.ci_status);
             let status_str: &'static str = ci_status.into();
             crate::output::stdout(status_str)?;
@@ -1022,10 +1035,16 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
 
 /// Handle the state set command
 pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> anyhow::Result<()> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     match key {
         "default-branch" => {
+            // Warn if the branch doesn't exist locally
+            if !repo.local_branch_exists(&value)? {
+                crate::output::print(warning_message(cformat!(
+                    "Branch <bold>{value}</> does not exist locally"
+                )))?;
+            }
             repo.set_default_branch(&value)?;
             crate::output::print(success_message(cformat!(
                 "Set default branch to <bold>{value}</>"
@@ -1067,7 +1086,7 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
 
 /// Handle the state clear command
 pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyhow::Result<()> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     match key {
         "default-branch" => {
@@ -1185,7 +1204,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
 
 /// Handle the state clear all command
 pub fn handle_state_clear_all() -> anyhow::Result<()> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
     let mut cleared_any = false;
 
     // Clear default branch cache
@@ -1241,7 +1260,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
 
 /// Handle the hints get command (list shown hints)
 pub fn handle_hints_get() -> anyhow::Result<()> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
     let hints = repo.list_shown_hints();
 
     if hints.is_empty() {
@@ -1257,7 +1276,7 @@ pub fn handle_hints_get() -> anyhow::Result<()> {
 
 /// Handle the hints clear command
 pub fn handle_hints_clear(name: Option<String>) -> anyhow::Result<()> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     match name {
         Some(hint_name) => {
@@ -1287,7 +1306,7 @@ pub fn handle_hints_clear(name: Option<String>) -> anyhow::Result<()> {
 pub fn handle_state_show(format: crate::cli::OutputFormat) -> anyhow::Result<()> {
     use crate::cli::OutputFormat;
 
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     match format {
         OutputFormat::Json => handle_state_show_json(&repo),
@@ -1298,7 +1317,7 @@ pub fn handle_state_show(format: crate::cli::OutputFormat) -> anyhow::Result<()>
 /// Output state as JSON
 fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
     // Get default branch
-    let default_branch = repo.default_branch().ok();
+    let default_branch = repo.default_branch();
 
     // Get previous branch
     let previous_branch = repo.get_switch_previous();
@@ -1339,7 +1358,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         .collect();
 
     // Get log files
-    let log_dir = repo.wt_logs_dir()?;
+    let log_dir = repo.wt_logs_dir();
     let logs: Vec<serde_json::Value> = if log_dir.exists() {
         let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
             .filter_map(|e| e.ok())
@@ -1403,8 +1422,8 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     // Show default branch cache
     writeln!(out, "{}", format_heading("DEFAULT BRANCH", None))?;
     match repo.default_branch() {
-        Ok(branch) => writeln!(out, "{}", format_with_gutter(&branch, None))?,
-        Err(_) => writeln!(out, "{}", format_with_gutter("(not cached)", None))?,
+        Some(branch) => writeln!(out, "{}", format_with_gutter(&branch, None))?,
+        None => writeln!(out, "{}", format_with_gutter("(not available)", None))?,
     }
     writeln!(out)?;
 
@@ -1753,5 +1772,18 @@ mod tests {
         assert!(result.is_ok());
         let path = result.unwrap();
         assert!(path.ends_with("worktrunk/config.toml"));
+    }
+
+    // ==================== get_git_version tests ====================
+
+    #[test]
+    fn test_get_git_version_returns_version() {
+        // In a normal environment with git installed, should return a version
+        let version = get_git_version();
+        assert!(version.is_some());
+        let version = version.unwrap();
+        // Version should look like a semver (e.g., "2.47.1")
+        assert!(version.chars().next().unwrap().is_ascii_digit());
+        assert!(version.contains('.'));
     }
 }

@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.12.0
+
+### Improved
+
+- **`wt select --branches` and `--remotes` flags**: Control which items appear in the selection UI. Shares the `[list]` config section with `wt list` for consistent defaults.
+- **Graceful degradation when default branch unavailable**: When the default branch cannot be determined (e.g., misconfigured), `wt list` shows warnings and empty cells rather than failing. `wt switch --create` without `--base` gives a clear error message.
+- **Remove `--refresh` flag from state commands**: `wt config state default-branch get` and `wt config state ci-status get` now purely read cached state. To force re-detection, use the explicit workflow: `clear` then `get`. (Breaking: `--refresh` flag removed)
+- **Windows: Require Git for Windows**: Removed PowerShell fallback. Worktrunk now requires Git for Windows (Git Bash) and shows a clear error message pointing to the download page if not found. (Breaking: PowerShell no longer supported)
+
+### Fixed
+
+- **Flag styling in messages**: Flags like `--clobber` and `--no-verify` in parentheses now inherit message color instead of using bright-black styling.
+- **Nix flake**: Remove apple_sdk framework dependency. ([#525](https://github.com/max-sixty/worktrunk/pull/525), thanks @MattiasMTS)
+- **`gh issue create` hint**: Now includes `--web` flag to open the issue form in browser.
+
+### Internal
+
+- **Binary size reduced ~1MB**: Trimmed unused config/minijinja features (13MB → 12MB).
+- **Repository module split**: Split 2200-line module into 8 focused submodules for maintainability.
+
+## 0.11.0
+
+### Improved
+
+- **Nix flake for packaging**: New `flake.nix` for Nix users with crane for efficient Rust builds. ([#502](https://github.com/max-sixty/worktrunk/pull/502), thanks @marktoda; thanks @Kabilan108 for requesting)
+- **`sanitize_db` template filter**: New filter that transforms strings into database-safe identifiers with a 3-character hash suffix for collision/keyword safety. ([#498](https://github.com/max-sixty/worktrunk/pull/498), thanks @hugobarauna for requesting)
+- **`wt select` performance**: 500ms timeout for git commands improves TUI responsiveness on large repos with many branches. (thanks @KidkArolis for reporting [#461](https://github.com/max-sixty/worktrunk/issues/461))
+- **`wt select` stale branch handling**: Branches 50+ commits behind the default branch now skip expensive operations, showing `...` in the diff column. Improves performance on repos with many stale branches.
+- **Global merge-base cache**: Cached merge-base results improve `wt list` performance by avoiding redundant git calls.
+- **`wt config show` git version**: Now displays the git version alongside the worktrunk version.
+- **`wt step copy-ignored` default**: Now copies all gitignored files by default. Use `.worktreeinclude` to limit what gets copied (previously required `.worktreeinclude` to specify what to copy).
+- **Trace log analysis**: New `analyze-trace` binary for analyzing `[wt-trace]` performance logs.
+
+### Fixed
+
+- **Statusline truncation**: No longer truncates when terminal width is unknown, fixing Claude Code statusline display.
+- **Shell completions**: Deprecated args like `--no-background` no longer appear in tab completions.
+- **`wt remove` progress ordering**: Progress message now appears after pre-remove hooks, not before.
+- **`wt list` index lock**: Uses `--no-optional-locks` for git status to avoid lock contention with parallel tasks.
+
 ## 0.10.0
 
 ### Improved

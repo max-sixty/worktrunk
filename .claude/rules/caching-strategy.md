@@ -12,42 +12,58 @@ Everything else (remote URLs, project config, branch metadata) is read-only.
 
 ## Caching Implementation
 
-`Repository` uses `OnceCell` for per-instance caching. Since instances are short-lived (command duration), we can cache aggressively:
+`Repository` holds its cache directly via `Arc<RepoCache>`. Cloning a Repository
+shares the cache — all clones see the same cached values.
+
+**Key patterns:**
+
+- **Command entry points** create Repository via `Repository::current()` or `Repository::at(path)`
+- **Parallel tasks** (e.g., `wt list`) clone the Repository, sharing the cache
+- **Tests** naturally get isolation since each test creates its own Repository
 
 **Currently cached:**
-- `git_common_dir()` — never changes
-- `worktree_root()` — never changes
+
+- `git_common_dir` — computed at construction, stored on struct
+- `worktree_root()` — per-worktree, keyed by path
 - `worktree_base()` — derived from git_common_dir and is_bare
 - `is_bare()` — git config, doesn't change
-- `current_branch()` — we don't switch branches within a worktree
+- `current_branch()` — per-worktree, keyed by path
 - `project_identifier()` — derived from remote URL
 - `primary_remote()` — git config, doesn't change
+- `primary_remote_url()` — derived from primary_remote, doesn't change
 - `default_branch()` — from git config or detection, doesn't change
+- `integration_target()` — effective target for integration checks (local default or upstream if ahead)
+- `merge_base()` — keyed by (commit1, commit2) pair
+- `ahead_behind` — keyed by (base_ref, branch_name), populated by `batch_ahead_behind()`
+- `project_config` — loaded from .config/wt.toml
 
 **Not cached (intentionally):**
+
 - `is_dirty()` — changes as we stage/commit
 - `list_worktrees()` — changes as we create/remove worktrees
 
 **Adding new cached methods:**
 
 1. Add field to `RepoCache` struct: `field_name: OnceCell<T>`
-2. Use `get_or_try_init()` pattern for fallible initialization
-3. Return `&T` (for references) or `.copied()`/`.cloned()` (for values)
+2. Access via `self.cache.field_name`
+3. Return owned values (String, PathBuf, bool)
 
 ```rust
-// Return reference (avoids allocation)
-pub fn cached_ref(&self) -> anyhow::Result<&str> {
+// For repo-wide values (same for all clones)
+pub fn cached_value(&self) -> anyhow::Result<String> {
     self.cache
         .field_name
-        .get_or_try_init(|| { /* compute String */ })
-        .map(String::as_str)
+        .get_or_init(|| { /* compute value */ })
+        .clone()
 }
 
-// Return owned value (when caller needs ownership)
-pub fn cached_value(&self) -> anyhow::Result<bool> {
+// For per-worktree values (different per worktree path)
+// Use DashMap for concurrent access
+pub fn cached_per_worktree(&self, path: &Path) -> String {
     self.cache
         .field_name
-        .get_or_try_init(|| { /* compute bool */ })
-        .copied()
+        .entry(path.to_path_buf())
+        .or_insert_with(|| { /* compute value */ })
+        .clone()
 }
 ```
