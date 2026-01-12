@@ -899,6 +899,221 @@ fn test_configure_shell_no_warning_when_shell_unset(repo: TestRepo, temp_home: T
     });
 }
 
+#[rstest]
+fn test_configure_shell_dry_run(repo: TestRepo, temp_home: TempDir) {
+    // Create a fake .zshrc file
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(&zshrc_path, "# Existing config\n").unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("install")
+            .arg("zsh")
+            .arg("--dry-run")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify the file was NOT modified
+    let content = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(
+        !content.contains("wt config shell init"),
+        "File should not be modified with --dry-run"
+    );
+    assert_eq!(content, "# Existing config\n", "File should be unchanged");
+}
+
+#[rstest]
+fn test_configure_shell_dry_run_multiple(repo: TestRepo, temp_home: TempDir) {
+    // Create multiple shell config files
+    let bash_config_path = temp_home.path().join(".bashrc");
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(&bash_config_path, "# Existing bash config\n").unwrap();
+    fs::write(&zshrc_path, "# Existing zsh config\n").unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("install")
+            .arg("--dry-run")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify no files were modified
+    let bash_content = fs::read_to_string(&bash_config_path).unwrap();
+    assert!(
+        !bash_content.contains("wt config shell init"),
+        "Bash config should not be modified with --dry-run"
+    );
+    let zsh_content = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(
+        !zsh_content.contains("wt config shell init"),
+        "Zsh config should not be modified with --dry-run"
+    );
+}
+
+#[rstest]
+fn test_configure_shell_dry_run_already_configured(repo: TestRepo, temp_home: TempDir) {
+    // Create a fake .zshrc file with the line already present
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(
+        &zshrc_path,
+        "# Existing config\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init zsh)\"; fi\n",
+    )
+    .unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("install")
+            .arg("zsh")
+            .arg("--dry-run")
+            .current_dir(repo.root_path());
+
+        // Already configured - nothing to preview
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_uninstall_shell_dry_run(repo: TestRepo, temp_home: TempDir) {
+    // Create a fake .zshrc file with wt integration
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(
+        &zshrc_path,
+        "# Existing config\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init zsh)\"; fi\n",
+    )
+    .unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("uninstall")
+            .arg("zsh")
+            .arg("--dry-run")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify the file was NOT modified
+    let content = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(
+        content.contains("wt config shell init"),
+        "File should not be modified with --dry-run"
+    );
+}
+
+#[rstest]
+fn test_uninstall_shell_dry_run_fish(repo: TestRepo, temp_home: TempDir) {
+    // Create fish conf.d directory with wt.fish and completions
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let fish_config = conf_d.join("wt.fish");
+    fs::write(
+        &fish_config,
+        "if type -q wt; command wt config shell init fish | source; end\n",
+    )
+    .unwrap();
+
+    // Create completions file
+    let completions_d = temp_home.path().join(".config/fish/completions");
+    fs::create_dir_all(&completions_d).unwrap();
+    let completions_file = completions_d.join("wt.fish");
+    fs::write(&completions_file, "# fish completions").unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/fish");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("uninstall")
+            .arg("fish")
+            .arg("--dry-run")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify files were NOT modified
+    assert!(fish_config.exists(), "Fish config should still exist");
+    assert!(
+        completions_file.exists(),
+        "Fish completions should still exist"
+    );
+}
+
+#[rstest]
+fn test_uninstall_shell_dry_run_multiple(repo: TestRepo, temp_home: TempDir) {
+    // Create multiple shell configs with wt integration
+    let bash_config_path = temp_home.path().join(".bashrc");
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(
+        &bash_config_path,
+        "# Bash config\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init bash)\"; fi\n",
+    )
+    .unwrap();
+    fs::write(
+        &zshrc_path,
+        "# Zsh config\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init zsh)\"; fi\n",
+    )
+    .unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("uninstall")
+            .arg("--dry-run")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify no files were modified
+    let bash_content = fs::read_to_string(&bash_config_path).unwrap();
+    assert!(
+        bash_content.contains("wt config shell init"),
+        "Bash config should not be modified with --dry-run"
+    );
+    let zsh_content = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(
+        zsh_content.contains("wt config shell init"),
+        "Zsh config should not be modified with --dry-run"
+    );
+}
+
 // PTY-based tests for interactive install preview
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {
