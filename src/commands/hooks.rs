@@ -5,7 +5,9 @@ use worktrunk::HookType;
 use worktrunk::config::CommandConfig;
 use worktrunk::git::WorktrunkError;
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{format_bash_with_gutter, progress_message, warning_message};
+use worktrunk::styling::{
+    error_message, format_bash_with_gutter, progress_message, warning_message,
+};
 
 use super::command_executor::{CommandContext, PreparedCommand, prepare_commands};
 use crate::commands::process::spawn_detached;
@@ -263,8 +265,8 @@ pub fn run_hook_with_filter(
         return Ok(());
     }
 
-    // Track first failure for Warn strategy (to propagate exit code after all commands run)
-    let mut first_failure: Option<(String, Option<String>, i32)> = None;
+    // Track first failure's exit code for Warn strategy (to propagate after all commands run)
+    let mut first_failure_exit_code: Option<i32> = None;
 
     for cmd in commands {
         cmd.announce()?;
@@ -302,12 +304,11 @@ pub fn run_hook_with_filter(
                         Some(name) => cformat!("Command <bold>{name}</> failed: {err_msg}"),
                         None => format!("Command failed: {err_msg}"),
                     };
-                    crate::output::print(warning_message(message))?;
+                    crate::output::print(error_message(message))?;
 
                     // Track first failure to propagate exit code later (only for PostMerge)
-                    if first_failure.is_none() && hook_type == HookType::PostMerge {
-                        first_failure =
-                            Some((err_msg, cmd.prepared.name.clone(), exit_code.unwrap_or(1)));
+                    if first_failure_exit_code.is_none() && hook_type == HookType::PostMerge {
+                        first_failure_exit_code = Some(exit_code.unwrap_or(1));
                     }
                 }
             }
@@ -318,14 +319,9 @@ pub fn run_hook_with_filter(
 
     // For Warn strategy with PostMerge: if any command failed, propagate the exit code
     // This matches git's behavior: post-hooks can't stop the operation but affect exit status
-    if let Some((error, command_name, exit_code)) = first_failure {
-        return Err(WorktrunkError::HookCommandFailed {
-            hook_type,
-            command_name,
-            error,
-            exit_code: Some(exit_code),
-        }
-        .into());
+    // Don't show another error message — warnings were already printed inline
+    if let Some(exit_code) = first_failure_exit_code {
+        return Err(WorktrunkError::AlreadyDisplayed { exit_code }.into());
     }
 
     Ok(())
