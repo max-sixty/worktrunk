@@ -849,10 +849,15 @@ fn main() {
                         let cmd = cmd.unwrap_or_else(binary_name);
                         handle_init(shell, cmd).map_err(|e| anyhow::anyhow!("{}", e))
                     }
-                    ConfigShellCommand::Install { shell, yes, cmd } => {
+                    ConfigShellCommand::Install {
+                        shell,
+                        yes,
+                        dry_run,
+                        cmd,
+                    } => {
                         // Auto-write to shell config files and completions
                         let cmd = cmd.unwrap_or_else(binary_name);
-                        handle_configure_shell(shell, yes, cmd)
+                        handle_configure_shell(shell, yes, dry_run, cmd)
                             .map_err(|e| anyhow::anyhow!("{}", e))
                             .and_then(|scan_result| {
                                 // Exit with error if no shells configured
@@ -864,14 +869,27 @@ fn main() {
                                     }
                                     .into());
                                 }
+                                // For --dry-run, preview was already shown by handler
+                                if dry_run {
+                                    return Ok(());
+                                }
                                 crate::output::print_shell_install_result(&scan_result)
                             })
                     }
-                    ConfigShellCommand::Uninstall { shell, yes } => {
+                    ConfigShellCommand::Uninstall {
+                        shell,
+                        yes,
+                        dry_run,
+                    } => {
                         let explicit_shell = shell.is_some();
-                        handle_unconfigure_shell(shell, yes, &binary_name())
+                        handle_unconfigure_shell(shell, yes, dry_run, &binary_name())
                             .map_err(|e| anyhow::anyhow!("{}", e))
                             .and_then(|scan_result| {
+                                // For --dry-run, preview was already shown by handler
+                                if dry_run {
+                                    return Ok(());
+                                }
+
                                 let shell_count = scan_result.results.len();
                                 let completion_count = scan_result.completion_results.len();
                                 let total_changes = shell_count + completion_count;
