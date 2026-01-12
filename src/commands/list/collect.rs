@@ -694,6 +694,7 @@ pub fn collect(
     skip_expensive_for_stale: bool,
 ) -> anyhow::Result<Option<super::model::ListData>> {
     use super::progressive_table::ProgressiveTable;
+    worktrunk::shell_exec::trace_instant("List collect started");
 
     // Phase 1: Get worktree list (required for everything else)
     let worktrees = repo.list_worktrees().context("Failed to list worktrees")?;
@@ -923,6 +924,7 @@ pub fn collect(
             max_width,
         );
         table.render_skeleton()?;
+        worktrunk::shell_exec::trace_instant("Skeleton rendered");
         Some(table)
     } else {
         None
@@ -934,6 +936,7 @@ pub fn collect(
     }
 
     // === Post-skeleton computations (deferred to minimize time-to-skeleton) ===
+    worktrunk::shell_exec::trace_instant("Post-skeleton started");
 
     // Compute previous_branch and update is_previous on items
     let previous_branch = repo.get_switch_previous();
@@ -1047,6 +1050,7 @@ pub fn collect(
         Vec::new()
     };
 
+    worktrunk::shell_exec::trace_instant("Spawning worker thread");
     std::thread::spawn(move || {
         use super::collect_progressive_impl::{work_items_for_branch, work_items_for_worktree};
 
@@ -1082,6 +1086,7 @@ pub fn collect(
         all_work_items.sort_by_key(|item| item.kind.is_network());
 
         // Phase 2: Execute all work items in parallel
+        worktrunk::shell_exec::trace_instant("Parallel execution started");
         all_work_items.into_par_iter().for_each(|item| {
             worktrunk::shell_exec::set_command_timeout(command_timeout);
             let result = item.execute();
@@ -1095,6 +1100,7 @@ pub fn collect(
     // Track completed results for footer progress
     let mut completed_results = 0;
     let mut progress_overflow = false;
+    let mut first_result_traced = false;
 
     // Drain task results with conditional progressive rendering
     let drain_outcome = drain_results(
@@ -1103,6 +1109,12 @@ pub fn collect(
         &mut errors,
         &expected_results,
         |item_idx, item, ctx| {
+            // Trace first result arrival
+            if !first_result_traced {
+                first_result_traced = true;
+                worktrunk::shell_exec::trace_instant("First result received");
+            }
+
             // Compute/recompute status symbols as data arrives (both modes).
             // This is idempotent and updates status as new data (like upstream) arrives.
             if let Some(ref target) = integration_target {
@@ -1149,6 +1161,7 @@ pub fn collect(
             }
         },
     );
+    worktrunk::shell_exec::trace_instant("All results drained");
 
     // Handle timeout if it occurred
     if let DrainOutcome::TimedOut {
@@ -1299,6 +1312,7 @@ pub fn collect(
     // - Progressive + Non-TTY: rendered final table (no intermediate output)
     // - Buffered: rendered final table
     // JSON mode (render_table=false): no rendering, data returned for serialization
+    worktrunk::shell_exec::trace_instant("List collect complete");
 
     Ok(Some(super::model::ListData {
         items,

@@ -7,23 +7,43 @@
 //! [wt-trace] ts=1234567890 tid=3 context=main cmd="git merge-base" dur=100.0ms err="fatal: ..."
 //! ```
 //!
+//! Instant events (milestones without duration) use this format:
+//! ```text
+//! [wt-trace] ts=1234567890 tid=3 event="Showed skeleton"
+//! ```
+//!
 //! The `ts` (timestamp in microseconds since epoch) and `tid` (thread ID) fields
 //! enable concurrency analysis and Chrome Trace Format export for visualizing
 //! thread utilization in tools like chrome://tracing or Perfetto.
 
 use std::time::Duration;
 
+/// The kind of trace entry: command execution or instant event.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TraceEntryKind {
+    /// A command execution with duration and result
+    Command {
+        /// Full command string (e.g., "git status --porcelain")
+        command: String,
+        /// Command duration
+        duration: Duration,
+        /// Command result
+        result: TraceResult,
+    },
+    /// An instant event (milestone marker with no duration)
+    Instant {
+        /// Event name (e.g., "Showed skeleton")
+        name: String,
+    },
+}
+
 /// A parsed trace entry from a wt-trace log line.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraceEntry {
     /// Optional context (typically worktree name for git commands)
     pub context: Option<String>,
-    /// Full command string (e.g., "git status --porcelain")
-    pub command: String,
-    /// Command duration
-    pub duration: Duration,
-    /// Command result
-    pub result: TraceResult,
+    /// The kind of trace entry
+    pub kind: TraceEntryKind,
     /// Start timestamp in microseconds since Unix epoch (for Chrome Trace Format)
     pub start_time_us: Option<u64>,
     /// Thread ID that executed this command (for concurrency analysis)
@@ -41,21 +61,70 @@ pub enum TraceResult {
 
 impl TraceEntry {
     /// Extract the program name (first word of command).
+    /// Returns empty string for instant events.
     pub fn program(&self) -> &str {
-        self.command.split_whitespace().next().unwrap_or("")
+        match &self.kind {
+            TraceEntryKind::Command { command, .. } => {
+                command.split_whitespace().next().unwrap_or("")
+            }
+            TraceEntryKind::Instant { .. } => "",
+        }
     }
 
     /// Extract git subcommand if this is a git command.
-    /// Returns None if not a git command.
+    /// Returns None if not a git command or if this is an instant event.
     pub fn git_subcommand(&self) -> Option<&str> {
-        let mut parts = self.command.split_whitespace();
-        let program = parts.next()?;
-        if program == "git" { parts.next() } else { None }
+        match &self.kind {
+            TraceEntryKind::Command { command, .. } => {
+                let mut parts = command.split_whitespace();
+                let program = parts.next()?;
+                if program == "git" { parts.next() } else { None }
+            }
+            TraceEntryKind::Instant { .. } => None,
+        }
     }
 
     /// Returns true if the command succeeded.
+    /// Instant events always return true.
     pub fn is_success(&self) -> bool {
-        matches!(self.result, TraceResult::Completed { success: true })
+        match &self.kind {
+            TraceEntryKind::Command { result, .. } => {
+                matches!(result, TraceResult::Completed { success: true })
+            }
+            TraceEntryKind::Instant { .. } => true,
+        }
+    }
+
+    /// Returns the command string if this is a command entry.
+    pub fn command(&self) -> Option<&str> {
+        match &self.kind {
+            TraceEntryKind::Command { command, .. } => Some(command),
+            TraceEntryKind::Instant { .. } => None,
+        }
+    }
+
+    /// Returns the event name if this is an instant event.
+    pub fn event_name(&self) -> Option<&str> {
+        match &self.kind {
+            TraceEntryKind::Command { .. } => None,
+            TraceEntryKind::Instant { name } => Some(name),
+        }
+    }
+
+    /// Returns the duration if this is a command entry.
+    pub fn duration(&self) -> Option<Duration> {
+        match &self.kind {
+            TraceEntryKind::Command { duration, .. } => Some(*duration),
+            TraceEntryKind::Instant { .. } => None,
+        }
+    }
+
+    /// Returns the display name for this entry.
+    pub fn display_name(&self) -> &str {
+        match &self.kind {
+            TraceEntryKind::Command { command, .. } => command,
+            TraceEntryKind::Instant { name } => name,
+        }
     }
 }
 
@@ -63,6 +132,10 @@ impl TraceEntry {
 ///
 /// Returns `None` if the line doesn't match the expected format.
 /// The `[wt-trace]` marker can appear anywhere in the line (to handle log prefixes).
+///
+/// Supports two formats:
+/// - Command events: `cmd="..." dur=...ms ok=true/false` or `err="..."`
+/// - Instant events: `event="..."`
 pub fn parse_line(line: &str) -> Option<TraceEntry> {
     // Find the [wt-trace] marker anywhere in the line
     let marker = "[wt-trace] ";
@@ -72,6 +145,7 @@ pub fn parse_line(line: &str) -> Option<TraceEntry> {
     // Parse key=value pairs
     let mut context = None;
     let mut command = None;
+    let mut event = None;
     let mut duration = None;
     let mut result = None;
     let mut start_time_us = None;
@@ -109,6 +183,7 @@ pub fn parse_line(line: &str) -> Option<TraceEntry> {
         match key {
             "context" => context = Some(value.to_string()),
             "cmd" => command = Some(value.to_string()),
+            "event" => event = Some(value.to_string()),
             "dur" => {
                 // Parse "123.4ms"
                 let ms_str = value.strip_suffix("ms")?;
@@ -134,11 +209,22 @@ pub fn parse_line(line: &str) -> Option<TraceEntry> {
         }
     }
 
+    // Determine the entry kind based on what was parsed
+    let kind = if let Some(event_name) = event {
+        // Instant event
+        TraceEntryKind::Instant { name: event_name }
+    } else {
+        // Command event - requires cmd, dur, and result
+        TraceEntryKind::Command {
+            command: command?,
+            duration: duration?,
+            result: result?,
+        }
+    };
+
     Some(TraceEntry {
         context,
-        command: command?,
-        duration: duration?,
-        result: result?,
+        kind,
         start_time_us,
         thread_id,
     })
@@ -159,8 +245,8 @@ mod tests {
         let entry = parse_line(line).unwrap();
 
         assert_eq!(entry.context, None);
-        assert_eq!(entry.command, "git status");
-        assert_eq!(entry.duration, Duration::from_secs_f64(0.0123));
+        assert_eq!(entry.command(), Some("git status"));
+        assert_eq!(entry.duration(), Some(Duration::from_secs_f64(0.0123)));
         assert!(entry.is_success());
     }
 
@@ -171,7 +257,7 @@ mod tests {
         let entry = parse_line(line).unwrap();
 
         assert_eq!(entry.context, Some("main".to_string()));
-        assert_eq!(entry.command, "git merge-base HEAD origin/main");
+        assert_eq!(entry.command(), Some("git merge-base HEAD origin/main"));
         assert_eq!(entry.git_subcommand(), Some("merge-base"));
     }
 
@@ -182,8 +268,8 @@ mod tests {
 
         assert!(!entry.is_success());
         assert!(matches!(
-            entry.result,
-            TraceResult::Error { message } if message == "fatal: bad revision"
+            &entry.kind,
+            TraceEntryKind::Command { result: TraceResult::Error { message }, .. } if message == "fatal: bad revision"
         ));
     }
 
@@ -194,8 +280,11 @@ mod tests {
 
         assert!(!entry.is_success());
         assert!(matches!(
-            entry.result,
-            TraceResult::Completed { success: false }
+            &entry.kind,
+            TraceEntryKind::Command {
+                result: TraceResult::Completed { success: false },
+                ..
+            }
         ));
     }
 
@@ -219,7 +308,7 @@ mod tests {
         // Real output has thread ID prefix like "[a] "
         let line = r#"[a] [wt-trace] cmd="git status" dur=5.0ms ok=true"#;
         let entry = parse_line(line).unwrap();
-        assert_eq!(entry.command, "git status");
+        assert_eq!(entry.command(), Some("git status"));
     }
 
     #[test]
@@ -228,7 +317,7 @@ mod tests {
         let line =
             r#"[wt-trace] future_field=xyz cmd="git status" dur=5.0ms ok=true extra=ignored"#;
         let entry = parse_line(line).unwrap();
-        assert_eq!(entry.command, "git status");
+        assert_eq!(entry.command(), Some("git status"));
         assert!(entry.is_success());
     }
 
@@ -237,7 +326,7 @@ mod tests {
         // Trailing whitespace should be handled (exercises trim_start + break)
         let line = "[wt-trace] cmd=\"git status\" dur=5.0ms ok=true   ";
         let entry = parse_line(line).unwrap();
-        assert_eq!(entry.command, "git status");
+        assert_eq!(entry.command(), Some("git status"));
     }
 
     #[test]
@@ -250,8 +339,8 @@ more noise
 "#;
         let entries = parse_lines(input);
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].command, "git status");
-        assert_eq!(entries[1].command, "git diff");
+        assert_eq!(entries[0].command(), Some("git status"));
+        assert_eq!(entries[1].command(), Some("git diff"));
     }
 
     #[test]
@@ -262,7 +351,7 @@ more noise
         assert_eq!(entry.start_time_us, Some(1736600000000000));
         assert_eq!(entry.thread_id, Some(5));
         assert_eq!(entry.context, Some("feature".to_string()));
-        assert_eq!(entry.command, "git status");
+        assert_eq!(entry.command(), Some("git status"));
         assert!(entry.is_success());
     }
 
@@ -274,7 +363,7 @@ more noise
 
         assert_eq!(entry.start_time_us, None);
         assert_eq!(entry.thread_id, None);
-        assert_eq!(entry.command, "git status");
+        assert_eq!(entry.command(), Some("git status"));
     }
 
     #[test]
@@ -285,5 +374,73 @@ more noise
 
         assert_eq!(entry.start_time_us, Some(1736600000000000));
         assert_eq!(entry.thread_id, None);
+    }
+
+    // ========================================================================
+    // Instant event tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_instant_event() {
+        let line = r#"[wt-trace] ts=1736600000000000 tid=3 event="Showed skeleton""#;
+        let entry = parse_line(line).unwrap();
+
+        assert_eq!(entry.start_time_us, Some(1736600000000000));
+        assert_eq!(entry.thread_id, Some(3));
+        assert_eq!(entry.event_name(), Some("Showed skeleton"));
+        assert_eq!(entry.command(), None);
+        assert_eq!(entry.duration(), None);
+        assert!(entry.is_success()); // Instant events are always "successful"
+    }
+
+    #[test]
+    fn test_parse_instant_event_with_context() {
+        let line = r#"[wt-trace] ts=1736600000000000 tid=3 context=main event="Skeleton rendered""#;
+        let entry = parse_line(line).unwrap();
+
+        assert_eq!(entry.context, Some("main".to_string()));
+        assert_eq!(entry.event_name(), Some("Skeleton rendered"));
+    }
+
+    #[test]
+    fn test_parse_instant_event_minimal() {
+        // Instant event with only the required field
+        let line = r#"[wt-trace] event="Started""#;
+        let entry = parse_line(line).unwrap();
+
+        assert_eq!(entry.event_name(), Some("Started"));
+        assert_eq!(entry.start_time_us, None);
+        assert_eq!(entry.thread_id, None);
+    }
+
+    #[test]
+    fn test_display_name() {
+        // Command entry
+        let cmd_line = r#"[wt-trace] cmd="git status" dur=5.0ms ok=true"#;
+        let cmd_entry = parse_line(cmd_line).unwrap();
+        assert_eq!(cmd_entry.display_name(), "git status");
+
+        // Instant event
+        let event_line = r#"[wt-trace] event="Showed skeleton""#;
+        let event_entry = parse_line(event_line).unwrap();
+        assert_eq!(event_entry.display_name(), "Showed skeleton");
+    }
+
+    #[test]
+    fn test_parse_lines_mixed() {
+        let input = r#"
+[wt-trace] event="Started"
+[wt-trace] cmd="git status" dur=10.0ms ok=true
+[wt-trace] event="Showed skeleton"
+[wt-trace] cmd="git diff" dur=20.0ms ok=true
+[wt-trace] event="Done"
+"#;
+        let entries = parse_lines(input);
+        assert_eq!(entries.len(), 5);
+        assert_eq!(entries[0].event_name(), Some("Started"));
+        assert_eq!(entries[1].command(), Some("git status"));
+        assert_eq!(entries[2].event_name(), Some("Showed skeleton"));
+        assert_eq!(entries[3].command(), Some("git diff"));
+        assert_eq!(entries[4].event_name(), Some("Done"));
     }
 }

@@ -182,6 +182,43 @@ pub fn set_command_timeout(timeout: Option<Duration>) {
     COMMAND_TIMEOUT.with(|t| t.set(timeout));
 }
 
+/// Emit an instant trace event (a milestone marker with no duration).
+///
+/// Instant events appear as vertical lines in Chrome Trace Format visualization tools
+/// (chrome://tracing, Perfetto). Use them to mark significant moments in execution:
+///
+/// ```text
+/// [wt-trace] ts=1234567890 tid=3 event="Showed skeleton"
+/// ```
+///
+/// # Example
+///
+/// ```ignore
+/// use worktrunk::shell_exec::trace_instant;
+///
+/// // Mark when the skeleton UI was displayed
+/// trace_instant("Showed skeleton");
+///
+/// // Or with more context
+/// trace_instant("Progressive render: headers complete");
+/// ```
+pub fn trace_instant(event: &str) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let start_time_us = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_micros() as u64)
+        .unwrap_or(0);
+    let tid = thread_id_number();
+
+    log::debug!(
+        "[wt-trace] ts={} tid={} event=\"{}\"",
+        start_time_us,
+        tid,
+        event
+    );
+}
+
 /// Execute a command with timing and debug logging.
 ///
 /// This is the **only** way to run external commands in worktrunk. All command execution
