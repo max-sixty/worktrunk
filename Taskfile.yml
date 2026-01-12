@@ -1,0 +1,250 @@
+# https://taskfile.dev
+version: "3"
+
+vars:
+  REPO_ROOT:
+    sh: pwd
+  STATIC_DIR: "{{.REPO_ROOT}}/docs/static"
+  ASSETS_DIR: "{{.STATIC_DIR}}/assets"
+
+tasks:
+  # Development
+  coverage:
+    desc: Run tests with coverage report
+    cmd: cargo llvm-cov --html --features shell-integration-tests {{.CLI_ARGS}}
+
+  setup-web:
+    desc: Setup Claude Code web environment for development
+    platforms: [linux]
+    cmds:
+      - |
+        set -e
+        echo "========================================"
+        echo "Claude Code Web - Worktrunk Setup"
+        echo "========================================"
+
+        # Check project root
+        if [ ! -f "Cargo.toml" ] || ! grep -q 'name = "worktrunk"' Cargo.toml; then
+            echo "Error: Must be run from worktrunk project root"
+            exit 1
+        fi
+        echo "Found worktrunk project"
+
+        # Check/install Rust
+        echo ""
+        echo "Checking Rust toolchain..."
+        if ! command -v cargo &> /dev/null; then
+            echo "Cargo not found. Installing Rust..."
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            source "$HOME/.cargo/env"
+        fi
+        echo "Rust version: $(rustc --version | awk '{print $2}')"
+
+        # Install shells
+        echo ""
+        echo "Installing shells for integration tests..."
+        if command -v apt-get &> /dev/null; then
+            export DEBIAN_FRONTEND=noninteractive
+            for f in /etc/apt/sources.list.d/*.list; do
+                [ -f "$f" ] && grep -q '^\[' "$f" 2>/dev/null && rm -f "$f"
+            done
+            if ! command -v zsh &> /dev/null || ! command -v fish &> /dev/null; then
+                apt-get update -qq
+                apt-get install -y -qq zsh fish
+            fi
+        fi
+        for shell in bash zsh fish; do
+            command -v "$shell" &> /dev/null || { echo "Error: $shell not found"; exit 1; }
+            echo "$shell available"
+        done
+
+        # Install gh CLI
+        echo ""
+        echo "Installing GitHub CLI..."
+        if command -v gh &> /dev/null; then
+            echo "gh already installed"
+        else
+            GH_VERSION="2.63.2"
+            ARCH="linux_amd64"
+            URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_${ARCH}.tar.gz"
+            mkdir -p ~/bin
+            TEMP=$(mktemp -d)
+            curl -fsSL "$URL" | tar -xz -C "$TEMP"
+            mv "$TEMP/gh_${GH_VERSION}_${ARCH}/bin/gh" ~/bin/gh
+            chmod +x ~/bin/gh
+            rm -rf "$TEMP"
+            export PATH="$HOME/bin:$PATH"
+            echo "gh installed to ~/bin/gh"
+        fi
+
+        # Build
+        echo ""
+        echo "Building worktrunk..."
+        cargo build 2>&1 | tail -5
+        echo "Build successful"
+
+        # Install dev tools
+        echo ""
+        echo "Installing development tools..."
+        cargo install cargo-insta cargo-nextest --quiet
+        cargo install --path . --quiet
+        echo "Installed cargo-insta, cargo-nextest, worktrunk"
+
+        echo ""
+        echo "Setup complete! Run 'wt --help' to get started."
+
+  # Assets
+  fetch-assets:
+    desc: Fetch assets from worktrunk-assets repo
+    cmds:
+      - |
+        set -euo pipefail
+        echo "Fetching assets..."
+        rm -rf "{{.ASSETS_DIR}}"
+        mkdir -p "{{.ASSETS_DIR}}"
+        TMPFILE=$(mktemp)
+        curl -fsSL "https://github.com/max-sixty/worktrunk-assets/archive/refs/heads/main.tar.gz" -o "$TMPFILE"
+        tar -xzf "$TMPFILE" --strip-components=2 -C "{{.ASSETS_DIR}}" "worktrunk-assets-main/assets"
+        rm "$TMPFILE"
+        echo "Done. Assets in {{.ASSETS_DIR}}/"
+
+  publish-assets:
+    desc: Publish assets to worktrunk-assets repo
+    dir: "{{.REPO_ROOT}}"
+    cmds:
+      - |
+        set -euo pipefail
+        ASSETS_REPO="../worktrunk-assets"
+        LOCAL_ASSETS="{{.ASSETS_DIR}}"
+
+        # Clone if needed
+        if [[ ! -d "$ASSETS_REPO/.git" ]]; then
+            if ! command -v gh &>/dev/null; then
+                echo "Error: gh CLI required. Install from https://cli.github.com/"
+                exit 1
+            fi
+            echo "Cloning assets repo..."
+            gh repo clone max-sixty/worktrunk-assets "$ASSETS_REPO" || {
+                echo "Failed to clone assets repo"
+                exit 1
+            }
+        fi
+
+        cd "$ASSETS_REPO"
+        git pull --ff-only || {
+            echo "Failed to update assets repo. Check for uncommitted changes."
+            exit 1
+        }
+
+        rsync -av --delete "$LOCAL_ASSETS/" "$ASSETS_REPO/assets/"
+
+        if git diff --quiet; then
+            echo "No changes to publish"
+            exit 0
+        fi
+
+        git diff --stat
+        git add -A
+        git commit -m "Update assets"
+        git push
+
+        echo ""
+        echo "Published: https://github.com/max-sixty/worktrunk-assets"
+
+  # Social cards and logo
+  build-social-cards:
+    desc: Build social card ONGs from SVG sources
+    dir: "{{.STATIC_DIR}}"
+    preconditions:
+      - sh: command -v rsvg-convert
+        msg: "rsvg-convert required. Install with: brew install librsvg"
+    cmds:
+      - |
+        set -euo pipefail
+        FONT_DIR="{{.REPO_ROOT}}/.fonts"
+        OUTPUT_DIR="{{.ASSETS_DIR}}/social"
+
+        ensure_font() {
+            local name="$1"
+            local url="$2"
+            if fc-list | grep -qi "$name"; then
+                return 0
+            fi
+            echo "Downloading $name..."
+            mkdir -p "$FONT_DIR"
+            local zip="$FONT_DIR/${name// /_}.zip"
+            curl -fsSL "$url" -o "$zip"
+            unzip -qo "$zip" -d "$FONT_DIR"
+            rm "$zip"
+        }
+
+        ensure_font "Inter" "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip"
+        ensure_font "Plus Jakarta Sans" "https://github.com/tokotype/PlusJakartaSans/releases/download/2.7.1/PlusJakartaSans-2.7.1.zip"
+
+        # Fontconfig setup
+        export FONTCONFIG_FILE="$FONT_DIR/fonts.conf"
+        cat > "$FONT_DIR/fonts.conf" << EOF
+        <?xml version="1.0"?>
+        <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+        <fontconfig>
+          <dir>$FONT_DIR</dir>
+          <cachedir>$FONT_DIR/cache</cachedir>
+          <include ignore_missing="yes">/etc/fonts/fonts.conf</include>
+        </fontconfig>
+        EOF
+        mkdir -p "$FONT_DIR/cache"
+        fc-cache -f "$FONT_DIR" 2>/dev/null
+
+        for font in "Inter" "Plus Jakarta Sans"; do
+            if ! fc-list : family | grep -qi "$font"; then
+                echo "Error: Font '$font' not found after download" >&2
+                exit 1
+            fi
+        done
+
+        mkdir -p "$OUTPUT_DIR"
+        echo "Building social cards..."
+        rsvg-convert social-card.svg -o "$OUTPUT_DIR/social-card.png"
+        rsvg-convert github-social-card.svg -o "$OUTPUT_DIR/github-social-card.png"
+        echo "Done:"
+        ls -lh "$OUTPUT_DIR"/*.png
+
+  generate-logo:
+    desc: Generate logo using Gemini AI
+    dir: "{{.REPO_ROOT}}"
+    preconditions:
+      - sh: command -v gemimg
+        msg: "gemimg required. Install with: uv tool install gemimg"
+      - sh: command -v magick
+        msg: "imagemagick required. Install with: brew install imagemagick"
+      - sh: command -v rembg
+        msg: "rembg required. Install with: uv tool install rembg[cli]"
+      - sh: test -f dev/logo-prompt.json
+        msg: "dev/logo-prompt.json not found"
+    cmds:
+      - |
+        set -euo pipefail
+        RAW_FILE=".tmp/logo-raw.png"
+        SIZE_1X=512
+        SIZE_2X=1024
+        SIZE_FAVICON=32
+
+        mkdir -p .tmp
+
+        echo "Generating logo..."
+        gemimg "$(cat dev/logo-prompt.json)" \
+            --model gemini-3-pro-image-preview \
+            --aspect-ratio 1:1 \
+            -o "$RAW_FILE"
+
+        echo "Removing background..."
+        rembg i "$RAW_FILE" "$RAW_FILE"
+
+        echo "Processing sizes..."
+        magick "$RAW_FILE" -resize "${SIZE_1X}x${SIZE_1X}" "{{.STATIC_DIR}}/logo.png"
+        magick "$RAW_FILE" -resize "${SIZE_2X}x${SIZE_2X}" "{{.STATIC_DIR}}/logo@2x.png"
+        magick "$RAW_FILE" -resize "${SIZE_FAVICON}x${SIZE_FAVICON}" "{{.STATIC_DIR}}/favicon.png"
+        rm "$RAW_FILE"
+
+        echo "Done. Generated:"
+        ls -la "{{.STATIC_DIR}}"/logo.png "{{.STATIC_DIR}}"/logo@2x.png "{{.STATIC_DIR}}"/favicon.png

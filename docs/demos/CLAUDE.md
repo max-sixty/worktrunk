@@ -65,7 +65,7 @@ This uses a small amount of API credits per recording (Claude starts, renders it
 After building, publish to the assets repo:
 
 ```bash
-./dev/publish-assets
+task publish-assets
 ```
 
 This copies `docs/static/assets/{docs,social}/` to the `worktrunk-assets` repo (sibling directory), commits, and pushes. The script clones the repo via `gh` if missing.
@@ -73,7 +73,7 @@ This copies `docs/static/assets/{docs,social}/` to the `worktrunk-assets` repo (
 To fetch published assets (without rebuilding):
 
 ```bash
-./dev/fetch-assets
+task fetch-assets
 ```
 
 Both build and fetch output to the same location (`docs/static/assets/`), so local builds override fetched assets.
