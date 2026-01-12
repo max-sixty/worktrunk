@@ -1,8 +1,9 @@
-# Windows-compatible mock executable stub for integration tests.
+# Config-driven mock executable for integration tests.
 #
-# On Windows, Rust's Command::new() uses CreateProcessW which only finds .exe files.
-# This stub executable delegates to bash with a companion shell script:
-#   gh.exe + gh (script) -> gh.exe runs: bash gh <args>
+# Reads a JSON config file to determine responses. When invoked as `gh`,
+# looks for `gh.json` in the same directory and responds based on config.
+#
+# Works on all platforms (no bash dependency).
 #
 # WHY A SEPARATE PACKAGE?
 # cargo-dist automatically discovers all [[bin]] entries and expects to distribute

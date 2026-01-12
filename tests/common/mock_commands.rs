@@ -1,141 +1,229 @@
 // Cross-platform mock command helpers
 //
 // These helpers create mock executables that work on both Unix and Windows.
-// All mock logic is written as shell scripts (#!/bin/sh).
+// Mock behavior is defined via JSON config files, read by the mock-stub binary.
 //
-// On Unix: shell scripts are directly executable via shebang
-// On Windows: mock-stub.exe delegates to bash + shell script
+// On Unix: mock-stub is copied as the command name (e.g., `gh`)
+// On Windows: mock-stub.exe is copied as `gh.exe`
 //
-// Requirements:
-// - On Windows, Git Bash must be installed and `bash` must be in PATH
-// - This matches production: hooks require Git Bash on Windows anyway
+// Both platforms read `<command>.json` for configuration.
 //
 // This approach:
-// - Single source of truth for mock behavior
-// - Simpler than maintaining parallel shell/batch implementations
+// - Single Rust binary for all platforms
+// - No bash dependency
+// - Config is just JSON - easy to generate and debug
 
+use serde_json::json;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-/// Path to the mock-stub.exe binary, built by `cargo test`.
-#[cfg(windows)]
-fn mock_stub_exe() -> std::path::PathBuf {
-    // The mock-stub binary is built by cargo test (via its dummy integration test)
-    // and lives in the same target directory as the test binary.
+/// Path to the mock-stub binary, built by `cargo test`.
+fn mock_stub_binary() -> std::path::PathBuf {
     let mut path = std::env::current_exe().expect("failed to get test executable path");
     path.pop(); // Remove test binary name
     path.pop(); // Remove deps/
+
+    #[cfg(windows)]
     path.push("mock-stub.exe");
+
+    #[cfg(not(windows))]
+    path.push("mock-stub");
+
     path
 }
 
-/// Write a mock shell script, with platform-appropriate setup.
+/// Builder for mock command configuration.
 ///
-/// On Unix: writes directly as executable script
-/// On Windows: writes script + copies mock-stub.exe as name.exe
-pub fn write_mock_script(bin_dir: &Path, name: &str, script: &str) {
+/// Example:
+/// ```ignore
+/// MockConfig::new("gh")
+///     .version("gh version 2.0.0 (mock)")
+///     .command("auth", MockResponse::exit(0))
+///     .command("pr", MockResponse::file("pr_data.json"))
+///     .write(bin_dir);
+/// ```
+pub struct MockConfig {
+    name: String,
+    version: Option<String>,
+    commands: HashMap<String, MockResponse>,
+}
+
+/// How to respond to a command.
+pub struct MockResponse {
+    file: Option<String>,
+    output: Option<String>,
+    exit_code: i32,
+}
+
+impl MockResponse {
+    /// Respond by reading contents from a file.
+    pub fn file(path: &str) -> Self {
+        Self {
+            file: Some(path.to_string()),
+            output: None,
+            exit_code: 0,
+        }
+    }
+
+    /// Respond with literal output.
+    pub fn output(text: &str) -> Self {
+        Self {
+            file: None,
+            output: Some(text.to_string()),
+            exit_code: 0,
+        }
+    }
+
+    /// Just exit with a code (no output).
+    pub fn exit(code: i32) -> Self {
+        Self {
+            file: None,
+            output: None,
+            exit_code: code,
+        }
+    }
+
+    /// Set exit code (chainable).
+    pub fn with_exit_code(mut self, code: i32) -> Self {
+        self.exit_code = code;
+        self
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        let mut obj = serde_json::Map::new();
+        if let Some(f) = &self.file {
+            obj.insert("file".to_string(), json!(f));
+        }
+        if let Some(o) = &self.output {
+            obj.insert("output".to_string(), json!(o));
+        }
+        if self.exit_code != 0 || (self.file.is_none() && self.output.is_none()) {
+            obj.insert("exit_code".to_string(), json!(self.exit_code));
+        }
+        serde_json::Value::Object(obj)
+    }
+}
+
+impl MockConfig {
+    /// Create a new mock config for the given command name.
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            version: None,
+            commands: HashMap::new(),
+        }
+    }
+
+    /// Set the version string returned by `--version`.
+    pub fn version(mut self, v: &str) -> Self {
+        self.version = Some(v.to_string());
+        self
+    }
+
+    /// Add a command handler.
+    pub fn command(mut self, cmd: &str, response: MockResponse) -> Self {
+        self.commands.insert(cmd.to_string(), response);
+        self
+    }
+
+    /// Write the config and copy the mock binary to bin_dir.
+    pub fn write(self, bin_dir: &Path) {
+        let mut config = serde_json::Map::new();
+
+        if let Some(v) = &self.version {
+            config.insert("version".to_string(), json!(v));
+        }
+
+        let commands: serde_json::Map<String, serde_json::Value> = self
+            .commands
+            .iter()
+            .map(|(k, v)| (k.clone(), v.to_json()))
+            .collect();
+        config.insert("commands".to_string(), serde_json::Value::Object(commands));
+
+        let json = serde_json::to_string_pretty(&serde_json::Value::Object(config)).unwrap();
+
+        // Write config file
+        let config_path = bin_dir.join(format!("{}.json", self.name));
+        fs::write(&config_path, json).unwrap();
+
+        // Copy mock binary
+        copy_mock_binary(bin_dir, &self.name);
+    }
+}
+
+/// Copy the mock-stub binary to bin_dir with the given name.
+pub fn copy_mock_binary(bin_dir: &Path, name: &str) {
+    let stub = mock_stub_binary();
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let script_path = bin_dir.join(name);
-        fs::write(&script_path, script).unwrap();
-        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+        let dest = bin_dir.join(name);
+        fs::copy(&stub, &dest).expect("failed to copy mock-stub binary");
+        fs::set_permissions(&dest, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[cfg(windows)]
     {
-        // Write the shell script (no extension) - mock-stub.exe will invoke this via bash
-        let script_path = bin_dir.join(name);
-        fs::write(&script_path, script).unwrap();
-
-        // Copy mock-stub.exe as name.exe (for Rust's Command::new which uses CreateProcessW)
-        let exe_path = bin_dir.join(format!("{}.exe", name));
-        fs::copy(mock_stub_exe(), &exe_path)
-            .expect("failed to copy mock-stub.exe - did `cargo test` build it?");
-
-        // Create .bat/.cmd shims for CMD/PowerShell invocations.
-        // Not strictly required for our tests (Command::new finds .exe, Git Bash finds scripts),
-        // but provides a fallback if anyone debugs tests from cmd.exe.
-        let shim = format!("@bash \"%~dp0{}\" %*\n", name);
-        fs::write(bin_dir.join(format!("{}.cmd", name)), &shim).unwrap();
-        fs::write(bin_dir.join(format!("{}.bat", name)), &shim).unwrap();
+        let dest = bin_dir.join(format!("{}.exe", name));
+        fs::copy(&stub, &dest).expect("failed to copy mock-stub.exe");
     }
 }
 
-/// Create a mock command that outputs fixed lines and exits.
-///
-/// Each line is echoed. Stdin is discarded (for mocks that receive piped input).
-pub fn create_simple_mock(bin_dir: &Path, name: &str, output: &str, exit_code: i32) {
-    let echoes: String = output
-        .lines()
-        .map(|line| format!("echo '{}'\n", escape_shell_string(line)))
-        .collect();
-
-    let script = format!(
-        r#"#!/bin/sh
-cat > /dev/null
-{echoes}exit {exit_code}
-"#
-    );
-
-    write_mock_script(bin_dir, name, &script);
-}
-
-/// Escape single quotes in shell strings.
-fn escape_shell_string(s: &str) -> String {
-    s.replace('\'', "'\"'\"'")
-}
-
-// === High-level mock helpers for common test scenarios ===
+// =============================================================================
+// High-level mock helpers for common test scenarios
+// =============================================================================
 
 /// Create a mock cargo command for tests.
-///
-/// Handles: test, clippy, install subcommands with realistic output.
 pub fn create_mock_cargo(bin_dir: &Path) {
-    write_mock_script(
-        bin_dir,
-        "cargo",
-        r#"#!/bin/sh
-case "$1" in
-    test)
-        echo '    Finished test [unoptimized + debuginfo] target(s) in 0.12s'
-        echo '     Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)'
-        echo ''
-        echo 'running 18 tests'
-        echo 'test auth::tests::test_jwt_decode ... ok'
-        echo 'test auth::tests::test_jwt_encode ... ok'
-        echo 'test auth::tests::test_token_refresh ... ok'
-        echo 'test auth::tests::test_token_validation ... ok'
-        echo ''
-        echo 'test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s'
-        ;;
-    clippy)
-        echo '    Checking worktrunk v0.1.0'
-        echo '    Finished dev [unoptimized + debuginfo] target(s) in 1.23s'
-        ;;
-    install)
-        echo '  Installing worktrunk v0.1.0'
-        echo '   Compiling worktrunk v0.1.0'
-        echo '    Finished release [optimized] target(s) in 2.34s'
-        echo '  Installing ~/.cargo/bin/wt'
-        echo '   Installed package `worktrunk v0.1.0` (executable `wt`)'
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-"#,
-    );
+    MockConfig::new("cargo")
+        .command(
+            "test",
+            MockResponse::output(
+                "    Finished test [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)
+
+running 18 tests
+test auth::tests::test_jwt_decode ... ok
+test auth::tests::test_jwt_encode ... ok
+test auth::tests::test_token_refresh ... ok
+test auth::tests::test_token_validation ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+",
+            ),
+        )
+        .command(
+            "clippy",
+            MockResponse::output(
+                "    Checking worktrunk v0.1.0
+    Finished dev [unoptimized + debuginfo] target(s) in 1.23s
+",
+            ),
+        )
+        .command(
+            "install",
+            MockResponse::output(
+                "  Installing worktrunk v0.1.0
+   Compiling worktrunk v0.1.0
+    Finished release [optimized] target(s) in 2.34s
+  Installing ~/.cargo/bin/wt
+   Installed package `worktrunk v0.1.0` (executable `wt`)
+",
+            ),
+        )
+        .write(bin_dir);
 }
 
 /// Create a mock llm command that outputs a commit message.
-///
-/// The commit message is suitable for JWT authentication feature commits.
 pub fn create_mock_llm_auth(bin_dir: &Path) {
-    create_simple_mock(
-        bin_dir,
-        "llm",
-        r#"feat(auth): Implement JWT authentication system
+    MockConfig::new("llm")
+        .command(
+            "_default",
+            MockResponse::output(
+                "feat(auth): Implement JWT authentication system
 
 Add comprehensive JWT token handling including validation, refresh logic,
 and authentication tests. This establishes the foundation for secure
@@ -143,72 +231,60 @@ API authentication.
 
 - Implement token refresh mechanism with expiry handling
 - Add JWT encoding/decoding with signature verification
-- Create test suite covering all authentication flows"#,
-        0,
-    );
+- Create test suite covering all authentication flows",
+            ),
+        )
+        .write(bin_dir);
 }
 
 /// Create a mock llm command for API endpoint commits.
 pub fn create_mock_llm_api(bin_dir: &Path) {
-    create_simple_mock(
-        bin_dir,
-        "llm",
-        r#"feat(api): Add user authentication endpoints
+    MockConfig::new("llm")
+        .command(
+            "_default",
+            MockResponse::output(
+                "feat(api): Add user authentication endpoints
 
 Implement login and token refresh endpoints with JWT validation.
-Includes comprehensive test coverage and input validation."#,
-        0,
-    );
+Includes comprehensive test coverage and input validation.",
+            ),
+        )
+        .write(bin_dir);
 }
 
 /// Create a mock uv command for dependency sync and dev server.
-///
-/// Handles: `uv sync` (1 arg) and `uv run dev` (2 args).
 pub fn create_mock_uv_sync(bin_dir: &Path) {
-    write_mock_script(
-        bin_dir,
-        "uv",
-        r#"#!/bin/sh
-if [ "$1" = "sync" ]; then
-    echo ''
-    echo '  Resolved 24 packages in 145ms'
-    echo '  Installed 24 packages in 1.2s'
-elif [ "$1" = "run" ] && [ "$2" = "dev" ]; then
-    echo ''
-    echo '  Starting dev server on http://localhost:3000...'
-else
-    echo "uv: unknown command '$1 $2'"
-    exit 1
-fi
-"#,
-    );
+    MockConfig::new("uv")
+        .command(
+            "sync",
+            MockResponse::output(
+                "
+  Resolved 24 packages in 145ms
+  Installed 24 packages in 1.2s
+",
+            ),
+        )
+        .command(
+            "run",
+            MockResponse::output(
+                "
+  Starting dev server on http://localhost:3000...
+",
+            ),
+        )
+        .write(bin_dir);
 }
 
 /// Create mock uv that delegates to pytest/ruff commands.
+///
+/// Note: This mock doesn't actually delegate - it provides fixed output.
+/// For tests needing real delegation, set up both commands separately.
 pub fn create_mock_uv_pytest_ruff(bin_dir: &Path) {
-    write_mock_script(
-        bin_dir,
-        "uv",
-        r#"#!/bin/sh
-if [ "$1" = "run" ] && [ "$2" = "pytest" ]; then
-    exec pytest
-elif [ "$1" = "run" ] && [ "$2" = "ruff" ]; then
-    shift 2
-    exec ruff "$@"
-else
-    echo "uv: unknown command '$1 $2'"
-    exit 1
-fi
-"#,
-    );
-}
-
-/// Create a mock pytest command with test output.
-pub fn create_mock_pytest(bin_dir: &Path) {
-    create_simple_mock(
-        bin_dir,
-        "pytest",
-        r#"
+    MockConfig::new("uv")
+        .command(
+            "run",
+            MockResponse::output(
+                "
 ============================= test session starts ==============================
 collected 3 items
 
@@ -217,29 +293,38 @@ tests/test_auth.py::test_login_invalid_password PASSED                   [ 66%]
 tests/test_auth.py::test_token_validation PASSED                         [100%]
 
 ============================== 3 passed in 0.8s ===============================
-"#,
-        0,
-    );
+",
+            ),
+        )
+        .write(bin_dir);
+}
+
+/// Create a mock pytest command with test output.
+pub fn create_mock_pytest(bin_dir: &Path) {
+    MockConfig::new("pytest")
+        .command(
+            "_default",
+            MockResponse::output(
+                "
+============================= test session starts ==============================
+collected 3 items
+
+tests/test_auth.py::test_login_success PASSED                            [ 33%]
+tests/test_auth.py::test_login_invalid_password PASSED                   [ 66%]
+tests/test_auth.py::test_token_validation PASSED                         [100%]
+
+============================== 3 passed in 0.8s ===============================
+",
+            ),
+        )
+        .write(bin_dir);
 }
 
 /// Create a mock ruff command.
 pub fn create_mock_ruff(bin_dir: &Path) {
-    write_mock_script(
-        bin_dir,
-        "ruff",
-        r#"#!/bin/sh
-case "$1" in
-    check)
-        echo ''
-        echo 'All checks passed!'
-        echo ''
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-"#,
-    );
+    MockConfig::new("ruff")
+        .command("check", MockResponse::output("\nAll checks passed!\n\n"))
+        .write(bin_dir);
 }
 
 #[cfg(test)]
@@ -248,40 +333,28 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn test_write_mock_script() {
+    fn test_mock_config_write() {
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path();
 
-        write_mock_script(bin_dir, "test-cmd", "#!/bin/sh\necho 'hello'\n");
+        MockConfig::new("test-cmd")
+            .version("test-cmd version 1.0")
+            .command("foo", MockResponse::output("hello"))
+            .command("bar", MockResponse::exit(42))
+            .write(bin_dir);
 
+        // Check config file exists and is valid JSON
+        let config_path = bin_dir.join("test-cmd.json");
+        assert!(config_path.exists());
+        let content = fs::read_to_string(&config_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["version"], "test-cmd version 1.0");
+
+        // Check binary exists
         #[cfg(unix)]
         assert!(bin_dir.join("test-cmd").exists());
 
         #[cfg(windows)]
-        {
-            assert!(bin_dir.join("test-cmd").exists());
-            assert!(bin_dir.join("test-cmd.exe").exists());
-            assert!(bin_dir.join("test-cmd.cmd").exists());
-            assert!(bin_dir.join("test-cmd.bat").exists());
-        }
-    }
-
-    #[test]
-    fn test_create_simple_mock() {
-        let temp = TempDir::new().unwrap();
-        let bin_dir = temp.path();
-
-        create_simple_mock(bin_dir, "simple-cmd", "Line 1\nLine 2\nLine 3", 0);
-
-        #[cfg(unix)]
-        assert!(bin_dir.join("simple-cmd").exists());
-
-        #[cfg(windows)]
-        {
-            assert!(bin_dir.join("simple-cmd").exists());
-            assert!(bin_dir.join("simple-cmd.exe").exists());
-            assert!(bin_dir.join("simple-cmd.cmd").exists());
-            assert!(bin_dir.join("simple-cmd.bat").exists());
-        }
+        assert!(bin_dir.join("test-cmd.exe").exists());
     }
 }

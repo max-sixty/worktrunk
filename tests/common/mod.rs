@@ -1502,67 +1502,27 @@ impl TestRepo {
     /// - `glab --version`: succeeds (installed)
     /// - `glab auth status`: fails (not authenticated)
     pub fn setup_mock_ci_tools_unauthenticated(&mut self) {
-        use crate::common::mock_commands::write_mock_script;
+        use crate::common::mock_commands::{MockConfig, MockResponse};
 
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
-        // Create mock gh script - installed but not authenticated
-        write_mock_script(
-            &mock_bin,
-            "gh",
-            r#"#!/bin/sh
-# Mock gh: installed but not authenticated
+        // gh: installed but not authenticated
+        MockConfig::new("gh")
+            .version("gh version 2.0.0 (mock)")
+            .command("auth", MockResponse::exit(1))
+            .write(&mock_bin);
 
-case "$1" in
-    --version)
-        echo "gh version 2.0.0 (mock)"
-        exit 0
-        ;;
-    auth)
-        # gh auth status - fail (not authenticated)
-        exit 1
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-"#,
-        );
+        // glab: installed but not authenticated
+        MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(1))
+            .write(&mock_bin);
 
-        // Create mock glab script - installed but not authenticated
-        write_mock_script(
-            &mock_bin,
-            "glab",
-            r#"#!/bin/sh
-# Mock glab: installed but not authenticated
-
-case "$1" in
-    --version)
-        echo "glab version 1.0.0 (mock)"
-        exit 0
-        ;;
-    auth)
-        # glab auth status - fail (not authenticated)
-        exit 1
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-"#,
-        );
-
-        // Create mock claude script - not installed (exit 1 on --version)
-        // Tests can override with setup_mock_claude_installed() if needed
-        write_mock_script(
-            &mock_bin,
-            "claude",
-            r#"#!/bin/sh
-# Mock claude: not installed
-exit 1
-"#,
-        );
+        // claude: not installed
+        MockConfig::new("claude")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
 
         self.mock_bin_path = Some(mock_bin);
     }
@@ -1572,29 +1532,18 @@ exit 1
     /// Call this after setup_mock_ci_tools_unauthenticated() to simulate
     /// Claude Code being available on the system.
     pub fn setup_mock_claude_installed(&mut self) {
-        use crate::common::mock_commands::write_mock_script;
+        use crate::common::mock_commands::{MockConfig, MockResponse};
 
         let mock_bin = self
             .mock_bin_path
             .as_ref()
             .expect("Call setup_mock_ci_tools_unauthenticated first");
 
-        write_mock_script(
-            mock_bin,
-            "claude",
-            r#"#!/bin/sh
-# Mock claude: installed
-case "$1" in
-    --version)
-        echo "Claude Code 1.0.0 (mock)"
-        exit 0
-        ;;
-    *)
-        exit 0
-        ;;
-esac
-"#,
-        );
+        // claude: installed
+        MockConfig::new("claude")
+            .version("Claude Code 1.0.0 (mock)")
+            .command("_default", MockResponse::exit(0))
+            .write(mock_bin);
     }
 
     /// Setup the worktrunk plugin as installed in Claude Code
@@ -1620,83 +1569,27 @@ esac
     /// * `pr_json` - JSON string to return for `gh pr list --json ...`
     /// * `run_json` - JSON string to return for `gh run list --json ...`
     pub fn setup_mock_gh_with_ci_data(&mut self, pr_json: &str, run_json: &str) {
-        use crate::common::mock_commands::write_mock_script;
+        use crate::common::mock_commands::{MockConfig, MockResponse};
 
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
-        // Write JSON to separate files to avoid all escaping issues
-        let pr_json_file = mock_bin.join("pr_data.json");
-        let run_json_file = mock_bin.join("run_data.json");
-        std::fs::write(&pr_json_file, pr_json).unwrap();
-        std::fs::write(&run_json_file, run_json).unwrap();
+        // Write JSON data files
+        std::fs::write(mock_bin.join("pr_data.json"), pr_json).unwrap();
+        std::fs::write(mock_bin.join("run_data.json"), run_json).unwrap();
 
-        // Convert mock_bin path to a format bash can read.
-        // On Windows, convert D:\foo\bar to /d/foo/bar (MSYS2 style).
-        // On Unix, just use the path as-is.
-        let script_dir = {
-            let path_str = mock_bin.to_string_lossy();
-            #[cfg(windows)]
-            {
-                let chars: Vec<char> = path_str.chars().collect();
-                if chars.len() >= 2 && chars[1] == ':' {
-                    // D:\foo\bar -> /d/foo/bar
-                    let drive = chars[0].to_ascii_lowercase();
-                    format!("/{}{}", drive, path_str[2..].replace('\\', "/"))
-                } else {
-                    path_str.replace('\\', "/")
-                }
-            }
-            #[cfg(not(windows))]
-            {
-                path_str.to_string()
-            }
-        };
+        // Configure gh mock
+        MockConfig::new("gh")
+            .version("gh version 2.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("pr", MockResponse::file("pr_data.json"))
+            .command("run", MockResponse::file("run_data.json"))
+            .write(&mock_bin);
 
-        // Embed SCRIPT_DIR directly to avoid path resolution issues on Windows.
-        // Debug mode: set MOCK_GH_DEBUG=1 to see path resolution info.
-        let script = format!(
-            r#"#!/bin/bash
-# Mock gh command that returns configured JSON data
-# JSON files are in the same directory as this script
-SCRIPT_DIR="{script_dir}"
-
-case "$1" in
-    --version)
-        echo "gh version 2.0.0 (mock)"
-        exit 0
-        ;;
-    auth)
-        # gh auth status - succeed immediately
-        exit 0
-        ;;
-    pr)
-        # gh pr list - return PR data from file
-        cat "$SCRIPT_DIR/pr_data.json"
-        exit 0
-        ;;
-    run)
-        # gh run list - return run data from file
-        cat "$SCRIPT_DIR/run_data.json"
-        exit 0
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-"#
-        );
-        write_mock_script(&mock_bin, "gh", &script);
-
-        // Create mock glab script (fails immediately - no GitLab support in this mock)
-        write_mock_script(
-            &mock_bin,
-            "glab",
-            r#"#!/bin/sh
-# Mock glab command that fails fast
-exit 1
-"#,
-        );
+        // Configure glab mock (fails - no GitLab support)
+        MockConfig::new("glab")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
 
         self.mock_bin_path = Some(mock_bin);
     }
@@ -1710,86 +1603,33 @@ exit 1
     /// * `mr_json` - JSON string to return for `glab mr list --output json`
     /// * `project_id` - Optional project ID to return from `glab repo view`
     pub fn setup_mock_glab_with_ci_data(&mut self, mr_json: &str, project_id: Option<u64>) {
-        use crate::common::mock_commands::write_mock_script;
+        use crate::common::mock_commands::{MockConfig, MockResponse};
 
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
-        // Write JSON to a file to avoid escaping issues
-        let mr_json_file = mock_bin.join("mr_data.json");
-        std::fs::write(&mr_json_file, mr_json).unwrap();
+        // Write JSON data file
+        std::fs::write(mock_bin.join("mr_data.json"), mr_json).unwrap();
 
-        // Convert mock_bin path to a format bash can read
-        let script_dir = {
-            let path_str = mock_bin.to_string_lossy();
-            #[cfg(windows)]
-            {
-                let chars: Vec<char> = path_str.chars().collect();
-                if chars.len() >= 2 && chars[1] == ':' {
-                    let drive = chars[0].to_ascii_lowercase();
-                    format!("/{}{}", drive, path_str[2..].replace('\\', "/"))
-                } else {
-                    path_str.replace('\\', "/")
-                }
-            }
-            #[cfg(not(windows))]
-            {
-                path_str.to_string()
-            }
-        };
-
-        // Build glab mock script
+        // Build project ID response
         let project_id_response = match project_id {
             Some(id) => format!(r#"{{"id": {}}}"#, id),
             None => r#"{"error": "not found"}"#.to_string(),
         };
 
-        let script = format!(
-            r#"#!/bin/bash
-# Mock glab command that returns configured JSON data
-SCRIPT_DIR="{script_dir}"
+        // Configure glab mock
+        MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("mr", MockResponse::file("mr_data.json"))
+            .command("repo", MockResponse::output(&project_id_response))
+            .command("ci", MockResponse::output("[]"))
+            .write(&mock_bin);
 
-case "$1" in
-    --version)
-        echo "glab version 1.0.0 (mock)"
-        exit 0
-        ;;
-    auth)
-        # glab auth status - succeed immediately
-        exit 0
-        ;;
-    mr)
-        # glab mr list - return MR data from file
-        cat "$SCRIPT_DIR/mr_data.json"
-        exit 0
-        ;;
-    repo)
-        # glab repo view --output json - return project info
-        echo '{project_id_response}'
-        exit 0
-        ;;
-    ci)
-        # glab ci list - return empty for now
-        echo '[]'
-        exit 0
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-"#
-        );
-        write_mock_script(&mock_bin, "glab", &script);
-
-        // Create mock gh script that fails (GitHub not available)
-        write_mock_script(
-            &mock_bin,
-            "gh",
-            r#"#!/bin/sh
-# Mock gh command that fails fast
-exit 1
-"#,
-        );
+        // Configure gh mock (fails - no GitHub support)
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
 
         self.mock_bin_path = Some(mock_bin);
     }

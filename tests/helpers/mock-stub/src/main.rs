@@ -1,141 +1,329 @@
-//! Windows-compatible mock executable stub.
+//! Config-driven mock executable for integration tests.
 //!
-//! When invoked as `foo.exe`, runs `bash foo <args>` where `foo` is a companion
-//! shell script in the same directory. This allows Rust's Command::new() to find
-//! mock commands on Windows (CreateProcessW only searches for .exe files).
+//! Reads a JSON config file to determine responses. When invoked as `gh`,
+//! looks for `gh.json` in the same directory and responds based on config.
+//!
+//! Config format:
+//! ```json
+//! {
+//!   "version": "gh version 2.0.0 (mock)",
+//!   "commands": {
+//!     "auth": { "exit_code": 0 },
+//!     "pr": { "file": "pr_data.json" },
+//!     "run": { "output": "[{\"status\": \"completed\"}]" }
+//!   }
+//! }
+//! ```
+//!
+//! Command matching:
+//! - `gh --version` → outputs version string
+//! - `gh auth ...` → matches "auth" command
+//! - `gh pr list ...` → matches "pr" command
+//!
+//! Response types:
+//! - `file`: read and output contents of specified file (relative to config dir)
+//! - `output`: output literal string
+//! - `exit_code`: exit with specified code (default 0)
 //!
 //! Usage in tests:
-//! 1. Copy mock-stub.exe to bin_dir/gh.exe
-//! 2. Write shell script to bin_dir/gh
-//! 3. Command::new("gh") now works on Windows
+//! 1. Write config to bin_dir/gh.json
+//! 2. Write data files to bin_dir/ (e.g., pr_data.json)
+//! 3. Copy mock-stub binary as bin_dir/gh (Unix) or bin_dir/gh.exe (Windows)
+//! 4. Command::new("gh") now works on all platforms
 
+use std::collections::HashMap;
 use std::env;
+use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio, exit};
+use std::path::PathBuf;
+use std::process::exit;
 
-/// Convert Windows path to MSYS2/Git Bash style path.
-///
-/// Git Bash expects Unix-style paths. When we pass a Windows path like
-/// `D:\temp\bin\gh` to bash, it doesn't understand it. Convert to `/d/temp/bin/gh`.
-fn to_msys_path(path: &Path) -> String {
-    let path_str = path.to_string_lossy();
-
-    // Check for Windows drive letter (e.g., "D:\...")
-    let chars: Vec<char> = path_str.chars().collect();
-    if chars.len() >= 2 && chars[1] == ':' {
-        // D:\foo\bar -> /d/foo/bar
-        let drive = chars[0].to_ascii_lowercase();
-        format!("/{}{}", drive, path_str[2..].replace('\\', "/"))
-    } else {
-        // Already Unix-style or relative path
-        path_str.replace('\\', "/")
-    }
+/// Configuration for the mock command
+#[derive(Debug)]
+struct Config {
+    version: Option<String>,
+    commands: HashMap<String, CommandResponse>,
 }
 
-/// Find Git Bash on Windows (avoid WSL bash wrapper at `C:\Windows\System32\bash.exe`).
-#[cfg(windows)]
-fn find_bash() -> PathBuf {
-    // GitHub Actions and most Windows installations have Git here
-    let git_bash = PathBuf::from(r"C:\Program Files\Git\bin\bash.exe");
-    if git_bash.exists() {
-        git_bash
-    } else {
-        PathBuf::from("bash")
-    }
-}
-
-#[cfg(not(windows))]
-fn find_bash() -> PathBuf {
-    PathBuf::from("bash")
+/// How to respond to a command
+#[derive(Debug)]
+struct CommandResponse {
+    file: Option<String>,
+    output: Option<String>,
+    exit_code: i32,
 }
 
 fn main() {
     let exe_path = env::current_exe().expect("failed to get executable path");
-
-    // Strip .exe extension to get companion script path
-    // e.g., /tmp/bin/gh.exe -> /tmp/bin/gh
-    let script_path = exe_path.with_extension("");
-    let script_dir = script_path
+    let exe_dir = exe_path
         .parent()
-        .expect("mock-stub: script path has no parent directory");
+        .expect("mock: executable has no parent directory");
 
-    // Distinguish setup errors from environment errors
-    if !script_path.exists() {
-        eprintln!(
-            "mock-stub: companion script not found: {}",
-            script_path.display()
-        );
-        eprintln!("Check that write_mock_script() created the script file.");
+    // Get command name by stripping path and extension
+    // e.g., /tmp/bin/gh.exe -> gh, /tmp/bin/gh -> gh
+    let cmd_name = exe_path
+        .file_stem()
+        .expect("mock: executable has no file stem")
+        .to_string_lossy();
+
+    // Look for config file: gh.json for gh command
+    let config_path = exe_dir.join(format!("{}.json", cmd_name));
+
+    let debug = env::var("MOCK_DEBUG").is_ok();
+    if debug {
+        eprintln!("mock: exe_path={}", exe_path.display());
+        eprintln!("mock: cmd_name={}", cmd_name);
+        eprintln!("mock: config_path={}", config_path.display());
+    }
+
+    if !config_path.exists() {
+        eprintln!("mock: config not found: {}", config_path.display());
+        eprintln!("Expected JSON config file for mock command.");
         exit(1);
     }
 
-    // Convert to MSYS2-style path for bash on Windows
-    let script_path_str = to_msys_path(&script_path);
-    let script_dir_str = to_msys_path(script_dir);
-
-    // Forward all arguments to bash with the script
+    let config = parse_config(&config_path);
     let args: Vec<String> = env::args().skip(1).collect();
 
-    // Find Git Bash on Windows (avoid WSL bash wrapper)
-    let bash_path = find_bash();
-
-    // Debug: Show what we're about to execute (only when MOCK_DEBUG is set)
-    if env::var("MOCK_DEBUG").is_ok() {
-        eprintln!("mock-stub: exe_path={}", exe_path.display());
-        eprintln!("mock-stub: script_path={}", script_path.display());
-        eprintln!("mock-stub: script_path_str={}", script_path_str);
-        eprintln!("mock-stub: script_dir={}", script_dir.display());
-        eprintln!("mock-stub: script_dir_str={}", script_dir_str);
-        eprintln!("mock-stub: bash_path={}", bash_path.display());
-        eprintln!("mock-stub: args={:?}", args);
+    if debug {
+        eprintln!("mock: args={:?}", args);
+        eprintln!("mock: config={:?}", config);
     }
 
-    // Use .output() to capture stdout/stderr, then forward them.
-    // This is more reliable than relying on handle inheritance on Windows,
-    // which can fail silently when pipes are involved.
-    //
-    // Pass MOCK_SCRIPT_DIR so scripts can reliably find sibling files.
-    // This avoids $0/dirname/pwd issues in Git Bash on Windows CI.
-    let output = Command::new(&bash_path)
-        .arg(&script_path_str)
-        .args(&args)
-        .env("MOCK_SCRIPT_DIR", &script_dir_str)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .unwrap_or_else(|e| {
-            eprintln!(
-                "mock-stub: failed to execute bash at {}: {e}",
-                bash_path.display()
-            );
-            eprintln!("Is Git Bash installed?");
-            exit(1);
-        });
+    // Handle --version flag
+    if args.first().map(|s| s.as_str()) == Some("--version")
+        && let Some(version) = &config.version
+    {
+        println!("{}", version);
+        exit(0);
+    }
 
-    // Debug: Show exit code and output lengths
-    if env::var("MOCK_DEBUG").is_ok() {
-        eprintln!(
-            "mock-stub: exit={} stdout_len={} stderr_len={}",
-            output.status.code().unwrap_or(-1),
-            output.stdout.len(),
-            output.stderr.len()
-        );
-        if !output.stderr.is_empty() {
-            eprintln!(
-                "mock-stub: stderr={}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+    // Match first argument against commands, fall back to _default
+    let default_response = CommandResponse {
+        file: None,
+        output: None,
+        exit_code: 1,
+    };
+    let response = args
+        .first()
+        .and_then(|cmd| config.commands.get(cmd))
+        .or_else(|| config.commands.get("_default"))
+        .unwrap_or(&default_response);
+
+    // Output response
+    if let Some(file) = &response.file {
+        let file_path = exe_dir.join(file);
+        match fs::read_to_string(&file_path) {
+            Ok(contents) => {
+                print!("{}", contents);
+                io::stdout().flush().unwrap();
+            }
+            Err(e) => {
+                eprintln!("mock: failed to read {}: {}", file_path.display(), e);
+                exit(1);
+            }
+        }
+    } else if let Some(output) = &response.output {
+        print!("{}", output);
+        io::stdout().flush().unwrap();
+    }
+
+    exit(response.exit_code);
+}
+
+fn parse_config(path: &PathBuf) -> Config {
+    let content = fs::read_to_string(path).unwrap_or_else(|e| {
+        eprintln!("mock: failed to read config {}: {}", path.display(), e);
+        exit(1);
+    });
+
+    // Simple JSON parsing without serde dependency
+    // Format: { "version": "...", "commands": { "cmd": { "file": "...", "output": "...", "exit_code": N } } }
+    parse_json_config(&content).unwrap_or_else(|e| {
+        eprintln!("mock: failed to parse config {}: {}", path.display(), e);
+        exit(1);
+    })
+}
+
+fn parse_json_config(json: &str) -> Result<Config, String> {
+    // Very simple JSON parser - just enough for our config format
+    // Avoids serde dependency to keep binary small and fast to compile
+
+    let json = json.trim();
+    if !json.starts_with('{') || !json.ends_with('}') {
+        return Err("expected JSON object".to_string());
+    }
+
+    let mut version = None;
+    let mut commands = HashMap::new();
+
+    // Extract version if present
+    if let Some(start) = json.find("\"version\"")
+        && let Some(value) = extract_string_value(&json[start..])
+    {
+        version = Some(value);
+    }
+
+    // Extract commands object
+    if let Some(start) = json.find("\"commands\"") {
+        let rest = &json[start + 10..]; // skip "commands"
+        if let Some(obj_start) = rest.find('{') {
+            let obj_rest = &rest[obj_start..];
+            if let Some(obj_end) = find_matching_brace(obj_rest) {
+                let commands_json = &obj_rest[1..obj_end];
+                parse_commands(commands_json, &mut commands)?;
+            }
         }
     }
 
-    // Forward captured output to our stdout/stderr.
-    // Must flush before exit() since exit() doesn't run destructors.
-    io::stdout().write_all(&output.stdout).unwrap();
-    io::stdout().flush().unwrap();
-    io::stderr().write_all(&output.stderr).unwrap();
-    io::stderr().flush().unwrap();
+    Ok(Config { version, commands })
+}
 
-    exit(output.status.code().unwrap_or(1));
+fn extract_string_value(json: &str) -> Option<String> {
+    // Find the colon after the key
+    let colon = json.find(':')?;
+    let rest = json[colon + 1..].trim_start();
+
+    // Find the opening quote
+    if !rest.starts_with('"') {
+        return None;
+    }
+
+    // Find the closing quote (handle escaped quotes)
+    let mut chars = rest[1..].chars().peekable();
+    let mut value = String::new();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(&next) = chars.peek() {
+                chars.next();
+                match next {
+                    'n' => value.push('\n'),
+                    't' => value.push('\t'),
+                    'r' => value.push('\r'),
+                    '"' => value.push('"'),
+                    '\\' => value.push('\\'),
+                    _ => {
+                        value.push('\\');
+                        value.push(next);
+                    }
+                }
+            }
+        } else if c == '"' {
+            return Some(value);
+        } else {
+            value.push(c);
+        }
+    }
+    None
+}
+
+fn find_matching_brace(json: &str) -> Option<usize> {
+    let mut depth = 0;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for (i, c) in json.chars().enumerate() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        if c == '\\' && in_string {
+            escape_next = true;
+            continue;
+        }
+        if c == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn parse_commands(
+    json: &str,
+    commands: &mut HashMap<String, CommandResponse>,
+) -> Result<(), String> {
+    // Parse command entries: "cmd": { ... }
+    let mut rest = json.trim();
+
+    while !rest.is_empty() {
+        // Skip whitespace and commas
+        rest = rest.trim_start_matches(|c: char| c.is_whitespace() || c == ',');
+        if rest.is_empty() {
+            break;
+        }
+
+        // Find command name
+        if !rest.starts_with('"') {
+            break;
+        }
+        let name_end = rest[1..].find('"').ok_or("unterminated command name")?;
+        let name = rest[1..=name_end].to_string();
+        rest = &rest[name_end + 2..];
+
+        // Find colon and opening brace
+        rest = rest.trim_start();
+        if !rest.starts_with(':') {
+            return Err(format!("expected ':' after command name '{}'", name));
+        }
+        rest = rest[1..].trim_start();
+
+        if !rest.starts_with('{') {
+            return Err(format!("expected '{{' for command '{}'", name));
+        }
+
+        let brace_end = find_matching_brace(rest).ok_or("unterminated command object")?;
+        let cmd_json = &rest[1..brace_end];
+        rest = &rest[brace_end + 1..];
+
+        // Parse command response
+        let mut file = None;
+        let mut output = None;
+        let mut exit_code = 0;
+
+        if let Some(start) = cmd_json.find("\"file\"") {
+            file = extract_string_value(&cmd_json[start..]);
+        }
+        if let Some(start) = cmd_json.find("\"output\"") {
+            output = extract_string_value(&cmd_json[start..]);
+        }
+        if let Some(start) = cmd_json.find("\"exit_code\"") {
+            let after_key = &cmd_json[start + 11..];
+            if let Some(colon) = after_key.find(':') {
+                let value_str = after_key[colon + 1..].trim_start();
+                // Parse integer until non-digit
+                let num_str: String = value_str
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit() || *c == '-')
+                    .collect();
+                if let Ok(n) = num_str.parse() {
+                    exit_code = n;
+                }
+            }
+        }
+
+        commands.insert(
+            name,
+            CommandResponse {
+                file,
+                output,
+                exit_code,
+            },
+        );
+    }
+
+    Ok(())
 }
