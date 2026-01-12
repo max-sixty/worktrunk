@@ -980,15 +980,11 @@ pub fn collect(
     // See module docs for the timing diagram.
     worktrunk::shell_exec::trace_instant("Post-skeleton started");
 
-    // Check fsmonitor first (sequential) - this gates whether daemon starts are needed.
-    // The check is fast (~5ms) and must complete before we know which spawns to add.
+    // Collect worktree paths for fsmonitor starts (macOS only, fast, no git commands).
+    // Git's builtin fsmonitor has race conditions under parallel load - pre-starting
+    // daemons before parallel operations avoids hangs.
     #[cfg(target_os = "macos")]
-    let should_start_fsmonitor = repo.is_builtin_fsmonitor_enabled();
-    #[cfg(not(target_os = "macos"))]
-    let should_start_fsmonitor = false;
-
-    // Collect worktree paths for fsmonitor starts (fast, no git commands)
-    let fsmonitor_worktrees: Vec<_> = if should_start_fsmonitor {
+    let fsmonitor_worktrees: Vec<_> = if repo.is_builtin_fsmonitor_enabled() {
         sorted_worktrees
             .iter()
             .filter(|wt| !wt.is_prunable())
@@ -996,15 +992,12 @@ pub fn collect(
     } else {
         vec![]
     };
+    #[cfg(not(target_os = "macos"))]
+    let fsmonitor_worktrees: Vec<&WorktreeInfo> = vec![];
 
     // Single-level parallelism: all spawns in one rayon::scope.
-    // This avoids nested parallelism (join! → par_iter) which is conceptually messy.
-    //
-    // Pre-start fsmonitor daemons on macOS to avoid auto-start races.
-    // Git's builtin fsmonitor has race conditions under parallel load that can cause
-    // git commands to hang. Pre-starting daemons before parallel operations avoids this.
-    // See: https://gitlab.com/gitlab-org/git/-/merge_requests/148 (scalar's workaround)
-    // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same issue)
+    // See: https://gitlab.com/gitlab-org/git/-/merge_requests/148 (scalar's fsmonitor workaround)
+    // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same fsmonitor issue)
     let previous_branch_cell: OnceCell<Option<String>> = OnceCell::new();
     let integration_target_cell: OnceCell<Option<String>> = OnceCell::new();
 
