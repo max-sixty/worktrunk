@@ -170,9 +170,12 @@ The `codecov/patch` CI check enforces coverage on changed lines — respond to f
 
 ### Running Coverage Locally
 
-- Install once: `cargo install cargo-llvm-cov`
-- Run: `./dev/coverage.sh` — generates HTML (`target/llvm-cov/html/index.html`) and LCOV
-- Filter tests: `./dev/coverage.sh -- --test test_name`
+```bash
+./dev/coverage.sh
+# Report: target/llvm-cov/html/index.html
+```
+
+Install once: `cargo install cargo-llvm-cov`
 
 ### Investigating codecov/patch Failures
 
