@@ -407,16 +407,13 @@ impl WorktreeSkimItem {
     /// and unselected modes dimmed. Controls shown below in normal text
     /// for visual distinction from inactive tabs.
     fn render_preview_tabs(mode: PreviewMode) -> String {
-        use anstyle::Style;
-
         /// Format a tab label with bold (active) or dimmed (inactive) styling
         fn format_tab(label: &str, is_active: bool) -> String {
-            let style = if is_active {
-                Style::new().bold()
+            if is_active {
+                cformat!("<bold>{}</>", label)
             } else {
-                Style::new().dimmed()
-            };
-            format!("{}{}{}", style.render(), label, style.render_reset())
+                cformat!("<dim>{}</>", label)
+            }
         }
 
         let tab1 = format_tab("1: HEAD±", mode == PreviewMode::WorkingTree);
@@ -425,14 +422,8 @@ impl WorktreeSkimItem {
         let tab4 = format_tab("4: remote⇅", mode == PreviewMode::UpstreamDiff);
 
         // Controls use dim yellow to distinguish from dimmed (white) tabs
-        // while remaining subdued
-        let controls_style = Style::new()
-            .dimmed()
-            .fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Yellow)));
-        let controls = format!(
-            "{}Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle{}",
-            controls_style.render(),
-            controls_style.render_reset()
+        let controls = cformat!(
+            "<dim,yellow>Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle</>"
         );
 
         format!(
@@ -799,6 +790,7 @@ fn process_log_with_dimming(
     unique_commits: Option<&HashSet<String>>,
 ) -> (String, Vec<String>) {
     use ansi_str::AnsiStr;
+    use std::fmt::Write;
 
     let dim = anstyle::Style::new().dimmed();
     let reset = anstyle::Reset;
@@ -838,13 +830,12 @@ fn process_log_with_dimming(
                 result.push_str(display);
             } else {
                 // Dim: strip colors and wrap in dim style, but keep hash markers
-                result.push_str(graph_prefix);
-                result.push(HASH_START);
-                result.push_str(full_hash);
-                result.push(HASH_END);
-                result.push_str(&dim.to_string());
-                result.push_str(&display.ansi_strip());
-                result.push_str(&reset.to_string());
+                let _ = write!(
+                    result,
+                    "{}{HASH_START}{full_hash}{HASH_END}{dim}{}{reset}",
+                    graph_prefix,
+                    display.ansi_strip()
+                );
             }
             continue;
         }
