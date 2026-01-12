@@ -206,6 +206,18 @@ pub fn run(cmd: &mut Command, context: Option<&str>) -> std::io::Result<std::pro
     run_with_timeout(cmd, context, timeout)
 }
 
+/// Extract numeric thread ID from ThreadId's debug format.
+/// ThreadId debug format is "ThreadId(N)" where N is the numeric ID.
+fn thread_id_number() -> u64 {
+    let thread_id = std::thread::current().id();
+    let debug_str = format!("{:?}", thread_id);
+    debug_str
+        .strip_prefix("ThreadId(")
+        .and_then(|s| s.strip_suffix(")"))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
+
 /// Execute a command with an optional timeout.
 ///
 /// Like `run()`, but allows specifying a timeout. If the command doesn't complete within
@@ -217,7 +229,7 @@ pub fn run_with_timeout(
     context: Option<&str>,
     timeout: Option<std::time::Duration>,
 ) -> std::io::Result<std::process::Output> {
-    use std::time::Instant;
+    use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
     // Remove WORKTRUNK_DIRECTIVE_FILE to prevent hooks from writing to it
     cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
@@ -241,6 +253,13 @@ pub fn run_with_timeout(
     // RAII guard ensures release even on panic
     let _guard = get_semaphore().acquire();
 
+    // Capture timestamp and thread ID for Chrome Trace Format support
+    let start_time_us = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_micros() as u64)
+        .unwrap_or(0);
+    let tid = thread_id_number();
+
     let t0 = Instant::now();
 
     // Execute with or without timeout
@@ -251,11 +270,13 @@ pub fn run_with_timeout(
 
     let duration_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
-    // Log trace with timing
+    // Log trace with timing, timestamp, and thread ID for concurrency analysis
     match (&result, context) {
         (Ok(output), Some(ctx)) => {
             log::debug!(
-                "[wt-trace] context={} cmd=\"{}\" dur={:.1}ms ok={}",
+                "[wt-trace] ts={} tid={} context={} cmd=\"{}\" dur={:.1}ms ok={}",
+                start_time_us,
+                tid,
                 ctx,
                 cmd_str,
                 duration_ms,
@@ -264,7 +285,9 @@ pub fn run_with_timeout(
         }
         (Ok(output), None) => {
             log::debug!(
-                "[wt-trace] cmd=\"{}\" dur={:.1}ms ok={}",
+                "[wt-trace] ts={} tid={} cmd=\"{}\" dur={:.1}ms ok={}",
+                start_time_us,
+                tid,
                 cmd_str,
                 duration_ms,
                 output.status.success()
@@ -272,7 +295,9 @@ pub fn run_with_timeout(
         }
         (Err(e), Some(ctx)) => {
             log::debug!(
-                "[wt-trace] context={} cmd=\"{}\" dur={:.1}ms err=\"{}\"",
+                "[wt-trace] ts={} tid={} context={} cmd=\"{}\" dur={:.1}ms err=\"{}\"",
+                start_time_us,
+                tid,
                 ctx,
                 cmd_str,
                 duration_ms,
@@ -281,7 +306,9 @@ pub fn run_with_timeout(
         }
         (Err(e), None) => {
             log::debug!(
-                "[wt-trace] cmd=\"{}\" dur={:.1}ms err=\"{}\"",
+                "[wt-trace] ts={} tid={} cmd=\"{}\" dur={:.1}ms err=\"{}\"",
+                start_time_us,
+                tid,
                 cmd_str,
                 duration_ms,
                 e

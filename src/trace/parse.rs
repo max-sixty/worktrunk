@@ -2,10 +2,14 @@
 //!
 //! Trace lines are emitted by `shell_exec::run()` with this format:
 //! ```text
-//! [wt-trace] context=worktree cmd="git status" dur=12.3ms ok=true
-//! [wt-trace] cmd="gh pr list" dur=45.2ms ok=false
-//! [wt-trace] context=main cmd="git merge-base" dur=100.0ms err="fatal: ..."
+//! [wt-trace] ts=1234567890 tid=3 context=worktree cmd="git status" dur=12.3ms ok=true
+//! [wt-trace] ts=1234567890 tid=3 cmd="gh pr list" dur=45.2ms ok=false
+//! [wt-trace] ts=1234567890 tid=3 context=main cmd="git merge-base" dur=100.0ms err="fatal: ..."
 //! ```
+//!
+//! The `ts` (timestamp in microseconds since epoch) and `tid` (thread ID) fields
+//! enable concurrency analysis and Chrome Trace Format export for visualizing
+//! thread utilization in tools like chrome://tracing or Perfetto.
 
 use std::time::Duration;
 
@@ -20,6 +24,10 @@ pub struct TraceEntry {
     pub duration: Duration,
     /// Command result
     pub result: TraceResult,
+    /// Start timestamp in microseconds since Unix epoch (for Chrome Trace Format)
+    pub start_time_us: Option<u64>,
+    /// Thread ID that executed this command (for concurrency analysis)
+    pub thread_id: Option<u64>,
 }
 
 /// Result of a traced command.
@@ -66,6 +74,8 @@ pub fn parse_line(line: &str) -> Option<TraceEntry> {
     let mut command = None;
     let mut duration = None;
     let mut result = None;
+    let mut start_time_us = None;
+    let mut thread_id = None;
 
     let mut remaining = rest;
 
@@ -114,6 +124,12 @@ pub fn parse_line(line: &str) -> Option<TraceEntry> {
                     message: value.to_string(),
                 });
             }
+            "ts" => {
+                start_time_us = value.parse().ok();
+            }
+            "tid" => {
+                thread_id = value.parse().ok();
+            }
             _ => {} // Ignore unknown keys for forward compatibility
         }
     }
@@ -123,6 +139,8 @@ pub fn parse_line(line: &str) -> Option<TraceEntry> {
         command: command?,
         duration: duration?,
         result: result?,
+        start_time_us,
+        thread_id,
     })
 }
 
@@ -234,5 +252,38 @@ more noise
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].command, "git status");
         assert_eq!(entries[1].command, "git diff");
+    }
+
+    #[test]
+    fn test_parse_with_timestamp_and_thread_id() {
+        let line = r#"[wt-trace] ts=1736600000000000 tid=5 context=feature cmd="git status" dur=12.3ms ok=true"#;
+        let entry = parse_line(line).unwrap();
+
+        assert_eq!(entry.start_time_us, Some(1736600000000000));
+        assert_eq!(entry.thread_id, Some(5));
+        assert_eq!(entry.context, Some("feature".to_string()));
+        assert_eq!(entry.command, "git status");
+        assert!(entry.is_success());
+    }
+
+    #[test]
+    fn test_parse_without_timestamp_and_thread_id() {
+        // Old format traces (without ts/tid) should still parse with None values
+        let line = r#"[wt-trace] cmd="git status" dur=12.3ms ok=true"#;
+        let entry = parse_line(line).unwrap();
+
+        assert_eq!(entry.start_time_us, None);
+        assert_eq!(entry.thread_id, None);
+        assert_eq!(entry.command, "git status");
+    }
+
+    #[test]
+    fn test_parse_partial_new_fields() {
+        // Only ts provided, no tid
+        let line = r#"[wt-trace] ts=1736600000000000 cmd="git status" dur=12.3ms ok=true"#;
+        let entry = parse_line(line).unwrap();
+
+        assert_eq!(entry.start_time_us, Some(1736600000000000));
+        assert_eq!(entry.thread_id, None);
     }
 }
