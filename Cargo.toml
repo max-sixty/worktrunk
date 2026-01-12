@@ -1,7 +1,7 @@
 [workspace]
-members = ["tests/helpers/setup-select-test", "tests/helpers/dev-detach", "tests/helpers/mock-stub"]
-# Include helpers so `cargo test` builds their binaries (via their integration tests)
-default-members = [".", "tests/helpers/dev-detach", "tests/helpers/mock-stub"]
+members = ["tests/helpers/setup-select-test", "tests/helpers/mock-stub"]
+# Include mock-stub so `cargo test` builds its binary (via its integration test)
+default-members = [".", "tests/helpers/mock-stub"]
 
 [package]
 name = "worktrunk"
@@ -64,6 +64,7 @@ required-features = ["git-wt"]
 [[bin]]
 name = "analyze-trace"
 path = "src/bin/analyze-trace.rs"
+test = false
 
 [dependencies]
 anyhow = "1.0"

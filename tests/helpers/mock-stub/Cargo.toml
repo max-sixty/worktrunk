@@ -5,11 +5,14 @@
 #   gh.exe + gh (script) -> gh.exe runs: bash gh <args>
 #
 # WHY A SEPARATE PACKAGE?
-# See dev-detach/Cargo.toml for explanation of cargo-dist compatibility.
+# cargo-dist automatically discovers all [[bin]] entries and expects to distribute
+# them. Moving test-only binaries to separate packages with `publish = false`
+# prevents them from being included in releases.
 #
 # HOW THE BINARY GETS BUILT:
 # Has a dummy integration test (tests/builds.rs) that triggers binary compilation
-# when running `cargo test`. See dev-detach for details.
+# when running `cargo test`. Combined with `workspace.default-members` including
+# this package, `cargo test` automatically builds the binary.
 [package]
 name = "mock-stub"
 version = "0.1.0"
@@ -19,3 +22,4 @@ publish = false
 [[bin]]
 name = "mock-stub"
 path = "src/main.rs"
+test = false
