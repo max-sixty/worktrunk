@@ -179,3 +179,46 @@ fn test_help_list_narrow_terminal() {
         assert_cmd_snapshot!("help_list_narrow_80", cmd);
     });
 }
+
+/// Tests that using a nested subcommand at the top level suggests the correct command.
+///
+/// When users type `wt squash` instead of `wt step squash`, or `wt pre-merge` instead
+/// of `wt hook pre-merge`, they should get a helpful suggestion.
+#[rstest]
+#[case("nested_subcommand_step_squash", "squash", "wt step squash")]
+#[case("nested_subcommand_step_commit", "commit", "wt step commit")]
+#[case("nested_subcommand_hook_pre_merge", "pre-merge", "wt hook pre-merge")]
+#[case(
+    "nested_subcommand_hook_post_create",
+    "post-create",
+    "wt hook post-create"
+)]
+fn test_nested_subcommand_suggestion(
+    #[case] test_name: &str,
+    #[case] subcommand: &str,
+    #[case] expected_suggestion: &str,
+) {
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    // Remove trailing ANSI reset codes for cross-platform consistency
+    settings.add_filter(r"\x1b\[0m$", "");
+    settings.add_filter(r"\x1b\[0m\n", "\n");
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.arg(subcommand);
+        let output = cmd.output().expect("failed to run wt");
+
+        // Should fail (exit code 2)
+        assert_eq!(output.status.code(), Some(2));
+
+        // Should contain the suggestion
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected_suggestion),
+            "Expected stderr to contain '{expected_suggestion}', got:\n{stderr}"
+        );
+
+        // Snapshot the full error output
+        assert_cmd_snapshot!(test_name, cmd);
+    });
+}

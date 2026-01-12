@@ -1,0 +1,28 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - squash
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    RUST_LOG: warn
+    SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+---
+success: false
+exit_code: 2
+----- stdout -----
+
+----- stderr -----
+[1m[31merror:[0m unrecognized subcommand '[1m[33msquash[0m'
+
+[1m[32mUsage:[0m [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND]
+
+For more information, try '[1m[36m--help[0m'.
+
+  [33mtip:[39m  did you mean [36m[1mwt step squash[39m[22m?
