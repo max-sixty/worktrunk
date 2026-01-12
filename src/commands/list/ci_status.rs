@@ -1230,25 +1230,7 @@ impl PrStatus {
     /// - Organization repos (PRs from org branches)
     /// - Multiple users with same branch name
     fn detect_github(repo: &Repository, branch: &str, local_head: &str) -> Option<Self> {
-        use std::process::Stdio;
-
         let repo_root = repo.current_worktree().root().ok()?;
-
-        // Check if gh is available and authenticated
-        let mut auth_cmd = Command::new("gh");
-        auth_cmd.args(["auth", "status"]);
-        auth_cmd.stdin(Stdio::null());
-        match run(&mut auth_cmd, None) {
-            Err(e) => {
-                log::debug!("gh not available for {}: {}", branch, e);
-                return None;
-            }
-            Ok(o) if !o.status.success() => {
-                log::debug!("gh not authenticated for {}", branch);
-                return None;
-            }
-            _ => {}
-        }
 
         // Get origin owner for filtering (see parse_remote_owner docs for why)
         let origin_owner = get_origin_owner(repo);
@@ -1466,11 +1448,6 @@ impl PrStatus {
     /// that `statusCheckRollup` provides for PRs. This correctly aggregates
     /// status across multiple workflows (e.g., `ci` and `publish-docs`).
     fn detect_github_commit_checks(repo: &Repository, local_head: &str) -> Option<Self> {
-        // Note: We don't log auth failures here since detect_github already logged them
-        if !tool_available("gh", &["auth", "status"]) {
-            return None;
-        }
-
         let repo_root = repo.current_worktree().root().ok()?;
         let (owner, repo_name) = get_owner_repo(repo)?;
 
