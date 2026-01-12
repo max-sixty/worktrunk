@@ -2,19 +2,21 @@
 //!
 //! Trace lines are emitted by `shell_exec::run()` with this format:
 //! ```text
-//! [wt-trace] ts=1234567890 tid=3 context=worktree cmd="git status" dur=12.3ms ok=true
-//! [wt-trace] ts=1234567890 tid=3 cmd="gh pr list" dur=45.2ms ok=false
-//! [wt-trace] ts=1234567890 tid=3 context=main cmd="git merge-base" dur=100.0ms err="fatal: ..."
+//! [wt-trace] ts=1234567 tid=3 context=worktree cmd="git status" dur_us=12300 ok=true
+//! [wt-trace] ts=1234567 tid=3 cmd="gh pr list" dur_us=45200 ok=false
+//! [wt-trace] ts=1234567 tid=3 context=main cmd="git merge-base" dur_us=100000 err="fatal: ..."
 //! ```
 //!
 //! Instant events (milestones without duration) use this format:
 //! ```text
-//! [wt-trace] ts=1234567890 tid=3 event="Showed skeleton"
+//! [wt-trace] ts=1234567 tid=3 event="Showed skeleton"
 //! ```
 //!
-//! The `ts` (timestamp in microseconds since epoch) and `tid` (thread ID) fields
+//! The `ts` (timestamp in microseconds since trace epoch) and `tid` (thread ID) fields
 //! enable concurrency analysis and Chrome Trace Format export for visualizing
 //! thread utilization in tools like chrome://tracing or Perfetto.
+//!
+//! Both `dur_us` (microseconds, preferred) and `dur` (milliseconds, legacy) are supported.
 
 use std::time::Duration;
 
@@ -129,10 +131,15 @@ fn parse_line(line: &str) -> Option<TraceEntry> {
             "cmd" => command = Some(value.to_string()),
             "event" => event = Some(value.to_string()),
             "dur" => {
-                // Parse "123.4ms"
+                // Parse "123.4ms" (legacy format)
                 let ms_str = value.strip_suffix("ms")?;
                 let ms: f64 = ms_str.parse().ok()?;
                 duration = Some(Duration::from_secs_f64(ms / 1000.0));
+            }
+            "dur_us" => {
+                // Parse microseconds (new format, no precision loss)
+                let us: u64 = value.parse().ok()?;
+                duration = Some(Duration::from_micros(us));
             }
             "ok" => {
                 let success = value == "true";
@@ -338,6 +345,18 @@ more noise
 
         assert_eq!(entry.start_time_us, Some(1736600000000000));
         assert_eq!(entry.thread_id, None);
+    }
+
+    #[test]
+    fn test_parse_dur_us_format() {
+        // New format with microseconds (no precision loss)
+        let line = r#"[wt-trace] ts=1234567 tid=3 cmd="git status" dur_us=12345 ok=true"#;
+        let entry = parse_line(line).unwrap();
+
+        let TraceEntryKind::Command { duration, .. } = &entry.kind else {
+            panic!("expected command");
+        };
+        assert_eq!(*duration, Duration::from_micros(12345));
     }
 
     // ========================================================================
