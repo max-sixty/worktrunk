@@ -44,11 +44,30 @@
 //!
 //! ### Post-Skeleton Operations
 //!
-//! Everything else runs **after** the skeleton appears:
-//! - `get_switch_previous()` — previous branch detection (updates gutter symbol)
-//! - `effective_integration_target()` — upstream vs local target check
-//! - URL template expansion — parallelized in task spawning
-//! - All computed fields (ahead/behind, diffs, CI status, etc.)
+//! After the skeleton renders, remaining setup runs before spawning the worker thread.
+//! These operations are parallelized using `rayon::scope` with single-level parallelism:
+//!
+//! ```text
+//! Skeleton render
+//! ├─ is_builtin_fsmonitor_enabled()             (5ms, sequential - gate)
+//! ├─ rayon::scope(
+//! │    ├─ get_switch_previous()                 (5ms)
+//! │    ├─ integration_target()                  (10ms)
+//! │    ├─ start_fsmonitor_daemon × N worktrees  (6ms each, all parallel)
+//! │  )                                          // ~10ms total (max of all spawns)
+//! Worker thread spawns
+//! ```
+//!
+//! **Why fsmonitor check is sequential:** It gates whether daemon starts are needed.
+//! The check is fast (~5ms) and must complete before we know which spawns to add.
+//!
+//! **Why fsmonitor starts are in the parallel scope:** The `git fsmonitor--daemon start`
+//! command returns quickly after signaling the daemon. By the time the worker thread
+//! starts executing `git status` commands, daemons have had time to initialize.
+//!
+//! **Invalid default branch warning:** Uses cached value from `default_branch()` which
+//! ran during pre-skeleton. The `invalid_default_branch_config()` call is a pure cache
+//! read with no git commands.
 //!
 //! When adding new features, ask: "Can this be computed after skeleton?" If yes, defer it.
 //! The skeleton shows `·` placeholder for gutter symbols, filled in when data loads.
@@ -75,6 +94,7 @@ use anyhow::Context;
 use color_print::cformat;
 use crossbeam_channel as chan;
 use dunce::canonicalize;
+use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use rayon_join_macro::join;
 use worktrunk::git::{LineDiff, Repository, WorktreeInfo};
@@ -936,10 +956,63 @@ pub fn collect(
     }
 
     // === Post-skeleton computations (deferred to minimize time-to-skeleton) ===
+    //
+    // These operations run in parallel using rayon::scope with single-level parallelism.
+    // See module docs for the timing diagram.
     worktrunk::shell_exec::trace_instant("Post-skeleton started");
 
-    // Compute previous_branch and update is_previous on items
-    let previous_branch = repo.get_switch_previous();
+    // Check fsmonitor first (sequential) - this gates whether daemon starts are needed.
+    // The check is fast (~5ms) and must complete before we know which spawns to add.
+    #[cfg(target_os = "macos")]
+    let should_start_fsmonitor = repo.is_builtin_fsmonitor_enabled();
+    #[cfg(not(target_os = "macos"))]
+    let should_start_fsmonitor = false;
+
+    // Collect worktree paths for fsmonitor starts (fast, no git commands)
+    let fsmonitor_worktrees: Vec<_> = if should_start_fsmonitor {
+        sorted_worktrees
+            .iter()
+            .filter(|wt| !wt.is_prunable())
+            .collect()
+    } else {
+        vec![]
+    };
+
+    // Single-level parallelism: all spawns in one rayon::scope.
+    // This avoids nested parallelism (join! → par_iter) which is conceptually messy.
+    //
+    // Pre-start fsmonitor daemons on macOS to avoid auto-start races.
+    // Git's builtin fsmonitor has race conditions under parallel load that can cause
+    // git commands to hang. Pre-starting daemons before parallel operations avoids this.
+    // See: https://gitlab.com/gitlab-org/git/-/merge_requests/148 (scalar's workaround)
+    // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same issue)
+    let previous_branch_cell: OnceCell<Option<String>> = OnceCell::new();
+    let integration_target_cell: OnceCell<Option<String>> = OnceCell::new();
+
+    rayon::scope(|s| {
+        // Previous branch lookup (for gutter symbol)
+        s.spawn(|_| {
+            let _ = previous_branch_cell.set(repo.get_switch_previous());
+        });
+
+        // Integration target (upstream if ahead of local, else local)
+        s.spawn(|_| {
+            let _ = integration_target_cell.set(repo.integration_target());
+        });
+
+        // Fsmonitor daemon starts (one spawn per worktree)
+        for wt in &fsmonitor_worktrees {
+            s.spawn(|_| {
+                repo.start_fsmonitor_daemon_at(&wt.path);
+            });
+        }
+    });
+
+    // Extract results from cells
+    let previous_branch = previous_branch_cell.into_inner().flatten();
+    let integration_target = integration_target_cell.into_inner().flatten();
+
+    // Update is_previous on items
     if let Some(prev) = previous_branch.as_deref() {
         for item in &mut all_items {
             if item.branch.as_deref() == Some(prev)
@@ -949,12 +1022,6 @@ pub fn collect(
             }
         }
     }
-
-    // Effective target for integration checks: upstream if ahead of local, else local.
-    // This handles the case where a branch was merged remotely but user hasn't pulled yet.
-    // Deferred until after skeleton to avoid blocking initial render.
-    // Uses cached integration_target() which returns None if default_branch unknown.
-    let integration_target = repo.integration_target();
 
     // Batch-fetch ahead/behind counts to identify branches that are far behind.
     // This allows skipping expensive merge-base operations for diverged branches, dramatically
@@ -984,28 +1051,6 @@ pub fn collect(
 
     // Note: URL template expansion is deferred to task spawning (in collect_worktree_progressive
     // and collect_branch_progressive). This parallelizes the work and minimizes time-to-skeleton.
-
-    // Pre-start fsmonitor daemons on macOS to avoid auto-start races.
-    //
-    // Git's builtin fsmonitor on macOS has race conditions under parallel load that can
-    // cause git commands to hang. When multiple git status commands try to auto-start
-    // the daemon simultaneously, they can wedge. Pre-starting the daemons before parallel
-    // operations avoids this race.
-    //
-    // See: https://gitlab.com/gitlab-org/git/-/merge_requests/148 (scalar's workaround)
-    // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same issue)
-    #[cfg(target_os = "macos")]
-    {
-        if repo.is_builtin_fsmonitor_enabled() {
-            // Parallelize daemon starts - explicit `start` is safe to call concurrently
-            // (each returns quickly if daemon already running for that worktree).
-            sorted_worktrees.par_iter().for_each(|wt| {
-                if !wt.is_prunable() {
-                    repo.start_fsmonitor_daemon_at(&wt.path);
-                }
-            });
-        }
-    }
 
     // Cache last rendered (unclamped) message per row to avoid redundant updates.
     let mut last_rendered_lines: Vec<String> = vec![String::new(); all_items.len()];
