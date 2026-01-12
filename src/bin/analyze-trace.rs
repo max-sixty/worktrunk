@@ -1,45 +1,31 @@
-//! Analyze wt-trace logs to understand command performance.
+//! Analyze wt-trace logs for concurrency visualization.
 //!
 //! # Usage
 //!
 //! ```bash
-//! # Human-readable analysis
-//! RUST_LOG=debug wt list 2>&1 | grep wt-trace | analyze-trace
-//!
-//! # Chrome Trace Format for visualization or SQL analysis
-//! RUST_LOG=debug wt list 2>&1 | grep wt-trace | analyze-trace --format=chrome > trace.json
+//! # Generate Chrome Trace Format for visualization
+//! RUST_LOG=debug wt list 2>&1 | grep wt-trace | analyze-trace > trace.json
 //!
 //! # Visualize: open trace.json in chrome://tracing or https://ui.perfetto.dev
 //!
 //! # Analyze with SQL (requires: curl -LO https://get.perfetto.dev/trace_processor)
 //! trace_processor trace.json -Q 'SELECT COUNT(*), SUM(dur)/1e6 as cpu_ms FROM slice'
+//! trace_processor trace.json -Q 'SELECT name, COUNT(*) as n, SUM(dur)/1e6 as ms FROM slice GROUP BY name ORDER BY ms DESC'
 //! ```
 
 use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use worktrunk::trace;
 
-#[derive(Debug, Clone, Copy, Default, ValueEnum)]
-enum OutputFormat {
-    /// Human-readable analysis with command breakdown and histogram
-    #[default]
-    Text,
-    /// Chrome Trace Format JSON for chrome://tracing, Perfetto, or trace_processor
-    Chrome,
-}
-
-/// Analyze wt-trace logs for performance insights
+/// Analyze wt-trace logs for concurrency visualization
 #[derive(Parser)]
 #[command(name = "analyze-trace")]
-#[command(about = "Analyze wt-trace logs for performance insights")]
+#[command(about = "Convert wt-trace logs to Chrome Trace Format for visualization")]
 #[command(after_long_help = r#"EXAMPLES:
-  # Human-readable analysis
-  RUST_LOG=debug wt list 2>&1 | grep wt-trace | analyze-trace
-
-  # Chrome Trace Format for visualization
-  RUST_LOG=debug wt list 2>&1 | grep wt-trace | analyze-trace --format=chrome > trace.json
+  # Generate trace from wt command
+  RUST_LOG=debug wt list 2>&1 | grep wt-trace | analyze-trace > trace.json
 
   # Then either:
   #   - Open trace.json in chrome://tracing or https://ui.perfetto.dev
@@ -51,10 +37,6 @@ enum OutputFormat {
 struct Args {
     /// Path to trace log file (reads from stdin if omitted)
     file: Option<PathBuf>,
-
-    /// Output format
-    #[arg(long, short, value_enum, default_value_t = OutputFormat::Text)]
-    format: OutputFormat,
 }
 
 fn main() {
@@ -97,13 +79,5 @@ fn main() {
         std::process::exit(1);
     }
 
-    match args.format {
-        OutputFormat::Text => {
-            let analysis = trace::analyze(&entries);
-            println!("{}", trace::render(&analysis));
-        }
-        OutputFormat::Chrome => {
-            println!("{}", trace::to_chrome_trace(&entries));
-        }
-    }
+    println!("{}", trace::to_chrome_trace(&entries));
 }

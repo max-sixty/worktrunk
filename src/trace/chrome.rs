@@ -70,27 +70,13 @@ struct ChromeTrace {
 
 /// Convert trace entries to Chrome Trace Format JSON.
 ///
-/// Entries without timestamp data (`start_time_us = None`) are assigned
-/// sequential timestamps based on their duration to maintain relative ordering.
-/// This allows visualization of old-format traces, though thread utilization
-/// won't be accurate.
-///
 /// Returns pretty-printed JSON suitable for chrome://tracing or Perfetto.
+/// Entries without timestamp/thread data use 0 as fallback.
 pub fn to_chrome_trace(entries: &[TraceEntry]) -> String {
-    // For entries without timestamps, we'll compute synthetic timestamps
-    // by accumulating durations. This gives a reasonable visualization
-    // even for old-format traces, though it won't show true parallelism.
-    let mut synthetic_ts: u64 = 0;
-
     let trace_events: Vec<TraceEvent> = entries
         .iter()
         .map(|entry| {
-            let ts = entry.start_time_us.unwrap_or_else(|| {
-                let ts = synthetic_ts;
-                synthetic_ts += entry.duration.as_micros() as u64;
-                ts
-            });
-
+            let ts = entry.start_time_us.unwrap_or(0);
             let tid = entry.thread_id.unwrap_or(0);
             let dur = entry.duration.as_micros() as u64;
 
@@ -184,7 +170,7 @@ mod tests {
 
     #[test]
     fn test_to_chrome_trace_without_timestamps() {
-        // Old format entries without ts/tid get synthetic values
+        // Old format entries without ts/tid get 0 as fallback
         let entries = vec![
             make_entry("git status", 10, None, None),
             make_entry("git diff", 20, None, None),
@@ -195,9 +181,9 @@ mod tests {
 
         let events = parsed["traceEvents"].as_array().unwrap();
 
-        // Synthetic timestamps: first at 0, second after first's duration
+        // Fallback: both get ts=0 and tid=0
         assert_eq!(events[0]["ts"], 0);
-        assert_eq!(events[1]["ts"], 10000); // After 10ms = 10000µs
+        assert_eq!(events[1]["ts"], 0);
         assert_eq!(events[0]["tid"], 0);
         assert_eq!(events[1]["tid"], 0);
     }
