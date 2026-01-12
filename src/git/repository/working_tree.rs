@@ -212,35 +212,10 @@ impl<'a> WorkingTree<'a> {
         LineDiff::from_numstat(&stdout)
     }
 
-    /// Get working tree diff stats vs a base branch, if trees differ.
-    ///
-    /// When `base_branch` is `None` (main worktree), returns `Some(LineDiff::default())`.
-    /// If the base branch tree matches HEAD and the working tree is dirty, computes
-    /// the precise diff; otherwise returns zero to indicate trees match.
-    /// When trees differ, returns `None` so callers can skip expensive comparisons.
-    pub fn working_tree_diff_with_base(
-        &self,
-        base_branch: Option<&str>,
-        working_tree_dirty: bool,
-    ) -> anyhow::Result<Option<LineDiff>> {
-        match self.trees_match_base(base_branch)? {
-            TreesMatchResult::NoBaseBranch => Ok(Some(LineDiff::default())),
-            TreesMatchResult::BranchNotFound | TreesMatchResult::TreesDiffer => Ok(None),
-            TreesMatchResult::TreesMatch { branch } => {
-                if working_tree_dirty {
-                    Ok(Some(self.working_tree_diff_vs_ref(branch)?))
-                } else {
-                    Ok(Some(LineDiff::default()))
-                }
-            }
-        }
-    }
-
     /// Check if HEAD tree matches a base branch tree.
     ///
     /// This runs `rev-parse --verify` + `diff-tree --quiet` and returns the result.
-    /// Used by `working_tree_diff_with_base` and can also be called directly for
-    /// parallel execution with other operations like `git status`.
+    /// Can be called directly for parallel execution with `git status`.
     pub fn trees_match_base<'b>(
         &self,
         base_branch: Option<&'b str>,
