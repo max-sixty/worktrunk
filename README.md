@@ -103,6 +103,12 @@ A demo with some advanced features:
 brew install max-sixty/worktrunk/wt && wt config shell install
 ```
 
+**Arch Linux:**
+
+```bash
+paru worktrunk-bin
+```
+
 Shell integration allows commands to change directories.
 
 **Cargo:**
