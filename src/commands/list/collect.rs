@@ -17,16 +17,17 @@
 //! - **Batching** — timestamp fetch passes all SHAs to one `git show` command
 //! - **Parallelization** — independent commands run concurrently via `join!` macro
 //!
-//! **Steady-state (4-6 commands):**
+//! **Steady-state (5-7 commands):**
 //!
-//! | Command | Purpose |
-//! |---------|---------|
-//! | `git worktree list --porcelain` | Enumerate worktrees |
-//! | `git config worktrunk.default-branch` | Cached default branch |
-//! | `git show -s --format='%H %ct' SHA1 SHA2 ...` | **Batched** timestamps for sorting |
-//! | `git config --bool core.bare` | Bare repo check for expected-path logic |
-//! | `git for-each-ref refs/heads` | Only with `--branches` flag |
-//! | `git for-each-ref refs/remotes` | Only with `--remotes` flag |
+//! | Command | Purpose | Parallel |
+//! |---------|---------|----------|
+//! | `git worktree list --porcelain` | Enumerate worktrees | Sequential (required first) |
+//! | `git config worktrunk.default-branch` | Cached default branch | ✓ |
+//! | `git config --bool core.bare` | Bare repo check for expected-path logic | ✓ |
+//! | `git rev-parse --show-toplevel` | Worktree root for project config | ✓ |
+//! | `git for-each-ref refs/heads` | Only with `--branches` flag | ✓ |
+//! | `git for-each-ref refs/remotes` | Only with `--remotes` flag | ✓ |
+//! | `git show -s --format='%H %ct' SHA1 SHA2 ...` | **Batched** timestamps | Sequential (needs SHAs) |
 //!
 //! **Non-git operations (negligible latency):**
 //! - Path canonicalization — detect current worktree
@@ -96,7 +97,6 @@ use crossbeam_channel as chan;
 use dunce::canonicalize;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use rayon_join_macro::join;
 use worktrunk::git::{LineDiff, Repository, WorktreeInfo};
 use worktrunk::styling::{INFO_SYMBOL, format_with_gutter, warning_message};
 
@@ -656,28 +656,6 @@ fn drain_results(
     DrainOutcome::Complete
 }
 
-/// Get branches that don't have worktrees.
-///
-/// Returns (branch_name, commit_sha) pairs for all branches without associated worktrees.
-fn get_branches_without_worktrees(
-    repo: &Repository,
-    worktrees: &[WorktreeInfo],
-) -> anyhow::Result<Vec<(String, String)>> {
-    // Get all local branches
-    let all_branches = repo.list_local_branches()?;
-
-    // Build a set of branch names that have worktrees
-    let worktree_branches = worktree_branch_set(worktrees);
-
-    // Filter to branches without worktrees
-    let branches_without_worktrees: Vec<_> = all_branches
-        .into_iter()
-        .filter(|(branch_name, _)| !worktree_branches.contains(branch_name.as_str()))
-        .collect();
-
-    Ok(branches_without_worktrees)
-}
-
 fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> std::collections::HashSet<&str> {
     worktrees
         .iter()
@@ -716,11 +694,78 @@ pub fn collect(
     use super::progressive_table::ProgressiveTable;
     worktrunk::shell_exec::trace_instant("List collect started");
 
-    // Phase 1: Get worktree list (required for everything else)
-    let worktrees = repo.list_worktrees().context("Failed to list worktrees")?;
+    // Phase 1: Parallel fetch of ALL independent git data
+    //
+    // Key insight: most operations don't depend on each other. By running them all
+    // in parallel via rayon::scope, we minimize wall-clock time. Dependencies:
+    //
+    // - worktree list: independent (needed for filtering and SHAs)
+    // - default_branch: independent (git config + verify)
+    // - is_bare: independent (git config, cached for later use)
+    // - url_template: independent (loads project config via show-toplevel)
+    // - local_branches: independent (for-each-ref, but filtering needs worktrees)
+    // - remote_branches: independent (for-each-ref)
+    //
+    // After this scope completes, we have all raw data and can do CPU-only work.
+    let worktrees_cell: OnceCell<anyhow::Result<Vec<WorktreeInfo>>> = OnceCell::new();
+    let default_branch_cell: OnceCell<Option<String>> = OnceCell::new();
+    let url_template_cell: OnceCell<Option<String>> = OnceCell::new();
+    let local_branches_cell: OnceCell<anyhow::Result<Vec<(String, String)>>> = OnceCell::new();
+    let remote_branches_cell: OnceCell<anyhow::Result<Vec<(String, String)>>> = OnceCell::new();
+
+    rayon::scope(|s| {
+        s.spawn(|_| {
+            let _ = worktrees_cell.set(repo.list_worktrees());
+        });
+        s.spawn(|_| {
+            let _ = default_branch_cell.set(repo.default_branch());
+        });
+        s.spawn(|_| {
+            // Populate is_bare cache (value used later via worktree_base)
+            let _ = repo.is_bare();
+        });
+        s.spawn(|_| {
+            let _ = url_template_cell.set(repo.url_template());
+        });
+        s.spawn(|_| {
+            if show_branches {
+                let _ = local_branches_cell.set(repo.list_local_branches());
+            }
+        });
+        s.spawn(|_| {
+            if show_remotes {
+                let _ = remote_branches_cell.set(repo.list_untracked_remote_branches());
+            }
+        });
+    });
+
+    // Extract results
+    let worktrees = worktrees_cell
+        .into_inner()
+        .unwrap()
+        .context("Failed to list worktrees")?;
     if worktrees.is_empty() {
         return Ok(None);
     }
+    let default_branch = default_branch_cell.into_inner().unwrap();
+    let url_template = url_template_cell.into_inner().unwrap();
+
+    // Filter local branches to those without worktrees (CPU-only, no git commands)
+    let branches_without_worktrees = if show_branches {
+        let all_local = local_branches_cell.into_inner().unwrap()?;
+        let worktree_branches = worktree_branch_set(&worktrees);
+        all_local
+            .into_iter()
+            .filter(|(name, _)| !worktree_branches.contains(name.as_str()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let remote_branches = if show_remotes {
+        remote_branches_cell.into_inner().unwrap()?
+    } else {
+        Vec::new()
+    };
 
     // Detect current worktree by checking if repo path is inside any worktree.
     // This avoids a git command - we just compare canonicalized paths.
@@ -732,27 +777,6 @@ pub fn collect(
                 .filter(|wt_path| repo_path.starts_with(wt_path))
         })
     });
-
-    // Phase 2: Parallel fetch of independent git data
-    // These operations don't depend on each other, only on worktree list.
-    // Running them in parallel reduces pre-skeleton time (e.g., ~46ms to ~28ms).
-    let (default_branch, branches_without_worktrees, remote_branches) = join!(
-        || repo.default_branch(),
-        || {
-            if show_branches {
-                get_branches_without_worktrees(repo, &worktrees)
-            } else {
-                Ok(Vec::new())
-            }
-        },
-        || {
-            if show_remotes {
-                repo.list_untracked_remote_branches()
-            } else {
-                Ok(Vec::new())
-            }
-        }
-    );
     // Show warning if user configured a default branch that doesn't exist locally
     if let Some(configured) = repo.invalid_default_branch_config() {
         let msg =
@@ -761,9 +785,6 @@ pub fn collect(
         let hint = cformat!("Run <bright-black>wt config state default-branch clear</> to reset");
         crate::output::print(worktrunk::styling::hint_message(hint))?;
     }
-
-    let branches_without_worktrees = branches_without_worktrees?;
-    let remote_branches = remote_branches?;
 
     // Main worktree is the worktree on the default branch (if exists), else first non-prunable worktree.
     // find_home returns None if all worktrees are prunable or the list is empty.
@@ -809,9 +830,7 @@ pub fn collect(
     // (paths from git worktree list may differ based on symlinks or working directory)
     let main_worktree_canonical = canonicalize(&main_worktree.path).ok();
 
-    // Check if URL template is configured (for layout column allocation).
-    // Template expansion is deferred to post-skeleton to minimize time-to-skeleton.
-    let url_template = repo.url_template();
+    // URL template already fetched in parallel join (layout needs to know if column is needed)
     // Initialize worktree items with identity fields and None for computed fields
     let mut all_items: Vec<ListItem> = sorted_worktrees
         .iter()

@@ -602,22 +602,40 @@ impl Task for BranchDiffTask {
 }
 
 /// Task 5 (worktree only): Working tree diff + status flags
+///
+/// Parallelizes `git status` with `rev-parse --verify` + `diff-tree --quiet` since they're
+/// independent. The `diff-tree` compares committed trees (HEAD vs main), not the working tree,
+/// so it can run while status is scanning the working tree.
 pub struct WorkingTreeDiffTask;
 
 impl Task for WorkingTreeDiffTask {
     const KIND: TaskKind = TaskKind::WorkingTreeDiff;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
+        use worktrunk::git::TreesMatchResult;
+
         // This task is only spawned for worktree items, so worktree path is always present.
         let wt = ctx
             .branch_ref
             .working_tree(&ctx.repo)
             .expect("WorkingTreeDiffTask requires a worktree");
-        // Use --no-optional-locks to avoid index lock contention with WorkingTreeConflictsTask's
-        // `git stash create` which needs the index lock.
-        let status_output = wt
-            .run_command(&["--no-optional-locks", "status", "--porcelain"])
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+
+        // Use default_branch (local default branch) for informational display
+        let default_branch = ctx.default_branch();
+
+        // Parallelize: status (reads working tree) || trees_match (compares committed trees)
+        // These are independent - diff-tree compares HEAD vs main trees, not the working tree.
+        let (status_result, trees_match_result) = rayon::join(
+            || {
+                // Use --no-optional-locks to avoid index lock contention with WorkingTreeConflictsTask's
+                // `git stash create` which needs the index lock.
+                wt.run_command(&["--no-optional-locks", "status", "--porcelain"])
+            },
+            || wt.trees_match_base(default_branch.as_deref()),
+        );
+
+        let status_output = status_result.map_err(|e| ctx.error(Self::KIND, e))?;
+        let trees_match = trees_match_result.map_err(|e| ctx.error(Self::KIND, e))?;
 
         let (working_tree_status, is_dirty, has_conflicts) =
             parse_working_tree_status(&status_output);
@@ -629,11 +647,21 @@ impl Task for WorkingTreeDiffTask {
             LineDiff::default()
         };
 
-        // Use default_branch (local default branch) for informational display
-        let default_branch = ctx.default_branch();
-        let working_tree_diff_with_main = wt
-            .working_tree_diff_with_base(default_branch.as_deref(), is_dirty)
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+        // Compute working tree diff vs main based on trees_match result
+        let working_tree_diff_with_main = match trees_match {
+            TreesMatchResult::NoBaseBranch => Some(LineDiff::default()),
+            TreesMatchResult::BranchNotFound | TreesMatchResult::TreesDiffer => None,
+            TreesMatchResult::TreesMatch { branch } => {
+                if is_dirty {
+                    Some(
+                        wt.working_tree_diff_vs_ref(branch)
+                            .map_err(|e| ctx.error(Self::KIND, e))?,
+                    )
+                } else {
+                    Some(LineDiff::default())
+                }
+            }
+        };
 
         Ok(TaskResult::WorkingTreeDiff {
             item_idx: ctx.item_idx,
