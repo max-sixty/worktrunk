@@ -3,14 +3,14 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-/// Test that the binary produces expected output for sample trace input.
+/// Test that the binary produces Chrome Trace Format JSON for sample trace input.
 #[test]
 fn test_analyze_trace_from_stdin() {
-    let sample_trace = r#"[wt-trace] cmd="git status" dur=10.0ms ok=true
-[wt-trace] cmd="git status" dur=15.0ms ok=true
-[wt-trace] cmd="git diff" dur=100.0ms ok=true
-[wt-trace] cmd="git merge-base HEAD main" dur=500.0ms ok=true
-[wt-trace] cmd="gh pr list" dur=200.0ms ok=true"#;
+    let sample_trace = r#"[wt-trace] ts=1000000 tid=1 cmd="git status" dur=10.0ms ok=true
+[wt-trace] ts=1000000 tid=2 cmd="git status" dur=15.0ms ok=true
+[wt-trace] ts=1010000 tid=1 cmd="git diff" dur=100.0ms ok=true
+[wt-trace] ts=1020000 tid=2 cmd="git merge-base HEAD main" dur=500.0ms ok=true
+[wt-trace] ts=1030000 tid=1 cmd="gh pr list" dur=200.0ms ok=true"#;
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_analyze-trace"))
         .stdin(Stdio::piped())
@@ -31,24 +31,35 @@ fn test_analyze_trace_from_stdin() {
     assert!(output.status.success(), "analyze-trace should succeed");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Check key elements of the output
+
+    // Should be valid JSON with Chrome Trace Format structure
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Output should be valid JSON");
+
     assert!(
-        stdout.contains("TRACE PERFORMANCE ANALYSIS"),
-        "Should have header"
+        parsed["traceEvents"].is_array(),
+        "Should have traceEvents array"
     );
-    assert!(
-        stdout.contains("git merge-base"),
-        "Should show git merge-base"
+    assert_eq!(
+        parsed["displayTimeUnit"], "ms",
+        "Should have displayTimeUnit"
     );
-    assert!(stdout.contains("git status"), "Should show git status");
-    assert!(stdout.contains("TOTAL"), "Should show total row");
+
+    let events = parsed["traceEvents"].as_array().unwrap();
+    assert_eq!(events.len(), 5, "Should have 5 trace events");
+
+    // Check first event structure
+    assert_eq!(events[0]["name"], "git status");
+    assert_eq!(events[0]["ph"], "X"); // Complete event
+    assert_eq!(events[0]["ts"], 1000000);
+    assert_eq!(events[0]["tid"], 1);
+    assert_eq!(events[0]["cat"], "git");
 }
 
 /// Test that the binary shows usage when run interactively without input.
 #[test]
 fn test_analyze_trace_no_input_shows_usage() {
-    // Use --help to test non-interactive path without hanging
-    // The binary doesn't have --help, so we test by passing a non-existent file
+    // Test by passing a non-existent file
     let output = Command::new(env!("CARGO_BIN_EXE_analyze-trace"))
         .arg("/nonexistent/path/to/file.log")
         .output()
@@ -96,24 +107,30 @@ fn test_analyze_trace_empty_input() {
 /// Test reading from a file.
 #[test]
 fn test_analyze_trace_from_file() {
-    // Use the sample log file from the testdata directory
-    let sample_log_path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/trace/testdata/sample.log");
+    // Create a temporary file with trace data
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let log_path = temp_dir.path().join("trace.log");
+
+    let sample_trace = r#"[wt-trace] ts=1000000 tid=1 cmd="git rev-parse" dur=5.0ms ok=true
+[wt-trace] ts=1005000 tid=1 cmd="git status" dur=10.0ms ok=true
+[wt-trace] ts=1015000 tid=2 cmd="git diff" dur=20.0ms ok=true"#;
+
+    std::fs::write(&log_path, sample_trace).expect("Failed to write temp file");
 
     let output = Command::new(env!("CARGO_BIN_EXE_analyze-trace"))
-        .arg(sample_log_path)
+        .arg(&log_path)
         .output()
         .expect("Failed to run analyze-trace");
 
     assert!(output.status.success(), "Should succeed with sample log");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("TRACE PERFORMANCE ANALYSIS"),
-        "Should have header"
-    );
-    assert!(
-        stdout.contains("git rev-parse"),
-        "Should show git rev-parse (most common in sample)"
-    );
-    assert!(stdout.contains("TOTAL"), "Should show total row");
+
+    // Should be valid Chrome Trace Format JSON
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Output should be valid JSON");
+
+    let events = parsed["traceEvents"].as_array().unwrap();
+    assert_eq!(events.len(), 3, "Should have 3 trace events");
+    assert_eq!(events[0]["name"], "git rev-parse");
 }
