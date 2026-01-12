@@ -792,6 +792,53 @@ fn test_configure_shell_no_warning_for_bash_user(repo: TestRepo, temp_home: Temp
     });
 }
 
+/// Test that explicitly targeting a shell creates the config file when it doesn't exist
+#[rstest]
+fn test_configure_shell_create_zshrc_when_missing(repo: TestRepo, temp_home: TempDir) {
+    // Don't create .zshrc - it doesn't exist
+    let zshrc_path = temp_home.path().join(".zshrc");
+    assert!(!zshrc_path.exists(), "zshrc should not exist before test");
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        // Force compinit warning for deterministic tests across environments
+        cmd.env("WORKTRUNK_TEST_COMPINIT_MISSING", "1");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("install")
+            .arg("zsh") // Explicitly target zsh
+            .arg("--yes")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd, @"
+        success: true
+        exit_code: 0
+        ----- stdout -----
+
+        ----- stderr -----
+        [32m✓[39m [32mCreated shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
+
+        [32m✓[39m [32mConfigured 1 shell[39m
+        [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
+        [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m
+        [2m↳[22m [2mRestart shell to activate shell integration[22m
+        ");
+    });
+
+    // Verify the file was created with correct content
+    assert!(zshrc_path.exists(), "zshrc should exist after install");
+    let content = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(
+        content.contains("eval \"$(command wt config shell init zsh)\""),
+        "Created file should contain wt integration: {}",
+        content
+    );
+}
+
 /// Only `install zsh` or `install` (all) should trigger zsh-specific warnings
 #[rstest]
 fn test_configure_shell_no_warning_for_fish_install(repo: TestRepo, temp_home: TempDir) {

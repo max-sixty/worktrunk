@@ -372,3 +372,151 @@ platform = "invalid_platform"
         assert_cmd_snapshot!(cmd);
     });
 }
+
+// =============================================================================
+// GitLab MR status tests
+// =============================================================================
+
+/// Helper to run a GitLab CI status test with the given mock data
+fn run_gitlab_ci_status_test(
+    repo: &mut TestRepo,
+    snapshot_name: &str,
+    mr_json: &str,
+    project_id: Option<u64>,
+) {
+    repo.setup_mock_glab_with_ci_data(mr_json, project_id);
+
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!(snapshot_name, cmd);
+    });
+}
+
+/// Setup a repo with GitLab remote and feature worktree, returns head SHA
+fn setup_gitlab_repo_with_feature(repo: &mut TestRepo) -> String {
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://gitlab.com/test-group/test-project.git",
+    ]);
+    repo.add_worktree("feature");
+    get_branch_sha(repo, "feature")
+}
+
+#[rstest]
+#[case::passed("success", false, "gitlab_mr_passed")]
+#[case::failed("failed", false, "gitlab_mr_failed")]
+#[case::running("running", false, "gitlab_mr_running")]
+#[case::pending("pending", false, "gitlab_mr_pending")]
+#[case::conflicts("success", true, "gitlab_mr_conflicts")]
+fn test_list_full_with_gitlab_mr_status(
+    mut repo: TestRepo,
+    #[case] pipeline_status: &str,
+    #[case] has_conflicts: bool,
+    #[case] snapshot_name: &str,
+) {
+    let head_sha = setup_gitlab_repo_with_feature(&mut repo);
+
+    let mr_json = format!(
+        r#"[{{
+        "sha": "{}",
+        "has_conflicts": {},
+        "detailed_merge_status": null,
+        "head_pipeline": {{"status": "{}"}},
+        "source_project_id": 12345,
+        "web_url": "https://gitlab.com/test-group/test-project/-/merge_requests/1"
+    }}]"#,
+        head_sha, has_conflicts, pipeline_status
+    );
+
+    run_gitlab_ci_status_test(&mut repo, snapshot_name, &mr_json, Some(12345));
+}
+
+#[rstest]
+fn test_list_full_with_gitlab_stale_mr(mut repo: TestRepo) {
+    setup_gitlab_repo_with_feature(&mut repo);
+
+    // Make additional commit locally (not pushed)
+    let worktree_path = repo.worktrees.get("feature").unwrap().clone();
+    std::fs::write(worktree_path.join("new_file.txt"), "new content").unwrap();
+    repo.stage_all(&worktree_path);
+    repo.run_git_in(&worktree_path, &["commit", "-m", "Local commit"]);
+
+    // MR HEAD differs from local HEAD - simulates stale MR
+    let mr_json = r#"[{
+        "sha": "old_sha_from_before_local_commit",
+        "has_conflicts": false,
+        "detailed_merge_status": null,
+        "head_pipeline": {"status": "success"},
+        "source_project_id": 12345,
+        "web_url": "https://gitlab.com/test-group/test-project/-/merge_requests/1"
+    }]"#;
+
+    run_gitlab_ci_status_test(&mut repo, "gitlab_stale_mr", mr_json, Some(12345));
+}
+
+#[rstest]
+fn test_list_full_with_gitlab_no_ci(mut repo: TestRepo) {
+    let head_sha = setup_gitlab_repo_with_feature(&mut repo);
+
+    // MR with no pipeline
+    let mr_json = format!(
+        r#"[{{
+        "sha": "{}",
+        "has_conflicts": false,
+        "detailed_merge_status": null,
+        "head_pipeline": null,
+        "source_project_id": 12345,
+        "web_url": "https://gitlab.com/test-group/test-project/-/merge_requests/1"
+    }}]"#,
+        head_sha
+    );
+
+    run_gitlab_ci_status_test(&mut repo, "gitlab_no_ci", &mr_json, Some(12345));
+}
+
+#[rstest]
+fn test_list_full_with_gitlab_filters_by_project_id(mut repo: TestRepo) {
+    // Use a specific project for our repo
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://gitlab.com/my-group/my-project.git",
+    ]);
+    repo.add_worktree("feature");
+    let head_sha = get_branch_sha(&repo, "feature");
+
+    // Multiple MRs - only one from our project (should filter to project 99999)
+    let mr_json = format!(
+        r#"[
+        {{
+            "sha": "wrong_sha",
+            "has_conflicts": false,
+            "detailed_merge_status": null,
+            "head_pipeline": {{"status": "failed"}},
+            "source_project_id": 11111,
+            "web_url": "https://gitlab.com/other-group/other-project/-/merge_requests/99"
+        }},
+        {{
+            "sha": "{}",
+            "has_conflicts": false,
+            "detailed_merge_status": null,
+            "head_pipeline": {{"status": "success"}},
+            "source_project_id": 99999,
+            "web_url": "https://gitlab.com/my-group/my-project/-/merge_requests/1"
+        }}
+    ]"#,
+        head_sha
+    );
+
+    run_gitlab_ci_status_test(
+        &mut repo,
+        "gitlab_filters_by_project_id",
+        &mr_json,
+        Some(99999),
+    );
+}

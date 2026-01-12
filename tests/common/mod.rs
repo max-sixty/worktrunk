@@ -1701,6 +1701,99 @@ exit 1
         self.mock_bin_path = Some(mock_bin);
     }
 
+    /// Setup mock `glab` that returns configurable MR/CI data for GitLab
+    ///
+    /// Use this for testing GitLab CI status parsing code. The mock returns JSON data
+    /// for `glab mr list` and `glab repo view` commands.
+    ///
+    /// # Arguments
+    /// * `mr_json` - JSON string to return for `glab mr list --output json`
+    /// * `project_id` - Optional project ID to return from `glab repo view`
+    pub fn setup_mock_glab_with_ci_data(&mut self, mr_json: &str, project_id: Option<u64>) {
+        use crate::common::mock_commands::write_mock_script;
+
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        // Write JSON to a file to avoid escaping issues
+        let mr_json_file = mock_bin.join("mr_data.json");
+        std::fs::write(&mr_json_file, mr_json).unwrap();
+
+        // Convert mock_bin path to a format bash can read
+        let script_dir = {
+            let path_str = mock_bin.to_string_lossy();
+            #[cfg(windows)]
+            {
+                let chars: Vec<char> = path_str.chars().collect();
+                if chars.len() >= 2 && chars[1] == ':' {
+                    let drive = chars[0].to_ascii_lowercase();
+                    format!("/{}{}", drive, path_str[2..].replace('\\', "/"))
+                } else {
+                    path_str.replace('\\', "/")
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                path_str.to_string()
+            }
+        };
+
+        // Build glab mock script
+        let project_id_response = match project_id {
+            Some(id) => format!(r#"{{"id": {}}}"#, id),
+            None => r#"{"error": "not found"}"#.to_string(),
+        };
+
+        let script = format!(
+            r#"#!/bin/bash
+# Mock glab command that returns configured JSON data
+SCRIPT_DIR="{script_dir}"
+
+case "$1" in
+    --version)
+        echo "glab version 1.0.0 (mock)"
+        exit 0
+        ;;
+    auth)
+        # glab auth status - succeed immediately
+        exit 0
+        ;;
+    mr)
+        # glab mr list - return MR data from file
+        cat "$SCRIPT_DIR/mr_data.json"
+        exit 0
+        ;;
+    repo)
+        # glab repo view --output json - return project info
+        echo '{project_id_response}'
+        exit 0
+        ;;
+    ci)
+        # glab ci list - return empty for now
+        echo '[]'
+        exit 0
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+"#
+        );
+        write_mock_script(&mock_bin, "glab", &script);
+
+        // Create mock gh script that fails (GitHub not available)
+        write_mock_script(
+            &mock_bin,
+            "gh",
+            r#"#!/bin/sh
+# Mock gh command that fails fast
+exit 1
+"#,
+        );
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
     /// Configure a command to use mock gh/glab commands
     ///
     /// Must call `setup_mock_gh()` first. Prepends the mock bin directory to PATH
