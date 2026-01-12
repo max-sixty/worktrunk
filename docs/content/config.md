@@ -533,17 +533,15 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 # Named commands appear in output, making it easier to identify failures.
 
 # ============================================================================
-# Template Variables
+# Template Variables — see https://worktrunk.dev/hook/#template-variables
 # ============================================================================
-# All hooks support these variables:
+# Common variables:
 #   {{ repo }}               - Repository directory name (e.g., "myproject")
 #   {{ branch }}             - Branch name (e.g., "feature/auth")
 #   {{ worktree_path }}      - Absolute path to worktree
 #   {{ main_worktree_path }} - Absolute path to main worktree
 #   {{ default_branch }}     - Default branch name (e.g., "main")
-#
-# Merge hooks (pre-commit, pre-merge, post-merge) also support:
-#   {{ target }}             - Target branch for the merge
+#   {{ target }}             - Target branch (merge hooks only)
 #
 # Filters:
 #   {{ branch | sanitize }}     - Replace / and \ with - (e.g., "feature-auth")

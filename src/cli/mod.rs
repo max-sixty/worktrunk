@@ -1150,8 +1150,6 @@ Hooks can use template variables that expand at runtime:
 
 See [Designing effective hooks](#designing-effective-hooks) for `main_worktree_path` patterns.
 
-**Deprecated:** `repo_root` (use `repo_path`), `worktree` (use `worktree_path`), `main_worktree` (use `repo`). These still work but emit warnings.
-
 ### Filters
 
 Templates support Jinja2 filters for transforming values:
