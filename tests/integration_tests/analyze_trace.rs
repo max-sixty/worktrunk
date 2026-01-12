@@ -60,8 +60,7 @@ fn test_analyze_trace_from_stdin() {
 /// Test that the binary shows usage when run interactively without input.
 #[test]
 fn test_analyze_trace_no_input_shows_usage() {
-    // Use --help to test non-interactive path without hanging
-    // The binary doesn't have --help, so we test by passing a non-existent file
+    // Test by passing a non-existent file
     let output = Command::new(env!("CARGO_BIN_EXE_analyze-trace"))
         .arg("/nonexistent/path/to/file.log")
         .output()
