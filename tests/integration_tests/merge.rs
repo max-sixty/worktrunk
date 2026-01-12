@@ -1071,8 +1071,8 @@ mod tests {
     repo.run_git_in(&feature_wt, &["commit", "-m", "Add authentication tests"]);
 
     // Configure LLM in worktrunk config for deterministic, high-quality commit messages
-    // On Windows, direct execution needs .cmd extension; use forward slashes for shell compatibility
-    let llm_name = if cfg!(windows) { "llm.cmd" } else { "llm" };
+    // On Windows, use .exe extension for the config-driven mock binary
+    let llm_name = if cfg!(windows) { "llm.exe" } else { "llm" };
     let llm_path = bin_dir.join(llm_name);
     let llm_path_str = llm_path.to_string_lossy().replace('\\', "/");
     let worktrunk_config = format!(
