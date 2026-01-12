@@ -195,13 +195,6 @@ pub struct WorktreeData {
     pub prunable: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_tree_diff: Option<LineDiff>,
-    /// Diff between working tree and default branch.
-    /// `None` means "not computed yet" or "not computed" (optimization: skipped when trees differ).
-    /// `Some(Some((0, 0)))` means working tree matches default branch exactly.
-    /// `Some(Some((a, d)))` means a lines added, d deleted vs default branch.
-    /// `Some(None)` means computation was skipped.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub working_tree_diff_with_main: Option<Option<LineDiff>>,
     /// Git operation in progress (rebase/merge)
     #[serde(skip_serializing_if = "GitOperationState::is_none")]
     pub git_operation: GitOperationState,
@@ -677,17 +670,8 @@ impl ListItem {
                     .as_ref()
                     .is_some_and(|d| d.is_empty())
                     && !has_untracked;
-                let working_tree_matches_main = data
-                    .working_tree_diff_with_main
-                    .as_ref()
-                    .and_then(|opt| opt.as_ref())
-                    .is_some_and(|diff| diff.is_empty());
-                let integration = self.check_integration_state(
-                    data.is_main,
-                    default_branch,
-                    is_clean,
-                    working_tree_matches_main,
-                );
+                let integration =
+                    self.check_integration_state(data.is_main, default_branch, is_clean);
 
                 // Separately detect SameCommit: same commit as main but with uncommitted work
                 // This is NOT an integration state (has work that would be lost on delete)
@@ -727,8 +711,7 @@ impl ListItem {
                 let integration = self.check_integration_state(
                     false, // branches are never main worktree
                     default_branch,
-                    true,  // branches are always clean (no working tree)
-                    false, // no working tree diff with main for branches
+                    true, // branches are always clean (no working tree)
                 );
 
                 // Compute main state
@@ -767,7 +750,6 @@ impl ListItem {
         is_main: bool,
         default_branch: Option<&str>,
         is_clean: bool,
-        working_tree_matches_main: bool,
     ) -> Option<MainState> {
         if is_main || default_branch.is_none() {
             return None;
@@ -795,10 +777,6 @@ impl ListItem {
             would_merge_add: self.would_merge_add.unwrap_or(true), // default: assume would add
         };
         let reason = check_integration(&mut provider);
-
-        // Additional check for wt list: working tree (with uncommitted changes) matches main.
-        // This is list-specific because wt remove requires a clean working tree anyway.
-        let reason = reason.or(working_tree_matches_main.then_some(IntegrationReason::TreesMatch));
 
         // Convert to MainState, with SameCommit becoming Empty for display
         match reason {
@@ -1648,29 +1626,27 @@ mod tests {
     }
 
     #[test]
-    fn test_check_integration_state_priority5_requires_clean() {
-        // Priority 5 checks if working tree matches main.
-        // It must also require is_clean to avoid marking worktrees with
+    fn test_check_integration_state_requires_clean() {
+        // Integration checks require is_clean to avoid marking worktrees with
         // uncommitted changes as integrated (which would incorrectly suggest
         // they're safe to remove).
 
-        // Create a minimal ListItem for testing - only set fields that affect integration checks
+        // Create a minimal ListItem for testing - set committed_trees_match = true
         let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
         item.is_ancestor = Some(false); // not an ancestor (to skip priority 1-2)
-        item.committed_trees_match = Some(false); // trees don't match (to skip priority 4)
+        item.committed_trees_match = Some(true); // trees match (priority 4)
         item.has_file_changes = None; // unknown (to skip priority 3)
         item.would_merge_add = None; // unknown (to skip priority 6)
 
-        // Dirty working tree: should NOT return Integrated even though working tree matches main
+        // Dirty working tree: should NOT return Integrated
         assert_eq!(
             item.check_integration_state(
                 false,        // not main
                 Some("main"), // has default branch
                 false,        // is_clean = false (dirty working tree)
-                true,         // working_tree_matches_main = true
             ),
             None,
-            "Priority 5 should reject dirty working tree"
+            "Integration should reject dirty working tree"
         );
 
         // Clean working tree: SHOULD return Integrated(TreesMatch)
@@ -1679,10 +1655,9 @@ mod tests {
                 false,
                 Some("main"),
                 true, // is_clean = true
-                true, // working_tree_matches_main = true
             ),
             Some(MainState::Integrated(IntegrationReason::TreesMatch)),
-            "Priority 5 should accept clean working tree"
+            "Integration should accept clean working tree with matching trees"
         );
     }
 
@@ -1694,7 +1669,7 @@ mod tests {
 
         let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
         item.is_ancestor = Some(false);
-        item.committed_trees_match = Some(false);
+        item.committed_trees_match = Some(true); // trees match (would show integration if clean)
         item.has_file_changes = None;
         item.would_merge_add = None;
 
@@ -1704,7 +1679,6 @@ mod tests {
                 false,
                 Some("main"),
                 false, // is_clean = false (represents untracked files blocking integration)
-                true,  // working_tree_matches_main = true
             ),
             None,
             "Dirty working tree (untracked files) should block integration"
@@ -1716,7 +1690,6 @@ mod tests {
                 false,
                 Some("main"),
                 true, // is_clean = true
-                true, // working_tree_matches_main = true
             ),
             Some(MainState::Integrated(IntegrationReason::TreesMatch)),
             "Clean working tree should show as integrated"

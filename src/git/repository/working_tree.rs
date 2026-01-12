@@ -211,49 +211,4 @@ impl<'a> WorkingTree<'a> {
         let stdout = self.run_command(&["diff", "--numstat", ref_name])?;
         LineDiff::from_numstat(&stdout)
     }
-
-    /// Check if HEAD tree matches a base branch tree.
-    ///
-    /// This runs `rev-parse --verify` + `diff-tree --quiet` and returns the result.
-    /// Can be called directly for parallel execution with `git status`.
-    pub fn trees_match_base<'b>(
-        &self,
-        base_branch: Option<&'b str>,
-    ) -> anyhow::Result<TreesMatchResult<'b>> {
-        let Some(branch) = base_branch else {
-            return Ok(TreesMatchResult::NoBaseBranch);
-        };
-
-        // Check if branch exists
-        if self
-            .run_command(&["rev-parse", "--verify", branch])
-            .is_err()
-        {
-            return Ok(TreesMatchResult::BranchNotFound);
-        }
-
-        // Check if trees match
-        let trees_match = self
-            .run_command(&["diff-tree", "--quiet", "HEAD", branch])
-            .is_ok();
-
-        if trees_match {
-            Ok(TreesMatchResult::TreesMatch { branch })
-        } else {
-            Ok(TreesMatchResult::TreesDiffer)
-        }
-    }
-}
-
-/// Result of checking if HEAD tree matches a base branch tree.
-#[derive(Debug, Clone, Copy)]
-pub enum TreesMatchResult<'a> {
-    /// No base branch specified (main worktree).
-    NoBaseBranch,
-    /// Base branch doesn't exist.
-    BranchNotFound,
-    /// Trees differ between HEAD and base branch.
-    TreesDiffer,
-    /// Trees match - includes branch name for computing diff if needed.
-    TreesMatch { branch: &'a str },
 }

@@ -199,7 +199,6 @@ pub(super) enum TaskResult {
     WorkingTreeDiff {
         item_idx: usize,
         working_tree_diff: LineDiff,
-        working_tree_diff_with_main: Option<LineDiff>,
         /// Working tree change flags
         working_tree_status: WorkingTreeStatus,
         has_conflicts: bool,
@@ -409,7 +408,6 @@ fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], 
         TaskKind::WorkingTreeDiff => {
             if let ItemKind::Worktree(data) = &mut items[idx].kind {
                 data.working_tree_diff = Some(LineDiff::default());
-                data.working_tree_diff_with_main = Some(None);
             } else {
                 debug_assert!(false, "WorkingTreeDiff task spawned for non-worktree item");
             }
@@ -588,14 +586,12 @@ fn drain_results(
             }
             TaskResult::WorkingTreeDiff {
                 working_tree_diff,
-                working_tree_diff_with_main,
                 working_tree_status,
                 has_conflicts,
                 ..
             } => {
                 if let ItemKind::Worktree(data) = &mut item.kind {
                     data.working_tree_diff = Some(working_tree_diff);
-                    data.working_tree_diff_with_main = Some(working_tree_diff_with_main);
                 } else {
                     debug_assert!(false, "WorkingTreeDiff result for non-worktree item");
                 }
