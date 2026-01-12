@@ -124,6 +124,85 @@ pub fn build_command() -> Command {
     })
 }
 
+/// Parent commands whose subcommands should be accessible as top-level aliases.
+///
+/// For example, `wt squash` is rewritten to `wt step squash`.
+const SUBCOMMAND_ALIAS_PARENTS: &[&str] = &["step", "hook"];
+
+/// Get names of subcommands under a parent command.
+fn get_nested_subcommand_names(cmd: &Command, parent: &str) -> Vec<String> {
+    cmd.get_subcommands()
+        .find(|c| c.get_name() == parent)
+        .map(|parent_cmd| {
+            parent_cmd
+                .get_subcommands()
+                .map(|s| s.get_name().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Rewrite args to expand top-level aliases for nested subcommands.
+///
+/// If the user runs `wt squash`, this rewrites it to `wt step squash`.
+/// Works for all subcommands of `step` and `hook`.
+///
+/// This allows users to type `wt squash` instead of `wt step squash`, making
+/// common operations more discoverable and reducing typing.
+pub fn rewrite_subcommand_aliases(cmd: &Command, args: Vec<String>) -> Vec<String> {
+    // Build a map of subcommand name -> parent command
+    let mut subcommand_to_parent: std::collections::HashMap<String, &str> =
+        std::collections::HashMap::new();
+    for parent in SUBCOMMAND_ALIAS_PARENTS {
+        for sub in get_nested_subcommand_names(cmd, parent) {
+            subcommand_to_parent.insert(sub, parent);
+        }
+    }
+
+    // Find the first positional argument (the subcommand)
+    // Skip global flags: -C <value>, --config <value>, -v/--verbose
+    let mut iter = args.iter().enumerate().skip(1); // skip binary name
+    let mut subcommand_idx = None;
+
+    while let Some((idx, arg)) = iter.next() {
+        if arg == "-C" || arg == "--config" {
+            // These take a value, skip the next arg too
+            iter.next();
+            continue;
+        }
+        if arg.starts_with("-C") || arg.starts_with("--config=") {
+            // Value is attached, just skip this arg
+            continue;
+        }
+        if arg == "-v" || arg == "--verbose" || arg.starts_with("-v") {
+            // -v can be repeated like -vv, no value
+            continue;
+        }
+        if arg.starts_with('-') {
+            // Other flags (--help, --version, etc.) - stop looking
+            break;
+        }
+        // This is the first positional - the subcommand
+        subcommand_idx = Some(idx);
+        break;
+    }
+
+    let Some(idx) = subcommand_idx else {
+        return args;
+    };
+
+    let subcmd = &args[idx];
+
+    if let Some(parent) = subcommand_to_parent.get(subcmd) {
+        let mut new_args = args[..idx].to_vec();
+        new_args.push((*parent).to_string());
+        new_args.extend(args[idx..].iter().cloned());
+        new_args
+    } else {
+        args
+    }
+}
+
 fn apply_help_template_recursive(mut cmd: Command, path: &str) -> Command {
     cmd = cmd.help_template(HELP_TEMPLATE).display_name(path);
 
@@ -169,6 +248,7 @@ pub enum OutputFormat {
 #[command(disable_help_subcommand = true)]
 #[command(styles = help_styles())]
 #[command(arg_required_else_help = true)]
+#[command(infer_subcommands = true)]
 // Disable clap's text wrapping - we handle wrapping in the markdown renderer.
 // This prevents clap from breaking markdown tables by wrapping their rows.
 #[command(term_width = 0)]

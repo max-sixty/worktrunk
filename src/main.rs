@@ -740,8 +740,14 @@ fn main() {
     // Clap doesn't support this natively yet - see https://github.com/clap-rs/clap/issues/3320
     // When available, use built-in setting. Until then, could use try_parse() to intercept
     // MissingRequiredArgument errors and print custom messages with ValueEnum::value_variants().
+
+    // Rewrite subcommand aliases (e.g., `wt squash` -> `wt step squash`)
+    let args: Vec<String> = std::env::args().collect();
     let cmd = cli::build_command();
-    let matches = cmd.try_get_matches().unwrap_or_else(|e| {
+    let args = cli::rewrite_subcommand_aliases(&cmd, args);
+
+    let cmd = cli::build_command();
+    let matches = cmd.try_get_matches_from(args).unwrap_or_else(|e| {
         enhance_and_exit_error(e);
     });
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
