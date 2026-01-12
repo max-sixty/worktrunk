@@ -81,7 +81,7 @@ config = { version = "0.15", default-features = false, features = ["toml", "conv
 crossbeam-channel = "0.5"
 crossterm = "0.29"
 env_logger = "0.11"
-indexmap = { version = "2.12", features = ["serde"] }
+indexmap = { version = "2.13", features = ["serde"] }
 etcetera = "0.11"
 log = "0.4"
 # Only enable needed features - saves ~200KB by excluding debug, macros, multi_template
