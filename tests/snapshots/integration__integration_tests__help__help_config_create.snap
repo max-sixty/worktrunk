@@ -270,17 +270,15 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
   [2m# Named commands appear in output, making it easier to identify failures.
   [2m
   [2m# ============================================================================
-  [2m# Template Variables
+  [2m# Template Variables — see https://worktrunk.dev/hook/#template-variables
   [2m# ============================================================================
-  [2m# All hooks support these variables:
+  [2m# Common variables:
   [2m#   {{ repo }}               - Repository directory name (e.g., "myproject")
   [2m#   {{ branch }}             - Branch name (e.g., "feature/auth")
   [2m#   {{ worktree_path }}      - Absolute path to worktree
   [2m#   {{ main_worktree_path }} - Absolute path to main worktree
   [2m#   {{ default_branch }}     - Default branch name (e.g., "main")
-  [2m#
-  [2m# Merge hooks (pre-commit, pre-merge, post-merge) also support:
-  [2m#   {{ target }}             - Target branch for the merge
+  [2m#   {{ target }}             - Target branch (merge hooks only)
   [2m#
   [2m# Filters:
   [2m#   {{ branch | sanitize }}     - Replace / and \ with - (e.g., "feature-auth")

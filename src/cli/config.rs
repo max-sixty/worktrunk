@@ -69,6 +69,10 @@ Use --yes to skip confirmation."#
         #[arg(short, long)]
         yes: bool,
 
+        /// Show what would be changed
+        #[arg(long)]
+        dry_run: bool,
+
         /// Command name for shell integration (defaults to binary name)
         ///
         /// Use this to create shell integration for an alternate command name.
@@ -113,6 +117,10 @@ Detects various forms of the integration pattern regardless of:
         /// Skip confirmation prompt
         #[arg(short, long)]
         yes: bool,
+
+        /// Show what would be changed
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Show output theme samples

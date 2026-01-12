@@ -107,6 +107,7 @@ impl ConfigAction {
 pub fn handle_configure_shell(
     shell_filter: Option<Shell>,
     skip_confirmation: bool,
+    dry_run: bool,
     cmd: String,
 ) -> Result<ScanResult, String> {
     // First, do a dry-run to see what would be changed
@@ -137,6 +138,17 @@ pub fn handle_configure_shell(
 
     // If nothing needs to be changed, just return the preview results
     if !needs_shell_changes && !needs_completion_changes {
+        return Ok(ScanResult {
+            configured: preview.configured,
+            completion_results: completion_preview,
+            skipped: preview.skipped,
+            zsh_needs_compinit: false,
+        });
+    }
+
+    // For --dry-run, show preview and return without prompting or applying
+    if dry_run {
+        show_install_preview(&preview.configured, &completion_preview, &cmd);
         return Ok(ScanResult {
             configured: preview.configured,
             completion_results: completion_preview,
@@ -545,6 +557,50 @@ pub fn show_install_preview(
     }
 }
 
+/// Display what will be uninstalled (shell extensions and completions)
+///
+/// Shows the files that will be modified without prompting.
+/// Used for --dry-run mode.
+///
+/// Note: I/O errors are intentionally ignored - preview is best-effort
+/// and shouldn't block the flow.
+pub fn show_uninstall_preview(
+    results: &[UninstallResult],
+    completion_results: &[CompletionUninstallResult],
+) {
+    use anstyle::Style;
+
+    let bold = Style::new().bold();
+
+    for result in results {
+        let shell = result.shell;
+        let path = format_path_for_display(&result.path);
+        // Bash/Zsh: inline completions; Fish: separate completion file
+        let what = if matches!(shell, Shell::Fish) {
+            "shell extension"
+        } else {
+            "shell extension & completions"
+        };
+
+        let _ = output::print(format!(
+            "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
+            result.action.symbol(),
+            result.action.description(),
+        ));
+    }
+
+    for result in completion_results {
+        let shell = result.shell;
+        let path = format_path_for_display(&result.path);
+
+        let _ = output::print(format!(
+            "{} {} completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
+            result.action.symbol(),
+            result.action.description(),
+        ));
+    }
+}
+
 /// Prompt for install with [y/N/?] options
 ///
 /// - `y` or `yes`: Accept and return true
@@ -697,6 +753,7 @@ pub fn process_shell_completions(
 pub fn handle_unconfigure_shell(
     shell_filter: Option<Shell>,
     skip_confirmation: bool,
+    dry_run: bool,
     cmd: &str,
 ) -> Result<UninstallScanResult, String> {
     // First, do a dry-run to see what would be changed
@@ -704,6 +761,12 @@ pub fn handle_unconfigure_shell(
 
     // If nothing to do, return early
     if preview.results.is_empty() && preview.completion_results.is_empty() {
+        return Ok(preview);
+    }
+
+    // For --dry-run, show preview and return without prompting or applying
+    if dry_run {
+        show_uninstall_preview(&preview.results, &preview.completion_results);
         return Ok(preview);
     }
 

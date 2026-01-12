@@ -62,10 +62,15 @@ cargo test --test integration --features shell-integration-tests
 
 ### Claude Code Web Environment
 
-When working in Claude Code web, run the setup script first:
+When working in Claude Code web, install the task runner and run setup:
 
 ```bash
-./dev/setup-claude-code-web.sh
+# Install task (go-task) - https://taskfile.dev
+sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin
+export PATH="$HOME/bin:$PATH"
+
+# Run setup
+task setup-web
 ```
 
 This installs required shells (zsh, fish) for shell integration tests and builds the project. Also installs `gh` and other dev tools—run this if any command is not found. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) automatically skip when running as root, which is common in containerized environments.
@@ -171,7 +176,7 @@ The `codecov/patch` CI check enforces coverage on changed lines — respond to f
 ### Running Coverage Locally
 
 ```bash
-./dev/coverage.sh
+task coverage
 # Report: target/llvm-cov/html/index.html
 ```
 
@@ -183,7 +188,7 @@ When CI shows a codecov/patch failure, investigate before declaring "ready to me
 
 1. Identify uncovered lines in your changes:
    ```bash
-   ./dev/coverage.sh
+   task coverage
    cargo llvm-cov report --show-missing-lines | grep <file>
    git diff main...HEAD -- path/to/file.rs
    ```

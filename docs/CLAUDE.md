@@ -275,7 +275,7 @@ Demo GIFs (~2MB each) are stored in a separate `worktrunk-assets` repo to avoid 
 
 **For local development:**
 ```bash
-./dev/fetch-assets      # Download published assets
+task fetch-assets       # Download published assets
 ```
 
 **To regenerate demos** (required after CLI output changes):
@@ -283,7 +283,7 @@ Demo GIFs (~2MB each) are stored in a separate `worktrunk-assets` repo to avoid 
 ```bash
 ./docs/demos/build docs      # Doc site demos (light + dark)
 ./docs/demos/build social    # Social media demos (light only)
-./dev/publish-assets         # Publish to assets repo
+task publish-assets          # Publish to assets repo
 ```
 
 Deploy runs `fetch-assets` before building.
@@ -301,8 +301,8 @@ Social cards follow the same assets pattern as demos.
 **To regenerate** (after changing tagline, logo, or layout):
 
 ```bash
-./dev/build-social-cards   # SVG → PNG (downloads fonts if needed)
-./dev/publish-assets       # Publish to assets repo
+task build-social-cards    # SVG → PNG (downloads fonts if needed)
+task publish-assets        # Publish to assets repo
 ```
 
 The build script automatically downloads Inter and Plus Jakarta Sans fonts from GitHub if not installed locally. Requires `rsvg-convert` (from librsvg).
