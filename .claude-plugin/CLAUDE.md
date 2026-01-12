@@ -1,18 +1,20 @@
 # Claude Code Plugin Guidelines
 
-## Skills Directory Location
+## Plugin Structure
 
-**Working solution**: Using `source: "./.claude-plugin"` in `marketplace.json` allows skills to remain in `.claude-plugin/skills/` ✅
+This plugin uses `source: "./"` in `marketplace.json`, which means:
+- `marketplace.json` and `plugin.json` live in `.claude-plugin/`
+- `hooks/` and `skills/` directories are at the repository root
 
-Configuration in `marketplace.json`:
+Configuration in `.claude-plugin/marketplace.json`:
 ```json
 {
-  "source": "./.claude-plugin",
+  "source": "./",
   "skills": ["./skills/worktrunk"]
 }
 ```
 
-Configuration in `plugin.json`:
+Configuration in `.claude-plugin/plugin.json`:
 ```json
 {
   "hooks": "./hooks/hooks.json",
@@ -20,16 +22,7 @@ Configuration in `plugin.json`:
 }
 ```
 
-**Path resolution**:
-- Source base: `./.claude-plugin`
-- Skills: `./.claude-plugin + ./skills/worktrunk = ./.claude-plugin/skills/worktrunk` ✅
-- Hooks: `./.claude-plugin + ./hooks/hooks.json = ./.claude-plugin/hooks/hooks.json` ✅
-
-This approach keeps all Claude Code components organized together in `.claude-plugin/` and avoids root directory clutter.
-
-**Note**: The official Claude Code documentation states "All other directories (commands/, agents/, skills/, hooks/) must be at the plugin root" but using the `source` field to point to `./.claude-plugin` makes paths relative to that directory, allowing this organizational structure.
-
-**Why this works**: The `source` field in `marketplace.json` changes the base directory for path resolution. When `source: "./"` (the default), skills paths are resolved from the plugin root. When `source: "./.claude-plugin"`, skills paths are resolved from `.claude-plugin/`, allowing the entire plugin to be self-contained in one directory.
+**Why this structure**: Using `source: "./.claude-plugin"` caused EXDEV (cross-device link) errors on Linux systems where `/tmp` is on a separate filesystem (Ubuntu 21.04+, Fedora, Arch). See https://github.com/anthropics/claude-code/issues/14799 for details. Once that upstream bug is fixed, we could consolidate back to `.claude-plugin/` if desired.
 
 ## Known Limitations
 

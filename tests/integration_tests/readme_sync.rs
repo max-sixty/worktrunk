@@ -1408,57 +1408,45 @@ fn remove_section(content: &str, heading: &str) -> String {
 /// Format: (docs_path, skill_path)
 /// Files are synced with content transformed for skill consumption
 const SKILL_SYNC_FILES: &[(&str, &str)] = &[
-    (
-        "docs/content/hook.md",
-        ".claude-plugin/skills/worktrunk/reference/hook.md",
-    ),
+    ("docs/content/hook.md", "skills/worktrunk/reference/hook.md"),
     (
         "docs/content/config.md",
-        ".claude-plugin/skills/worktrunk/reference/config.md",
+        "skills/worktrunk/reference/config.md",
     ),
     (
         "docs/content/switch.md",
-        ".claude-plugin/skills/worktrunk/reference/switch.md",
+        "skills/worktrunk/reference/switch.md",
     ),
     (
         "docs/content/merge.md",
-        ".claude-plugin/skills/worktrunk/reference/merge.md",
+        "skills/worktrunk/reference/merge.md",
     ),
-    (
-        "docs/content/list.md",
-        ".claude-plugin/skills/worktrunk/reference/list.md",
-    ),
+    ("docs/content/list.md", "skills/worktrunk/reference/list.md"),
     (
         "docs/content/select.md",
-        ".claude-plugin/skills/worktrunk/reference/select.md",
+        "skills/worktrunk/reference/select.md",
     ),
-    (
-        "docs/content/step.md",
-        ".claude-plugin/skills/worktrunk/reference/step.md",
-    ),
+    ("docs/content/step.md", "skills/worktrunk/reference/step.md"),
     (
         "docs/content/remove.md",
-        ".claude-plugin/skills/worktrunk/reference/remove.md",
+        "skills/worktrunk/reference/remove.md",
     ),
     (
         "docs/content/llm-commits.md",
-        ".claude-plugin/skills/worktrunk/reference/llm-commits.md",
+        "skills/worktrunk/reference/llm-commits.md",
     ),
     (
         "docs/content/tips-patterns.md",
-        ".claude-plugin/skills/worktrunk/reference/tips-patterns.md",
+        "skills/worktrunk/reference/tips-patterns.md",
     ),
     (
         "docs/content/worktrunk.md",
-        ".claude-plugin/skills/worktrunk/reference/worktrunk.md",
+        "skills/worktrunk/reference/worktrunk.md",
     ),
-    (
-        "docs/content/faq.md",
-        ".claude-plugin/skills/worktrunk/reference/faq.md",
-    ),
+    ("docs/content/faq.md", "skills/worktrunk/reference/faq.md"),
     (
         "docs/content/claude-code.md",
-        ".claude-plugin/skills/worktrunk/reference/claude-code.md",
+        "skills/worktrunk/reference/claude-code.md",
     ),
 ];
 
