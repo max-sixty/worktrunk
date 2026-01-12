@@ -679,19 +679,30 @@ Worktrunk checks five conditions (in order of cost):
 4. **Trees match** — Branch tree SHA equals target tree SHA. Shows `⊂`.
 5. **Merge adds nothing** — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows `⊂`.
 
-The "same commit" check uses the local default branch; for other checks, **target** means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
+The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 
 Branches showing `_` or `⊂` are dimmed as safe to delete.
 
-Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of status.
+## Force flags
+
+Worktrunk has two force flags for different situations:
+
+| Flag | Scope | When to use |
+|------|-------|-------------|
+| `--force` (`-f`) | Worktree | Worktree has untracked files (build artifacts, IDE config) |
+| `--force-delete` (`-D`) | Branch | Branch has unmerged commits |
+
+```console
+wt remove feature --force       # Remove worktree with untracked files
+wt remove feature -D            # Delete unmerged branch
+wt remove feature --force -D    # Both
+```
+
+Without `--force`, removal fails if the worktree contains untracked files. Without `-D`, removal keeps branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of merge status.
 
 ## Background removal
 
 Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
-
-## Shortcuts
-
-`@` (current), `-` (previous), `^` (default branch). See [`wt switch`](@/switch.md#shortcuts).
 
 ## See also
 
