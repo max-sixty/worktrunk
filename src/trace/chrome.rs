@@ -1,12 +1,12 @@
 //! Chrome Trace Format output for concurrency visualization.
 //!
 //! Converts trace entries to Chrome Trace Event Format JSON, which can be
-//! visualized in chrome://tracing or https://ui.perfetto.dev.
+//! visualized in chrome://tracing or <https://ui.perfetto.dev>.
 //!
 //! # Usage
 //!
 //! ```bash
-//! RUST_LOG=debug wt list 2>&1 | grep wt-trace | analyze-trace --format=chrome > trace.json
+//! RUST_LOG=debug wt list 2>&1 | grep wt-trace | analyze-trace > trace.json
 //! # Then open trace.json in chrome://tracing or https://ui.perfetto.dev
 //! ```
 //!
