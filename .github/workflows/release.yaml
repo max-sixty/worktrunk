@@ -312,16 +312,74 @@ jobs:
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
           fork-user: max-sixty
 
+  publish-homebrew:
+    needs:
+      - plan
+      - host
+    runs-on: ubuntu-latest
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    env:
+      GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+    steps:
+      - name: Checkout homebrew-worktrunk
+        run: |
+          git clone https://x-access-token:${{ secrets.WORKTRUNK_BOT_TOKEN }}@github.com/max-sixty/homebrew-worktrunk.git
+          cd homebrew-worktrunk
+          git config user.name "worktrunk-bot"
+          git config user.email "worktrunk-bot@users.noreply.github.com"
+      - name: Update formula
+        run: |
+          cd homebrew-worktrunk
+          VERSION="${{ needs.plan.outputs.tag }}"
+          VERSION="${VERSION#v}"  # Strip leading 'v'
+          BASE="https://github.com/max-sixty/worktrunk/releases/download/v${VERSION}"
+
+          # Fetch SHA256 hashes from release assets
+          SHA_ARM=$(curl -sfL "$BASE/worktrunk-aarch64-apple-darwin.tar.xz.sha256" | cut -d' ' -f1)
+          SHA_INTEL=$(curl -sfL "$BASE/worktrunk-x86_64-apple-darwin.tar.xz.sha256" | cut -d' ' -f1)
+          SHA_LINUX=$(curl -sfL "$BASE/worktrunk-x86_64-unknown-linux-musl.tar.xz.sha256" | cut -d' ' -f1)
+
+          # Verify hashes are valid (64 hex chars)
+          for sha in "$SHA_ARM" "$SHA_INTEL" "$SHA_LINUX"; do
+            if [[ ! "$sha" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "Invalid SHA256: $sha"
+              exit 1
+            fi
+          done
+
+          # Update formula
+          sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" Formula/wt.rb
+          sed -i "s|/v[0-9.]*-*[^/]*/worktrunk-aarch64-apple-darwin|/v${VERSION}/worktrunk-aarch64-apple-darwin|g" Formula/wt.rb
+          sed -i "s|/v[0-9.]*-*[^/]*/worktrunk-x86_64-apple-darwin|/v${VERSION}/worktrunk-x86_64-apple-darwin|g" Formula/wt.rb
+          sed -i "s|/v[0-9.]*-*[^/]*/worktrunk-x86_64-unknown-linux-musl|/v${VERSION}/worktrunk-x86_64-unknown-linux-musl|g" Formula/wt.rb
+
+          # Update SHA256 hashes (order: arm, intel, linux in file)
+          sed -i "0,/sha256 \"[a-f0-9]\{64\}\"/s//sha256 \"${SHA_ARM}\"/" Formula/wt.rb
+          sed -i "0,/sha256 \"[a-f0-9]\{64\}\"/s//sha256 \"${SHA_INTEL}\"/" Formula/wt.rb
+          sed -i "0,/sha256 \"[a-f0-9]\{64\}\"/s//sha256 \"${SHA_LINUX}\"/" Formula/wt.rb
+
+          echo "Updated formula:"
+          head -30 Formula/wt.rb
+      - name: Commit and push
+        run: |
+          cd homebrew-worktrunk
+          VERSION="${{ needs.plan.outputs.tag }}"
+          VERSION="${VERSION#v}"
+          git add Formula/wt.rb
+          git commit -m "Update to v${VERSION}"
+          git push
+
   announce:
     needs:
       - plan
       - host
       - publish-cargo
       - publish-winget
+      - publish-homebrew
     # use "always() && ..." to allow us to wait for all publish jobs while
     # still allowing individual publish jobs to skip themselves (for prereleases).
     # "host" however must run to completion, no skipping allowed!
-    if: ${{ always() && needs.host.result == 'success' && (needs.publish-cargo.result == 'success' || needs.publish-cargo.result == 'skipped') && (needs.publish-winget.result == 'success' || needs.publish-winget.result == 'skipped') }}
+    if: ${{ always() && needs.host.result == 'success' && (needs.publish-cargo.result == 'success' || needs.publish-cargo.result == 'skipped') && (needs.publish-winget.result == 'success' || needs.publish-winget.result == 'skipped') && (needs.publish-homebrew.result == 'success' || needs.publish-homebrew.result == 'skipped') }}
     runs-on: "ubuntu-22.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
