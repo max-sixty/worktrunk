@@ -997,12 +997,13 @@ pub fn collect(
     #[cfg(target_os = "macos")]
     {
         if repo.is_builtin_fsmonitor_enabled() {
-            for wt in &sorted_worktrees {
-                // Skip prunable worktrees (directory missing)
+            // Parallelize daemon starts - explicit `start` is safe to call concurrently
+            // (each returns quickly if daemon already running for that worktree).
+            sorted_worktrees.par_iter().for_each(|wt| {
                 if !wt.is_prunable() {
                     repo.start_fsmonitor_daemon_at(&wt.path);
                 }
-            }
+            });
         }
     }
 
