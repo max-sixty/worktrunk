@@ -91,6 +91,23 @@ impl Repository {
         Ok(stdout.trim().to_owned())
     }
 
+    /// Get commit timestamp and message in a single git command.
+    ///
+    /// More efficient than calling `commit_timestamp` and `commit_message` separately.
+    pub fn commit_details(&self, commit: &str) -> anyhow::Result<(i64, String)> {
+        // Use space separator - timestamps don't contain spaces, and %s (subject)
+        // is the first line only (no embedded newlines). Split on first space.
+        let stdout = self.run_command(&["show", "-s", "--format=%ct %s", commit])?;
+        // Only strip trailing newline, not spaces (empty subject = "timestamp ")
+        let line = stdout.trim_end_matches('\n');
+        let (timestamp_str, message) = line
+            .split_once(' ')
+            .context("Failed to parse commit details")?;
+        let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
+        // Trim the message to match commit_message() behavior
+        Ok((timestamp, message.trim().to_owned()))
+    }
+
     /// Get commit subjects (first line of commit message) from a range.
     pub fn commit_subjects(&self, range: &str) -> anyhow::Result<Vec<String>> {
         let output = self.run_command(&["log", "--format=%s", range])?;
@@ -161,16 +178,24 @@ impl Repository {
         // Count commits using two-dot syntax (faster when merge-base is cached)
         // ahead = commits in head but not in merge_base
         // behind = commits in base but not in merge_base
-        let ahead_output =
-            self.run_command(&["rev-list", "--count", &format!("{}..{}", merge_base, head)])?;
+        //
+        // Skip rev-list when merge_base equals head (count would be 0).
+        // Note: we don't check merge_base == base because base is typically a
+        // refname like "main" while merge_base is a SHA.
+        let ahead = if merge_base == head {
+            0
+        } else {
+            let output =
+                self.run_command(&["rev-list", "--count", &format!("{}..{}", merge_base, head)])?;
+            output
+                .trim()
+                .parse()
+                .context("Failed to parse ahead count")?
+        };
+
         let behind_output =
             self.run_command(&["rev-list", "--count", &format!("{}..{}", merge_base, base)])?;
-
-        let ahead: usize = ahead_output
-            .trim()
-            .parse()
-            .context("Failed to parse ahead count")?;
-        let behind: usize = behind_output
+        let behind = behind_output
             .trim()
             .parse()
             .context("Failed to parse behind count")?;

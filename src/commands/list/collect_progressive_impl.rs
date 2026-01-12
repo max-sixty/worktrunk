@@ -377,11 +377,8 @@ impl Task for CommitDetailsTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         let repo = &ctx.repo;
-        let timestamp = repo
-            .commit_timestamp(&ctx.branch_ref.commit_sha)
-            .map_err(|e| ctx.error(Self::KIND, e))?;
-        let commit_message = repo
-            .commit_message(&ctx.branch_ref.commit_sha)
+        let (timestamp, commit_message) = repo
+            .commit_details(&ctx.branch_ref.commit_sha)
             .map_err(|e| ctx.error(Self::KIND, e))?;
         Ok(TaskResult::CommitDetails {
             item_idx: ctx.item_idx,

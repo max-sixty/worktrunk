@@ -248,8 +248,8 @@ fn test_diagnostic_verbose_log_contains_git_commands(mut repo: TestRepo) {
         "Verbose log should contain wt-trace entries"
     );
     assert!(
-        verbose_section.contains("dur="),
-        "Verbose log should contain command durations"
+        verbose_section.contains("dur_us="),
+        "Verbose log should contain command durations in microseconds"
     );
     assert!(
         verbose_section.contains("ok="),

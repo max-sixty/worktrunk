@@ -11,12 +11,23 @@
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
+use std::time::Instant;
 
 use crate::sync::Semaphore;
 
 /// Semaphore to limit concurrent command execution.
 /// Prevents resource exhaustion when spawning many parallel git commands.
 static CMD_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+
+/// Monotonic epoch for trace timestamps.
+///
+/// Using `Instant` instead of `SystemTime` ensures monotonic timestamps even if
+/// the system clock steps backward. All trace timestamps are relative to this epoch.
+static TRACE_EPOCH: OnceLock<Instant> = OnceLock::new();
+
+fn trace_epoch() -> &'static Instant {
+    TRACE_EPOCH.get_or_init(Instant::now)
+}
 
 /// Default concurrent external commands. Tuned to avoid hitting OS limits
 /// (file descriptors, process limits) while maintaining good parallelism.
@@ -203,20 +214,10 @@ pub fn set_command_timeout(timeout: Option<Duration>) {
 /// trace_instant("Progressive render: headers complete");
 /// ```
 pub fn trace_instant(event: &str) {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let start_time_us = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_micros() as u64)
-        .unwrap_or(0);
+    let ts = Instant::now().duration_since(*trace_epoch()).as_micros() as u64;
     let tid = thread_id_number();
 
-    log::debug!(
-        "[wt-trace] ts={} tid={} event=\"{}\"",
-        start_time_us,
-        tid,
-        event
-    );
+    log::debug!("[wt-trace] ts={} tid={} event=\"{}\"", ts, tid, event);
 }
 
 /// Execute a command with timing and debug logging.
@@ -266,7 +267,7 @@ pub fn run_with_timeout(
     context: Option<&str>,
     timeout: Option<std::time::Duration>,
 ) -> std::io::Result<std::process::Output> {
-    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+    use std::time::Instant;
 
     // Remove WORKTRUNK_DIRECTIVE_FILE to prevent hooks from writing to it
     cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
@@ -290,14 +291,12 @@ pub fn run_with_timeout(
     // RAII guard ensures release even on panic
     let _guard = get_semaphore().acquire();
 
-    // Capture timestamp and thread ID for Chrome Trace Format support
-    let start_time_us = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_micros() as u64)
-        .unwrap_or(0);
-    let tid = thread_id_number();
-
+    // Capture monotonic timestamp and thread ID for Chrome Trace Format support.
+    // Using Instant instead of SystemTime ensures monotonic timestamps even if
+    // the system clock steps backward.
     let t0 = Instant::now();
+    let ts = t0.duration_since(*trace_epoch()).as_micros() as u64;
+    let tid = thread_id_number();
 
     // Execute with or without timeout
     let result = match timeout {
@@ -305,49 +304,50 @@ pub fn run_with_timeout(
         Some(timeout_duration) => run_with_timeout_impl(cmd, timeout_duration),
     };
 
-    let duration_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    // Use microseconds to avoid precision loss from millisecond rounding
+    let dur_us = t0.elapsed().as_micros() as u64;
 
     // Log trace with timing, timestamp, and thread ID for concurrency analysis
     match (&result, context) {
         (Ok(output), Some(ctx)) => {
             log::debug!(
-                "[wt-trace] ts={} tid={} context={} cmd=\"{}\" dur={:.1}ms ok={}",
-                start_time_us,
+                "[wt-trace] ts={} tid={} context={} cmd=\"{}\" dur_us={} ok={}",
+                ts,
                 tid,
                 ctx,
                 cmd_str,
-                duration_ms,
+                dur_us,
                 output.status.success()
             );
         }
         (Ok(output), None) => {
             log::debug!(
-                "[wt-trace] ts={} tid={} cmd=\"{}\" dur={:.1}ms ok={}",
-                start_time_us,
+                "[wt-trace] ts={} tid={} cmd=\"{}\" dur_us={} ok={}",
+                ts,
                 tid,
                 cmd_str,
-                duration_ms,
+                dur_us,
                 output.status.success()
             );
         }
         (Err(e), Some(ctx)) => {
             log::debug!(
-                "[wt-trace] ts={} tid={} context={} cmd=\"{}\" dur={:.1}ms err=\"{}\"",
-                start_time_us,
+                "[wt-trace] ts={} tid={} context={} cmd=\"{}\" dur_us={} err=\"{}\"",
+                ts,
                 tid,
                 ctx,
                 cmd_str,
-                duration_ms,
+                dur_us,
                 e
             );
         }
         (Err(e), None) => {
             log::debug!(
-                "[wt-trace] ts={} tid={} cmd=\"{}\" dur={:.1}ms err=\"{}\"",
-                start_time_us,
+                "[wt-trace] ts={} tid={} cmd=\"{}\" dur_us={} err=\"{}\"",
+                ts,
                 tid,
                 cmd_str,
-                duration_ms,
+                dur_us,
                 e
             );
         }
