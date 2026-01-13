@@ -315,11 +315,10 @@ fn run_with_timeout_impl(
 // Builder-style command execution
 // ============================================================================
 
-/// Builder for executing commands with logging, tracing, and optional stdin.
+/// Builder for executing commands with two modes of operation.
 ///
-/// Provides logging, semaphore limiting, and tracing with two execution modes:
-/// - `.run()` — captures output, returns `Output`
-/// - `.stream()` — inherits stdio for TTY preservation, returns `()`
+/// - `.run()` — captures output, provides logging/semaphore/tracing
+/// - `.stream()` — inherits stdio for TTY preservation (hooks, interactive)
 ///
 /// # Examples
 ///
@@ -439,7 +438,10 @@ impl Cmd {
         self
     }
 
-    /// Set a timeout for command execution.
+    /// Set a timeout for command execution (only applies to `.run()`).
+    ///
+    /// Note: Timeout is not supported by `.stream()` since streaming commands
+    /// are interactive and should not be time-limited.
     pub fn timeout(mut self, duration: std::time::Duration) -> Self {
         self.timeout = Some(duration);
         self
@@ -488,10 +490,22 @@ impl Cmd {
 
     /// Execute the command and return its output.
     ///
-    /// Provides logging, semaphore limiting, and tracing like `run()`.
+    /// Captures stdout/stderr and returns them in `Output`. For interactive
+    /// commands or hooks where output should stream to the terminal, use
+    /// `.stream()` instead.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a shell-wrapped command (created via `Cmd::shell()`).
+    /// Shell commands must use `.stream()` because they need TTY preservation.
     pub fn run(self) -> std::io::Result<std::process::Output> {
         use std::io::Write;
         use std::process::Stdio;
+
+        assert!(
+            !self.shell_wrap,
+            "Cmd::shell() commands must use .stream(), not .run()"
+        );
 
         // Build command string for logging
         let cmd_str = if self.args.is_empty() {
@@ -617,6 +631,8 @@ impl Cmd {
     /// - Optionally redirects stdout to stderr (via `.redirect_stdout_to_stderr()`)
     /// - Optionally inherits stdin for interactive commands (via `.inherit_stdin()`)
     /// - Optionally forwards signals to child process group (via `.forward_signals()`)
+    /// - Does not use concurrency limiting (streaming commands run sequentially by nature)
+    /// - Does not support timeout (interactive commands should not be time-limited)
     ///
     /// Shell commands created via `Cmd::shell()` are executed through the platform's
     /// shell (`sh -c` on Unix, Git Bash on Windows).
@@ -631,6 +647,12 @@ impl Cmd {
             signal_hook::iterator::Signals,
             std::os::unix::process::CommandExt,
         };
+
+        // Shell-wrapped commands don't use args (the command string is the full command)
+        assert!(
+            !self.shell_wrap || self.args.is_empty(),
+            "Cmd::shell() cannot use .arg() - include arguments in the shell command string"
+        );
 
         let working_dir = self
             .current_dir
@@ -1077,6 +1099,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_cmd_shell_stream_with_stdin() {
         // cat should echo stdin content (output goes to inherited stdout, we can't capture it,
         // but we can verify no error)
@@ -1085,6 +1108,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_cmd_new_stream_succeeds() {
         // Non-shell command via stream() (uses direct execution, not shell wrapping)
         let result = Cmd::new("echo").arg("hello").stream();
