@@ -4,24 +4,10 @@ use std::path::Path;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::styling::{Stream, StyledLine, hyperlink_stdout, supports_hyperlinks};
 
-use super::ci_status::PrStatus;
 use super::collect_progressive_impl::parse_port_from_url;
 use super::columns::{ColumnKind, DiffVariant};
 use super::layout::{ColumnFormat, ColumnLayout, DiffColumnConfig, LayoutConfig};
 use super::model::{ListItem, PositionMask};
-
-impl PrStatus {
-    /// Render indicator as a StyledLine for table column rendering.
-    ///
-    /// Uses OSC 8 hyperlinks when the terminal supports them; falls back to
-    /// plain colored indicator otherwise.
-    fn render_indicator(&self) -> StyledLine {
-        let mut segment = StyledLine::new();
-        let include_link = supports_hyperlinks(Stream::Stdout);
-        segment.push_raw(self.format_indicator(include_link));
-        segment
-    }
-}
 
 impl DiffColumnConfig {
     /// Check if a value exceeds the allocated digit width
@@ -309,9 +295,8 @@ impl LayoutConfig {
                     cell.push_styled(short_head, dim);
                 }
                 _ => {
-                    // Show spinner for data columns
-                    cell.push_styled(spinner, dim);
-                    cell.pad_to(col.width);
+                    // Show spinner for data columns (placeholder_cell handles alignment)
+                    return col.placeholder_cell(spinner);
                 }
             }
 
@@ -323,6 +308,18 @@ impl LayoutConfig {
 }
 
 impl ColumnLayout {
+    /// Render a placeholder indicator (loading or skipped state).
+    /// Right-aligns for diff columns, left-aligns otherwise.
+    fn placeholder_cell(&self, symbol: &str) -> StyledLine {
+        let mut cell = StyledLine::new();
+        if matches!(self.format, ColumnFormat::Diff(_)) {
+            let padding = self.width.saturating_sub(symbol.width());
+            cell.push_raw(" ".repeat(padding));
+        }
+        cell.push_styled(symbol, Style::new().dimmed());
+        cell
+    }
+
     /// Render a text cell with optional style, truncated to column width.
     fn render_text_cell(&self, text: &str, style: Option<Style>) -> StyledLine {
         let mut cell = StyledLine::new();
@@ -380,17 +377,11 @@ impl ColumnLayout {
                 self.render_text_cell(text, text_style)
             }
             ColumnKind::Status => {
+                let Some(ref status_symbols) = item.status_symbols else {
+                    return self.placeholder_cell("⋯");
+                };
                 let mut cell = StyledLine::new();
-
-                // Render status symbols (works for both worktrees and branches)
-                if let Some(ref status_symbols) = item.status_symbols {
-                    cell.push_raw(status_symbols.render_with_mask(status_mask));
-                } else {
-                    // Show spinner while status is being computed (both worktrees and branches)
-                    cell.push_styled("⋯", Style::new().dimmed());
-                }
-
-                // Truncate if exceeds column width, then pad
+                cell.push_raw(status_symbols.render_with_mask(status_mask));
                 let mut cell = cell.truncate_to_width(self.width);
                 cell.pad_to(self.width);
                 cell
@@ -409,14 +400,7 @@ impl ColumnLayout {
                 match item.counts {
                     Some(counts) if counts.ahead == 0 && counts.behind == 0 => StyledLine::new(),
                     Some(counts) => self.render_diff_cell(counts.ahead, counts.behind),
-                    None => {
-                        // Not loaded yet — show spinner
-                        let mut cell = StyledLine::new();
-                        let padding = self.width.saturating_sub(1);
-                        cell.push_raw(" ".repeat(padding));
-                        cell.push_styled("⋯", Style::new().dimmed());
-                        cell
-                    }
+                    None => self.placeholder_cell("⋯"), // Not loaded yet
                 }
             }
             ColumnKind::BranchDiff => {
@@ -425,14 +409,7 @@ impl ColumnLayout {
                 }
                 match item.branch_diff() {
                     Some(bd) => self.render_diff_cell(bd.diff.added, bd.diff.deleted),
-                    None => {
-                        // Task was skipped — show ellipsis to indicate "not computed"
-                        let mut cell = StyledLine::new();
-                        let padding = self.width.saturating_sub(1);
-                        cell.push_raw(" ".repeat(padding));
-                        cell.push_styled("…", Style::new().dimmed());
-                        cell
-                    }
+                    None => self.placeholder_cell("…"), // Task was skipped
                 }
             }
             ColumnKind::Path => {
@@ -461,41 +438,33 @@ impl ColumnLayout {
                 self.render_diff_cell(active.ahead, active.behind)
             }
             ColumnKind::Time => {
+                let Some(ref commit) = item.commit else {
+                    return self.placeholder_cell("⋯");
+                };
                 let mut cell = StyledLine::new();
-
-                // Show spinner if commit details haven't loaded yet (for both worktrees and branches)
-                if let Some(ref commit) = item.commit {
-                    let time_str = format_relative_time_short(commit.timestamp);
-                    cell.push_styled(time_str, Style::new().dimmed());
-                } else {
-                    cell.push_styled("⋯", Style::new().dimmed());
-                }
-
+                cell.push_styled(
+                    format_relative_time_short(commit.timestamp),
+                    Style::new().dimmed(),
+                );
                 cell
             }
             ColumnKind::Url => {
                 // URL column: shows dev server URL from project config template
                 // - When hyperlinks supported: show ":port" as clickable link
                 // - When hyperlinks not supported: show full URL
-                // - dim if not available/active
-                // - normal if available and active
-                match (&item.url, item.url_active) {
-                    (None, _) => StyledLine::new(), // No URL configured
-                    (Some(url), Some(true)) => {
-                        // Active: normal styling
-                        let mut cell = StyledLine::new();
-                        cell.push_raw(format_url_cell(url));
-                        cell.truncate_to_width(self.width)
-                    }
-                    (Some(url), _) => {
-                        // Not active or unknown: dim styling
-                        let mut cell = StyledLine::new();
-                        let formatted = format_url_cell(url);
-                        // Apply dim to the formatted text (which may contain OSC 8 sequences)
-                        cell.push_styled(formatted, Style::new().dimmed());
-                        cell.truncate_to_width(self.width)
-                    }
+                // - dim if not available/active, normal if active
+                let Some(url) = &item.url else {
+                    return StyledLine::new();
+                };
+                let mut cell = StyledLine::new();
+                let formatted = format_url_cell(url);
+                if item.url_active == Some(true) {
+                    cell.push_raw(formatted);
+                } else {
+                    // Not active or unknown: dim styling
+                    cell.push_styled(formatted, Style::new().dimmed());
                 }
+                cell.truncate_to_width(self.width)
             }
             ColumnKind::CiStatus => {
                 // Check display field first for pending indicators during progressive rendering
@@ -512,40 +481,29 @@ impl ColumnLayout {
                 // - Some(None) = loaded, no CI (show nothing)
                 // - Some(Some(status)) = loaded with CI (show status)
                 match &item.pr_status {
-                    None => {
-                        // Not loaded yet - show spinner
-                        let mut cell = StyledLine::new();
-                        cell.push_styled("⋯", Style::new().dimmed());
-                        cell
-                    }
-                    Some(None) => {
-                        // Loaded, no CI - show nothing
-                        StyledLine::new()
-                    }
+                    None => self.placeholder_cell("⋯"), // Not loaded yet
+                    Some(None) => StyledLine::new(),    // Loaded, no CI
                     Some(Some(pr_status)) => {
-                        // Loaded with CI - show status
-                        pr_status.render_indicator()
+                        let mut cell = StyledLine::new();
+                        cell.push_raw(
+                            pr_status.format_indicator(supports_hyperlinks(Stream::Stdout)),
+                        );
+                        cell
                     }
                 }
             }
             ColumnKind::Commit => {
                 let head = item.head();
                 let short_head = &head[..8.min(head.len())];
-                let mut cell = StyledLine::new();
-                cell.push_styled(short_head.to_string(), Style::new().dimmed());
-                cell
+                self.render_text_cell(short_head, Some(Style::new().dimmed()))
             }
             ColumnKind::Message => {
+                let Some(ref commit) = item.commit else {
+                    return self.placeholder_cell("⋯");
+                };
                 let mut cell = StyledLine::new();
-
-                // Show spinner if commit details haven't loaded yet (for both worktrees and branches)
-                if let Some(ref commit) = item.commit {
-                    let msg = truncate_to_width(&commit.commit_message, max_message_len);
-                    cell.push_styled(msg, Style::new().dimmed());
-                } else {
-                    cell.push_styled("⋯", Style::new().dimmed());
-                }
-
+                let msg = truncate_to_width(&commit.commit_message, max_message_len);
+                cell.push_styled(msg, Style::new().dimmed());
                 cell
             }
         }
