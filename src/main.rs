@@ -225,12 +225,7 @@ fn maybe_handle_help_with_pager() -> bool {
                     let help =
                         md_help::render_markdown_in_help_with_width(&clap_output, Some(width));
 
-                    // show_help_in_pager checks if stdout or stderr is a TTY.
-                    // If neither is a TTY (e.g., `wt --help &>file`), it skips the pager.
-                    if let Err(e) = help_pager::show_help_in_pager(&help) {
-                        log::debug!("Pager invocation failed: {}", e);
-                        eprintln!("{}", help);
-                    }
+                    eprintln!("{}", help);
                     process::exit(0);
                 }
                 ErrorKind::DisplayVersion => {
