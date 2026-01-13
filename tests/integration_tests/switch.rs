@@ -373,12 +373,7 @@ fn test_switch_execute_template_shell_escape(repo: TestRepo) {
     snapshot_switch(
         "switch_execute_template_shell_escape",
         &repo,
-        &[
-            "--create",
-            "feat;id",
-            "--execute",
-            "echo {{ branch }}",
-        ],
+        &["--create", "feat;id", "--execute", "echo {{ branch }}"],
     );
 }
 
