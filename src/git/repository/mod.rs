@@ -14,8 +14,8 @@
 //! - `config.rs` - Git config, hints, markers, and default branch detection
 //! - `integration.rs` - Integration detection (same commit, ancestor, trees match)
 
+use crate::shell_exec::Cmd;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Arc, OnceLock};
 
 use dashmap::DashMap;
@@ -65,6 +65,9 @@ pub(super) struct RepoCache {
     pub(super) is_bare: OnceCell<bool>,
     /// Default branch (main, master, etc.)
     pub(super) default_branch: OnceCell<Option<String>>,
+    /// Invalid default branch config (set when user configured a non-existent branch).
+    /// Populated by `default_branch()` as a side effect, read by `invalid_default_branch_config()`.
+    pub(super) invalid_default_branch: OnceCell<Option<String>>,
     /// Effective integration target (local default branch or upstream if ahead)
     pub(super) integration_target: OnceCell<Option<String>>,
     /// Primary remote name (None if no remotes configured)
@@ -77,8 +80,8 @@ pub(super) struct RepoCache {
     pub(super) worktree_base: OnceCell<PathBuf>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
-    /// Merge-base cache: (commit1, commit2) -> merge_base_sha
-    pub(super) merge_base: DashMap<(String, String), String>,
+    /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
+    pub(super) merge_base: DashMap<(String, String), Option<String>>,
     /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
     /// Populated by batch_ahead_behind(), used by get_cached_ahead_behind()
     pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
@@ -211,13 +214,11 @@ impl Repository {
 
     /// Resolve the git common directory for a path.
     fn resolve_git_common_dir(discovery_path: &Path) -> anyhow::Result<PathBuf> {
-        use crate::shell_exec::run;
-
-        let mut cmd = Command::new("git");
-        cmd.args(["rev-parse", "--git-common-dir"]);
-        cmd.current_dir(discovery_path);
-
-        let output = run(&mut cmd, Some(&path_to_logging_context(discovery_path)))
+        let output = Cmd::new("git")
+            .args(["rev-parse", "--git-common-dir"])
+            .current_dir(discovery_path)
+            .context(path_to_logging_context(discovery_path))
+            .run()
             .context("Failed to execute: git rev-parse --git-common-dir")?;
 
         if !output.status.success() {
@@ -452,13 +453,11 @@ impl Repository {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
-        use crate::shell_exec::run;
-
-        let mut cmd = Command::new("git");
-        cmd.args(args);
-        cmd.current_dir(&self.discovery_path);
-
-        let output = run(&mut cmd, Some(&self.logging_context()))
+        let output = Cmd::new("git")
+            .args(args.iter().copied())
+            .current_dir(&self.discovery_path)
+            .context(self.logging_context())
+            .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
 
         if !output.status.success() {
@@ -504,16 +503,20 @@ impl Repository {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {
-        use crate::shell_exec::run;
+        Ok(self.run_command_output(args)?.status.success())
+    }
 
-        let mut cmd = Command::new("git");
-        cmd.args(args);
-        cmd.current_dir(&self.discovery_path);
-
-        let output = run(&mut cmd, Some(&self.logging_context()))
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
-
-        Ok(output.status.success())
+    /// Run a git command and return the raw Output (for inspecting exit codes).
+    ///
+    /// Use this when exit codes have semantic meaning beyond success/failure.
+    /// For most cases, prefer `run_command` (returns stdout) or `run_command_check` (returns bool).
+    pub(super) fn run_command_output(&self, args: &[&str]) -> anyhow::Result<std::process::Output> {
+        Cmd::new("git")
+            .args(args.iter().copied())
+            .current_dir(&self.discovery_path)
+            .context(self.logging_context())
+            .run()
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
 }
 

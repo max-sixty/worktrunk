@@ -118,50 +118,6 @@ fn test_help_md_subcommand() {
     });
 }
 
-#[test]
-fn test_help_page_merge() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        cmd.args(["merge", "--help-page"]);
-        assert_cmd_snapshot!("help_page_merge", cmd);
-    });
-}
-
-#[test]
-fn test_help_page_switch() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        cmd.args(["switch", "--help-page"]);
-        assert_cmd_snapshot!("help_page_switch", cmd);
-    });
-}
-
-#[test]
-fn test_help_page_no_subcommand() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        cmd.arg("--help-page");
-        assert_cmd_snapshot!("help_page_no_subcommand", cmd);
-    });
-}
-
-#[test]
-fn test_help_page_unknown_command() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        cmd.args(["nonexistent", "--help-page"]);
-        assert_cmd_snapshot!("help_page_unknown", cmd);
-    });
-}
-
 /// Verifies that markdown tables remain intact (no mid-row breaks) even when
 /// table width exceeds terminal width. Tables should extend past 80 columns
 /// rather than wrap incorrectly.

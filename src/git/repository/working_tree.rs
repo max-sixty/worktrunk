@@ -1,9 +1,10 @@
 //! WorkingTree - a borrowed handle for worktree-specific git operations.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, bail};
+
+use crate::shell_exec::Cmd;
 use dunce::canonicalize;
 
 use super::{GitError, LineDiff, Repository};
@@ -53,13 +54,11 @@ pub struct WorkingTree<'a> {
 impl<'a> WorkingTree<'a> {
     /// Run a git command in this worktree and return stdout.
     pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
-        use crate::shell_exec::run;
-
-        let mut cmd = Command::new("git");
-        cmd.args(args);
-        cmd.current_dir(&self.path);
-
-        let output = run(&mut cmd, Some(&path_to_logging_context(&self.path)))
+        let output = Cmd::new("git")
+            .args(args.iter().copied())
+            .current_dir(&self.path)
+            .context(path_to_logging_context(&self.path))
+            .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
 
         if !output.status.success() {
@@ -210,46 +209,5 @@ impl<'a> WorkingTree<'a> {
     pub fn working_tree_diff_vs_ref(&self, ref_name: &str) -> anyhow::Result<LineDiff> {
         let stdout = self.run_command(&["diff", "--numstat", ref_name])?;
         LineDiff::from_numstat(&stdout)
-    }
-
-    /// Get working tree diff stats vs a base branch, if trees differ.
-    ///
-    /// When `base_branch` is `None` (main worktree), returns `Some(LineDiff::default())`.
-    /// If the base branch tree matches HEAD and the working tree is dirty, computes
-    /// the precise diff; otherwise returns zero to indicate trees match.
-    /// When trees differ, returns `None` so callers can skip expensive comparisons.
-    pub fn working_tree_diff_with_base(
-        &self,
-        base_branch: Option<&str>,
-        working_tree_dirty: bool,
-    ) -> anyhow::Result<Option<LineDiff>> {
-        let Some(branch) = base_branch else {
-            // Main worktree has no base to compare against
-            return Ok(Some(LineDiff::default()));
-        };
-
-        // Check if branch exists
-        if self
-            .run_command(&["rev-parse", "--verify", branch])
-            .is_err()
-        {
-            return Ok(None);
-        }
-
-        // Check if trees match
-        let trees_match = self
-            .run_command(&["diff-tree", "--quiet", "HEAD", branch])
-            .is_ok();
-
-        if trees_match {
-            // Trees identical - if working tree is dirty, compute the diff
-            if working_tree_dirty {
-                Ok(Some(self.working_tree_diff_vs_ref(branch)?))
-            } else {
-                Ok(Some(LineDiff::default()))
-            }
-        } else {
-            Ok(None)
-        }
     }
 }

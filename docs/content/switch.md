@@ -96,7 +96,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Additional arguments for --execute command (after --)
 
           Arguments after <b>--</b> are appended to the execute command. Each argument
-          is POSIX shell-escaped before appending.
+          is expanded for templates, then POSIX shell-escaped.
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-c</span></b>, <b><span class=c>--create</span></b>
@@ -114,6 +114,10 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           full terminal control. Useful for launching editors, AI agents, or
           other interactive tools.
 
+          Supports ]8;;@/hook.md#template-variables\<u>hook template variables]8;;\</u> (<b>{{ branch }}</b>, <b>{{ worktree_path }}</b>,
+          etc.) and filters. <b>{{ base }}</b> and <b>{{ base_worktree_path }}</b> require
+          --create.
+
           Especially useful with shell aliases:
 
             <b>alias wsc=&#39;wt switch --create -x claude&#39;</b>
@@ -122,6 +126,10 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Then <b>wsc feature-branch</b> creates the worktree and launches Claude Code.
           Arguments after <b>--</b> are passed to the command, so <b>wsc feature -- &#39;Fix</b>
           GH #322&#39; runs <b>claude &#39;Fix GH #322&#39;</b>, starting Claude with a prompt.
+
+          Template example: <b>-x &#39;code {{ worktree_path }}&#39;</b> opens VS Code at the
+          worktree, <b>-x &#39;tmux new -s {{ branch | sanitize }}&#39;</b> starts a tmux
+          session named after the branch.
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts

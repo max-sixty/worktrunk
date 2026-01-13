@@ -143,6 +143,15 @@ tasks:
             exit 0
         fi
 
+        # Check for deletions - require manual publish if files were removed
+        if git status --porcelain | grep -q '^ D'; then
+            echo "Deletions detected:"
+            git status --porcelain | grep '^ D'
+            echo ""
+            echo "Publish manually in $ASSETS_REPO if this is correct"
+            exit 1
+        fi
+
         git diff --stat
         git add -A
         git commit -m "Update assets"

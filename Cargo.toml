@@ -1,5 +1,5 @@
 [workspace]
-members = ["tests/helpers/setup-select-test", "tests/helpers/mock-stub"]
+members = ["tests/helpers/wt-perf", "tests/helpers/mock-stub"]
 # Include mock-stub so `cargo test` builds its binary (via its integration test)
 default-members = [".", "tests/helpers/mock-stub"]
 
@@ -60,12 +60,6 @@ name = "git-wt"
 path = "src/git_wt.rs"
 required-features = ["git-wt"]
 
-# Trace log analyzer for performance debugging
-[[bin]]
-name = "analyze-trace"
-path = "src/bin/analyze-trace.rs"
-test = false
-
 [dependencies]
 anyhow = "1.0"
 anstream = "0.6"
@@ -117,7 +111,6 @@ which = "8.0"
 # which external tools like git cannot handle. On Unix, it's a no-op wrapper.
 dunce = "1.0"
 termimad = "0.34.1"
-rayon-join-macro = "0.1.1"
 urlencoding = "2.1"
 regex = "1.12"
 ignore = "0.4"
@@ -143,6 +136,7 @@ portable-pty = "0.9"
 regex = "1.12"
 vt100 = "0.16"
 ansi-to-html = "0.2.2"
+wt-perf = { path = "tests/helpers/wt-perf" }
 
 [[bench]]
 name = "completion"

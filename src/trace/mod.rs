@@ -13,7 +13,7 @@
 //!
 //! ```bash
 //! # Generate Chrome Trace Format
-//! RUST_LOG=debug wt list 2>&1 | grep wt-trace | analyze-trace > trace.json
+//! RUST_LOG=debug wt list 2>&1 | grep wt-trace | cargo run -p wt-perf -- trace > trace.json
 //!
 //! # Visualize: open trace.json in chrome://tracing or https://ui.perfetto.dev
 //!

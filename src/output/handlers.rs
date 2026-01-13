@@ -849,8 +849,9 @@ fn handle_removed_worktree_output(
 
 /// Execute a command in a worktree directory
 ///
-/// Merges stdout into stderr using shell redirection (1>&2) to ensure deterministic output ordering.
-/// Per CLAUDE.md guidelines: child process output goes to stderr, worktrunk output goes to stdout.
+/// Redirects child stdout to stderr (via `.stdout(Stdio::from(std::io::stderr()))`) for
+/// deterministic output ordering. Per CLAUDE.md guidelines: child process output goes to
+/// stderr, worktrunk output goes to stdout.
 ///
 /// If `stdin_content` is provided, it will be piped to the command's stdin. This is used to pass
 /// hook context as JSON to hook commands.
@@ -876,7 +877,7 @@ pub fn execute_command_in_worktree(
     stdin_content: Option<&str>,
 ) -> anyhow::Result<()> {
     use std::io::Write;
-    use worktrunk::shell_exec::execute_streaming;
+    use worktrunk::shell_exec::Cmd;
     use worktrunk::styling::{eprint, stderr};
 
     // Flush stdout before executing command to ensure all our messages appear
@@ -890,8 +891,17 @@ pub fn execute_command_in_worktree(
     stderr().flush().ok(); // Ignore flush errors - reset is best-effort, command execution should proceed
 
     // Execute with stdout→stderr redirect for deterministic ordering
-    // Hooks don't need stdin inheritance (inherit_stdin=false)
-    execute_streaming(command, worktree_path, true, stdin_content, false, true)?;
+    use std::process::Stdio;
+    let mut cmd = Cmd::shell(command)
+        .current_dir(worktree_path)
+        .stdout(Stdio::from(std::io::stderr()))
+        .forward_signals();
+
+    if let Some(content) = stdin_content {
+        cmd = cmd.stdin_bytes(content);
+    }
+
+    cmd.stream()?;
 
     // Flush to ensure all output appears before we continue
     super::flush()?;

@@ -152,15 +152,21 @@ impl Repository {
                 // If configured, validate it exists locally
                 if let Some(ref branch) = configured {
                     if self.local_branch_exists(branch).unwrap_or(false) {
+                        // Valid config - no invalid branch to report
+                        let _ = self.cache.invalid_default_branch.set(None);
                         return Some(branch.clone());
                     }
-                    // Configured branch doesn't exist - return None (don't fall back)
+                    // Configured branch doesn't exist - cache for warning, return None
+                    let _ = self.cache.invalid_default_branch.set(Some(branch.clone()));
                     log::debug!(
                         "Configured default branch '{}' doesn't exist locally",
                         branch
                     );
                     return None;
                 }
+
+                // Not configured - no invalid branch to report
+                let _ = self.cache.invalid_default_branch.set(None);
 
                 // Not configured - detect and persist to git config
                 if let Ok(branch) = self.detect_default_branch() {
@@ -181,18 +187,16 @@ impl Repository {
     /// - Configured branch exists locally
     ///
     /// Used to show warnings when the configured branch is invalid.
+    ///
+    /// **Performance:** Calls `default_branch()` internally to ensure the cache is
+    /// populated, but that call is itself cached so subsequent calls are free.
     pub fn invalid_default_branch_config(&self) -> Option<String> {
-        let configured = self
-            .run_command(&["config", "--get", "worktrunk.default-branch"])
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())?;
-
-        if self.local_branch_exists(&configured).unwrap_or(false) {
-            None
-        } else {
-            Some(configured)
-        }
+        // Ensure default_branch() has populated the cache (no-op if already called)
+        let _ = self.default_branch();
+        self.cache
+            .invalid_default_branch
+            .get()
+            .and_then(|opt| opt.clone())
     }
 
     /// Detect the default branch without using worktrunk's cache.

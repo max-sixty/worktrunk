@@ -521,6 +521,18 @@ pub fn handle_switch(
         None => {}
     }
 
+    // No worktree for branch - validate branch exists before proceeding
+    // When not creating, the branch must exist (locally or on remote)
+    // Note: This check could be moved to the error recovery path (after git worktree add
+    // fails) to avoid the ~10ms overhead on the happy path. We'd detect "invalid reference"
+    // in the error, then call branch_exists() to determine which branch is invalid.
+    if !create && !repo.branch_exists(&resolved_branch)? {
+        return Err(GitError::InvalidReference {
+            reference: resolved_branch.clone(),
+        }
+        .into());
+    }
+
     // No worktree for branch - check if expected path is occupied by a different branch's worktree
     if let Some((existing_path, path_branch)) = repo.worktree_at_path(&expected_path)? {
         if !existing_path.exists() {
@@ -603,7 +615,17 @@ pub fn handle_switch(
     // For bare repos with no branches yet (bootstrap case), allow None to create orphan branch.
     let base_for_creation = if create {
         match resolved_base {
-            Some(b) => Some(b),
+            Some(ref b) => {
+                // Validate that the explicitly specified base branch exists
+                // (Same note as above re: moving to error recovery path for performance)
+                if !repo.branch_exists(b)? {
+                    return Err(GitError::InvalidReference {
+                        reference: b.clone(),
+                    }
+                    .into());
+                }
+                Some(b.clone())
+            }
             None => {
                 // Try to use default branch as base, but only if it actually exists
                 // (has commits). For empty repos, the default branch is unborn and
@@ -651,15 +673,8 @@ pub fn handle_switch(
                 .into());
             }
         }
-        // Check if error is about invalid reference (branch not found)
-        // Format: "fatal: invalid reference: branch-name"
-        if msg.contains("invalid reference:") {
-            return Err(GitError::InvalidReference {
-                reference: resolved_branch.clone(),
-            }
-            .into());
-        }
         // Fall back to generic error with context
+        // Note: "invalid reference" errors are caught by upfront validation (lines 529, 621)
         return Err(GitError::WorktreeCreationFailed {
             branch: resolved_branch.clone(),
             base_branch: base_for_creation.clone(),

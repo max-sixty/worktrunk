@@ -1,11 +1,24 @@
-//! Integration tests for the analyze-trace binary.
+//! Integration tests for the wt-perf trace command.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+fn wt_perf_bin() -> std::path::PathBuf {
+    // Build and get path to wt-perf binary
+    let output = Command::new("cargo")
+        .args(["build", "-p", "wt-perf"])
+        .output()
+        .expect("Failed to build wt-perf");
+    assert!(output.status.success(), "Failed to build wt-perf");
+
+    std::env::current_dir()
+        .unwrap()
+        .join("target/debug/wt-perf")
+}
+
 /// Test that the binary produces Chrome Trace Format JSON for sample trace input.
 #[test]
-fn test_analyze_trace_from_stdin() {
+fn test_wt_perf_trace_from_stdin() {
     let sample_trace = r#"[wt-trace] ts=1000000 tid=1 cmd="git status" dur=10.0ms ok=true
 [wt-trace] ts=1010000 tid=1 cmd="git status" dur=15.0ms ok=true
 [wt-trace] ts=1025000 tid=1 cmd="git diff" dur=100.0ms ok=true
@@ -13,12 +26,13 @@ fn test_analyze_trace_from_stdin() {
 [wt-trace] ts=1125000 tid=1 cmd="git merge-base HEAD main" dur=500.0ms ok=true
 [wt-trace] ts=1625000 tid=1 cmd="gh pr list" dur=200.0ms ok=true"#;
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_analyze-trace"))
+    let mut child = Command::new(wt_perf_bin())
+        .arg("trace")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("Failed to spawn analyze-trace");
+        .expect("Failed to spawn wt-perf");
 
     child
         .stdin
@@ -29,7 +43,7 @@ fn test_analyze_trace_from_stdin() {
 
     let output = child.wait_with_output().expect("Failed to read output");
 
-    assert!(output.status.success(), "analyze-trace should succeed");
+    assert!(output.status.success(), "wt-perf trace should succeed");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -59,12 +73,12 @@ fn test_analyze_trace_from_stdin() {
 
 /// Test that the binary shows usage when run interactively without input.
 #[test]
-fn test_analyze_trace_no_input_shows_usage() {
+fn test_wt_perf_trace_no_input_shows_usage() {
     // Test by passing a non-existent file
-    let output = Command::new(env!("CARGO_BIN_EXE_analyze-trace"))
-        .arg("/nonexistent/path/to/file.log")
+    let output = Command::new(wt_perf_bin())
+        .args(["trace", "/nonexistent/path/to/file.log"])
         .output()
-        .expect("Failed to run analyze-trace");
+        .expect("Failed to run wt-perf");
 
     assert!(
         !output.status.success(),
@@ -80,13 +94,14 @@ fn test_analyze_trace_no_input_shows_usage() {
 
 /// Test that the binary handles empty trace input.
 #[test]
-fn test_analyze_trace_empty_input() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_analyze-trace"))
+fn test_wt_perf_trace_empty_input() {
+    let mut child = Command::new(wt_perf_bin())
+        .arg("trace")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("Failed to spawn analyze-trace");
+        .expect("Failed to spawn wt-perf");
 
     // Write empty input and close stdin
     child.stdin.take().unwrap();
@@ -107,7 +122,7 @@ fn test_analyze_trace_empty_input() {
 
 /// Test reading from a file.
 #[test]
-fn test_analyze_trace_from_file() {
+fn test_wt_perf_trace_from_file() {
     // Create a temp file with sample trace data
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
     let log_file = temp_dir.path().join("trace.log");
@@ -119,10 +134,10 @@ fn test_analyze_trace_from_file() {
 
     std::fs::write(&log_file, sample_trace).expect("Failed to write sample log");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_analyze-trace"))
-        .arg(&log_file)
+    let output = Command::new(wt_perf_bin())
+        .args(["trace", log_file.to_str().unwrap()])
         .output()
-        .expect("Failed to run analyze-trace");
+        .expect("Failed to run wt-perf");
 
     assert!(output.status.success(), "Should succeed with sample log");
 

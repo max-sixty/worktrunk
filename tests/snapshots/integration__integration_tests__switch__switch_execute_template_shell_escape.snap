@@ -1,10 +1,13 @@
 ---
-source: tests/integration_tests/list.rs
+source: tests/integration_tests/switch.rs
 info:
   program: wt
   args:
-    - list
-    - "--branches"
+    - switch
+    - "--create"
+    - feat;id
+    - "--execute"
+    - "echo {{ branch }}"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -30,10 +33,12 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-  [1mBranch[0m  [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m  [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
-@ main        [2m^[22m                         .              [2ma1e809f5[0m  [2m1d[0m    [2mInitial commit
-  assets     [2m/[22m[2m∅[22m                                        [2m50209039[0m  [2m1d[0m    [2mAdd asset
-
-[2m○[22m [2mShowing 1 worktrees, 1 branches
+feat;id
 
 ----- stderr -----
+[32m✓[39m [32mCreated branch [1mfeat;id[22m and worktree from [1mmain[22m @ [1m_REPO_.feat;id[22m[39m
+[2m↳[22m [2mCustomize worktree locations: [90mwt config create[39m[22m
+[33m▲[39m [33mExecuting [1mecho {{ branch }}[22m @ [1m_REPO_.feat;id[22m, but shell directory unchanged — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
+[36m◎[39m [36mExecuting (--execute):[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'feat;id'[0m[2m
