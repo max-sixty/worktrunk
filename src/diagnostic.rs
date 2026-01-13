@@ -43,13 +43,12 @@
 //! ```
 //!
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 
 use anyhow::Context;
 use color_print::cformat;
 use minijinja::{Environment, context};
 use worktrunk::git::Repository;
-use worktrunk::shell_exec::run;
+use worktrunk::shell_exec::Cmd;
 
 use crate::cli::version_str;
 use crate::output;
@@ -231,11 +230,11 @@ fn truncate_log(content: &str) -> String {
 
 /// Get git version string.
 fn get_git_version() -> anyhow::Result<String> {
-    let mut cmd = Command::new("git");
-    cmd.args(["--version"]);
-    cmd.stdin(Stdio::null());
+    let output = Cmd::new("git")
+        .arg("--version")
+        .run()
+        .context("Failed to run git --version")?;
 
-    let output = run(&mut cmd, None).context("Failed to run git --version")?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let version = stdout
         .trim()

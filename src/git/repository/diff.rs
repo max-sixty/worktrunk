@@ -186,7 +186,7 @@ impl Repository {
     /// and behind is commits in base not in head.
     ///
     /// For orphan branches with no common ancestor, returns `(0, 0)`.
-    /// TODO: Consider distinct display for orphan branches (e.g., "–" or "∅")
+    /// Caller should check for orphan status separately via `merge_base()`.
     ///
     /// Uses `merge_base()` internally (which is cached) to compute the common
     /// ancestor, then counts commits using two-dot syntax. This allows the

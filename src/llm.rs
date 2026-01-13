@@ -1,11 +1,10 @@
 use anyhow::Context;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{self, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
+use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::warning_message;
 
 use minijinja::Environment;
@@ -263,39 +262,17 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"Combine these commits into a single com
 /// This is the canonical way to execute LLM commands in this codebase.
 /// All LLM execution should go through this function to maintain consistency.
 fn execute_llm_command(command: &str, args: &[String], prompt: &str) -> anyhow::Result<String> {
-    // Build command args
-    let mut cmd = process::Command::new(command);
-    cmd.args(args);
-
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        // Prevent subprocesses from writing to the directive file
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR);
-
-    // Log execution
-    log::debug!("$ {} {}", command, args.join(" "));
+    // Log prompt for debugging (Cmd logs the command itself)
     log::debug!("  Prompt (stdin):");
     for line in prompt.lines() {
         log::debug!("    {}", line);
     }
 
-    let mut child = cmd.spawn().context("Failed to spawn LLM command")?;
-
-    // Write prompt to stdin
-    // Note: We ignore BrokenPipe errors because some commands (like `echo`) exit
-    // immediately without reading stdin. This is fine as long as they produce output.
-    if let Some(mut stdin) = child.stdin.take()
-        && let Err(e) = stdin.write_all(prompt.as_bytes())
-        && e.kind() != std::io::ErrorKind::BrokenPipe
-    {
-        return Err(e).context("Failed to write prompt to LLM stdin");
-    }
-    // stdin is dropped here, closing the pipe
-
-    let output = child
-        .wait_with_output()
-        .context("Failed to wait for LLM output")?;
+    let output = Cmd::new(command)
+        .args(args.iter().map(String::as_str))
+        .stdin(prompt)
+        .run()
+        .context("Failed to spawn LLM command")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

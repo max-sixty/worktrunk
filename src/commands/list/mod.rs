@@ -256,8 +256,7 @@ impl SummaryMetrics {
             }
         }
 
-        let counts = item.counts();
-        if counts.ahead > 0 {
+        if item.counts.is_some_and(|c| c.ahead > 0) {
             self.ahead_items += 1;
         }
     }

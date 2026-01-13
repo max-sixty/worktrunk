@@ -1808,14 +1808,11 @@ fn write_vv_diagnostic(verbose: u8, command_line: &str, error_msg: Option<&str>)
 
 /// Check if the GitHub CLI (gh) is installed.
 fn is_gh_installed() -> bool {
-    use std::process::{Command, Stdio};
-    use worktrunk::shell_exec::run;
+    use worktrunk::shell_exec::Cmd;
 
-    let mut cmd = Command::new("gh");
-    cmd.args(["--version"]);
-    cmd.stdin(Stdio::null());
-
-    run(&mut cmd, None)
+    Cmd::new("gh")
+        .arg("--version")
+        .run()
         .map(|o| o.status.success())
         .unwrap_or(false)
 }

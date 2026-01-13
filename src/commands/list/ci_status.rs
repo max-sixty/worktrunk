@@ -1,10 +1,9 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use worktrunk::git::{Repository, parse_owner_repo, parse_remote_owner};
 use worktrunk::path::sanitize_for_filename;
-use worktrunk::shell_exec::run;
+use worktrunk::shell_exec::Cmd;
 use worktrunk::utils::get_now;
 
 /// CI platform detected from project config override or remote URL.
@@ -677,14 +676,13 @@ fn get_gitlab_project_id(repo: &Repository) -> Option<u64> {
     let repo_root = repo.current_worktree().root().ok()?;
 
     // Use glab repo view to get the project info as JSON
-    let mut cmd = Command::new("glab");
-    cmd.args(["repo", "view", "--output", "json"]);
-    cmd.current_dir(&repo_root);
     // Disable color/pager to avoid ANSI noise in JSON output
-    configure_non_interactive(&mut cmd);
-    cmd.env("PAGER", "cat");
-
-    let output = run(&mut cmd, None).ok()?;
+    let output = non_interactive_cmd("glab")
+        .args(["repo", "view", "--output", "json"])
+        .current_dir(&repo_root)
+        .env("PAGER", "cat")
+        .run()
+        .ok()?;
 
     if !output.status.success() {
         return None;
@@ -701,40 +699,29 @@ fn get_gitlab_project_id(repo: &Repository) -> Option<u64> {
         .map(|info| info.id)
 }
 
-/// Configure command for non-interactive batch execution.
+/// Create a Cmd configured for non-interactive batch execution.
 ///
 /// This prevents tools like `gh` and `glab` from:
-/// - Prompting for user input (stdin set to /dev/null)
+/// - Prompting for user input
 /// - Using TTY-specific output formatting
 /// - Opening browsers for authentication
-fn configure_non_interactive(cmd: &mut Command) {
-    use std::process::Stdio;
-    cmd.stdin(Stdio::null());
-    cmd.env_remove("CLICOLOR_FORCE");
-    cmd.env_remove("GH_FORCE_TTY");
-    cmd.env("NO_COLOR", "1");
-    cmd.env("CLICOLOR", "0");
-    cmd.env("GH_PROMPT_DISABLED", "1");
+fn non_interactive_cmd(program: &str) -> Cmd {
+    Cmd::new(program)
+        .env_remove("CLICOLOR_FORCE")
+        .env_remove("GH_FORCE_TTY")
+        .env("NO_COLOR", "1")
+        .env("CLICOLOR", "0")
+        .env("GH_PROMPT_DISABLED", "1")
 }
 
 /// Check if a CLI tool is available
 ///
-/// On Windows, CreateProcessW (via Command::new) searches PATH for .exe files.
+/// On Windows, CreateProcessW (via Cmd) searches PATH for .exe files.
 /// We provide .exe mocks in tests via mock-stub, so this works consistently.
-///
-/// Uses `Stdio::null()` for stdin to prevent tools like `gh` from prompting
-/// for user input when they detect a TTY.
 fn tool_available(tool: &str, args: &[&str]) -> bool {
-    use std::process::Stdio;
-
-    // Use Command::new(tool) directly on all platforms.
-    // On Windows, CreateProcessW searches PATH for .exe files.
-    // This is simpler and more reliable than going through cmd.exe.
-    let mut cmd = Command::new(tool);
-    cmd.args(args);
-    cmd.stdin(Stdio::null());
-
-    run(&mut cmd, None)
+    Cmd::new(tool)
+        .args(args.iter().copied())
+        .run()
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
@@ -1244,24 +1231,22 @@ impl PrStatus {
         //
         // We fetch up to MAX_PRS_TO_FETCH PRs to handle branch name collisions, then filter
         // client-side by headRepositoryOwner to find PRs from our fork.
-        let mut cmd = Command::new("gh");
-        cmd.args([
-            "pr",
-            "list",
-            "--head",
-            branch,
-            "--state",
-            "open",
-            "--limit",
-            &MAX_PRS_TO_FETCH.to_string(),
-            "--json",
-            "headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner",
-        ]);
-
-        configure_non_interactive(&mut cmd);
-        cmd.current_dir(&repo_root);
-
-        let output = match run(&mut cmd, None) {
+        let output = match non_interactive_cmd("gh")
+            .args([
+                "pr",
+                "list",
+                "--head",
+                branch,
+                "--state",
+                "open",
+                "--limit",
+                &MAX_PRS_TO_FETCH.to_string(),
+                "--json",
+                "headRefOid,mergeStateStatus,statusCheckRollup,url,headRepositoryOwner",
+            ])
+            .current_dir(&repo_root)
+            .run()
+        {
             Ok(output) => output,
             Err(e) => {
                 log::warn!("gh pr list failed to execute for branch {}: {}", branch, e);
@@ -1357,20 +1342,20 @@ impl PrStatus {
 
         // Fetch MRs with matching source branch.
         // We filter client-side by source_project_id (numeric project ID comparison).
-        let mut cmd = Command::new("glab");
-        cmd.args([
-            "mr",
-            "list",
-            "--source-branch",
-            branch,
-            "--state=opened",
-            &format!("--per-page={}", MAX_PRS_TO_FETCH),
-            "--output",
-            "json",
-        ]);
-        cmd.current_dir(&repo_root);
-
-        let output = match run(&mut cmd, None) {
+        let output = match Cmd::new("glab")
+            .args([
+                "mr",
+                "list",
+                "--source-branch",
+                branch,
+                "--state=opened",
+                &format!("--per-page={}", MAX_PRS_TO_FETCH),
+                "--output",
+                "json",
+            ])
+            .current_dir(&repo_root)
+            .run()
+        {
             Ok(output) => output,
             Err(e) => {
                 log::warn!(
@@ -1452,18 +1437,16 @@ impl PrStatus {
         let (owner, repo_name) = get_owner_repo(repo)?;
 
         // Use GitHub's check-runs API to get all checks for this commit
-        let mut cmd = Command::new("gh");
-        cmd.args([
-            "api",
-            &format!("repos/{owner}/{repo_name}/commits/{local_head}/check-runs"),
-            "--jq",
-            ".check_runs | map({status, conclusion})",
-        ]);
-
-        configure_non_interactive(&mut cmd);
-        cmd.current_dir(&repo_root);
-
-        let output = match run(&mut cmd, None) {
+        let output = match non_interactive_cmd("gh")
+            .args([
+                "api",
+                &format!("repos/{owner}/{repo_name}/commits/{local_head}/check-runs"),
+                "--jq",
+                ".check_runs | map({status, conclusion})",
+            ])
+            .current_dir(&repo_root)
+            .run()
+        {
             Ok(output) => output,
             Err(e) => {
                 log::warn!(
@@ -1506,13 +1489,11 @@ impl PrStatus {
         }
 
         // Get most recent pipeline for the branch using JSON output
-        use std::process::Stdio;
-        let mut cmd = Command::new("glab");
-        cmd.args(["ci", "list", "--per-page", "1", "--output", "json"])
+        let output = match Cmd::new("glab")
+            .args(["ci", "list", "--per-page", "1", "--output", "json"])
             .env("BRANCH", branch) // glab ci list uses BRANCH env var
-            .stdin(Stdio::null());
-
-        let output = match run(&mut cmd, None) {
+            .run()
+        {
             Ok(output) => output,
             Err(e) => {
                 log::warn!(

@@ -220,30 +220,6 @@ pub fn trace_instant(event: &str) {
     log::debug!("[wt-trace] ts={} tid={} event=\"{}\"", ts, tid, event);
 }
 
-/// Execute a command with timing and debug logging.
-///
-/// This is the **only** way to run external commands in worktrunk. All command execution
-/// must go through this function to ensure consistent logging and tracing.
-///
-/// If a thread-local timeout is set via `set_command_timeout()`, the command will be
-/// killed if it exceeds that duration.
-///
-/// The `WORKTRUNK_DIRECTIVE_FILE` environment variable is automatically removed from spawned
-/// processes to prevent hooks from discovering and writing to the directive file.
-///
-/// ```text
-/// $ git status [worktree-name]           # with context
-/// $ gh pr list                           # without context
-/// [wt-trace] context=worktree cmd="..." dur=12.3ms ok=true
-/// ```
-///
-/// The `context` parameter is typically the worktree name for git commands, or `None` for
-/// standalone CLI tools like `gh` and `glab`.
-pub fn run(cmd: &mut Command, context: Option<&str>) -> std::io::Result<std::process::Output> {
-    let timeout = COMMAND_TIMEOUT.with(|t| t.get());
-    run_with_timeout(cmd, context, timeout)
-}
-
 /// Extract numeric thread ID from ThreadId's debug format.
 /// ThreadId debug format is "ThreadId(N)" where N is the numeric ID.
 fn thread_id_number() -> u64 {
@@ -254,106 +230,6 @@ fn thread_id_number() -> u64 {
         .and_then(|s| s.strip_suffix(")"))
         .and_then(|s| s.parse().ok())
         .unwrap_or(0)
-}
-
-/// Execute a command with an optional timeout.
-///
-/// Like `run()`, but allows specifying a timeout. If the command doesn't complete within
-/// the timeout, it is killed and an error is returned.
-///
-/// Returns `std::io::ErrorKind::TimedOut` if the command times out.
-pub fn run_with_timeout(
-    cmd: &mut Command,
-    context: Option<&str>,
-    timeout: Option<std::time::Duration>,
-) -> std::io::Result<std::process::Output> {
-    use std::time::Instant;
-
-    // Remove WORKTRUNK_DIRECTIVE_FILE to prevent hooks from writing to it
-    cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
-
-    // Build command string for logging
-    let program = cmd.get_program().to_string_lossy();
-    let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy()).collect();
-    let cmd_str = if args.is_empty() {
-        program.to_string()
-    } else {
-        format!("{} {}", program, args.join(" "))
-    };
-
-    // Log command with optional context
-    match context {
-        Some(ctx) => log::debug!("$ {} [{}]", cmd_str, ctx),
-        None => log::debug!("$ {}", cmd_str),
-    }
-
-    // Acquire semaphore to limit concurrent commands (prevents resource exhaustion)
-    // RAII guard ensures release even on panic
-    let _guard = get_semaphore().acquire();
-
-    // Capture monotonic timestamp and thread ID for Chrome Trace Format support.
-    // Using Instant instead of SystemTime ensures monotonic timestamps even if
-    // the system clock steps backward.
-    let t0 = Instant::now();
-    let ts = t0.duration_since(*trace_epoch()).as_micros() as u64;
-    let tid = thread_id_number();
-
-    // Execute with or without timeout
-    let result = match timeout {
-        None => cmd.output(),
-        Some(timeout_duration) => run_with_timeout_impl(cmd, timeout_duration),
-    };
-
-    // Use microseconds to avoid precision loss from millisecond rounding
-    let dur_us = t0.elapsed().as_micros() as u64;
-
-    // Log trace with timing, timestamp, and thread ID for concurrency analysis
-    match (&result, context) {
-        (Ok(output), Some(ctx)) => {
-            log::debug!(
-                "[wt-trace] ts={} tid={} context={} cmd=\"{}\" dur_us={} ok={}",
-                ts,
-                tid,
-                ctx,
-                cmd_str,
-                dur_us,
-                output.status.success()
-            );
-        }
-        (Ok(output), None) => {
-            log::debug!(
-                "[wt-trace] ts={} tid={} cmd=\"{}\" dur_us={} ok={}",
-                ts,
-                tid,
-                cmd_str,
-                dur_us,
-                output.status.success()
-            );
-        }
-        (Err(e), Some(ctx)) => {
-            log::debug!(
-                "[wt-trace] ts={} tid={} context={} cmd=\"{}\" dur_us={} err=\"{}\"",
-                ts,
-                tid,
-                ctx,
-                cmd_str,
-                dur_us,
-                e
-            );
-        }
-        (Err(e), None) => {
-            log::debug!(
-                "[wt-trace] ts={} tid={} cmd=\"{}\" dur_us={} err=\"{}\"",
-                ts,
-                tid,
-                cmd_str,
-                dur_us,
-                e
-            );
-        }
-    }
-
-    result
 }
 
 /// Implementation of timeout-based command execution.
@@ -433,6 +309,236 @@ fn run_with_timeout_impl(
         stdout,
         stderr,
     })
+}
+
+// ============================================================================
+// Builder-style command execution
+// ============================================================================
+
+/// Builder for executing commands with logging, tracing, and optional stdin.
+///
+/// Provides the same benefits as `run()` (logging, semaphore, tracing) with a
+/// cleaner interface that supports stdin piping.
+///
+/// # Examples
+///
+/// Basic usage:
+/// ```ignore
+/// let output = Cmd::new("git")
+///     .args(["status", "--porcelain"])
+///     .current_dir(&repo_path)
+///     .context("my-worktree")
+///     .run()?;
+/// ```
+///
+/// With stdin:
+/// ```ignore
+/// let output = Cmd::new("git")
+///     .args(["diff-tree", "--stdin", "--numstat"])
+///     .stdin(hashes.join("\n"))
+///     .run()?;
+/// ```
+pub struct Cmd {
+    program: String,
+    args: Vec<String>,
+    current_dir: Option<std::path::PathBuf>,
+    context: Option<String>,
+    stdin_data: Option<Vec<u8>>,
+    timeout: Option<std::time::Duration>,
+    envs: Vec<(String, String)>,
+    env_removes: Vec<String>,
+}
+
+impl Cmd {
+    /// Create a new command builder for the given program.
+    pub fn new(program: impl Into<String>) -> Self {
+        Self {
+            program: program.into(),
+            args: Vec::new(),
+            current_dir: None,
+            context: None,
+            stdin_data: None,
+            timeout: None,
+            envs: Vec::new(),
+            env_removes: Vec::new(),
+        }
+    }
+
+    /// Add a single argument.
+    pub fn arg(mut self, arg: impl Into<String>) -> Self {
+        self.args.push(arg.into());
+        self
+    }
+
+    /// Add multiple arguments.
+    pub fn args<I, S>(mut self, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    /// Set the working directory for the command.
+    pub fn current_dir(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
+        self.current_dir = Some(dir.into());
+        self
+    }
+
+    /// Set the logging context (typically worktree name for git commands).
+    pub fn context(mut self, ctx: impl Into<String>) -> Self {
+        self.context = Some(ctx.into());
+        self
+    }
+
+    /// Set data to write to the command's stdin.
+    pub fn stdin(mut self, data: impl Into<Vec<u8>>) -> Self {
+        self.stdin_data = Some(data.into());
+        self
+    }
+
+    /// Set a timeout for command execution.
+    pub fn timeout(mut self, duration: std::time::Duration) -> Self {
+        self.timeout = Some(duration);
+        self
+    }
+
+    /// Set an environment variable.
+    pub fn env(mut self, key: impl Into<String>, val: impl Into<String>) -> Self {
+        self.envs.push((key.into(), val.into()));
+        self
+    }
+
+    /// Remove an environment variable.
+    pub fn env_remove(mut self, key: impl Into<String>) -> Self {
+        self.env_removes.push(key.into());
+        self
+    }
+
+    /// Execute the command and return its output.
+    ///
+    /// Provides logging, semaphore limiting, and tracing like `run()`.
+    pub fn run(self) -> std::io::Result<std::process::Output> {
+        use std::io::Write;
+        use std::process::Stdio;
+
+        // Build command string for logging
+        let cmd_str = if self.args.is_empty() {
+            self.program.clone()
+        } else {
+            format!("{} {}", self.program, self.args.join(" "))
+        };
+
+        // Log command with optional context
+        match &self.context {
+            Some(ctx) => log::debug!("$ {} [{}]", cmd_str, ctx),
+            None => log::debug!("$ {}", cmd_str),
+        }
+
+        // Acquire semaphore to limit concurrent commands
+        let _guard = get_semaphore().acquire();
+
+        // Capture timing for tracing
+        let t0 = Instant::now();
+        let ts = t0.duration_since(*trace_epoch()).as_micros() as u64;
+        let tid = thread_id_number();
+
+        // Build the Command
+        let mut cmd = Command::new(&self.program);
+        cmd.args(&self.args);
+        cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
+
+        if let Some(ref dir) = self.current_dir {
+            cmd.current_dir(dir);
+        }
+
+        for (key, val) in &self.envs {
+            cmd.env(key, val);
+        }
+        for key in &self.env_removes {
+            cmd.env_remove(key);
+        }
+
+        // Determine effective timeout: explicit > thread-local > none
+        let effective_timeout = self.timeout.or_else(|| COMMAND_TIMEOUT.with(|t| t.get()));
+
+        // Execute with or without stdin
+        let result = if let Some(stdin_data) = self.stdin_data {
+            // Stdin piping requires spawn/write/wait
+            // Note: stdin path doesn't support timeout (would need async I/O)
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            let mut child = cmd.spawn()?;
+
+            // Write stdin data (ignore BrokenPipe - some commands exit early)
+            if let Some(mut stdin) = child.stdin.take()
+                && let Err(e) = stdin.write_all(&stdin_data)
+                && e.kind() != std::io::ErrorKind::BrokenPipe
+            {
+                return Err(e);
+            }
+
+            child.wait_with_output()
+        } else if let Some(timeout_duration) = effective_timeout {
+            // Timeout handling uses the existing impl
+            run_with_timeout_impl(&mut cmd, timeout_duration)
+        } else {
+            // Simple case: just run and capture output
+            cmd.output()
+        };
+
+        // Log trace
+        let dur_us = t0.elapsed().as_micros() as u64;
+        match (&result, &self.context) {
+            (Ok(output), Some(ctx)) => {
+                log::debug!(
+                    "[wt-trace] ts={} tid={} context={} cmd=\"{}\" dur_us={} ok={}",
+                    ts,
+                    tid,
+                    ctx,
+                    cmd_str,
+                    dur_us,
+                    output.status.success()
+                );
+            }
+            (Ok(output), None) => {
+                log::debug!(
+                    "[wt-trace] ts={} tid={} cmd=\"{}\" dur_us={} ok={}",
+                    ts,
+                    tid,
+                    cmd_str,
+                    dur_us,
+                    output.status.success()
+                );
+            }
+            (Err(e), Some(ctx)) => {
+                log::debug!(
+                    "[wt-trace] ts={} tid={} context={} cmd=\"{}\" dur_us={} err=\"{}\"",
+                    ts,
+                    tid,
+                    ctx,
+                    cmd_str,
+                    dur_us,
+                    e
+                );
+            }
+            (Err(e), None) => {
+                log::debug!(
+                    "[wt-trace] ts={} tid={} cmd=\"{}\" dur_us={} err=\"{}\"",
+                    ts,
+                    tid,
+                    cmd_str,
+                    dur_us,
+                    e
+                );
+            }
+        }
+
+        result
+    }
 }
 
 // ============================================================================
@@ -796,14 +902,15 @@ mod tests {
     }
 
     // ========================================================================
-    // Timeout tests
+    // Cmd and timeout tests
     // ========================================================================
 
     #[test]
-    fn test_run_with_timeout_completes_fast_command() {
-        let mut cmd = Command::new("echo");
-        cmd.arg("hello");
-        let result = run_with_timeout(&mut cmd, None, Some(Duration::from_secs(5)));
+    fn test_cmd_completes_fast_command() {
+        let result = Cmd::new("echo")
+            .arg("hello")
+            .timeout(Duration::from_secs(5))
+            .run();
         assert!(result.is_ok());
         let output = result.unwrap();
         assert!(output.status.success());
@@ -812,27 +919,43 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn test_run_with_timeout_kills_slow_command() {
-        let mut cmd = Command::new("sleep");
-        cmd.arg("10");
-        let result = run_with_timeout(&mut cmd, None, Some(Duration::from_millis(50)));
+    fn test_cmd_timeout_kills_slow_command() {
+        let result = Cmd::new("sleep")
+            .arg("10")
+            .timeout(Duration::from_millis(50))
+            .run();
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
     }
 
     #[test]
-    fn test_run_with_no_timeout_completes() {
-        let mut cmd = Command::new("echo");
-        cmd.arg("no timeout");
-        let result = run_with_timeout(&mut cmd, None, None);
+    fn test_cmd_without_timeout_completes() {
+        let result = Cmd::new("echo").arg("no timeout").run();
         assert!(result.is_ok());
     }
 
     #[test]
+    fn test_cmd_with_context() {
+        let result = Cmd::new("echo")
+            .arg("with context")
+            .context("test-context")
+            .run();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cmd_with_stdin() {
+        let result = Cmd::new("cat").stdin("hello from stdin").run();
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("hello from stdin"));
+    }
+
+    #[test]
     fn test_thread_local_timeout_setting() {
-        // Initially no timeout
+        // Initially no timeout (or whatever was set by previous test)
         let initial = COMMAND_TIMEOUT.with(|t| t.get());
-        assert!(initial.is_none() || initial == Some(Duration::from_millis(500)));
 
         // Set a timeout
         set_command_timeout(Some(Duration::from_millis(100)));
@@ -840,20 +963,35 @@ mod tests {
         assert_eq!(after_set, Some(Duration::from_millis(100)));
 
         // Clear the timeout
-        set_command_timeout(None);
+        set_command_timeout(initial);
         let after_clear = COMMAND_TIMEOUT.with(|t| t.get());
-        assert!(after_clear.is_none());
+        assert_eq!(after_clear, initial);
     }
 
     #[test]
-    fn test_run_uses_thread_local_timeout() {
+    fn test_cmd_uses_thread_local_timeout() {
         // Set no timeout (ensure fast completion)
         set_command_timeout(None);
 
-        let mut cmd = Command::new("echo");
-        cmd.arg("thread local test");
-        let result = run(&mut cmd, None);
+        let result = Cmd::new("echo").arg("thread local test").run();
         assert!(result.is_ok());
+
+        // Clean up
+        set_command_timeout(None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_thread_local_timeout_kills_slow_command() {
+        // Set a short thread-local timeout
+        set_command_timeout(Some(Duration::from_millis(50)));
+
+        // Command that would take too long
+        let result = Cmd::new("sleep").arg("10").run();
+
+        // Should be killed by the thread-local timeout
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
 
         // Clean up
         set_command_timeout(None);

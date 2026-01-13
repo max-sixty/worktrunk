@@ -66,11 +66,11 @@ repos:
         files: '^tests/'
       - id: no-direct-cmd-output
         name: no-direct-cmd-output
-        description: Use shell_exec::run() instead of cmd.output() for consistent logging
+        description: Use shell_exec::Cmd instead of cmd.output() for consistent logging
         language: pygrep
         types: ["rust"]
         entry: '\.output\(\)'
-        # shell_exec.rs: defines run() which legitimately calls .output()
+        # shell_exec.rs: defines Cmd which legitimately calls .output()
         # select.rs: skim API's selected.output() is not Command::output()
         # tests/benches: test utilities run commands directly
         exclude: '^(src/shell_exec\.rs|src/commands/select\.rs|tests/|benches/)'

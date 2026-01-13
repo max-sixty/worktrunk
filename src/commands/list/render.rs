@@ -406,11 +406,18 @@ impl ColumnLayout {
                 if item.is_main() {
                     return StyledLine::new();
                 }
-                let counts = item.counts();
-                if counts.ahead == 0 && counts.behind == 0 {
-                    return StyledLine::new();
+                match item.counts {
+                    Some(counts) if counts.ahead == 0 && counts.behind == 0 => StyledLine::new(),
+                    Some(counts) => self.render_diff_cell(counts.ahead, counts.behind),
+                    None => {
+                        // Not loaded yet — show spinner
+                        let mut cell = StyledLine::new();
+                        let padding = self.width.saturating_sub(1);
+                        cell.push_raw(" ".repeat(padding));
+                        cell.push_styled("⋯", Style::new().dimmed());
+                        cell
+                    }
                 }
-                self.render_diff_cell(counts.ahead, counts.behind)
             }
             ColumnKind::BranchDiff => {
                 if item.is_main() {

@@ -172,6 +172,8 @@ pub(super) enum TaskResult {
     AheadBehind {
         item_idx: usize,
         counts: AheadBehind,
+        /// True if this is an orphan branch (no common ancestor with default branch)
+        is_orphan: bool,
     },
     /// Whether HEAD's tree SHA matches integration target's tree SHA (committed content identical)
     CommittedTreesMatch {
@@ -199,7 +201,6 @@ pub(super) enum TaskResult {
     WorkingTreeDiff {
         item_idx: usize,
         working_tree_diff: LineDiff,
-        working_tree_diff_with_main: Option<LineDiff>,
         /// Working tree change flags
         working_tree_status: WorkingTreeStatus,
         has_conflicts: bool,
@@ -385,7 +386,9 @@ fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], 
             items[idx].commit = Some(CommitDetails::default());
         }
         TaskKind::AheadBehind => {
-            items[idx].counts = Some(AheadBehind::default());
+            // Leave as None — UI shows `⋯` for not-loaded tasks
+            // Conservative: don't claim orphan if we couldn't check
+            items[idx].is_orphan = Some(false);
         }
         TaskKind::CommittedTreesMatch => {
             // Conservative: don't claim integrated if we couldn't check
@@ -409,7 +412,6 @@ fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], 
         TaskKind::WorkingTreeDiff => {
             if let ItemKind::Worktree(data) = &mut items[idx].kind {
                 data.working_tree_diff = Some(LineDiff::default());
-                data.working_tree_diff_with_main = Some(None);
             } else {
                 debug_assert!(false, "WorkingTreeDiff task spawned for non-worktree item");
             }
@@ -561,8 +563,11 @@ fn drain_results(
             TaskResult::CommitDetails { commit, .. } => {
                 item.commit = Some(commit);
             }
-            TaskResult::AheadBehind { counts, .. } => {
+            TaskResult::AheadBehind {
+                counts, is_orphan, ..
+            } => {
                 item.counts = Some(counts);
+                item.is_orphan = Some(is_orphan);
             }
             TaskResult::CommittedTreesMatch {
                 committed_trees_match,
@@ -588,14 +593,12 @@ fn drain_results(
             }
             TaskResult::WorkingTreeDiff {
                 working_tree_diff,
-                working_tree_diff_with_main,
                 working_tree_status,
                 has_conflicts,
                 ..
             } => {
                 if let ItemKind::Worktree(data) = &mut item.kind {
                     data.working_tree_diff = Some(working_tree_diff);
-                    data.working_tree_diff_with_main = Some(working_tree_diff_with_main);
                 } else {
                     debug_assert!(false, "WorkingTreeDiff result for non-worktree item");
                 }
@@ -867,6 +870,7 @@ pub fn collect(
                 has_file_changes: None,
                 would_merge_add: None,
                 is_ancestor: None,
+                is_orphan: None,
                 upstream: None,
                 pr_status: None,
                 url: None,
@@ -978,7 +982,6 @@ pub fn collect(
     //
     // These operations run in parallel using rayon::scope with single-level parallelism.
     // See module docs for the timing diagram.
-    worktrunk::shell_exec::trace_instant("Post-skeleton started");
 
     // Collect worktree paths for fsmonitor starts (macOS only, fast, no git commands).
     // Git's builtin fsmonitor has race conditions under parallel load - pre-starting
@@ -1451,6 +1454,7 @@ pub fn build_worktree_item(
         has_file_changes: None,
         would_merge_add: None,
         is_ancestor: None,
+        is_orphan: None,
         upstream: None,
         pr_status: None,
         url: None,
