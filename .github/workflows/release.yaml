@@ -353,10 +353,10 @@ jobs:
           sed -i "s|/v[0-9.]*-*[^/]*/worktrunk-x86_64-apple-darwin|/v${VERSION}/worktrunk-x86_64-apple-darwin|g" Formula/wt.rb
           sed -i "s|/v[0-9.]*-*[^/]*/worktrunk-x86_64-unknown-linux-musl|/v${VERSION}/worktrunk-x86_64-unknown-linux-musl|g" Formula/wt.rb
 
-          # Update SHA256 hashes (order: arm, intel, linux in file)
-          sed -i "0,/sha256 \"[a-f0-9]\{64\}\"/s//sha256 \"${SHA_ARM}\"/" Formula/wt.rb
-          sed -i "0,/sha256 \"[a-f0-9]\{64\}\"/s//sha256 \"${SHA_INTEL}\"/" Formula/wt.rb
-          sed -i "0,/sha256 \"[a-f0-9]\{64\}\"/s//sha256 \"${SHA_LINUX}\"/" Formula/wt.rb
+          # Update SHA256 hashes by matching the URL context above each sha256
+          sed -i "/aarch64-apple-darwin/{n;s/sha256 \"[a-f0-9]\{64\}\"/sha256 \"${SHA_ARM}\"/}" Formula/wt.rb
+          sed -i "/x86_64-apple-darwin/{n;s/sha256 \"[a-f0-9]\{64\}\"/sha256 \"${SHA_INTEL}\"/}" Formula/wt.rb
+          sed -i "/x86_64-unknown-linux-musl/{n;s/sha256 \"[a-f0-9]\{64\}\"/sha256 \"${SHA_LINUX}\"/}" Formula/wt.rb
 
           echo "Updated formula:"
           head -30 Formula/wt.rb
