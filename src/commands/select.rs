@@ -515,7 +515,7 @@ impl WorktreeSkimItem {
         let Some(default_branch) = repo.default_branch() else {
             return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of main\n");
         };
-        if self.item.counts().ahead == 0 {
+        if self.item.counts.is_some_and(|c| c.ahead == 0) {
             return cformat!(
                 "{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of <bold>{default_branch}</>\n"
             );

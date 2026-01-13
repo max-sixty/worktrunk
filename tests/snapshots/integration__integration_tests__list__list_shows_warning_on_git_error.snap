@@ -31,7 +31,7 @@ exit_code: 0
 ----- stdout -----
   [1mBranch[0m   [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m             [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
 @ main         [2m^[22m                         .                         [2ma1e809f5[0m  [2m1d[0m    [2mInitial commit
-+ feature      [33m✗[39m                         ../repo.feature           [2m00000000[0m  [2m55y[0m   [2m
++ feature      [33m✗[39m                      [2m⋯[0m  ../repo.feature           [2m00000000[0m  [2m55y[0m   [2m
 
 [2m○[22m [2mShowing 2 worktrees
 

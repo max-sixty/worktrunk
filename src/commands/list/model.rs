@@ -429,10 +429,6 @@ impl ListItem {
         self.commit.clone().unwrap_or_default()
     }
 
-    pub fn counts(&self) -> AheadBehind {
-        self.counts.unwrap_or_default()
-    }
-
     pub fn branch_diff(&self) -> Option<&BranchDiffTotals> {
         self.branch_diff.as_ref()
     }
@@ -546,8 +542,9 @@ impl ListItem {
         }
 
         // 4. Commits ahead/behind main (priority 4)
-        if let Some(formatted) =
-            ColumnKind::AheadBehind.format_diff_plain(self.counts().ahead, self.counts().behind)
+        if let Some(counts) = self.counts
+            && let Some(formatted) =
+                ColumnKind::AheadBehind.format_diff_plain(counts.ahead, counts.behind)
         {
             segments.push(StatuslineSegment::from_column(
                 formatted,
@@ -2018,17 +2015,17 @@ mod tests {
 
     #[test]
     fn test_list_item_counts() {
+        // New items have no counts computed yet
         let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-        let counts = item.counts();
-        assert_eq!(counts.ahead, 0);
-        assert_eq!(counts.behind, 0);
+        assert!(item.counts.is_none());
 
+        // After setting counts, they're accessible
         let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
         item.counts = Some(AheadBehind {
             ahead: 5,
             behind: 3,
         });
-        let counts = item.counts();
+        let counts = item.counts.unwrap();
         assert_eq!(counts.ahead, 5);
         assert_eq!(counts.behind, 3);
     }

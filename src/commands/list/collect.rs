@@ -385,7 +385,7 @@ fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], 
             items[idx].commit = Some(CommitDetails::default());
         }
         TaskKind::AheadBehind => {
-            items[idx].counts = Some(AheadBehind::default());
+            // Leave as None — UI shows `⋯` for not-loaded tasks
         }
         TaskKind::CommittedTreesMatch => {
             // Conservative: don't claim integrated if we couldn't check

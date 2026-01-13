@@ -333,7 +333,8 @@ impl LayoutConfig {
 struct ListRowContext<'a> {
     item: &'a ListItem,
     worktree_data: Option<&'a WorktreeData>,
-    counts: AheadBehind,
+    /// None means not yet loaded (show `⋯`), Some means computed (may be zero)
+    counts: Option<AheadBehind>,
     /// None means task was skipped (show `…`), Some means computed (may be zero)
     branch_diff: Option<LineDiff>,
     upstream: UpstreamStatus,
@@ -347,7 +348,7 @@ struct ListRowContext<'a> {
 impl<'a> ListRowContext<'a> {
     fn new(item: &'a ListItem, previous_branch: Option<&str>) -> Self {
         let worktree_data = item.worktree_data();
-        let counts = item.counts();
+        let counts = item.counts;
         let commit = item.commit_details();
         let branch_diff = item.branch_diff().map(|bd| bd.diff);
         let upstream = item.upstream();
@@ -469,12 +470,18 @@ impl ColumnLayout {
                 if ctx.item.is_main() {
                     return StyledLine::new();
                 }
-                let ahead = ctx.counts.ahead;
-                let behind = ctx.counts.behind;
-                if ahead == 0 && behind == 0 {
-                    return StyledLine::new();
+                match ctx.counts {
+                    Some(counts) if counts.ahead == 0 && counts.behind == 0 => StyledLine::new(),
+                    Some(counts) => self.render_diff_cell(counts.ahead, counts.behind),
+                    None => {
+                        // Not loaded yet — show spinner
+                        let mut cell = StyledLine::new();
+                        let padding = self.width.saturating_sub(1);
+                        cell.push_raw(" ".repeat(padding));
+                        cell.push_styled("⋯", Style::new().dimmed());
+                        cell
+                    }
                 }
-                self.render_diff_cell(ahead, behind)
             }
             ColumnKind::BranchDiff => {
                 if ctx.item.is_main() {
