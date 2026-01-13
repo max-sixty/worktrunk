@@ -93,7 +93,10 @@ pub(crate) fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
     log::debug!("Invoking pager: {}", pager_cmd);
 
     // LESS flags: F=quit if one screen, R=allow colors, X=no termcap init
-    let less_flags = std::env::var("LESS").unwrap_or_else(|_| "FRX".to_string());
+    // Append FRX to user's LESS setting to ensure these flags are always on for help,
+    // while preserving any other user preferences (search settings, mouse behavior, etc.)
+    let user_less = std::env::var("LESS").unwrap_or_default();
+    let less_flags = format!("{}FRX", user_less);
 
     // Always send pager output to stderr (standard for help text, like git)
     // This works in all cases: direct invocation, shell wrapper, piping, etc.
