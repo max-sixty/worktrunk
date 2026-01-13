@@ -43,6 +43,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::LazyLock;
+use worktrunk::shell;
 
 /// Regex for normalizing temporary directory paths in test snapshots
 static TMPDIR_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
@@ -2002,6 +2003,78 @@ approved-commands = ["echo 'bash background'"]
         assert!(
             output.combined.contains("exit_code: 127"),
             "Fish wrapper should return exit code 127 when binary is missing.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
+    /// Test that fish WRAPPER (bootstrap) handles missing binary gracefully
+    ///
+    /// This tests the WRAPPER file (fish_wrapper.fish) that gets installed to
+    /// ~/.config/fish/functions/wt.fish. Unlike the full function (tested above),
+    /// the wrapper tries to SOURCE the full function from the binary at runtime.
+    ///
+    /// When wt isn't in PATH:
+    /// - `command wt config shell init fish` fails
+    /// - The wrapper should return 127, NOT infinite loop
+    ///
+    /// This is different from test_fish_binary_not_found_clear_error which tests
+    /// the FULL function (which has its own WORKTRUNK_BIN check).
+    #[rstest]
+    #[case("fish")]
+    fn test_fish_wrapper_binary_not_found_no_infinite_loop(#[case] shell: &str, repo: TestRepo) {
+        // Use the WRAPPER template (not the full function from generate_wrapper)
+        let init = shell::ShellInit::with_prefix(shell::Shell::Fish, "wt".to_string());
+        let wrapper_content = init.generate_fish_wrapper().unwrap();
+
+        // Script that clears PATH so wt isn't found, then calls wt
+        let script = format!(
+            r#"
+            # Clear PATH to ensure wt is not found
+            set -x PATH /usr/bin /bin
+            set -x CLICOLOR_FORCE 1
+            {}
+            wt --version
+            echo "exit_code: $status"
+            "#,
+            wrapper_content
+        );
+
+        let final_script = format!("begin\n{}\nend 2>&1", script);
+
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path);
+
+        let (combined, exit_code) =
+            exec_in_pty_interactive(shell, &final_script, repo.root_path(), &env_vars, &[]);
+
+        let output = ShellOutput {
+            combined,
+            exit_code,
+        };
+
+        // Should NOT show signs of infinite recursion (stack overflow, repeated function calls)
+        // One occurrence of "in function 'wt'" is normal (fish's error trace).
+        // Infinite recursion would show this MANY times.
+        let function_call_count = output.combined.matches("in function 'wt'").count();
+        assert!(
+            function_call_count <= 1,
+            "Fish wrapper should not infinite loop (found {} recursive calls).\nOutput:\n{}",
+            function_call_count,
+            output.combined
+        );
+
+        // Should return exit code 127 (command not found)
+        assert!(
+            output.combined.contains("exit_code: 127"),
+            "Fish wrapper should return exit code 127 when binary is missing.\nOutput:\n{}",
+            output.combined
+        );
+
+        // Should show fish's error message about unknown command
+        assert!(
+            output.combined.contains("Unknown command")
+                || output.combined.contains("command not found"),
+            "Fish wrapper should show error when binary is missing.\nOutput:\n{}",
             output.combined
         );
     }
