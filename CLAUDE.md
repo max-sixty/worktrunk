@@ -153,6 +153,36 @@ for line in reader.lines() {
 let lines: Vec<_> = reader.lines().collect();
 ```
 
+### Structured Output Over Error Message Parsing
+
+Prefer structured output (exit codes, `--porcelain`, `--json`) over parsing human-readable messages. Error messages break on locale changes, version updates, and minor rewording.
+
+```rust
+// GOOD - exit codes encode meaning
+// git merge-base: 0 = found, 1 = no common ancestor, 128 = invalid ref
+if output.status.success() {
+    Some(parse_sha(&output.stdout))
+} else if output.status.code() == Some(1) {
+    None
+} else {
+    bail!("git merge-base failed: {}", stderr)
+}
+
+// BAD - parsing error messages (breaks on wording changes)
+if msg.contains("no merge base") { return Ok(true); }
+```
+
+**Structured alternatives:**
+
+| Tool | Fragile | Structured |
+|------|---------|------------|
+| `git diff` | `--shortstat` (localized) | `--numstat` |
+| `git status` | default | `--porcelain=v2` |
+| `git merge-base` | error messages | exit codes |
+| `gh` / `glab` | default | `--json` |
+
+When no structured alternative exists, document the fragility inline.
+
 ## Background Operation Logs
 
 All background logs are centralized in `.git/wt-logs/` (main worktree's git directory):

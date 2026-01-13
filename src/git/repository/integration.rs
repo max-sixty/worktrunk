@@ -33,17 +33,10 @@ impl Repository {
     /// For orphan branches (no common ancestor with target), returns true since all
     /// their changes are unique.
     pub fn has_added_changes(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
-        // Try to get merge-base (cached). Orphan branches will fail here.
-        let merge_base = match self.merge_base(target, branch) {
-            Ok(base) => base,
-            Err(e) => {
-                // Check if it's an orphan branch (no common ancestor)
-                let msg = e.to_string();
-                if msg.contains("no merge base") || msg.contains("Not a valid commit") {
-                    return Ok(true); // Orphan branches have unique changes
-                }
-                return Err(e);
-            }
+        // Try to get merge-base (cached). Orphan branches return None.
+        let Some(merge_base) = self.merge_base(target, branch)? else {
+            // Orphan branches have no common ancestor, so all their changes are unique
+            return Ok(true);
         };
 
         // git diff --name-only merge_base..branch shows files changed from merge-base to branch

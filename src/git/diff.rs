@@ -72,65 +72,45 @@ impl From<(usize, usize)> for LineDiff {
     }
 }
 
-/// Parse git diff --shortstat output
-#[derive(Debug)]
+/// Diff statistics (files changed, insertions, deletions).
+#[derive(Debug, Default)]
 pub struct DiffStats {
-    pub files: Option<usize>,
-    pub insertions: Option<usize>,
-    pub deletions: Option<usize>,
+    pub files: usize,
+    pub insertions: usize,
+    pub deletions: usize,
 }
 
 impl DiffStats {
-    /// Construct stats from `git diff --shortstat` output.
-    pub fn from_shortstat(output: &str) -> Self {
-        let mut stats = DiffStats {
-            files: None,
-            insertions: None,
-            deletions: None,
-        };
-
-        // Example: " 3 files changed, 45 insertions(+), 12 deletions(-)"
-        let parts: Vec<&str> = output.split(',').collect();
-
-        for part in parts {
-            let part = part.trim();
-
-            if part.contains("file") {
-                if let Some(num_str) = part.split_whitespace().next() {
-                    stats.files = num_str.parse().ok();
-                }
-            } else if part.contains("insertion") {
-                if let Some(num_str) = part.split_whitespace().next() {
-                    stats.insertions = num_str.parse().ok();
-                }
-            } else if part.contains("deletion")
-                && let Some(num_str) = part.split_whitespace().next()
-            {
-                stats.deletions = num_str.parse().ok();
+    /// Construct stats from `git diff --numstat` output.
+    pub fn from_numstat(output: &str) -> Self {
+        let mut stats = Self::default();
+        for line in output.lines() {
+            if let Some((added, deleted)) = parse_numstat_line(line) {
+                stats.files += 1;
+                stats.insertions += added;
+                stats.deletions += deleted;
+            } else if !line.trim().is_empty() {
+                // Binary file (shows as "-\t-\tfilename") - count file but not lines
+                stats.files += 1;
             }
         }
-
         stats
     }
 
-    /// Format stats as a summary string (e.g., "3 files, +45, -12")
+    /// Format stats as a summary string (e.g., "3 files, +45, -12").
+    /// Zero values are omitted.
     pub fn format_summary(&self) -> Vec<String> {
         let mut parts = Vec::new();
-
-        if let Some(files) = self.files {
-            parts.push(format!(
-                "{} file{}",
-                files,
-                if files == 1 { "" } else { "s" }
-            ));
+        if self.files > 0 {
+            let s = if self.files == 1 { "" } else { "s" };
+            parts.push(format!("{} file{}", self.files, s));
         }
-        if let Some(insertions) = self.insertions {
-            parts.push(cformat!("<green>+{insertions}</>"));
+        if self.insertions > 0 {
+            parts.push(cformat!("<green>+{}</>", self.insertions));
         }
-        if let Some(deletions) = self.deletions {
-            parts.push(cformat!("<red>-{deletions}</>"));
+        if self.deletions > 0 {
+            parts.push(cformat!("<red>-{}</>", self.deletions));
         }
-
         parts
     }
 }
@@ -327,119 +307,82 @@ mod tests {
     // ============================================================================
 
     #[test]
-    fn test_diff_stats_from_shortstat_empty() {
-        let stats = DiffStats::from_shortstat("");
-        assert!(stats.files.is_none());
-        assert!(stats.insertions.is_none());
-        assert!(stats.deletions.is_none());
-    }
-
-    #[test]
-    fn test_diff_stats_from_shortstat_full() {
-        let output = " 3 files changed, 45 insertions(+), 12 deletions(-)";
-        let stats = DiffStats::from_shortstat(output);
-        assert_eq!(stats.files, Some(3));
-        assert_eq!(stats.insertions, Some(45));
-        assert_eq!(stats.deletions, Some(12));
-    }
-
-    #[test]
-    fn test_diff_stats_from_shortstat_single_file() {
-        let output = " 1 file changed, 10 insertions(+)";
-        let stats = DiffStats::from_shortstat(output);
-        assert_eq!(stats.files, Some(1));
-        assert_eq!(stats.insertions, Some(10));
-        assert!(stats.deletions.is_none());
-    }
-
-    #[test]
-    fn test_diff_stats_from_shortstat_only_deletions() {
-        let output = " 2 files changed, 5 deletions(-)";
-        let stats = DiffStats::from_shortstat(output);
-        assert_eq!(stats.files, Some(2));
-        assert!(stats.insertions.is_none());
-        assert_eq!(stats.deletions, Some(5));
-    }
-
-    #[test]
-    fn test_diff_stats_from_shortstat_no_changes() {
-        // Output when comparing identical trees
-        let output = "";
-        let stats = DiffStats::from_shortstat(output);
-        assert!(stats.files.is_none());
-    }
-
-    #[test]
     fn test_diff_stats_format_summary_empty() {
-        let stats = DiffStats {
-            files: None,
-            insertions: None,
-            deletions: None,
-        };
-        let summary = stats.format_summary();
-        assert!(summary.is_empty());
+        let stats = DiffStats::default();
+        assert!(stats.format_summary().is_empty());
     }
 
     #[test]
     fn test_diff_stats_format_summary_all_parts() {
         let stats = DiffStats {
-            files: Some(3),
-            insertions: Some(45),
-            deletions: Some(12),
+            files: 3,
+            insertions: 45,
+            deletions: 12,
         };
         let summary = stats.format_summary();
         assert_eq!(summary.len(), 3);
         assert_eq!(summary[0], "3 files");
-        assert!(summary[1].contains("45")); // Has color codes
-        assert!(summary[2].contains("12")); // Has color codes
+        assert!(summary[1].contains("45"));
+        assert!(summary[2].contains("12"));
     }
 
     #[test]
     fn test_diff_stats_format_summary_single_file() {
         let stats = DiffStats {
-            files: Some(1),
-            insertions: Some(10),
-            deletions: None,
+            files: 1,
+            insertions: 10,
+            deletions: 0,
         };
         let summary = stats.format_summary();
         assert_eq!(summary.len(), 2);
-        assert_eq!(summary[0], "1 file"); // Singular
+        assert_eq!(summary[0], "1 file");
         assert!(summary[1].contains("10"));
     }
 
+    // ============================================================================
+    // DiffStats::from_numstat Tests
+    // ============================================================================
+
     #[test]
-    fn test_diff_stats_format_summary_only_files() {
-        let stats = DiffStats {
-            files: Some(5),
-            insertions: None,
-            deletions: None,
-        };
-        let summary = stats.format_summary();
-        assert_eq!(summary.len(), 1);
-        assert_eq!(summary[0], "5 files");
+    fn test_diff_stats_from_numstat_empty() {
+        let stats = DiffStats::from_numstat("");
+        assert_eq!(stats.files, 0);
+        assert_eq!(stats.insertions, 0);
+        assert_eq!(stats.deletions, 0);
     }
 
     #[test]
-    fn test_diff_stats_format_summary_only_insertions() {
-        let stats = DiffStats {
-            files: None,
-            insertions: Some(100),
-            deletions: None,
-        };
-        let summary = stats.format_summary();
-        assert_eq!(summary.len(), 1);
-        assert!(summary[0].contains("100"));
+    fn test_diff_stats_from_numstat_single_file() {
+        let stats = DiffStats::from_numstat("45\t12\tpath/to/file.rs");
+        assert_eq!(stats.files, 1);
+        assert_eq!(stats.insertions, 45);
+        assert_eq!(stats.deletions, 12);
     }
 
     #[test]
-    fn test_diff_stats_format_summary_only_deletions() {
-        let stats = DiffStats {
-            files: None,
-            insertions: None,
-            deletions: Some(50),
-        };
-        let summary = stats.format_summary();
-        assert_eq!(summary.len(), 1);
-        assert!(summary[0].contains("50"));
+    fn test_diff_stats_from_numstat_multiple_files() {
+        let output = "10\t5\tsrc/main.rs\n20\t3\tsrc/lib.rs\n15\t4\ttests/test.rs";
+        let stats = DiffStats::from_numstat(output);
+        assert_eq!(stats.files, 3);
+        assert_eq!(stats.insertions, 45);
+        assert_eq!(stats.deletions, 12);
+    }
+
+    #[test]
+    fn test_diff_stats_from_numstat_binary_file() {
+        // Binary files show as "-" for both counts - file counted, no line stats
+        let stats = DiffStats::from_numstat("-\t-\timage.png");
+        assert_eq!(stats.files, 1);
+        assert_eq!(stats.insertions, 0);
+        assert_eq!(stats.deletions, 0);
+    }
+
+    #[test]
+    fn test_diff_stats_from_numstat_mixed_binary_and_text() {
+        let output = "10\t5\tsrc/main.rs\n-\t-\tassets/logo.png\n20\t0\tsrc/lib.rs";
+        let stats = DiffStats::from_numstat(output);
+        assert_eq!(stats.files, 3);
+        assert_eq!(stats.insertions, 30);
+        assert_eq!(stats.deletions, 5);
     }
 }
