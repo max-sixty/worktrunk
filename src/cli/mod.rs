@@ -3,13 +3,13 @@ mod hook;
 mod list;
 mod step;
 
-pub use config::{
+pub(crate) use config::{
     ApprovalsCommand, CiStatusAction, ConfigCommand, ConfigShellCommand, DefaultBranchAction,
     HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand,
 };
-pub use hook::HookCommand;
-pub use list::ListSubcommand;
-pub use step::StepCommand;
+pub(crate) use hook::HookCommand;
+pub(crate) use list::ListSubcommand;
+pub(crate) use step::StepCommand;
 
 use clap::builder::styling::{AnsiColor, Color, Styles};
 use clap::{Command, CommandFactory, Parser, Subcommand, ValueEnum};
@@ -106,7 +106,7 @@ fn shell_value_name() -> &'static str {
 }
 
 /// Build a clap Command for Cli with the shared help template applied recursively.
-pub fn build_command() -> Command {
+pub(crate) fn build_command() -> Command {
     let cmd = apply_help_template_recursive(Cli::command(), DEFAULT_COMMAND_NAME);
 
     // Set value_name for Shell args to show options in usage/errors
@@ -130,7 +130,7 @@ const NESTED_COMMAND_PARENTS: &[&str] = &["step", "hook"];
 /// Check if an unrecognized subcommand matches a nested subcommand.
 ///
 /// Returns the full command path if found, e.g., "wt step squash" for "squash".
-pub fn suggest_nested_subcommand(cmd: &Command, unknown: &str) -> Option<String> {
+pub(crate) fn suggest_nested_subcommand(cmd: &Command, unknown: &str) -> Option<String> {
     for parent in NESTED_COMMAND_PARENTS {
         if let Some(parent_cmd) = cmd.get_subcommands().find(|c| c.get_name() == *parent)
             && parent_cmd
@@ -159,7 +159,7 @@ fn apply_help_template_recursive(mut cmd: Command, path: &str) -> Command {
 ///
 /// Returns the git describe version if available (e.g., "v0.8.5-3-gabcdef"),
 /// otherwise falls back to the cargo package version (e.g., "0.8.5").
-pub fn version_str() -> &'static str {
+pub(crate) fn version_str() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
     VERSION.get_or_init(|| {
         let git_version = env!("VERGEN_GIT_DESCRIBE");
@@ -174,7 +174,7 @@ pub fn version_str() -> &'static str {
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub enum OutputFormat {
+pub(crate) enum OutputFormat {
     /// Human-readable table format
     Table,
     /// JSON output
@@ -204,7 +204,7 @@ Run `wt config create` to customize worktree locations.
 
 Docs: https://worktrunk.dev
 GitHub: https://github.com/max-sixty/worktrunk")]
-pub struct Cli {
+pub(crate) struct Cli {
     /// Working directory for this command
     #[arg(
         short = 'C',
@@ -241,7 +241,7 @@ pub struct Cli {
 }
 
 #[derive(Subcommand)]
-pub enum Commands {
+pub(crate) enum Commands {
     /// Switch to a worktree
     #[command(
         after_long_help = r#"Change directory to a worktree, creating one if needed.

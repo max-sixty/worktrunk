@@ -72,7 +72,7 @@ fn detect_help_pager() -> Option<String> {
 /// Note: All fallbacks output to stderr for consistency with pager behavior
 /// (which sends output to stderr via `>&2`). This ensures `config show`
 /// works correctly since stdout is reserved for data output.
-pub fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
+pub(crate) fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
     let Some(pager_cmd) = detect_help_pager() else {
         log::debug!("No pager configured, printing help directly to stderr");
         eprint!("{}", help_text);
