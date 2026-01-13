@@ -736,21 +736,10 @@ pub fn execute_switch(
 
             // Create worktree
             if let Err(e) = repo.run_command(&args) {
-                let msg = e.to_string();
-                // If path exists (race condition - plan_switch checked but something created it),
-                // use our known worktree_path rather than parsing git's locale-sensitive stderr
-                if msg.contains("already exists") {
-                    return Err(GitError::WorktreePathExists {
-                        branch: branch.clone(),
-                        path: worktree_path,
-                        create: create_branch,
-                    }
-                    .into());
-                }
                 return Err(GitError::WorktreeCreationFailed {
                     branch: branch.clone(),
                     base_branch: base_branch.clone(),
-                    error: msg,
+                    error: e.to_string(),
                 }
                 .into());
             }
@@ -811,25 +800,6 @@ pub fn execute_switch(
             ))
         }
     }
-}
-
-/// Switch to a worktree (convenience wrapper around plan_switch + execute_switch).
-///
-/// For new code, prefer calling `plan_switch()` then `execute_switch()` separately
-/// to allow approval prompts between validation and execution.
-#[cfg(unix)]
-pub(crate) fn handle_switch(
-    branch: &str,
-    create: bool,
-    base: Option<&str>,
-    force: bool,
-    clobber: bool,
-    no_verify: bool,
-    config: &WorktrunkConfig,
-) -> anyhow::Result<(SwitchResult, SwitchBranchInfo)> {
-    let repo = Repository::current()?;
-    let plan = plan_switch(&repo, branch, create, base, clobber, config)?;
-    execute_switch(&repo, plan, config, force, no_verify)
 }
 
 pub fn handle_remove(
