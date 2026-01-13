@@ -408,7 +408,7 @@ fn build_prompt(
     Ok(rendered)
 }
 
-pub fn generate_commit_message(
+pub(crate) fn generate_commit_message(
     commit_generation_config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
     // Check if commit generation is configured (non-empty command)
@@ -470,7 +470,7 @@ fn try_generate_commit_message(
 ///
 /// Gathers the staged diff, branch name, repo name, and recent commits, then renders
 /// the prompt template. Used by both normal commit generation and `--show-prompt`.
-pub fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<String> {
+pub(crate) fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<String> {
     let repo = Repository::current()?;
 
     // Get staged diff and diffstat
@@ -517,7 +517,7 @@ pub fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<St
     build_prompt(config, TemplateType::Commit, &context)
 }
 
-pub fn generate_squash_message(
+pub(crate) fn generate_squash_message(
     target_branch: &str,
     merge_base: &str,
     subjects: &[String],
@@ -564,7 +564,7 @@ pub fn generate_squash_message(
 ///
 /// Gathers the combined diff, commit subjects, branch names, and recent commits, then
 /// renders the prompt template. Used by both normal squash generation and `--show-prompt`.
-pub fn build_squash_prompt(
+pub(crate) fn build_squash_prompt(
     target_branch: &str,
     merge_base: &str,
     subjects: &[String],
@@ -626,7 +626,7 @@ const SYNTHETIC_DIFF_STAT: &str = " src/main.rs | 4 ++++
 ///
 /// Returns Ok(message) if the LLM command succeeds, or an error describing
 /// what went wrong (command not found, API error, empty response, etc.)
-pub fn test_commit_generation(
+pub(crate) fn test_commit_generation(
     commit_generation_config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
     if !commit_generation_config.is_configured() {

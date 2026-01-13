@@ -101,7 +101,7 @@ Shell integration: {{ shell_integration }}
 "#;
 
 /// Collected diagnostic information for issue reporting.
-pub struct DiagnosticReport {
+pub(crate) struct DiagnosticReport {
     /// Formatted markdown content
     content: String,
 }
@@ -195,7 +195,7 @@ impl DiagnosticReport {
 /// TODO: Consider showing this hint automatically when any `log::warn!` occurs
 /// during command execution, since runtime warnings often indicate unexpected
 /// conditions that could be bugs worth reporting.
-pub fn issue_hint() -> String {
+pub(crate) fn issue_hint() -> String {
     cformat!("To create a diagnostic file, run with <bright-black>-vv</>")
 }
 

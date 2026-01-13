@@ -24,7 +24,7 @@ mod output;
 mod pager;
 mod verbose_log;
 
-pub use crate::cli::OutputFormat;
+pub(crate) use crate::cli::OutputFormat;
 
 use commands::command_executor::{CommandContext, build_hook_context};
 #[cfg(unix)]
@@ -81,7 +81,7 @@ fn is_git_subcommand() -> bool {
 ///
 /// Used in error messages to show what command was actually run.
 /// Returns the full invocation path (e.g., `target/debug/wt`, `./wt`, `wt`).
-pub fn invocation_path() -> String {
+pub(crate) fn invocation_path() -> String {
     std::env::args().next().unwrap_or_else(|| "wt".to_string())
 }
 
@@ -143,7 +143,7 @@ pub fn invocation_path() -> String {
 ///
 /// The argv\[0\] heuristic is simple, fast, and catches all cases where shell
 /// integration won't work because the shell wrapper wasn't invoked.
-pub fn was_invoked_with_explicit_path() -> bool {
+pub(crate) fn was_invoked_with_explicit_path() -> bool {
     std::env::args()
         .next()
         .map(|arg0| arg0.contains('/') || arg0.contains('\\'))
