@@ -29,19 +29,19 @@
 //! See [`shell_integration`] module for the complete spec of warning messages.
 
 mod global;
-pub mod handlers;
-pub mod shell_integration;
+pub(crate) mod handlers;
+pub(crate) mod shell_integration;
 
 // Re-export the public API
-pub use global::{
+pub(crate) use global::{
     blank, change_directory, execute, flush, is_shell_integration_active, post_hook_display_path,
     pre_hook_display_path, print, stdout, terminate_output,
 };
 // Re-export output handlers
-pub use handlers::{
+pub(crate) use handlers::{
     execute_command_in_worktree, execute_user_command, handle_remove_output, handle_switch_output,
 };
 // Re-export shell integration functions
-pub use shell_integration::{
+pub(crate) use shell_integration::{
     print_shell_install_result, print_skipped_shells, prompt_shell_integration,
 };

@@ -36,5 +36,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Will remove [1m~/.config/fish/conf.d/wt.fish[0m (deprecated; now using [1m~/.config/fish/functions/wt.fish[0m)
+[2m○[22m Will remove shell extension for [1mfish[0m @ [1m~/.config/fish/functions/wt.fish
 [2m○[22m Will remove completions for [1mfish[0m @ [1m~/.config/fish/completions/wt.fish

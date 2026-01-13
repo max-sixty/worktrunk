@@ -5,7 +5,7 @@ info:
   args:
     - config
     - shell
-    - uninstall
+    - install
     - fish
     - "--dry-run"
   env:
@@ -36,5 +36,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Will remove [1m~/.config/fish/conf.d/wt.fish[0m (deprecated; now using [1m~/.config/fish/functions/wt.fish[0m)
-[2m○[22m Will remove completions for [1mfish[0m @ [1m~/.config/fish/completions/wt.fish
+[2m○[22m Will add completions for [1mfish[0m @ [1m~/.config/fish/completions/wt.fish
+[107m [0m [2m# worktrunk completions for fish[0m[2m
+[107m [0m [2m[0m[2m[34mcomplete[0m[2m [0m[2m[36m--keep-order[0m[2m [0m[2m[36m--exclusive[0m[2m [0m[2m[36m--command[0m[2m wt [0m[2m[36m--arguments[0m[2m [0m[2m[32m"(test -n /"/$WORKTRUNK_BIN/"; or set -l WORKTRUNK_BIN (type -P wt 2>/dev/null); and COMPLETE=fish /$WORKTRUNK_BIN -- (commandline --current-process --tokenize --cut-at-cursor) (commandline --current-token))"[0m[2m

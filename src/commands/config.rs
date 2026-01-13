@@ -505,12 +505,23 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     // Get detection details to show matched lines inline
     let detection_results = scan_for_detection_details(&cmd).unwrap_or_default();
 
+    // Check for legacy fish conf.d path (deprecated location from before #566)
+    // We need this early to handle the case where fish shows "Not configured" at the
+    // new location but has valid integration at the legacy location.
+    let legacy_fish_conf_d = Shell::legacy_fish_conf_d_path(&cmd).ok();
+    let legacy_fish_has_integration = legacy_fish_conf_d.as_ref().is_some_and(|legacy_path| {
+        detection_results
+            .iter()
+            .any(|d| d.path == *legacy_path && !d.matched_lines.is_empty())
+    });
+
     let mut any_not_configured = false;
+    let mut not_configured_shells: Vec<Shell> = Vec::new();
     let mut has_any_unmatched = false;
 
     // Show configured and not-configured shells (matching `config shell install` format exactly)
     // Bash/Zsh: inline completions, show "shell extension & completions"
-    // Fish: separate completion file, show "shell extension" for conf.d and "completions" for completions/
+    // Fish: separate completion file, show "shell extension" for functions/ and "completions" for completions/
     for result in &scan_result.configured {
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
@@ -597,30 +608,93 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                         )?;
                     } else {
                         any_not_configured = true;
+                        if !not_configured_shells.contains(&shell) {
+                            not_configured_shells.push(shell);
+                        }
                         writeln!(
                             out,
                             "{}",
-                            hint_message(format!(
-                                "Not configured completions for {shell} @ {completion_display}"
-                            ))
+                            hint_message(format!("Not configured completions for {shell}"))
                         )?;
                     }
                 }
             }
             ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
-                any_not_configured = true;
-                writeln!(
-                    out,
-                    "{}",
-                    hint_message(format!("Not configured {what} for {shell} @ {path}"))
-                )?;
+                // For fish, check if we have valid integration at the legacy conf.d location
+                if matches!(shell, Shell::Fish) && legacy_fish_has_integration {
+                    // Show migration hint instead of "Not configured"
+                    let legacy_path = legacy_fish_conf_d
+                        .as_ref()
+                        .map(|p| format_path_for_display(p))
+                        .unwrap_or_default();
+                    writeln!(
+                        out,
+                        "{}",
+                        info_message(cformat!(
+                            "Fish integration found in deprecated location @ <bold>{legacy_path}</>"
+                        ))
+                    )?;
+                    // Get canonical path for the migration hint
+                    let canonical_path = Shell::Fish
+                        .config_paths(&cmd)
+                        .ok()
+                        .and_then(|p| p.into_iter().next())
+                        .map(|p| format_path_for_display(&p))
+                        .unwrap_or_else(|| "~/.config/fish/functions/".to_string());
+                    writeln!(
+                        out,
+                        "{}",
+                        hint_message(cformat!(
+                            "To migrate to <bright-black>{canonical_path}</>, run <bright-black>{cmd} config shell install fish</>"
+                        ))
+                    )?;
+                } else {
+                    any_not_configured = true;
+                    if !not_configured_shells.contains(&shell) {
+                        not_configured_shells.push(shell);
+                    }
+                    writeln!(
+                        out,
+                        "{}",
+                        hint_message(format!("Not configured {what} for {shell}"))
+                    )?;
+                }
             }
             _ => {} // Added/Created won't appear in dry_run mode
         }
     }
 
     // Show skipped (not installed) shells
+    // For fish with legacy integration, show migration hint instead of "skipped"
     for (shell, path) in &scan_result.skipped {
+        if matches!(shell, Shell::Fish) && legacy_fish_has_integration {
+            // Show migration hint for legacy fish location
+            let legacy_path = legacy_fish_conf_d
+                .as_ref()
+                .map(|p| format_path_for_display(p))
+                .unwrap_or_default();
+            let canonical_path = Shell::Fish
+                .config_paths(&cmd)
+                .ok()
+                .and_then(|p| p.into_iter().next())
+                .map(|p| format_path_for_display(&p))
+                .unwrap_or_else(|| "~/.config/fish/functions/".to_string());
+            writeln!(
+                out,
+                "{}",
+                info_message(cformat!(
+                    "Fish integration found in deprecated location @ <bold>{legacy_path}</>"
+                ))
+            )?;
+            writeln!(
+                out,
+                "{}",
+                hint_message(cformat!(
+                    "To migrate to <bright-black>{canonical_path}</>, run <bright-black>{cmd} config shell install fish</>"
+                ))
+            )?;
+            continue;
+        }
         let path = format_path_for_display(path);
         writeln!(
             out,
@@ -629,23 +703,28 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         )?;
     }
 
-    // Summary hint
-    if any_not_configured {
+    // Summary hint - be specific about which shells need configuration
+    if any_not_configured && !not_configured_shells.is_empty() {
         writeln!(out)?;
+        // CLI accepts one shell at a time, so suggest the base command
+        // which auto-detects and configures all available shells
         writeln!(
             out,
             "{}",
             hint_message(cformat!(
-                "To enable shell integration, run <bright-black>wt config shell install</>"
+                "To configure, run <bright-black>{cmd} config shell install</>"
             ))
         )?;
     }
 
     // Show potential false negatives (lines containing cmd but not detected)
+    // Skip files that have valid integration detected (matched_lines) - those are fine,
+    // and the other lines containing cmd are just part of the integration script.
     for detection in &detection_results {
-        if !detection.unmatched_candidates.is_empty() {
+        if !detection.unmatched_candidates.is_empty() && detection.matched_lines.is_empty() {
             has_any_unmatched = true;
             let path = format_path_for_display(&detection.path);
+
             // Build file:line location (clickable in terminals)
             let line_nums: Vec<_> = detection
                 .unmatched_candidates
@@ -736,12 +815,21 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             urlencoding::encode(&body)
         );
 
-        writeln!(out)?;
+        // Quote a short version of the unmatched content in the hint
+        let quoted = if unmatched_summary.len() == 1 {
+            format!("`{}`", unmatched_summary[0])
+        } else {
+            format!(
+                "`{}` (and {} more)",
+                unmatched_summary[0],
+                unmatched_summary.len() - 1
+            )
+        };
         writeln!(
             out,
             "{}",
             hint_message(format!(
-                "If this is shell integration, report a false negative: {issue_url}"
+                "If {quoted} is shell integration, report a false negative: {issue_url}"
             ))
         )?;
     }

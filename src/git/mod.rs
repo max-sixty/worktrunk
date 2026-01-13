@@ -29,7 +29,8 @@ use std::sync::LazyLock;
 static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
 
 // Re-exports from submodules
-pub use diff::{DiffStats, LineDiff, parse_numstat_line};
+pub(crate) use diff::DiffStats;
+pub use diff::{LineDiff, parse_numstat_line};
 pub use error::{
     // Typed error enum (Display produces styled output)
     GitError,
@@ -42,7 +43,8 @@ pub use error::{
 };
 pub use parse::{parse_porcelain_z, parse_untracked_files};
 pub use repository::{Repository, ResolvedWorktree, WorkingTree, set_base_path};
-pub use url::{GitRemoteUrl, parse_owner_repo, parse_remote_host, parse_remote_owner};
+pub(crate) use url::GitRemoteUrl;
+pub use url::{parse_owner_repo, parse_remote_owner};
 /// Why branch content is considered integrated into the target branch.
 ///
 /// Used by both `wt list` (for status symbols) and `wt remove` (for messages).

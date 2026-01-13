@@ -40,7 +40,7 @@ fn render_markdown_in_help(help: &str) -> String {
 ///
 /// If `width` is provided, prose text is wrapped to that width. Tables, code blocks,
 /// and headers are never wrapped (tables need full-width rows for alignment).
-pub fn render_markdown_in_help_with_width(help: &str, width: Option<usize>) -> String {
+pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize>) -> String {
     let green = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green)));
     let dimmed = Style::new().dimmed();
 
@@ -128,7 +128,7 @@ fn render_table(lines: &[&str], max_width: Option<usize>) -> String {
 }
 
 /// Render a markdown table from markdown source string (no indent)
-pub fn render_markdown_table(markdown: &str) -> String {
+pub(crate) fn render_markdown_table(markdown: &str) -> String {
     let lines: Vec<&str> = markdown
         .lines()
         .filter(|l| l.trim().starts_with('|') && l.trim().ends_with('|'))

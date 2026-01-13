@@ -43,15 +43,14 @@ exit_code: 0
 [33m▲[39m [33mShell integration not active[39m
 [107m [0m Binary invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
 
-[2m↳[22m [2mNot configured shell extension & completions for bash @ ~/.bashrc[22m
+[2m↳[22m [2mNot configured shell extension & completions for bash[22m
 [2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
-[2m○[22m [2mSkipped fish; ~/.config/fish/conf.d not found[22m
+[2m○[22m [2mSkipped fish; ~/.config/fish/functions not found[22m
 
-[2m↳[22m [2mTo enable shell integration, run [90mwt config shell install[39m[22m
+[2m↳[22m [2mTo configure, run [90mwt config shell install[39m[22m
 [33m▲[39m [33mFound [1mwt[22m in [1m~/.bashrc:3[22m but not detected as integration:[39m
 [107m [0m [2m[0m[2m[34malias[0m[2m wt=[0m[2m[32m"git worktree"[0m[2m
-
-[2m↳[22m [2mIf this is shell integration, report a false negative: https://github.com/max-sixty/worktrunk/issues/new?title=Shell%20integration%20detection%20false%20negative&body=Shell%20integration%20not%20detected%20despite%20config%20containing%20%60wt%60.%0A%0A%2A%2AUnmatched%20lines%3A%2A%2A%0A%60%60%60%0Aalias%20wt%3D%22git%20worktree%22%0A%60%60%60%0A%0A%2A%2AExpected%20behavior%3A%2A%2A%20These%20lines%20should%20be%20detected%20as%20shell%20integration.[22m
+[2m↳[22m [2mIf `alias wt="git worktree"` is shell integration, report a false negative: https://github.com/max-sixty/worktrunk/issues/new?title=Shell%20integration%20detection%20false%20negative&body=Shell%20integration%20not%20detected%20despite%20config%20containing%20%60wt%60.%0A%0A%2A%2AUnmatched%20lines%3A%2A%2A%0A%60%60%60%0Aalias%20wt%3D%22git%20worktree%22%0A%60%60%60%0A%0A%2A%2AExpected%20behavior%3A%2A%2A%20These%20lines%20should%20be%20detected%20as%20shell%20integration.[22m
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m

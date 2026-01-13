@@ -5,9 +5,9 @@ info:
   args:
     - config
     - shell
-    - uninstall
+    - install
     - fish
-    - "--dry-run"
+    - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -36,5 +36,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Will remove [1m~/.config/fish/conf.d/wt.fish[0m (deprecated; now using [1m~/.config/fish/functions/wt.fish[0m)
-[2m○[22m Will remove completions for [1mfish[0m @ [1m~/.config/fish/completions/wt.fish
+[32m✓[39m [32mCreated shell extension for [1mfish[22m @ [1m~/.config/fish/functions/wt.fish[22m[39m
+[32m✓[39m [32mCreated completions for [1mfish[22m @ [1m~/.config/fish/completions/wt.fish[22m[39m
+[2m○[22m Removed [1m~/.config/fish/conf.d/wt.fish[22m (deprecated; now using [1m~/.config/fish/functions/wt.fish[22m)
+
+[32m✓[39m [32mConfigured 1 shell[39m
+[2m↳[22m [2mRestart shell to activate shell integration[22m

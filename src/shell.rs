@@ -445,7 +445,10 @@ pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>,
             .map(PathBuf::from)
             .unwrap_or_else(|_| home.clone())
             .join(".zshrc"),
-        // Fish conf.d
+        // Fish functions/ (current location)
+        home.join(".config/fish/functions")
+            .join(format!("{cmd}.fish")),
+        // Fish conf.d (legacy location - for detecting existing installs)
         home.join(".config/fish/conf.d").join(format!("{cmd}.fish")),
     ];
 
@@ -486,7 +489,7 @@ pub enum Shell {
 impl Shell {
     /// Returns the config file paths for this shell.
     ///
-    /// The `cmd` parameter affects the Fish conf.d filename (e.g., `wt.fish` or `git-wt.fish`).
+    /// The `cmd` parameter affects the Fish functions filename (e.g., `wt.fish` or `git-wt.fish`).
     /// Returns paths in order of preference. The first existing file should be used.
     pub fn config_paths(&self, cmd: &str) -> Result<Vec<PathBuf>, std::io::Error> {
         let home = home_dir_required()?;
@@ -503,17 +506,34 @@ impl Shell {
                 vec![zdotdir.join(".zshrc")]
             }
             Self::Fish => {
-                // For fish, we write to conf.d/ which is auto-sourced
-                // Filename includes prefix to avoid conflicts (e.g., wt.fish, git-wt.fish)
+                // For fish, we write to functions/ which is autoloaded on first use.
+                // This ensures PATH is fully configured before our function loads,
+                // fixing the issue where Homebrew PATH setup in config.fish runs
+                // after conf.d/ files. See: https://github.com/max-sixty/worktrunk/issues/566
                 vec![
                     home.join(".config")
                         .join("fish")
-                        .join("conf.d")
+                        .join("functions")
                         .join(format!("{}.fish", cmd)),
                 ]
             }
             Self::PowerShell => powershell_profile_paths(&home),
         })
+    }
+
+    /// Returns the legacy fish conf.d path for cleanup purposes.
+    ///
+    /// Previously, fish shell integration was installed to `~/.config/fish/conf.d/{cmd}.fish`.
+    /// This caused issues with Homebrew PATH setup (see issue #566). We now install to
+    /// `functions/{cmd}.fish` instead. This method returns the legacy path so install/uninstall
+    /// can clean it up.
+    pub fn legacy_fish_conf_d_path(cmd: &str) -> Result<PathBuf, std::io::Error> {
+        let home = home_dir_required()?;
+        Ok(home
+            .join(".config")
+            .join("fish")
+            .join("conf.d")
+            .join(format!("{}.fish", cmd)))
     }
 
     /// Returns the path to the native completion directory for this shell.
@@ -620,7 +640,7 @@ impl ShellInit {
         Self { shell, cmd }
     }
 
-    /// Generate shell integration code
+    /// Generate shell integration code (for `wt config shell init`)
     pub fn generate(&self) -> Result<String, askama::Error> {
         match self.shell {
             Shell::Bash => {
@@ -644,6 +664,15 @@ impl ShellInit {
             }
         }
     }
+
+    /// Generate fish wrapper code (for `wt config shell install fish`)
+    ///
+    /// This generates a minimal wrapper that sources the full function from the binary.
+    /// Unlike `generate()` which outputs the full function, this wrapper auto-updates.
+    pub fn generate_fish_wrapper(&self) -> Result<String, askama::Error> {
+        let template = FishWrapperTemplate { cmd: &self.cmd };
+        template.render()
+    }
 }
 
 /// Bash shell template
@@ -661,10 +690,21 @@ struct ZshTemplate<'a> {
     cmd: &'a str,
 }
 
-/// Fish shell template
+/// Fish shell template (full function for `wt config shell init fish`)
 #[derive(Template)]
 #[template(path = "fish.fish", escape = "none")]
 struct FishTemplate<'a> {
+    cmd: &'a str,
+}
+
+/// Fish wrapper template (minimal wrapper for `functions/wt.fish`)
+///
+/// This wrapper is autoloaded by fish and sources the full function from the binary.
+/// Unlike the full FishTemplate, this allows updates to worktrunk to automatically
+/// provide the latest wrapper logic without requiring `wt config shell install`.
+#[derive(Template)]
+#[template(path = "fish_wrapper.fish", escape = "none")]
+struct FishWrapperTemplate<'a> {
     cmd: &'a str,
 }
 

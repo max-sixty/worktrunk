@@ -74,7 +74,7 @@ impl From<(usize, usize)> for LineDiff {
 
 /// Diff statistics (files changed, insertions, deletions).
 #[derive(Debug, Default)]
-pub struct DiffStats {
+pub(crate) struct DiffStats {
     pub files: usize,
     pub insertions: usize,
     pub deletions: usize,

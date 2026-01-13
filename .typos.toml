@@ -1,5 +1,5 @@
 [files]
-extend-exclude = ["docs/demos/vhs-keystrokes/"]
+extend-exclude = ["docs/demos/vhs-keystrokes/", "*.snap"]
 
 [default.extend-words]
 # Git commit hashes that typos flags as potential typos

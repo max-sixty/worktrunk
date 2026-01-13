@@ -1,5 +1,5 @@
 ---
-source: tests/integration_tests/config_show.rs
+source: tests/integration_tests/configure_shell.rs
 info:
   program: wt
   args:
@@ -20,6 +20,7 @@ info:
     LC_ALL: C
     PATH: "[PATH]"
     RUST_LOG: warn
+    SHELL: /bin/fish
     SOURCE_DATE_EPOCH: "1735776000"
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -33,7 +34,7 @@ exit_code: 0
 
 ----- stderr -----
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
-[107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
+[2m↳[22m [2mNot found; to create one, run [90mwt config create[39m[22m
 
 [36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
 [2m↳[22m [2mNot found[22m
@@ -42,12 +43,13 @@ exit_code: 0
 [33m▲[39m [33mShell integration not active[39m
 [107m [0m Binary invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
 
+[2m○[22m Fish integration found in deprecated location @ [1m~/.config/fish/conf.d/wt.fish[22m
+[2m↳[22m [2mTo migrate to [90m~/.config/fish/functions/wt.fish[39m, run [90mwt config shell install fish[39m[22m
 [2m○[22m [2mSkipped bash; ~/.bashrc not found[22m
 [2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
-[2m○[22m [2mSkipped fish; ~/.config/fish/functions not found[22m
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m
 [2m○[22m git: [1m[VERSION][22m
-[32m✓[39m [32mClaude Code plugin installed[39m
+[2m↳[22m [2mClaude Code plugin not installed ([1mclaude[22m not found)[22m
 [2m○[22m Hyperlinks: [1minactive[22m

@@ -21,6 +21,8 @@ pub struct UninstallResult {
     pub shell: Shell,
     pub path: PathBuf,
     pub action: UninstallAction,
+    /// Path that replaces this one (for deprecated location cleanup)
+    pub superseded_by: Option<PathBuf>,
 }
 
 pub struct UninstallScanResult {
@@ -44,6 +46,8 @@ pub struct ScanResult {
     pub skipped: Vec<(Shell, PathBuf)>, // Shell + first path that was checked
     /// Zsh was configured but compinit is missing (completions won't work without it)
     pub zsh_needs_compinit: bool,
+    /// Legacy files that were cleaned up (e.g., fish conf.d/wt.fish -> functions/wt.fish migration)
+    pub legacy_cleanups: Vec<PathBuf>,
 }
 
 pub struct CompletionResult {
@@ -104,6 +108,68 @@ impl ConfigAction {
     }
 }
 
+/// Check if file content appears to be worktrunk-managed (contains our markers)
+fn is_worktrunk_managed_content(content: &str, cmd: &str) -> bool {
+    content.contains(&format!("{cmd} config shell init"))
+}
+
+/// Clean up legacy fish conf.d file after installing to functions/
+///
+/// Previously, fish shell integration was installed to `~/.config/fish/conf.d/{cmd}.fish`.
+/// This caused issues with Homebrew PATH setup (see issue #566). We now install to
+/// `functions/{cmd}.fish` instead. This function removes the legacy file if it exists.
+///
+/// Returns the paths of files that were cleaned up.
+fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<PathBuf> {
+    use worktrunk::path::format_path_for_display;
+    use worktrunk::styling::warning_message;
+
+    let mut cleaned = Vec::new();
+
+    // Clean up if fish was part of the install (regardless of whether it already existed)
+    // This handles the case where user manually created functions/wt.fish but still has
+    // the old conf.d/wt.fish hanging around
+    let fish_targeted = configured.iter().any(|r| r.shell == Shell::Fish);
+
+    if !fish_targeted {
+        return cleaned;
+    }
+
+    // Check for legacy conf.d file
+    let Ok(legacy_path) = Shell::legacy_fish_conf_d_path(cmd) else {
+        return cleaned;
+    };
+
+    if !legacy_path.exists() {
+        return cleaned;
+    }
+
+    // Only remove if the file contains worktrunk integration markers
+    // to avoid deleting user's custom wt.fish that isn't from worktrunk
+    let Ok(content) = fs::read_to_string(&legacy_path) else {
+        return cleaned;
+    };
+
+    if !is_worktrunk_managed_content(&content, cmd) {
+        return cleaned;
+    }
+
+    match fs::remove_file(&legacy_path) {
+        Ok(()) => {
+            cleaned.push(legacy_path);
+        }
+        Err(e) => {
+            // Warn but don't fail - the new integration will still work
+            let _ = crate::output::print(warning_message(format!(
+                "Failed to remove deprecated {}: {e}",
+                format_path_for_display(&legacy_path)
+            )));
+        }
+    }
+
+    cleaned
+}
+
 pub fn handle_configure_shell(
     shell_filter: Option<Shell>,
     skip_confirmation: bool,
@@ -124,6 +190,7 @@ pub fn handle_configure_shell(
             completion_results: completion_preview,
             skipped: preview.skipped,
             zsh_needs_compinit: false,
+            legacy_cleanups: Vec::new(),
         });
     }
 
@@ -136,17 +203,7 @@ pub fn handle_configure_shell(
         .iter()
         .any(|r| !matches!(r.action, ConfigAction::AlreadyExists));
 
-    // If nothing needs to be changed, just return the preview results
-    if !needs_shell_changes && !needs_completion_changes {
-        return Ok(ScanResult {
-            configured: preview.configured,
-            completion_results: completion_preview,
-            skipped: preview.skipped,
-            zsh_needs_compinit: false,
-        });
-    }
-
-    // For --dry-run, show preview and return without prompting or applying
+    // For --dry-run, show preview and return without modifying anything
     if dry_run {
         show_install_preview(&preview.configured, &completion_preview, &cmd);
         return Ok(ScanResult {
@@ -154,6 +211,20 @@ pub fn handle_configure_shell(
             completion_results: completion_preview,
             skipped: preview.skipped,
             zsh_needs_compinit: false,
+            legacy_cleanups: Vec::new(),
+        });
+    }
+
+    // If nothing needs to be changed, still clean up legacy fish conf.d files
+    // A user might have upgraded and have both functions/wt.fish and conf.d/wt.fish
+    if !needs_shell_changes && !needs_completion_changes {
+        let legacy_cleanups = cleanup_legacy_fish_conf_d(&preview.configured, &cmd);
+        return Ok(ScanResult {
+            configured: preview.configured,
+            completion_results: completion_preview,
+            skipped: preview.skipped,
+            zsh_needs_compinit: false,
+            legacy_cleanups,
         });
     }
 
@@ -202,11 +273,16 @@ pub fn handle_configure_shell(
     // If detection fails (None), stay silent - we can't be sure.
     let zsh_needs_compinit = should_check_compinit && shell::detect_zsh_compinit() == Some(false);
 
+    // Clean up legacy fish conf.d file if we just installed to functions/
+    // This handles migration from the old conf.d location (issue #566)
+    let legacy_cleanups = cleanup_legacy_fish_conf_d(&result.configured, &cmd);
+
     Ok(ScanResult {
         configured: result.configured,
         completion_results,
         skipped: result.skipped,
         zsh_needs_compinit,
+        legacy_cleanups,
     })
 }
 
@@ -228,12 +304,12 @@ pub fn scan_shell_configs(
     for shell in shells {
         let paths = shell
             .config_paths(cmd)
-            .map_err(|e| format!("Failed to get config paths for {}: {}", shell, e))?;
+            .map_err(|e| format!("Failed to get config paths for {shell}: {e}"))?;
 
         // Find the first existing config file
         let target_path = paths.iter().find(|p| p.exists());
 
-        // For Fish, also check if the parent directory (conf.d/) exists
+        // For Fish, also check if the parent directory (functions/) exists
         // since we create the file there rather than modifying an existing one
         let has_config_location = if matches!(shell, Shell::Fish) {
             paths
@@ -258,13 +334,13 @@ pub fn scan_shell_configs(
                     Err(e) => {
                         // For non-critical errors, we could continue with other shells
                         // but for now we'll fail fast
-                        return Err(format!("Failed to configure {}: {}", shell, e));
+                        return Err(format!("Failed to configure {shell}: {e}"));
                     }
                 }
             }
         } else if shell_filter.is_none() {
             // Track skipped shells (only when not explicitly filtering)
-            // For Fish, we check for conf.d directory; for others, the config file
+            // For Fish, we check for functions/ directory; for others, the config file
             let skipped_path = if matches!(shell, Shell::Fish) {
                 paths
                     .first()
@@ -288,7 +364,8 @@ pub fn scan_shell_configs(
         configured: results,
         completion_results: Vec::new(), // Completions handled separately in handle_configure_shell
         skipped,
-        zsh_needs_compinit: false, // Caller handles compinit detection
+        zsh_needs_compinit: false,   // Caller handles compinit detection
+        legacy_cleanups: Vec::new(), // Caller handles legacy cleanup
     })
 }
 
@@ -302,12 +379,18 @@ fn configure_shell_file(
     // The line we write to the config file (also used for display)
     let config_line = shell.config_line(cmd);
 
-    // For Fish, we write to a separate conf.d/ file
+    // For Fish, we write a minimal wrapper to functions/{cmd}.fish that sources the
+    // full function from the binary. This allows updates to worktrunk to automatically
+    // provide the latest wrapper logic without requiring reinstall.
     if matches!(shell, Shell::Fish) {
+        let init = shell::ShellInit::with_prefix(shell, cmd.to_string());
+        let fish_wrapper = init
+            .generate_fish_wrapper()
+            .map_err(|e| format!("Failed to generate fish wrapper: {e}"))?;
         return configure_fish_file(
             shell,
             path,
-            &config_line,
+            &fish_wrapper,
             dry_run,
             explicit_shell,
             &config_line,
@@ -427,15 +510,20 @@ fn configure_fish_file(
     explicit_shell: bool,
     config_line: &str,
 ) -> Result<Option<ConfigureResult>, String> {
-    // For Fish, we write to conf.d/{cmd}.fish (separate file)
+    // For Fish, we write a minimal wrapper to functions/{cmd}.fish that sources
+    // the full function from `{cmd} config shell init fish` at runtime.
+    // Fish autoloads these files on first invocation of the command.
 
     // Check if it already exists and has our integration
-    if path.exists() {
-        let existing_content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
-
+    // Use .ok() for read errors - treat as "not configured" rather than failing
+    if let Some(existing_content) = path
+        .exists()
+        .then(|| fs::read_to_string(path).ok())
+        .flatten()
+    {
         // Canonical detection: check if the file matches exactly what we write
-        if existing_content.trim() == content {
+        // Trim both sides to handle trailing newlines consistently across platforms
+        if existing_content.trim() == content.trim() {
             return Ok(Some(ConfigureResult {
                 shell,
                 path: path.to_path_buf(),
@@ -447,7 +535,7 @@ fn configure_fish_file(
 
     // File doesn't exist or doesn't have our integration
     // For Fish, create if parent directory exists or if explicitly targeting this shell
-    // This is different from other shells because Fish uses conf.d/ which may exist
+    // This is different from other shells because Fish uses functions/ which may exist
     // even if the specific wt.fish file doesn't
     if !explicit_shell && !path.exists() {
         // Check if parent directory exists
@@ -457,14 +545,11 @@ fn configure_fish_file(
     }
 
     if dry_run {
+        // Fish always writes the complete file (doesn't append), so always WouldCreate
         return Ok(Some(ConfigureResult {
             shell,
             path: path.to_path_buf(),
-            action: if path.exists() {
-                ConfigAction::WouldAdd
-            } else {
-                ConfigAction::WouldCreate
-            },
+            action: ConfigAction::WouldCreate,
             config_line: config_line.to_string(),
         }));
     }
@@ -472,17 +557,12 @@ fn configure_fish_file(
     // Create parent directories if they don't exist
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
+            .map_err(|e| format!("Failed to create directory {}: {e}", parent.display()))?;
     }
 
-    // Write the conditional wrapper (short one-liner that calls wt init fish | source)
-    fs::write(path, format!("{}\n", content)).map_err(|e| {
-        format!(
-            "Failed to write to {}: {}",
-            format_path_for_display(path),
-            e
-        )
-    })?;
+    // Write the complete fish function file
+    fs::write(path, format!("{}\n", content))
+        .map_err(|e| format!("Failed to write {}: {e}", format_path_for_display(path)))?;
 
     Ok(Some(ConfigureResult {
         shell,
@@ -530,8 +610,17 @@ pub fn show_install_preview(
             result.action.description(),
         ));
 
-        // Show the config line that will be added with gutter
-        let _ = output::print(format_bash_with_gutter(&result.config_line));
+        // Show the config content that will be added with gutter
+        // Fish: show the wrapper (it's a complete file that sources the full function)
+        // Other shells: show the one-liner that gets appended
+        let content = if matches!(shell, Shell::Fish) {
+            shell::ShellInit::with_prefix(shell, cmd.to_string())
+                .generate_fish_wrapper()
+                .unwrap_or_else(|_| result.config_line.clone())
+        } else {
+            result.config_line.clone()
+        };
+        let _ = output::print(format_bash_with_gutter(&content));
         let _ = output::blank(); // Blank line after each shell block
     }
 
@@ -575,18 +664,28 @@ pub fn show_uninstall_preview(
     for result in results {
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
-        // Bash/Zsh: inline completions; Fish: separate completion file
-        let what = if matches!(shell, Shell::Fish) {
-            "shell extension"
-        } else {
-            "shell extension & completions"
-        };
 
-        let _ = output::print(format!(
-            "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
-            result.action.symbol(),
-            result.action.description(),
-        ));
+        // Deprecated files get a different message format
+        if let Some(canonical) = &result.superseded_by {
+            let canonical_path = format_path_for_display(canonical);
+            let _ = output::print(format!(
+                "{INFO_SYMBOL} {} {bold}{path}{bold:#} (deprecated; now using {bold}{canonical_path}{bold:#})",
+                result.action.description(),
+            ));
+        } else {
+            // Bash/Zsh: inline completions; Fish: separate completion file
+            let what = if matches!(shell, Shell::Fish) {
+                "shell extension"
+            } else {
+                "shell extension & completions"
+            };
+
+            let _ = output::print(format!(
+                "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
+                result.action.symbol(),
+                result.action.description(),
+            ));
+        }
     }
 
     for result in completion_results {
@@ -674,7 +773,7 @@ fn prompt_yes_no() -> Result<bool, String> {
 fn fish_completion_content(cmd: &str) -> String {
     format!(
         r#"# worktrunk completions for fish
-complete --keep-order --exclusive --command {cmd} --arguments "(test -n \"\$WORKTRUNK_BIN\"; or set -l WORKTRUNK_BIN (type -P {cmd}); COMPLETE=fish \$WORKTRUNK_BIN -- (commandline --current-process --tokenize --cut-at-cursor) (commandline --current-token))"
+complete --keep-order --exclusive --command {cmd} --arguments "(test -n \"\$WORKTRUNK_BIN\"; or set -l WORKTRUNK_BIN (type -P {cmd} 2>/dev/null); and COMPLETE=fish \$WORKTRUNK_BIN -- (commandline --current-process --tokenize --cut-at-cursor) (commandline --current-token))"
 "#
     )
 }
@@ -700,20 +799,22 @@ pub fn process_shell_completions(
 
         let completion_path = shell
             .completion_path(cmd)
-            .map_err(|e| format!("Failed to get completion path for {}: {}", shell, e))?;
+            .map_err(|e| format!("Failed to get completion path for {shell}: {e}"))?;
 
         // Check if completions already exist with correct content
-        if completion_path.exists() {
-            let existing = fs::read_to_string(&completion_path)
-                .map_err(|e| format!("Failed to read {}: {}", completion_path.display(), e))?;
-            if existing == fish_completion {
-                results.push(CompletionResult {
-                    shell,
-                    path: completion_path,
-                    action: ConfigAction::AlreadyExists,
-                });
-                continue;
-            }
+        // Use .ok() for read errors - treat as "not configured" rather than failing
+        if let Some(existing) = completion_path
+            .exists()
+            .then(|| fs::read_to_string(&completion_path).ok())
+            .flatten()
+            && existing == fish_completion
+        {
+            results.push(CompletionResult {
+                shell,
+                path: completion_path,
+                action: ConfigAction::AlreadyExists,
+            });
+            continue;
         }
 
         if dry_run {
@@ -733,12 +834,12 @@ pub fn process_shell_completions(
         // Create parent directory if needed
         if let Some(parent) = completion_path.parent() {
             fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+                .map_err(|e| format!("Failed to create directory {}: {e}", parent.display()))?;
         }
 
         // Write the completion file
         fs::write(&completion_path, &fish_completion)
-            .map_err(|e| format!("Failed to write {}: {}", completion_path.display(), e))?;
+            .map_err(|e| format!("Failed to write {}: {e}", completion_path.display()))?;
 
         results.push(CompletionResult {
             shell,
@@ -799,17 +900,29 @@ fn scan_for_uninstall(
     for &shell in &shells {
         let paths = shell
             .config_paths(cmd)
-            .map_err(|e| format!("Failed to get config paths for {}: {}", shell, e))?;
+            .map_err(|e| format!("Failed to get config paths for {shell}: {e}"))?;
 
-        // For Fish, delete entire {cmd}.fish file
+        // For Fish, delete entire {cmd}.fish file (check both canonical and legacy locations)
         if matches!(shell, Shell::Fish) {
-            if let Some(fish_path) = paths.first() {
-                if fish_path.exists() {
+            let mut found_any = false;
+
+            // Check canonical location (functions/)
+            // Only remove if it contains worktrunk markers to avoid deleting user's custom file
+            if let Some(fish_path) = paths.first()
+                && fish_path.exists()
+            {
+                let is_worktrunk_managed = fs::read_to_string(fish_path)
+                    .map(|content| is_worktrunk_managed_content(&content, cmd))
+                    .unwrap_or(false);
+
+                if is_worktrunk_managed {
+                    found_any = true;
                     if dry_run {
                         results.push(UninstallResult {
                             shell,
                             path: fish_path.clone(),
                             action: UninstallAction::WouldRemove,
+                            superseded_by: None,
                         });
                     } else {
                         fs::remove_file(fish_path).map_err(|e| {
@@ -823,11 +936,47 @@ fn scan_for_uninstall(
                             shell,
                             path: fish_path.clone(),
                             action: UninstallAction::Removed,
+                            superseded_by: None,
                         });
                     }
-                } else {
-                    not_found.push((shell, fish_path.clone()));
                 }
+            }
+
+            // Also check legacy location (conf.d/) - issue #566
+            // Only remove if it contains worktrunk markers to avoid deleting user's custom file
+            let canonical_path = paths.first().cloned();
+            if let Ok(legacy_path) = Shell::legacy_fish_conf_d_path(cmd)
+                && legacy_path.exists()
+            {
+                let is_worktrunk_managed = fs::read_to_string(&legacy_path)
+                    .map(|content| is_worktrunk_managed_content(&content, cmd))
+                    .unwrap_or(false);
+
+                if is_worktrunk_managed {
+                    found_any = true;
+                    if dry_run {
+                        results.push(UninstallResult {
+                            shell,
+                            path: legacy_path.clone(),
+                            action: UninstallAction::WouldRemove,
+                            superseded_by: canonical_path.clone(),
+                        });
+                    } else {
+                        fs::remove_file(&legacy_path).map_err(|e| {
+                            format!("Failed to remove {}: {e}", legacy_path.display())
+                        })?;
+                        results.push(UninstallResult {
+                            shell,
+                            path: legacy_path,
+                            action: UninstallAction::Removed,
+                            superseded_by: canonical_path,
+                        });
+                    }
+                }
+            }
+
+            if !found_any && let Some(fish_path) = paths.first() {
+                not_found.push((shell, fish_path.clone()));
             }
             continue;
         }
@@ -925,6 +1074,7 @@ fn uninstall_from_file(
             shell,
             path: path.to_path_buf(),
             action: UninstallAction::WouldRemove,
+            superseded_by: None,
         }));
     }
 
@@ -959,6 +1109,7 @@ fn uninstall_from_file(
         shell,
         path: path.to_path_buf(),
         action: UninstallAction::Removed,
+        superseded_by: None,
     }))
 }
 
