@@ -1521,44 +1521,32 @@ fn main() {
 
                 let repo = Repository::current().context("Failed to remove worktree")?;
 
+                // Helper: approve remove hooks using current worktree context
+                // Returns true if hooks should run (user approved)
+                let approve_remove = |yes: bool| -> anyhow::Result<bool> {
+                    use commands::context::CommandEnv;
+                    let env = CommandEnv::for_action_branchless()?;
+                    let ctx = env.context(yes);
+                    let approved =
+                        approve_hooks(&ctx, &[HookType::PreRemove, HookType::PostSwitch])?;
+                    if !approved {
+                        crate::output::print(info_message(
+                            "Commands declined, continuing removal",
+                        ))?;
+                    }
+                    Ok(approved)
+                };
+
                 if branches.is_empty() {
                     // Single worktree removal: validate FIRST, then approve, then execute
-                    // Uses path-based removal to handle detached HEAD state
                     let result =
                         handle_remove_current(!delete_branch, force_delete, force, &config)
                             .context("Failed to remove worktree")?;
 
                     // "Approve at the Gate": approval happens AFTER validation passes
-                    let verify = if verify {
-                        let worktree_path =
-                            std::env::current_dir().context("Failed to get current directory")?;
-                        let repo_root =
-                            repo.worktree_base().context("Failed to remove worktree")?;
-                        let current_branch = repo
-                            .current_worktree()
-                            .branch()
-                            .context("Failed to remove worktree")?;
-                        let ctx = CommandContext::new(
-                            &repo,
-                            &config,
-                            current_branch.as_deref(),
-                            &worktree_path,
-                            &repo_root,
-                            yes,
-                        );
-                        let approved =
-                            approve_hooks(&ctx, &[HookType::PreRemove, HookType::PostSwitch])?;
-                        if !approved {
-                            crate::output::print(info_message(
-                                "Commands declined, continuing removal",
-                            ))?;
-                        }
-                        approved
-                    } else {
-                        false
-                    };
+                    let run_hooks = verify && approve_remove(yes)?;
 
-                    handle_remove_output(&result, background, verify)
+                    handle_remove_output(&result, background, run_hooks)
                 } else {
                     use commands::worktree::RemoveResult;
                     use worktrunk::git::ResolvedWorktree;
@@ -1578,20 +1566,36 @@ fn main() {
                     let mut plan_current: Option<RemoveResult> = None;
                     let mut all_errors: Vec<anyhow::Error> = Vec::new();
 
+                    // Helper: record error and continue
+                    let mut record_error = |e: anyhow::Error| -> anyhow::Result<()> {
+                        output::print(e.to_string())?;
+                        all_errors.push(e);
+                        Ok(())
+                    };
+
                     for branch_name in &branches {
-                        match resolve_worktree_arg(
+                        // Resolve the target
+                        let resolved = match resolve_worktree_arg(
                             &repo,
                             branch_name,
                             &config,
                             ResolutionContext::Remove,
                         ) {
-                            Ok(ResolvedWorktree::Worktree { path, branch }) => {
+                            Ok(r) => r,
+                            Err(e) => {
+                                record_error(e)?;
+                                continue;
+                            }
+                        };
+
+                        match resolved {
+                            ResolvedWorktree::Worktree { path, branch } => {
                                 // Use canonical paths to avoid symlink/normalization mismatches
                                 let path_canonical = dunce::canonicalize(&path).unwrap_or(path);
                                 let is_current = current_worktree.as_ref() == Some(&path_canonical);
+
                                 if is_current {
-                                    // Current worktree (via "@" or branch name) - use handle_remove_current
-                                    // to handle detached HEAD state correctly
+                                    // Current worktree - use handle_remove_current for detached HEAD
                                     match handle_remove_current(
                                         !delete_branch,
                                         force_delete,
@@ -1599,38 +1603,32 @@ fn main() {
                                         &config,
                                     ) {
                                         Ok(result) => plan_current = Some(result),
-                                        Err(e) => {
-                                            output::print(e.to_string())?;
-                                            all_errors.push(e);
-                                        }
+                                        Err(e) => record_error(e)?,
                                     }
-                                } else {
-                                    // Non-current worktree - branch should always be Some
-                                    let Some(branch_for_remove) = branch.as_ref() else {
-                                        let e = anyhow::anyhow!(
-                                            "Cannot remove worktree at {} - branch unknown",
-                                            path_canonical.display()
-                                        );
-                                        output::print(e.to_string())?;
-                                        all_errors.push(e);
-                                        continue;
-                                    };
-                                    match handle_remove(
-                                        branch_for_remove,
-                                        !delete_branch,
-                                        force_delete,
-                                        force,
-                                        &config,
-                                    ) {
-                                        Ok(result) => plans_others.push(result),
-                                        Err(e) => {
-                                            output::print(e.to_string())?;
-                                            all_errors.push(e);
-                                        }
-                                    }
+                                    continue;
+                                }
+
+                                // Non-current worktree - branch should always be Some
+                                let Some(branch_for_remove) = branch.as_ref() else {
+                                    record_error(anyhow::anyhow!(
+                                        "Cannot remove worktree at {} - branch unknown",
+                                        path_canonical.display()
+                                    ))?;
+                                    continue;
+                                };
+
+                                match handle_remove(
+                                    branch_for_remove,
+                                    !delete_branch,
+                                    force_delete,
+                                    force,
+                                    &config,
+                                ) {
+                                    Ok(result) => plans_others.push(result),
+                                    Err(e) => record_error(e)?,
                                 }
                             }
-                            Ok(ResolvedWorktree::BranchOnly { branch }) => {
+                            ResolvedWorktree::BranchOnly { branch } => {
                                 match handle_remove(
                                     &branch,
                                     !delete_branch,
@@ -1639,15 +1637,8 @@ fn main() {
                                     &config,
                                 ) {
                                     Ok(result) => plans_branch_only.push(result),
-                                    Err(e) => {
-                                        output::print(e.to_string())?;
-                                        all_errors.push(e);
-                                    }
+                                    Err(e) => record_error(e)?,
                                 }
-                            }
-                            Err(e) => {
-                                output::print(e.to_string())?;
-                                all_errors.push(e);
                             }
                         }
                     }
@@ -1663,49 +1654,22 @@ fn main() {
                     // Phase 2: Approve hooks (only if we have valid plans)
                     // TODO(pre-remove-context): Approval context uses current worktree,
                     // but hooks execute in each target worktree.
-                    let verify = if verify {
-                        let worktree_path =
-                            std::env::current_dir().context("Failed to get current directory")?;
-                        let repo_root =
-                            repo.worktree_base().context("Failed to remove worktree")?;
-                        let current_branch = repo
-                            .current_worktree()
-                            .branch()
-                            .context("Failed to remove worktree")?;
-                        let ctx = CommandContext::new(
-                            &repo,
-                            &config,
-                            current_branch.as_deref(),
-                            &worktree_path,
-                            &repo_root,
-                            yes,
-                        );
-                        let approved =
-                            approve_hooks(&ctx, &[HookType::PreRemove, HookType::PostSwitch])?;
-                        if !approved {
-                            crate::output::print(info_message(
-                                "Commands declined, continuing removal",
-                            ))?;
-                        }
-                        approved
-                    } else {
-                        false
-                    };
+                    let run_hooks = verify && approve_remove(yes)?;
 
                     // Phase 3: Execute all validated plans
                     // Remove other worktrees first
                     for result in plans_others {
-                        handle_remove_output(&result, background, verify)?;
+                        handle_remove_output(&result, background, run_hooks)?;
                     }
 
                     // Handle branch-only cases
                     for result in plans_branch_only {
-                        handle_remove_output(&result, background, verify)?;
+                        handle_remove_output(&result, background, run_hooks)?;
                     }
 
                     // Remove current worktree last (if it was in the list)
                     if let Some(result) = plan_current {
-                        handle_remove_output(&result, background, verify)?;
+                        handle_remove_output(&result, background, run_hooks)?;
                     }
 
                     // Exit with failure if any validation errors occurred

@@ -813,7 +813,8 @@ pub fn execute_switch(
 ///
 /// For new code, prefer calling `plan_switch()` then `execute_switch()` separately
 /// to allow approval prompts between validation and execution.
-pub fn handle_switch(
+#[cfg(unix)]
+pub(crate) fn handle_switch(
     branch: &str,
     create: bool,
     base: Option<&str>,
