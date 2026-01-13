@@ -228,7 +228,8 @@ fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result
 
     // On non-Unix platforms, fall back to spawn-and-wait.
     // This uses the shell abstraction (Git Bash if available).
-    let mut cmd = Cmd::shell(&command).inherit_stdin();
+    use std::process::Stdio;
+    let mut cmd = Cmd::shell(&command).stdin(Stdio::inherit());
     if let Some(dir) = target_dir {
         cmd = cmd.current_dir(dir);
     }

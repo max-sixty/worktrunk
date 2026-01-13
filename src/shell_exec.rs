@@ -355,8 +355,8 @@ pub struct Cmd {
     shell_wrap: bool,
     /// Stdout configuration for stream() (defaults to inherit)
     stdout_cfg: Option<std::process::Stdio>,
-    /// If true, inherit stdin from parent for interactive use (for stream())
-    inherit_stdin: bool,
+    /// Stdin configuration for stream() (defaults to null, or piped if stdin_data is set)
+    stdin_cfg: Option<std::process::Stdio>,
     /// If true, forward signals to child process group (for stream(), Unix only)
     forward_signals: bool,
 }
@@ -378,7 +378,7 @@ impl Cmd {
             env_removes: Vec::new(),
             shell_wrap: false,
             stdout_cfg: None,
-            inherit_stdin: false,
+            stdin_cfg: None,
             forward_signals: false,
         }
     }
@@ -401,7 +401,7 @@ impl Cmd {
             env_removes: Vec::new(),
             shell_wrap: true,
             stdout_cfg: None,
-            inherit_stdin: false,
+            stdin_cfg: None,
             forward_signals: false,
         }
     }
@@ -434,8 +434,11 @@ impl Cmd {
         self
     }
 
-    /// Set data to write to the command's stdin.
-    pub fn stdin(mut self, data: impl Into<Vec<u8>>) -> Self {
+    /// Set data to pipe to the command's stdin.
+    ///
+    /// For `.run()`, the data is written to a piped stdin.
+    /// For `.stream()`, this takes precedence over `.stdin(Stdio)`.
+    pub fn stdin_bytes(mut self, data: impl Into<Vec<u8>>) -> Self {
         self.stdin_data = Some(data.into());
         self
     }
@@ -472,12 +475,15 @@ impl Cmd {
         self
     }
 
-    /// Inherit stdin from parent process for interactive commands.
+    /// Set stdin configuration for `.stream()`.
+    ///
+    /// Defaults to `Stdio::null()`. Use `Stdio::inherit()` for interactive commands
+    /// that need to read user input.
     ///
     /// Only affects `.stream()`. For `.run()`, stdin defaults to null unless
-    /// data is provided via `.stdin()`.
-    pub fn inherit_stdin(mut self) -> Self {
-        self.inherit_stdin = true;
+    /// data is provided via `.stdin_bytes()`.
+    pub fn stdin(mut self, cfg: std::process::Stdio) -> Self {
+        self.stdin_cfg = Some(cfg);
         self
     }
 
@@ -633,8 +639,8 @@ impl Cmd {
     ///
     /// Unlike `.run()`, this method:
     /// - Inherits stderr to preserve TTY behavior (colors, progress bars)
-    /// - Optionally redirects stdout to stderr (via `.redirect_stdout_to_stderr()`)
-    /// - Optionally inherits stdin for interactive commands (via `.inherit_stdin()`)
+    /// - Optionally redirects stdout to stderr (via `.stdout(Stdio::from(io::stderr()))`)
+    /// - Optionally inherits stdin for interactive commands (via `.stdin(Stdio::inherit())`)
     /// - Optionally forwards signals to child process group (via `.forward_signals()`)
     /// - Does not use concurrency limiting (streaming commands run sequentially by nature)
     /// - Does not support timeout (interactive commands should not be time-limited)
@@ -683,13 +689,11 @@ impl Cmd {
         // Determine stdout handling (default: inherit)
         let stdout_mode = self.stdout_cfg.unwrap_or_else(std::process::Stdio::inherit);
 
-        // Determine stdin handling
+        // Determine stdin handling (stdin_bytes takes precedence, then stdin cfg, then null)
         let stdin_mode = if self.stdin_data.is_some() {
             std::process::Stdio::piped()
-        } else if self.inherit_stdin {
-            std::process::Stdio::inherit()
         } else {
-            std::process::Stdio::null()
+            self.stdin_cfg.unwrap_or_else(std::process::Stdio::null)
         };
 
         #[cfg(unix)]
@@ -1027,7 +1031,7 @@ mod tests {
 
     #[test]
     fn test_cmd_with_stdin() {
-        let result = Cmd::new("cat").stdin("hello from stdin").run();
+        let result = Cmd::new("cat").stdin_bytes("hello from stdin").run();
         assert!(result.is_ok());
         let output = result.unwrap();
         assert!(output.status.success());
@@ -1111,7 +1115,7 @@ mod tests {
     fn test_cmd_shell_stream_with_stdin() {
         // cat should echo stdin content (output goes to inherited stdout, we can't capture it,
         // but we can verify no error)
-        let result = Cmd::shell("cat").stdin("test content").stream();
+        let result = Cmd::shell("cat").stdin_bytes("test content").stream();
         assert!(result.is_ok());
     }
 

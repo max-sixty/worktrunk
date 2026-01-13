@@ -898,7 +898,7 @@ pub fn execute_command_in_worktree(
         .forward_signals();
 
     if let Some(content) = stdin_content {
-        cmd = cmd.stdin(content);
+        cmd = cmd.stdin_bytes(content);
     }
 
     cmd.stream()?;
