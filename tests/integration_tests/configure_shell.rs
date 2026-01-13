@@ -467,6 +467,63 @@ fn test_uninstall_shell_fish_legacy_conf_d_cleanup(repo: TestRepo, temp_home: Te
     );
 }
 
+/// Test that --dry-run does NOT delete legacy fish conf.d file
+///
+/// Regression test: Previously, --dry-run could delete the legacy file because
+/// cleanup ran before the dry_run check. This must never happen.
+#[rstest]
+fn test_configure_shell_fish_dry_run_does_not_delete_legacy(repo: TestRepo, temp_home: TempDir) {
+    // Create functions/wt.fish with correct content (already configured)
+    let functions = temp_home.path().join(".config/fish/functions");
+    fs::create_dir_all(&functions).unwrap();
+    let new_file = functions.join("wt.fish");
+    let init =
+        worktrunk::shell::ShellInit::with_prefix(worktrunk::shell::Shell::Fish, "wt".to_string());
+    let wrapper_content = init.generate_fish_wrapper().unwrap();
+    fs::write(&new_file, format!("{}\n", wrapper_content)).unwrap();
+
+    // Create completions (so it reports "all already configured")
+    let completions_d = temp_home.path().join(".config/fish/completions");
+    fs::create_dir_all(&completions_d).unwrap();
+    fs::write(completions_d.join("wt.fish"), "# completions").unwrap();
+
+    // Create legacy conf.d file that should NOT be deleted in dry-run mode
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let legacy_file = conf_d.join("wt.fish");
+    fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/fish");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("install")
+            .arg("fish")
+            .arg("--dry-run")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // CRITICAL: Legacy file must still exist after --dry-run
+    assert!(
+        legacy_file.exists(),
+        "--dry-run must NOT delete legacy conf.d/wt.fish: {:?}",
+        legacy_file
+    );
+
+    // New file should still exist too
+    assert!(
+        new_file.exists(),
+        "functions/wt.fish should be preserved: {:?}",
+        new_file
+    );
+}
+
 /// Test that detection finds fish integration in legacy conf.d location
 ///
 /// `wt config show` should detect shell integration whether it's in the

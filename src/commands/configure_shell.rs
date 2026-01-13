@@ -121,6 +121,9 @@ fn is_worktrunk_managed_content(content: &str, cmd: &str) -> bool {
 ///
 /// Returns the paths of files that were cleaned up.
 fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<PathBuf> {
+    use worktrunk::path::format_path_for_display;
+    use worktrunk::styling::warning_message;
+
     let mut cleaned = Vec::new();
 
     // Clean up if fish was part of the install (regardless of whether it already existed)
@@ -137,14 +140,31 @@ fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<
         return cleaned;
     };
 
+    if !legacy_path.exists() {
+        return cleaned;
+    }
+
     // Only remove if the file contains worktrunk integration markers
     // to avoid deleting user's custom wt.fish that isn't from worktrunk
-    if legacy_path.exists()
-        && let Ok(content) = fs::read_to_string(&legacy_path)
-        && is_worktrunk_managed_content(&content, cmd)
-        && fs::remove_file(&legacy_path).is_ok()
-    {
-        cleaned.push(legacy_path);
+    let Ok(content) = fs::read_to_string(&legacy_path) else {
+        return cleaned;
+    };
+
+    if !is_worktrunk_managed_content(&content, cmd) {
+        return cleaned;
+    }
+
+    match fs::remove_file(&legacy_path) {
+        Ok(()) => {
+            cleaned.push(legacy_path);
+        }
+        Err(e) => {
+            // Warn but don't fail - the new integration will still work
+            let _ = crate::output::print(warning_message(format!(
+                "Failed to remove deprecated {}: {e}",
+                format_path_for_display(&legacy_path)
+            )));
+        }
     }
 
     cleaned
@@ -183,6 +203,18 @@ pub fn handle_configure_shell(
         .iter()
         .any(|r| !matches!(r.action, ConfigAction::AlreadyExists));
 
+    // For --dry-run, show preview and return without modifying anything
+    if dry_run {
+        show_install_preview(&preview.configured, &completion_preview, &cmd);
+        return Ok(ScanResult {
+            configured: preview.configured,
+            completion_results: completion_preview,
+            skipped: preview.skipped,
+            zsh_needs_compinit: false,
+            legacy_cleanups: Vec::new(),
+        });
+    }
+
     // If nothing needs to be changed, still clean up legacy fish conf.d files
     // A user might have upgraded and have both functions/wt.fish and conf.d/wt.fish
     if !needs_shell_changes && !needs_completion_changes {
@@ -193,18 +225,6 @@ pub fn handle_configure_shell(
             skipped: preview.skipped,
             zsh_needs_compinit: false,
             legacy_cleanups,
-        });
-    }
-
-    // For --dry-run, show preview and return without prompting or applying
-    if dry_run {
-        show_install_preview(&preview.configured, &completion_preview, &cmd);
-        return Ok(ScanResult {
-            configured: preview.configured,
-            completion_results: completion_preview,
-            skipped: preview.skipped,
-            zsh_needs_compinit: false,
-            legacy_cleanups: Vec::new(),
         });
     }
 
