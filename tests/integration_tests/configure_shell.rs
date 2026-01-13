@@ -461,6 +461,39 @@ fn test_config_show_detects_fish_legacy_conf_d(mut repo: TestRepo, temp_home: Te
     });
 }
 
+/// Test config show when functions/ exists but wt.fish doesn't, with legacy conf.d
+///
+/// This tests a different code path than test_config_show_detects_fish_legacy_conf_d:
+/// - That test: functions/ doesn't exist -> fish is "skipped"
+/// - This test: functions/ exists but empty -> fish is "configured" with WouldCreate
+///
+/// Both should show the migration hint for the legacy conf.d location.
+#[rstest]
+fn test_config_show_fish_legacy_with_functions_dir(mut repo: TestRepo, temp_home: TempDir) {
+    // Create functions/ directory (empty - no wt.fish)
+    let functions = temp_home.path().join(".config/fish/functions");
+    fs::create_dir_all(&functions).unwrap();
+
+    // Create legacy conf.d file
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let legacy_file = conf_d.join("wt.fish");
+    fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
+
+    // Mock claude as not found
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/fish");
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[rstest]
 fn test_configure_shell_no_files(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
