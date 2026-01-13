@@ -543,7 +543,6 @@ impl Cmd {
         // Build the Command
         let mut cmd = Command::new(&self.program);
         cmd.args(&self.args);
-        cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
 
         if let Some(ref dir) = self.current_dir {
             cmd.current_dir(dir);
@@ -555,6 +554,10 @@ impl Cmd {
         for key in &self.env_removes {
             cmd.env_remove(key);
         }
+
+        // Prevent subprocesses from writing shell directives (security).
+        // Applied last to ensure it can't be re-added by user-provided envs.
+        cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
 
         // Determine effective timeout: explicit > thread-local > none
         let effective_timeout = self.timeout.or_else(|| COMMAND_TIMEOUT.with(|t| t.get()));
@@ -728,9 +731,7 @@ impl Cmd {
             .stdout(stdout_mode)
             .stderr(std::process::Stdio::inherit()) // Preserve TTY for errors
             // Prevent vergen "overridden" warning in nested cargo builds
-            .env_remove("VERGEN_GIT_DESCRIBE")
-            // Prevent hooks from writing shell directives (security)
-            .env_remove(DIRECTIVE_FILE_ENV_VAR);
+            .env_remove("VERGEN_GIT_DESCRIBE");
 
         for (key, val) in &self.envs {
             cmd.env(key, val);
@@ -738,6 +739,10 @@ impl Cmd {
         for key in &self.env_removes {
             cmd.env_remove(key);
         }
+
+        // Prevent hooks from writing shell directives (security).
+        // Applied last to ensure it can't be re-added by user-provided envs.
+        cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
 
         let mut child = cmd.spawn().map_err(|e| {
             anyhow::Error::from(GitError::Other {
