@@ -92,8 +92,7 @@ pub(crate) fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
 
     log::debug!("Invoking pager: {}", pager_cmd);
 
-    // LESS flags: F=quit if one screen, R=allow colors, X=no termcap init
-    let less_flags = std::env::var("LESS").unwrap_or_else(|_| "FRX".to_string());
+    let less_flags = compute_less_flags(std::env::var("LESS").ok().as_deref());
 
     // Always send pager output to stderr (standard for help text, like git)
     // This works in all cases: direct invocation, shell wrapper, piping, etc.
@@ -129,8 +128,20 @@ pub(crate) fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Compute LESS flags by appending our required flags to user's existing LESS setting.
+///
+/// Returns flags suitable for setting LESS env var when spawning less.
+/// Ensures F (quit if one screen), R (colors), X (no termcap init) are always active.
+fn compute_less_flags(user_less: Option<&str>) -> String {
+    match user_less {
+        Some(s) if !s.is_empty() => format!("{} -FRX", s),
+        _ => "FRX".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::compute_less_flags;
     use crate::pager::parse_pager_value;
 
     #[test]
@@ -147,5 +158,35 @@ mod tests {
         assert_eq!(parse_pager_value("  less  "), Some("less".to_string()));
         assert_eq!(parse_pager_value("delta"), Some("delta".to_string()));
         assert_eq!(parse_pager_value("less -R"), Some("less -R".to_string()));
+    }
+
+    #[test]
+    fn test_compute_less_flags_empty() {
+        assert_eq!(compute_less_flags(None), "FRX");
+        assert_eq!(compute_less_flags(Some("")), "FRX");
+    }
+
+    #[test]
+    fn test_compute_less_flags_short_options() {
+        // Common case: user has -R (oh-my-zsh default)
+        assert_eq!(compute_less_flags(Some("-R")), "-R -FRX");
+        // User has multiple short flags
+        assert_eq!(compute_less_flags(Some("-iMRS")), "-iMRS -FRX");
+    }
+
+    #[test]
+    fn test_compute_less_flags_long_options() {
+        // Issue #594: --mouse must not become --mouseFRX
+        assert_eq!(compute_less_flags(Some("--mouse")), "--mouse -FRX");
+        // Multiple long options
+        assert_eq!(
+            compute_less_flags(Some("--mouse --shift=4")),
+            "--mouse --shift=4 -FRX"
+        );
+    }
+
+    #[test]
+    fn test_compute_less_flags_mixed() {
+        assert_eq!(compute_less_flags(Some("-R --mouse")), "-R --mouse -FRX");
     }
 }
