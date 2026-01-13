@@ -123,15 +123,20 @@ fn compute_shell_warning_reason_inner(
                 .and_then(|s| s.to_str())
                 .unwrap_or(invoked);
 
-            // Check if the only difference is .exe suffix (case-insensitive for Windows)
-            let invoked_lower = invoked_name.to_lowercase();
-            let wraps_lower = wraps.to_lowercase();
-            if invoked_lower == format!("{wraps_lower}.exe") {
+            // Windows: check if the only difference is .exe suffix (case-insensitive)
+            #[cfg(windows)]
+            if {
+                let invoked_lower = invoked_name.to_lowercase();
+                let wraps_lower = wraps.to_lowercase();
+                invoked_lower == format!("{wraps_lower}.exe")
+            } {
                 // Windows .exe mismatch - give targeted advice
-                cformat!(
+                return cformat!(
                     "ran <bold>{invoked_name}</>; use <bold>{wraps}</> (without .exe) for auto-cd"
-                )
-            } else if invoked_name == wraps {
+                );
+            }
+
+            if invoked_name == wraps {
                 // Filename matches but full path differs - show full path for clarity
                 // (e.g., "./target/debug/wt" vs "wt" - the path IS the useful info)
                 cformat!("ran <bold>{invoked}</>; shell integration wraps <bold>{wraps}</>")
