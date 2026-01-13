@@ -333,6 +333,10 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         /// it full terminal control. Useful for launching editors, AI agents,
         /// or other interactive tools.
         ///
+        /// Supports [hook template variables](@/hook.md#template-variables)
+        /// (`{{ branch }}`, `{{ worktree_path }}`, etc.) and filters.
+        /// `{{ base }}` and `{{ base_worktree_path }}` require `--create`.
+        ///
         /// Especially useful with shell aliases:
         ///
         /// ```sh
@@ -344,13 +348,17 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         /// Code. Arguments after `--` are passed to the command, so
         /// `wsc feature -- 'Fix GH #322'` runs `claude 'Fix GH #322'`,
         /// starting Claude with a prompt.
+        ///
+        /// Template example: `-x 'code {{ worktree_path }}'` opens VS Code
+        /// at the worktree, `-x 'tmux new -s {{ branch | sanitize }}'` starts
+        /// a tmux session named after the branch.
         #[arg(short = 'x', long)]
         execute: Option<String>,
 
         /// Additional arguments for --execute command (after --)
         ///
         /// Arguments after `--` are appended to the execute command.
-        /// Each argument is POSIX shell-escaped before appending.
+        /// Each argument is expanded for templates, then POSIX shell-escaped.
         #[arg(last = true, requires = "execute")]
         execute_args: Vec<String>,
 
