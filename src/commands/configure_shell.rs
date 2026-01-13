@@ -109,8 +109,11 @@ impl ConfigAction {
 }
 
 /// Check if file content appears to be worktrunk-managed (contains our markers)
+///
+/// Used to identify files safe to delete during migration/uninstall.
+/// Requires both the init command AND pipe to source, to avoid false positives.
 fn is_worktrunk_managed_content(content: &str, cmd: &str) -> bool {
-    content.contains(&format!("{cmd} config shell init"))
+    content.contains(&format!("{cmd} config shell init")) && content.contains("| source")
 }
 
 /// Clean up legacy fish conf.d file after installing to functions/
