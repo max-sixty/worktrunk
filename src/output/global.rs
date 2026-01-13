@@ -31,6 +31,8 @@ use std::path::PathBuf;
 #[cfg(unix)]
 use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
+#[cfg(not(unix))]
+use worktrunk::shell_exec::Cmd;
 use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 #[cfg(unix)]
 use worktrunk::shell_exec::ShellConfig;
