@@ -40,8 +40,8 @@ pub use step_commands::{
     step_show_squash_prompt,
 };
 pub use worktree::{
-    ResolutionContext, compute_worktree_path, handle_remove, handle_remove_current, handle_switch,
-    is_worktree_at_expected_path, resolve_worktree_arg, worktree_display_name,
+    ResolutionContext, execute_switch, handle_remove, handle_remove_current,
+    is_worktree_at_expected_path, plan_switch, resolve_worktree_arg, worktree_display_name,
 };
 
 // Re-export Shell from the canonical location

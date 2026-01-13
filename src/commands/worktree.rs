@@ -82,7 +82,7 @@ use anyhow::Context;
 use color_print::cformat;
 use dunce::canonicalize;
 use normalize_path::NormalizePath;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use worktrunk::HookType;
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{GitError, Repository, ResolvedWorktree};
@@ -345,6 +345,60 @@ pub struct SwitchBranchInfo {
     pub expected_path: Option<PathBuf>,
 }
 
+/// Validated plan for a switch operation.
+///
+/// Created by `plan_switch()`, consumed by `execute_switch()`.
+/// This separation allows validation to happen before approval prompts,
+/// ensuring users aren't asked to approve hooks for operations that will fail.
+#[derive(Debug)]
+pub enum SwitchPlan {
+    /// Branch already has a worktree - just switch to it (no git commands needed)
+    Existing {
+        path: PathBuf,
+        branch: String,
+        /// Expected path for mismatch detection
+        expected_path: PathBuf,
+        /// Branch to record as "previous" for `wt switch -`
+        new_previous: Option<String>,
+    },
+    /// Need to create a new worktree
+    Create {
+        branch: String,
+        worktree_path: PathBuf,
+        /// True if using `-b` to create a new branch (--create flag)
+        create_branch: bool,
+        /// Base branch for creation (resolved, validated to exist)
+        base_branch: Option<String>,
+        /// If path exists and --clobber, this is the backup path to move it to
+        clobber_backup: Option<PathBuf>,
+        /// Branch to record as "previous" for `wt switch -`
+        new_previous: Option<String>,
+    },
+}
+
+impl SwitchPlan {
+    /// Get the worktree path for this plan.
+    pub fn worktree_path(&self) -> &Path {
+        match self {
+            SwitchPlan::Existing { path, .. } => path,
+            SwitchPlan::Create { worktree_path, .. } => worktree_path,
+        }
+    }
+
+    /// Get the branch name for this plan.
+    pub fn branch(&self) -> &str {
+        match self {
+            SwitchPlan::Existing { branch, .. } => branch,
+            SwitchPlan::Create { branch, .. } => branch,
+        }
+    }
+
+    /// Returns true if this plan will create a new worktree.
+    pub fn is_create(&self) -> bool {
+        matches!(self, SwitchPlan::Create { .. })
+    }
+}
+
 /// How the branch should be handled after worktree removal.
 ///
 /// This enum replaces the previous `no_delete_branch: bool, force_delete: bool` pattern,
@@ -413,28 +467,30 @@ pub enum RemoveResult {
     },
 }
 
-pub fn handle_switch(
+/// Validate and plan a switch operation.
+///
+/// This performs all validation upfront, returning a `SwitchPlan` that can be
+/// executed later. Call this BEFORE approval prompts to ensure users aren't
+/// asked to approve hooks for operations that will fail.
+///
+/// Warnings (remote branch shadow, --base without --create, invalid default branch)
+/// are printed during planning since they're informational, not blocking.
+pub fn plan_switch(
+    repo: &Repository,
     branch: &str,
     create: bool,
     base: Option<&str>,
-    force: bool,
     clobber: bool,
-    no_verify: bool,
     config: &WorktrunkConfig,
-) -> anyhow::Result<(SwitchResult, SwitchBranchInfo)> {
-    let repo = Repository::current()?;
-
+) -> anyhow::Result<SwitchPlan> {
     // Get the actual current branch BEFORE switching.
     // This is what we'll record as "previous" in history for `wt switch -` support.
-    let actual_current_branch = repo.current_worktree().branch().ok().flatten();
+    let new_previous = repo.current_worktree().branch().ok().flatten();
 
     // Resolve special branch names ("@" for current, "-" for previous)
     let resolved_branch = repo
         .resolve_worktree_name(branch)
         .context("Failed to resolve branch name")?;
-
-    // Record actual current branch as new "previous" for ping-pong behavior
-    let new_previous = actual_current_branch;
 
     // Resolve base if provided
     let resolved_base = if let Some(base_str) = base {
@@ -474,43 +530,17 @@ pub fn handle_switch(
     }
 
     // Compute expected worktree path for this branch
-    let expected_path = compute_worktree_path(&repo, &resolved_branch, config)?;
-
-    // Helper to build switch result for an existing worktree.
-    let switch_to_existing = |path: PathBuf| -> (SwitchResult, SwitchBranchInfo) {
-        let canonical_path = canonicalize(&path).unwrap_or(path.clone());
-        let current_dir = std::env::current_dir()
-            .ok()
-            .and_then(|p| canonicalize(&p).ok());
-        let already_at_worktree = current_dir
-            .as_ref()
-            .map(|cur| cur == &canonical_path)
-            .unwrap_or(false);
-
-        // Check if the actual path matches the expected path (branch-worktree mismatch detection).
-        let mismatch_path = if !paths_match(&path, &expected_path) {
-            Some(expected_path.clone())
-        } else {
-            None
-        };
-
-        let result = if already_at_worktree {
-            SwitchResult::AlreadyAt(canonical_path)
-        } else {
-            SwitchResult::Existing(canonical_path)
-        };
-        let branch_info = SwitchBranchInfo {
-            branch: resolved_branch.clone(),
-            expected_path: mismatch_path,
-        };
-        (result, branch_info)
-    };
+    let expected_path = compute_worktree_path(repo, &resolved_branch, config)?;
 
     // Branch-first lookup: check if branch has a worktree anywhere
     match repo.worktree_for_branch(&resolved_branch)? {
         Some(existing_path) if existing_path.exists() => {
-            let _ = repo.record_switch_previous(new_previous.as_deref());
-            return Ok(switch_to_existing(existing_path));
+            return Ok(SwitchPlan::Existing {
+                path: canonicalize(&existing_path).unwrap_or(existing_path),
+                branch: resolved_branch,
+                expected_path,
+                new_previous,
+            });
         }
         Some(_) => {
             return Err(GitError::WorktreeMissing {
@@ -522,10 +552,6 @@ pub fn handle_switch(
     }
 
     // No worktree for branch - validate branch exists before proceeding
-    // When not creating, the branch must exist (locally or on remote)
-    // Note: This check could be moved to the error recovery path (after git worktree add
-    // fails) to avoid the ~10ms overhead on the happy path. We'd detect "invalid reference"
-    // in the error, then call branch_exists() to determine which branch is invalid.
     if !create && !repo.branch_exists(&resolved_branch)? {
         return Err(GitError::InvalidReference {
             reference: resolved_branch.clone(),
@@ -533,15 +559,12 @@ pub fn handle_switch(
         .into());
     }
 
-    // No worktree for branch - check if expected path is occupied by a different branch's worktree
+    // Check if expected path is occupied by a different branch's worktree
     if let Some((existing_path, path_branch)) = repo.worktree_at_path(&expected_path)? {
         if !existing_path.exists() {
-            // Stale worktree metadata - git thinks there's a worktree but directory is gone
             let branch = path_branch.unwrap_or_else(|| resolved_branch.clone());
             return Err(GitError::WorktreeMissing { branch }.into());
         }
-
-        // Path is occupied by a different branch's worktree
         return Err(GitError::WorktreePathOccupied {
             branch: resolved_branch.clone(),
             path: expected_path,
@@ -550,55 +573,35 @@ pub fn handle_switch(
         .into());
     }
 
-    // No existing worktree for branch or at expected path - will create one
-    let worktree_path = expected_path;
-
-    // If the target path already exists but is NOT a worktree (e.g., stale directory),
-    // either move it to .bak (with --clobber) or surface a helpful error.
-    if worktree_path.exists() {
+    // Determine clobber backup path if needed
+    let clobber_backup = if expected_path.exists() {
         if clobber {
-            use anyhow::Context;
-
-            // Generate timestamped backup path
             let timestamp = worktrunk::utils::get_now() as i64;
             let datetime =
                 chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(chrono::Utc::now);
             let suffix = datetime.format("%Y%m%d-%H%M%S").to_string();
-            let backup_path = generate_backup_path(&worktree_path, &suffix);
+            let backup_path = generate_backup_path(&expected_path, &suffix);
 
-            // Error if backup path already exists
             if backup_path.exists() {
                 anyhow::bail!(
                     "Backup path already exists: {}",
                     worktrunk::path::format_path_for_display(&backup_path)
                 );
             }
-
-            let path_display = worktrunk::path::format_path_for_display(&worktree_path);
-            let backup_display = worktrunk::path::format_path_for_display(&backup_path);
-            crate::output::print(warning_message(cformat!(
-                "Moving <bold>{path_display}</> to <bold>{backup_display}</> (--clobber)"
-            )))?;
-
-            std::fs::rename(&worktree_path, &backup_path)
-                .with_context(|| format!("Failed to move {path_display} to {backup_display}"))?;
+            Some(backup_path)
         } else {
             return Err(GitError::WorktreePathExists {
                 branch: resolved_branch.clone(),
-                path: worktree_path,
+                path: expected_path,
                 create,
             }
             .into());
         }
-    }
+    } else {
+        None
+    };
 
-    // Create the worktree
-    // Build git worktree add command
-    let worktree_path_str = worktree_path.to_string_lossy();
-    let mut args = vec!["worktree", "add", worktree_path_str.as_ref()];
-
-    // Check for invalid configured default branch when creating without explicit --base.
-    // Show warning if user's configured default branch doesn't exist locally.
+    // Check for invalid configured default branch when creating without explicit --base
     if create
         && resolved_base.is_none()
         && let Some(configured) = repo.invalid_default_branch_config()
@@ -611,13 +614,10 @@ pub fn handle_switch(
         )))?;
     }
 
-    // Use the resolved base, or default to default branch if creating without a base.
-    // For bare repos with no branches yet (bootstrap case), allow None to create orphan branch.
-    let base_for_creation = if create {
+    // Resolve base branch for creation
+    let base_branch = if create {
         match resolved_base {
             Some(ref b) => {
-                // Validate that the explicitly specified base branch exists
-                // (Same note as above re: moving to error recovery path for performance)
                 if !repo.branch_exists(b)? {
                     return Err(GitError::InvalidReference {
                         reference: b.clone(),
@@ -626,124 +626,205 @@ pub fn handle_switch(
                 }
                 Some(b.clone())
             }
-            None => {
-                // Try to use default branch as base, but only if it actually exists
-                // (has commits). For empty repos, the default branch is unborn and
-                // git will automatically create an orphan worktree.
-                repo.resolve_target_branch(None)
-                    .ok()
-                    .filter(|b| repo.local_branch_exists(b).unwrap_or(false))
-            }
+            None => repo
+                .resolve_target_branch(None)
+                .ok()
+                .filter(|b| repo.local_branch_exists(b).unwrap_or(false)),
         }
     } else {
         None
     };
 
-    // Build args based on whether we're creating or checking out
-    if create {
-        args.push("-b");
-        args.push(&resolved_branch);
-        if let Some(ref base_branch) = base_for_creation {
-            args.push(base_branch);
-        }
-    } else {
-        args.push(&resolved_branch);
-    }
+    Ok(SwitchPlan::Create {
+        branch: resolved_branch,
+        worktree_path: expected_path,
+        create_branch: create,
+        base_branch,
+        clobber_backup,
+        new_previous,
+    })
+}
 
-    // Create worktree and parse specific error cases
-    if let Err(e) = repo.run_command(&args) {
-        let msg = e.to_string();
-        // Check if error is about directory already existing
-        if msg.contains("already exists") {
-            // Parse the path from git's error message
-            // Format: "fatal: '/path/to/dir' already exists"
-            if let Some(path_str) = msg
-                .lines()
-                .find(|line| line.contains("already exists"))
-                .and_then(|line| {
-                    // Extract path between quotes
-                    line.split('\'').nth(1).or_else(|| line.split('"').nth(1))
-                })
-            {
-                return Err(GitError::WorktreePathExists {
-                    branch: resolved_branch.clone(),
-                    path: std::path::PathBuf::from(path_str),
-                    create,
+/// Execute a validated switch plan.
+///
+/// Takes a `SwitchPlan` from `plan_switch()` and executes it.
+/// For `SwitchPlan::Existing`, just records history.
+/// For `SwitchPlan::Create`, creates the worktree and runs hooks.
+pub fn execute_switch(
+    repo: &Repository,
+    plan: SwitchPlan,
+    config: &WorktrunkConfig,
+    force: bool,
+    no_verify: bool,
+) -> anyhow::Result<(SwitchResult, SwitchBranchInfo)> {
+    match plan {
+        SwitchPlan::Existing {
+            path,
+            branch,
+            expected_path,
+            new_previous,
+        } => {
+            let _ = repo.record_switch_previous(new_previous.as_deref());
+
+            let current_dir = std::env::current_dir()
+                .ok()
+                .and_then(|p| canonicalize(&p).ok());
+            let already_at_worktree = current_dir
+                .as_ref()
+                .map(|cur| cur == &path)
+                .unwrap_or(false);
+
+            let mismatch_path = if !paths_match(&path, &expected_path) {
+                Some(expected_path)
+            } else {
+                None
+            };
+
+            let result = if already_at_worktree {
+                SwitchResult::AlreadyAt(path)
+            } else {
+                SwitchResult::Existing(path)
+            };
+
+            Ok((
+                result,
+                SwitchBranchInfo {
+                    branch,
+                    expected_path: mismatch_path,
+                },
+            ))
+        }
+
+        SwitchPlan::Create {
+            branch,
+            worktree_path,
+            create_branch,
+            base_branch,
+            clobber_backup,
+            new_previous,
+        } => {
+            // Handle --clobber backup if needed
+            if let Some(backup_path) = clobber_backup {
+                let path_display = worktrunk::path::format_path_for_display(&worktree_path);
+                let backup_display = worktrunk::path::format_path_for_display(&backup_path);
+                crate::output::print(warning_message(cformat!(
+                    "Moving <bold>{path_display}</> to <bold>{backup_display}</> (--clobber)"
+                )))?;
+
+                std::fs::rename(&worktree_path, &backup_path).with_context(|| {
+                    format!("Failed to move {path_display} to {backup_display}")
+                })?;
+            }
+
+            // Build git worktree add command
+            let worktree_path_str = worktree_path.to_string_lossy();
+            let mut args = vec!["worktree", "add", worktree_path_str.as_ref()];
+
+            if create_branch {
+                args.push("-b");
+                args.push(&branch);
+                if let Some(ref base) = base_branch {
+                    args.push(base);
+                }
+            } else {
+                args.push(&branch);
+            }
+
+            // Create worktree
+            if let Err(e) = repo.run_command(&args) {
+                let msg = e.to_string();
+                // If path exists (race condition - plan_switch checked but something created it),
+                // use our known worktree_path rather than parsing git's locale-sensitive stderr
+                if msg.contains("already exists") {
+                    return Err(GitError::WorktreePathExists {
+                        branch: branch.clone(),
+                        path: worktree_path,
+                        create: create_branch,
+                    }
+                    .into());
+                }
+                return Err(GitError::WorktreeCreationFailed {
+                    branch: branch.clone(),
+                    base_branch: base_branch.clone(),
+                    error: msg,
                 }
                 .into());
             }
-        }
-        // Fall back to generic error with context
-        // Note: "invalid reference" errors are caught by upfront validation (lines 529, 621)
-        return Err(GitError::WorktreeCreationFailed {
-            branch: resolved_branch.clone(),
-            base_branch: base_for_creation.clone(),
-            error: msg,
-        }
-        .into());
-    }
 
-    // Check if git's DWIM created a tracking branch from a remote
-    // This happens when we don't use --create and the branch exists on a remote
-    let from_remote = if !create {
-        // Query the new worktree for its upstream tracking branch
-        repo.upstream_branch(&resolved_branch)?
-    } else {
-        None
-    };
+            // Check if git's DWIM created a tracking branch from a remote
+            let from_remote = if !create_branch {
+                repo.upstream_branch(&branch)?
+            } else {
+                None
+            };
 
-    // Compute base worktree path once for hooks and result
-    let base_worktree_path = base_for_creation
-        .as_ref()
-        .and_then(|b| repo.worktree_for_branch(b).ok().flatten())
-        .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
-
-    // Execute post-create commands (sequential, blocking)
-    // Note: If user declines, continue anyway - worktree already created
-    if !no_verify {
-        let repo_root = repo.worktree_base()?;
-        let ctx = CommandContext::new(
-            &repo,
-            config,
-            Some(&resolved_branch),
-            &worktree_path,
-            &repo_root,
-            force,
-        );
-
-        let extra_vars: Vec<(&str, &str)> = [
-            base_for_creation.as_ref().map(|b| ("base", b.as_str())),
-            base_worktree_path
+            // Compute base worktree path for hooks and result
+            let base_worktree_path = base_branch
                 .as_ref()
-                .map(|p| ("base_worktree_path", p.as_str())),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+                .and_then(|b| repo.worktree_for_branch(b).ok().flatten())
+                .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
-        // Approval was handled at the gate
-        ctx.execute_post_create_commands(&extra_vars)?;
+            // Execute post-create commands
+            if !no_verify {
+                let repo_root = repo.worktree_base()?;
+                let ctx = CommandContext::new(
+                    repo,
+                    config,
+                    Some(&branch),
+                    &worktree_path,
+                    &repo_root,
+                    force,
+                );
+
+                let extra_vars: Vec<(&str, &str)> = [
+                    base_branch.as_ref().map(|b| ("base", b.as_str())),
+                    base_worktree_path
+                        .as_ref()
+                        .map(|p| ("base_worktree_path", p.as_str())),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+
+                ctx.execute_post_create_commands(&extra_vars)?;
+            }
+
+            // Record successful switch in history
+            let _ = repo.record_switch_previous(new_previous.as_deref());
+
+            Ok((
+                SwitchResult::Created {
+                    path: worktree_path,
+                    created_branch: create_branch,
+                    base_branch,
+                    base_worktree_path,
+                    from_remote,
+                },
+                SwitchBranchInfo {
+                    branch,
+                    expected_path: None,
+                },
+            ))
+        }
     }
+}
 
-    // Note: post-start commands are spawned AFTER success message is shown
-    // (see main.rs switch handler for temporal locality)
-
-    // Record successful switch in history for `wt switch -` support
-    let _ = repo.record_switch_previous(new_previous.as_deref());
-
-    Ok((
-        SwitchResult::Created {
-            path: worktree_path,
-            created_branch: create,
-            base_branch: base_for_creation,
-            base_worktree_path,
-            from_remote,
-        },
-        SwitchBranchInfo {
-            branch: resolved_branch,
-            expected_path: None, // Created at expected path by definition
-        },
-    ))
+/// Switch to a worktree (convenience wrapper around plan_switch + execute_switch).
+///
+/// For new code, prefer calling `plan_switch()` then `execute_switch()` separately
+/// to allow approval prompts between validation and execution.
+pub fn handle_switch(
+    branch: &str,
+    create: bool,
+    base: Option<&str>,
+    force: bool,
+    clobber: bool,
+    no_verify: bool,
+    config: &WorktrunkConfig,
+) -> anyhow::Result<(SwitchResult, SwitchBranchInfo)> {
+    let repo = Repository::current()?;
+    let plan = plan_switch(&repo, branch, create, base, clobber, config)?;
+    execute_switch(&repo, plan, config, force, no_verify)
 }
 
 pub fn handle_remove(
