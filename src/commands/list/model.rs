@@ -423,10 +423,6 @@ impl ListItem {
         &self.head
     }
 
-    pub fn commit_details(&self) -> CommitDetails {
-        self.commit.clone().unwrap_or_default()
-    }
-
     pub fn branch_diff(&self) -> Option<&BranchDiffTotals> {
         self.branch_diff.as_ref()
     }
@@ -2017,14 +2013,6 @@ mod tests {
     fn test_list_item_head() {
         let item = ListItem::new_branch("abc123def".to_string(), "feature".to_string());
         assert_eq!(item.head(), "abc123def");
-    }
-
-    #[test]
-    fn test_list_item_commit_details() {
-        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-        let details = item.commit_details();
-        assert_eq!(details.timestamp, 0);
-        assert_eq!(details.commit_message, "");
     }
 
     #[test]

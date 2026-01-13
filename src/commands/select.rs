@@ -1062,7 +1062,7 @@ pub fn handle_select(
             let branch_name = item.branch_name().to_string();
 
             // Use layout system to render the line - this handles all column alignment
-            let rendered_line = layout.render_list_item_line(&item, None);
+            let rendered_line = layout.render_list_item_line(&item);
             let display_text_with_ansi = rendered_line.render();
             let display_text = rendered_line.plain_text();
 
