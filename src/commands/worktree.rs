@@ -99,21 +99,24 @@ use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 ///
 /// For paths with extensions: `file.txt` → `file.txt.bak.TIMESTAMP`
 /// For paths without extensions: `foo` → `foo.bak.TIMESTAMP`
-fn generate_backup_path(path: &std::path::Path, suffix: &str) -> PathBuf {
+///
+/// Returns an error for unusual paths without a file name (e.g., `/` or `..`).
+fn generate_backup_path(path: &std::path::Path, suffix: &str) -> anyhow::Result<PathBuf> {
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("Cannot generate backup path for {}", path.display()))?;
+
     if path.extension().is_none() {
         // Path has no extension (e.g., /repo/feature)
-        path.with_file_name(format!(
-            "{}.bak.{suffix}",
-            path.file_name().unwrap().to_string_lossy()
-        ))
+        Ok(path.with_file_name(format!("{}.bak.{suffix}", file_name.to_string_lossy())))
     } else {
         // Path has an extension (e.g., /repo.feature or /file.txt)
-        path.with_extension(format!(
+        Ok(path.with_extension(format!(
             "{}.bak.{suffix}",
             path.extension()
                 .map(|e| e.to_string_lossy().to_string())
                 .unwrap_or_default()
-        ))
+        )))
     }
 }
 
@@ -580,7 +583,7 @@ pub fn plan_switch(
             let datetime =
                 chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(chrono::Utc::now);
             let suffix = datetime.format("%Y%m%d-%H%M%S").to_string();
-            let backup_path = generate_backup_path(&expected_path, &suffix);
+            let backup_path = generate_backup_path(&expected_path, &suffix)?;
 
             if backup_path.exists() {
                 anyhow::bail!(
@@ -1326,14 +1329,14 @@ mod tests {
     fn test_generate_backup_path_with_extension() {
         // Paths with extensions: file.txt -> file.txt.bak.TIMESTAMP
         let path = PathBuf::from("/tmp/repo.feature");
-        let backup = super::generate_backup_path(&path, "20250101-000000");
+        let backup = super::generate_backup_path(&path, "20250101-000000").unwrap();
         assert_eq!(
             backup,
             PathBuf::from("/tmp/repo.feature.bak.20250101-000000")
         );
 
         let path = PathBuf::from("/tmp/file.txt");
-        let backup = super::generate_backup_path(&path, "20250101-000000");
+        let backup = super::generate_backup_path(&path, "20250101-000000").unwrap();
         assert_eq!(backup, PathBuf::from("/tmp/file.txt.bak.20250101-000000"));
     }
 
@@ -1341,14 +1344,25 @@ mod tests {
     fn test_generate_backup_path_without_extension() {
         // Paths without extensions: foo -> foo.bak.TIMESTAMP
         let path = PathBuf::from("/tmp/repo/feature");
-        let backup = super::generate_backup_path(&path, "20250101-000000");
+        let backup = super::generate_backup_path(&path, "20250101-000000").unwrap();
         assert_eq!(
             backup,
             PathBuf::from("/tmp/repo/feature.bak.20250101-000000")
         );
 
         let path = PathBuf::from("/tmp/mydir");
-        let backup = super::generate_backup_path(&path, "20250101-000000");
+        let backup = super::generate_backup_path(&path, "20250101-000000").unwrap();
         assert_eq!(backup, PathBuf::from("/tmp/mydir.bak.20250101-000000"));
+    }
+
+    #[test]
+    fn test_generate_backup_path_unusual_paths() {
+        // Root path has no file name
+        let path = PathBuf::from("/");
+        assert!(super::generate_backup_path(&path, "20250101-000000").is_err());
+
+        // Parent reference has no file name
+        let path = PathBuf::from("..");
+        assert!(super::generate_backup_path(&path, "20250101-000000").is_err());
     }
 }

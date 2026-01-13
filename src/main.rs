@@ -1559,6 +1559,15 @@ fn main() {
                         .ok()
                         .and_then(|p| dunce::canonicalize(&p).ok());
 
+                    // Dedupe inputs to avoid redundant planning/execution
+                    let branches: Vec<_> = {
+                        let mut seen = std::collections::HashSet::new();
+                        branches
+                            .into_iter()
+                            .filter(|b| seen.insert(b.clone()))
+                            .collect()
+                    };
+
                     // Phase 1: Validate all targets (resolution + preparation)
                     // Store successful plans for execution after approval
                     let mut plans_others: Vec<RemoveResult> = Vec::new();
