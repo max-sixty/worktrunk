@@ -45,7 +45,7 @@ exit_code: 0
 [107m [0m [2m[0m[2m[35mfunction[0m[2m wt
 [107m [0m [2m    [0m[2m[34mcommand[0m[2m wt config shell init fish [0m[2m[36m|[0m[2m [0m[2m[34msource[0m[2m
 [107m [0m [2m    [0m[2m[34mset[0m[2m [0m[2m[36m-l[0m[2m wt_status [0m[2m[36m$[0m[2mpipestatus[1]
-[107m [0m [2m    [0m[2m[34mtest[0m[2m [0m[2m[36m$[0m[2mwt_status [0m[2m[36m-eq[0m[2m 0; [0m[2m[34mor[0m[2m return [0m[2m[36m$[0m[2mwt_status
+[107m [0m [2m    [0m[2m[34mtest[0m[2m [0m[2m[36m$[0m[2mwt_status [0m[2m[36m-eq[0m[2m 0; [0m[2m[34more[0m[2m return [0m[2m[36m$[0m[2mwt_status
 [107m [0m [2m    [0m[2m[34mwt[0m[2m [0m[2m[36m$[0m[2margv
 [107m [0m [2m[0m[2m[34mend[0m[2m
 
