@@ -55,6 +55,26 @@ pub struct CollectOptions {
     /// Presence in set = skip expensive tasks for this branch (HasFileChanges,
     /// IsAncestor, WouldMergeAdd, BranchDiff, MergeTreeConflicts).
     ///
+    /// ## Why "commits behind" as the heuristic
+    ///
+    /// The expensive operations (`git merge-tree`, `git diff`) scale with:
+    /// - **Files changed on both sides** — each needs 3-way merge or diff
+    /// - **Size of those files** — content loading and merge algorithm
+    ///
+    /// Commit count isn't directly in the algorithm, but "commits behind" is a
+    /// cheap proxy: more commits on main since divergence → more files main has
+    /// touched → more potential overlap with the branch's changes.
+    ///
+    /// We use "behind" rather than "ahead" because feature branches typically
+    /// have small ahead counts, so behind dominates. A more accurate heuristic
+    /// would be `min(files_changed_on_main, files_changed_on_branch)`, but
+    /// computing that requires per-branch git commands, defeating the optimization.
+    ///
+    /// The batch `git for-each-ref --format='%(ahead-behind:...)'` gives us all
+    /// counts in a single command, making this heuristic essentially free.
+    ///
+    /// ## Implementation
+    ///
     /// Built by filtering `batch_ahead_behind()` results on local branches only.
     /// Remote-only branches are never in this set (they use individual git commands).
     /// The threshold (default 50) is applied at construction time. Ahead/behind
