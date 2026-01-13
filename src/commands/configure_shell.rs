@@ -21,6 +21,8 @@ pub struct UninstallResult {
     pub shell: Shell,
     pub path: PathBuf,
     pub action: UninstallAction,
+    /// Path that replaces this one (for deprecated location cleanup)
+    pub superseded_by: Option<PathBuf>,
 }
 
 pub struct UninstallScanResult {
@@ -646,18 +648,28 @@ pub fn show_uninstall_preview(
     for result in results {
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
-        // Bash/Zsh: inline completions; Fish: separate completion file
-        let what = if matches!(shell, Shell::Fish) {
-            "shell extension"
-        } else {
-            "shell extension & completions"
-        };
 
-        let _ = output::print(format!(
-            "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
-            result.action.symbol(),
-            result.action.description(),
-        ));
+        // Deprecated files get a different message format
+        if let Some(canonical) = &result.superseded_by {
+            let canonical_path = format_path_for_display(canonical);
+            let _ = output::print(format!(
+                "{INFO_SYMBOL} {} {bold}{path}{bold:#} (deprecated; now using {bold}{canonical_path}{bold:#})",
+                result.action.description(),
+            ));
+        } else {
+            // Bash/Zsh: inline completions; Fish: separate completion file
+            let what = if matches!(shell, Shell::Fish) {
+                "shell extension"
+            } else {
+                "shell extension & completions"
+            };
+
+            let _ = output::print(format!(
+                "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
+                result.action.symbol(),
+                result.action.description(),
+            ));
+        }
     }
 
     for result in completion_results {
@@ -892,6 +904,7 @@ fn scan_for_uninstall(
                             shell,
                             path: fish_path.clone(),
                             action: UninstallAction::WouldRemove,
+                            superseded_by: None,
                         });
                     } else {
                         fs::remove_file(fish_path).map_err(|e| {
@@ -905,6 +918,7 @@ fn scan_for_uninstall(
                             shell,
                             path: fish_path.clone(),
                             action: UninstallAction::Removed,
+                            superseded_by: None,
                         });
                     }
                 }
@@ -912,6 +926,7 @@ fn scan_for_uninstall(
 
             // Also check legacy location (conf.d/) - issue #566
             // Only remove if it contains worktrunk markers to avoid deleting user's custom file
+            let canonical_path = paths.first().cloned();
             if let Ok(legacy_path) = Shell::legacy_fish_conf_d_path(cmd)
                 && legacy_path.exists()
             {
@@ -926,6 +941,7 @@ fn scan_for_uninstall(
                             shell,
                             path: legacy_path.clone(),
                             action: UninstallAction::WouldRemove,
+                            superseded_by: canonical_path.clone(),
                         });
                     } else {
                         fs::remove_file(&legacy_path).map_err(|e| {
@@ -939,6 +955,7 @@ fn scan_for_uninstall(
                             shell,
                             path: legacy_path,
                             action: UninstallAction::Removed,
+                            superseded_by: canonical_path,
                         });
                     }
                 }
@@ -1043,6 +1060,7 @@ fn uninstall_from_file(
             shell,
             path: path.to_path_buf(),
             action: UninstallAction::WouldRemove,
+            superseded_by: None,
         }));
     }
 
@@ -1077,6 +1095,7 @@ fn uninstall_from_file(
         shell,
         path: path.to_path_buf(),
         action: UninstallAction::Removed,
+        superseded_by: None,
     }))
 }
 
