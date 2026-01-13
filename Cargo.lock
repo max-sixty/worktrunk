@@ -1720,15 +1720,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rayon-join-macro"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d64d145ddcd53ddc86a24a4ad646702cf9a08ea7f708bee54b8893fa67cb59a1"
-dependencies = [
- "rayon",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1952,13 +1943,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "winapi",
-]
-
-[[package]]
-name = "setup-select-test"
-version = "0.1.0"
-dependencies = [
- "dunce",
 ]
 
 [[package]]
@@ -3073,7 +3057,6 @@ dependencies = [
  "pathdiff",
  "portable-pty",
  "rayon",
- "rayon-join-macro",
  "reflink-copy",
  "regex",
  "rstest",
@@ -3101,6 +3084,7 @@ dependencies = [
  "vt100",
  "which 8.0.0",
  "wrap-ansi",
+ "wt-perf",
 ]
 
 [[package]]
@@ -3113,6 +3097,16 @@ dependencies = [
  "regex",
  "string-width",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "wt-perf"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "dunce",
+ "tempfile",
+ "worktrunk",
 ]
 
 [[package]]

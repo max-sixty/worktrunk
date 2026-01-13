@@ -1,0 +1,44 @@
+---
+source: tests/integration_tests/switch.rs
+info:
+  program: wt
+  args:
+    - switch
+    - "--create"
+    - feat;id
+    - "--execute"
+    - "echo {{ branch }}"
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    PATH: "[PATH]"
+    RUST_LOG: warn
+    SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+feat;id
+
+----- stderr -----
+[32m✓[39m [32mCreated branch [1mfeat;id[22m and worktree from [1mmain[22m @ [1m_REPO_.feat;id[22m[39m
+[2m↳[22m [2mCustomize worktree locations: [90mwt config create[39m[22m
+[33m▲[39m [33mExecuting [1mecho {{ branch }}[22m @ [1m_REPO_.feat;id[22m, but shell directory unchanged — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
+[36m◎[39m [36mExecuting (--execute):[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'feat;id'[0m[2m

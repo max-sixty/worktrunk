@@ -367,6 +367,22 @@ fn test_switch_execute_template_with_filter(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_switch_execute_template_shell_escape(repo: TestRepo) {
+    // Test that shell metacharacters in branch names are escaped
+    // Without escaping, this would execute `id` as a separate command
+    snapshot_switch(
+        "switch_execute_template_shell_escape",
+        &repo,
+        &[
+            "--create",
+            "feat;id",
+            "--execute",
+            "echo {{ branch }}",
+        ],
+    );
+}
+
+#[rstest]
 fn test_switch_execute_template_worktree_path(repo: TestRepo) {
     // Test that {{ worktree_path }} is expanded
     snapshot_switch(
