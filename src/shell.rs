@@ -668,7 +668,8 @@ impl ShellInit {
     /// Generate fish wrapper code (for `wt config shell install fish`)
     ///
     /// This generates a minimal wrapper that sources the full function from the binary.
-    /// Unlike `generate()` which outputs the full function, this wrapper auto-updates.
+    /// The wrapper file itself is static, but it loads the init output at runtime,
+    /// so users get updated behavior without reinstalling.
     pub fn generate_fish_wrapper(&self) -> Result<String, askama::Error> {
         let template = FishWrapperTemplate { cmd: &self.cmd };
         template.render()

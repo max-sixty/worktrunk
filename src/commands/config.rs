@@ -516,7 +516,6 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     });
 
     let mut any_not_configured = false;
-    let mut not_configured_shells: Vec<Shell> = Vec::new();
     let mut has_any_unmatched = false;
 
     // Show configured and not-configured shells (matching `config shell install` format exactly)
@@ -539,14 +538,13 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     .iter()
                     .find(|d| d.path == result.path && !d.matched_lines.is_empty());
 
-                // Build file:line location (clickable in terminals)
+                // Build file:line location (clickable in terminals - use first line only)
                 let location = if let Some(det) = detection {
-                    let line_nums: Vec<_> = det
-                        .matched_lines
-                        .iter()
-                        .map(|d| d.line_number.to_string())
-                        .collect();
-                    format!("{}:{}", path, line_nums.join(","))
+                    if let Some(first_line) = det.matched_lines.first() {
+                        format!("{}:{}", path, first_line.line_number)
+                    } else {
+                        path.to_string()
+                    }
                 } else {
                     path.to_string()
                 };
@@ -608,9 +606,6 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                         )?;
                     } else {
                         any_not_configured = true;
-                        if !not_configured_shells.contains(&shell) {
-                            not_configured_shells.push(shell);
-                        }
                         writeln!(
                             out,
                             "{}",
@@ -650,9 +645,6 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     )?;
                 } else {
                     any_not_configured = true;
-                    if !not_configured_shells.contains(&shell) {
-                        not_configured_shells.push(shell);
-                    }
                     writeln!(
                         out,
                         "{}",
@@ -703,11 +695,9 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         )?;
     }
 
-    // Summary hint - be specific about which shells need configuration
-    if any_not_configured && !not_configured_shells.is_empty() {
+    // Summary hint when shells need configuration
+    if any_not_configured {
         writeln!(out)?;
-        // CLI accepts one shell at a time, so suggest the base command
-        // which auto-detects and configures all available shells
         writeln!(
             out,
             "{}",
@@ -725,13 +715,12 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             has_any_unmatched = true;
             let path = format_path_for_display(&detection.path);
 
-            // Build file:line location (clickable in terminals)
-            let line_nums: Vec<_> = detection
-                .unmatched_candidates
-                .iter()
-                .map(|d| d.line_number.to_string())
-                .collect();
-            let location = format!("{}:{}", path, line_nums.join(","));
+            // Build file:line location (clickable in terminals - use first line only)
+            let location = if let Some(first) = detection.unmatched_candidates.first() {
+                format!("{}:{}", path, first.line_number)
+            } else {
+                path.to_string()
+            };
             writeln!(
                 out,
                 "{}",

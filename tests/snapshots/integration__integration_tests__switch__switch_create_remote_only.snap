@@ -9,7 +9,7 @@ info:
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -34,7 +34,7 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mBranch [1mremote-feature[22m exists on remote (origin/remote-feature); creating new branch from base instead[39m
-[2m↳[22m [2mTo switch to the remote branch, remove [90m--create[39m; run [90mwt switch remote-feature[39m[22m
+[2m↳[22m [2mTo switch to the remote branch, remove this added branch and then run without [90m--create[39m: [90mwt remove remote-feature && wt switch remote-feature[39m[22m
 [32m✓[39m [32mCreated branch [1mremote-feature[22m and worktree from [1mmain[22m @ [1m_REPO_.remote-feature[22m[39m
 [2m↳[22m [2mCustomize worktree locations: [90mwt config create[39m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m

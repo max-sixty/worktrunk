@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.13.1
+
+### Fixed
+
+- **Pager auto-quit**: Help text now auto-quits when it fits on screen, even when `LESS` is set without the `F` flag (common with oh-my-zsh's `LESS=-R` default). Fixes [#583](https://github.com/max-sixty/worktrunk/issues/583). (thanks @razor-x for reporting)
+- **`--create` hint for remote branch shadowing**: Improved recovery hint when `--create` shadows a remote branch — now shows the full recovery command.
+
+## 0.13.0
+
+### Improved
+
+- **`wt list` parallelization**: Parallel worktree operations reduce latency significantly. Respects `RAYON_NUM_THREADS` environment variable for controlling parallelism.
+- **Template variables in `--execute`**: Hook template variables (`{{ branch }}`, `{{ worktree_path }}`, etc.) are now expanded in `--execute` commands and trailing args. With `--create`, `{{ base }}` and `{{ base_worktree_path }}` are also available.
+- **Fish shell Homebrew compatibility**: Fish shell integration now installs to `~/.config/fish/functions/wt.fish` instead of `conf.d/`, ensuring PATH is fully configured before the wt function loads. `wt config show` detects legacy installations and `wt config shell install` handles migration automatically.
+- **Chrome Trace Format export**: Performance traces can be exported for analysis with Chrome's trace viewer or Perfetto.
+- **`--dry-run` flag for shell commands**: `wt config shell install` and `wt config shell uninstall` now support `--dry-run` to preview changes without prompting.
+- **Nested subcommand suggestions**: When typing `wt squash` instead of `wt step squash`, the error now suggests the correct command path.
+- **Orphan branch indicator**: `wt list` shows `∅` (empty set) for orphan branches with no common ancestor to the default branch.
+- **Improved `-vv` diagnostic workflow**: Bug reporting hint now uses a gist workflow to avoid URL length limits.
+
+### Fixed
+
+- **`wt switch --create --base` error message**: Now correctly identifies the invalid base branch instead of the target branch. Fixes [#562](https://github.com/max-sixty/worktrunk/issues/562). (thanks @fablefactor)
+- **AheadBehind column loading indicator**: Shows `⋯` when not yet loaded instead of appearing empty, distinguishing loading state from "in sync".
+- **Post-merge hook failure output**: Simplified error messages and removed confusing `--no-verify` hint.
+- **`wt select` log preview**: Graph structure is now preserved when displaying commit history, and columns dynamically align.
+
+### Documentation
+
+- **FAQ entry for shell setup issues**: Added troubleshooting guidance for common shell integration problems.
+- **Template variables reference**: Consolidated template variables documentation into hook.md.
+- **Clarified `--force` vs `-D` flags**: Updated `wt remove` documentation. (thanks @hlee-cb)
+- **Performance benchmarks**: Added documentation for `copy-ignored` performance.
+
 ## 0.12.0
 
 ### Improved
