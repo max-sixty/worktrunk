@@ -714,7 +714,8 @@ fn batch_fetch_stats(repo: &Repository, hashes: &[String]) -> HashMap<String, (u
     }
 
     // --root: include stats for root commits (no parent to diff against)
-    let stdin_data = hashes.join("\n");
+    // Each hash needs a trailing newline for git to process it
+    let stdin_data = hashes.iter().map(|h| format!("{h}\n")).collect::<String>();
     let Ok(output) = Cmd::new("git")
         .args(["diff-tree", "--numstat", "-r", "--root", "--stdin"])
         .current_dir(repo.worktree_base().unwrap_or_else(|_| ".".into()))
