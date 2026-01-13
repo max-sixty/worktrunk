@@ -177,11 +177,11 @@ fn test_configure_shell_fish_extension_exists(repo: TestRepo, temp_home: TempDir
     let functions = temp_home.path().join(".config/fish/functions");
     fs::create_dir_all(&functions).unwrap();
     let fish_config = functions.join("wt.fish");
-    // Write the exact content that install would create
+    // Write the exact wrapper content that install would create
     let init =
         worktrunk::shell::ShellInit::with_prefix(worktrunk::shell::Shell::Fish, "wt".to_string());
-    let init_content = init.generate().unwrap();
-    fs::write(&fish_config, format!("{}\n", init_content)).unwrap();
+    let wrapper_content = init.generate_fish_wrapper().unwrap();
+    fs::write(&fish_config, format!("{}\n", wrapper_content)).unwrap();
 
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
@@ -196,8 +196,8 @@ fn test_configure_shell_fish_extension_exists(repo: TestRepo, temp_home: TempDir
             .arg("--yes")
             .current_dir(repo.root_path());
 
-        // Fish completions are inline in the init script, so when extension exists,
-        // it should say "All shells already configured"
+        // Fish shell extension exists but completions are in a separate file.
+        // Shell extension shows as "Already configured", completions show as "Created".
         assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
@@ -230,11 +230,11 @@ fn test_configure_shell_fish_all_already_configured(repo: TestRepo, temp_home: T
     let functions = temp_home.path().join(".config/fish/functions");
     fs::create_dir_all(&functions).unwrap();
     let fish_config = functions.join("wt.fish");
-    // Write the exact content that install would create
+    // Write the exact wrapper content that install would create
     let init =
         worktrunk::shell::ShellInit::with_prefix(worktrunk::shell::Shell::Fish, "wt".to_string());
-    let init_content = init.generate().unwrap();
-    fs::write(&fish_config, format!("{}\n", init_content)).unwrap();
+    let wrapper_content = init.generate_fish_wrapper().unwrap();
+    fs::write(&fish_config, format!("{}\n", wrapper_content)).unwrap();
 
     // Also create completions file
     let completions_d = temp_home.path().join(".config/fish/completions");
@@ -270,7 +270,8 @@ fn test_configure_shell_fish_legacy_conf_d_cleanup(repo: TestRepo, temp_home: Te
     let conf_d = temp_home.path().join(".config/fish/conf.d");
     fs::create_dir_all(&conf_d).unwrap();
     let legacy_file = conf_d.join("wt.fish");
-    fs::write(&legacy_file, "# legacy wt.fish in conf.d").unwrap();
+    // Use realistic content with worktrunk marker so it's detected as worktrunk-managed
+    fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
 
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
@@ -324,8 +325,8 @@ fn test_configure_shell_fish_legacy_cleanup_even_when_already_exists(
     let new_file = functions.join("wt.fish");
     let init =
         worktrunk::shell::ShellInit::with_prefix(worktrunk::shell::Shell::Fish, "wt".to_string());
-    let init_content = init.generate().unwrap();
-    fs::write(&new_file, format!("{}\n", init_content)).unwrap();
+    let wrapper_content = init.generate_fish_wrapper().unwrap();
+    fs::write(&new_file, format!("{}\n", wrapper_content)).unwrap();
 
     // Also create completions (so it reports "all already configured")
     let completions_d = temp_home.path().join(".config/fish/completions");
@@ -336,7 +337,8 @@ fn test_configure_shell_fish_legacy_cleanup_even_when_already_exists(
     let conf_d = temp_home.path().join(".config/fish/conf.d");
     fs::create_dir_all(&conf_d).unwrap();
     let legacy_file = conf_d.join("wt.fish");
-    fs::write(&legacy_file, "# legacy wt.fish in conf.d").unwrap();
+    // Use realistic content with worktrunk marker so it's detected as worktrunk-managed
+    fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
 
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
@@ -379,12 +381,17 @@ fn test_uninstall_shell_fish_legacy_conf_d_cleanup(repo: TestRepo, temp_home: Te
     let functions = temp_home.path().join(".config/fish/functions");
     fs::create_dir_all(&functions).unwrap();
     let new_file = functions.join("wt.fish");
-    fs::write(&new_file, "function wt\n  # new location\nend").unwrap();
+    // Write the exact wrapper content that install would create
+    let init =
+        worktrunk::shell::ShellInit::with_prefix(worktrunk::shell::Shell::Fish, "wt".to_string());
+    let wrapper_content = init.generate_fish_wrapper().unwrap();
+    fs::write(&new_file, format!("{}\n", wrapper_content)).unwrap();
 
     let conf_d = temp_home.path().join(".config/fish/conf.d");
     fs::create_dir_all(&conf_d).unwrap();
     let legacy_file = conf_d.join("wt.fish");
-    fs::write(&legacy_file, "# legacy wt.fish in conf.d").unwrap();
+    // Legacy content from main branch
+    fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
 
     // Also create completions
     let completions_d = temp_home.path().join(".config/fish/completions");
@@ -738,11 +745,11 @@ fn test_uninstall_shell_fish(repo: TestRepo, temp_home: TempDir) {
     let functions = temp_home.path().join(".config/fish/functions");
     fs::create_dir_all(&functions).unwrap();
     let fish_config = functions.join("wt.fish");
-    fs::write(
-        &fish_config,
-        "function wt\n    # wt shell integration\nend\n",
-    )
-    .unwrap();
+    // Write the exact wrapper content that install would create
+    let init =
+        worktrunk::shell::ShellInit::with_prefix(worktrunk::shell::Shell::Fish, "wt".to_string());
+    let wrapper_content = init.generate_fish_wrapper().unwrap();
+    fs::write(&fish_config, format!("{}\n", wrapper_content)).unwrap();
 
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {

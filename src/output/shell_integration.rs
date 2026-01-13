@@ -248,9 +248,16 @@ pub fn print_shell_install_result(
 
     // Show legacy file cleanups (migration from conf.d to functions)
     for legacy_path in &scan_result.legacy_cleanups {
-        let path = format_path_for_display(legacy_path);
+        let old_path = format_path_for_display(legacy_path);
+        // Find the new canonical path from the configured results
+        let new_path = scan_result
+            .configured
+            .iter()
+            .find(|r| r.shell == Shell::Fish)
+            .map(|r| format_path_for_display(&r.path))
+            .unwrap_or_else(|| "~/.config/fish/functions/".to_string());
         super::print(info_message(cformat!(
-            "Removed <bold>{path}</> (deprecated; now using functions/)"
+            "Removed <bold>{old_path}</> (deprecated; now using <bold>{new_path}</>)"
         )))?;
     }
 

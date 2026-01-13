@@ -528,7 +528,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
 
     // Show configured and not-configured shells (matching `config shell install` format exactly)
     // Bash/Zsh: inline completions, show "shell extension & completions"
-    // Fish: separate completion file, show "shell extension" for conf.d and "completions" for completions/
+    // Fish: separate completion file, show "shell extension" for functions/ and "completions" for completions/
     for result in &scan_result.configured {
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
@@ -657,7 +657,9 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     )?;
                 } else {
                     any_not_configured = true;
-                    not_configured_shells.push(shell);
+                    if !not_configured_shells.contains(&shell) {
+                        not_configured_shells.push(shell);
+                    }
                     writeln!(
                         out,
                         "{}",
@@ -711,25 +713,22 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     // Summary hint - be specific about which shells need configuration
     if any_not_configured && !not_configured_shells.is_empty() {
         writeln!(out)?;
-        let shells_str = not_configured_shells
-            .iter()
-            .map(|s| s.to_string().to_lowercase())
-            .collect::<Vec<_>>()
-            .join(" ");
+        // CLI accepts one shell at a time, so suggest the base command
+        // which auto-detects and configures all available shells
         writeln!(
             out,
             "{}",
             hint_message(cformat!(
-                "To configure, run <bright-black>{cmd} config shell install {shells_str}</>"
+                "To configure, run <bright-black>{cmd} config shell install</>"
             ))
         )?;
     }
 
     // Show potential false negatives (lines containing cmd but not detected)
-    // Note: If legacy fish has VALID integration (matched_lines), it's handled earlier
-    // in the WouldAdd/WouldCreate arm. This loop only sees unmatched_candidates.
+    // Skip files that have valid integration detected (matched_lines) - those are fine,
+    // and the other lines containing cmd are just part of the integration script.
     for detection in &detection_results {
-        if !detection.unmatched_candidates.is_empty() {
+        if !detection.unmatched_candidates.is_empty() && detection.matched_lines.is_empty() {
             has_any_unmatched = true;
             let path = format_path_for_display(&detection.path);
 

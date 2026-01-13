@@ -489,7 +489,7 @@ pub enum Shell {
 impl Shell {
     /// Returns the config file paths for this shell.
     ///
-    /// The `cmd` parameter affects the Fish conf.d filename (e.g., `wt.fish` or `git-wt.fish`).
+    /// The `cmd` parameter affects the Fish functions filename (e.g., `wt.fish` or `git-wt.fish`).
     /// Returns paths in order of preference. The first existing file should be used.
     pub fn config_paths(&self, cmd: &str) -> Result<Vec<PathBuf>, std::io::Error> {
         let home = home_dir_required()?;
@@ -640,7 +640,7 @@ impl ShellInit {
         Self { shell, cmd }
     }
 
-    /// Generate shell integration code
+    /// Generate shell integration code (for `wt config shell init`)
     pub fn generate(&self) -> Result<String, askama::Error> {
         match self.shell {
             Shell::Bash => {
@@ -664,6 +664,15 @@ impl ShellInit {
             }
         }
     }
+
+    /// Generate fish wrapper code (for `wt config shell install fish`)
+    ///
+    /// This generates a minimal wrapper that sources the full function from the binary.
+    /// Unlike `generate()` which outputs the full function, this wrapper auto-updates.
+    pub fn generate_fish_wrapper(&self) -> Result<String, askama::Error> {
+        let template = FishWrapperTemplate { cmd: &self.cmd };
+        template.render()
+    }
 }
 
 /// Bash shell template
@@ -681,10 +690,21 @@ struct ZshTemplate<'a> {
     cmd: &'a str,
 }
 
-/// Fish shell template
+/// Fish shell template (full function for `wt config shell init fish`)
 #[derive(Template)]
 #[template(path = "fish.fish", escape = "none")]
 struct FishTemplate<'a> {
+    cmd: &'a str,
+}
+
+/// Fish wrapper template (minimal wrapper for `functions/wt.fish`)
+///
+/// This wrapper is autoloaded by fish and sources the full function from the binary.
+/// Unlike the full FishTemplate, this allows updates to worktrunk to automatically
+/// provide the latest wrapper logic without requiring `wt config shell install`.
+#[derive(Template)]
+#[template(path = "fish_wrapper.fish", escape = "none")]
+struct FishWrapperTemplate<'a> {
     cmd: &'a str,
 }
 

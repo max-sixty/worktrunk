@@ -4,18 +4,17 @@ expression: output
 ---
 # worktrunk shell integration for fish
 #
-# This file is autoloaded by fish when wt is first invoked.
-# By that time, all startup files (conf.d/ and config.fish) have run,
-# so PATH is fully configured. See: https://github.com/max-sixty/worktrunk/issues/566
+# This is the full function definition, output by `wt config shell init fish`.
+# It's sourced at runtime by the wrapper in ~/.config/fish/functions/wt.fish.
 
 # Override wt command with file-based directive passing.
 # Creates a temp file, passes path via WORKTRUNK_DIRECTIVE_FILE, evals it after.
 # WORKTRUNK_BIN can override the binary path (for testing dev builds).
 #
 # Note: We use `eval (cat ... | string collect)` instead of `source` because:
-# 1. fish's `source` doesn't propagate `exit` to the parent function
+# 1. fish's `source` doesn't propagate exit codes to the parent function
 # 2. `eval (cat ...)` without `string collect` splits on newlines, breaking multiline directives
-# With `string collect`, `exit 42` properly exits the function with code 42.
+# With `string collect`, we get proper exit code propagation for cd and other directives.
 function wt
     set -l use_source false
     set -l args

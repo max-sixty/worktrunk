@@ -946,14 +946,6 @@ fn main() {
                                     )))?;
                                 }
 
-                                // Show legacy file cleanups (migration from conf.d to functions)
-                                for legacy_path in &scan_result.legacy_cleanups {
-                                    let path = format_path_for_display(legacy_path);
-                                    crate::output::print(info_message(cformat!(
-                                        "Removed <bold>{path}</> (deprecated; now using functions/)"
-                                    )))?;
-                                }
-
                                 // Show not found - warning if explicit shell, hint if auto-scan
                                 for (shell, path) in &scan_result.not_found {
                                     let path = format_path_for_display(path);
