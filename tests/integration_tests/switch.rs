@@ -176,6 +176,18 @@ fn test_switch_base_without_create_warning(repo: TestRepo) {
         &["--base", "main", "main"],
     );
 }
+
+#[rstest]
+fn test_switch_create_with_invalid_base(repo: TestRepo) {
+    // Issue #562: Error message should identify the invalid base branch,
+    // not the target branch being created
+    snapshot_switch(
+        "switch_create_invalid_base",
+        &repo,
+        &["--create", "new-feature", "--base", "nonexistent-base"],
+    );
+}
+
 // Internal mode tests
 #[rstest]
 fn test_switch_internal_mode(repo: TestRepo) {
