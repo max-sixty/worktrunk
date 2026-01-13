@@ -172,6 +172,8 @@ pub(super) enum TaskResult {
     AheadBehind {
         item_idx: usize,
         counts: AheadBehind,
+        /// True if this is an orphan branch (no common ancestor with default branch)
+        is_orphan: bool,
     },
     /// Whether HEAD's tree SHA matches integration target's tree SHA (committed content identical)
     CommittedTreesMatch {
@@ -386,6 +388,8 @@ fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], 
         }
         TaskKind::AheadBehind => {
             items[idx].counts = Some(AheadBehind::default());
+            // Conservative: don't claim orphan if we couldn't check
+            items[idx].is_orphan = Some(false);
         }
         TaskKind::CommittedTreesMatch => {
             // Conservative: don't claim integrated if we couldn't check
@@ -561,8 +565,11 @@ fn drain_results(
             TaskResult::CommitDetails { commit, .. } => {
                 item.commit = Some(commit);
             }
-            TaskResult::AheadBehind { counts, .. } => {
+            TaskResult::AheadBehind {
+                counts, is_orphan, ..
+            } => {
                 item.counts = Some(counts);
+                item.is_orphan = Some(is_orphan);
             }
             TaskResult::CommittedTreesMatch {
                 committed_trees_match,
@@ -867,6 +874,7 @@ pub fn collect(
                 has_file_changes: None,
                 would_merge_add: None,
                 is_ancestor: None,
+                is_orphan: None,
                 upstream: None,
                 pr_status: None,
                 url: None,
@@ -1453,6 +1461,7 @@ pub fn build_worktree_item(
         has_file_changes: None,
         would_merge_add: None,
         is_ancestor: None,
+        is_orphan: None,
         upstream: None,
         pr_status: None,
         url: None,

@@ -354,6 +354,10 @@ pub struct ListItem {
     /// This is the cheapest integration check (~1ms).
     #[serde(skip)]
     pub is_ancestor: Option<bool>,
+    /// Whether this branch is an orphan (no common ancestor with default branch).
+    /// Orphan branches have independent history and can't compute meaningful ahead/behind counts.
+    #[serde(skip)]
+    pub is_orphan: Option<bool>,
 
     // TODO: Same concern as counts/branch_diff above - should upstream fields always be present?
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
@@ -403,6 +407,7 @@ impl ListItem {
             has_file_changes: None,
             would_merge_add: None,
             is_ancestor: None,
+            is_orphan: None,
             upstream: None,
             pr_status: None,
             url: None,
@@ -706,6 +711,7 @@ impl ListItem {
                     has_merge_tree_conflicts,
                     integration,
                     is_same_commit_dirty,
+                    self.is_orphan.unwrap_or(false),
                     counts.ahead,
                     counts.behind,
                 );
@@ -738,6 +744,7 @@ impl ListItem {
                     has_merge_tree_conflicts,
                     integration,
                     false, // branches have no working tree, can't be dirty
+                    self.is_orphan.unwrap_or(false),
                     counts.ahead,
                     counts.behind,
                 );
@@ -923,13 +930,14 @@ impl serde::Serialize for WorktreeState {
 ///
 /// Priority order determines which symbol is shown:
 /// 1. IsMain (^) - this IS the main worktree
-/// 2. WouldConflict (✗) - merge-tree simulation shows conflicts
-/// 3. Empty (_) - same commit as default branch AND clean working tree (safe to delete)
-/// 4. SameCommit (–) - same commit as default branch with uncommitted changes
-/// 5. Integrated (⊂) - content is in default branch via different history
-/// 6. Diverged (↕) - both ahead and behind default branch
-/// 7. Ahead (↑) - has commits default branch doesn't have
-/// 8. Behind (↓) - missing commits from default branch
+/// 2. Orphan (∅) - no common ancestor with default branch
+/// 3. WouldConflict (✗) - merge-tree simulation shows conflicts
+/// 4. Empty (_) - same commit as default branch AND clean working tree (safe to delete)
+/// 5. SameCommit (–) - same commit as default branch with uncommitted changes
+/// 6. Integrated (⊂) - content is in default branch via different history
+/// 7. Diverged (↕) - both ahead and behind default branch
+/// 8. Ahead (↑) - has commits default branch doesn't have
+/// 9. Behind (↓) - missing commits from default branch
 ///
 /// The `Integrated` variant carries an [`IntegrationReason`] explaining how the
 /// content was integrated (ancestor, trees match, no added changes, or merge adds nothing).
@@ -951,6 +959,8 @@ pub enum MainState {
     /// Content is integrated into default branch via different history
     #[strum(serialize = "integrated")]
     Integrated(IntegrationReason),
+    /// No common ancestor with default branch (orphan branch)
+    Orphan,
     /// Both ahead and behind default branch
     Diverged,
     /// Has commits default branch doesn't have
@@ -969,6 +979,7 @@ impl std::fmt::Display for MainState {
             Self::Empty => write!(f, "_"),
             Self::SameCommit => write!(f, "–"), // en-dash U+2013
             Self::Integrated(_) => write!(f, "⊂"),
+            Self::Orphan => write!(f, "∅"), // U+2205 empty set
             Self::Diverged => write!(f, "↕"),
             Self::Ahead => write!(f, "↑"),
             Self::Behind => write!(f, "↓"),
@@ -1007,17 +1018,25 @@ impl MainState {
 
     /// Compute from divergence counts, integration state, and same-commit-dirty flag.
     ///
-    /// Priority: IsMain > WouldConflict > integration > SameCommit > Diverged > Ahead > Behind
+    /// Priority: IsMain > Orphan > WouldConflict > integration > SameCommit > Diverged > Ahead > Behind
+    ///
+    /// Orphan takes priority over WouldConflict because:
+    /// - Orphan is a fundamental property (no common ancestor)
+    /// - Merge conflicts for orphan branches are expected but not actionable normally
+    /// - Users should understand "this is an orphan branch" rather than "this would conflict"
     pub fn from_integration_and_counts(
         is_main: bool,
         would_conflict: bool,
         integration: Option<MainState>,
         is_same_commit_dirty: bool,
+        is_orphan: bool,
         ahead: usize,
         behind: usize,
     ) -> Self {
         if is_main {
             Self::IsMain
+        } else if is_orphan {
+            Self::Orphan
         } else if would_conflict {
             Self::WouldConflict
         } else if let Some(state) = integration {
@@ -1572,13 +1591,19 @@ mod tests {
     fn test_main_state_from_integration_and_counts() {
         // IsMain takes priority
         assert!(matches!(
-            MainState::from_integration_and_counts(true, false, None, false, 5, 3),
+            MainState::from_integration_and_counts(true, false, None, false, false, 5, 3),
             MainState::IsMain
         ));
 
-        // WouldConflict next
+        // Orphan takes priority over WouldConflict (orphan is root cause)
         assert!(matches!(
-            MainState::from_integration_and_counts(false, true, None, false, 5, 3),
+            MainState::from_integration_and_counts(false, true, None, false, true, 0, 0),
+            MainState::Orphan
+        ));
+
+        // WouldConflict when not orphan
+        assert!(matches!(
+            MainState::from_integration_and_counts(false, true, None, false, false, 5, 3),
             MainState::WouldConflict
         ));
 
@@ -1588,6 +1613,7 @@ mod tests {
                 false,
                 false,
                 Some(MainState::Empty),
+                false,
                 false,
                 0,
                 0
@@ -1602,6 +1628,7 @@ mod tests {
                 false,
                 Some(MainState::Integrated(IntegrationReason::Ancestor)),
                 false,
+                false,
                 0,
                 5
             ),
@@ -1610,31 +1637,37 @@ mod tests {
 
         // SameCommit (via is_same_commit_dirty flag, NOT integration)
         assert!(matches!(
-            MainState::from_integration_and_counts(false, false, None, true, 0, 0),
+            MainState::from_integration_and_counts(false, false, None, true, false, 0, 0),
             MainState::SameCommit
+        ));
+
+        // Orphan (no common ancestor with default branch)
+        assert!(matches!(
+            MainState::from_integration_and_counts(false, false, None, false, true, 0, 0),
+            MainState::Orphan
         ));
 
         // Diverged (both ahead and behind)
         assert!(matches!(
-            MainState::from_integration_and_counts(false, false, None, false, 3, 2),
+            MainState::from_integration_and_counts(false, false, None, false, false, 3, 2),
             MainState::Diverged
         ));
 
         // Ahead only
         assert!(matches!(
-            MainState::from_integration_and_counts(false, false, None, false, 3, 0),
+            MainState::from_integration_and_counts(false, false, None, false, false, 3, 0),
             MainState::Ahead
         ));
 
         // Behind only
         assert!(matches!(
-            MainState::from_integration_and_counts(false, false, None, false, 0, 2),
+            MainState::from_integration_and_counts(false, false, None, false, false, 0, 2),
             MainState::Behind
         ));
 
         // None (in sync)
         assert!(matches!(
-            MainState::from_integration_and_counts(false, false, None, false, 0, 0),
+            MainState::from_integration_and_counts(false, false, None, false, false, 0, 0),
             MainState::None
         ));
     }
@@ -1813,6 +1846,7 @@ mod tests {
             format!("{}", MainState::Integrated(IntegrationReason::Ancestor)),
             "⊂"
         );
+        assert_eq!(format!("{}", MainState::Orphan), "∅"); // empty set
         assert_eq!(format!("{}", MainState::Diverged), "↕");
         assert_eq!(format!("{}", MainState::Ahead), "↑");
         assert_eq!(format!("{}", MainState::Behind), "↓");
@@ -1833,6 +1867,10 @@ mod tests {
 
         let styled = MainState::Ahead.styled().unwrap();
         assert!(styled.contains("↑"));
+
+        // Orphan is dimmed (informational, not a warning)
+        let styled = MainState::Orphan.styled().unwrap();
+        assert!(styled.contains("∅"));
     }
 
     #[test]
@@ -1845,6 +1883,9 @@ mod tests {
 
         let json = serde_json::to_string(&MainState::Diverged).unwrap();
         assert_eq!(json, "\"↕\"");
+
+        let json = serde_json::to_string(&MainState::Orphan).unwrap();
+        assert_eq!(json, "\"∅\"");
     }
 
     // ============================================================================
