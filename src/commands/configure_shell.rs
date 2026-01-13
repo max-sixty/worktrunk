@@ -282,9 +282,7 @@ pub fn scan_shell_configs(
     let mut skipped = Vec::new();
 
     for shell in shells {
-        let paths = shell
-            .config_paths(cmd)
-            .map_err(|e| format!("Failed to get config paths for {}: {}", shell, e))?;
+        let paths = shell.config_paths(cmd).map_err(|e| e.to_string())?;
 
         // Find the first existing config file
         let target_path = paths.iter().find(|p| p.exists());
@@ -495,10 +493,12 @@ fn configure_fish_file(
     // Fish autoloads these files on first invocation of the command.
 
     // Check if it already exists and has our integration
-    if path.exists() {
-        let existing_content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
-
+    // Use .ok() for read errors - treat as "not configured" rather than failing
+    if let Some(existing_content) = path
+        .exists()
+        .then(|| fs::read_to_string(path).ok())
+        .flatten()
+    {
         // Canonical detection: check if the file matches exactly what we write
         // Trim both sides to handle trailing newlines consistently across platforms
         if existing_content.trim() == content.trim() {
@@ -534,18 +534,12 @@ fn configure_fish_file(
 
     // Create parent directories if they don't exist
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
+        fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
 
     // Write the complete fish function file
-    fs::write(path, format!("{}\n", content)).map_err(|e| {
-        format!(
-            "Failed to write to {}: {}",
-            format_path_for_display(path),
-            e
-        )
-    })?;
+    fs::write(path, format!("{}\n", content))
+        .map_err(|e| format!("{}: {e}", format_path_for_display(path)))?;
 
     Ok(Some(ConfigureResult {
         shell,
@@ -782,22 +776,22 @@ pub fn process_shell_completions(
             continue;
         }
 
-        let completion_path = shell
-            .completion_path(cmd)
-            .map_err(|e| format!("Failed to get completion path for {}: {}", shell, e))?;
+        let completion_path = shell.completion_path(cmd).map_err(|e| e.to_string())?;
 
         // Check if completions already exist with correct content
-        if completion_path.exists() {
-            let existing = fs::read_to_string(&completion_path)
-                .map_err(|e| format!("Failed to read {}: {}", completion_path.display(), e))?;
-            if existing == fish_completion {
-                results.push(CompletionResult {
-                    shell,
-                    path: completion_path,
-                    action: ConfigAction::AlreadyExists,
-                });
-                continue;
-            }
+        // Use .ok() for read errors - treat as "not configured" rather than failing
+        if let Some(existing) = completion_path
+            .exists()
+            .then(|| fs::read_to_string(&completion_path).ok())
+            .flatten()
+            && existing == fish_completion
+        {
+            results.push(CompletionResult {
+                shell,
+                path: completion_path,
+                action: ConfigAction::AlreadyExists,
+            });
+            continue;
         }
 
         if dry_run {
@@ -816,13 +810,12 @@ pub fn process_shell_completions(
 
         // Create parent directory if needed
         if let Some(parent) = completion_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+            fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
         }
 
         // Write the completion file
         fs::write(&completion_path, &fish_completion)
-            .map_err(|e| format!("Failed to write {}: {}", completion_path.display(), e))?;
+            .map_err(|e| format!("{}: {e}", completion_path.display()))?;
 
         results.push(CompletionResult {
             shell,
@@ -881,9 +874,7 @@ fn scan_for_uninstall(
     let mut not_found = Vec::new();
 
     for &shell in &shells {
-        let paths = shell
-            .config_paths(cmd)
-            .map_err(|e| format!("Failed to get config paths for {}: {}", shell, e))?;
+        let paths = shell.config_paths(cmd).map_err(|e| e.to_string())?;
 
         // For Fish, delete entire {cmd}.fish file (check both canonical and legacy locations)
         if matches!(shell, Shell::Fish) {
