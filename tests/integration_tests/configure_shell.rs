@@ -439,7 +439,7 @@ fn test_uninstall_shell_fish_legacy_conf_d_cleanup(repo: TestRepo, temp_home: Te
 /// `wt config show` should detect shell integration whether it's in the
 /// old conf.d location or the new functions location.
 #[rstest]
-fn test_config_show_detects_fish_legacy_conf_d(repo: TestRepo, temp_home: TempDir) {
+fn test_config_show_detects_fish_legacy_conf_d(mut repo: TestRepo, temp_home: TempDir) {
     // Create ONLY the legacy conf.d file (simulating user who installed before #566)
     let conf_d = temp_home.path().join(".config/fish/conf.d");
     fs::create_dir_all(&conf_d).unwrap();
@@ -447,10 +447,12 @@ fn test_config_show_detects_fish_legacy_conf_d(repo: TestRepo, temp_home: TempDi
     // Write content that matches our detection pattern (old-style init sourcing)
     fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
 
+    // Mock claude as not found (consistent across environments)
+    repo.setup_mock_ci_tools_unauthenticated();
+
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
+        let mut cmd = repo.wt_command();
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/fish");
         cmd.arg("config").arg("show").current_dir(repo.root_path());
