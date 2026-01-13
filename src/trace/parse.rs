@@ -1,6 +1,6 @@
 //! Parse wt-trace log lines into structured entries.
 //!
-//! Trace lines are emitted by `shell_exec::run()` with this format:
+//! Trace lines are emitted by `shell_exec::Cmd` with this format:
 //! ```text
 //! [wt-trace] ts=1234567 tid=3 context=worktree cmd="git status" dur_us=12300 ok=true
 //! [wt-trace] ts=1234567 tid=3 cmd="gh pr list" dur_us=45200 ok=false
