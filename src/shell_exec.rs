@@ -333,9 +333,11 @@ fn run_with_timeout_impl(
 ///
 /// Stream output (hooks, interactive):
 /// ```ignore
+/// use std::process::Stdio;
+///
 /// Cmd::shell("npm run build")
 ///     .current_dir(&repo_path)
-///     .redirect_stdout_to_stderr()
+///     .stdout(Stdio::from(std::io::stderr()))
 ///     .forward_signals()
 ///     .stream()?;
 /// ```
@@ -351,8 +353,8 @@ pub struct Cmd {
     env_removes: Vec<String>,
     /// If true, wrap command through ShellConfig (for stream())
     shell_wrap: bool,
-    /// If true, redirect child stdout to stderr (for stream())
-    redirect_stdout: bool,
+    /// Stdout configuration for stream() (defaults to inherit)
+    stdout_cfg: Option<std::process::Stdio>,
     /// If true, inherit stdin from parent for interactive use (for stream())
     inherit_stdin: bool,
     /// If true, forward signals to child process group (for stream(), Unix only)
@@ -375,7 +377,7 @@ impl Cmd {
             envs: Vec::new(),
             env_removes: Vec::new(),
             shell_wrap: false,
-            redirect_stdout: false,
+            stdout_cfg: None,
             inherit_stdin: false,
             forward_signals: false,
         }
@@ -398,7 +400,7 @@ impl Cmd {
             envs: Vec::new(),
             env_removes: Vec::new(),
             shell_wrap: true,
-            redirect_stdout: false,
+            stdout_cfg: None,
             inherit_stdin: false,
             forward_signals: false,
         }
@@ -459,11 +461,14 @@ impl Cmd {
         self
     }
 
-    /// Redirect child's stdout to stderr for deterministic output ordering.
+    /// Set stdout configuration for `.stream()`.
+    ///
+    /// Defaults to `Stdio::inherit()`. Use `Stdio::from(io::stderr())` to redirect
+    /// stdout to stderr for deterministic output ordering.
     ///
     /// Only affects `.stream()`. For `.run()`, output is always captured separately.
-    pub fn redirect_stdout_to_stderr(mut self) -> Self {
-        self.redirect_stdout = true;
+    pub fn stdout(mut self, cfg: std::process::Stdio) -> Self {
+        self.stdout_cfg = Some(cfg);
         self
     }
 
@@ -669,15 +674,14 @@ impl Cmd {
             (cmd, self.program.clone())
         };
 
+        // Log command for debugging (output goes to logger, not stdout/stderr)
+        log::debug!("$ {} (streaming via {})", self.program, shell_name);
+
         #[cfg(not(unix))]
         let _ = self.forward_signals;
 
-        // Determine stdout handling
-        let stdout_mode = if self.redirect_stdout {
-            std::process::Stdio::from(std::io::stderr())
-        } else {
-            std::process::Stdio::inherit()
-        };
+        // Determine stdout handling (default: inherit)
+        let stdout_mode = self.stdout_cfg.unwrap_or_else(std::process::Stdio::inherit);
 
         // Determine stdin handling
         let stdin_mode = if self.stdin_data.is_some() {
@@ -706,7 +710,9 @@ impl Cmd {
             .stdin(stdin_mode)
             .stdout(stdout_mode)
             .stderr(std::process::Stdio::inherit()) // Preserve TTY for errors
+            // Prevent vergen "overridden" warning in nested cargo builds
             .env_remove("VERGEN_GIT_DESCRIBE")
+            // Prevent hooks from writing shell directives (security)
             .env_remove(DIRECTIVE_FILE_ENV_VAR);
 
         for (key, val) in &self.envs {
@@ -722,13 +728,15 @@ impl Cmd {
             })
         })?;
 
-        // Write stdin content if provided
+        // Write stdin content if provided (ignore BrokenPipe - child may exit early)
         if let Some(ref content) = self.stdin_data
             && let Some(mut stdin) = child.stdin.take()
+            && let Err(e) = stdin.write_all(content)
+            && e.kind() != std::io::ErrorKind::BrokenPipe
         {
-            let _ = stdin.write_all(content);
-            // stdin is dropped here, closing the pipe
+            return Err(e.into());
         }
+        // stdin handle is dropped here, closing the pipe
 
         // Wait for child with optional signal forwarding
         #[cfg(unix)]

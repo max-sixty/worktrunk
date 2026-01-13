@@ -891,9 +891,10 @@ pub fn execute_command_in_worktree(
     stderr().flush().ok(); // Ignore flush errors - reset is best-effort, command execution should proceed
 
     // Execute with stdout→stderr redirect for deterministic ordering
+    use std::process::Stdio;
     let mut cmd = Cmd::shell(command)
         .current_dir(worktree_path)
-        .redirect_stdout_to_stderr()
+        .stdout(Stdio::from(std::io::stderr()))
         .forward_signals();
 
     if let Some(content) = stdin_content {
