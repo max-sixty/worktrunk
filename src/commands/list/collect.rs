@@ -974,7 +974,6 @@ pub fn collect(
     //
     // These operations run in parallel using rayon::scope with single-level parallelism.
     // See module docs for the timing diagram.
-    worktrunk::shell_exec::trace_instant("Post-skeleton started");
 
     // Collect worktree paths for fsmonitor starts (macOS only, fast, no git commands).
     // Git's builtin fsmonitor has race conditions under parallel load - pre-starting
