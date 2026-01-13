@@ -8,10 +8,7 @@ use super::ci_status::PrStatus;
 use super::collect_progressive_impl::parse_port_from_url;
 use super::columns::{ColumnKind, DiffVariant};
 use super::layout::{ColumnFormat, ColumnLayout, DiffColumnConfig, LayoutConfig};
-use super::model::{
-    AheadBehind, CommitDetails, ListItem, PositionMask, UpstreamStatus, WorktreeData,
-};
-use worktrunk::git::LineDiff;
+use super::model::{ListItem, PositionMask};
 
 impl PrStatus {
     /// Render indicator as a StyledLine for table column rendering.
@@ -248,20 +245,15 @@ impl LayoutConfig {
         })
     }
 
-    pub fn format_list_item_line(&self, item: &ListItem, previous_branch: Option<&str>) -> String {
-        self.render_list_item_line(item, previous_branch).render()
+    pub fn format_list_item_line(&self, item: &ListItem) -> String {
+        self.render_list_item_line(item).render()
     }
 
     /// Render list item line as StyledLine (for extracting both plain and styled text)
-    pub fn render_list_item_line(
-        &self,
-        item: &ListItem,
-        previous_branch: Option<&str>,
-    ) -> StyledLine {
-        let ctx = ListRowContext::new(item, previous_branch);
+    pub fn render_list_item_line(&self, item: &ListItem) -> StyledLine {
         self.render_line(|column| {
             column.render_cell(
-                &ctx,
+                item,
                 &self.status_position_mask,
                 &self.main_worktree_path,
                 self.max_message_len,
@@ -291,8 +283,8 @@ impl LayoutConfig {
 
             match col.kind {
                 ColumnKind::Gutter => {
-                    // Skeleton shows placeholder gutter - actual symbols appear when data loads.
-                    // This allows deferring previous_branch lookup until after skeleton.
+                    // Skeleton shows placeholder gutter - actual symbols (including is_previous)
+                    // appear when WorktreeData is populated post-skeleton.
                     let symbol = if wt_data.is_some() {
                         "· " // Placeholder for worktrees
                     } else {
@@ -330,69 +322,18 @@ impl LayoutConfig {
     }
 }
 
-struct ListRowContext<'a> {
-    item: &'a ListItem,
-    worktree_data: Option<&'a WorktreeData>,
-    counts: AheadBehind,
-    /// None means task was skipped (show `…`), Some means computed (may be zero)
-    branch_diff: Option<LineDiff>,
-    upstream: UpstreamStatus,
-    commit: CommitDetails,
-    head: &'a str,
-    text_style: Option<Style>,
-    is_current: bool,
-    is_previous: bool,
-}
-
-impl<'a> ListRowContext<'a> {
-    fn new(item: &'a ListItem, previous_branch: Option<&str>) -> Self {
-        let worktree_data = item.worktree_data();
-        let counts = item.counts();
-        let commit = item.commit_details();
-        let branch_diff = item.branch_diff().map(|bd| bd.diff);
-        let upstream = item.upstream();
-        let head = item.head();
-
-        // Use stored values for worktrees, compute for branches
-        let is_current = worktree_data.is_some_and(|d| d.is_current);
-        let is_previous = worktree_data.map(|d| d.is_previous).unwrap_or_else(|| {
-            // Branches don't have WorktreeData, compute from previous_branch
-            previous_branch.is_some_and(|prev| item.branch.as_deref() == Some(prev))
-        });
-
-        let mut ctx = Self {
-            item,
-            worktree_data,
-            counts,
-            branch_diff,
-            upstream,
-            commit,
-            head,
-            text_style: None,
-            is_current,
-            is_previous,
-        };
-
-        ctx.text_style = ctx.compute_text_style();
-        ctx
-    }
-
-    fn short_head(&self) -> &str {
-        &self.head[..8.min(self.head.len())]
-    }
-
-    fn compute_text_style(&self) -> Option<Style> {
-        // No special styling for current worktree - gutter symbol (@) and top position
-        // already communicate it. Only dim removable worktrees.
-        if self.item.should_dim() {
-            Some(Style::new().dimmed())
-        } else {
-            None
-        }
-    }
-}
-
 impl ColumnLayout {
+    /// Render a text cell with optional style, truncated to column width.
+    fn render_text_cell(&self, text: &str, style: Option<Style>) -> StyledLine {
+        let mut cell = StyledLine::new();
+        if let Some(s) = style {
+            cell.push_styled(text.to_string(), s);
+        } else {
+            cell.push_raw(text.to_string());
+        }
+        cell.truncate_to_width(self.width)
+    }
+
     fn render_diff_cell(&self, positive: usize, negative: usize) -> StyledLine {
         let ColumnFormat::Diff(config) = self.format else {
             return StyledLine::new();
@@ -405,21 +346,25 @@ impl ColumnLayout {
 
     fn render_cell(
         &self,
-        ctx: &ListRowContext,
+        item: &ListItem,
         status_mask: &PositionMask,
         main_worktree_path: &Path,
         max_message_len: usize,
     ) -> StyledLine {
+        // Compute derived values inline (avoids separate context struct)
+        let worktree_data = item.worktree_data();
+        let text_style = item.should_dim().then(|| Style::new().dimmed());
+
         match self.kind {
             ColumnKind::Gutter => {
                 let mut cell = StyledLine::new();
-                let symbol = if let Some(data) = ctx.worktree_data {
+                let symbol = if let Some(data) = worktree_data {
                     // Priority: @ (current) > ^ (main) > - (previous) > + (regular)
-                    if ctx.is_current {
+                    if data.is_current {
                         "@ " // Current worktree
                     } else if data.is_main {
                         "^ " // Main worktree
-                    } else if ctx.is_previous {
+                    } else if data.is_previous {
                         "- " // Previous worktree (wt switch -)
                     } else {
                         "+ " // Regular worktree
@@ -431,20 +376,14 @@ impl ColumnLayout {
                 cell
             }
             ColumnKind::Branch => {
-                let mut cell = StyledLine::new();
-                let text = ctx.item.branch.as_deref().unwrap_or("-");
-                if let Some(style) = ctx.text_style {
-                    cell.push_styled(text.to_string(), style);
-                } else {
-                    cell.push_raw(text.to_string());
-                }
-                cell.truncate_to_width(self.width)
+                let text = item.branch.as_deref().unwrap_or("-");
+                self.render_text_cell(text, text_style)
             }
             ColumnKind::Status => {
                 let mut cell = StyledLine::new();
 
                 // Render status symbols (works for both worktrees and branches)
-                if let Some(ref status_symbols) = ctx.item.status_symbols {
+                if let Some(ref status_symbols) = item.status_symbols {
                     cell.push_raw(status_symbols.render_with_mask(status_mask));
                 } else {
                     // Show spinner while status is being computed (both worktrees and branches)
@@ -457,31 +396,28 @@ impl ColumnLayout {
                 cell
             }
             ColumnKind::WorkingDiff => {
-                let Some(diff) = ctx
-                    .worktree_data
-                    .and_then(|data| data.working_tree_diff.as_ref())
+                let Some(diff) = worktree_data.and_then(|data| data.working_tree_diff.as_ref())
                 else {
                     return StyledLine::new();
                 };
                 self.render_diff_cell(diff.added, diff.deleted)
             }
             ColumnKind::AheadBehind => {
-                if ctx.item.is_main() {
+                if item.is_main() {
                     return StyledLine::new();
                 }
-                let ahead = ctx.counts.ahead;
-                let behind = ctx.counts.behind;
-                if ahead == 0 && behind == 0 {
+                let counts = item.counts();
+                if counts.ahead == 0 && counts.behind == 0 {
                     return StyledLine::new();
                 }
-                self.render_diff_cell(ahead, behind)
+                self.render_diff_cell(counts.ahead, counts.behind)
             }
             ColumnKind::BranchDiff => {
-                if ctx.item.is_main() {
+                if item.is_main() {
                     return StyledLine::new();
                 }
-                match ctx.branch_diff {
-                    Some(diff) => self.render_diff_cell(diff.added, diff.deleted),
+                match item.branch_diff() {
+                    Some(bd) => self.render_diff_cell(bd.diff.added, bd.diff.deleted),
                     None => {
                         // Task was skipped — show ellipsis to indicate "not computed"
                         let mut cell = StyledLine::new();
@@ -493,20 +429,15 @@ impl ColumnLayout {
                 }
             }
             ColumnKind::Path => {
-                let Some(data) = ctx.worktree_data else {
+                let Some(data) = worktree_data else {
                     return StyledLine::new();
                 };
-                let mut cell = StyledLine::new();
                 let path_str = shorten_path(&data.path, main_worktree_path);
-                if let Some(style) = ctx.text_style {
-                    cell.push_styled(path_str, style);
-                } else {
-                    cell.push_raw(path_str);
-                }
-                cell.truncate_to_width(self.width)
+                self.render_text_cell(&path_str, text_style)
             }
             ColumnKind::Upstream => {
-                let Some(active) = ctx.upstream.active() else {
+                let upstream = item.upstream();
+                let Some(active) = upstream.active() else {
                     return StyledLine::new();
                 };
                 // Show centered | when in sync instead of ⇡0  ⇣0
@@ -526,11 +457,11 @@ impl ColumnLayout {
                 let mut cell = StyledLine::new();
 
                 // Show spinner if commit details haven't loaded yet (for both worktrees and branches)
-                if ctx.item.commit.is_none() {
-                    cell.push_styled("⋯", Style::new().dimmed());
-                } else {
-                    let time_str = format_relative_time_short(ctx.commit.timestamp);
+                if let Some(ref commit) = item.commit {
+                    let time_str = format_relative_time_short(commit.timestamp);
                     cell.push_styled(time_str, Style::new().dimmed());
+                } else {
+                    cell.push_styled("⋯", Style::new().dimmed());
                 }
 
                 cell
@@ -541,7 +472,7 @@ impl ColumnLayout {
                 // - When hyperlinks not supported: show full URL
                 // - dim if not available/active
                 // - normal if available and active
-                match (&ctx.item.url, ctx.item.url_active) {
+                match (&item.url, item.url_active) {
                     (None, _) => StyledLine::new(), // No URL configured
                     (Some(url), Some(true)) => {
                         // Active: normal styling
@@ -562,7 +493,7 @@ impl ColumnLayout {
             ColumnKind::CiStatus => {
                 // Check display field first for pending indicators during progressive rendering
                 // (works for both worktrees and branches)
-                if let Some(ref ci_display) = ctx.item.display.ci_status_display {
+                if let Some(ref ci_display) = item.display.ci_status_display {
                     let mut cell = StyledLine::new();
                     // ci_status_display contains pre-formatted ANSI text (either actual status or "⋯")
                     cell.push_raw(ci_display.clone());
@@ -573,7 +504,7 @@ impl ColumnLayout {
                 // - None = not loaded yet (show spinner)
                 // - Some(None) = loaded, no CI (show nothing)
                 // - Some(Some(status)) = loaded with CI (show status)
-                match &ctx.item.pr_status {
+                match &item.pr_status {
                     None => {
                         // Not loaded yet - show spinner
                         let mut cell = StyledLine::new();
@@ -591,19 +522,21 @@ impl ColumnLayout {
                 }
             }
             ColumnKind::Commit => {
+                let head = item.head();
+                let short_head = &head[..8.min(head.len())];
                 let mut cell = StyledLine::new();
-                cell.push_styled(ctx.short_head().to_string(), Style::new().dimmed());
+                cell.push_styled(short_head.to_string(), Style::new().dimmed());
                 cell
             }
             ColumnKind::Message => {
                 let mut cell = StyledLine::new();
 
                 // Show spinner if commit details haven't loaded yet (for both worktrees and branches)
-                if ctx.item.commit.is_none() {
-                    cell.push_styled("⋯", Style::new().dimmed());
-                } else {
-                    let msg = truncate_to_width(&ctx.commit.commit_message, max_message_len);
+                if let Some(ref commit) = item.commit {
+                    let msg = truncate_to_width(&commit.commit_message, max_message_len);
                     cell.push_styled(msg, Style::new().dimmed());
+                } else {
+                    cell.push_styled("⋯", Style::new().dimmed());
                 }
 
                 cell

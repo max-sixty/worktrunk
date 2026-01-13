@@ -1204,7 +1204,7 @@ pub fn collect(
                 table.update_footer(footer_msg);
 
                 // Re-render the row with caching (now includes status if computed)
-                let rendered = layout.format_list_item_line(item, previous_branch.as_deref());
+                let rendered = layout.format_list_item_line(item);
 
                 // Compare using full line so changes beyond the clamp (e.g., CI) still refresh.
                 if rendered != last_rendered_lines[item_idx] {
@@ -1285,7 +1285,7 @@ pub fn collect(
         if table.is_tty() {
             // Interactive: do final render pass and update footer to summary
             for (item_idx, item) in all_items.iter().enumerate() {
-                let rendered = layout.format_list_item_line(item, previous_branch.as_deref());
+                let rendered = layout.format_list_item_line(item);
                 table.update_row(item_idx, rendered);
             }
             table.finalize(final_msg)?;
@@ -1294,9 +1294,7 @@ pub fn collect(
             // Progressive skeleton was suppressed; now output the final table
             crate::output::stdout(layout.format_header_line())?;
             for item in &all_items {
-                crate::output::stdout(
-                    layout.format_list_item_line(item, previous_branch.as_deref()),
-                )?;
+                crate::output::stdout(layout.format_list_item_line(item))?;
             }
             crate::output::stdout("")?;
             crate::output::stdout(final_msg)?;
@@ -1311,7 +1309,7 @@ pub fn collect(
 
         crate::output::stdout(layout.format_header_line())?;
         for item in &all_items {
-            crate::output::stdout(layout.format_list_item_line(item, previous_branch.as_deref()))?;
+            crate::output::stdout(layout.format_list_item_line(item))?;
         }
         crate::output::stdout("")?;
         crate::output::stdout(final_msg)?;
