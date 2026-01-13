@@ -125,15 +125,15 @@ fn compute_shell_warning_reason_inner(
 
             // Windows: check if the only difference is .exe suffix (case-insensitive)
             #[cfg(windows)]
-            if {
+            {
                 let invoked_lower = invoked_name.to_lowercase();
                 let wraps_lower = wraps.to_lowercase();
-                invoked_lower == format!("{wraps_lower}.exe")
-            } {
-                // Windows .exe mismatch - give targeted advice
-                return cformat!(
-                    "ran <bold>{invoked_name}</>; use <bold>{wraps}</> (without .exe) for auto-cd"
-                );
+                if invoked_lower == format!("{wraps_lower}.exe") {
+                    // Windows .exe mismatch - give targeted advice
+                    return cformat!(
+                        "ran <bold>{invoked_name}</>; use <bold>{wraps}</> (without .exe) for auto-cd"
+                    );
+                }
             }
 
             if invoked_name == wraps {

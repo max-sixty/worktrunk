@@ -282,7 +282,9 @@ pub fn scan_shell_configs(
     let mut skipped = Vec::new();
 
     for shell in shells {
-        let paths = shell.config_paths(cmd).map_err(|e| e.to_string())?;
+        let paths = shell
+            .config_paths(cmd)
+            .map_err(|e| format!("Failed to get config paths for {shell}: {e}"))?;
 
         // Find the first existing config file
         let target_path = paths.iter().find(|p| p.exists());
@@ -312,7 +314,7 @@ pub fn scan_shell_configs(
                     Err(e) => {
                         // For non-critical errors, we could continue with other shells
                         // but for now we'll fail fast
-                        return Err(format!("Failed to configure {}: {}", shell, e));
+                        return Err(format!("Failed to configure {shell}: {e}"));
                     }
                 }
             }
@@ -364,7 +366,7 @@ fn configure_shell_file(
         let init = shell::ShellInit::with_prefix(shell, cmd.to_string());
         let fish_wrapper = init
             .generate_fish_wrapper()
-            .map_err(|e| format!("Failed to generate fish wrapper: {}", e))?;
+            .map_err(|e| format!("Failed to generate fish wrapper: {e}"))?;
         return configure_fish_file(
             shell,
             path,
@@ -534,12 +536,13 @@ fn configure_fish_file(
 
     // Create parent directories if they don't exist
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create directory {}: {e}", parent.display()))?;
     }
 
     // Write the complete fish function file
     fs::write(path, format!("{}\n", content))
-        .map_err(|e| format!("{}: {e}", format_path_for_display(path)))?;
+        .map_err(|e| format!("Failed to write {}: {e}", format_path_for_display(path)))?;
 
     Ok(Some(ConfigureResult {
         shell,
@@ -590,16 +593,14 @@ pub fn show_install_preview(
         // Show the config content that will be added with gutter
         // Fish: show the wrapper (it's a complete file that sources the full function)
         // Other shells: show the one-liner that gets appended
-        if matches!(shell, Shell::Fish) {
-            let init = shell::ShellInit::with_prefix(shell, cmd.to_string());
-            if let Ok(wrapper_content) = init.generate_fish_wrapper() {
-                let _ = output::print(format_bash_with_gutter(&wrapper_content));
-            } else {
-                let _ = output::print(format_bash_with_gutter(&result.config_line));
-            }
+        let content = if matches!(shell, Shell::Fish) {
+            shell::ShellInit::with_prefix(shell, cmd.to_string())
+                .generate_fish_wrapper()
+                .unwrap_or_else(|_| result.config_line.clone())
         } else {
-            let _ = output::print(format_bash_with_gutter(&result.config_line));
-        }
+            result.config_line.clone()
+        };
+        let _ = output::print(format_bash_with_gutter(&content));
         let _ = output::blank(); // Blank line after each shell block
     }
 
@@ -776,7 +777,9 @@ pub fn process_shell_completions(
             continue;
         }
 
-        let completion_path = shell.completion_path(cmd).map_err(|e| e.to_string())?;
+        let completion_path = shell
+            .completion_path(cmd)
+            .map_err(|e| format!("Failed to get completion path for {shell}: {e}"))?;
 
         // Check if completions already exist with correct content
         // Use .ok() for read errors - treat as "not configured" rather than failing
@@ -810,12 +813,13 @@ pub fn process_shell_completions(
 
         // Create parent directory if needed
         if let Some(parent) = completion_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory {}: {e}", parent.display()))?;
         }
 
         // Write the completion file
         fs::write(&completion_path, &fish_completion)
-            .map_err(|e| format!("{}: {e}", completion_path.display()))?;
+            .map_err(|e| format!("Failed to write {}: {e}", completion_path.display()))?;
 
         results.push(CompletionResult {
             shell,
@@ -874,7 +878,9 @@ fn scan_for_uninstall(
     let mut not_found = Vec::new();
 
     for &shell in &shells {
-        let paths = shell.config_paths(cmd).map_err(|e| e.to_string())?;
+        let paths = shell
+            .config_paths(cmd)
+            .map_err(|e| format!("Failed to get config paths for {shell}: {e}"))?;
 
         // For Fish, delete entire {cmd}.fish file (check both canonical and legacy locations)
         if matches!(shell, Shell::Fish) {
@@ -937,11 +943,7 @@ fn scan_for_uninstall(
                         });
                     } else {
                         fs::remove_file(&legacy_path).map_err(|e| {
-                            format!(
-                                "Failed to remove {}: {}",
-                                format_path_for_display(&legacy_path),
-                                e
-                            )
+                            format!("Failed to remove {}: {e}", legacy_path.display())
                         })?;
                         results.push(UninstallResult {
                             shell,
