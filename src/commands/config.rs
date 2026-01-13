@@ -645,7 +645,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                         out,
                         "{}",
                         hint_message(cformat!(
-                            "Run <bright-black>{cmd} config shell install fish</> to migrate to <bright-black>{canonical_path}</>"
+                            "To migrate to <bright-black>{canonical_path}</>, run <bright-black>{cmd} config shell install fish</>"
                         ))
                     )?;
                 } else {
@@ -690,7 +690,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                 out,
                 "{}",
                 hint_message(cformat!(
-                    "Run <bright-black>{cmd} config shell install fish</> to migrate to <bright-black>{canonical_path}</>"
+                    "To migrate to <bright-black>{canonical_path}</>, run <bright-black>{cmd} config shell install fish</>"
                 ))
             )?;
             continue;

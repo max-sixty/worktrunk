@@ -44,7 +44,7 @@ exit_code: 0
 [107m [0m Binary invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
 
 [2m○[22m Fish integration found in deprecated location @ [1m~/.config/fish/conf.d/wt.fish[22m
-[2m↳[22m [2mRun [90mwt config shell install fish[39m to migrate to [90m~/.config/fish/functions/wt.fish[39m[22m
+[2m↳[22m [2mTo migrate to [90m~/.config/fish/functions/wt.fish[39m, run [90mwt config shell install fish[39m[22m
 [2m○[22m [2mSkipped bash; ~/.bashrc not found[22m
 [2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
 
