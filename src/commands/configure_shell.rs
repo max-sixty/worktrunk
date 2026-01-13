@@ -500,7 +500,8 @@ fn configure_fish_file(
             .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
 
         // Canonical detection: check if the file matches exactly what we write
-        if existing_content.trim() == content {
+        // Trim both sides to handle trailing newlines consistently across platforms
+        if existing_content.trim() == content.trim() {
             return Ok(Some(ConfigureResult {
                 shell,
                 path: path.to_path_buf(),

@@ -1276,6 +1276,7 @@ fn test_uninstall_shell_dry_run(repo: TestRepo, temp_home: TempDir) {
     );
 }
 
+/// Test dry-run with fish in legacy conf.d location (shows deprecated message)
 #[rstest]
 fn test_uninstall_shell_dry_run_fish(repo: TestRepo, temp_home: TempDir) {
     // Create fish conf.d directory with wt.fish and completions
@@ -1287,6 +1288,49 @@ fn test_uninstall_shell_dry_run_fish(repo: TestRepo, temp_home: TempDir) {
         "if type -q wt; command wt config shell init fish | source; end\n",
     )
     .unwrap();
+
+    // Create completions file
+    let completions_d = temp_home.path().join(".config/fish/completions");
+    fs::create_dir_all(&completions_d).unwrap();
+    let completions_file = completions_d.join("wt.fish");
+    fs::write(&completions_file, "# fish completions").unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/fish");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("uninstall")
+            .arg("fish")
+            .arg("--dry-run")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify files were NOT modified
+    assert!(fish_config.exists(), "Fish config should still exist");
+    assert!(
+        completions_file.exists(),
+        "Fish completions should still exist"
+    );
+}
+
+/// Test dry-run with fish in canonical functions/ location (shows normal message)
+#[rstest]
+fn test_uninstall_shell_dry_run_fish_canonical(repo: TestRepo, temp_home: TempDir) {
+    // Create fish functions directory with wt.fish (canonical location)
+    let functions = temp_home.path().join(".config/fish/functions");
+    fs::create_dir_all(&functions).unwrap();
+    let fish_config = functions.join("wt.fish");
+    // Write the exact wrapper content that install would create
+    let init =
+        worktrunk::shell::ShellInit::with_prefix(worktrunk::shell::Shell::Fish, "wt".to_string());
+    let wrapper_content = init.generate_fish_wrapper().unwrap();
+    fs::write(&fish_config, format!("{}\n", wrapper_content)).unwrap();
 
     // Create completions file
     let completions_d = temp_home.path().join(".config/fish/completions");
