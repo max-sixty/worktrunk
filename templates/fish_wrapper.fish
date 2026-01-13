@@ -5,6 +5,7 @@
 
 function {{ cmd }}
     command {{ cmd }} config shell init fish | source
-    or return
+    set -l wt_status $pipestatus[1]
+    test $wt_status -eq 0; or return $wt_status
     {{ cmd }} $argv
 end
