@@ -315,14 +315,15 @@ fn run_with_timeout_impl(
 // Builder-style command execution
 // ============================================================================
 
-/// Builder for executing commands with logging, tracing, and optional stdin.
+/// Builder for executing commands with two modes of operation.
 ///
-/// Provides the same benefits as `run()` (logging, semaphore, tracing) with a
-/// cleaner interface that supports stdin piping.
+/// - `.run()` — captures output, provides logging/semaphore/tracing
+/// - `.stream()` — inherits stdout/stderr for TTY preservation (hooks, interactive);
+///   stdin defaults to null unless configured with `.stdin(Stdio)` or `.stdin_bytes()`
 ///
 /// # Examples
 ///
-/// Basic usage:
+/// Capture output:
 /// ```ignore
 /// let output = Cmd::new("git")
 ///     .args(["status", "--porcelain"])
@@ -331,14 +332,18 @@ fn run_with_timeout_impl(
 ///     .run()?;
 /// ```
 ///
-/// With stdin:
+/// Stream output (hooks, interactive):
 /// ```ignore
-/// let output = Cmd::new("git")
-///     .args(["diff-tree", "--stdin", "--numstat"])
-///     .stdin(hashes.join("\n"))
-///     .run()?;
+/// use std::process::Stdio;
+///
+/// Cmd::shell("npm run build")
+///     .current_dir(&repo_path)
+///     .stdout(Stdio::from(std::io::stderr()))
+///     .forward_signals()
+///     .stream()?;
 /// ```
 pub struct Cmd {
+    /// Program name or shell command string (if shell_wrap is true)
     program: String,
     args: Vec<String>,
     current_dir: Option<std::path::PathBuf>,
@@ -347,10 +352,21 @@ pub struct Cmd {
     timeout: Option<std::time::Duration>,
     envs: Vec<(String, String)>,
     env_removes: Vec<String>,
+    /// If true, wrap command through ShellConfig (for stream())
+    shell_wrap: bool,
+    /// Stdout configuration for stream() (defaults to inherit)
+    stdout_cfg: Option<std::process::Stdio>,
+    /// Stdin configuration for stream() (defaults to null, or piped if stdin_data is set)
+    stdin_cfg: Option<std::process::Stdio>,
+    /// If true, forward signals to child process group (for stream(), Unix only)
+    forward_signals: bool,
 }
 
 impl Cmd {
     /// Create a new command builder for the given program.
+    ///
+    /// The program is executed directly without shell interpretation.
+    /// For shell commands (with pipes, redirects, etc.), use [`Cmd::shell()`].
     pub fn new(program: impl Into<String>) -> Self {
         Self {
             program: program.into(),
@@ -361,6 +377,33 @@ impl Cmd {
             timeout: None,
             envs: Vec::new(),
             env_removes: Vec::new(),
+            shell_wrap: false,
+            stdout_cfg: None,
+            stdin_cfg: None,
+            forward_signals: false,
+        }
+    }
+
+    /// Create a command builder for a shell command string.
+    ///
+    /// The command is executed through the platform's shell (`sh -c` on Unix,
+    /// Git Bash on Windows), enabling shell features like pipes and redirects.
+    ///
+    /// Only valid with `.stream()` — shell commands cannot use `.run()`.
+    pub fn shell(command: impl Into<String>) -> Self {
+        Self {
+            program: command.into(),
+            args: Vec::new(),
+            current_dir: None,
+            context: None,
+            stdin_data: None,
+            timeout: None,
+            envs: Vec::new(),
+            env_removes: Vec::new(),
+            shell_wrap: true,
+            stdout_cfg: None,
+            stdin_cfg: None,
+            forward_signals: false,
         }
     }
 
@@ -392,13 +435,19 @@ impl Cmd {
         self
     }
 
-    /// Set data to write to the command's stdin.
-    pub fn stdin(mut self, data: impl Into<Vec<u8>>) -> Self {
+    /// Set data to pipe to the command's stdin.
+    ///
+    /// For `.run()`, the data is written to a piped stdin.
+    /// For `.stream()`, this takes precedence over `.stdin(Stdio)`.
+    pub fn stdin_bytes(mut self, data: impl Into<Vec<u8>>) -> Self {
         self.stdin_data = Some(data.into());
         self
     }
 
-    /// Set a timeout for command execution.
+    /// Set a timeout for command execution (only applies to `.run()`).
+    ///
+    /// Note: Timeout is not supported by `.stream()` since streaming commands
+    /// are interactive and should not be time-limited.
     pub fn timeout(mut self, duration: std::time::Duration) -> Self {
         self.timeout = Some(duration);
         self
@@ -416,12 +465,59 @@ impl Cmd {
         self
     }
 
+    /// Set stdout configuration for `.stream()`.
+    ///
+    /// Defaults to `Stdio::inherit()`. Use `Stdio::from(io::stderr())` to redirect
+    /// stdout to stderr for deterministic output ordering.
+    ///
+    /// Only affects `.stream()`. For `.run()`, output is always captured separately.
+    pub fn stdout(mut self, cfg: std::process::Stdio) -> Self {
+        self.stdout_cfg = Some(cfg);
+        self
+    }
+
+    /// Set stdin configuration for `.stream()`.
+    ///
+    /// Defaults to `Stdio::null()`. Use `Stdio::inherit()` for interactive commands
+    /// that need to read user input.
+    ///
+    /// Only affects `.stream()`. For `.run()`, stdin defaults to null unless
+    /// data is provided via `.stdin_bytes()`.
+    pub fn stdin(mut self, cfg: std::process::Stdio) -> Self {
+        self.stdin_cfg = Some(cfg);
+        self
+    }
+
+    /// Forward signals (SIGINT, SIGTERM) to child process group.
+    ///
+    /// On Unix, spawns the child in its own process group and forwards signals
+    /// with escalation (SIGINT → SIGTERM → SIGKILL). This enables clean shutdown
+    /// of the entire process tree on Ctrl-C.
+    ///
+    /// Only affects `.stream()` on Unix. No-op on Windows.
+    pub fn forward_signals(mut self) -> Self {
+        self.forward_signals = true;
+        self
+    }
+
     /// Execute the command and return its output.
     ///
-    /// Provides logging, semaphore limiting, and tracing like `run()`.
+    /// Captures stdout/stderr and returns them in `Output`. For interactive
+    /// commands or hooks where output should stream to the terminal, use
+    /// `.stream()` instead.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a shell-wrapped command (created via `Cmd::shell()`).
+    /// Shell commands must use `.stream()` because they need TTY preservation.
     pub fn run(self) -> std::io::Result<std::process::Output> {
         use std::io::Write;
         use std::process::Stdio;
+
+        assert!(
+            !self.shell_wrap,
+            "Cmd::shell() commands must use .stream(), not .run()"
+        );
 
         // Build command string for logging
         let cmd_str = if self.args.is_empty() {
@@ -447,7 +543,6 @@ impl Cmd {
         // Build the Command
         let mut cmd = Command::new(&self.program);
         cmd.args(&self.args);
-        cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
 
         if let Some(ref dir) = self.current_dir {
             cmd.current_dir(dir);
@@ -459,6 +554,10 @@ impl Cmd {
         for key in &self.env_removes {
             cmd.env_remove(key);
         }
+
+        // Prevent subprocesses from writing shell directives (security).
+        // Applied last to ensure it can't be re-added by user-provided envs.
+        cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
 
         // Determine effective timeout: explicit > thread-local > none
         let effective_timeout = self.timeout.or_else(|| COMMAND_TIMEOUT.with(|t| t.get()));
@@ -539,10 +638,201 @@ impl Cmd {
 
         result
     }
+
+    /// Execute the command with streaming output (inherits stdio).
+    ///
+    /// Unlike `.run()`, this method:
+    /// - Inherits stderr to preserve TTY behavior (colors, progress bars)
+    /// - Optionally redirects stdout to stderr (via `.stdout(Stdio::from(io::stderr()))`)
+    /// - Optionally inherits stdin for interactive commands (via `.stdin(Stdio::inherit())`)
+    /// - Optionally forwards signals to child process group (via `.forward_signals()`)
+    /// - Does not use concurrency limiting (streaming commands run sequentially by nature)
+    /// - Does not support timeout (interactive commands should not be time-limited)
+    ///
+    /// Shell commands created via `Cmd::shell()` are executed through the platform's
+    /// shell (`sh -c` on Unix, Git Bash on Windows).
+    ///
+    /// Returns error if command exits with non-zero status.
+    pub fn stream(self) -> anyhow::Result<()> {
+        use crate::git::{GitError, WorktrunkError};
+        use std::io::Write;
+        #[cfg(unix)]
+        use {
+            signal_hook::consts::{SIGINT, SIGTERM},
+            signal_hook::iterator::Signals,
+            std::os::unix::process::CommandExt,
+        };
+
+        // Shell-wrapped commands don't use args (the command string is the full command)
+        assert!(
+            !self.shell_wrap || self.args.is_empty(),
+            "Cmd::shell() cannot use .arg() - include arguments in the shell command string"
+        );
+
+        let working_dir = self
+            .current_dir
+            .as_deref()
+            .unwrap_or_else(|| std::path::Path::new("."));
+
+        // Build the command - either shell-wrapped or direct
+        let (mut cmd, exec_mode) = if self.shell_wrap {
+            let shell = ShellConfig::get();
+            let mode = format!("shell: {}", shell.name);
+            (shell.command(&self.program), mode)
+        } else {
+            let mut cmd = Command::new(&self.program);
+            cmd.args(&self.args);
+            (cmd, "direct".to_string())
+        };
+
+        // Build command string for logging (shell commands have full command in program,
+        // non-shell commands may have args)
+        let cmd_str = if self.shell_wrap || self.args.is_empty() {
+            self.program.clone()
+        } else {
+            format!("{} {}", self.program, self.args.join(" "))
+        };
+
+        // Log command for debugging (output goes to logger, not stdout/stderr)
+        match &self.context {
+            Some(ctx) => log::debug!("$ {} [{}] (streaming, {})", cmd_str, ctx, exec_mode),
+            None => log::debug!("$ {} (streaming, {})", cmd_str, exec_mode),
+        }
+
+        #[cfg(not(unix))]
+        let _ = self.forward_signals;
+
+        // Determine stdout handling (default: inherit)
+        let stdout_mode = self.stdout_cfg.unwrap_or_else(std::process::Stdio::inherit);
+
+        // Determine stdin handling (stdin_bytes takes precedence, then stdin cfg, then null)
+        let stdin_mode = if self.stdin_data.is_some() {
+            std::process::Stdio::piped()
+        } else {
+            self.stdin_cfg.unwrap_or_else(std::process::Stdio::null)
+        };
+
+        #[cfg(unix)]
+        let mut signals = if self.forward_signals {
+            Some(Signals::new([SIGINT, SIGTERM])?)
+        } else {
+            None
+        };
+
+        #[cfg(unix)]
+        if self.forward_signals {
+            // Isolate the child in its own process group so we can signal the whole tree.
+            cmd.process_group(0);
+        }
+
+        // Apply environment and spawn
+        cmd.current_dir(working_dir)
+            .stdin(stdin_mode)
+            .stdout(stdout_mode)
+            .stderr(std::process::Stdio::inherit()) // Preserve TTY for errors
+            // Prevent vergen "overridden" warning in nested cargo builds
+            .env_remove("VERGEN_GIT_DESCRIBE");
+
+        for (key, val) in &self.envs {
+            cmd.env(key, val);
+        }
+        for key in &self.env_removes {
+            cmd.env_remove(key);
+        }
+
+        // Prevent hooks from writing shell directives (security).
+        // Applied last to ensure it can't be re-added by user-provided envs.
+        cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
+
+        let mut child = cmd.spawn().map_err(|e| {
+            anyhow::Error::from(GitError::Other {
+                message: format!("Failed to execute command ({}): {}", exec_mode, e),
+            })
+        })?;
+
+        // Write stdin content if provided (ignore BrokenPipe - child may exit early)
+        if let Some(ref content) = self.stdin_data
+            && let Some(mut stdin) = child.stdin.take()
+            && let Err(e) = stdin.write_all(content)
+            && e.kind() != std::io::ErrorKind::BrokenPipe
+        {
+            return Err(e.into());
+        }
+        // stdin handle is dropped here, closing the pipe
+
+        // Wait for child with optional signal forwarding
+        #[cfg(unix)]
+        let (status, seen_signal) = if self.forward_signals {
+            let child_pgid = child.id() as i32;
+            let mut seen_signal: Option<i32> = None;
+            loop {
+                if let Some(status) = child.try_wait().map_err(|e| {
+                    anyhow::Error::from(GitError::Other {
+                        message: format!("Failed to wait for command: {}", e),
+                    })
+                })? {
+                    break (status, seen_signal);
+                }
+                if let Some(signals) = signals.as_mut() {
+                    for sig in signals.pending() {
+                        if seen_signal.is_none() {
+                            seen_signal = Some(sig);
+                            forward_signal_with_escalation(child_pgid, sig);
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        } else {
+            let status = child.wait().map_err(|e| {
+                anyhow::Error::from(GitError::Other {
+                    message: format!("Failed to wait for command: {}", e),
+                })
+            })?;
+            (status, None)
+        };
+
+        #[cfg(not(unix))]
+        let status = child.wait().map_err(|e| {
+            anyhow::Error::from(GitError::Other {
+                message: format!("Failed to wait for command: {}", e),
+            })
+        })?;
+
+        // Handle signals (Unix only)
+        #[cfg(unix)]
+        if let Some(sig) = seen_signal {
+            return Err(WorktrunkError::ChildProcessExited {
+                code: 128 + sig,
+                message: format!("terminated by signal {}", sig),
+            }
+            .into());
+        }
+
+        #[cfg(unix)]
+        if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&status) {
+            return Err(WorktrunkError::ChildProcessExited {
+                code: 128 + sig,
+                message: format!("terminated by signal {}", sig),
+            }
+            .into());
+        }
+
+        if !status.success() {
+            let code = status.code().unwrap_or(1);
+            return Err(WorktrunkError::ChildProcessExited {
+                code,
+                message: format!("exit status: {}", code),
+            }
+            .into());
+        }
+
+        Ok(())
+    }
 }
 
 // ============================================================================
-// Streaming command execution with signal handling
+// Signal forwarding helpers (Unix only)
 // ============================================================================
 
 #[cfg(unix)]
@@ -572,208 +862,20 @@ fn forward_signal_with_escalation(pgid: i32, sig: i32) {
     let _ = nix::sys::signal::killpg(pgid, initial_signal);
 
     let grace = std::time::Duration::from_millis(200);
-    match sig {
-        signal_hook::consts::SIGINT => {
-            if !wait_for_exit(pgid.as_raw(), grace) {
-                let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGTERM);
-                if !wait_for_exit(pgid.as_raw(), grace) {
-                    let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
-                }
-            }
-        }
-        signal_hook::consts::SIGTERM => {
+    // Escalate if process doesn't exit gracefully
+    if sig == signal_hook::consts::SIGINT {
+        if !wait_for_exit(pgid.as_raw(), grace) {
+            let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGTERM);
             if !wait_for_exit(pgid.as_raw(), grace) {
                 let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
             }
         }
-        _ => {}
-    }
-}
-
-/// Execute a command with streaming output
-///
-/// Uses Stdio::inherit for stderr to preserve TTY behavior - this ensures commands like cargo
-/// detect they're connected to a terminal and don't buffer their output.
-///
-/// If `redirect_stdout_to_stderr` is true, redirects child stdout to our stderr at the OS level
-/// (via `Stdio::from(io::stderr())`). This ensures deterministic output ordering (all child output
-/// flows through stderr). Per CLAUDE.md: child process output goes to stderr, worktrunk output
-/// goes to stdout.
-///
-/// If `stdin_content` is provided, it will be piped to the command's stdin (used for hook context JSON).
-///
-/// If `inherit_stdin` is true and `stdin_content` is None, stdin is inherited from the parent process,
-/// enabling interactive programs (like `claude`, `vim`, or `python -i`) to read user input.
-/// If false and `stdin_content` is None, stdin is set to null (appropriate for non-interactive hooks).
-///
-/// Returns error if command exits with non-zero status.
-///
-/// ## Cross-Platform Shell Execution
-///
-/// Uses the platform's preferred shell via `ShellConfig`:
-/// - Unix: `/bin/sh -c`
-/// - Windows: Git Bash (requires Git for Windows)
-///
-/// ## Signal Handling (Unix)
-///
-/// When `forward_signals` is true, the child is spawned in its own process group and
-/// SIGINT/SIGTERM received by the parent are forwarded to that group so we can abort
-/// the entire command tree without shell-wrapping. If the process group does not exit
-/// promptly, we escalate to SIGTERM/SIGKILL (SIGINT path) or SIGKILL (SIGTERM path).
-/// We still return exit code 128 + signal number (e.g., 130 for SIGINT) to match Unix conventions.
-pub fn execute_streaming(
-    command: &str,
-    working_dir: &std::path::Path,
-    redirect_stdout_to_stderr: bool,
-    stdin_content: Option<&str>,
-    inherit_stdin: bool,
-    forward_signals: bool,
-) -> anyhow::Result<()> {
-    use crate::git::{GitError, WorktrunkError};
-    use std::io::Write;
-    #[cfg(unix)]
-    use {
-        signal_hook::consts::{SIGINT, SIGTERM},
-        signal_hook::iterator::Signals,
-        std::os::unix::process::CommandExt,
-    };
-
-    let shell = ShellConfig::get();
-    #[cfg(not(unix))]
-    let _ = forward_signals;
-
-    // Determine stdout handling based on redirect flag
-    // When redirecting, use Stdio::from(stderr) to redirect child stdout to our stderr at OS level.
-    // This keeps stdout reserved for data output while hook output goes to stderr.
-    // Previously used shell-level `{ cmd } 1>&2` wrapping, but OS-level redirect is simpler
-    // and may improve signal handling by removing an extra shell process layer.
-    let stdout_mode = if redirect_stdout_to_stderr {
-        std::process::Stdio::from(std::io::stderr())
     } else {
-        std::process::Stdio::inherit()
-    };
-
-    let stdin_mode = if stdin_content.is_some() {
-        std::process::Stdio::piped()
-    } else if inherit_stdin {
-        std::process::Stdio::inherit()
-    } else {
-        std::process::Stdio::null()
-    };
-
-    #[cfg(unix)]
-    let mut signals = if forward_signals {
-        Some(Signals::new([SIGINT, SIGTERM])?)
-    } else {
-        None
-    };
-
-    let mut cmd = shell.command(command);
-    #[cfg(unix)]
-    if forward_signals {
-        // Isolate the child in its own process group so we can signal the whole tree.
-        cmd.process_group(0);
-    }
-    let mut child = cmd
-        .current_dir(working_dir)
-        .stdin(stdin_mode)
-        .stdout(stdout_mode)
-        .stderr(std::process::Stdio::inherit()) // Preserve TTY for errors
-        // Prevent vergen "overridden" warning in nested cargo builds when run via `cargo run`.
-        // Add more VERGEN_* variables here if we expand build.rs and hit similar issues.
-        .env_remove("VERGEN_GIT_DESCRIBE")
-        // Prevent hooks from writing to the directive file
-        .env_remove(DIRECTIVE_FILE_ENV_VAR)
-        .spawn()
-        .map_err(|e| {
-            anyhow::Error::from(GitError::Other {
-                message: format!("Failed to execute command with {}: {}", shell.name, e),
-            })
-        })?;
-
-    // Write stdin content if provided (used for hook context JSON)
-    // We ignore write errors here because:
-    // 1. The child may have already exited (broken pipe)
-    // 2. Hooks that don't read stdin will still work
-    // 3. Hooks that need stdin will fail with their own error message
-    if let Some(content) = stdin_content
-        && let Some(mut stdin) = child.stdin.take()
-    {
-        // Write and close stdin immediately so the child doesn't block waiting for more input
-        let _ = stdin.write_all(content.as_bytes());
-        // stdin is dropped here, closing the pipe
-    }
-
-    #[cfg(unix)]
-    let (status, seen_signal) = if forward_signals {
-        let child_pgid = child.id() as i32;
-        let mut seen_signal: Option<i32> = None;
-        loop {
-            if let Some(status) = child.try_wait().map_err(|e| {
-                anyhow::Error::from(GitError::Other {
-                    message: format!("Failed to wait for command: {}", e),
-                })
-            })? {
-                break (status, seen_signal);
-            }
-            if let Some(signals) = signals.as_mut() {
-                for sig in signals.pending() {
-                    if seen_signal.is_none() {
-                        seen_signal = Some(sig);
-                        forward_signal_with_escalation(child_pgid, sig);
-                    }
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+        // SIGTERM - escalate directly to SIGKILL
+        if !wait_for_exit(pgid.as_raw(), grace) {
+            let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
         }
-    } else {
-        let status = child.wait().map_err(|e| {
-            anyhow::Error::from(GitError::Other {
-                message: format!("Failed to wait for command: {}", e),
-            })
-        })?;
-        (status, None)
-    };
-
-    #[cfg(not(unix))]
-    let status = child.wait().map_err(|e| {
-        anyhow::Error::from(GitError::Other {
-            message: format!("Failed to wait for command: {}", e),
-        })
-    })?;
-
-    #[cfg(unix)]
-    if let Some(sig) = seen_signal {
-        return Err(WorktrunkError::ChildProcessExited {
-            code: 128 + sig,
-            message: format!("terminated by signal {}", sig),
-        }
-        .into());
     }
-
-    // Check if child was killed by a signal (Unix only)
-    // This handles Ctrl-C: when SIGINT is sent, the child receives it and terminates,
-    // and we propagate the signal exit code (128 + signal number, e.g., 130 for SIGINT)
-    #[cfg(unix)]
-    if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&status) {
-        return Err(WorktrunkError::ChildProcessExited {
-            code: 128 + sig,
-            message: format!("terminated by signal {}", sig),
-        }
-        .into());
-    }
-
-    if !status.success() {
-        // Get the exit code if available (None means terminated by signal on some platforms)
-        let code = status.code().unwrap_or(1);
-        return Err(WorktrunkError::ChildProcessExited {
-            code,
-            message: format!("exit status: {}", code),
-        }
-        .into());
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -945,7 +1047,7 @@ mod tests {
 
     #[test]
     fn test_cmd_with_stdin() {
-        let result = Cmd::new("cat").stdin("hello from stdin").run();
+        let result = Cmd::new("cat").stdin_bytes("hello from stdin").run();
         assert!(result.is_ok());
         let output = result.unwrap();
         assert!(output.status.success());
@@ -995,5 +1097,104 @@ mod tests {
 
         // Clean up
         set_command_timeout(None);
+    }
+
+    // ========================================================================
+    // Cmd::stream() tests
+    // ========================================================================
+
+    #[test]
+    fn test_cmd_shell_stream_succeeds() {
+        let result = Cmd::shell("echo hello").stream();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cmd_shell_stream_fails_on_nonzero_exit() {
+        use crate::git::WorktrunkError;
+
+        let result = Cmd::shell("exit 42").stream();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
+        match wt_err {
+            WorktrunkError::ChildProcessExited { code, .. } => {
+                assert_eq!(*code, 42);
+            }
+            _ => panic!("Expected ChildProcessExited error"),
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_shell_stream_with_stdin() {
+        // cat should echo stdin content (output goes to inherited stdout, we can't capture it,
+        // but we can verify no error)
+        let result = Cmd::shell("cat").stdin_bytes("test content").stream();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_new_stream_succeeds() {
+        // Non-shell command via stream() (uses direct execution, not shell wrapping)
+        let result = Cmd::new("echo").arg("hello").stream();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_shell_stream_with_stdout_redirect() {
+        use std::process::Stdio;
+        // Redirect stdout to stderr (common pattern for hooks)
+        let result = Cmd::shell("echo redirected")
+            .stdout(Stdio::from(std::io::stderr()))
+            .stream();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_shell_stream_with_stdin_inherit() {
+        use std::process::Stdio;
+        // Test stdin configuration (true immediately exits, doesn't actually read stdin)
+        let result = Cmd::shell("true").stdin(Stdio::inherit()).stream();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_shell_stream_with_env() {
+        // Test .env() and .env_remove() with stream()
+        let result = Cmd::shell("printenv TEST_VAR")
+            .env("TEST_VAR", "test_value")
+            .env_remove("SOME_NONEXISTENT_VAR")
+            .stream();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_process_group_alive_with_current_process() {
+        // Current process group should be alive
+        let pgid = nix::unistd::getpgrp().as_raw();
+        assert!(super::process_group_alive(pgid));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_process_group_alive_with_nonexistent_pgid() {
+        // Very high PGID unlikely to exist
+        assert!(!super::process_group_alive(999_999_999));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_forward_signal_with_escalation_unknown_signal() {
+        // Unknown signal should return early without doing anything
+        // Use a signal number that's not SIGINT or SIGTERM
+        super::forward_signal_with_escalation(1, 999);
+        // No panic = success (function returns early for unknown signals)
     }
 }

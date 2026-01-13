@@ -719,7 +719,7 @@ fn batch_fetch_stats(repo: &Repository, hashes: &[String]) -> HashMap<String, (u
     let Ok(output) = Cmd::new("git")
         .args(["diff-tree", "--numstat", "-r", "--root", "--stdin"])
         .current_dir(repo.worktree_base().unwrap_or_else(|_| ".".into()))
-        .stdin(stdin_data)
+        .stdin_bytes(stdin_data)
         .run()
     else {
         return HashMap::new();

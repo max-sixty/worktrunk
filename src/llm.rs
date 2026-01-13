@@ -270,7 +270,7 @@ fn execute_llm_command(command: &str, args: &[String], prompt: &str) -> anyhow::
 
     let output = Cmd::new(command)
         .args(args.iter().map(String::as_str))
-        .stdin(prompt)
+        .stdin_bytes(prompt)
         .run()
         .context("Failed to spawn LLM command")?;
 
