@@ -402,9 +402,25 @@ impl Task for AheadBehindTask {
             return Ok(TaskResult::AheadBehind {
                 item_idx: ctx.item_idx,
                 counts: AheadBehind::default(),
+                is_orphan: false,
             });
         };
         let repo = &ctx.repo;
+
+        // Check for orphan branch (no common ancestor with default branch).
+        // merge_base() is cached, so this is cheap after first call.
+        let is_orphan = repo
+            .merge_base(&base, &ctx.branch_ref.commit_sha)
+            .map_err(|e| ctx.error(Self::KIND, e))?
+            .is_none();
+
+        if is_orphan {
+            return Ok(TaskResult::AheadBehind {
+                item_idx: ctx.item_idx,
+                counts: AheadBehind::default(),
+                is_orphan: true,
+            });
+        }
 
         // Check cache first (populated by batch_ahead_behind if it ran).
         // Cache lookup has minor overhead (rev-parse for cache key + allocations),
@@ -424,6 +440,7 @@ impl Task for AheadBehindTask {
         Ok(TaskResult::AheadBehind {
             item_idx: ctx.item_idx,
             counts: AheadBehind { ahead, behind },
+            is_orphan: false,
         })
     }
 }

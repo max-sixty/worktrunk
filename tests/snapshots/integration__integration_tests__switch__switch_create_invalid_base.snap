@@ -1,10 +1,14 @@
 ---
-source: tests/integration_tests/list.rs
+source: tests/integration_tests/switch.rs
+assertion_line: 54
 info:
   program: wt
   args:
-    - list
-    - "--branches"
+    - switch
+    - "--create"
+    - new-feature
+    - "--base"
+    - nonexistent-base
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -27,13 +31,10 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
-  [1mBranch[0m  [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m  [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
-@ main        [2m^[22m                         .              [2ma1e809f5[0m  [2m1d[0m    [2mInitial commit
-  assets     [2m/[22m[2m∅[22m                                        [2m50209039[0m  [2m1d[0m    [2mAdd asset
-
-[2m○[22m [2mShowing 1 worktrees, 1 branches
 
 ----- stderr -----
+[31m✗[39m [31mBranch [1mnonexistent-base[22m not found[39m
+[2m↳[22m [2mTo create a new branch, run [90mwt switch nonexistent-base --create[39m; to list branches, run [90mwt list --branches --remotes[39m[22m
