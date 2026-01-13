@@ -26,7 +26,7 @@ pub fn to_posix_path(path: &str) -> String {
         return path.to_string();
     };
 
-    let Ok(output) = Cmd::new(&cygpath).args(["-u", path]).run() else {
+    let Ok(output) = Cmd::new(cygpath.to_string_lossy()).args(["-u", path]).run() else {
         return path.to_string();
     };
 

@@ -272,7 +272,7 @@ fn execute_llm_command(command: &str, args: &[String], prompt: &str) -> anyhow::
         .args(args.iter().map(String::as_str))
         .stdin(prompt)
         .run()
-        .context("Failed to run LLM command")?;
+        .context("Failed to spawn LLM command")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

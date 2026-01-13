@@ -460,9 +460,13 @@ impl Cmd {
             cmd.env_remove(key);
         }
 
+        // Determine effective timeout: explicit > thread-local > none
+        let effective_timeout = self.timeout.or_else(|| COMMAND_TIMEOUT.with(|t| t.get()));
+
         // Execute with or without stdin
         let result = if let Some(stdin_data) = self.stdin_data {
             // Stdin piping requires spawn/write/wait
+            // Note: stdin path doesn't support timeout (would need async I/O)
             cmd.stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
@@ -478,7 +482,7 @@ impl Cmd {
             }
 
             child.wait_with_output()
-        } else if let Some(timeout_duration) = self.timeout {
+        } else if let Some(timeout_duration) = effective_timeout {
             // Timeout handling uses the existing impl
             run_with_timeout_impl(&mut cmd, timeout_duration)
         } else {
@@ -946,5 +950,50 @@ mod tests {
         let output = result.unwrap();
         assert!(output.status.success());
         assert!(String::from_utf8_lossy(&output.stdout).contains("hello from stdin"));
+    }
+
+    #[test]
+    fn test_thread_local_timeout_setting() {
+        // Initially no timeout (or whatever was set by previous test)
+        let initial = COMMAND_TIMEOUT.with(|t| t.get());
+
+        // Set a timeout
+        set_command_timeout(Some(Duration::from_millis(100)));
+        let after_set = COMMAND_TIMEOUT.with(|t| t.get());
+        assert_eq!(after_set, Some(Duration::from_millis(100)));
+
+        // Clear the timeout
+        set_command_timeout(initial);
+        let after_clear = COMMAND_TIMEOUT.with(|t| t.get());
+        assert_eq!(after_clear, initial);
+    }
+
+    #[test]
+    fn test_cmd_uses_thread_local_timeout() {
+        // Set no timeout (ensure fast completion)
+        set_command_timeout(None);
+
+        let result = Cmd::new("echo").arg("thread local test").run();
+        assert!(result.is_ok());
+
+        // Clean up
+        set_command_timeout(None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_thread_local_timeout_kills_slow_command() {
+        // Set a short thread-local timeout
+        set_command_timeout(Some(Duration::from_millis(50)));
+
+        // Command that would take too long
+        let result = Cmd::new("sleep").arg("10").run();
+
+        // Should be killed by the thread-local timeout
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+
+        // Clean up
+        set_command_timeout(None);
     }
 }
