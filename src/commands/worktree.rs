@@ -459,9 +459,10 @@ pub fn handle_switch(
             crate::output::print(warning_message(cformat!(
                 "Branch <bold>{resolved_branch}</> exists on remote ({remote_ref}); creating new branch from base instead"
             )))?;
-            let cmd = suggest_command("switch", &[&resolved_branch], &[]);
+            let remove_cmd = suggest_command("remove", &[&resolved_branch], &[]);
+            let switch_cmd = suggest_command("switch", &[&resolved_branch], &[]);
             crate::output::print(hint_message(cformat!(
-                "To switch to the remote branch, remove <bright-black>--create</>; run <bright-black>{cmd}</>"
+                "To switch to the remote branch, remove this added branch and then run without <bright-black>--create</>: <bright-black>{remove_cmd} && {switch_cmd}</>"
             )))?;
         }
     }

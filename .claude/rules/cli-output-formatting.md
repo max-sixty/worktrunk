@@ -317,8 +317,8 @@ command for easy copying:
 "To delete the unmerged branch, run wt remove feature -D"
 "To rebase onto main, run wt step rebase or wt merge"
 
-// GOOD - when user needs to modify their command
-"To switch to the remote branch, remove --create; run wt switch feature"
+// GOOD - recovery command after shadowing a remote branch
+"To switch to the remote branch, remove this added branch and then run without --create: wt remove feature && wt switch feature"
 
 // BAD - command without context
 "wt remove feature -D deletes unmerged branches"
