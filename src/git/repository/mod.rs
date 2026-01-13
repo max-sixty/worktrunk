@@ -77,8 +77,8 @@ pub(super) struct RepoCache {
     pub(super) worktree_base: OnceCell<PathBuf>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
-    /// Merge-base cache: (commit1, commit2) -> merge_base_sha
-    pub(super) merge_base: DashMap<(String, String), String>,
+    /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
+    pub(super) merge_base: DashMap<(String, String), Option<String>>,
     /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
     /// Populated by batch_ahead_behind(), used by get_cached_ahead_behind()
     pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
@@ -504,16 +504,22 @@ impl Repository {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {
+        Ok(self.run_command_output(args)?.status.success())
+    }
+
+    /// Run a git command and return the raw Output (for inspecting exit codes).
+    ///
+    /// Use this when exit codes have semantic meaning beyond success/failure.
+    /// For most cases, prefer `run_command` (returns stdout) or `run_command_check` (returns bool).
+    pub(super) fn run_command_output(&self, args: &[&str]) -> anyhow::Result<std::process::Output> {
         use crate::shell_exec::run;
 
         let mut cmd = Command::new("git");
         cmd.args(args);
         cmd.current_dir(&self.discovery_path);
 
-        let output = run(&mut cmd, Some(&self.logging_context()))
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
-
-        Ok(output.status.success())
+        run(&mut cmd, Some(&self.logging_context()))
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
 }
 

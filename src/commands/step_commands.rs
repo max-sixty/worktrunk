@@ -152,8 +152,10 @@ pub fn handle_squash(
         .map_err(worktrunk::git::add_hook_skip_hint)?;
     }
 
-    // Get merge base with target branch
-    let merge_base = repo.merge_base("HEAD", &target_branch)?;
+    // Get merge base with target branch (required for squash)
+    let merge_base = repo
+        .merge_base("HEAD", &target_branch)?
+        .context("Cannot squash: no common ancestor with target branch")?;
 
     // Count commits since merge base
     let commit_count = repo.count_commits(&merge_base, "HEAD")?;
@@ -302,8 +304,10 @@ pub fn step_show_squash_prompt(
         .branch()?
         .unwrap_or_else(|| "HEAD".to_string());
 
-    // Get merge base with target branch
-    let merge_base = repo.merge_base("HEAD", &target_branch)?;
+    // Get merge base with target branch (required for generating squash message)
+    let merge_base = repo
+        .merge_base("HEAD", &target_branch)?
+        .context("Cannot generate squash message: no common ancestor with target branch")?;
 
     // Get commit subjects for the squash message
     let range = format!("{}..HEAD", merge_base);
@@ -351,7 +355,9 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     }
 
     // Check if this is a fast-forward or true rebase
-    let merge_base = repo.merge_base("HEAD", &target_branch)?;
+    let merge_base = repo
+        .merge_base("HEAD", &target_branch)?
+        .context("Cannot rebase: no common ancestor with target branch")?;
     let head_sha = repo.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
     let is_fast_forward = merge_base == head_sha;
 
