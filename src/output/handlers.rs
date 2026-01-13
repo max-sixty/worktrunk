@@ -28,7 +28,7 @@ use super::shell_integration::{
 /// Format a switch message based on what was created
 ///
 /// # Message formats
-/// - Branch + worktree created (`--create`): "Created branch X and worktree from Y @ path"
+/// - Branch + worktree created (`--create`): "Created branch X from Y and worktree @ path"
 /// - Branch from remote + worktree (DWIM): "Created branch X (tracking remote) and worktree @ path"
 /// - Worktree only created: "Created worktree for X @ path"
 /// - Switched to existing: "Switched to worktree for X @ path"
@@ -46,7 +46,7 @@ fn format_switch_message(
         // --create flag: created branch and worktree
         match base_branch {
             Some(base) => cformat!(
-                "Created branch <bold>{branch}</> and worktree from <bold>{base}</> @ <bold>{path_display}</>"
+                "Created branch <bold>{branch}</> from <bold>{base}</> and worktree @ <bold>{path_display}</>"
             ),
             None => {
                 cformat!("Created branch <bold>{branch}</> and worktree @ <bold>{path_display}</>")

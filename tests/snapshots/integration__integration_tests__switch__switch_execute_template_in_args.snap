@@ -39,7 +39,7 @@ exit_code: 0
 branch=args-test repo=repo
 
 ----- stderr -----
-[32m✓[39m [32mCreated branch [1margs-test[22m and worktree from [1mmain[22m @ [1m_REPO_.args-test[22m[39m
+[32m✓[39m [32mCreated branch [1margs-test[22m from [1mmain[22m and worktree @ [1m_REPO_.args-test[22m[39m
 [2m↳[22m [2mCustomize worktree locations: [90mwt config create[39m[22m
 [33m▲[39m [33mExecuting [1mecho[22m @ [1m_REPO_.args-test[22m, but shell directory unchanged — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
