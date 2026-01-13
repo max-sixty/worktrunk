@@ -672,13 +672,14 @@ impl Cmd {
             .unwrap_or_else(|| std::path::Path::new("."));
 
         // Build the command - either shell-wrapped or direct
-        let (mut cmd, shell_name) = if self.shell_wrap {
+        let (mut cmd, exec_mode) = if self.shell_wrap {
             let shell = ShellConfig::get();
-            (shell.command(&self.program), shell.name.clone())
+            let mode = format!("shell: {}", shell.name);
+            (shell.command(&self.program), mode)
         } else {
             let mut cmd = Command::new(&self.program);
             cmd.args(&self.args);
-            (cmd, self.program.clone())
+            (cmd, "direct".to_string())
         };
 
         // Build command string for logging (shell commands have full command in program,
@@ -691,8 +692,8 @@ impl Cmd {
 
         // Log command for debugging (output goes to logger, not stdout/stderr)
         match &self.context {
-            Some(ctx) => log::debug!("$ {} [{}] (streaming via {})", cmd_str, ctx, shell_name),
-            None => log::debug!("$ {} (streaming via {})", cmd_str, shell_name),
+            Some(ctx) => log::debug!("$ {} [{}] (streaming, {})", cmd_str, ctx, exec_mode),
+            None => log::debug!("$ {} (streaming, {})", cmd_str, exec_mode),
         }
 
         #[cfg(not(unix))]
@@ -740,7 +741,7 @@ impl Cmd {
 
         let mut child = cmd.spawn().map_err(|e| {
             anyhow::Error::from(GitError::Other {
-                message: format!("Failed to execute command with {}: {}", shell_name, e),
+                message: format!("Failed to execute command ({}): {}", exec_mode, e),
             })
         })?;
 
