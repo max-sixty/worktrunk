@@ -246,6 +246,14 @@ pub fn print_shell_install_result(
         }
     }
 
+    // Show legacy file cleanups (migration from conf.d to functions)
+    for legacy_path in &scan_result.legacy_cleanups {
+        let path = format_path_for_display(legacy_path);
+        super::print(info_message(cformat!(
+            "Removed <bold>{path}</> (deprecated; now using functions/)"
+        )))?;
+    }
+
     // Show skipped shells
     print_skipped_shells(&scan_result.skipped)?;
 

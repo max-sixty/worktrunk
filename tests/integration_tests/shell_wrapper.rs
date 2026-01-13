@@ -1947,6 +1947,65 @@ approved-commands = ["echo 'bash background'"]
         );
     }
 
+    /// Test that fish wrapper shows clear error when wt binary is not available
+    ///
+    /// This tests the scenario where:
+    /// 1. User has shell integration installed (functions/wt.fish exists)
+    /// 2. But wt binary is not in PATH
+    /// 3. And WORKTRUNK_BIN is not set
+    ///
+    /// The fish function should show "wt: command not found" and exit 127.
+    /// This is fish-specific because bash/zsh have an outer guard that prevents
+    /// the function from being defined when wt isn't available.
+    #[rstest]
+    #[case("fish")]
+    fn test_fish_binary_not_found_clear_error(#[case] shell: &str, repo: TestRepo) {
+        let wrapper_script = generate_wrapper(&repo, shell);
+
+        // Script that clears PATH and does NOT set WORKTRUNK_BIN
+        // This simulates having the fish function installed but wt not available
+        let script = format!(
+            r#"
+            # Clear PATH to ensure wt is not found via PATH
+            set -x PATH /usr/bin /bin
+            # Explicitly unset WORKTRUNK_BIN to ensure it's not set
+            set -e WORKTRUNK_BIN
+            set -x CLICOLOR_FORCE 1
+            {}
+            wt --version
+            echo "exit_code: $status"
+            "#,
+            wrapper_script
+        );
+
+        let final_script = format!("begin\n{}\nend 2>&1", script);
+
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path);
+
+        let (combined, exit_code) =
+            exec_in_pty_interactive(shell, &final_script, repo.root_path(), &env_vars, &[]);
+
+        let output = ShellOutput {
+            combined,
+            exit_code,
+        };
+
+        // The function should show a clear error message
+        assert!(
+            output.combined.contains("wt: command not found"),
+            "Fish wrapper should show 'wt: command not found' when binary is missing.\nOutput:\n{}",
+            output.combined
+        );
+
+        // And return exit code 127 (standard "command not found" exit code)
+        assert!(
+            output.combined.contains("exit_code: 127"),
+            "Fish wrapper should return exit code 127 when binary is missing.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
     // ========================================================================
     // Interrupt/Cleanup Tests
     // ========================================================================

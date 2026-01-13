@@ -445,7 +445,10 @@ pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>,
             .map(PathBuf::from)
             .unwrap_or_else(|_| home.clone())
             .join(".zshrc"),
-        // Fish conf.d
+        // Fish functions/ (current location)
+        home.join(".config/fish/functions")
+            .join(format!("{cmd}.fish")),
+        // Fish conf.d (legacy location - for detecting existing installs)
         home.join(".config/fish/conf.d").join(format!("{cmd}.fish")),
     ];
 
@@ -503,17 +506,34 @@ impl Shell {
                 vec![zdotdir.join(".zshrc")]
             }
             Self::Fish => {
-                // For fish, we write to conf.d/ which is auto-sourced
-                // Filename includes prefix to avoid conflicts (e.g., wt.fish, git-wt.fish)
+                // For fish, we write to functions/ which is autoloaded on first use.
+                // This ensures PATH is fully configured before our function loads,
+                // fixing the issue where Homebrew PATH setup in config.fish runs
+                // after conf.d/ files. See: https://github.com/max-sixty/worktrunk/issues/566
                 vec![
                     home.join(".config")
                         .join("fish")
-                        .join("conf.d")
+                        .join("functions")
                         .join(format!("{}.fish", cmd)),
                 ]
             }
             Self::PowerShell => powershell_profile_paths(&home),
         })
+    }
+
+    /// Returns the legacy fish conf.d path for cleanup purposes.
+    ///
+    /// Previously, fish shell integration was installed to `~/.config/fish/conf.d/{cmd}.fish`.
+    /// This caused issues with Homebrew PATH setup (see issue #566). We now install to
+    /// `functions/{cmd}.fish` instead. This method returns the legacy path so install/uninstall
+    /// can clean it up.
+    pub fn legacy_fish_conf_d_path(cmd: &str) -> Result<PathBuf, std::io::Error> {
+        let home = home_dir_required()?;
+        Ok(home
+            .join(".config")
+            .join("fish")
+            .join("conf.d")
+            .join(format!("{}.fish", cmd)))
     }
 
     /// Returns the path to the native completion directory for this shell.

@@ -30,6 +30,8 @@ pub struct UninstallScanResult {
     pub not_found: Vec<(Shell, PathBuf)>,
     /// Completion files not found (only fish has separate completion files)
     pub completion_not_found: Vec<(Shell, PathBuf)>,
+    /// Legacy files that were cleaned up (e.g., fish conf.d/wt.fish -> functions/wt.fish migration)
+    pub legacy_cleanups: Vec<PathBuf>,
 }
 
 pub struct CompletionUninstallResult {
@@ -44,6 +46,8 @@ pub struct ScanResult {
     pub skipped: Vec<(Shell, PathBuf)>, // Shell + first path that was checked
     /// Zsh was configured but compinit is missing (completions won't work without it)
     pub zsh_needs_compinit: bool,
+    /// Legacy files that were cleaned up (e.g., fish conf.d/wt.fish -> functions/wt.fish migration)
+    pub legacy_cleanups: Vec<PathBuf>,
 }
 
 pub struct CompletionResult {
@@ -104,6 +108,37 @@ impl ConfigAction {
     }
 }
 
+/// Clean up legacy fish conf.d file after installing to functions/
+///
+/// Previously, fish shell integration was installed to `~/.config/fish/conf.d/{cmd}.fish`.
+/// This caused issues with Homebrew PATH setup (see issue #566). We now install to
+/// `functions/{cmd}.fish` instead. This function removes the legacy file if it exists.
+///
+/// Returns the paths of files that were cleaned up.
+fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<PathBuf> {
+    let mut cleaned = Vec::new();
+
+    // Clean up if fish was part of the install (regardless of whether it already existed)
+    // This handles the case where user manually created functions/wt.fish but still has
+    // the old conf.d/wt.fish hanging around
+    let fish_targeted = configured.iter().any(|r| r.shell == Shell::Fish);
+
+    if !fish_targeted {
+        return cleaned;
+    }
+
+    // Check for legacy conf.d file
+    let Ok(legacy_path) = Shell::legacy_fish_conf_d_path(cmd) else {
+        return cleaned;
+    };
+
+    if legacy_path.exists() && fs::remove_file(&legacy_path).is_ok() {
+        cleaned.push(legacy_path);
+    }
+
+    cleaned
+}
+
 pub fn handle_configure_shell(
     shell_filter: Option<Shell>,
     skip_confirmation: bool,
@@ -124,6 +159,7 @@ pub fn handle_configure_shell(
             completion_results: completion_preview,
             skipped: preview.skipped,
             zsh_needs_compinit: false,
+            legacy_cleanups: Vec::new(),
         });
     }
 
@@ -143,6 +179,7 @@ pub fn handle_configure_shell(
             completion_results: completion_preview,
             skipped: preview.skipped,
             zsh_needs_compinit: false,
+            legacy_cleanups: Vec::new(),
         });
     }
 
@@ -154,6 +191,7 @@ pub fn handle_configure_shell(
             completion_results: completion_preview,
             skipped: preview.skipped,
             zsh_needs_compinit: false,
+            legacy_cleanups: Vec::new(),
         });
     }
 
@@ -202,11 +240,16 @@ pub fn handle_configure_shell(
     // If detection fails (None), stay silent - we can't be sure.
     let zsh_needs_compinit = should_check_compinit && shell::detect_zsh_compinit() == Some(false);
 
+    // Clean up legacy fish conf.d file if we just installed to functions/
+    // This handles migration from the old conf.d location (issue #566)
+    let legacy_cleanups = cleanup_legacy_fish_conf_d(&result.configured, &cmd);
+
     Ok(ScanResult {
         configured: result.configured,
         completion_results,
         skipped: result.skipped,
         zsh_needs_compinit,
+        legacy_cleanups,
     })
 }
 
@@ -288,7 +331,8 @@ pub fn scan_shell_configs(
         configured: results,
         completion_results: Vec::new(), // Completions handled separately in handle_configure_shell
         skipped,
-        zsh_needs_compinit: false, // Caller handles compinit detection
+        zsh_needs_compinit: false,   // Caller handles compinit detection
+        legacy_cleanups: Vec::new(), // Caller handles legacy cleanup
     })
 }
 
@@ -302,12 +346,18 @@ fn configure_shell_file(
     // The line we write to the config file (also used for display)
     let config_line = shell.config_line(cmd);
 
-    // For Fish, we write to a separate conf.d/ file
+    // For Fish, we write to functions/{cmd}.fish with the full init script.
+    // Unlike bash/zsh which add a one-liner to their rc file, fish uses autoloaded
+    // function files that need the complete function definition.
     if matches!(shell, Shell::Fish) {
+        let init = shell::ShellInit::with_prefix(shell, cmd.to_string());
+        let fish_content = init
+            .generate()
+            .map_err(|e| format!("Failed to generate fish init: {}", e))?;
         return configure_fish_file(
             shell,
             path,
-            &config_line,
+            &fish_content,
             dry_run,
             explicit_shell,
             &config_line,
@@ -427,7 +477,8 @@ fn configure_fish_file(
     explicit_shell: bool,
     config_line: &str,
 ) -> Result<Option<ConfigureResult>, String> {
-    // For Fish, we write to conf.d/{cmd}.fish (separate file)
+    // For Fish, we write to functions/{cmd}.fish with the complete function definition.
+    // Fish autoloads these files on first invocation of the command.
 
     // Check if it already exists and has our integration
     if path.exists() {
@@ -801,33 +852,66 @@ fn scan_for_uninstall(
             .config_paths(cmd)
             .map_err(|e| format!("Failed to get config paths for {}: {}", shell, e))?;
 
-        // For Fish, delete entire {cmd}.fish file
+        // For Fish, delete entire {cmd}.fish file (check both canonical and legacy locations)
         if matches!(shell, Shell::Fish) {
-            if let Some(fish_path) = paths.first() {
-                if fish_path.exists() {
-                    if dry_run {
-                        results.push(UninstallResult {
-                            shell,
-                            path: fish_path.clone(),
-                            action: UninstallAction::WouldRemove,
-                        });
-                    } else {
-                        fs::remove_file(fish_path).map_err(|e| {
-                            format!(
-                                "Failed to remove {}: {}",
-                                format_path_for_display(fish_path),
-                                e
-                            )
-                        })?;
-                        results.push(UninstallResult {
-                            shell,
-                            path: fish_path.clone(),
-                            action: UninstallAction::Removed,
-                        });
-                    }
+            let mut found_any = false;
+
+            // Check canonical location (functions/)
+            if let Some(fish_path) = paths.first()
+                && fish_path.exists()
+            {
+                found_any = true;
+                if dry_run {
+                    results.push(UninstallResult {
+                        shell,
+                        path: fish_path.clone(),
+                        action: UninstallAction::WouldRemove,
+                    });
                 } else {
-                    not_found.push((shell, fish_path.clone()));
+                    fs::remove_file(fish_path).map_err(|e| {
+                        format!(
+                            "Failed to remove {}: {}",
+                            format_path_for_display(fish_path),
+                            e
+                        )
+                    })?;
+                    results.push(UninstallResult {
+                        shell,
+                        path: fish_path.clone(),
+                        action: UninstallAction::Removed,
+                    });
                 }
+            }
+
+            // Also check legacy location (conf.d/) - issue #566
+            if let Ok(legacy_path) = Shell::legacy_fish_conf_d_path(cmd)
+                && legacy_path.exists()
+            {
+                found_any = true;
+                if dry_run {
+                    results.push(UninstallResult {
+                        shell,
+                        path: legacy_path.clone(),
+                        action: UninstallAction::WouldRemove,
+                    });
+                } else {
+                    fs::remove_file(&legacy_path).map_err(|e| {
+                        format!(
+                            "Failed to remove {}: {}",
+                            format_path_for_display(&legacy_path),
+                            e
+                        )
+                    })?;
+                    results.push(UninstallResult {
+                        shell,
+                        path: legacy_path,
+                        action: UninstallAction::Removed,
+                    });
+                }
+            }
+
+            if !found_any && let Some(fish_path) = paths.first() {
+                not_found.push((shell, fish_path.clone()));
             }
             continue;
         }
@@ -891,11 +975,23 @@ fn scan_for_uninstall(
         }
     }
 
+    // Clean up legacy fish conf.d file if it exists (migration from issue #566)
+    let mut legacy_cleanups = Vec::new();
+    if !dry_run
+        && shells.contains(&Shell::Fish)
+        && let Ok(legacy_path) = Shell::legacy_fish_conf_d_path(cmd)
+        && legacy_path.exists()
+        && fs::remove_file(&legacy_path).is_ok()
+    {
+        legacy_cleanups.push(legacy_path);
+    }
+
     Ok(UninstallScanResult {
         results,
         completion_results,
         not_found,
         completion_not_found,
+        legacy_cleanups,
     })
 }
 
