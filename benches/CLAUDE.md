@@ -51,14 +51,33 @@ cargo bench --bench list -- --skip cold  # Warm cache only
 - Cached rust repo: `target/bench-repos/rust/`
 - HTML reports: `target/criterion/*/report/index.html`
 
-## Performance Investigation with analyze-trace
+## Performance Investigation with wt-perf
 
-Use `analyze-trace` to generate Chrome Trace Format for visualization:
+Use `wt-perf` to set up benchmark repos and generate Chrome Trace Format for visualization.
+
+### Setting up benchmark repos
+
+```bash
+# Set up a repo with 8 worktrees (persists at /tmp/wt-perf-typical-8)
+cargo run -p wt-perf -- setup typical-8 --persist
+
+# Available configs:
+#   typical-N       - 500 commits, 100 files, N worktrees
+#   branches-N      - N branches, 1 commit each
+#   branches-N-M    - N branches, M commits each
+#   divergent       - 200 branches × 20 commits (GH #461 scenario)
+#   select-test     - Config for wt select testing
+
+# Invalidate caches for cold run
+cargo run -p wt-perf -- invalidate /tmp/wt-perf-typical-8/main
+```
+
+### Generating traces
 
 ```bash
 # Generate trace.json for Perfetto/Chrome
 RUST_LOG=debug wt list --branches 2>&1 | grep '\[wt-trace\]' | \
-  cargo run --release -q --bin analyze-trace > trace.json
+  cargo run -p wt-perf -- trace > trace.json
 
 # Open in https://ui.perfetto.dev or chrome://tracing
 ```
@@ -120,7 +139,7 @@ trace_processor trace.json -q /tmp/q.sql
 ```bash
 # Trace on rust-lang/rust (must run benchmark first to clone)
 RUST_LOG=debug cargo run --release -q -- -C target/bench-repos/rust list --branches 2>&1 | \
-  grep '\[wt-trace\]' | cargo run --release -q --bin analyze-trace > rust-trace.json
+  grep '\[wt-trace\]' | cargo run -p wt-perf -- trace > rust-trace.json
 ```
 
 ## Key Performance Insights

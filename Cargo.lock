@@ -1955,13 +1955,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "setup-select-test"
-version = "0.1.0"
-dependencies = [
- "dunce",
-]
-
-[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3101,6 +3094,7 @@ dependencies = [
  "vt100",
  "which 8.0.0",
  "wrap-ansi",
+ "wt-perf",
 ]
 
 [[package]]
@@ -3113,6 +3107,16 @@ dependencies = [
  "regex",
  "string-width",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "wt-perf"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "dunce",
+ "tempfile",
+ "worktrunk",
 ]
 
 [[package]]

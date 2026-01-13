@@ -24,67 +24,33 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
-use tempfile::TempDir;
+use wt_perf::{RepoConfig, create_repo, ensure_rust_repo, invalidate_caches, setup_fake_remote};
 
-/// Lazy-initialized rust repo path.
-static RUST_REPO: OnceLock<PathBuf> = OnceLock::new();
-
-/// Unified benchmark configuration.
+/// Benchmark configuration wrapping RepoConfig with cache state.
 #[derive(Clone)]
 struct BenchConfig {
-    // Repo structure
-    commits_on_main: usize,
-    files: usize,
-    branches: usize,
-    commits_per_branch: usize,
-    // Worktrees (0 = none)
-    worktrees: usize,
-    worktree_commits_ahead: usize,
-    worktree_uncommitted_files: usize,
-    // Cache state
+    repo: RepoConfig,
     cold_cache: bool,
 }
 
 impl BenchConfig {
-    /// Typical repo with worktrees (for skeleton, complete, worktree_scaling)
     const fn typical(worktrees: usize, cold_cache: bool) -> Self {
         Self {
-            commits_on_main: 500,
-            files: 100,
-            branches: 0,
-            commits_per_branch: 0,
-            worktrees,
-            worktree_commits_ahead: 10,
-            worktree_uncommitted_files: 3,
+            repo: RepoConfig::typical(worktrees),
             cold_cache,
         }
     }
 
-    /// Branch-only config (for many_branches)
     const fn branches(count: usize, commits_per_branch: usize, cold_cache: bool) -> Self {
         Self {
-            commits_on_main: 1,
-            files: 1,
-            branches: count,
-            commits_per_branch,
-            worktrees: 0,
-            worktree_commits_ahead: 0,
-            worktree_uncommitted_files: 0,
+            repo: RepoConfig::branches(count, commits_per_branch),
             cold_cache,
         }
     }
 
-    /// Many divergent branches (GH #461 scenario: 200 branches × 20 commits)
     const fn many_divergent_branches(cold_cache: bool) -> Self {
         Self {
-            commits_on_main: 100,
-            files: 50,
-            branches: 200,
-            commits_per_branch: 20,
-            worktrees: 0,
-            worktree_commits_ahead: 0,
-            worktree_uncommitted_files: 0,
+            repo: RepoConfig::many_divergent_branches(),
             cold_cache,
         }
     }
@@ -123,161 +89,6 @@ fn get_release_binary() -> PathBuf {
     std::env::current_dir().unwrap().join("target/release/wt")
 }
 
-/// Create a test repository from config.
-fn create_test_repo(config: &BenchConfig) -> TempDir {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let repo_path = temp_dir.path().join("main");
-    std::fs::create_dir(&repo_path).unwrap();
-
-    run_git(&repo_path, &["init", "-b", "main"]);
-    run_git(&repo_path, &["config", "user.name", "Benchmark"]);
-    run_git(&repo_path, &["config", "user.email", "bench@test.com"]);
-
-    // Create initial file structure
-    let num_files = config.files.max(1);
-    for i in 0..num_files {
-        let file_path = repo_path.join(format!("src/file_{}.rs", i));
-        std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
-        std::fs::write(
-            &file_path,
-            format!(
-                "// File {i}\npub struct Module{i} {{ data: Vec<String> }}\npub fn function_{i}() -> i32 {{ {} }}\n",
-                i * 42
-            ),
-        )
-        .unwrap();
-    }
-
-    run_git(&repo_path, &["add", "."]);
-    run_git(&repo_path, &["commit", "-m", "Initial commit"]);
-
-    // Build commit history on main
-    for i in 1..config.commits_on_main {
-        let num_files_to_modify = 2 + (i % 2);
-        for j in 0..num_files_to_modify {
-            let file_idx = (i * 7 + j * 13) % num_files;
-            let file_path = repo_path.join(format!("src/file_{}.rs", file_idx));
-            let mut content = std::fs::read_to_string(&file_path).unwrap();
-            content.push_str(&format!(
-                "\npub fn function_{file_idx}_{i}() -> i32 {{ {} }}\n",
-                i * 100 + j
-            ));
-            std::fs::write(&file_path, content).unwrap();
-        }
-        run_git(&repo_path, &["add", "."]);
-        run_git(&repo_path, &["commit", "-m", &format!("Commit {i}")]);
-    }
-
-    // Create branches
-    for i in 0..config.branches {
-        let branch_name = format!("feature-{i:03}");
-        run_git(&repo_path, &["checkout", "-b", &branch_name, "main"]);
-
-        for j in 0..config.commits_per_branch {
-            let feature_file = repo_path.join(format!("feature_{i:03}_{j}.rs"));
-            std::fs::write(
-                &feature_file,
-                format!(
-                    "// Feature {i} file {j}\npub fn feature_{i}_func_{j}() -> i32 {{ {} }}\n",
-                    i * 100 + j
-                ),
-            )
-            .unwrap();
-            run_git(&repo_path, &["add", "."]);
-            run_git(
-                &repo_path,
-                &["commit", "-m", &format!("Feature {branch_name} commit {j}")],
-            );
-        }
-    }
-
-    if config.branches > 0 {
-        run_git(&repo_path, &["checkout", "main"]);
-    }
-
-    // Add worktrees
-    for wt_num in 1..config.worktrees {
-        let branch = format!("feature-wt-{wt_num}");
-        let wt_path = temp_dir.path().join(format!("wt-{wt_num}"));
-
-        let head_output = Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(&repo_path)
-            .output()
-            .unwrap();
-        let base_commit = String::from_utf8_lossy(&head_output.stdout)
-            .trim()
-            .to_string();
-
-        run_git(
-            &repo_path,
-            &[
-                "worktree",
-                "add",
-                "-b",
-                &branch,
-                wt_path.to_str().unwrap(),
-                &base_commit,
-            ],
-        );
-
-        // Add diverging commits
-        for i in 0..config.worktree_commits_ahead {
-            let file_path = wt_path.join(format!("feature_{wt_num}_file_{i}.txt"));
-            std::fs::write(&file_path, format!("Feature {wt_num} content {i}\n")).unwrap();
-            run_git(&wt_path, &["add", "."]);
-            run_git(
-                &wt_path,
-                &["commit", "-m", &format!("Feature {wt_num} commit {i}")],
-            );
-        }
-
-        // Add uncommitted changes
-        for i in 0..config.worktree_uncommitted_files {
-            let file_path = wt_path.join(format!("uncommitted_{i}.txt"));
-            std::fs::write(&file_path, "Uncommitted content\n").unwrap();
-        }
-    }
-
-    temp_dir
-}
-
-/// Invalidate git caches for cold benchmarks.
-fn invalidate_caches(repo_path: &Path, num_worktrees: usize) {
-    let git_dir = repo_path.join(".git");
-
-    // Remove index files
-    let _ = std::fs::remove_file(git_dir.join("index"));
-    for i in 1..num_worktrees {
-        let _ = std::fs::remove_file(
-            git_dir
-                .join("worktrees")
-                .join(format!("wt-{i}"))
-                .join("index"),
-        );
-    }
-
-    // Remove commit graph
-    let _ = std::fs::remove_file(git_dir.join("objects/info/commit-graph"));
-    let _ = std::fs::remove_dir_all(git_dir.join("objects/info/commit-graphs"));
-
-    // Remove packed refs
-    let _ = std::fs::remove_file(git_dir.join("packed-refs"));
-}
-
-/// Set up fake remote for default branch detection.
-fn setup_fake_remote(repo_path: &Path) {
-    let refs_dir = repo_path.join(".git/refs/remotes/origin");
-    std::fs::create_dir_all(&refs_dir).unwrap();
-    std::fs::write(refs_dir.join("HEAD"), "ref: refs/remotes/origin/main\n").unwrap();
-    let head_sha = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-    std::fs::write(refs_dir.join("main"), head_sha.stdout).unwrap();
-}
-
 /// Run a benchmark with the given config.
 fn run_benchmark(
     b: &mut criterion::Bencher,
@@ -298,7 +109,7 @@ fn run_benchmark(
 
     if config.cold_cache {
         b.iter_batched(
-            || invalidate_caches(repo_path, config.worktrees),
+            || invalidate_caches(repo_path, config.repo.worktrees),
             |_| {
                 cmd_factory().output().unwrap();
             },
@@ -318,7 +129,7 @@ fn bench_skeleton(c: &mut Criterion) {
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
             let config = BenchConfig::typical(worktrees, cold);
-            let temp = create_test_repo(&config);
+            let temp = create_repo(&config.repo);
             let repo_path = temp.path().join("main");
             setup_fake_remote(&repo_path);
 
@@ -349,7 +160,7 @@ fn bench_complete(c: &mut Criterion) {
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
             let config = BenchConfig::typical(worktrees, cold);
-            let temp = create_test_repo(&config);
+            let temp = create_repo(&config.repo);
             let repo_path = temp.path().join("main");
             setup_fake_remote(&repo_path);
 
@@ -373,7 +184,7 @@ fn bench_worktree_scaling(c: &mut Criterion) {
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
             let config = BenchConfig::typical(worktrees, cold);
-            let temp = create_test_repo(&config);
+            let temp = create_repo(&config.repo);
             let repo_path = temp.path().join("main");
             run_git(&repo_path, &["status"]);
 
@@ -390,45 +201,6 @@ fn bench_worktree_scaling(c: &mut Criterion) {
     group.finish();
 }
 
-fn get_or_clone_rust_repo() -> PathBuf {
-    RUST_REPO
-        .get_or_init(|| {
-            let cache_dir = std::env::current_dir().unwrap().join("target/bench-repos");
-            let rust_repo = cache_dir.join("rust");
-
-            if rust_repo.exists() {
-                let output = Command::new("git")
-                    .args(["rev-parse", "HEAD"])
-                    .current_dir(&rust_repo)
-                    .output();
-
-                if output.is_ok_and(|o| o.status.success()) {
-                    println!("Using cached rust repo at {}", rust_repo.display());
-                    return rust_repo;
-                }
-                println!("Cached rust repo corrupted, re-cloning...");
-                std::fs::remove_dir_all(&rust_repo).unwrap();
-            }
-
-            std::fs::create_dir_all(&cache_dir).unwrap();
-            println!("Cloning rust-lang/rust (this will take several minutes)...");
-
-            let clone_output = Command::new("git")
-                .args([
-                    "clone",
-                    "https://github.com/rust-lang/rust.git",
-                    rust_repo.to_str().unwrap(),
-                ])
-                .output()
-                .unwrap();
-
-            assert!(clone_output.status.success(), "Failed to clone rust repo");
-            println!("Rust repo cloned successfully");
-            rust_repo
-        })
-        .clone()
-}
-
 fn bench_real_repo(c: &mut Criterion) {
     let mut group = c.benchmark_group("real_repo");
     let binary = get_release_binary();
@@ -441,7 +213,7 @@ fn bench_real_repo(c: &mut Criterion) {
                 BenchmarkId::new(label, worktrees),
                 &(worktrees, cold),
                 |b, &(worktrees, cold)| {
-                    let rust_repo = get_or_clone_rust_repo();
+                    let rust_repo = ensure_rust_repo();
                     let temp = tempfile::tempdir().unwrap();
                     let workspace_main = temp.path().join("main");
 
@@ -462,7 +234,7 @@ fn bench_real_repo(c: &mut Criterion) {
                     run_git(&workspace_main, &["config", "user.name", "Benchmark"]);
                     run_git(&workspace_main, &["config", "user.email", "bench@test.com"]);
 
-                    // Add worktrees manually (can't use create_test_repo for external repo)
+                    // Add worktrees manually (can't use create_repo for external repo)
                     for wt_num in 1..worktrees {
                         let branch = format!("feature-wt-{wt_num}");
                         let wt_path = temp.path().join(format!("wt-{wt_num}"));
@@ -541,7 +313,7 @@ fn bench_many_branches(c: &mut Criterion) {
 
     for cold in [false, true] {
         let config = BenchConfig::branches(100, 2, cold);
-        let temp = create_test_repo(&config);
+        let temp = create_repo(&config.repo);
         let repo_path = temp.path().join("main");
         run_git(&repo_path, &["status"]);
 
@@ -569,7 +341,7 @@ fn bench_divergent_branches(c: &mut Criterion) {
 
     for cold in [false, true] {
         let config = BenchConfig::many_divergent_branches(cold);
-        let temp = create_test_repo(&config);
+        let temp = create_repo(&config.repo);
         let repo_path = temp.path().join("main");
         run_git(&repo_path, &["status"]);
 
@@ -591,7 +363,7 @@ fn bench_divergent_branches(c: &mut Criterion) {
 /// Helper to set up rust repo workspace with branches at different history depths.
 /// Returns the workspace path (temp dir must outlive usage).
 fn setup_rust_workspace_with_branches(temp: &tempfile::TempDir, num_branches: usize) -> PathBuf {
-    let rust_repo = get_or_clone_rust_repo();
+    let rust_repo = ensure_rust_repo();
     let workspace_main = temp.path().join("main");
 
     // Clone rust repo locally
