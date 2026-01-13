@@ -1164,4 +1164,15 @@ mod tests {
         let result = Cmd::shell("true").stdin(Stdio::inherit()).stream();
         assert!(result.is_ok());
     }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_shell_stream_with_env() {
+        // Test .env() and .env_remove() with stream()
+        let result = Cmd::shell("printenv TEST_VAR")
+            .env("TEST_VAR", "test_value")
+            .env_remove("SOME_NONEXISTENT_VAR")
+            .stream();
+        assert!(result.is_ok());
+    }
 }
