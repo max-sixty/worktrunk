@@ -1,0 +1,21 @@
+# Maintainer: Maximilian Roos <m@maxroos.com>
+pkgname=worktrunk-bin
+pkgver=0.0.0
+pkgrel=1
+pkgdesc="CLI for git worktree management, designed for running AI agents in parallel"
+arch=('x86_64' 'aarch64')
+url="https://github.com/max-sixty/worktrunk"
+license=('MIT' 'Apache-2.0')
+provides=('worktrunk')
+conflicts=('worktrunk')
+source_x86_64=("https://github.com/max-sixty/worktrunk/releases/download/v${pkgver}/worktrunk-x86_64-unknown-linux-musl.tar.xz")
+source_aarch64=("https://github.com/max-sixty/worktrunk/releases/download/v${pkgver}/worktrunk-aarch64-unknown-linux-musl.tar.xz")
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+  cd "worktrunk-$CARCH-unknown-linux-musl"
+  install -Dm755 wt "$pkgdir/usr/bin/wt"
+  install -Dm755 git-wt "$pkgdir/usr/bin/git-wt"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
