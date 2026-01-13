@@ -1,9 +1,10 @@
 //! WorkingTree - a borrowed handle for worktree-specific git operations.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, bail};
+
+use crate::shell_exec::Cmd;
 use dunce::canonicalize;
 
 use super::{GitError, LineDiff, Repository};
@@ -53,13 +54,11 @@ pub struct WorkingTree<'a> {
 impl<'a> WorkingTree<'a> {
     /// Run a git command in this worktree and return stdout.
     pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
-        use crate::shell_exec::run;
-
-        let mut cmd = Command::new("git");
-        cmd.args(args);
-        cmd.current_dir(&self.path);
-
-        let output = run(&mut cmd, Some(&path_to_logging_context(&self.path)))
+        let output = Cmd::new("git")
+            .args(args.iter().copied())
+            .current_dir(&self.path)
+            .context(path_to_logging_context(&self.path))
+            .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
 
         if !output.status.success() {

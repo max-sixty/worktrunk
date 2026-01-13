@@ -157,14 +157,11 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
 
 /// Check if Claude Code CLI is available
 fn is_claude_available() -> bool {
-    use std::process::{Command, Stdio};
-    use worktrunk::shell_exec::run;
+    use worktrunk::shell_exec::Cmd;
 
-    let mut cmd = Command::new("claude");
-    cmd.args(["--version"]);
-    cmd.stdin(Stdio::null());
-
-    run(&mut cmd, None)
+    Cmd::new("claude")
+        .arg("--version")
+        .run()
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
@@ -193,13 +190,9 @@ fn is_plugin_installed() -> bool {
 
 /// Get the git version string (e.g., "2.47.1")
 fn get_git_version() -> Option<String> {
-    use std::process::Command;
-    use worktrunk::shell_exec::run;
+    use worktrunk::shell_exec::Cmd;
 
-    let mut cmd = Command::new("git");
-    cmd.args(["--version"]);
-
-    let output = run(&mut cmd, None).ok()?;
+    let output = Cmd::new("git").arg("--version").run().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -796,8 +789,7 @@ fn render_ci_tool_status(
 /// Returns true if compinit is NOT enabled (i.e., user needs to add it).
 /// Returns false if compinit is enabled or we can't determine (fail-safe: don't warn).
 fn check_zsh_compinit_missing() -> bool {
-    use std::process::Command;
-    use worktrunk::shell_exec::run;
+    use worktrunk::shell_exec::Cmd;
 
     // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
     if std::env::var("WORKTRUNK_TEST_COMPINIT_CONFIGURED").is_ok() {
@@ -814,12 +806,13 @@ fn check_zsh_compinit_missing() -> bool {
     // This ensures we're checking the USER's configuration, not system defaults
     // Suppress stderr to avoid noise like "can't change option: zle"
     // The (( ... )) arithmetic returns exit 0 if true (compdef exists), 1 if false
-    let mut cmd = Command::new("zsh");
-    cmd.args(["--no-globalrcs", "-ic", "(( $+functions[compdef] ))"]);
     // Suppress zsh's "insecure directories" warning from compinit.
     // See detailed rationale in shell::detect_zsh_compinit().
-    cmd.env("ZSH_DISABLE_COMPFIX", "true");
-    let Ok(output) = run(&mut cmd, None) else {
+    let Ok(output) = Cmd::new("zsh")
+        .args(["--no-globalrcs", "-ic", "(( $+functions[compdef] ))"])
+        .env("ZSH_DISABLE_COMPFIX", "true")
+        .run()
+    else {
         return false; // Can't determine, don't warn
     };
 

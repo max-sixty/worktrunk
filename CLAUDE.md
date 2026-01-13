@@ -122,22 +122,35 @@ Never risk data loss without explicit user consent. A failed command that preser
 
 ## Command Execution Principles
 
-### All Commands Through `shell_exec::run`
+### All Commands Through `shell_exec::Cmd`
 
-All external commands go through `shell_exec::run()` for consistent logging and tracing:
+All external commands go through `shell_exec::Cmd` for consistent logging and tracing:
 
 ```rust
-use crate::shell_exec::run;
+use crate::shell_exec::Cmd;
 
-let mut cmd = Command::new("git");
-cmd.args(["status", "--porcelain"]);
-let output = run(&mut cmd, Some("worktree-name"))?;  // context for git commands
-let output = run(&mut cmd, None)?;                   // None for standalone tools
+let output = Cmd::new("git")
+    .args(["status", "--porcelain"])
+    .current_dir(&worktree_path)
+    .context("worktree-name")  // for git commands
+    .run()?;
+
+let output = Cmd::new("gh")
+    .args(["pr", "list"])
+    .run()?;  // no context for standalone tools
 ```
 
-Never use `cmd.output()` directly. `run()` provides debug logging (`$ git status [worktree-name]`) and timing traces (`[wt-trace] cmd="..." dur=12.3ms ok=true`).
+Never use `cmd.output()` directly. `Cmd` provides debug logging (`$ git status [worktree-name]`) and timing traces (`[wt-trace] cmd="..." dur=12.3ms ok=true`).
 
-For git commands, prefer `Repository::run_command()` which wraps `shell_exec::run` with worktree context.
+For git commands, prefer `Repository::run_command()` which wraps `Cmd` with worktree context.
+
+For commands that need stdin piping:
+```rust
+let output = Cmd::new("git")
+    .args(["diff-tree", "--stdin", "--numstat"])
+    .stdin(hashes.join("\n"))
+    .run()?;
+```
 
 ### Real-time Output Streaming
 

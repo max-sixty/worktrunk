@@ -564,20 +564,20 @@ fn list_ignored_entries(
     worktree_path: &Path,
     context: &str,
 ) -> anyhow::Result<Vec<(std::path::PathBuf, bool)>> {
-    use std::process::Command;
-    use worktrunk::shell_exec;
+    use worktrunk::shell_exec::Cmd;
 
-    let mut cmd = Command::new("git");
-    cmd.args([
-        "ls-files",
-        "--ignored",
-        "--exclude-standard",
-        "-o",
-        "--directory",
-    ])
-    .current_dir(worktree_path);
-
-    let output = shell_exec::run(&mut cmd, Some(context)).context("Failed to run git ls-files")?;
+    let output = Cmd::new("git")
+        .args([
+            "ls-files",
+            "--ignored",
+            "--exclude-standard",
+            "-o",
+            "--directory",
+        ])
+        .current_dir(worktree_path)
+        .context(context)
+        .run()
+        .context("Failed to run git ls-files")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
