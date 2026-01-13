@@ -135,19 +135,21 @@ fn run_git(path: &Path, args: &[&str]) {
 
 /// Create a test repository from config.
 ///
-/// Returns a `TempDir` containing the repo. The main worktree is at `temp.path().join("main")`.
-/// Additional worktrees are at `temp.path().join("wt-N")`.
+/// Returns a `TempDir` containing the repo. The main worktree is at `temp.path().join("repo")`.
+/// Additional worktrees are siblings: `temp.path().join("repo.feature-wt-N")`.
 pub fn create_repo(config: &RepoConfig) -> TempDir {
     let temp_dir = tempfile::tempdir().unwrap();
-    create_repo_at(config, temp_dir.path());
+    create_repo_at(config, &temp_dir.path().join("repo"));
     temp_dir
 }
 
 /// Create a test repository at a specific path.
 ///
-/// The main worktree is at `base_path.join("main")`.
+/// Uses worktrunk naming convention:
+/// - Main worktree: `base_path`
+/// - Feature worktrees: `base_path.feature-wt-N` (siblings in parent directory)
 pub fn create_repo_at(config: &RepoConfig, base_path: &Path) {
-    let repo_path = base_path.join("main");
+    let repo_path = base_path.to_path_buf();
     std::fs::create_dir_all(&repo_path).unwrap();
 
     run_git(&repo_path, &["init", "-b", "main"]);
