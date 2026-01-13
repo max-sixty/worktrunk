@@ -729,11 +729,14 @@ fn main() {
     // requests (CI status, URL health checks) in parallel. Using 2x CPU cores
     // allows threads blocked on I/O to overlap with compute work.
     //
-    // TODO: Benchmark different thread counts to find optimal value.
-    // Test with `RAYON_NUM_THREADS=N wt list` on repos with many worktrees.
-    let num_threads = std::thread::available_parallelism()
-        .map(|n| n.get() * 2)
-        .unwrap_or(8);
+    // Override with RAYON_NUM_THREADS=N for benchmarking.
+    let num_threads = if std::env::var_os("RAYON_NUM_THREADS").is_some() {
+        0 // Let Rayon handle the env var (includes validation)
+    } else {
+        std::thread::available_parallelism()
+            .map(|n| n.get() * 2)
+            .unwrap_or(8)
+    };
     let _ = rayon::ThreadPoolBuilder::new()
         .num_threads(num_threads)
         .build_global();
