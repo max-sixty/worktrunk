@@ -319,7 +319,6 @@ jobs:
       - host
     runs-on: "ubuntu-22.04"
     env:
-      PLAN: ${{ needs.plan.outputs.val }}
       GITHUB_USER: "worktrunk-bot"
       GITHUB_EMAIL: "worktrunk-bot@users.noreply.github.com"
     if: ${{ needs.plan.outputs.publishing == 'true' && (!fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases) }}
@@ -340,23 +339,8 @@ jobs:
           git config --global user.name "${GITHUB_USER}"
           git config --global user.email "${GITHUB_EMAIL}"
 
-          # Parse releases with .rb artifacts safely (avoid word-splitting issues)
-          printf '%s' "$PLAN" | jq -c '.releases[] | select([.artifacts[] | endswith(".rb")] | any)' | while IFS= read -r release; do
-            # Get first .rb filename only (in case of multiple)
-            filename=$(printf '%s' "$release" | jq -r 'first(.artifacts[] | select(endswith(".rb")))')
-            version=$(printf '%s' "$release" | jq -r .app_version)
-            name="${filename%.rb}"
-
-            # Safety check: reject paths with directory traversal or leading dash
-            if [[ "$filename" == */* ]] || [[ "$filename" == ..* ]] || [[ "$filename" == -* ]]; then
-              echo "Rejecting unsafe filename: $filename"
-              exit 1
-            fi
-
-            git add "Formula/${filename}"
-            # Only commit if there are staged changes
-            git diff --cached --quiet || git commit -m "${name} ${version}"
-          done
+          git add Formula/*.rb
+          git diff --cached --quiet || git commit -m "wt ${{ needs.plan.outputs.tag }}"
           git push
 
   announce:
