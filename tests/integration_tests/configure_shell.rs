@@ -170,6 +170,39 @@ fn test_configure_shell_fish(repo: TestRepo, temp_home: TempDir) {
     );
 }
 
+/// Test install dry-run shows preview with gutter-formatted config content
+#[rstest]
+fn test_configure_shell_fish_dry_run(repo: TestRepo, temp_home: TempDir) {
+    // Create fish functions directory (but no wt.fish - so it will be "created")
+    let functions = temp_home.path().join(".config/fish/functions");
+    fs::create_dir_all(&functions).unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/fish");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("install")
+            .arg("fish")
+            .arg("--dry-run")
+            .current_dir(repo.root_path());
+
+        // Dry-run should show "Will create" and the actual content in gutter
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify no files were actually created
+    let fish_config = functions.join("wt.fish");
+    assert!(
+        !fish_config.exists(),
+        "Dry-run should not create files: {:?}",
+        fish_config
+    );
+}
+
 /// Test that installing when extension exists shows "Already configured"
 #[rstest]
 fn test_configure_shell_fish_extension_exists(repo: TestRepo, temp_home: TempDir) {
