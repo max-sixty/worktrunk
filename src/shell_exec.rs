@@ -1144,4 +1144,24 @@ mod tests {
         let result = Cmd::new("echo").arg("hello").stream();
         assert!(result.is_ok());
     }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_shell_stream_with_stdout_redirect() {
+        use std::process::Stdio;
+        // Redirect stdout to stderr (common pattern for hooks)
+        let result = Cmd::shell("echo redirected")
+            .stdout(Stdio::from(std::io::stderr()))
+            .stream();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_shell_stream_with_stdin_inherit() {
+        use std::process::Stdio;
+        // Test stdin configuration (true immediately exits, doesn't actually read stdin)
+        let result = Cmd::shell("true").stdin(Stdio::inherit()).stream();
+        assert!(result.is_ok());
+    }
 }
