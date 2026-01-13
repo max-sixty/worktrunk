@@ -11,9 +11,9 @@
 
 ### Improved
 
-- **`wt list` parallelization**: Parallel worktree operations reduce latency significantly. Respects `RAYON_NUM_THREADS` environment variable for controlling parallelism.
+- **`wt list` parallelization improvements**: Better parallelization of worktree operations reduce latency in some conditions. Respects `RAYON_NUM_THREADS` environment variable for controlling parallelism.
 - **Template variables in `--execute`**: Hook template variables (`{{ branch }}`, `{{ worktree_path }}`, etc.) are now expanded in `--execute` commands and trailing args. With `--create`, `{{ base }}` and `{{ base_worktree_path }}` are also available.
-- **Fish shell Homebrew compatibility**: Fish shell integration now installs to `~/.config/fish/functions/wt.fish` instead of `conf.d/`, ensuring PATH is fully configured before the wt function loads. `wt config show` detects legacy installations and `wt config shell install` handles migration automatically.
+- **Fish shell Homebrew compatibility**: Fish shell integration now installs to `~/.config/fish/functions/wt.fish` instead of `conf.d/`, ensuring PATH is fully configured before the wt function loads. `wt config show` detects legacy installations and `wt config shell install` handles migration automatically. ([#586](https://github.com/max-sixty/worktrunk/issues/586) — thanks @ekans & @itzlambda)
 - **Chrome Trace Format export**: Performance traces can be exported for analysis with Chrome's trace viewer or Perfetto.
 - **`--dry-run` flag for shell commands**: `wt config shell install` and `wt config shell uninstall` now support `--dry-run` to preview changes without prompting.
 - **Nested subcommand suggestions**: When typing `wt squash` instead of `wt step squash`, the error now suggests the correct command path.
