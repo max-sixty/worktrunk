@@ -176,6 +176,18 @@ fn test_switch_base_without_create_warning(repo: TestRepo) {
         &["--base", "main", "main"],
     );
 }
+
+#[rstest]
+fn test_switch_create_with_invalid_base(repo: TestRepo) {
+    // Issue #562: Error message should identify the invalid base branch,
+    // not the target branch being created
+    snapshot_switch(
+        "switch_create_invalid_base",
+        &repo,
+        &["--create", "new-feature", "--base", "nonexistent-base"],
+    );
+}
+
 // Internal mode tests
 #[rstest]
 fn test_switch_internal_mode(repo: TestRepo) {
@@ -294,6 +306,110 @@ fn test_switch_execute_multiline(repo: TestRepo) {
         &["--create", "multiline-test", "--execute", multiline_cmd],
     );
 }
+
+// Execute template expansion tests
+#[rstest]
+fn test_switch_execute_template_branch(repo: TestRepo) {
+    // Test that {{ branch }} is expanded in --execute command
+    snapshot_switch(
+        "switch_execute_template_branch",
+        &repo,
+        &[
+            "--create",
+            "template-test",
+            "--execute",
+            "echo 'branch={{ branch }}'",
+        ],
+    );
+}
+
+#[rstest]
+fn test_switch_execute_template_base(repo: TestRepo) {
+    // Test that {{ base }} is available when creating with --create
+    snapshot_switch(
+        "switch_execute_template_base",
+        &repo,
+        &[
+            "--create",
+            "from-main",
+            "--base",
+            "main",
+            "--execute",
+            "echo 'base={{ base }}'",
+        ],
+    );
+}
+
+#[rstest]
+fn test_switch_execute_template_base_without_create(mut repo: TestRepo) {
+    // Test that {{ base }} is empty when switching to existing worktree (no --create)
+    repo.add_worktree("existing");
+    snapshot_switch(
+        "switch_execute_template_base_without_create",
+        &repo,
+        &["existing", "--execute", "echo 'base={{ base }}'"],
+    );
+}
+
+#[rstest]
+fn test_switch_execute_template_with_filter(repo: TestRepo) {
+    // Test that filters work ({{ branch | sanitize }})
+    snapshot_switch(
+        "switch_execute_template_with_filter",
+        &repo,
+        &[
+            "--create",
+            "feature/with-slash",
+            "--execute",
+            "echo 'sanitized={{ branch | sanitize }}'",
+        ],
+    );
+}
+
+#[rstest]
+fn test_switch_execute_template_shell_escape(repo: TestRepo) {
+    // Test that shell metacharacters in branch names are escaped
+    // Without escaping, this would execute `id` as a separate command
+    snapshot_switch(
+        "switch_execute_template_shell_escape",
+        &repo,
+        &["--create", "feat;id", "--execute", "echo {{ branch }}"],
+    );
+}
+
+#[rstest]
+fn test_switch_execute_template_worktree_path(repo: TestRepo) {
+    // Test that {{ worktree_path }} is expanded
+    snapshot_switch(
+        "switch_execute_template_worktree_path",
+        &repo,
+        &[
+            "--create",
+            "path-test",
+            "--execute",
+            "echo 'path={{ worktree_path }}'",
+        ],
+    );
+}
+
+#[rstest]
+fn test_switch_execute_template_in_args(repo: TestRepo) {
+    // Test that templates are expanded in trailing args (after --)
+    snapshot_switch(
+        "switch_execute_template_in_args",
+        &repo,
+        &[
+            "--create",
+            "args-test",
+            "--execute",
+            "echo",
+            "--",
+            "branch={{ branch }}",
+            "repo={{ repo }}",
+        ],
+    );
+}
+
 // --no-verify flag tests
 #[rstest]
 fn test_switch_no_config_commands_execute_still_runs(repo: TestRepo) {

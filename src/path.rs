@@ -1,9 +1,7 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
-use crate::shell_exec::run;
-#[cfg(windows)]
-use std::process::Command;
+use crate::shell_exec::Cmd;
 
 /// Convert a path to POSIX format for Git Bash compatibility.
 ///
@@ -28,9 +26,7 @@ pub fn to_posix_path(path: &str) -> String {
         return path.to_string();
     };
 
-    let mut cmd = Command::new(&cygpath);
-    cmd.arg("-u").arg(path);
-    let Ok(output) = run(&mut cmd, None) else {
+    let Ok(output) = Cmd::new(cygpath.to_string_lossy()).args(["-u", path]).run() else {
         return path.to_string();
     };
 

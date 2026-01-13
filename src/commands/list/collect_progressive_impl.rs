@@ -402,9 +402,25 @@ impl Task for AheadBehindTask {
             return Ok(TaskResult::AheadBehind {
                 item_idx: ctx.item_idx,
                 counts: AheadBehind::default(),
+                is_orphan: false,
             });
         };
         let repo = &ctx.repo;
+
+        // Check for orphan branch (no common ancestor with default branch).
+        // merge_base() is cached, so this is cheap after first call.
+        let is_orphan = repo
+            .merge_base(&base, &ctx.branch_ref.commit_sha)
+            .map_err(|e| ctx.error(Self::KIND, e))?
+            .is_none();
+
+        if is_orphan {
+            return Ok(TaskResult::AheadBehind {
+                item_idx: ctx.item_idx,
+                counts: AheadBehind::default(),
+                is_orphan: true,
+            });
+        }
 
         // Check cache first (populated by batch_ahead_behind if it ran).
         // Cache lookup has minor overhead (rev-parse for cache key + allocations),
@@ -424,6 +440,7 @@ impl Task for AheadBehindTask {
         Ok(TaskResult::AheadBehind {
             item_idx: ctx.item_idx,
             counts: AheadBehind { ahead, behind },
+            is_orphan: false,
         })
     }
 }
@@ -602,6 +619,8 @@ impl Task for BranchDiffTask {
 }
 
 /// Task 5 (worktree only): Working tree diff + status flags
+///
+/// Runs `git status --porcelain` to get working tree status and computes diff stats.
 pub struct WorkingTreeDiffTask;
 
 impl Task for WorkingTreeDiffTask {
@@ -613,6 +632,7 @@ impl Task for WorkingTreeDiffTask {
             .branch_ref
             .working_tree(&ctx.repo)
             .expect("WorkingTreeDiffTask requires a worktree");
+
         // Use --no-optional-locks to avoid index lock contention with WorkingTreeConflictsTask's
         // `git stash create` which needs the index lock.
         let status_output = wt
@@ -629,16 +649,9 @@ impl Task for WorkingTreeDiffTask {
             LineDiff::default()
         };
 
-        // Use default_branch (local default branch) for informational display
-        let default_branch = ctx.default_branch();
-        let working_tree_diff_with_main = wt
-            .working_tree_diff_with_base(default_branch.as_deref(), is_dirty)
-            .map_err(|e| ctx.error(Self::KIND, e))?;
-
         Ok(TaskResult::WorkingTreeDiff {
             item_idx: ctx.item_idx,
             working_tree_diff,
-            working_tree_diff_with_main,
             working_tree_status,
             has_conflicts,
         })

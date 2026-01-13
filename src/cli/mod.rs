@@ -333,6 +333,10 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         /// it full terminal control. Useful for launching editors, AI agents,
         /// or other interactive tools.
         ///
+        /// Supports [hook template variables](@/hook.md#template-variables)
+        /// (`{{ branch }}`, `{{ worktree_path }}`, etc.) and filters.
+        /// `{{ base }}` and `{{ base_worktree_path }}` require `--create`.
+        ///
         /// Especially useful with shell aliases:
         ///
         /// ```sh
@@ -344,13 +348,17 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         /// Code. Arguments after `--` are passed to the command, so
         /// `wsc feature -- 'Fix GH #322'` runs `claude 'Fix GH #322'`,
         /// starting Claude with a prompt.
+        ///
+        /// Template example: `-x 'code {{ worktree_path }}'` opens VS Code
+        /// at the worktree, `-x 'tmux new -s {{ branch | sanitize }}'` starts
+        /// a tmux session named after the branch.
         #[arg(short = 'x', long)]
         execute: Option<String>,
 
         /// Additional arguments for --execute command (after --)
         ///
         /// Arguments after `--` are appended to the execute command.
-        /// Each argument is POSIX shell-escaped before appending.
+        /// Each argument is expanded for templates, then POSIX shell-escaped.
         #[arg(last = true, requires = "execute")]
         execute_args: Vec<String>,
 
@@ -542,7 +550,6 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `renamed` | boolean | Has renamed files |
 | `deleted` | boolean | Has deleted files |
 | `diff` | object | Lines changed vs HEAD: `{added, deleted}` |
-| `diff_vs_main` | object | Lines changed vs the default branch: `{added, deleted}` |
 
 ### main object
 
@@ -679,19 +686,30 @@ Worktrunk checks five conditions (in order of cost):
 4. **Trees match** — Branch tree SHA equals target tree SHA. Shows `⊂`.
 5. **Merge adds nothing** — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows `⊂`.
 
-The "same commit" check uses the local default branch; for other checks, **target** means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
+The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 
 Branches showing `_` or `⊂` are dimmed as safe to delete.
 
-Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of status.
+## Force flags
+
+Worktrunk has two force flags for different situations:
+
+| Flag | Scope | When to use |
+|------|-------|-------------|
+| `--force` (`-f`) | Worktree | Worktree has untracked files (build artifacts, IDE config) |
+| `--force-delete` (`-D`) | Branch | Branch has unmerged commits |
+
+```console
+wt remove feature --force       # Remove worktree with untracked files
+wt remove feature -D            # Delete unmerged branch
+wt remove feature --force -D    # Both
+```
+
+Without `--force`, removal fails if the worktree contains untracked files. Without `-D`, removal keeps branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of merge status.
 
 ## Background removal
 
 Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
-
-## Shortcuts
-
-`@` (current), `-` (previous), `^` (default branch). See [`wt switch`](@/switch.md#shortcuts).
 
 ## See also
 
@@ -740,7 +758,7 @@ Removal runs in the background by default (returns immediately). Logs are writte
     ///
     /// Squash & rebase, fast-forward target, remove the worktree.
     #[command(
-        after_long_help = r#"Merge the current branch into the default branch — like clicking "Merge pull request" on GitHub.
+        after_long_help = r#"Merge the current branch into the target branch, defaulting to the main branch. Unlike `git merge`, this merges the current branch into a target (rather than a target into the current branch). Similar to clicking "Merge pull request" on GitHub.
 <!-- demo: wt-merge.gif 1600x900 -->
 
 ## Examples

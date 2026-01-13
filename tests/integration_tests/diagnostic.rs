@@ -13,6 +13,7 @@
 //! - `test_diagnostic_verbose_log_contains_git_commands`: Log has useful data
 //! - `test_diagnostic_saved_message_with_vv`: Output shows "Diagnostic saved" with -vv
 //! - `test_diagnostic_written_to_correct_location`: File in .git/wt-logs/
+//! - `test_diagnostic_gh_hint_with_vv`: Hint shows gist and issue URL when gh installed
 
 use std::fs;
 use std::path::PathBuf;
@@ -454,6 +455,33 @@ fn test_vv_outside_repo_no_crash() {
         !diagnostic_path.exists(),
         "Diagnostic file should NOT be created outside a git repo"
     );
+}
+
+/// When gh is installed, the hint should show gist creation and issue URL.
+#[rstest]
+fn test_diagnostic_gh_hint_with_vv(mut repo: TestRepo) {
+    // Setup mock gh so it appears installed
+    repo.setup_mock_gh();
+
+    let output = repo.wt_command().args(["list", "-vv"]).output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Extract the hint line (starts with ↳)
+    let hint_line = stderr
+        .lines()
+        .find(|line| line.contains("report a bug"))
+        .expect("Should have hint about reporting a bug");
+
+    // Normalize the path in the hint (handles both raw paths and _REPO_ filtered paths)
+    let normalized = regex::Regex::new(r"'[^']*diagnostic\.md'")
+        .unwrap()
+        .replace(hint_line, "'[DIAGNOSTIC_PATH]'");
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("diagnostic_gh_hint", normalized);
+    });
 }
 
 /// Normalize the report for snapshot comparison.

@@ -17,16 +17,17 @@
 //! - **Batching** — timestamp fetch passes all SHAs to one `git show` command
 //! - **Parallelization** — independent commands run concurrently via `join!` macro
 //!
-//! **Steady-state (4-6 commands):**
+//! **Steady-state (5-7 commands):**
 //!
-//! | Command | Purpose |
-//! |---------|---------|
-//! | `git worktree list --porcelain` | Enumerate worktrees |
-//! | `git config worktrunk.default-branch` | Cached default branch |
-//! | `git show -s --format='%H %ct' SHA1 SHA2 ...` | **Batched** timestamps for sorting |
-//! | `git config --bool core.bare` | Bare repo check for expected-path logic |
-//! | `git for-each-ref refs/heads` | Only with `--branches` flag |
-//! | `git for-each-ref refs/remotes` | Only with `--remotes` flag |
+//! | Command | Purpose | Parallel |
+//! |---------|---------|----------|
+//! | `git worktree list --porcelain` | Enumerate worktrees | Sequential (required first) |
+//! | `git config worktrunk.default-branch` | Cached default branch | ✓ |
+//! | `git config --bool core.bare` | Bare repo check for expected-path logic | ✓ |
+//! | `git rev-parse --show-toplevel` | Worktree root for project config | ✓ |
+//! | `git for-each-ref refs/heads` | Only with `--branches` flag | ✓ |
+//! | `git for-each-ref refs/remotes` | Only with `--remotes` flag | ✓ |
+//! | `git show -s --format='%H %ct' SHA1 SHA2 ...` | **Batched** timestamps | Sequential (needs SHAs) |
 //!
 //! **Non-git operations (negligible latency):**
 //! - Path canonicalization — detect current worktree
@@ -44,11 +45,30 @@
 //!
 //! ### Post-Skeleton Operations
 //!
-//! Everything else runs **after** the skeleton appears:
-//! - `get_switch_previous()` — previous branch detection (updates gutter symbol)
-//! - `effective_integration_target()` — upstream vs local target check
-//! - URL template expansion — parallelized in task spawning
-//! - All computed fields (ahead/behind, diffs, CI status, etc.)
+//! After the skeleton renders, remaining setup runs before spawning the worker thread.
+//! These operations are parallelized using `rayon::scope` with single-level parallelism:
+//!
+//! ```text
+//! Skeleton render
+//! ├─ is_builtin_fsmonitor_enabled()             (5ms, sequential - gate)
+//! ├─ rayon::scope(
+//! │    ├─ get_switch_previous()                 (5ms)
+//! │    ├─ integration_target()                  (10ms)
+//! │    ├─ start_fsmonitor_daemon × N worktrees  (6ms each, all parallel)
+//! │  )                                          // ~10ms total (max of all spawns)
+//! Worker thread spawns
+//! ```
+//!
+//! **Why fsmonitor check is sequential:** It gates whether daemon starts are needed.
+//! The check is fast (~5ms) and must complete before we know which spawns to add.
+//!
+//! **Why fsmonitor starts are in the parallel scope:** The `git fsmonitor--daemon start`
+//! command returns quickly after signaling the daemon. By the time the worker thread
+//! starts executing `git status` commands, daemons have had time to initialize.
+//!
+//! **Invalid default branch warning:** Uses cached value from `default_branch()` which
+//! ran during pre-skeleton. The `invalid_default_branch_config()` call is a pure cache
+//! read with no git commands.
 //!
 //! When adding new features, ask: "Can this be computed after skeleton?" If yes, defer it.
 //! The skeleton shows `·` placeholder for gutter symbols, filled in when data loads.
@@ -75,8 +95,8 @@ use anyhow::Context;
 use color_print::cformat;
 use crossbeam_channel as chan;
 use dunce::canonicalize;
+use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use rayon_join_macro::join;
 use worktrunk::git::{LineDiff, Repository, WorktreeInfo};
 use worktrunk::styling::{INFO_SYMBOL, format_with_gutter, warning_message};
 
@@ -152,6 +172,8 @@ pub(super) enum TaskResult {
     AheadBehind {
         item_idx: usize,
         counts: AheadBehind,
+        /// True if this is an orphan branch (no common ancestor with default branch)
+        is_orphan: bool,
     },
     /// Whether HEAD's tree SHA matches integration target's tree SHA (committed content identical)
     CommittedTreesMatch {
@@ -179,7 +201,6 @@ pub(super) enum TaskResult {
     WorkingTreeDiff {
         item_idx: usize,
         working_tree_diff: LineDiff,
-        working_tree_diff_with_main: Option<LineDiff>,
         /// Working tree change flags
         working_tree_status: WorkingTreeStatus,
         has_conflicts: bool,
@@ -365,7 +386,9 @@ fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], 
             items[idx].commit = Some(CommitDetails::default());
         }
         TaskKind::AheadBehind => {
-            items[idx].counts = Some(AheadBehind::default());
+            // Leave as None — UI shows `⋯` for not-loaded tasks
+            // Conservative: don't claim orphan if we couldn't check
+            items[idx].is_orphan = Some(false);
         }
         TaskKind::CommittedTreesMatch => {
             // Conservative: don't claim integrated if we couldn't check
@@ -389,7 +412,6 @@ fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], 
         TaskKind::WorkingTreeDiff => {
             if let ItemKind::Worktree(data) = &mut items[idx].kind {
                 data.working_tree_diff = Some(LineDiff::default());
-                data.working_tree_diff_with_main = Some(None);
             } else {
                 debug_assert!(false, "WorkingTreeDiff task spawned for non-worktree item");
             }
@@ -541,8 +563,11 @@ fn drain_results(
             TaskResult::CommitDetails { commit, .. } => {
                 item.commit = Some(commit);
             }
-            TaskResult::AheadBehind { counts, .. } => {
+            TaskResult::AheadBehind {
+                counts, is_orphan, ..
+            } => {
                 item.counts = Some(counts);
+                item.is_orphan = Some(is_orphan);
             }
             TaskResult::CommittedTreesMatch {
                 committed_trees_match,
@@ -568,14 +593,12 @@ fn drain_results(
             }
             TaskResult::WorkingTreeDiff {
                 working_tree_diff,
-                working_tree_diff_with_main,
                 working_tree_status,
                 has_conflicts,
                 ..
             } => {
                 if let ItemKind::Worktree(data) = &mut item.kind {
                     data.working_tree_diff = Some(working_tree_diff);
-                    data.working_tree_diff_with_main = Some(working_tree_diff_with_main);
                 } else {
                     debug_assert!(false, "WorkingTreeDiff result for non-worktree item");
                 }
@@ -636,28 +659,6 @@ fn drain_results(
     DrainOutcome::Complete
 }
 
-/// Get branches that don't have worktrees.
-///
-/// Returns (branch_name, commit_sha) pairs for all branches without associated worktrees.
-fn get_branches_without_worktrees(
-    repo: &Repository,
-    worktrees: &[WorktreeInfo],
-) -> anyhow::Result<Vec<(String, String)>> {
-    // Get all local branches
-    let all_branches = repo.list_local_branches()?;
-
-    // Build a set of branch names that have worktrees
-    let worktree_branches = worktree_branch_set(worktrees);
-
-    // Filter to branches without worktrees
-    let branches_without_worktrees: Vec<_> = all_branches
-        .into_iter()
-        .filter(|(branch_name, _)| !worktree_branches.contains(branch_name.as_str()))
-        .collect();
-
-    Ok(branches_without_worktrees)
-}
-
 fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> std::collections::HashSet<&str> {
     worktrees
         .iter()
@@ -696,11 +697,78 @@ pub fn collect(
     use super::progressive_table::ProgressiveTable;
     worktrunk::shell_exec::trace_instant("List collect started");
 
-    // Phase 1: Get worktree list (required for everything else)
-    let worktrees = repo.list_worktrees().context("Failed to list worktrees")?;
+    // Phase 1: Parallel fetch of ALL independent git data
+    //
+    // Key insight: most operations don't depend on each other. By running them all
+    // in parallel via rayon::scope, we minimize wall-clock time. Dependencies:
+    //
+    // - worktree list: independent (needed for filtering and SHAs)
+    // - default_branch: independent (git config + verify)
+    // - is_bare: independent (git config, cached for later use)
+    // - url_template: independent (loads project config via show-toplevel)
+    // - local_branches: independent (for-each-ref, but filtering needs worktrees)
+    // - remote_branches: independent (for-each-ref)
+    //
+    // After this scope completes, we have all raw data and can do CPU-only work.
+    let worktrees_cell: OnceCell<anyhow::Result<Vec<WorktreeInfo>>> = OnceCell::new();
+    let default_branch_cell: OnceCell<Option<String>> = OnceCell::new();
+    let url_template_cell: OnceCell<Option<String>> = OnceCell::new();
+    let local_branches_cell: OnceCell<anyhow::Result<Vec<(String, String)>>> = OnceCell::new();
+    let remote_branches_cell: OnceCell<anyhow::Result<Vec<(String, String)>>> = OnceCell::new();
+
+    rayon::scope(|s| {
+        s.spawn(|_| {
+            let _ = worktrees_cell.set(repo.list_worktrees());
+        });
+        s.spawn(|_| {
+            let _ = default_branch_cell.set(repo.default_branch());
+        });
+        s.spawn(|_| {
+            // Populate is_bare cache (value used later via worktree_base)
+            let _ = repo.is_bare();
+        });
+        s.spawn(|_| {
+            let _ = url_template_cell.set(repo.url_template());
+        });
+        s.spawn(|_| {
+            if show_branches {
+                let _ = local_branches_cell.set(repo.list_local_branches());
+            }
+        });
+        s.spawn(|_| {
+            if show_remotes {
+                let _ = remote_branches_cell.set(repo.list_untracked_remote_branches());
+            }
+        });
+    });
+
+    // Extract results
+    let worktrees = worktrees_cell
+        .into_inner()
+        .unwrap()
+        .context("Failed to list worktrees")?;
     if worktrees.is_empty() {
         return Ok(None);
     }
+    let default_branch = default_branch_cell.into_inner().unwrap();
+    let url_template = url_template_cell.into_inner().unwrap();
+
+    // Filter local branches to those without worktrees (CPU-only, no git commands)
+    let branches_without_worktrees = if show_branches {
+        let all_local = local_branches_cell.into_inner().unwrap()?;
+        let worktree_branches = worktree_branch_set(&worktrees);
+        all_local
+            .into_iter()
+            .filter(|(name, _)| !worktree_branches.contains(name.as_str()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let remote_branches = if show_remotes {
+        remote_branches_cell.into_inner().unwrap()?
+    } else {
+        Vec::new()
+    };
 
     // Detect current worktree by checking if repo path is inside any worktree.
     // This avoids a git command - we just compare canonicalized paths.
@@ -712,27 +780,6 @@ pub fn collect(
                 .filter(|wt_path| repo_path.starts_with(wt_path))
         })
     });
-
-    // Phase 2: Parallel fetch of independent git data
-    // These operations don't depend on each other, only on worktree list.
-    // Running them in parallel reduces pre-skeleton time (e.g., ~46ms to ~28ms).
-    let (default_branch, branches_without_worktrees, remote_branches) = join!(
-        || repo.default_branch(),
-        || {
-            if show_branches {
-                get_branches_without_worktrees(repo, &worktrees)
-            } else {
-                Ok(Vec::new())
-            }
-        },
-        || {
-            if show_remotes {
-                repo.list_untracked_remote_branches()
-            } else {
-                Ok(Vec::new())
-            }
-        }
-    );
     // Show warning if user configured a default branch that doesn't exist locally
     if let Some(configured) = repo.invalid_default_branch_config() {
         let msg =
@@ -741,9 +788,6 @@ pub fn collect(
         let hint = cformat!("Run <bright-black>wt config state default-branch clear</> to reset");
         crate::output::print(worktrunk::styling::hint_message(hint))?;
     }
-
-    let branches_without_worktrees = branches_without_worktrees?;
-    let remote_branches = remote_branches?;
 
     // Main worktree is the worktree on the default branch (if exists), else first non-prunable worktree.
     // find_home returns None if all worktrees are prunable or the list is empty.
@@ -789,9 +833,7 @@ pub fn collect(
     // (paths from git worktree list may differ based on symlinks or working directory)
     let main_worktree_canonical = canonicalize(&main_worktree.path).ok();
 
-    // Check if URL template is configured (for layout column allocation).
-    // Template expansion is deferred to post-skeleton to minimize time-to-skeleton.
-    let url_template = repo.url_template();
+    // URL template already fetched in parallel join (layout needs to know if column is needed)
     // Initialize worktree items with identity fields and None for computed fields
     let mut all_items: Vec<ListItem> = sorted_worktrees
         .iter()
@@ -828,6 +870,7 @@ pub fn collect(
                 has_file_changes: None,
                 would_merge_add: None,
                 is_ancestor: None,
+                is_orphan: None,
                 upstream: None,
                 pr_status: None,
                 url: None,
@@ -936,10 +979,55 @@ pub fn collect(
     }
 
     // === Post-skeleton computations (deferred to minimize time-to-skeleton) ===
-    worktrunk::shell_exec::trace_instant("Post-skeleton started");
+    //
+    // These operations run in parallel using rayon::scope with single-level parallelism.
+    // See module docs for the timing diagram.
 
-    // Compute previous_branch and update is_previous on items
-    let previous_branch = repo.get_switch_previous();
+    // Collect worktree paths for fsmonitor starts (macOS only, fast, no git commands).
+    // Git's builtin fsmonitor has race conditions under parallel load - pre-starting
+    // daemons before parallel operations avoids hangs.
+    #[cfg(target_os = "macos")]
+    let fsmonitor_worktrees: Vec<_> = if repo.is_builtin_fsmonitor_enabled() {
+        sorted_worktrees
+            .iter()
+            .filter(|wt| !wt.is_prunable())
+            .collect()
+    } else {
+        vec![]
+    };
+    #[cfg(not(target_os = "macos"))]
+    let fsmonitor_worktrees: Vec<&WorktreeInfo> = vec![];
+
+    // Single-level parallelism: all spawns in one rayon::scope.
+    // See: https://gitlab.com/gitlab-org/git/-/merge_requests/148 (scalar's fsmonitor workaround)
+    // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same fsmonitor issue)
+    let previous_branch_cell: OnceCell<Option<String>> = OnceCell::new();
+    let integration_target_cell: OnceCell<Option<String>> = OnceCell::new();
+
+    rayon::scope(|s| {
+        // Previous branch lookup (for gutter symbol)
+        s.spawn(|_| {
+            let _ = previous_branch_cell.set(repo.get_switch_previous());
+        });
+
+        // Integration target (upstream if ahead of local, else local)
+        s.spawn(|_| {
+            let _ = integration_target_cell.set(repo.integration_target());
+        });
+
+        // Fsmonitor daemon starts (one spawn per worktree)
+        for wt in &fsmonitor_worktrees {
+            s.spawn(|_| {
+                repo.start_fsmonitor_daemon_at(&wt.path);
+            });
+        }
+    });
+
+    // Extract results from cells
+    let previous_branch = previous_branch_cell.into_inner().flatten();
+    let integration_target = integration_target_cell.into_inner().flatten();
+
+    // Update is_previous on items
     if let Some(prev) = previous_branch.as_deref() {
         for item in &mut all_items {
             if item.branch.as_deref() == Some(prev)
@@ -949,12 +1037,6 @@ pub fn collect(
             }
         }
     }
-
-    // Effective target for integration checks: upstream if ahead of local, else local.
-    // This handles the case where a branch was merged remotely but user hasn't pulled yet.
-    // Deferred until after skeleton to avoid blocking initial render.
-    // Uses cached integration_target() which returns None if default_branch unknown.
-    let integration_target = repo.integration_target();
 
     // Batch-fetch ahead/behind counts to identify branches that are far behind.
     // This allows skipping expensive merge-base operations for diverged branches, dramatically
@@ -984,28 +1066,6 @@ pub fn collect(
 
     // Note: URL template expansion is deferred to task spawning (in collect_worktree_progressive
     // and collect_branch_progressive). This parallelizes the work and minimizes time-to-skeleton.
-
-    // Pre-start fsmonitor daemons on macOS to avoid auto-start races.
-    //
-    // Git's builtin fsmonitor on macOS has race conditions under parallel load that can
-    // cause git commands to hang. When multiple git status commands try to auto-start
-    // the daemon simultaneously, they can wedge. Pre-starting the daemons before parallel
-    // operations avoids this race.
-    //
-    // See: https://gitlab.com/gitlab-org/git/-/merge_requests/148 (scalar's workaround)
-    // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same issue)
-    #[cfg(target_os = "macos")]
-    {
-        if repo.is_builtin_fsmonitor_enabled() {
-            // Parallelize daemon starts - explicit `start` is safe to call concurrently
-            // (each returns quickly if daemon already running for that worktree).
-            sorted_worktrees.par_iter().for_each(|wt| {
-                if !wt.is_prunable() {
-                    repo.start_fsmonitor_daemon_at(&wt.path);
-                }
-            });
-        }
-    }
 
     // Cache last rendered (unclamped) message per row to avoid redundant updates.
     let mut last_rendered_lines: Vec<String> = vec![String::new(); all_items.len()];
@@ -1147,7 +1207,7 @@ pub fn collect(
                 table.update_footer(footer_msg);
 
                 // Re-render the row with caching (now includes status if computed)
-                let rendered = layout.format_list_item_line(item, previous_branch.as_deref());
+                let rendered = layout.format_list_item_line(item);
 
                 // Compare using full line so changes beyond the clamp (e.g., CI) still refresh.
                 if rendered != last_rendered_lines[item_idx] {
@@ -1228,7 +1288,7 @@ pub fn collect(
         if table.is_tty() {
             // Interactive: do final render pass and update footer to summary
             for (item_idx, item) in all_items.iter().enumerate() {
-                let rendered = layout.format_list_item_line(item, previous_branch.as_deref());
+                let rendered = layout.format_list_item_line(item);
                 table.update_row(item_idx, rendered);
             }
             table.finalize(final_msg)?;
@@ -1237,9 +1297,7 @@ pub fn collect(
             // Progressive skeleton was suppressed; now output the final table
             crate::output::stdout(layout.format_header_line())?;
             for item in &all_items {
-                crate::output::stdout(
-                    layout.format_list_item_line(item, previous_branch.as_deref()),
-                )?;
+                crate::output::stdout(layout.format_list_item_line(item))?;
             }
             crate::output::stdout("")?;
             crate::output::stdout(final_msg)?;
@@ -1254,7 +1312,7 @@ pub fn collect(
 
         crate::output::stdout(layout.format_header_line())?;
         for item in &all_items {
-            crate::output::stdout(layout.format_list_item_line(item, previous_branch.as_deref()))?;
+            crate::output::stdout(layout.format_list_item_line(item))?;
         }
         crate::output::stdout("")?;
         crate::output::stdout(final_msg)?;
@@ -1396,6 +1454,7 @@ pub fn build_worktree_item(
         has_file_changes: None,
         would_merge_add: None,
         is_ancestor: None,
+        is_orphan: None,
         upstream: None,
         pr_status: None,
         url: None,

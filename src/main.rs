@@ -3,7 +3,7 @@ use clap::FromArgMatches;
 use color_print::cformat;
 use std::path::PathBuf;
 use std::process;
-use worktrunk::config::{WorktrunkConfig, set_config_path};
+use worktrunk::config::{WorktrunkConfig, expand_template, set_config_path};
 use worktrunk::git::{Repository, exit_code, set_base_path};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::extract_filename_from_path;
@@ -26,7 +26,7 @@ mod verbose_log;
 
 pub use crate::cli::OutputFormat;
 
-use commands::command_executor::CommandContext;
+use commands::command_executor::{CommandContext, build_hook_context};
 #[cfg(unix)]
 use commands::handle_select;
 use commands::worktree::{SwitchResult, handle_push};
@@ -729,11 +729,14 @@ fn main() {
     // requests (CI status, URL health checks) in parallel. Using 2x CPU cores
     // allows threads blocked on I/O to overlap with compute work.
     //
-    // TODO: Benchmark different thread counts to find optimal value.
-    // Test with `RAYON_NUM_THREADS=N wt list` on repos with many worktrees.
-    let num_threads = std::thread::available_parallelism()
-        .map(|n| n.get() * 2)
-        .unwrap_or(8);
+    // Override with RAYON_NUM_THREADS=N for benchmarking.
+    let num_threads = if std::env::var_os("RAYON_NUM_THREADS").is_some() {
+        0 // Let Rayon handle the env var (includes validation)
+    } else {
+        std::thread::available_parallelism()
+            .map(|n| n.get() * 2)
+            .unwrap_or(8)
+    };
     let _ = rayon::ThreadPoolBuilder::new()
         .num_threads(num_threads)
         .build_global();
@@ -1407,6 +1410,26 @@ fn main() {
                         output::prompt_shell_integration(&mut config, &binary_name(), skip_prompt);
                 }
 
+                // Build extra vars for base branch context (used by both hooks and --execute)
+                // "base" is the branch we branched from when creating a new worktree.
+                // For existing worktrees, there's no base concept.
+                let (base_branch, base_worktree_path): (Option<&str>, Option<&str>) = match &result
+                {
+                    SwitchResult::Created {
+                        base_branch,
+                        base_worktree_path,
+                        ..
+                    } => (base_branch.as_deref(), base_worktree_path.as_deref()),
+                    SwitchResult::Existing(_) | SwitchResult::AlreadyAt(_) => (None, None),
+                };
+                let extra_vars: Vec<(&str, &str)> = [
+                    base_branch.map(|b| ("base", b)),
+                    base_worktree_path.map(|p| ("base_worktree_path", p)),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+
                 // Spawn background hooks after success message
                 // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
                 // - post-start: runs only when creating a NEW worktree
@@ -1422,26 +1445,6 @@ fn main() {
                         yes,
                     );
 
-                    // Build extra vars for base branch context
-                    // "base" is the branch we branched from when creating a new worktree.
-                    // For existing worktrees, there's no base concept.
-                    let (base_branch, base_worktree_path): (Option<&str>, Option<&str>) =
-                        match &result {
-                            SwitchResult::Created {
-                                base_branch,
-                                base_worktree_path,
-                                ..
-                            } => (base_branch.as_deref(), base_worktree_path.as_deref()),
-                            SwitchResult::Existing(_) | SwitchResult::AlreadyAt(_) => (None, None),
-                        };
-                    let extra_vars: Vec<(&str, &str)> = [
-                        base_branch.map(|b| ("base", b)),
-                        base_worktree_path.map(|p| ("base_worktree_path", p)),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .collect();
-
                     // Post-switch runs first (immediate "I'm here" signal)
                     ctx.spawn_post_switch_commands(&extra_vars, hooks_display_path.as_deref())?;
 
@@ -1454,15 +1457,46 @@ fn main() {
                 // Execute user command after post-start hooks have been spawned
                 // Note: execute_args requires execute via clap's `requires` attribute
                 if let Some(cmd) = execute {
+                    // Build template context for expansion (includes base vars when creating)
+                    let repo = Repository::current()?;
+                    let repo_root = repo.worktree_base().context("Failed to get repo root")?;
+                    let ctx = CommandContext::new(
+                        &repo,
+                        &config,
+                        Some(&branch_info.branch),
+                        result.path(),
+                        &repo_root,
+                        yes,
+                    );
+                    let template_vars = build_hook_context(&ctx, &extra_vars);
+                    let vars: std::collections::HashMap<&str, &str> = template_vars
+                        .iter()
+                        .map(|(k, v)| (k.as_str(), v.as_str()))
+                        .collect();
+
+                    // Expand template variables in command (shell_escape: true for safety)
+                    let expanded_cmd = expand_template(&cmd, &vars, true).map_err(|e| {
+                        anyhow::anyhow!("Failed to expand --execute template: {}", e)
+                    })?;
+
                     // Append any trailing args (after --) to the execute command
+                    // Each arg is also expanded, then shell-escaped
                     let full_cmd = if execute_args.is_empty() {
-                        cmd
+                        expanded_cmd
                     } else {
-                        let escaped_args: Vec<_> = execute_args
+                        let expanded_args: Result<Vec<_>, _> = execute_args
+                            .iter()
+                            .map(|arg| {
+                                expand_template(arg, &vars, false).map_err(|e| {
+                                    anyhow::anyhow!("Failed to expand argument template: {}", e)
+                                })
+                            })
+                            .collect();
+                        let escaped_args: Vec<_> = expanded_args?
                             .iter()
                             .map(|arg| shlex::try_quote(arg).unwrap_or(arg.into()).into_owned())
                             .collect();
-                        format!("{} {}", cmd, escaped_args.join(" "))
+                        format!("{} {}", expanded_cmd, escaped_args.join(" "))
                     };
                     execute_user_command(&full_cmd)?;
                 }
@@ -1798,8 +1832,10 @@ fn write_vv_diagnostic(verbose: u8, command_line: &str, error_msg: Option<&str>)
             if is_gh_installed() {
                 // Escape single quotes for shell: 'it'\''s' -> it's
                 let path_str = path.to_string_lossy().replace('\'', "'\\''");
+                // URL with prefilled body: ## Gist\n\n[Paste URL]\n\n## Description\n\n[Describe the issue]
+                let issue_url = "https://github.com/max-sixty/worktrunk/issues/new?body=%23%23%20Gist%0A%0A%5BPaste%20gist%20URL%5D%0A%0A%23%23%20Description%0A%0A%5BDescribe%20the%20issue%5D";
                 let _ = output::print(hint_message(cformat!(
-                    "If this is a bug, draft an issue: <bright-black>gh issue create --web -R max-sixty/worktrunk -t 'Bug report' --body-file '{path_str}'</>"
+                    "To report a bug, create a secret gist with <bright-black>gh gist create --web '{path_str}'</> and reference it from an issue at <bright-black>{issue_url}</>"
                 )));
             }
         }
@@ -1811,14 +1847,11 @@ fn write_vv_diagnostic(verbose: u8, command_line: &str, error_msg: Option<&str>)
 
 /// Check if the GitHub CLI (gh) is installed.
 fn is_gh_installed() -> bool {
-    use std::process::{Command, Stdio};
-    use worktrunk::shell_exec::run;
+    use worktrunk::shell_exec::Cmd;
 
-    let mut cmd = Command::new("gh");
-    cmd.args(["--version"]);
-    cmd.stdin(Stdio::null());
-
-    run(&mut cmd, None)
+    Cmd::new("gh")
+        .arg("--version")
+        .run()
         .map(|o| o.status.success())
         .unwrap_or(false)
 }

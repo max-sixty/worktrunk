@@ -69,7 +69,7 @@ Examples:
 ## Security
 
 `WORKTRUNK_DIRECTIVE_FILE` is automatically removed from spawned subprocesses
-(via `shell_exec::run()`). This prevents hooks from writing to the directive
+(via `shell_exec::Cmd`). This prevents hooks from writing to the directive
 file.
 
 ## Windows Compatibility (Git Bash / MSYS2)

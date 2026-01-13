@@ -33,7 +33,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
   [36m[EXECUTE_ARGS]...
           Additional arguments for --execute command (after --)
           
-          Arguments after [1m--[0m are appended to the execute command. Each argument is POSIX shell-escaped before appending.
+          Arguments after [1m--[0m are appended to the execute command. Each argument is expanded for templates, then POSIX shell-escaped.
 
 [1m[32mOptions:
   [1m[36m-c[0m, [1m[36m--create
@@ -49,12 +49,16 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
           
           Replaces the wt process with the command after switching, giving it full terminal control. Useful for launching editors, AI agents, or other interactive tools.
           
+          Supports ]8;;@/hook.md#template-variables\[4mhook template variables]8;;\[0m ([1m{{ branch }}[0m, [1m{{ worktree_path }}[0m, etc.) and filters. [1m{{ base }}[0m and [1m{{ base_worktree_path }}[0m require [1m--create[0m.
+          
           Especially useful with shell aliases:
           
             [1m[1malias wsc='wt switch --create -x claude'
             [1mwsc feature-branch -- 'Fix GH #322'
           
           Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code. Arguments after [1m--[0m are passed to the command, so [1mwsc feature -- 'Fix GH #322'[0m runs [1mclaude 'Fix GH #322'[0m, starting Claude with a prompt.
+          
+          Template example: [1m-x 'code {{ worktree_path }}'[0m opens VS Code at the worktree, [1m-x 'tmux new -s {{ branch | sanitize }}'[0m starts a tmux session named after the branch.
 
   [1m[36m-y[0m, [1m[36m--yes
           Skip approval prompts

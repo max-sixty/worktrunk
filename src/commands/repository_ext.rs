@@ -297,7 +297,10 @@ impl RepositoryCliExt for Repository {
     }
 
     fn is_rebased_onto(&self, target: &str) -> anyhow::Result<bool> {
-        let merge_base = self.merge_base("HEAD", target)?;
+        // Orphan branches have no common ancestor, so they can't be "rebased onto" target
+        let Some(merge_base) = self.merge_base("HEAD", target)? else {
+            return Ok(false);
+        };
         let target_sha = self.run_command(&["rev-parse", target])?.trim().to_string();
 
         if merge_base != target_sha {

@@ -136,10 +136,6 @@ pub struct JsonWorkingTree {
     /// Lines added/deleted in working tree vs HEAD
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff: Option<JsonDiff>,
-
-    /// Lines added/deleted in working tree vs default branch
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub diff_vs_main: Option<JsonDiff>,
 }
 
 /// Line diff statistics
@@ -254,12 +250,6 @@ impl JsonItem {
         let working_tree = worktree_data.and_then(|data| {
             item.status_symbols.as_ref().map(|symbols| {
                 let wt = &symbols.working_tree;
-                // working_tree_diff_with_main is Option<Option<LineDiff>>:
-                // None = not computed, Some(None) = skipped, Some(Some(diff)) = computed
-                let diff_vs_main = data
-                    .working_tree_diff_with_main
-                    .flatten()
-                    .map(JsonDiff::from);
                 JsonWorkingTree {
                     staged: wt.staged,
                     modified: wt.modified,
@@ -267,7 +257,6 @@ impl JsonItem {
                     renamed: wt.renamed,
                     deleted: wt.deleted,
                     diff: data.working_tree_diff.map(JsonDiff::from),
-                    diff_vs_main,
                 }
             })
         });
@@ -631,7 +620,6 @@ mod tests {
             locked: None,
             prunable: None,
             working_tree_diff: None,
-            working_tree_diff_with_main: None,
             git_operation: GitOperationState::None,
             branch_worktree_mismatch: false,
             working_diff_display: None,
@@ -833,7 +821,6 @@ mod tests {
                 added: 10,
                 deleted: 5,
             }),
-            diff_vs_main: None,
         };
         let json = serde_json::to_string(&wt).unwrap();
         assert!(json.contains("\"staged\":true"));
