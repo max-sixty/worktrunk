@@ -8,12 +8,18 @@ cargo-dist-version = "0.30.2"
 # CI backends to support
 ci = "github"
 # The installers to generate for each app
-installers = ["shell", "powershell"]
+installers = ["shell", "powershell", "homebrew"]
+# Homebrew tap repository
+tap = "max-sixty/homebrew-worktrunk"
+# Homebrew formula name (defaults to package name)
+formula = "wt"
+# Jobs that publish to external services
+publish-jobs = ["homebrew"]
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl", "x86_64-pc-windows-msvc"]
 # Whether to install an updater program
 install-updater = false
-# Allow custom CI modifications
+# Allow custom CI modifications (we have custom publish jobs for cargo, winget)
 allow-dirty = ["ci"]
 # Enable git-wt binary in release builds (opt-in for cargo install)
 features = ["git-wt"]
