@@ -436,6 +436,209 @@ fn run_with_timeout_impl(
 }
 
 // ============================================================================
+// Builder-style command execution
+// ============================================================================
+
+/// Builder for executing commands with logging, tracing, and optional stdin.
+///
+/// Provides the same benefits as `run()` (logging, semaphore, tracing) with a
+/// cleaner interface that supports stdin piping.
+///
+/// # Examples
+///
+/// Basic usage:
+/// ```ignore
+/// let output = Cmd::new("git")
+///     .args(["status", "--porcelain"])
+///     .current_dir(&repo_path)
+///     .context("my-worktree")
+///     .run()?;
+/// ```
+///
+/// With stdin:
+/// ```ignore
+/// let output = Cmd::new("git")
+///     .args(["diff-tree", "--stdin", "--numstat"])
+///     .stdin(hashes.join("\n"))
+///     .run()?;
+/// ```
+pub struct Cmd {
+    program: String,
+    args: Vec<String>,
+    current_dir: Option<std::path::PathBuf>,
+    context: Option<String>,
+    stdin_data: Option<Vec<u8>>,
+    timeout: Option<std::time::Duration>,
+}
+
+impl Cmd {
+    /// Create a new command builder for the given program.
+    pub fn new(program: impl Into<String>) -> Self {
+        Self {
+            program: program.into(),
+            args: Vec::new(),
+            current_dir: None,
+            context: None,
+            stdin_data: None,
+            timeout: None,
+        }
+    }
+
+    /// Add a single argument.
+    pub fn arg(mut self, arg: impl Into<String>) -> Self {
+        self.args.push(arg.into());
+        self
+    }
+
+    /// Add multiple arguments.
+    pub fn args<I, S>(mut self, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    /// Set the working directory for the command.
+    pub fn current_dir(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
+        self.current_dir = Some(dir.into());
+        self
+    }
+
+    /// Set the logging context (typically worktree name for git commands).
+    pub fn context(mut self, ctx: impl Into<String>) -> Self {
+        self.context = Some(ctx.into());
+        self
+    }
+
+    /// Set data to write to the command's stdin.
+    pub fn stdin(mut self, data: impl Into<Vec<u8>>) -> Self {
+        self.stdin_data = Some(data.into());
+        self
+    }
+
+    /// Set a timeout for command execution.
+    pub fn timeout(mut self, duration: std::time::Duration) -> Self {
+        self.timeout = Some(duration);
+        self
+    }
+
+    /// Execute the command and return its output.
+    ///
+    /// Provides logging, semaphore limiting, and tracing like `run()`.
+    pub fn run(self) -> std::io::Result<std::process::Output> {
+        use std::io::Write;
+        use std::process::Stdio;
+
+        // Build command string for logging
+        let cmd_str = if self.args.is_empty() {
+            self.program.clone()
+        } else {
+            format!("{} {}", self.program, self.args.join(" "))
+        };
+
+        // Log command with optional context
+        match &self.context {
+            Some(ctx) => log::debug!("$ {} [{}]", cmd_str, ctx),
+            None => log::debug!("$ {}", cmd_str),
+        }
+
+        // Acquire semaphore to limit concurrent commands
+        let _guard = get_semaphore().acquire();
+
+        // Capture timing for tracing
+        let t0 = Instant::now();
+        let ts = t0.duration_since(*trace_epoch()).as_micros() as u64;
+        let tid = thread_id_number();
+
+        // Build the Command
+        let mut cmd = Command::new(&self.program);
+        cmd.args(&self.args);
+        cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
+
+        if let Some(ref dir) = self.current_dir {
+            cmd.current_dir(dir);
+        }
+
+        // Execute with or without stdin
+        let result = if let Some(stdin_data) = self.stdin_data {
+            // Stdin piping requires spawn/write/wait
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            let mut child = cmd.spawn()?;
+
+            // Write stdin data (ignore BrokenPipe - some commands exit early)
+            if let Some(mut stdin) = child.stdin.take()
+                && let Err(e) = stdin.write_all(&stdin_data)
+                && e.kind() != std::io::ErrorKind::BrokenPipe
+            {
+                return Err(e);
+            }
+
+            child.wait_with_output()
+        } else if let Some(timeout_duration) = self.timeout {
+            // Timeout handling uses the existing impl
+            run_with_timeout_impl(&mut cmd, timeout_duration)
+        } else {
+            // Simple case: just run and capture output
+            cmd.output()
+        };
+
+        // Log trace
+        let dur_us = t0.elapsed().as_micros() as u64;
+        match (&result, &self.context) {
+            (Ok(output), Some(ctx)) => {
+                log::debug!(
+                    "[wt-trace] ts={} tid={} context={} cmd=\"{}\" dur_us={} ok={}",
+                    ts,
+                    tid,
+                    ctx,
+                    cmd_str,
+                    dur_us,
+                    output.status.success()
+                );
+            }
+            (Ok(output), None) => {
+                log::debug!(
+                    "[wt-trace] ts={} tid={} cmd=\"{}\" dur_us={} ok={}",
+                    ts,
+                    tid,
+                    cmd_str,
+                    dur_us,
+                    output.status.success()
+                );
+            }
+            (Err(e), Some(ctx)) => {
+                log::debug!(
+                    "[wt-trace] ts={} tid={} context={} cmd=\"{}\" dur_us={} err=\"{}\"",
+                    ts,
+                    tid,
+                    ctx,
+                    cmd_str,
+                    dur_us,
+                    e
+                );
+            }
+            (Err(e), None) => {
+                log::debug!(
+                    "[wt-trace] ts={} tid={} cmd=\"{}\" dur_us={} err=\"{}\"",
+                    ts,
+                    tid,
+                    cmd_str,
+                    dur_us,
+                    e
+                );
+            }
+        }
+
+        result
+    }
+}
+
+// ============================================================================
 // Streaming command execution with signal handling
 // ============================================================================
 

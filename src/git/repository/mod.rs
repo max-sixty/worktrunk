@@ -14,8 +14,8 @@
 //! - `config.rs` - Git config, hints, markers, and default branch detection
 //! - `integration.rs` - Integration detection (same commit, ancestor, trees match)
 
+use crate::shell_exec::Cmd;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Arc, OnceLock};
 
 use dashmap::DashMap;
@@ -214,13 +214,11 @@ impl Repository {
 
     /// Resolve the git common directory for a path.
     fn resolve_git_common_dir(discovery_path: &Path) -> anyhow::Result<PathBuf> {
-        use crate::shell_exec::run;
-
-        let mut cmd = Command::new("git");
-        cmd.args(["rev-parse", "--git-common-dir"]);
-        cmd.current_dir(discovery_path);
-
-        let output = run(&mut cmd, Some(&path_to_logging_context(discovery_path)))
+        let output = Cmd::new("git")
+            .args(["rev-parse", "--git-common-dir"])
+            .current_dir(discovery_path)
+            .context(path_to_logging_context(discovery_path))
+            .run()
             .context("Failed to execute: git rev-parse --git-common-dir")?;
 
         if !output.status.success() {
@@ -455,13 +453,11 @@ impl Repository {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
-        use crate::shell_exec::run;
-
-        let mut cmd = Command::new("git");
-        cmd.args(args);
-        cmd.current_dir(&self.discovery_path);
-
-        let output = run(&mut cmd, Some(&self.logging_context()))
+        let output = Cmd::new("git")
+            .args(args.iter().copied())
+            .current_dir(&self.discovery_path)
+            .context(self.logging_context())
+            .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
 
         if !output.status.success() {
@@ -515,13 +511,11 @@ impl Repository {
     /// Use this when exit codes have semantic meaning beyond success/failure.
     /// For most cases, prefer `run_command` (returns stdout) or `run_command_check` (returns bool).
     pub(super) fn run_command_output(&self, args: &[&str]) -> anyhow::Result<std::process::Output> {
-        use crate::shell_exec::run;
-
-        let mut cmd = Command::new("git");
-        cmd.args(args);
-        cmd.current_dir(&self.discovery_path);
-
-        run(&mut cmd, Some(&self.logging_context()))
+        Cmd::new("git")
+            .args(args.iter().copied())
+            .current_dir(&self.discovery_path)
+            .context(self.logging_context())
+            .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
 }

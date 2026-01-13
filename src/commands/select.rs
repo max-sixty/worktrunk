@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{Repository, parse_numstat_line};
 use worktrunk::shell::extract_filename_from_path;
+use worktrunk::shell_exec::Cmd;
 
 use super::list::collect;
 use super::list::layout::{DiffDisplayConfig, DiffVariant};
@@ -706,35 +707,20 @@ impl WorktreeSkimItem {
 /// Batch fetch diffstats for multiple commits using git diff-tree --stdin.
 /// Returns a map of full_hash -> (insertions, deletions).
 ///
-/// Note: This bypasses shell_exec::run() because it requires stdin piping,
-/// which run() doesn't support. Failures are silent (preview context).
+/// Failures are silent (preview context).
 fn batch_fetch_stats(repo: &Repository, hashes: &[String]) -> HashMap<String, (usize, usize)> {
-    use std::io::Write;
-
     if hashes.is_empty() {
         return HashMap::new();
     }
 
-    let mut cmd = Command::new("git");
     // --root: include stats for root commits (no parent to diff against)
-    cmd.args(["diff-tree", "--numstat", "-r", "--root", "--stdin"])
+    let stdin_data = hashes.join("\n");
+    let Ok(output) = Cmd::new("git")
+        .args(["diff-tree", "--numstat", "-r", "--root", "--stdin"])
         .current_dir(repo.worktree_base().unwrap_or_else(|_| ".".into()))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-
-    let Ok(mut child) = cmd.spawn() else {
-        return HashMap::new();
-    };
-
-    // Write hashes to stdin
-    if let Some(mut stdin) = child.stdin.take() {
-        for hash in hashes {
-            let _ = writeln!(stdin, "{}", hash);
-        }
-    }
-
-    let Ok(output) = child.wait_with_output() else {
+        .stdin(stdin_data)
+        .run()
+    else {
         return HashMap::new();
     };
 
