@@ -1622,14 +1622,10 @@ fn main() {
                                     continue;
                                 }
 
-                                // Non-current worktree - branch should always be Some
-                                let Some(branch_for_remove) = branch.as_ref() else {
-                                    record_error(anyhow::anyhow!(
-                                        "Cannot remove worktree at {} - branch unknown",
-                                        path_canonical.display()
-                                    ))?;
-                                    continue;
-                                };
+                                // Non-current worktree - branch is always Some because:
+                                // - "@" resolves to current worktree (handled by is_current branch above)
+                                // - Other names resolve via resolve_worktree_arg which always sets branch: Some(...)
+                                let branch_for_remove = branch.as_ref().unwrap();
 
                                 match handle_remove(
                                     branch_for_remove,

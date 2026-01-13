@@ -1407,3 +1407,22 @@ fn test_remove_path_mismatch_warning_foreground(repo: TestRepo) {
         None
     ));
 }
+
+#[rstest]
+fn test_remove_detached_worktree_in_multi(mut repo: TestRepo) {
+    // Create two worktrees
+    let _feature_a = repo.add_worktree("feature-a");
+    let _feature_b = repo.add_worktree("feature-b");
+
+    // Detach HEAD in feature-b
+    repo.detach_head_in_worktree("feature-b");
+
+    // From main, try to multi-remove both
+    // feature-a should succeed, feature-b should fail (detached HEAD)
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-a", "feature-b"],
+        None
+    ));
+}
