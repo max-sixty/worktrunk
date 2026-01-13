@@ -862,21 +862,19 @@ fn forward_signal_with_escalation(pgid: i32, sig: i32) {
     let _ = nix::sys::signal::killpg(pgid, initial_signal);
 
     let grace = std::time::Duration::from_millis(200);
-    match sig {
-        signal_hook::consts::SIGINT => {
-            if !wait_for_exit(pgid.as_raw(), grace) {
-                let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGTERM);
-                if !wait_for_exit(pgid.as_raw(), grace) {
-                    let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
-                }
-            }
-        }
-        signal_hook::consts::SIGTERM => {
+    // Escalate if process doesn't exit gracefully
+    if sig == signal_hook::consts::SIGINT {
+        if !wait_for_exit(pgid.as_raw(), grace) {
+            let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGTERM);
             if !wait_for_exit(pgid.as_raw(), grace) {
                 let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
             }
         }
-        _ => {}
+    } else {
+        // SIGTERM - escalate directly to SIGKILL
+        if !wait_for_exit(pgid.as_raw(), grace) {
+            let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
+        }
     }
 }
 
@@ -1174,5 +1172,29 @@ mod tests {
             .env_remove("SOME_NONEXISTENT_VAR")
             .stream();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_process_group_alive_with_current_process() {
+        // Current process group should be alive
+        let pgid = nix::unistd::getpgrp().as_raw();
+        assert!(super::process_group_alive(pgid));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_process_group_alive_with_nonexistent_pgid() {
+        // Very high PGID unlikely to exist
+        assert!(!super::process_group_alive(999_999_999));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_forward_signal_with_escalation_unknown_signal() {
+        // Unknown signal should return early without doing anything
+        // Use a signal number that's not SIGINT or SIGTERM
+        super::forward_signal_with_escalation(1, 999);
+        // No panic = success (function returns early for unknown signals)
     }
 }
