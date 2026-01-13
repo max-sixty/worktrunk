@@ -318,7 +318,8 @@ fn run_with_timeout_impl(
 /// Builder for executing commands with two modes of operation.
 ///
 /// - `.run()` — captures output, provides logging/semaphore/tracing
-/// - `.stream()` — inherits stdio for TTY preservation (hooks, interactive)
+/// - `.stream()` — inherits stdout/stderr for TTY preservation (hooks, interactive);
+///   stdin defaults to null unless configured with `.stdin(Stdio)` or `.stdin_bytes()`
 ///
 /// # Examples
 ///
@@ -680,8 +681,19 @@ impl Cmd {
             (cmd, self.program.clone())
         };
 
+        // Build command string for logging (shell commands have full command in program,
+        // non-shell commands may have args)
+        let cmd_str = if self.shell_wrap || self.args.is_empty() {
+            self.program.clone()
+        } else {
+            format!("{} {}", self.program, self.args.join(" "))
+        };
+
         // Log command for debugging (output goes to logger, not stdout/stderr)
-        log::debug!("$ {} (streaming via {})", self.program, shell_name);
+        match &self.context {
+            Some(ctx) => log::debug!("$ {} [{}] (streaming via {})", cmd_str, ctx, shell_name),
+            None => log::debug!("$ {} (streaming via {})", cmd_str, shell_name),
+        }
 
         #[cfg(not(unix))]
         let _ = self.forward_signals;

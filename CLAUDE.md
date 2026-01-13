@@ -148,7 +148,7 @@ For commands that need stdin piping:
 ```rust
 let output = Cmd::new("git")
     .args(["diff-tree", "--stdin", "--numstat"])
-    .stdin(hashes.join("\n"))
+    .stdin_bytes(hashes.join("\n"))
     .run()?;
 ```
 

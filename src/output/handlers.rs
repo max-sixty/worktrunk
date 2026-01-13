@@ -849,9 +849,9 @@ fn handle_removed_worktree_output(
 
 /// Execute a command in a worktree directory
 ///
-/// Redirects child stdout to stderr (via `redirect_stdout_to_stderr()`) for deterministic output
-/// ordering. Per CLAUDE.md guidelines: child process output goes to stderr, worktrunk output
-/// goes to stdout.
+/// Redirects child stdout to stderr (via `.stdout(Stdio::from(stderr()))`) for deterministic
+/// output ordering. Per CLAUDE.md guidelines: child process output goes to stderr, worktrunk
+/// output goes to stdout.
 ///
 /// If `stdin_content` is provided, it will be piped to the command's stdin. This is used to pass
 /// hook context as JSON to hook commands.
