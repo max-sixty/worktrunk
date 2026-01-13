@@ -411,6 +411,19 @@ fn test_remove_no_background_deprecated(mut repo: TestRepo) {
     ));
 }
 
+/// Tests that --force-delete and --no-delete-branch are mutually exclusive
+#[rstest]
+fn test_remove_conflicting_branch_flags(repo: TestRepo) {
+    // Try to use both --force-delete (-D) and --no-delete-branch together
+    // This should fail with an error
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["-D", "--no-delete-branch", "nonexistent"],
+        None
+    ));
+}
+
 #[rstest]
 fn test_remove_foreground_unmerged(mut repo: TestRepo) {
     // Create a worktree with an unmerged commit
