@@ -4,24 +4,10 @@ use std::path::Path;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::styling::{Stream, StyledLine, hyperlink_stdout, supports_hyperlinks};
 
-use super::ci_status::PrStatus;
 use super::collect_progressive_impl::parse_port_from_url;
 use super::columns::{ColumnKind, DiffVariant};
 use super::layout::{ColumnFormat, ColumnLayout, DiffColumnConfig, LayoutConfig};
 use super::model::{ListItem, PositionMask};
-
-impl PrStatus {
-    /// Render indicator as a StyledLine for table column rendering.
-    ///
-    /// Uses OSC 8 hyperlinks when the terminal supports them; falls back to
-    /// plain colored indicator otherwise.
-    fn render_indicator(&self) -> StyledLine {
-        let mut segment = StyledLine::new();
-        let include_link = supports_hyperlinks(Stream::Stdout);
-        segment.push_raw(self.format_indicator(include_link));
-        segment
-    }
-}
 
 impl DiffColumnConfig {
     /// Check if a value exceeds the allocated digit width
@@ -309,9 +295,8 @@ impl LayoutConfig {
                     cell.push_styled(short_head, dim);
                 }
                 _ => {
-                    // Show spinner for data columns
-                    cell.push_styled(spinner, dim);
-                    cell.pad_to(col.width);
+                    // Show spinner for data columns (placeholder_cell handles alignment)
+                    return col.placeholder_cell(spinner);
                 }
             }
 
@@ -467,25 +452,19 @@ impl ColumnLayout {
                 // URL column: shows dev server URL from project config template
                 // - When hyperlinks supported: show ":port" as clickable link
                 // - When hyperlinks not supported: show full URL
-                // - dim if not available/active
-                // - normal if available and active
-                match (&item.url, item.url_active) {
-                    (None, _) => StyledLine::new(), // No URL configured
-                    (Some(url), Some(true)) => {
-                        // Active: normal styling
-                        let mut cell = StyledLine::new();
-                        cell.push_raw(format_url_cell(url));
-                        cell.truncate_to_width(self.width)
-                    }
-                    (Some(url), _) => {
-                        // Not active or unknown: dim styling
-                        let mut cell = StyledLine::new();
-                        let formatted = format_url_cell(url);
-                        // Apply dim to the formatted text (which may contain OSC 8 sequences)
-                        cell.push_styled(formatted, Style::new().dimmed());
-                        cell.truncate_to_width(self.width)
-                    }
+                // - dim if not available/active, normal if active
+                let Some(url) = &item.url else {
+                    return StyledLine::new();
+                };
+                let mut cell = StyledLine::new();
+                let formatted = format_url_cell(url);
+                if item.url_active == Some(true) {
+                    cell.push_raw(formatted);
+                } else {
+                    // Not active or unknown: dim styling
+                    cell.push_styled(formatted, Style::new().dimmed());
                 }
+                cell.truncate_to_width(self.width)
             }
             ColumnKind::CiStatus => {
                 // Check display field first for pending indicators during progressive rendering
@@ -504,15 +483,19 @@ impl ColumnLayout {
                 match &item.pr_status {
                     None => self.placeholder_cell("⋯"), // Not loaded yet
                     Some(None) => StyledLine::new(),    // Loaded, no CI
-                    Some(Some(pr_status)) => pr_status.render_indicator(),
+                    Some(Some(pr_status)) => {
+                        let mut cell = StyledLine::new();
+                        cell.push_raw(
+                            pr_status.format_indicator(supports_hyperlinks(Stream::Stdout)),
+                        );
+                        cell
+                    }
                 }
             }
             ColumnKind::Commit => {
                 let head = item.head();
                 let short_head = &head[..8.min(head.len())];
-                let mut cell = StyledLine::new();
-                cell.push_styled(short_head.to_string(), Style::new().dimmed());
-                cell
+                self.render_text_cell(short_head, Some(Style::new().dimmed()))
             }
             ColumnKind::Message => {
                 let Some(ref commit) = item.commit else {
