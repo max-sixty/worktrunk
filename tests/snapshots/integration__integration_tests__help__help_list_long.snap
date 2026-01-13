@@ -212,15 +212,14 @@ Query structured data with [2m--format=json[0m:
 
 [1mworking_tree object
 
-      Field      Type                        Description                      
-   ──────────── ─────── ───────────────────────────────────────────────────── 
-   staged       boolean Has staged files                                      
-   modified     boolean Has modified files (unstaged)                         
-   untracked    boolean Has untracked files                                   
-   renamed      boolean Has renamed files                                     
-   deleted      boolean Has deleted files                                     
-   diff         object  Lines changed vs HEAD: {added, deleted}               
-   diff_vs_main object  Lines changed vs the default branch: {added, deleted} 
+     Field    Type                 Description               
+   ───────── ─────── ─────────────────────────────────────── 
+   staged    boolean Has staged files                        
+   modified  boolean Has modified files (unstaged)           
+   untracked boolean Has untracked files                     
+   renamed   boolean Has renamed files                       
+   deleted   boolean Has deleted files                       
+   diff      object  Lines changed vs HEAD: {added, deleted} 
 
 [1mmain object
 

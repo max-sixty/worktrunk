@@ -516,7 +516,7 @@ impl WorktreeSkimItem {
         let Some(default_branch) = repo.default_branch() else {
             return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of main\n");
         };
-        if self.item.counts().ahead == 0 {
+        if self.item.counts.is_some_and(|c| c.ahead == 0) {
             return cformat!(
                 "{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of <bold>{default_branch}</>\n"
             );
@@ -714,7 +714,8 @@ fn batch_fetch_stats(repo: &Repository, hashes: &[String]) -> HashMap<String, (u
     }
 
     // --root: include stats for root commits (no parent to diff against)
-    let stdin_data = hashes.join("\n");
+    // Each hash needs a trailing newline for git to process it
+    let stdin_data = hashes.iter().map(|h| format!("{h}\n")).collect::<String>();
     let Ok(output) = Cmd::new("git")
         .args(["diff-tree", "--numstat", "-r", "--root", "--stdin"])
         .current_dir(repo.worktree_base().unwrap_or_else(|_| ".".into()))

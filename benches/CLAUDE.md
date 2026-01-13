@@ -53,22 +53,75 @@ cargo bench --bench list -- --skip cold  # Warm cache only
 
 ## Performance Investigation with analyze-trace
 
-Use `analyze-trace` to understand where time goes in git operations:
+Use `analyze-trace` to generate Chrome Trace Format for visualization:
 
 ```bash
-# Capture trace and analyze
-RUST_LOG=debug wt list --branches 2>&1 | grep '\[wt-trace\]' > /tmp/trace.log
-cargo run --release --bin analyze-trace -- /tmp/trace.log
+# Generate trace.json for Perfetto/Chrome
+RUST_LOG=debug wt list --branches 2>&1 | grep '\[wt-trace\]' | \
+  cargo run --release -q --bin analyze-trace > trace.json
 
-# Or pipe directly
-RUST_LOG=debug wt list --branches 2>&1 | grep '\[wt-trace\]' | cargo run --bin analyze-trace
+# Open in https://ui.perfetto.dev or chrome://tracing
 ```
 
-The output shows:
-- **Command breakdown**: total time per git command type
-- **Duration histogram**: distribution of command times
-- **Timeout impact**: how much time could be saved with timeouts
-- **Top 10 slowest**: specific commands taking the most time
+### Querying with trace_processor
+
+Install [trace_processor](https://perfetto.dev/docs/analysis/trace-processor) for SQL analysis:
+
+```bash
+curl -LO https://get.perfetto.dev/trace_processor && chmod +x trace_processor
+```
+
+Useful queries:
+
+```bash
+# Top 10 slowest commands
+echo "SELECT name, ts/1e6 as start_ms, dur/1e6 as dur_ms FROM slice WHERE dur > 0 ORDER BY dur DESC LIMIT 10;" | trace_processor trace.json
+
+# Milestone events (skeleton render, worker spawn, completion)
+echo "SELECT name, ts/1e6 as ms FROM slice WHERE dur = 0 ORDER BY ts;" | trace_processor trace.json
+
+# Task type breakdown
+cat > /tmp/q.sql << 'EOF'
+SELECT
+  CASE WHEN name LIKE '%status%' THEN 'status'
+       WHEN name LIKE '%rev-parse%tree%' THEN 'trees_match'
+       WHEN name LIKE '%merge-tree%' THEN 'merge_tree'
+       WHEN name LIKE '%is-ancestor%' THEN 'is_ancestor'
+       WHEN name LIKE '%diff --name%' THEN 'file_changes'
+       ELSE 'other' END as task_type,
+  COUNT(*) as count,
+  ROUND(SUM(dur)/1e6, 2) as total_ms
+FROM slice WHERE dur > 0
+GROUP BY task_type ORDER BY total_ms DESC;
+EOF
+trace_processor trace.json -q /tmp/q.sql
+
+# Check parallel execution overlap between task types
+cat > /tmp/q.sql << 'EOF'
+WITH status_times AS (
+  SELECT MIN(ts) as start_us, MAX(ts + dur) as end_us
+  FROM slice WHERE name LIKE '%status%'
+),
+trees_times AS (
+  SELECT MIN(ts) as start_us, MAX(ts + dur) as end_us
+  FROM slice WHERE name LIKE '%rev-parse%tree%'
+)
+SELECT
+  s.start_us/1e6 as status_start_ms, s.end_us/1e6 as status_end_ms,
+  t.start_us/1e6 as trees_start_ms, t.end_us/1e6 as trees_end_ms,
+  CASE WHEN s.end_us > t.start_us AND t.end_us > s.start_us THEN 'OVERLAP' ELSE 'SEQUENTIAL' END as parallel
+FROM status_times s, trees_times t;
+EOF
+trace_processor trace.json -q /tmp/q.sql
+```
+
+### Generating traces from benchmark repos
+
+```bash
+# Trace on rust-lang/rust (must run benchmark first to clone)
+RUST_LOG=debug cargo run --release -q -- -C target/bench-repos/rust list --branches 2>&1 | \
+  grep '\[wt-trace\]' | cargo run --release -q --bin analyze-trace > rust-trace.json
+```
 
 ## Key Performance Insights
 

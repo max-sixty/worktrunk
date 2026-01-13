@@ -876,7 +876,7 @@ pub fn execute_command_in_worktree(
     stdin_content: Option<&str>,
 ) -> anyhow::Result<()> {
     use std::io::Write;
-    use worktrunk::shell_exec::execute_streaming;
+    use worktrunk::shell_exec::Cmd;
     use worktrunk::styling::{eprint, stderr};
 
     // Flush stdout before executing command to ensure all our messages appear
@@ -890,8 +890,16 @@ pub fn execute_command_in_worktree(
     stderr().flush().ok(); // Ignore flush errors - reset is best-effort, command execution should proceed
 
     // Execute with stdout→stderr redirect for deterministic ordering
-    // Hooks don't need stdin inheritance (inherit_stdin=false)
-    execute_streaming(command, worktree_path, true, stdin_content, false, true)?;
+    let mut cmd = Cmd::shell(command)
+        .current_dir(worktree_path)
+        .redirect_stdout_to_stderr()
+        .forward_signals();
+
+    if let Some(content) = stdin_content {
+        cmd = cmd.stdin(content);
+    }
+
+    cmd.stream()?;
 
     // Flush to ensure all output appears before we continue
     super::flush()?;

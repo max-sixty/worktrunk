@@ -43,8 +43,8 @@ mod working_tree;
 mod worktrees;
 
 // Re-export WorkingTree
+pub use working_tree::WorkingTree;
 pub(super) use working_tree::path_to_logging_context;
-pub use working_tree::{TreesMatchResult, WorkingTree};
 
 // ============================================================================
 // Repository Cache

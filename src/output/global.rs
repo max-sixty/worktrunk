@@ -34,8 +34,6 @@ use std::sync::{Mutex, OnceLock};
 use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 #[cfg(unix)]
 use worktrunk::shell_exec::ShellConfig;
-#[cfg(not(unix))]
-use worktrunk::shell_exec::execute_streaming;
 use worktrunk::styling::{eprintln, stderr};
 
 /// Global output state, lazily initialized on first access.
@@ -226,11 +224,16 @@ fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result
 #[cfg(not(unix))]
 fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result<()> {
     use worktrunk::git::WorktrunkError;
+    use worktrunk::shell_exec::Cmd;
 
     // On non-Unix platforms, fall back to spawn-and-wait.
     // This uses the shell abstraction (Git Bash if available).
-    let exec_dir = target_dir.unwrap_or_else(|| Path::new("."));
-    if let Err(err) = execute_streaming(&command, exec_dir, false, None, true, false) {
+    let mut cmd = Cmd::shell(&command).inherit_stdin();
+    if let Some(dir) = target_dir {
+        cmd = cmd.current_dir(dir);
+    }
+
+    if let Err(err) = cmd.stream() {
         // If the command failed with an exit code, just exit with that code.
         // This matches Unix behavior where exec() replaces the process and
         // the shell's exit code becomes the process exit code (no error message).
