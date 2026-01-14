@@ -335,7 +335,7 @@ impl ListItem {
     /// Format this item as prioritized segments for smart truncation.
     ///
     /// Returns segments with priorities matching `wt list` column priorities.
-    /// Use [`StatuslineSegment::fit_to_width`] to truncate intelligently.
+    /// Use [`super::statusline_segment::StatuslineSegment::fit_to_width`] to truncate intelligently.
     pub fn format_statusline_segments(
         &self,
         include_links: bool,
