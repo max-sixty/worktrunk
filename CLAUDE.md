@@ -242,7 +242,7 @@ The `codecov/patch` CI check enforces coverage on changed lines — respond to f
 ### Running Coverage Locally
 
 ```bash
-task coverage
+task coverage   # includes --features shell-integration-tests
 # Report: target/llvm-cov/html/index.html
 ```
 
