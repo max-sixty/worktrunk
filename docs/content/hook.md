@@ -120,6 +120,26 @@ cleanup = "rm -rf /tmp/cache/{{ branch }}"
 
 See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
 
+## Security
+
+Project commands require approval on first run:
+
+```
+▲ repo needs approval to execute 3 commands:
+
+○ post-create install:
+   echo 'Installing dependencies...'
+
+❯ Allow and remember? [y/N]
+```
+
+- Approvals are saved to user config (`~/.config/worktrunk/config.toml`)
+- If a command changes, new approval is required
+- Use `--yes` to bypass prompts (useful for CI/automation)
+- Use `--no-verify` to skip hooks
+
+Manage approvals with `wt hook approvals add` and `wt hook approvals clear`.
+
 ## Configuration
 
 Hooks are defined in `.config/wt.toml`. They can be a single command or multiple named commands:
@@ -132,6 +152,55 @@ post-create = "npm install"
 [pre-merge]
 test = "cargo test"
 build = "cargo build --release"
+```
+
+### User hooks
+
+Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval.
+
+```toml
+# ~/.config/worktrunk/config.toml
+[post-create]
+setup = "echo 'Setting up worktree...'"
+
+[pre-merge]
+notify = "notify-send 'Merging {{ branch }}'"
+```
+
+User hooks support the same hook types and template variables as project hooks.
+
+**Key differences from project hooks:**
+
+| Aspect | Project hooks | User hooks |
+|--------|--------------|------------|
+| Location | `.config/wt.toml` | `~/.config/worktrunk/config.toml` |
+| Scope | Single repository | All repositories |
+| Approval | Required | Not required |
+| Execution order | After user hooks | Before project hooks |
+
+Skip hooks with `--no-verify`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
+
+**Use cases:**
+- Personal notifications or logging
+- Editor/IDE integration
+- Repository-agnostic setup tasks
+- Filtering by repository using JSON context
+
+**Filtering by repository:**
+
+User hooks receive JSON context on stdin, enabling repository-specific behavior:
+
+```toml
+# ~/.config/worktrunk/config.toml
+[post-create]
+gitlab-setup = """
+python3 -c '
+import json, sys, subprocess
+ctx = json.load(sys.stdin)
+if "gitlab" in ctx.get("remote", ""):
+    subprocess.run(["glab", "mr", "create", "--fill"])
+'
+"""
 ```
 
 ### Template variables
@@ -207,6 +276,25 @@ print(f"Setting up {ctx['repo']} on branch {ctx['branch']}")
 ```
 
 The JSON includes all template variables plus `hook_type` and `hook_name`.
+
+## Running hooks manually
+
+`wt hook <type>` runs hooks on demand — useful for testing during development, running in CI pipelines, or re-running after a failure.
+
+```bash
+wt hook pre-merge              # Run all pre-merge hooks
+wt hook pre-merge test         # Run hooks named "test" from both sources
+wt hook pre-merge user:        # Run all user hooks
+wt hook pre-merge project:     # Run all project hooks
+wt hook pre-merge user:test    # Run only user's "test" hook
+wt hook pre-merge project:test # Run only project's "test" hook
+wt hook pre-merge --yes        # Skip approval prompts (for CI)
+wt hook post-create --var branch=feature/test  # Override template variable
+```
+
+The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
+
+The `--var KEY=VALUE` flag overrides built-in template variables — useful for testing hooks with different contexts without switching to that context.
 
 ## Designing effective hooks
 
@@ -288,94 +376,6 @@ DEV_PORT={{ branch | hash_port }}
 EOF
 """
 ```
-
-## Security
-
-Project commands require approval on first run:
-
-```
-▲ repo needs approval to execute 3 commands:
-
-○ post-create install:
-   echo 'Installing dependencies...'
-
-❯ Allow and remember? [y/N]
-```
-
-- Approvals are saved to user config (`~/.config/worktrunk/config.toml`)
-- If a command changes, new approval is required
-- Use `--yes` to bypass prompts (useful for CI/automation)
-- Use `--no-verify` to skip hooks
-
-Manage approvals with `wt hook approvals add` and `wt hook approvals clear`.
-
-## User hooks
-
-Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval.
-
-```toml
-# ~/.config/worktrunk/config.toml
-[post-create]
-setup = "echo 'Setting up worktree...'"
-
-[pre-merge]
-notify = "notify-send 'Merging {{ branch }}'"
-```
-
-User hooks support the same hook types and template variables as project hooks.
-
-**Key differences from project hooks:**
-
-| Aspect | Project hooks | User hooks |
-|--------|--------------|------------|
-| Location | `.config/wt.toml` | `~/.config/worktrunk/config.toml` |
-| Scope | Single repository | All repositories |
-| Approval | Required | Not required |
-| Execution order | After user hooks | Before project hooks |
-
-Skip hooks with `--no-verify`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
-
-**Use cases:**
-- Personal notifications or logging
-- Editor/IDE integration
-- Repository-agnostic setup tasks
-- Filtering by repository using JSON context
-
-**Filtering by repository:**
-
-User hooks receive JSON context on stdin, enabling repository-specific behavior:
-
-```toml
-# ~/.config/worktrunk/config.toml
-[post-create]
-gitlab-setup = """
-python3 -c '
-import json, sys, subprocess
-ctx = json.load(sys.stdin)
-if "gitlab" in ctx.get("remote", ""):
-    subprocess.run(["glab", "mr", "create", "--fill"])
-'
-"""
-```
-
-## Running hooks manually
-
-`wt hook <type>` runs hooks on demand — useful for testing during development, running in CI pipelines, or re-running after a failure.
-
-```bash
-wt hook pre-merge              # Run all pre-merge hooks
-wt hook pre-merge test         # Run hooks named "test" from both sources
-wt hook pre-merge user:        # Run all user hooks
-wt hook pre-merge project:     # Run all project hooks
-wt hook pre-merge user:test    # Run only user's "test" hook
-wt hook pre-merge project:test # Run only project's "test" hook
-wt hook pre-merge --yes        # Skip approval prompts (for CI)
-wt hook post-create --var branch=feature/test  # Override template variable
-```
-
-The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
-
-The `--var KEY=VALUE` flag overrides built-in template variables — useful for testing hooks with different contexts without switching to that context.
 
 ## Language-specific tips
 
