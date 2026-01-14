@@ -66,9 +66,8 @@
 //! command returns quickly after signaling the daemon. By the time the worker thread
 //! starts executing `git status` commands, daemons have had time to initialize.
 //!
-//! **Invalid default branch warning:** Uses cached value from `default_branch()` which
-//! ran during pre-skeleton. The `invalid_default_branch_config()` call is a pure cache
-//! read with no git commands.
+//! **Invalid default branch warning:** `invalid_default_branch_config()` reads the value
+//! cached by `default_branch()` during pre-skeleton. It's a pure cache read.
 //!
 //! When adding new features, ask: "Can this be computed after skeleton?" If yes, defer it.
 //! The skeleton shows `·` placeholder for gutter symbols, filled in when data loads.
