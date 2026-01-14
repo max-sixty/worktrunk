@@ -223,3 +223,60 @@ lint = "pre-commit run"
         assert_cmd_snapshot!(cmd);
     });
 }
+
+/// Test `wt hook clear` when no approvals exist for the project.
+#[rstest]
+fn test_hook_clear_no_approvals(repo: TestRepo, temp_home: TempDir) {
+    // Create user config without any project approvals
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    let config_path = global_config_dir.join("config.toml");
+    fs::write(
+        &config_path,
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
+        cmd.args(["hook", "approvals", "clear"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test `wt hook clear` when project has approvals to clear.
+#[rstest]
+fn test_hook_clear_with_approvals(repo: TestRepo, temp_home: TempDir) {
+    // Create user config with approved commands for this project
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    let config_path = global_config_dir.join("config.toml");
+    fs::write(
+        &config_path,
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[projects."repo"]
+approved-commands = ["cargo build", "cargo test", "npm install"]
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
+        cmd.args(["hook", "approvals", "clear"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}

@@ -263,6 +263,20 @@ When CI shows a codecov/patch failure, investigate before declaring "ready to me
    - Write a test that exercises it, or
    - Document why it's intentionally untested (e.g., error paths requiring external system mocks)
 
+### How Coverage Works with Integration Tests
+
+Coverage is collected via `cargo llvm-cov` which instruments the binary. **Subprocess execution IS captured** — when tests spawn `wt` via `assert_cmd_snapshot!`, the instrumented binary writes coverage data to profile files that get merged into the report.
+
+When investigating uncovered lines:
+
+1. Run `task coverage` first to see actual coverage % (~92% is normal)
+2. Use `cargo llvm-cov report --show-missing-lines | grep <file>` to find specific uncovered lines
+3. **Check if tests already exist** for that functionality before writing new ones
+4. Remaining uncovered lines are typically:
+   - Error handling paths requiring mocked git failures
+   - Edge cases in shell integration states (e.g., running as `git wt`)
+   - Test assertion code (only executes when tests fail)
+
 ## Benchmarks
 
 See `benches/CLAUDE.md` for details.

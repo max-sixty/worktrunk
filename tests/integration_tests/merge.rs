@@ -1943,3 +1943,20 @@ fn test_step_rebase_with_merge_commit(mut repo: TestRepo) {
         cmd
     });
 }
+
+/// Test `wt step rebase` when the feature branch is already up to date with main.
+///
+/// This should show "Already up to date with main" message.
+#[rstest]
+fn test_step_rebase_already_up_to_date(mut repo: TestRepo) {
+    // Create a feature worktree but don't advance main (feature is based on main's HEAD)
+    let feature_wt = repo.add_worktree("feature");
+
+    // Run `wt step rebase` - should show "Already up to date with main"
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["rebase"],
+        Some(&feature_wt)
+    ));
+}
