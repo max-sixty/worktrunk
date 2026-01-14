@@ -29,9 +29,7 @@ Hooks run automatically during `wt switch`, `wt merge`, & `wt remove`. `wt hook 
 
 ### post-create
 
-Runs after worktree creation, **blocks until complete**. The worktree switch doesn't finish until these commands succeed.
-
-**Use cases**: Installing dependencies, database migrations, copying environment files.
+Installing dependencies, database migrations, copying environment files.
 
 ```toml
 [post-create]
@@ -42,9 +40,7 @@ env = "cp .env.example .env"
 
 ### post-start
 
-Runs after worktree creation, **in background**. The worktree switch completes immediately; these run in parallel.
-
-**Use cases**: Long builds, dev servers, file watchers, downloading large assets.
+Long builds, dev servers, file watchers, downloading large assets. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
 
 ```toml
 [post-start]
@@ -52,25 +48,17 @@ build = "npm run build"
 server = "npm run dev"
 ```
 
-Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log` (source is `user` or `project`).
-
 ### post-switch
 
-Runs after **every** switch operation, **in background**. Triggers on all switch results: creating new worktrees, switching to existing ones, or switching to the current worktree.
-
-**Use cases**: Renaming terminal tabs, updating tmux window names, IDE notifications.
+Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current. Useful for terminal tab renaming, tmux window names, IDE notifications. Output logged to `.git/wt-logs/{branch}-{source}-post-switch-{name}.log`.
 
 ```toml
 post-switch = "echo 'Switched to {{ branch }}'"
 ```
 
-Output logged to `.git/wt-logs/{branch}-{source}-post-switch-{name}.log` (source is `user` or `project`).
-
 ### pre-commit
 
-Runs before committing during `wt merge`, **fail-fast**. All commands must exit 0 for the commit to proceed.
-
-**Use cases**: Formatters, linters, type checking.
+Formatters, linters, type checking — runs during `wt merge` before the squash commit.
 
 ```toml
 [pre-commit]
@@ -80,9 +68,7 @@ lint = "cargo clippy -- -D warnings"
 
 ### pre-merge
 
-Runs before merging to target branch, **fail-fast**. All commands must exit 0 for the merge to proceed.
-
-**Use cases**: Tests, security scans, build verification.
+Tests, security scans, build verification — runs after rebase, before merge to target.
 
 ```toml
 [pre-merge]
@@ -92,9 +78,7 @@ build = "cargo build --release"
 
 ### post-merge
 
-Runs after successful merge in the **worktree for the target branch** if it exists, otherwise the **main worktree**, **best-effort**. Failures are logged but don't abort.
-
-**Use cases**: Deployment, notifications, installing updated binaries.
+Deployment, notifications, installing updated binaries. Runs in the target branch worktree if it exists, otherwise the main worktree.
 
 ```toml
 post-merge = "cargo install --path ."
@@ -102,23 +86,14 @@ post-merge = "cargo install --path ."
 
 ### pre-remove
 
-Runs before worktree removal during `wt remove`, **fail-fast**. All commands must exit 0 for removal to proceed.
-
-**Use cases**: Cleanup tasks, saving state, notifying external systems.
+Cleanup tasks, saving state, notifying external systems.
 
 ```toml
 [pre-remove]
 cleanup = "rm -rf /tmp/cache/{{ branch }}"
 ```
 
-### Timing during merge
-
-- **pre-commit** — After staging, before squash commit
-- **pre-merge** — After rebase, before merge to target
-- **pre-remove** — Before removing worktree during cleanup
-- **post-merge** — After cleanup completes
-
-See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
+During `wt merge`, hooks run in this order: pre-commit → pre-merge → pre-remove → post-merge. See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
 
 ## Security
 
@@ -207,23 +182,23 @@ if "gitlab" in ctx.get("remote", ""):
 
 Hooks can use template variables that expand at runtime:
 
-| Variable | Example | Description |
-|----------|---------|-------------|
-| `{{ repo }}` | myproject | Repository directory name |
-| `{{ repo_path }}` | /path/to/myproject | Absolute path to repository root |
-| `{{ branch }}` | feature/auth | Branch name |
-| `{{ worktree_name }}` | myproject.feature-auth | Worktree directory name |
-| `{{ worktree_path }}` | /path/to/myproject.feature-auth | Absolute worktree path |
-| `{{ primary_worktree_path }}` | /path/to/myproject | Main worktree path (or for bare repos, the default branch worktree) |
-| `{{ default_branch }}` | main | Default branch name |
-| `{{ commit }}` | a1b2c3d4e5f6... | Full HEAD commit SHA |
-| `{{ short_commit }}` | a1b2c3d | Short HEAD commit SHA |
-| `{{ remote }}` | origin | Primary remote name |
-| `{{ remote_url }}` | git@github.com:user/repo.git | Remote URL |
-| `{{ upstream }}` | origin/feature | Upstream tracking branch |
-| `{{ target }}` | main | Target branch (merge hooks only) |
-| `{{ base }}` | main | Base branch (creation hooks only) |
-| `{{ base_worktree_path }}` | /path/to/myproject | Base branch worktree (creation hooks only) |
+| Variable | Description |
+|----------|-------------|
+| `{{ repo }}` | Repository directory name |
+| `{{ repo_path }}` | Absolute path to repository root |
+| `{{ branch }}` | Branch name |
+| `{{ worktree_name }}` | Worktree directory name |
+| `{{ worktree_path }}` | Absolute worktree path |
+| `{{ primary_worktree_path }}` | Main worktree path (for bare repos: default branch worktree) |
+| `{{ default_branch }}` | Default branch name |
+| `{{ commit }}` | Full HEAD commit SHA |
+| `{{ short_commit }}` | Short HEAD commit SHA (7 chars) |
+| `{{ remote }}` | Primary remote name |
+| `{{ remote_url }}` | Remote URL |
+| `{{ upstream }}` | Upstream tracking branch |
+| `{{ target }}` | Target branch (merge hooks only) |
+| `{{ base }}` | Base branch (creation hooks only) |
+| `{{ base_worktree_path }}` | Base branch worktree (creation hooks only) |
 
 ### Worktrunk Filters
 
@@ -377,29 +352,9 @@ EOF
 """
 ```
 
-## Language-specific tips
+### Progressive validation
 
-Each ecosystem has quirks that affect hook design. For copying dependencies and caches between worktrees, see [`wt step copy-ignored`](@/step.md#language-specific-notes). This section covers hooks.
-
-### Python
-
-Use `uv sync` to recreate virtual environments:
-
-```toml
-[post-create]
-install = "uv sync"
-```
-
-For pip-based projects without uv:
-
-```toml
-[post-create]
-venv = "python -m venv .venv && .venv/bin/pip install -r requirements.txt"
-```
-
-### Hook flow patterns
-
-**Progressive validation** — Quick checks before commit, thorough validation before merge:
+Quick checks before commit, thorough validation before merge:
 
 ```toml
 [pre-commit]
@@ -411,7 +366,9 @@ test = "npm test"
 build = "npm run build"
 ```
 
-**Target-specific behavior** — Different actions for production vs staging:
+### Target-specific behavior
+
+Different actions for production vs staging:
 
 ```toml
 post-merge = """
@@ -422,6 +379,17 @@ elif [ "{{ target }}" = "staging" ]; then
 fi
 """
 ```
+
+### Python virtual environments
+
+Use `uv sync` to recreate virtual environments (or `python -m venv .venv && .venv/bin/pip install -r requirements.txt` for pip-based projects):
+
+```toml
+[post-create]
+install = "uv sync"
+```
+
+For copying dependencies and caches between worktrees, see [`wt step copy-ignored`](@/step.md#language-specific-notes).
 
 ## See also
 
