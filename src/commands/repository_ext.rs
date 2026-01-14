@@ -344,8 +344,10 @@ fn compute_integration_reason(
     // removed during the operation.
     let repo = Repository::at(main_path).ok()?;
     let effective_target = repo.effective_integration_target(target);
-    let mut provider = worktrunk::git::LazyGitIntegration::new(&repo, branch, &effective_target);
-    worktrunk::git::check_integration(&mut provider)
+    // Use lazy computation with short-circuit. On error, return None (informational only).
+    let signals =
+        worktrunk::git::compute_integration_lazy(&repo, branch, &effective_target).ok()?;
+    worktrunk::git::check_integration(&signals)
 }
 
 /// Warn about untracked files that will be auto-staged.
