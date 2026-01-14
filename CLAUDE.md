@@ -113,17 +113,15 @@ Documentation has three categories:
 1. **Command pages** (config, hook, list, merge, remove, select, step, switch):
    ```
    src/cli/mod.rs (PRIMARY SOURCE)
-       ↓ test_command_pages_are_in_sync
-   docs/content/{command}.md
-       ↓ test_skill_files_are_in_sync_with_docs
-   .claude-plugin/skills/worktrunk/reference/{command}.md
+       ↓ test_command_pages_and_skill_files_are_in_sync
+   docs/content/{command}.md → .claude-plugin/skills/worktrunk/reference/{command}.md
    ```
    Edit `src/cli/mod.rs` (`after_long_help` attributes), never the docs directly.
 
 2. **Non-command docs** (claude-code, faq, llm-commits, tips-patterns, worktrunk):
    ```
    docs/content/*.md (PRIMARY SOURCE)
-       ↓ test_skill_files_are_in_sync_with_docs
+       ↓ test_command_pages_and_skill_files_are_in_sync
    .claude-plugin/skills/worktrunk/reference/*.md
    ```
    Edit the docs file directly. Skill reference is auto-synced.
@@ -134,8 +132,7 @@ Documentation has three categories:
 After any doc changes, run tests to sync:
 
 ```bash
-cargo test --test integration test_command_pages_are_in_sync
-cargo test --test integration test_skill_files_are_in_sync_with_docs
+cargo test --test integration test_command_pages_and_skill_files_are_in_sync
 ```
 
 ## Data Safety
