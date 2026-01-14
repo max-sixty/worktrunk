@@ -261,7 +261,7 @@ pub fn work_items_for_worktree(
         wt.branch.as_ref().and_then(|branch| {
             let mut vars = std::collections::HashMap::new();
             vars.insert("branch", branch.as_str());
-            worktrunk::config::expand_template(template, &vars, false).ok()
+            worktrunk::config::expand_template(template, &vars, false, repo).ok()
         })
     });
 

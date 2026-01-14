@@ -429,23 +429,19 @@ impl WorktrunkConfig {
     /// # Arguments
     /// * `main_worktree` - Main worktree directory name (replaces {{ main_worktree }} in template)
     /// * `branch` - Branch name (replaces {{ branch }} in template; use `{{ branch | sanitize }}` for paths)
-    ///
-    /// # Examples
-    /// ```
-    /// use worktrunk::config::WorktrunkConfig;
-    ///
-    /// // Default template uses {{ branch | sanitize }} for filesystem-safe paths
-    /// let config = WorktrunkConfig::default();
-    /// let path = config.format_path("myproject", "feature/foo").unwrap();
-    /// assert_eq!(path, "../myproject.feature-foo");
-    /// ```
-    pub fn format_path(&self, main_worktree: &str, branch: &str) -> Result<String, String> {
+    /// * `repo` - Repository for template function access
+    pub fn format_path(
+        &self,
+        main_worktree: &str,
+        branch: &str,
+        repo: &crate::git::Repository,
+    ) -> Result<String, String> {
         use std::collections::HashMap;
         let mut vars = HashMap::new();
         vars.insert("main_worktree", main_worktree);
         vars.insert("repo", main_worktree);
         vars.insert("branch", branch);
-        expand_template(&self.worktree_path(), &vars, false)
+        expand_template(&self.worktree_path(), &vars, false, repo)
     }
 
     /// Check if a command is approved for the given project.
@@ -782,6 +778,30 @@ pub fn find_unknown_keys(contents: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::Repository;
+
+    /// Test fixture that creates a real temporary git repository.
+    struct TestRepo {
+        _dir: tempfile::TempDir,
+        repo: Repository,
+    }
+
+    impl TestRepo {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            std::process::Command::new("git")
+                .args(["init"])
+                .current_dir(dir.path())
+                .output()
+                .unwrap();
+            let repo = Repository::at(dir.path()).unwrap();
+            Self { _dir: dir, repo }
+        }
+    }
+
+    fn test_repo() -> TestRepo {
+        TestRepo::new()
+    }
 
     #[test]
     fn test_find_unknown_keys_empty() {
@@ -1045,18 +1065,22 @@ rename-tab = "echo 'switched'"
 
     #[test]
     fn test_worktrunk_config_format_path() {
+        let test = test_repo();
         let config = WorktrunkConfig::default();
-        let path = config.format_path("myrepo", "feature/branch").unwrap();
+        let path = config
+            .format_path("myrepo", "feature/branch", &test.repo)
+            .unwrap();
         assert_eq!(path, "../myrepo.feature-branch");
     }
 
     #[test]
     fn test_worktrunk_config_format_path_custom_template() {
+        let test = test_repo();
         let config = WorktrunkConfig {
             worktree_path: Some(".worktrees/{{ branch }}".to_string()),
             ..Default::default()
         };
-        let path = config.format_path("myrepo", "feature").unwrap();
+        let path = config.format_path("myrepo", "feature", &test.repo).unwrap();
         assert_eq!(path, ".worktrees/feature");
     }
 

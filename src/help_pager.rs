@@ -133,10 +133,7 @@ pub(crate) fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
 /// Returns flags suitable for setting LESS env var when spawning less.
 /// Ensures F (quit if one screen), R (colors), X (no termcap init) are always active.
 fn compute_less_flags(user_less: Option<&str>) -> String {
-    match user_less {
-        Some(s) if !s.is_empty() => format!("{} -FRX", s),
-        _ => "FRX".to_string(),
-    }
+    format!("{} -FRX", user_less.unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -162,8 +159,9 @@ mod tests {
 
     #[test]
     fn test_compute_less_flags_empty() {
-        assert_eq!(compute_less_flags(None), "FRX");
-        assert_eq!(compute_less_flags(Some("")), "FRX");
+        // Leading space is fine - less ignores it
+        assert_eq!(compute_less_flags(None), " -FRX");
+        assert_eq!(compute_less_flags(Some("")), " -FRX");
     }
 
     #[test]
