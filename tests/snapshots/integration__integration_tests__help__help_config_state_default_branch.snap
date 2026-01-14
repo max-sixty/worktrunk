@@ -51,7 +51,7 @@ Useful in scripts to avoid hardcoding [2mmain[0m or [2mmaster[0m:
 
 Without a subcommand, runs [2mget[0m. Use [2mset[0m to override, or [2mclear[0m then [2mget[0m to re-detect.
 
-[32mDetection
+[1m[32mDetection
 
 Worktrunk detects the default branch automatically:
 

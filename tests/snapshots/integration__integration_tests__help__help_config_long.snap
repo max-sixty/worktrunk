@@ -53,7 +53,7 @@ Worktrunk uses two configuration files:
    User config    ~/.config/worktrunk/config.toml Personal settings, command defaults, approved project commands 
    Project config .config/wt.toml                 Lifecycle hooks, checked into version control                  
 
-[32mExamples
+[1m[32mExamples
 
 Install shell integration (required for directory switching):
 
@@ -71,11 +71,11 @@ Show current configuration and file locations:
 
   [2mwt config show
 
-[32mUser config
+[32mUSER CONFIG
 
 The user config stores personal preferences that apply across all repositories. Create it with [2mwt config create[0m and view with [2mwt config show[0m.
 
-[1mWorktree path template
+[32mWorktree path template
 
 Controls where new worktrees are created. The template is relative to the repository root.
 
@@ -102,7 +102,7 @@ Controls where new worktrees are created. The template is relative to the reposi
   [2m# Creates: ~/code/project/feature-login (sibling to .git)
   [2mworktree-path = "../{{ branch | sanitize }}"
 
-[1mCommand settings
+[32mCommand settings
 
 Set persistent flag values for commands. These apply unless explicitly overridden on the command line.
 
@@ -129,7 +129,7 @@ Set persistent flag values for commands. These apply unless explicitly overridde
   [2mremove = false  # Keep worktree after merge (--no-remove)
   [2mverify = false  # Skip hooks (--no-verify)
 
-[1mLLM commit messages
+[32mLLM commit messages
 
 Configure automatic commit message generation. Requires an external tool like llm:
 
@@ -139,7 +139,7 @@ Configure automatic commit message generation. Requires an external tool like ll
 
 See LLM Commit Messages for setup details and template customization.
 
-[1mApproved commands
+[32mApproved commands
 
 When project hooks run for the first time, Worktrunk prompts for approval. Approved commands are saved here automatically:
 
@@ -148,7 +148,7 @@ When project hooks run for the first time, Worktrunk prompts for approval. Appro
 
 Manage approvals with [2mwt hook approvals add[0m to review and pre-approve commands, and [2mwt hook approvals clear[0m to reset (add [2m--global[0m to clear all projects).
 
-[1mUser hooks
+[32mUser hooks
 
 Personal hooks that run for all repositories. Use the same syntax as project hooks:
 
@@ -162,7 +162,7 @@ User hooks run before project hooks and don't require approval. Skip with [2m--
 
 See [2mwt hook[0m for complete documentation.
 
-[32mProject config
+[32mPROJECT CONFIG
 
 The project config defines lifecycle hooks and project-specific settings. This file is checked into version control and shared across the team.
 
@@ -177,7 +177,7 @@ Create [2m.config/wt.toml[0m in the repository root:
 
 See [2mwt hook[0m for complete documentation on hook types, execution order, template variables, and JSON context.
 
-[1mDev server URL
+[32mDev server URL
 
 The [2m[list][0m section adds a URL column to [2mwt list[0m:
 
@@ -186,7 +186,7 @@ The [2m[list][0m section adds a URL column to [2mwt list[0m:
 
 URLs are dimmed when the port isn't listening.
 
-[1mCI platform override
+[32mCI platform override
 
 The [2m[ci][0m section overrides CI platform detection for GitHub Enterprise or self-hosted GitLab with custom domains:
 
@@ -195,7 +195,7 @@ The [2m[ci][0m section overrides CI platform detection for GitHub Enterprise o
 
 By default, the platform is detected from the remote URL. Use this when URL detection fails (e.g., [2mgit.mycompany.com[0m instead of [2mgithub.mycompany.com[0m).
 
-[32mShell integration
+[32mSHELL INTEGRATION
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
@@ -214,7 +214,7 @@ Or manually add to the shell config:
 
 Without shell integration, [2mwt switch[0m prints the target directory but cannot [2mcd[0m into it.
 
-[1mSkip first-run prompt
+[32mSkip first-run prompt
 
 On first run without shell integration, Worktrunk offers to install it. Suppress this prompt in CI or automated environments:
 
@@ -224,11 +224,11 @@ Or via environment variable:
 
   [2mexport WORKTRUNK_SKIP_SHELL_INTEGRATION_PROMPT=true
 
-[32mEnvironment variables
+[1m[32mEnvironment variables
 
 All user config options can be overridden with environment variables using the [2mWORKTRUNK_[0m prefix.
 
-[1mNaming convention
+[32mNaming convention
 
 Config keys use kebab-case ([2mworktree-path[0m), while env vars use SCREAMING_SNAKE_CASE ([2mWORKTRUNK_WORKTREE_PATH[0m). The conversion happens automatically.
 
@@ -242,13 +242,13 @@ For nested config sections, use double underscores to separate levels:
 
 Note the single underscore after [2mWORKTRUNK[0m and double underscores between nested keys.
 
-[1mArray values
+[32mArray values
 
 Array config values like [2margs = ["-m", "claude-haiku"][0m can be specified as a single string in environment variables:
 
   [2mexport WORKTRUNK_COMMIT_GENERATION__ARGS="-m claude-haiku"
 
-[1mExample: CI/testing override
+[32mExample: CI/testing override
 
 Override the LLM command in CI to use a mock:
 
@@ -256,7 +256,7 @@ Override the LLM command in CI to use a mock:
   [2mWORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
   [2m  wt merge
 
-[1mOther environment variables
+[32mOther environment variables
 
                Variable                                                   Purpose                                      
    ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────── 

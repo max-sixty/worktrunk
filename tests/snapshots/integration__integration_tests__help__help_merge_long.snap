@@ -74,7 +74,7 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET]
 
 Merge the current branch into the target branch, defaulting to the main branch. Unlike [2mgit merge[0m, this merges the current branch into a target (rather than a target into the current branch). Similar to clicking "Merge pull request" on GitHub.
 
-[32mExamples
+[1m[32mExamples
 
 Merge to the default branch:
 
@@ -96,7 +96,7 @@ Skip committing/squashing (rebase still runs unless --no-rebase):
 
   [2mwt merge --no-commit
 
-[32mPipeline
+[1m[32mPipeline
 
 [2mwt merge[0m runs these steps:
 
@@ -110,7 +110,7 @@ Skip committing/squashing (rebase still runs unless --no-rebase):
 
 Use [2m--no-commit[0m to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless [2m--no-rebase[0m is passed. Useful after preparing commits manually with [2mwt step[0m. Requires a clean working tree.
 
-[32mLocal CI
+[1m[32mLocal CI
 
 For personal projects, pre-merge hooks open up the possibility of a workflow with much faster iteration — an order of magnitude more small changes instead of fewer large ones.
 
@@ -122,7 +122,7 @@ The full workflow: start an agent (one of many) on a task, work elsewhere, retur
   [2mtest = "cargo test"
   [2mlint = "cargo clippy"
 
-[32mSee also
+[1m[32mSee also
 
 - [2mwt step[0m — Run individual operations (commit, squash, rebase, push)
 - [2mwt remove[0m — Remove worktrees without merging

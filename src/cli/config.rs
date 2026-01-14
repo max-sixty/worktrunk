@@ -176,11 +176,11 @@ pub enum ConfigCommand {
     /// Create configuration file
     #[command(
         after_long_help = concat!(
-            "## User config\n\n",
+            "# User config\n\n",
             "Creates `~/.config/worktrunk/config.toml` with the following content:\n\n```\n",
             include_str!("../../dev/config.example.toml"),
             "```\n\n",
-            "## Project config\n\n",
+            "# Project config\n\n",
             "With `--project`, creates `.config/wt.toml` in the current repository:\n\n```\n",
             include_str!("../../dev/wt.example.toml"),
             "```"

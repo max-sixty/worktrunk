@@ -88,13 +88,19 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
         }
 
         // Outside code blocks, render markdown headers (never wrapped)
+        // Visual hierarchy: H1 > H2 > H3
+        // - H1: UPPERCASE green (most prominent, rarely used)
+        // - H2: Bold green (major sections like "Examples", "Columns")
+        // - H3: Normal green (subsections like "CI status", "commit object")
         if let Some(header_text) = trimmed.strip_prefix("### ") {
-            let bold = Style::new().bold();
-            result.push_str(&format!("{bold}{header_text}{bold:#}\n"));
+            result.push_str(&format!("{green}{header_text}{green:#}\n"));
         } else if let Some(header_text) = trimmed.strip_prefix("## ") {
-            result.push_str(&format!("{green}{header_text}{green:#}\n"));
+            let bold_green = Style::new()
+                .bold()
+                .fg_color(Some(Color::Ansi(AnsiColor::Green)));
+            result.push_str(&format!("{bold_green}{header_text}{bold_green:#}\n"));
         } else if let Some(header_text) = trimmed.strip_prefix("# ") {
-            result.push_str(&format!("{green}{header_text}{green:#}\n"));
+            result.push_str(&format!("{green}{}{green:#}\n", header_text.to_uppercase()));
         } else {
             // Prose text - wrap if width is specified
             let formatted = render_inline_formatting(line);
@@ -480,24 +486,27 @@ mod tests {
     #[test]
     fn test_render_markdown_in_help_h1() {
         let result = render_markdown_in_help("# Header");
-        // H1 should be green
-        assert!(result.contains("Header"));
-        assert!(result.contains("\u{1b}[")); // Has color codes
+        // H1 should be UPPERCASE green
+        assert!(result.contains("HEADER")); // Uppercase
+        assert!(result.contains("\u{1b}[32m")); // Green
     }
 
     #[test]
     fn test_render_markdown_in_help_h2() {
         let result = render_markdown_in_help("## Section");
+        // H2 should be bold green (anstyle emits separate codes)
         assert!(result.contains("Section"));
-        assert!(result.contains("\u{1b}[")); // Has color codes
+        assert!(result.contains("\u{1b}[1m")); // Bold
+        assert!(result.contains("\u{1b}[32m")); // Green
     }
 
     #[test]
     fn test_render_markdown_in_help_h3() {
         let result = render_markdown_in_help("### Subsection");
+        // H3 should be green (no bold)
         assert!(result.contains("Subsection"));
-        // H3 is bold
-        assert!(result.contains("\u{1b}[1m")); // Bold
+        assert!(result.contains("\u{1b}[32m")); // Green
+        assert!(!result.contains("\u{1b}[1m")); // Not bold
     }
 
     #[test]

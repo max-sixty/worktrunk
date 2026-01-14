@@ -43,7 +43,7 @@ Show current configuration and file locations:
 wt config show
 ```
 
-## User config
+# User config
 
 The user config stores personal preferences that apply across all repositories. Create it with `wt config create` and view with `wt config show`.
 
@@ -148,7 +148,7 @@ User hooks run before project hooks and don't require approval. Skip with `--no-
 
 See [`wt hook`](@/hook.md#user-hooks) for complete documentation.
 
-## Project config
+# Project config
 
 The project config defines lifecycle hooks and project-specific settings. This file is checked into version control and shared across the team.
 
@@ -187,7 +187,7 @@ platform = "github"  # or "gitlab"
 
 By default, the platform is detected from the remote URL. Use this when URL detection fails (e.g., `git.mycompany.com` instead of `github.mycompany.com`).
 
-## Shell integration
+# Shell integration
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
@@ -302,7 +302,7 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
 
 ## wt config create
 
-### User config
+## User config
 
 Creates `~/.config/worktrunk/config.toml` with the following content:
 
@@ -507,7 +507,7 @@ approved-commands = ["npm ci", "npm test"]
 # """
 ```
 
-### Project config
+## Project config
 
 With `--project`, creates `.config/wt.toml` in the current repository:
 
