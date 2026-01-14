@@ -48,16 +48,16 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 
   [2m# # Worktrunk User Configuration
   [2m#
-  [2m# Location: `~/.config/worktrunk/config.toml`
+  [2m# Create with `wt config create`.
   [2m#
-  [2m# Create with `wt config create`. Alternative locations follow XDG Base Directory
-  [2m# spec: `$XDG_CONFIG_HOME/worktrunk/config.toml` on macOS/Linux,
-  [2m# `%APPDATA%\worktrunk\config.toml` on Windows.
+  [2m# Location:
+  [2m#
+  [2m# - macOS/Linux: `~/.config/worktrunk/config.toml` (or `$XDG_CONFIG_HOME` if set)
+  [2m# - Windows: `%APPDATA%\worktrunk\config.toml`
   [2m#
   [2m# ## Worktree Path Template
   [2m#
-  [2m# Controls where new worktrees are created. Paths are relative to the repository
-  [2m# root.
+  [2m# Controls where new worktrees are created. Paths are relative to the repository root.
   [2m#
   [2m# **Variables:**
   [2m#
@@ -68,13 +68,21 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#
   [2m# **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
   [2m#
-  [2m# Siblings in parent directory (default) → `~/code/myproject.feature-auth`:
-  [2m#
+  [2m# # Default — siblings in parent directory
+  [2m# # Creates: ~/code/myproject.feature-auth
   [2m# worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
   [2m#
-  [2m# Inside the repository → `~/code/myproject/.worktrees/feature-auth`:
-  [2m#
+  [2m# # Inside the repository
+  [2m# # Creates: ~/code/myproject/.worktrees/feature-auth
   [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"
+  [2m#
+  [2m# # Namespaced (useful when multiple repos share a parent directory)
+  [2m# # Creates: ~/code/worktrees/myproject/feature-auth
+  [2m# worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
+  [2m#
+  [2m# # Nested bare repo (git clone --bare <url> project/.git)
+  [2m# # Creates: ~/code/project/feature-auth (sibling to .git)
+  [2m# worktree-path = "../{{ branch | sanitize }}"
   [2m#
   [2m# ## List Command Defaults
   [2m#
@@ -110,12 +118,12 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# [select]
   [2m# # Pager command with flags for diff preview (overrides git's core.pager)
   [2m# # Use this to specify pager flags needed for non-TTY contexts
-  [2m# # Example: pager = "delta --paging=never"
+  [2m# # Example:
+  [2m# # pager = "delta --paging=never"
   [2m#
   [2m# ## LLM Commit Messages
   [2m#
-  [2m# Generate commit messages automatically during merge. Requires an external CLI
-  [2m# tool. See <https://worktrunk.dev/llm-commits/> for setup.
+  [2m# Generate commit messages automatically during merge. Requires an external CLI tool. See <https://worktrunk.dev/llm-commits/> for setup details and template customization.
   [2m#
   [2m# Using [llm](https://github.com/simonw/llm) (install: `pip install llm llm-anthropic`):
   [2m#
@@ -129,35 +137,28 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# command = "aichat"
   [2m# args = ["-m", "claude:claude-haiku-4.5"]
   [2m#
-  [2m# Load templates from external files (supports `~` expansion):
-  [2m#
-  [2m# [commit-generation]
-  [2m# template-file = "~/.config/worktrunk/commit-template.txt"
-  [2m# squash-template-file = "~/.config/worktrunk/squash-template.txt"
-  [2m#
   [2m# See [Custom Prompt Templates](#custom-prompt-templates) for inline template options.
   [2m#
   [2m# ## Approved Commands
   [2m#
-  [2m# Commands approved for project hooks. Auto-populated when approving hooks on
-  [2m# first run, or via `wt hook approvals add`.
+  [2m# Commands approved for project hooks. Auto-populated when approving hooks on first run, or via `wt hook approvals add`.
   [2m#
   [2m# [projects."github.com/user/repo"]
   [2m# approved-commands = ["npm ci", "npm test"]
   [2m#
-  [2m# For project-specific hooks (post-create, post-start, pre-merge, etc.), use a
-  [2m# separate project config at `<repo>/.config/wt.toml`. Run `wt config create --project`
-  [2m# to create one, or see <https://worktrunk.dev/hook/>.
+  [2m# For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see <https://worktrunk.dev/hook/>.
   [2m#
   [2m# ## Custom Prompt Templates
   [2m#
-  [2m# These options belong under the `[commit-generation]` section. Uses
-  [2m# [minijinja](https://docs.rs/minijinja/) syntax.
+  [2m# Templates use [minijinja](https://docs.rs/minijinja/) syntax.
   [2m#
   [2m# ### Commit Template
   [2m#
-  [2m# Available variables: `{{ git_diff }}`, `{{ git_diff_stat }}`, `{{ branch }}`,
-  [2m# `{{ recent_commits }}`, `{{ repo }}`
+  [2m# Available variables:
+  [2m#
+  [2m# - `{{ git_diff }}`, `{{ git_diff_stat }}` — diff content
+  [2m# - `{{ branch }}`, `{{ repo }}` — context
+  [2m# - `{{ recent_commits }}` — recent commit messages
   [2m#
   [2m# Default template:
   [2m#
@@ -197,8 +198,10 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#
   [2m# ### Squash Template
   [2m#
-  [2m# Available variables: `{{ git_diff }}`, `{{ git_diff_stat }}`, `{{ branch }}`,
-  [2m# `{{ recent_commits }}`, `{{ repo }}`, `{{ commits }}`, `{{ target_branch }}`
+  [2m# Available variables (in addition to commit template variables):
+  [2m#
+  [2m# - `{{ commits }}` — list of commits being squashed
+  [2m# - `{{ target_branch }}` — merge target branch
   [2m#
   [2m# Default template:
   [2m#

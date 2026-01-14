@@ -73,16 +73,16 @@ Show current configuration and file locations:
 
 [32mWorktrunk User Configuration
 
-Location: [2m~/.config/worktrunk/config.toml
+Create with [2mwt config create[0m.
 
-Create with [2mwt config create[0m. Alternative locations follow XDG Base Directory
-spec: [2m$XDG_CONFIG_HOME/worktrunk/config.toml[0m on macOS/Linux,
-[2m%APPDATA%\worktrunk\config.toml[0m on Windows.
+Location:
+
+- macOS/Linux: [2m~/.config/worktrunk/config.toml[0m (or [2m$XDG_CONFIG_HOME[0m if set)
+- Windows: [2m%APPDATA%\worktrunk\config.toml
 
 [32mWorktree Path Template
 
-Controls where new worktrees are created. Paths are relative to the repository
-root.
+Controls where new worktrees are created. Paths are relative to the repository root.
 
 [1mVariables:
 
@@ -93,13 +93,21 @@ root.
 
 [1mExamples[0m for repo at [2m~/code/myproject[0m, branch [2mfeature/auth[0m:
 
-Siblings in parent directory (default) → [2m~/code/myproject.feature-auth[0m:
-
+  [2m# Default — siblings in parent directory
+  [2m# Creates: ~/code/myproject.feature-auth
   [2mworktree-path = "../{{ repo }}.{{ branch | sanitize }}"
-
-Inside the repository → [2m~/code/myproject/.worktrees/feature-auth[0m:
-
+  [2m
+  [2m# Inside the repository
+  [2m# Creates: ~/code/myproject/.worktrees/feature-auth
   [2mworktree-path = ".worktrees/{{ branch | sanitize }}"
+  [2m
+  [2m# Namespaced (useful when multiple repos share a parent directory)
+  [2m# Creates: ~/code/worktrees/myproject/feature-auth
+  [2mworktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
+  [2m
+  [2m# Nested bare repo (git clone --bare <url> project/.git)
+  [2m# Creates: ~/code/project/feature-auth (sibling to .git)
+  [2mworktree-path = "../{{ branch | sanitize }}"
 
 [32mList Command Defaults
 
@@ -135,12 +143,12 @@ Pager behavior for [2mwt select[0m diff previews.
   [2m[select]
   [2m# Pager command with flags for diff preview (overrides git's core.pager)
   [2m# Use this to specify pager flags needed for non-TTY contexts
-  [2m# Example: pager = "delta --paging=never"
+  [2m# Example:
+  [2m# pager = "delta --paging=never"
 
 [32mLLM Commit Messages
 
-Generate commit messages automatically during merge. Requires an external CLI
-tool. See <https://worktrunk.dev/llm-commits/> for setup.
+Generate commit messages automatically during merge. Requires an external CLI tool. See <https://worktrunk.dev/llm-commits/> for setup details and template customization.
 
 Using llm (install: [2mpip install llm llm-anthropic[0m):
 
@@ -154,35 +162,28 @@ Using aichat:
   [2mcommand = "aichat"
   [2margs = ["-m", "claude:claude-haiku-4.5"]
 
-Load templates from external files (supports [2m~[0m expansion):
-
-  [2m[commit-generation]
-  [2mtemplate-file = "~/.config/worktrunk/commit-template.txt"
-  [2msquash-template-file = "~/.config/worktrunk/squash-template.txt"
-
 See Custom Prompt Templates for inline template options.
 
 [32mApproved Commands
 
-Commands approved for project hooks. Auto-populated when approving hooks on
-first run, or via [2mwt hook approvals add[0m.
+Commands approved for project hooks. Auto-populated when approving hooks on first run, or via [2mwt hook approvals add[0m.
 
   [2m[projects."github.com/user/repo"]
   [2mapproved-commands = ["npm ci", "npm test"]
 
-For project-specific hooks (post-create, post-start, pre-merge, etc.), use a
-separate project config at [2m<repo>/.config/wt.toml[0m. Run [2mwt config create --project
-to create one, or see <https://worktrunk.dev/hook/>.
+For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at [2m<repo>/.config/wt.toml[0m. Run [2mwt config create --project[0m to create one, or see <https://worktrunk.dev/hook/>.
 
 [32mCustom Prompt Templates
 
-These options belong under the [2m[commit-generation][0m section. Uses
-minijinja syntax.
+Templates use minijinja syntax.
 
 [1mCommit Template
 
-Available variables: [2m{{ git_diff }}[0m, [2m{{ git_diff_stat }}[0m, [2m{{ branch }}[0m,
-[2m{{ recent_commits }}[0m, [2m{{ repo }}
+Available variables:
+
+- [2m{{ git_diff }}[0m, [2m{{ git_diff_stat }}[0m — diff content
+- [2m{{ branch }}[0m, [2m{{ repo }}[0m — context
+- [2m{{ recent_commits }}[0m — recent commit messages
 
 Default template:
 
@@ -220,8 +221,10 @@ Default template:
 
 [1mSquash Template
 
-Available variables: [2m{{ git_diff }}[0m, [2m{{ git_diff_stat }}[0m, [2m{{ branch }}[0m,
-[2m{{ recent_commits }}[0m, [2m{{ repo }}[0m, [2m{{ commits }}[0m, [2m{{ target_branch }}
+Available variables (in addition to commit template variables):
+
+- [2m{{ commits }}[0m — list of commits being squashed
+- [2m{{ target_branch }}[0m — merge target branch
 
 Default template:
 
