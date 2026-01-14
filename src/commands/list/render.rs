@@ -251,9 +251,7 @@ impl LayoutConfig {
     ///
     /// Used for both worktrees and branch-only items; branch-only rows render an empty path
     /// and a blank gutter placeholder.
-    pub fn format_skeleton_row(&self, item: &super::model::ListItem) -> String {
-        use crate::display::shorten_path;
-
+    pub fn render_skeleton_row(&self, item: &ListItem) -> StyledLine {
         let branch = item.branch_name();
         let wt_data = item.worktree_data();
         let shortened_path = item
@@ -264,7 +262,7 @@ impl LayoutConfig {
         let dim = Style::new().dimmed();
         let spinner = "⋯"; // Placeholder character
 
-        let line = self.render_line(|col| {
+        self.render_line(|col| {
             let mut cell = StyledLine::new();
 
             match col.kind {
@@ -301,9 +299,7 @@ impl LayoutConfig {
             }
 
             cell
-        });
-
-        line.render()
+        })
     }
 }
 

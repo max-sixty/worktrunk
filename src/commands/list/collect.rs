@@ -977,7 +977,7 @@ pub fn collect(
         // hasn't been loaded yet. Using format_list_item_line would show default values like "55y".
         let skeletons: Vec<String> = all_items
             .iter()
-            .map(|item| layout.format_skeleton_row(item))
+            .map(|item| layout.render_skeleton_row(item).render())
             .collect();
 
         let initial_footer = format!("{INFO_SYMBOL} {dim}{footer_base} (loading...){dim:#}");
