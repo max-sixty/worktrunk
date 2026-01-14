@@ -1161,11 +1161,11 @@ const COMMAND_PAGES: &[&str] = &[
     "switch", "list", "merge", "remove", "select", "config", "step", "hook",
 ];
 
-#[test]
-fn test_command_pages_are_in_sync() {
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+/// Sync command pages from --help-page output to docs/content/*.md
+/// Returns (errors, updated_files)
+fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
     let mut errors = Vec::new();
-    let mut updated = 0;
+    let mut updated_files = Vec::new();
 
     for cmd in COMMAND_PAGES {
         let doc_path = project_root.join(format!("docs/content/{}.md", cmd));
@@ -1258,21 +1258,11 @@ fn test_command_pages_are_in_sync() {
         if current != new_content {
             fs::write(&doc_path, &new_content)
                 .unwrap_or_else(|e| panic!("Failed to write {}: {}", doc_path.display(), e));
-            updated += 1;
+            updated_files.push(format!("docs/content/{}.md", cmd));
         }
     }
 
-    if !errors.is_empty() {
-        panic!("Command pages out of sync:\n\n{}\n", errors.join("\n"));
-    }
-
-    if updated > 0 {
-        panic!(
-            "Command pages out of sync: updated {} page(s). \
-             Run tests locally and commit the changes.",
-            updated
-        );
-    }
+    (errors, updated_files)
 }
 
 /// Strip HTML tags from a string (simple implementation for command extraction)
@@ -1462,11 +1452,11 @@ const SKILL_SYNC_FILES: &[(&str, &str)] = &[
     ),
 ];
 
-#[test]
-fn test_skill_files_are_in_sync_with_docs() {
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+/// Sync skill files from docs/content/*.md to .claude-plugin/skills/worktrunk/reference/*.md
+/// Returns (errors, updated_files)
+fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     let mut errors = Vec::new();
-    let mut updated = 0;
+    let mut updated_files = Vec::new();
 
     for (docs_path, skill_path) in SKILL_SYNC_FILES {
         let docs_file = project_root.join(docs_path);
@@ -1501,19 +1491,38 @@ fn test_skill_files_are_in_sync_with_docs() {
             }
             fs::write(&skill_file, format!("{}\n", expected))
                 .unwrap_or_else(|e| panic!("Failed to write {}: {}", skill_file.display(), e));
-            updated += 1;
+            updated_files.push(skill_path.to_string());
         }
     }
 
-    if !errors.is_empty() {
-        panic!("Skill sync errors:\n\n{}\n", errors.join("\n"));
+    (errors, updated_files)
+}
+
+/// Combined test: sync command pages (mod.rs → docs) then skill files (docs → skills)
+/// This ensures a single test run handles the full chain when mod.rs changes.
+#[test]
+fn test_command_pages_and_skill_files_are_in_sync() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // Step 1: Sync command pages (mod.rs → docs/content/*.md)
+    let (cmd_errors, cmd_files) = sync_command_pages(project_root);
+
+    // Step 2: Sync skill files (docs/content/*.md → .claude-plugin/skills/*)
+    // This reads the freshly-written docs from step 1
+    let (skill_errors, skill_files) = sync_skill_files(project_root);
+
+    // Aggregate results
+    let all_errors: Vec<_> = cmd_errors.into_iter().chain(skill_errors).collect();
+    let all_files: Vec<_> = cmd_files.into_iter().chain(skill_files).collect();
+
+    if !all_errors.is_empty() {
+        panic!("Sync errors:\n\n{}\n", all_errors.join("\n"));
     }
 
-    if updated > 0 {
+    if !all_files.is_empty() {
         panic!(
-            "Skill files out of sync with docs: updated {} file(s). \
-             Run tests locally and commit the changes.",
-            updated
+            "Files out of sync (updated):\n  {}\n\nRun tests locally and commit the changes.",
+            all_files.join("\n  ")
         );
     }
 }
