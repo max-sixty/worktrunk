@@ -40,7 +40,6 @@ impl DisplayFields {
         counts: &Option<AheadBehind>,
         branch_diff: &Option<BranchDiffTotals>,
         upstream: &Option<UpstreamStatus>,
-        _pr_status: &Option<Option<PrStatus>>,
     ) -> Self {
         let commits_display = counts
             .as_ref()
@@ -56,15 +55,12 @@ impl DisplayFields {
             })
         });
 
-        // CI column shows only the indicator (●), not text
-        // Let render.rs handle it via render_indicator()
-        let ci_status_display = None;
-
         Self {
             commits_display,
             branch_diff_display,
             upstream_display,
-            ci_status_display,
+            // CI renders via render_indicator() in render.rs, not as display text
+            ci_status_display: None,
             status_display: None,
             statusline: None,
         }
@@ -430,12 +426,8 @@ impl ListItem {
     ///
     /// Call after all computed fields (counts, diffs, upstream, CI) are available.
     pub fn finalize_display(&mut self) {
-        self.display = DisplayFields::from_common_fields(
-            &self.counts,
-            &self.branch_diff,
-            &self.upstream,
-            &self.pr_status,
-        );
+        self.display =
+            DisplayFields::from_common_fields(&self.counts, &self.branch_diff, &self.upstream);
         self.display.statusline = Some(self.format_statusline());
 
         if let ItemKind::Worktree(ref mut wt_data) = self.kind
