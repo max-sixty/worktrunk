@@ -76,8 +76,8 @@ pub(super) struct RepoCache {
     pub(super) primary_remote_url: OnceCell<Option<String>>,
     /// Project identifier derived from remote URL
     pub(super) project_identifier: OnceCell<String>,
-    /// Base path for worktrees (repo root for normal repos, bare repo path for bare)
-    pub(super) worktree_base: OnceCell<PathBuf>,
+    /// Repository root path (main worktree for normal repos, bare directory for bare repos)
+    pub(super) repo_path: OnceCell<PathBuf>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
@@ -299,16 +299,18 @@ impl Repository {
         self.git_common_dir().join("wt-logs")
     }
 
-    /// Get the base directory where worktrees are created relative to.
+    /// The repository root path.
     ///
-    /// For normal repositories: the parent of .git (the repo root).
+    /// For normal repositories: the main worktree directory (parent of .git).
     /// For bare repositories: the bare repository directory itself.
     ///
-    /// This is the path that should be used when constructing worktree paths.
+    /// This is the base for template expansion (`{{ repo }}`, `{{ repo_path }}`).
+    /// NOT necessarily where established files live — use `primary_worktree()` for that.
+    ///
     /// Result is cached in the repository's shared cache (same for all clones).
-    pub fn worktree_base(&self) -> anyhow::Result<PathBuf> {
+    pub fn repo_path(&self) -> anyhow::Result<PathBuf> {
         self.cache
-            .worktree_base
+            .repo_path
             .get_or_try_init(|| {
                 let git_common_dir =
                     canonicalize(self.git_common_dir()).context("Failed to canonicalize path")?;
@@ -316,17 +318,10 @@ impl Repository {
                 if self.is_bare()? {
                     Ok(git_common_dir)
                 } else {
-                    git_common_dir
+                    Ok(git_common_dir
                         .parent()
-                        .ok_or_else(|| {
-                            anyhow::Error::from(GitError::Other {
-                                message: format!(
-                                    "Git directory has no parent: {}",
-                                    git_common_dir.display()
-                                ),
-                            })
-                        })
-                        .map(Path::to_path_buf)
+                        .context("Git directory has no parent")?
+                        .to_path_buf())
                 }
             })
             .cloned()

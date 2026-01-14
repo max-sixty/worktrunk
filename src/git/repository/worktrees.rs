@@ -47,6 +47,25 @@ impl Repository {
             .map(|wt| wt.path.clone()))
     }
 
+    /// The primary worktree — where established files (ignored files, configs) typically live.
+    ///
+    /// - Normal repos: the main worktree (repo root) — this is where you cloned and set things up
+    /// - Bare repos: the default branch's worktree — no main worktree exists
+    ///
+    /// Returns `None` for bare repos when no worktree has the default branch.
+    ///
+    /// For template var `{{ primary_worktree_path }}`.
+    pub fn primary_worktree(&self) -> anyhow::Result<Option<PathBuf>> {
+        if self.is_bare()? {
+            let Some(branch) = self.default_branch() else {
+                return Ok(None);
+            };
+            self.worktree_for_branch(&branch)
+        } else {
+            Ok(Some(self.repo_path()?))
+        }
+    }
+
     /// Find the worktree at a given path, returning its branch if known.
     ///
     /// Returns `Some((path, branch))` if a worktree exists at the path,
@@ -198,6 +217,6 @@ impl Repository {
         }
 
         // No worktrees - fall back to repo base (bare repo case)
-        self.worktree_base()
+        self.repo_path()
     }
 }

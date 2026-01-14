@@ -30,12 +30,6 @@ fn help_table_skin() -> MadSkin {
     skin
 }
 
-/// Render markdown in help text to ANSI without prose wrapping
-#[cfg(test)]
-fn render_markdown_in_help(help: &str) -> String {
-    render_markdown_in_help_with_width(help, None)
-}
-
 /// Render markdown in help text to ANSI with minimal styling (green headers only)
 ///
 /// If `width` is provided, prose text is wrapped to that width. Tables, code blocks,
@@ -384,6 +378,11 @@ fn colorize_status_symbols(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test helper: render markdown without prose wrapping
+    fn render_markdown_in_help(help: &str) -> String {
+        render_markdown_in_help_with_width(help, None)
+    }
 
     #[test]
     fn test_render_inline_formatting_strips_links() {

@@ -148,7 +148,7 @@ The `target/` directory is huge (often 1-10GB). Copying with reflink cuts first 
 
 ```toml
 [post-create]
-deps = "ln -sf {{ main_worktree_path }}/node_modules ."
+deps = "ln -sf {{ primary_worktree_path }}/node_modules ."
 ```
 
 ### Python

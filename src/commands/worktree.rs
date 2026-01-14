@@ -198,7 +198,7 @@ pub fn compute_worktree_path(
     branch: &str,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<PathBuf> {
-    let repo_root = repo.worktree_base()?;
+    let repo_root = repo.repo_path()?;
     let default_branch = repo.default_branch().unwrap_or_default();
     let is_bare = repo.is_bare()?;
 
@@ -220,7 +220,7 @@ pub fn compute_worktree_path(
         })?;
 
     let relative_path = config
-        .format_path(repo_name, branch)
+        .format_path(repo_name, branch, repo)
         .map_err(|e| anyhow::anyhow!("Failed to format worktree path: {e}"))?;
 
     Ok(repo_root.join(relative_path).normalize())
@@ -759,7 +759,7 @@ pub fn execute_switch(
 
             // Execute post-create commands
             if !no_verify {
-                let repo_root = repo.worktree_base()?;
+                let repo_root = repo.repo_path()?;
                 let ctx = CommandContext::new(
                     repo,
                     config,

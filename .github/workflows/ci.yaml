@@ -185,12 +185,14 @@ jobs:
         packages: zsh fish
         version: 1.0
 
-    - name: 📊 Run benchmarks
-      uses: clechasseur/rs-cargo@v4
+    - name: 💰 Rust repo cache
+      uses: actions/cache@v5
       with:
-        command: bench
-        # Run completion benchmarks (list has slow real_repo tests)
-        args: --bench completion -- --warm-up-time 0.3 --measurement-time 1
+        path: target/bench-repos
+        key: bench-repos-rust-${{ runner.os }}
+
+    - name: 📊 Run benchmarks
+      run: cargo bench
 
   code-coverage:
     runs-on: ubuntu-latest

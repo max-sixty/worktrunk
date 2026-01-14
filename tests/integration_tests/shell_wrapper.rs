@@ -37,6 +37,7 @@
 
 use crate::common::TestRepo;
 use crate::common::canonicalize;
+use crate::common::wait_for_file_content;
 use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
 use std::fs;
@@ -1769,22 +1770,31 @@ approved-commands = ["echo 'bash background'"]
         let wt_bin = get_cargo_bin("wt");
         let wrapper_script = generate_wrapper(&repo, "zsh");
 
+        // Use a marker file to avoid PTY output race conditions.
+        // PTY buffer flushing is unreliable on CI, so we write to a file and poll for it.
+        let marker_file = repo.root_path().join(".wrapper_test_marker");
+        let marker_path = marker_file.to_string_lossy().to_string();
+
         // Script that sources wrapper and checks if wt function exists
         let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
         let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
+        let marker_quoted = shell_quote(&marker_path);
         let script = format!(
             r#"
-            export WORKTRUNK_BIN={}
-            export WORKTRUNK_CONFIG_PATH={}
-            {}
-            # Check if wt wrapper function is defined
+            export WORKTRUNK_BIN={wt_bin}
+            export WORKTRUNK_CONFIG_PATH={config}
+            {wrapper}
+            # Check if wt wrapper function is defined and write result to marker file
             if (( $+functions[wt] )); then
-                echo "__WRAPPER_REGISTERED__"
+                echo "__WRAPPER_REGISTERED__" > {marker}
             else
-                echo "__NO_WRAPPER__"
+                echo "__NO_WRAPPER__" > {marker}
             fi
             "#,
-            wt_bin_quoted, config_quoted, wrapper_script
+            wt_bin = wt_bin_quoted,
+            config = config_quoted,
+            wrapper = wrapper_script,
+            marker = marker_quoted,
         );
 
         let final_script = format!("( {} ) 2>&1", script);
@@ -1795,14 +1805,18 @@ approved-commands = ["echo 'bash background'"]
             ("ZDOTDIR", "/dev/null"),
         ];
 
-        let (combined, exit_code) =
+        let (_combined, exit_code) =
             exec_in_pty_interactive("zsh", &final_script, repo.root_path(), &env_vars, &[]);
 
         assert_eq!(exit_code, 0);
+
+        // Poll for marker file instead of relying on PTY output
+        wait_for_file_content(&marker_file);
+        let result = std::fs::read_to_string(&marker_file).unwrap();
         assert!(
-            combined.contains("__WRAPPER_REGISTERED__"),
-            "Zsh wrapper function should be registered after sourcing.\nOutput:\n{}",
-            combined
+            result.contains("__WRAPPER_REGISTERED__"),
+            "Zsh wrapper function should be registered after sourcing.\nMarker file content:\n{}",
+            result
         );
     }
 

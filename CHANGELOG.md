@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.14.0
+
+### Improved
+
+- **`worktree_path_of_branch(branch)` template function**: Look up the filesystem path of any branch's worktree in hooks. Enables copying files between worktrees: `setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"`. Returns empty string if no worktree exists for the branch.
+- **Per-task timeout for `wt list`**: Configure timeout for git operations via `[list] timeout-ms` in user config. Shows timeout count in footer. Use `--full` to disable timeout for complete data collection.
+- **Atomic COW directory cloning on macOS**: `wt step copy-ignored` uses `clonefile()` syscall on APFS for O(1) directory cloning instead of file-by-file copying. ~12-15x faster for large directories like `target/`.
+- **Template variable renamed**: `main_worktree_path` → `primary_worktree_path` for clarity. Old name still works with deprecation warning.
+
+### Fixed
+
+- **`wt step copy-ignored` in bare repositories**: Fixed "this operation must be run in a work tree" error when using bare repo setups. Closes [#598](https://github.com/max-sixty/worktrunk/issues/598). (thanks @sbennett33 for reporting)
+
+### Internal
+
+- **Help system extraction**: Moved help and invocation utilities from main.rs to dedicated modules.
+- **`wt list` model refactor**: Split monolithic model.rs into modular directory structure.
+
 ## 0.13.4
 
 ### Fixed

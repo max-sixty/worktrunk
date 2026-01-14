@@ -249,9 +249,6 @@ fn test_copy_ignored_directory(mut repo: TestRepo) {
     fs::write(target_dir.join("debug").join("output"), "binary content").unwrap();
     fs::write(target_dir.join("CACHEDIR.TAG"), "cache tag").unwrap();
 
-    // Add a .git file inside target (should be skipped by copy_dir_recursive)
-    fs::write(target_dir.join(".git"), "gitdir: /some/path").unwrap();
-
     // Add target to .gitignore
     fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
 
@@ -276,12 +273,6 @@ fn test_copy_ignored_directory(mut repo: TestRepo) {
     assert_eq!(
         fs::read_to_string(copied_target.join("debug").join("output")).unwrap(),
         "binary content"
-    );
-
-    // Verify .git was NOT copied (skipped by copy_dir_recursive)
-    assert!(
-        !copied_target.join(".git").exists(),
-        ".git should NOT be copied"
     );
 }
 
@@ -537,21 +528,32 @@ fn test_copy_ignored_to_nonexistent_worktree(repo: TestRepo) {
 
 /// Test copy-ignored when default branch has no worktree
 ///
-/// When the default branch (main) has no worktree, copy-ignored should error clearly
-/// rather than failing cryptically with git ls-files errors.
+/// When the default branch (main) has no worktree, copy-ignored falls back to
+/// the main worktree (the original clone directory) for non-bare repos.
 #[rstest]
 fn test_copy_ignored_no_default_branch_worktree(mut repo: TestRepo) {
     // Create a feature worktree and switch main worktree to a different branch
     let feature_path = repo.add_worktree("feature");
     repo.switch_primary_to("develop"); // main worktree is now on 'develop', not 'main'
 
-    // Now 'main' has no worktree. Try to copy from default (main).
+    // Set up ignored file in the main worktree (which is now on 'develop')
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
+
+    // Copy from feature - should use main worktree as source (primary_worktree fallback)
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",
         &["copy-ignored"],
         Some(&feature_path),
     ));
+
+    // Verify file was copied from main worktree
+    assert!(
+        feature_path.join(".env").exists(),
+        ".env should be copied from main worktree"
+    );
 }
 
 /// Test copy-ignored in a bare repository setup
