@@ -44,6 +44,11 @@ pub use user::{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::Repository;
+
+    fn test_repo() -> Repository {
+        Repository::test_dummy()
+    }
 
     #[test]
     fn test_config_serialization() {
@@ -80,55 +85,62 @@ mod tests {
 
     #[test]
     fn test_format_worktree_path() {
+        let repo = test_repo();
         let config = WorktrunkConfig {
             worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
-            config.format_path("myproject", "feature-x").unwrap(),
+            config.format_path("myproject", "feature-x", &repo).unwrap(),
             "myproject.feature-x"
         );
     }
 
     #[test]
     fn test_format_worktree_path_custom_template() {
+        let repo = test_repo();
         let config = WorktrunkConfig {
             worktree_path: Some("{{ main_worktree }}-{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
-            config.format_path("myproject", "feature-x").unwrap(),
+            config.format_path("myproject", "feature-x", &repo).unwrap(),
             "myproject-feature-x"
         );
     }
 
     #[test]
     fn test_format_worktree_path_only_branch() {
+        let repo = test_repo();
         let config = WorktrunkConfig {
             worktree_path: Some(".worktrees/{{ main_worktree }}/{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
-            config.format_path("myproject", "feature-x").unwrap(),
+            config.format_path("myproject", "feature-x", &repo).unwrap(),
             ".worktrees/myproject/feature-x"
         );
     }
 
     #[test]
     fn test_format_worktree_path_with_slashes() {
+        let repo = test_repo();
         // Use {{ branch | sanitize }} to replace slashes with dashes
         let config = WorktrunkConfig {
             worktree_path: Some("{{ main_worktree }}.{{ branch | sanitize }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
-            config.format_path("myproject", "feature/foo").unwrap(),
+            config
+                .format_path("myproject", "feature/foo", &repo)
+                .unwrap(),
             "myproject.feature-foo"
         );
     }
 
     #[test]
     fn test_format_worktree_path_with_multiple_slashes() {
+        let repo = test_repo();
         let config = WorktrunkConfig {
             worktree_path: Some(
                 ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
@@ -136,13 +148,16 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            config.format_path("myproject", "feature/sub/task").unwrap(),
+            config
+                .format_path("myproject", "feature/sub/task", &repo)
+                .unwrap(),
             ".worktrees/myproject/feature-sub-task"
         );
     }
 
     #[test]
     fn test_format_worktree_path_with_backslashes() {
+        let repo = test_repo();
         // Windows-style path separators should also be sanitized
         let config = WorktrunkConfig {
             worktree_path: Some(
@@ -151,20 +166,25 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            config.format_path("myproject", "feature\\foo").unwrap(),
+            config
+                .format_path("myproject", "feature\\foo", &repo)
+                .unwrap(),
             ".worktrees/myproject/feature-foo"
         );
     }
 
     #[test]
     fn test_format_worktree_path_raw_branch() {
+        let repo = test_repo();
         // {{ branch }} without filter gives raw branch name
         let config = WorktrunkConfig {
             worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
-            config.format_path("myproject", "feature/foo").unwrap(),
+            config
+                .format_path("myproject", "feature/foo", &repo)
+                .unwrap(),
             "myproject.feature/foo"
         );
     }
@@ -556,7 +576,13 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let mut vars = HashMap::new();
         vars.insert("main_worktree", "myrepo");
         vars.insert("branch", "feature-x");
-        let result = expand_template("../{{ main_worktree }}.{{ branch }}", &vars, true).unwrap();
+        let result = expand_template(
+            "../{{ main_worktree }}.{{ branch }}",
+            &vars,
+            true,
+            &test_repo(),
+        )
+        .unwrap();
         assert_eq!(result, "../myrepo.feature-x");
     }
 
@@ -569,8 +595,13 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let mut vars = HashMap::new();
         vars.insert("main_worktree", "myrepo");
         vars.insert("branch", "feature/foo");
-        let result =
-            expand_template("{{ main_worktree }}/{{ branch | sanitize }}", &vars, false).unwrap();
+        let result = expand_template(
+            "{{ main_worktree }}/{{ branch | sanitize }}",
+            &vars,
+            false,
+            &test_repo(),
+        )
+        .unwrap();
         assert_eq!(result, "myrepo/feature-foo");
 
         let mut vars = HashMap::new();
@@ -580,6 +611,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
             ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}",
             &vars,
             false,
+            &test_repo(),
         )
         .unwrap();
         assert_eq!(result, ".worktrees/myrepo/feat-bar");
@@ -597,6 +629,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
             "{{ repo_root }}/target -> {{ worktree }}/target",
             &vars,
             true,
+            &test_repo(),
         )
         .unwrap();
         assert_eq!(result, "/path/to/repo/target -> /path/to/worktree/target");

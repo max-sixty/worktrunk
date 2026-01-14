@@ -8,6 +8,11 @@
 
 use std::collections::HashMap;
 use worktrunk::config::expand_template;
+use worktrunk::git::Repository;
+
+fn test_repo() -> Repository {
+    Repository::test_dummy()
+}
 
 /// Helper to compute hash_port for a string.
 ///
@@ -32,20 +37,21 @@ fn test_doc_basic_variables() {
     vars.insert("default_branch", "main");
 
     // Each variable substitutes correctly
+    let repo = test_repo();
     assert_eq!(
-        expand_template("{{ repo }}", &vars, false).unwrap(),
+        expand_template("{{ repo }}", &vars, false, &repo).unwrap(),
         "myproject"
     );
     assert_eq!(
-        expand_template("{{ branch }}", &vars, false).unwrap(),
+        expand_template("{{ branch }}", &vars, false, &repo).unwrap(),
         "feature/auth"
     );
     assert_eq!(
-        expand_template("{{ worktree }}", &vars, false).unwrap(),
+        expand_template("{{ worktree }}", &vars, false, &repo).unwrap(),
         "/home/user/myproject.feature-auth"
     );
     assert_eq!(
-        expand_template("{{ default_branch }}", &vars, false).unwrap(),
+        expand_template("{{ default_branch }}", &vars, false, &repo).unwrap(),
         "main"
     );
 }
@@ -58,18 +64,19 @@ fn test_doc_basic_variables() {
 #[test]
 fn test_doc_sanitize_filter() {
     let mut vars = HashMap::new();
+    let repo = test_repo();
 
     // From docs: {{ branch | sanitize }} replaces / and \ with -
     vars.insert("branch", "feature/foo");
     assert_eq!(
-        expand_template("{{ branch | sanitize }}", &vars, false).unwrap(),
+        expand_template("{{ branch | sanitize }}", &vars, false, &repo).unwrap(),
         "feature-foo",
         "sanitize should replace / with -"
     );
 
     vars.insert("branch", "user\\task");
     assert_eq!(
-        expand_template("{{ branch | sanitize }}", &vars, false).unwrap(),
+        expand_template("{{ branch | sanitize }}", &vars, false, &repo).unwrap(),
         "user-task",
         "sanitize should replace \\ with -"
     );
@@ -77,7 +84,7 @@ fn test_doc_sanitize_filter() {
     // Nested paths
     vars.insert("branch", "user/feature/task");
     assert_eq!(
-        expand_template("{{ branch | sanitize }}", &vars, false).unwrap(),
+        expand_template("{{ branch | sanitize }}", &vars, false, &repo).unwrap(),
         "user-feature-task",
         "sanitize should handle multiple slashes"
     );
@@ -91,11 +98,12 @@ fn test_doc_sanitize_filter() {
 #[test]
 fn test_doc_sanitize_db_filter() {
     let mut vars = HashMap::new();
+    let repo = test_repo();
 
     // From docs: {{ branch | sanitize_db }} transforms to database-safe identifier
     // Output includes a 3-character hash suffix for uniqueness
     vars.insert("branch", "feature/auth-oauth2");
-    let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    let result = expand_template("{{ branch | sanitize_db }}", &vars, false, &repo).unwrap();
     assert!(
         result.starts_with("feature_auth_oauth2_"),
         "sanitize_db should replace non-alphanumeric with _ and lowercase, got: {result}"
@@ -103,7 +111,7 @@ fn test_doc_sanitize_db_filter() {
 
     // Leading digits get underscore prefix
     vars.insert("branch", "123-bug-fix");
-    let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    let result = expand_template("{{ branch | sanitize_db }}", &vars, false, &repo).unwrap();
     assert!(
         result.starts_with("_123_bug_fix_"),
         "sanitize_db should prefix leading digits with _, got: {result}"
@@ -111,7 +119,7 @@ fn test_doc_sanitize_db_filter() {
 
     // Uppercase conversion
     vars.insert("branch", "UPPERCASE.Branch");
-    let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    let result = expand_template("{{ branch | sanitize_db }}", &vars, false, &repo).unwrap();
     assert!(
         result.starts_with("uppercase_branch_"),
         "sanitize_db should convert to lowercase, got: {result}"
@@ -119,7 +127,7 @@ fn test_doc_sanitize_db_filter() {
 
     // Consecutive underscores collapsed
     vars.insert("branch", "a--b//c");
-    let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    let result = expand_template("{{ branch | sanitize_db }}", &vars, false, &repo).unwrap();
     assert!(
         result.starts_with("a_b_c_"),
         "sanitize_db should collapse consecutive underscores, got: {result}"
@@ -127,9 +135,9 @@ fn test_doc_sanitize_db_filter() {
 
     // Different inputs that would otherwise collide get different suffixes
     vars.insert("branch", "a-b");
-    let result1 = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    let result1 = expand_template("{{ branch | sanitize_db }}", &vars, false, &repo).unwrap();
     vars.insert("branch", "a_b");
-    let result2 = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    let result2 = expand_template("{{ branch | sanitize_db }}", &vars, false, &repo).unwrap();
     assert_ne!(
         result1, result2,
         "a-b and a_b should produce different outputs"
@@ -143,7 +151,7 @@ fn test_doc_sanitize_db_truncation() {
     // Truncates to 63 characters (PostgreSQL limit)
     let long_branch = "a".repeat(100);
     vars.insert("branch", long_branch.as_str());
-    let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    let result = expand_template("{{ branch | sanitize_db }}", &vars, false, &test_repo()).unwrap();
     assert_eq!(
         result.len(),
         63,
@@ -160,8 +168,9 @@ fn test_doc_sanitize_db_truncation() {
 fn test_doc_hash_port_filter() {
     let mut vars = HashMap::new();
     vars.insert("branch", "feature-foo");
+    let repo = test_repo();
 
-    let result = expand_template("{{ branch | hash_port }}", &vars, false).unwrap();
+    let result = expand_template("{{ branch | hash_port }}", &vars, false, &repo).unwrap();
     let port: u16 = result.parse().expect("hash_port should produce a number");
 
     assert!(
@@ -170,7 +179,7 @@ fn test_doc_hash_port_filter() {
     );
 
     // Deterministic
-    let result2 = expand_template("{{ branch | hash_port }}", &vars, false).unwrap();
+    let result2 = expand_template("{{ branch | hash_port }}", &vars, false, &repo).unwrap();
     assert_eq!(result, result2, "hash_port should be deterministic");
 }
 
@@ -189,9 +198,11 @@ fn test_doc_hash_port_concatenation_precedence() {
 
     let mut vars = HashMap::new();
     vars.insert("branch", "feature");
+    let repo = test_repo();
 
     // With parentheses (correct, as documented)
-    let with_parens = expand_template("{{ ('db-' ~ branch) | hash_port }}", &vars, false).unwrap();
+    let with_parens =
+        expand_template("{{ ('db-' ~ branch) | hash_port }}", &vars, false, &repo).unwrap();
     let port_with_parens: u16 = with_parens.parse().unwrap();
 
     // Verify it hashes the concatenated string
@@ -202,7 +213,8 @@ fn test_doc_hash_port_concatenation_precedence() {
     );
 
     // Without parentheses (what the bug was) - this hashes just "branch" and prepends "db-"
-    let without_parens = expand_template("{{ 'db-' ~ branch | hash_port }}", &vars, false).unwrap();
+    let without_parens =
+        expand_template("{{ 'db-' ~ branch | hash_port }}", &vars, false, &repo).unwrap();
 
     // The result should be different because of precedence
     // Without parens: 'db-' ~ (branch | hash_port) = 'db-' ~ hash("feature")
@@ -229,7 +241,13 @@ fn test_doc_hash_port_repo_branch_concatenation() {
     vars.insert("repo", "myapp");
     vars.insert("branch", "feature");
 
-    let result = expand_template("{{ (repo ~ '-' ~ branch) | hash_port }}", &vars, false).unwrap();
+    let result = expand_template(
+        "{{ (repo ~ '-' ~ branch) | hash_port }}",
+        &vars,
+        false,
+        &test_repo(),
+    )
+    .unwrap();
     let port: u16 = result.parse().unwrap();
 
     // Should hash the full concatenated string
@@ -259,7 +277,7 @@ fn test_doc_example_docker_postgres() {
   -p {{ ('db-' ~ branch) | hash_port }}:5432 \
   postgres:16"#;
 
-    let result = expand_template(template, &vars, false).unwrap();
+    let result = expand_template(template, &vars, false, &test_repo()).unwrap();
 
     // Check the container name uses sanitized branch
     assert!(
@@ -286,7 +304,7 @@ fn test_doc_example_database_url() {
 
     let template = "DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ repo }}";
 
-    let result = expand_template(template, &vars, false).unwrap();
+    let result = expand_template(template, &vars, false, &test_repo()).unwrap();
 
     let expected_port = hash_port("db-feature");
     assert_eq!(
@@ -305,7 +323,7 @@ fn test_doc_example_dev_server() {
 
     let template = "npm run dev -- --host {{ branch }}.lvh.me --port {{ branch | hash_port }}";
 
-    let result = expand_template(template, &vars, false).unwrap();
+    let result = expand_template(template, &vars, false, &test_repo()).unwrap();
 
     let expected_port = hash_port("feature-auth");
     assert_eq!(
@@ -325,7 +343,7 @@ fn test_doc_example_worktree_path_sanitize() {
 
     let template = "{{ main_worktree }}.{{ branch | sanitize }}";
 
-    let result = expand_template(template, &vars, false).unwrap();
+    let result = expand_template(template, &vars, false, &test_repo()).unwrap();
     assert_eq!(result, "/home/user/project.feature-user-auth");
 }
 
@@ -338,7 +356,7 @@ fn test_doc_hash_port_empty_string() {
     let mut vars = HashMap::new();
     vars.insert("branch", "");
 
-    let result = expand_template("{{ branch | hash_port }}", &vars, false).unwrap();
+    let result = expand_template("{{ branch | hash_port }}", &vars, false, &test_repo()).unwrap();
     let port: u16 = result.parse().unwrap();
 
     assert!(
@@ -352,7 +370,7 @@ fn test_doc_sanitize_no_slashes() {
     let mut vars = HashMap::new();
     vars.insert("branch", "simple-branch");
 
-    let result = expand_template("{{ branch | sanitize }}", &vars, false).unwrap();
+    let result = expand_template("{{ branch | sanitize }}", &vars, false, &test_repo()).unwrap();
     assert_eq!(
         result, "simple-branch",
         "sanitize should be no-op without slashes"
@@ -365,10 +383,33 @@ fn test_doc_combined_filters() {
     let mut vars = HashMap::new();
     vars.insert("branch", "feature/auth");
 
-    let result = expand_template("{{ branch | sanitize | hash_port }}", &vars, false).unwrap();
+    let result = expand_template(
+        "{{ branch | sanitize | hash_port }}",
+        &vars,
+        false,
+        &test_repo(),
+    )
+    .unwrap();
     let port: u16 = result.parse().unwrap();
 
     // Should hash the sanitized version
     let expected = hash_port("feature-auth");
     assert_eq!(port, expected);
+}
+
+// =============================================================================
+// worktree_path Function
+// =============================================================================
+
+#[test]
+fn test_worktree_path_function_registered() {
+    // Test that worktree_path function is callable and returns empty for nonexistent branch
+    let vars: HashMap<&str, &str> = HashMap::new();
+    let result = expand_template(
+        "{{ worktree_path('nonexistent') }}",
+        &vars,
+        false,
+        &test_repo(),
+    );
+    assert_eq!(result.unwrap(), "");
 }

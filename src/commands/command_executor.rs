@@ -154,7 +154,7 @@ fn expand_commands(
     let mut result = Vec::new();
 
     for cmd in commands {
-        let expanded_str = expand_template(&cmd.template, &vars, true).map_err(|e| {
+        let expanded_str = expand_template(&cmd.template, &vars, true, ctx.repo).map_err(|e| {
             anyhow::anyhow!(
                 "Failed to expand command template '{}': {}",
                 cmd.template,

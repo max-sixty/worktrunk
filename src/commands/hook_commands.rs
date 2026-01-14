@@ -626,6 +626,6 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
         .collect();
 
     // Use the standard template expansion (shell-escaped)
-    worktrunk::config::expand_template(template, &vars, true)
+    worktrunk::config::expand_template(template, &vars, true, ctx.repo)
         .unwrap_or_else(|_| template.to_string())
 }

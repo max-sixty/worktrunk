@@ -150,7 +150,7 @@ Hooks can use template variables that expand at runtime:
 
 See [Designing effective hooks](#designing-effective-hooks) for `main_worktree_path` patterns.
 
-### Filters
+### Worktrunk Filters
 
 Templates support Jinja2 filters for transforming values:
 
@@ -172,6 +172,22 @@ Hash any string, including concatenations:
 ```toml
 # Unique port per repo+branch combination
 dev = "npm run dev --port {{ (repo ~ '-' ~ branch) | hash_port }}"
+```
+
+### Worktrunk Functions
+
+Templates also support functions for dynamic lookups:
+
+| Function | Example | Description |
+|----------|---------|-------------|
+| `worktree_path(branch)` | `{{ worktree_path("main") }}` | Look up the path of a branch's worktree |
+
+The `worktree_path` function returns the filesystem path of a worktree given a branch name, or an empty string if no worktree exists for that branch. This is useful for referencing files in other worktrees:
+
+```toml
+[post-create]
+# Copy config from main worktree
+setup = "cp {{ worktree_path('main') }}/config.local {{ worktree_path }}"
 ```
 
 ### JSON context

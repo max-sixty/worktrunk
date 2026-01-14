@@ -6,25 +6,12 @@
 //!
 //! All templates support Jinja2 syntax including filters, conditionals, and loops.
 //!
-//! # Custom Filters
-//!
-//! - `sanitize` — Replace `/` and `\` with `-` for filesystem-safe names
-//!   ```text
-//!   {{ branch | sanitize }} → feature-foo
-//!   ```
-//!
-//! - `sanitize_db` — Transform to database-safe identifier (`[a-z0-9_]`, max 63 chars)
-//!   ```text
-//!   {{ branch | sanitize_db }} → feature_auth_oauth2
-//!   ```
-//!
-//! - `hash_port` — Hash a string to a deterministic port number (10000-19999)
-//!   ```text
-//!   {{ branch | hash_port }}              → 12472
-//!   {{ (repo ~ "-" ~ branch) | hash_port }} → 15839
-//!   ```
+//! See `wt hook --help` for available filters and functions.
 
 use minijinja::{Environment, Value};
+
+use crate::git::Repository;
+use crate::path::to_posix_path;
 
 /// Known template variables available in hook commands.
 ///
@@ -178,35 +165,21 @@ fn short_hash(s: &str) -> String {
 /// * `vars` - Variables to substitute
 /// * `shell_escape` - If true, shell-escape all values for safe command execution.
 ///   If false, substitute values literally (for filesystem paths).
+/// * `repo` - Repository for looking up worktree paths
 ///
 /// # Filters
 /// - `sanitize` — Replace `/` and `\` with `-` for filesystem-safe paths
 /// - `sanitize_db` — Transform to database-safe identifier (`[a-z0-9_]`, max 63 chars)
 /// - `hash_port` — Hash to deterministic port number (10000-19999)
 ///
-/// # Examples
-/// ```
-/// use worktrunk::config::expand_template;
-/// use std::collections::HashMap;
-///
-/// // Raw branch name
-/// let mut vars = HashMap::new();
-/// vars.insert("branch", "feature/foo");
-/// vars.insert("repo", "myrepo");
-/// let cmd = expand_template("echo {{ branch }} in {{ repo }}", &vars, true).unwrap();
-/// assert_eq!(cmd, "echo feature/foo in myrepo");
-///
-/// // Sanitized branch name for filesystem paths
-/// let mut vars = HashMap::new();
-/// vars.insert("branch", "feature/foo");
-/// vars.insert("main_worktree", "myrepo");
-/// let path = expand_template("{{ main_worktree }}.{{ branch | sanitize }}", &vars, false).unwrap();
-/// assert_eq!(path, "myrepo.feature-foo");
-/// ```
+/// # Functions
+/// - `worktree_path(branch)` — Look up the filesystem path of a branch's worktree
+///   Returns empty string if branch has no worktree.
 pub fn expand_template(
     template: &str,
     vars: &HashMap<&str, &str>,
     shell_escape: bool,
+    repo: &Repository,
 ) -> Result<String, String> {
     use shell_escape::escape;
     use std::borrow::Cow;
@@ -238,6 +211,17 @@ pub fn expand_template(
     });
     env.add_filter("hash_port", |value: String| string_to_port(&value));
 
+    // Register worktree_path function for looking up branch worktree paths
+    let repo_clone = repo.clone();
+    env.add_function("worktree_path", move |branch: String| -> String {
+        repo_clone
+            .worktree_for_branch(&branch)
+            .ok()
+            .flatten()
+            .map(|p| to_posix_path(&p.to_string_lossy()))
+            .unwrap_or_default()
+    });
+
     let tmpl = env
         .template_from_str(template)
         .map_err(|e| format!("Template syntax error: {}", e))?;
@@ -249,6 +233,10 @@ pub fn expand_template(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_repo() -> Repository {
+        Repository::test_dummy()
+    }
 
     #[test]
     fn test_sanitize_branch_name() {
@@ -381,157 +369,165 @@ mod tests {
 
     #[test]
     fn test_expand_template_basic() {
+        let repo = test_repo();
+
         // Single variable
         let mut vars = HashMap::new();
         vars.insert("name", "world");
         assert_eq!(
-            expand_template("Hello {{ name }}", &vars, false).unwrap(),
+            expand_template("Hello {{ name }}", &vars, false, &repo).unwrap(),
             "Hello world"
         );
 
         // Multiple variables
         vars.insert("repo", "myrepo");
         assert_eq!(
-            expand_template("{{ repo }}/{{ name }}", &vars, false).unwrap(),
+            expand_template("{{ repo }}/{{ name }}", &vars, false, &repo).unwrap(),
             "myrepo/world"
         );
 
         // Empty/static cases
         let empty: HashMap<&str, &str> = HashMap::new();
-        assert_eq!(expand_template("", &empty, false).unwrap(), "");
+        assert_eq!(expand_template("", &empty, false, &repo).unwrap(), "");
         assert_eq!(
-            expand_template("static text", &empty, false).unwrap(),
+            expand_template("static text", &empty, false, &repo).unwrap(),
             "static text"
         );
         assert_eq!(
-            expand_template("no {{ variables }} here", &empty, false).unwrap(),
+            expand_template("no {{ variables }} here", &empty, false, &repo).unwrap(),
             "no  here"
         );
     }
 
     #[test]
     fn test_expand_template_shell_escape() {
+        let repo = test_repo();
         let mut vars = HashMap::new();
         vars.insert("path", "my path");
-        let expanded = expand_template("cd {{ path }}", &vars, true).unwrap();
+        let expanded = expand_template("cd {{ path }}", &vars, true, &repo).unwrap();
         assert!(expanded.contains("'my path'") || expanded.contains("my\\ path"));
 
         // Command injection prevention
         vars.insert("arg", "test;rm -rf");
-        let expanded = expand_template("echo {{ arg }}", &vars, true).unwrap();
+        let expanded = expand_template("echo {{ arg }}", &vars, true, &repo).unwrap();
         assert!(!expanded.contains(";rm") || expanded.contains("'"));
 
         // No escape for literal mode
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch }}", &vars, false).unwrap(),
+            expand_template("{{ branch }}", &vars, false, &repo).unwrap(),
             "feature/foo"
         );
     }
 
     #[test]
     fn test_expand_template_errors() {
+        let repo = test_repo();
         let vars = HashMap::new();
         assert!(
-            expand_template("{{ unclosed", &vars, false)
+            expand_template("{{ unclosed", &vars, false, &repo)
                 .unwrap_err()
                 .contains("syntax error")
         );
-        assert!(expand_template("{{ 1 + }}", &vars, false).is_err());
+        assert!(expand_template("{{ 1 + }}", &vars, false, &repo).is_err());
     }
 
     #[test]
     fn test_expand_template_jinja_features() {
+        let repo = test_repo();
         let mut vars = HashMap::new();
         vars.insert("debug", "true");
         assert_eq!(
-            expand_template("{% if debug %}DEBUG{% endif %}", &vars, false).unwrap(),
+            expand_template("{% if debug %}DEBUG{% endif %}", &vars, false, &repo).unwrap(),
             "DEBUG"
         );
 
         vars.insert("debug", "");
         assert_eq!(
-            expand_template("{% if debug %}DEBUG{% endif %}", &vars, false).unwrap(),
+            expand_template("{% if debug %}DEBUG{% endif %}", &vars, false, &repo).unwrap(),
             ""
         );
 
         let empty: HashMap<&str, &str> = HashMap::new();
         assert_eq!(
-            expand_template("{{ missing | default('fallback') }}", &empty, false).unwrap(),
+            expand_template("{{ missing | default('fallback') }}", &empty, false, &repo).unwrap(),
             "fallback"
         );
 
         vars.insert("name", "hello");
         assert_eq!(
-            expand_template("{{ name | upper }}", &vars, false).unwrap(),
+            expand_template("{{ name | upper }}", &vars, false, &repo).unwrap(),
             "HELLO"
         );
     }
 
     #[test]
     fn test_expand_template_sanitize_filter() {
+        let repo = test_repo();
         let mut vars = HashMap::new();
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch | sanitize }}", &vars, false).unwrap(),
+            expand_template("{{ branch | sanitize }}", &vars, false, &repo).unwrap(),
             "feature-foo"
         );
 
         // Backslashes are also sanitized
         vars.insert("branch", "feature\\bar");
         assert_eq!(
-            expand_template("{{ branch | sanitize }}", &vars, false).unwrap(),
+            expand_template("{{ branch | sanitize }}", &vars, false, &repo).unwrap(),
             "feature-bar"
         );
 
         // Multiple slashes
         vars.insert("branch", "user/feature/task");
         assert_eq!(
-            expand_template("{{ branch | sanitize }}", &vars, false).unwrap(),
+            expand_template("{{ branch | sanitize }}", &vars, false, &repo).unwrap(),
             "user-feature-task"
         );
 
         // Raw branch is unchanged
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch }}", &vars, false).unwrap(),
+            expand_template("{{ branch }}", &vars, false, &repo).unwrap(),
             "feature/foo"
         );
     }
 
     #[test]
     fn test_expand_template_sanitize_db_filter() {
+        let repo = test_repo();
         let mut vars = HashMap::new();
 
         // Basic transformation (with hash suffix)
         vars.insert("branch", "feature/auth-oauth2");
-        let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+        let result = expand_template("{{ branch | sanitize_db }}", &vars, false, &repo).unwrap();
         assert!(result.starts_with("feature_auth_oauth2_"), "got: {result}");
 
         // Leading digit gets underscore prefix
         vars.insert("branch", "123-bug-fix");
-        let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+        let result = expand_template("{{ branch | sanitize_db }}", &vars, false, &repo).unwrap();
         assert!(result.starts_with("_123_bug_fix_"), "got: {result}");
 
         // Uppercase conversion
         vars.insert("branch", "UPPERCASE.Branch");
-        let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+        let result = expand_template("{{ branch | sanitize_db }}", &vars, false, &repo).unwrap();
         assert!(result.starts_with("uppercase_branch_"), "got: {result}");
 
         // Raw branch is unchanged
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch }}", &vars, false).unwrap(),
+            expand_template("{{ branch }}", &vars, false, &repo).unwrap(),
             "feature/foo"
         );
     }
 
     #[test]
     fn test_expand_template_trailing_newline() {
+        let repo = test_repo();
         let mut vars = HashMap::new();
         vars.insert("cmd", "echo hello");
         assert!(
-            expand_template("{{ cmd }}\n", &vars, true)
+            expand_template("{{ cmd }}\n", &vars, true, &repo)
                 .unwrap()
                 .ends_with('\n')
         );
@@ -549,19 +545,32 @@ mod tests {
 
     #[test]
     fn test_hash_port_filter() {
+        let repo = test_repo();
         let mut vars = HashMap::new();
         vars.insert("branch", "feature-foo");
         vars.insert("repo", "myrepo");
 
         // Filter produces a number in range
-        let result = expand_template("{{ branch | hash_port }}", &vars, false).unwrap();
+        let result = expand_template("{{ branch | hash_port }}", &vars, false, &repo).unwrap();
         let port: u16 = result.parse().expect("should be a number");
         assert!((10000..20000).contains(&port));
 
         // Concatenation produces different (but deterministic) result
-        let r1 = expand_template("{{ (repo ~ '-' ~ branch) | hash_port }}", &vars, false).unwrap();
+        let r1 = expand_template(
+            "{{ (repo ~ '-' ~ branch) | hash_port }}",
+            &vars,
+            false,
+            &repo,
+        )
+        .unwrap();
         let r1_port: u16 = r1.parse().expect("should be a number");
-        let r2 = expand_template("{{ (repo ~ '-' ~ branch) | hash_port }}", &vars, false).unwrap();
+        let r2 = expand_template(
+            "{{ (repo ~ '-' ~ branch) | hash_port }}",
+            &vars,
+            false,
+            &repo,
+        )
+        .unwrap();
         let r2_port: u16 = r2.parse().expect("should be a number");
 
         assert!((10000..20000).contains(&r1_port));

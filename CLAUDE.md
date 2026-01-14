@@ -104,12 +104,38 @@ When changing:
 - CLI flags or their defaults
 - Error conditions or messages
 
-Ask: "Does `--help` still describe what the code does?" If not, update `src/cli.rs` first.
+Ask: "Does `--help` still describe what the code does?" If not, update `src/cli/mod.rs` first.
 
-After modifying `cli.rs`, sync the doc pages:
+### Auto-generated docs
+
+Documentation has three categories:
+
+1. **Command pages** (config, hook, list, merge, remove, select, step, switch):
+   ```
+   src/cli/mod.rs (PRIMARY SOURCE)
+       ↓ test_command_pages_are_in_sync
+   docs/content/{command}.md
+       ↓ test_skill_files_are_in_sync_with_docs
+   .claude-plugin/skills/worktrunk/reference/{command}.md
+   ```
+   Edit `src/cli/mod.rs` (`after_long_help` attributes), never the docs directly.
+
+2. **Non-command docs** (claude-code, faq, llm-commits, tips-patterns, worktrunk):
+   ```
+   docs/content/*.md (PRIMARY SOURCE)
+       ↓ test_skill_files_are_in_sync_with_docs
+   .claude-plugin/skills/worktrunk/reference/*.md
+   ```
+   Edit the docs file directly. Skill reference is auto-synced.
+
+3. **Skill-only files** (shell-integration.md, troubleshooting.md):
+   Edit `.claude-plugin/skills/worktrunk/reference/` directly — no docs equivalent.
+
+After any doc changes, run tests to sync:
 
 ```bash
 cargo test --test integration test_command_pages_are_in_sync
+cargo test --test integration test_skill_files_are_in_sync_with_docs
 ```
 
 ## Data Safety

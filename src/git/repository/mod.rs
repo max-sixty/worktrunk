@@ -518,6 +518,20 @@ impl Repository {
             .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
+
+    /// Create a dummy Repository for tests that don't actually call git.
+    ///
+    /// This is useful for testing code that takes `&Repository` but doesn't
+    /// actually invoke repository methods. If a test using this dummy does
+    /// call git methods, they will fail with appropriate errors.
+    #[doc(hidden)]
+    pub fn test_dummy() -> Self {
+        Self {
+            discovery_path: PathBuf::from("/test"),
+            git_common_dir: PathBuf::from("/test/.git"),
+            cache: Arc::new(RepoCache::default()),
+        }
+    }
 }
 
 #[cfg(test)]
