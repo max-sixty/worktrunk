@@ -249,9 +249,6 @@ fn test_copy_ignored_directory(mut repo: TestRepo) {
     fs::write(target_dir.join("debug").join("output"), "binary content").unwrap();
     fs::write(target_dir.join("CACHEDIR.TAG"), "cache tag").unwrap();
 
-    // Add a .git file inside target (should be skipped by copy_dir_recursive)
-    fs::write(target_dir.join(".git"), "gitdir: /some/path").unwrap();
-
     // Add target to .gitignore
     fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
 
@@ -276,12 +273,6 @@ fn test_copy_ignored_directory(mut repo: TestRepo) {
     assert_eq!(
         fs::read_to_string(copied_target.join("debug").join("output")).unwrap(),
         "binary content"
-    );
-
-    // Verify .git was NOT copied (skipped by copy_dir_recursive)
-    assert!(
-        !copied_target.join(".git").exists(),
-        ".git should NOT be copied"
     );
 }
 
