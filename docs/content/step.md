@@ -37,42 +37,6 @@ wt step push
 - `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
 
-## Options
-
-### `--stage`
-
-Controls what to stage before committing. Available for `commit` and `squash`:
-
-| Value | Behavior |
-|-------|----------|
-| `all` | Stage all changes including untracked files (default) |
-| `tracked` | Stage only modified tracked files |
-| `none` | Don't stage anything, commit only what's already staged |
-
-```bash
-wt step commit --stage=tracked
-wt step squash --stage=none
-```
-
-Configure the default in user config:
-
-```toml
-[commit]
-stage = "tracked"
-```
-
-### `--show-prompt`
-
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
-
-```bash
-# Inspect the rendered prompt
-wt step commit --show-prompt | less
-
-# Pipe to a different LLM
-wt step commit --show-prompt | llm -m gpt-5-nano
-```
-
 ## See also
 
 - [`wt merge`](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
@@ -107,6 +71,177 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Show debug info (-v), or also write diagnostic report (-vv)
 {% end %}
+
+## wt step commit
+
+Stages all changes (including untracked files) and commits with an [LLM-generated message](@/llm-commits.md).
+
+### Options
+
+#### `--stage`
+
+Controls what to stage before committing:
+
+| Value | Behavior |
+|-------|----------|
+| `all` | Stage all changes including untracked files (default) |
+| `tracked` | Stage only modified tracked files |
+| `none` | Don't stage anything, commit only what's already staged |
+
+```bash
+wt step commit --stage=tracked
+```
+
+Configure the default in user config:
+
+```toml
+[commit]
+stage = "tracked"
+```
+
+#### `--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+```bash
+# Inspect the rendered prompt
+wt step commit --show-prompt | less
+
+# Pipe to a different LLM
+wt step commit --show-prompt | llm -m gpt-5-nano
+```
+
+### Command reference
+
+{% terminal() %}
+wt step commit - Commit changes with LLM commit message
+
+Stages working tree changes and commits with an LLM-generated message.
+
+Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+
+      <b><span class=c>--no-verify</span></b>
+          Skip hooks
+
+      <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
+          What to stage before committing [default: all]
+
+          Possible values:
+          - <b><span class=c>all</span></b>:     Stage everything: untracked files + unstaged tracked
+            changes
+          - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
+          - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
+
+      <b><span class=c>--show-prompt</span></b>
+          Show prompt without running LLM
+
+          Outputs the rendered prompt to stdout for debugging or manual piping.
+
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
+{% end %}
+
+
+## wt step squash
+
+Stages all changes (including untracked files), then squashes all commits since diverging from the target branch into a single commit with an [LLM-generated message](@/llm-commits.md).
+
+### Options
+
+#### `--stage`
+
+Controls what to stage before squashing:
+
+| Value | Behavior |
+|-------|----------|
+| `all` | Stage all changes including untracked files (default) |
+| `tracked` | Stage only modified tracked files |
+| `none` | Don't stage anything, squash only committed changes |
+
+```bash
+wt step squash --stage=none
+```
+
+Configure the default in user config:
+
+```toml
+[commit]
+stage = "tracked"
+```
+
+#### `--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+```bash
+wt step squash --show-prompt | less
+```
+
+### Command reference
+
+{% terminal() %}
+wt step squash - Squash commits since branching
+
+Stages working tree changes, squashes all commits since diverging from target
+into one, generates message with LLM.
+
+Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span> <span class=c>[TARGET]</span>
+
+<b><span class=g>Arguments:</span></b>
+  <span class=c>[TARGET]</span>
+          Target branch
+
+          Defaults to default branch.
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+
+      <b><span class=c>--no-verify</span></b>
+          Skip hooks
+
+      <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
+          What to stage before committing [default: all]
+
+          Possible values:
+          - <b><span class=c>all</span></b>:     Stage everything: untracked files + unstaged tracked
+            changes
+          - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
+          - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
+
+      <b><span class=c>--show-prompt</span></b>
+          Show prompt without running LLM
+
+          Outputs the rendered prompt to stdout for debugging or manual piping.
+
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
+{% end %}
+
 
 ## wt step copy-ignored
 

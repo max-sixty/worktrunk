@@ -6,6 +6,45 @@ pub enum StepCommand {
     /// Commit changes with LLM commit message
     ///
     /// Stages working tree changes and commits with an LLM-generated message.
+    #[command(
+        after_long_help = r#"Stages all changes (including untracked files) and commits with an [LLM-generated message](@/llm-commits.md).
+
+## Options
+
+### `--stage`
+
+Controls what to stage before committing:
+
+| Value | Behavior |
+|-------|----------|
+| `all` | Stage all changes including untracked files (default) |
+| `tracked` | Stage only modified tracked files |
+| `none` | Don't stage anything, commit only what's already staged |
+
+```console
+wt step commit --stage=tracked
+```
+
+Configure the default in user config:
+
+```toml
+[commit]
+stage = "tracked"
+```
+
+### `--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+```console
+# Inspect the rendered prompt
+wt step commit --show-prompt | less
+
+# Pipe to a different LLM
+wt step commit --show-prompt | llm -m gpt-5-nano
+```
+"#
+    )]
     Commit {
         /// Skip approval prompts
         #[arg(short, long)]
@@ -29,6 +68,41 @@ pub enum StepCommand {
     /// Squash commits since branching
     ///
     /// Stages working tree changes, squashes all commits since diverging from target into one, generates message with LLM.
+    #[command(
+        after_long_help = r#"Stages all changes (including untracked files), then squashes all commits since diverging from the target branch into a single commit with an [LLM-generated message](@/llm-commits.md).
+
+## Options
+
+### `--stage`
+
+Controls what to stage before squashing:
+
+| Value | Behavior |
+|-------|----------|
+| `all` | Stage all changes including untracked files (default) |
+| `tracked` | Stage only modified tracked files |
+| `none` | Don't stage anything, squash only committed changes |
+
+```console
+wt step squash --stage=none
+```
+
+Configure the default in user config:
+
+```toml
+[commit]
+stage = "tracked"
+```
+
+### `--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+```console
+wt step squash --show-prompt | less
+```
+"#
+    )]
     Squash {
         /// Target branch
         ///
