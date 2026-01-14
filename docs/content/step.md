@@ -221,7 +221,6 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
           Show debug info (-v), or also write diagnostic report (-vv)
 {% end %}
 
-
 ## wt step for-each
 
 Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.

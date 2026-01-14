@@ -1022,11 +1022,8 @@ wt step commit --show-prompt | llm -m gpt-5-nano
 
 - [`wt merge`](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
 - [`wt hook`](@/hook.md) — Run configured hooks
-
 <!-- subdoc: copy-ignored -->
-
-<!-- subdoc: for-each -->
-"#
+<!-- subdoc: for-each -->"#
     )]
     Step {
         #[command(subcommand)]
@@ -1805,11 +1802,8 @@ WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
 | `NO_COLOR` | Disable colored output ([standard](https://no-color.org/)) |
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
-
 <!-- subdoc: show -->
-
-<!-- subdoc: state -->
-"#)
+<!-- subdoc: state -->"#)
     )]
     Config {
         #[command(subcommand)]
