@@ -179,7 +179,7 @@ fn short_hash(s: &str) -> String {
 /// - `hash_port` — Hash to deterministic port number (10000-19999)
 ///
 /// # Functions
-/// - `worktree_path(branch)` — Look up the filesystem path of a branch's worktree
+/// - `worktree_path_of_branch(branch)` — Look up the filesystem path of a branch's worktree
 ///   Returns empty string if branch has no worktree.
 pub fn expand_template(
     template: &str,
@@ -217,9 +217,9 @@ pub fn expand_template(
     });
     env.add_filter("hash_port", |value: String| string_to_port(&value));
 
-    // Register worktree_path function for looking up branch worktree paths
+    // Register worktree_path_of_branch function for looking up branch worktree paths
     let repo_clone = repo.clone();
-    env.add_function("worktree_path", move |branch: String| -> String {
+    env.add_function("worktree_path_of_branch", move |branch: String| -> String {
         repo_clone
             .worktree_for_branch(&branch)
             .ok()
