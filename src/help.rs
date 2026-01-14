@@ -7,6 +7,8 @@
 
 use std::process;
 
+use ansi_str::AnsiStr;
+
 use crate::cli;
 
 /// Custom help handling for pager support and markdown rendering.
@@ -193,27 +195,7 @@ fn find_after_help_start(help: &str) -> Option<usize> {
 
 /// Strip ANSI escape codes from a string for pattern matching.
 fn strip_ansi_codes(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            // Skip escape sequence: ESC [ ... m (SGR) or ESC [ ... other
-            if chars.peek() == Some(&'[') {
-                chars.next(); // consume '['
-                // Consume until we hit a letter (the command character)
-                while let Some(&next) = chars.peek() {
-                    chars.next();
-                    if next.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result
+    s.ansi_strip().into_owned()
 }
 
 /// Generate a full documentation page for a command.

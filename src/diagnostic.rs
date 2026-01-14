@@ -44,6 +44,7 @@
 //!
 use std::path::PathBuf;
 
+use ansi_str::AnsiStr;
 use anyhow::Context;
 use color_print::cformat;
 use minijinja::{Environment, context};
@@ -269,10 +270,7 @@ fn is_gh_installed() -> bool {
 ///
 /// Used to clean terminal-formatted text for markdown output.
 fn strip_ansi_codes(s: &str) -> String {
-    // Match SGR (Select Graphic Rendition) sequences: ESC [ <params> m
-    // This covers colors, bold, dim, etc.
-    let re = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
-    re.replace_all(s, "").into_owned()
+    s.ansi_strip().into_owned()
 }
 
 /// Truncate verbose log to ~50KB if it's too large.
