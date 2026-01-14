@@ -336,26 +336,22 @@ pub struct TaskError {
     pub item_idx: usize,
     pub kind: TaskKind,
     pub message: String,
-    /// What caused this error.
-    pub cause: ErrorCause,
+    /// What caused this error. Use `is_timeout()` to check.
+    cause: ErrorCause,
 }
 
 impl TaskError {
-    pub fn new(item_idx: usize, kind: TaskKind, message: impl Into<String>) -> Self {
+    pub fn new(
+        item_idx: usize,
+        kind: TaskKind,
+        message: impl Into<String>,
+        cause: ErrorCause,
+    ) -> Self {
         Self {
             item_idx,
             kind,
             message: message.into(),
-            cause: ErrorCause::Other,
-        }
-    }
-
-    pub fn timeout(item_idx: usize, kind: TaskKind, message: impl Into<String>) -> Self {
-        Self {
-            item_idx,
-            kind,
-            message: message.into(),
-            cause: ErrorCause::Timeout,
+            cause,
         }
     }
 
@@ -1306,7 +1302,8 @@ pub fn collect(
         }
     }
 
-    // Count timeout errors for summary
+    // Count errors for summary
+    let error_count = errors.len();
     let timed_out_count = errors.iter().filter(|e| e.is_timeout()).count();
 
     // Finalize progressive table or render buffered output
@@ -1316,6 +1313,7 @@ pub fn collect(
             &all_items,
             show_branches || show_remotes,
             layout.hidden_column_count,
+            error_count,
             timed_out_count,
         );
 
@@ -1342,6 +1340,7 @@ pub fn collect(
             &all_items,
             show_branches || show_remotes,
             layout.hidden_column_count,
+            error_count,
             timed_out_count,
         );
 
@@ -1624,16 +1623,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_task_error_new_has_other_cause() {
-        let error = TaskError::new(0, TaskKind::AheadBehind, "test error");
-        assert_eq!(error.cause, ErrorCause::Other);
+    fn test_task_error_other_is_not_timeout() {
+        let error = TaskError::new(0, TaskKind::AheadBehind, "test error", ErrorCause::Other);
         assert!(!error.is_timeout());
     }
 
     #[test]
-    fn test_task_error_timeout_has_timeout_cause() {
-        let error = TaskError::timeout(0, TaskKind::AheadBehind, "timed out");
-        assert_eq!(error.cause, ErrorCause::Timeout);
+    fn test_task_error_timeout_is_timeout() {
+        let error = TaskError::new(0, TaskKind::AheadBehind, "timed out", ErrorCause::Timeout);
         assert!(error.is_timeout());
     }
 }

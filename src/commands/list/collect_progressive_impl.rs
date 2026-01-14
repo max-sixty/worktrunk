@@ -23,7 +23,9 @@ use std::sync::Arc;
 use worktrunk::git::{BranchRef, LineDiff, Repository, WorktreeInfo};
 
 use super::ci_status::PrStatus;
-use super::collect::{ExpectedResults, TaskError, TaskKind, TaskResult, detect_git_operation};
+use super::collect::{
+    ErrorCause, ExpectedResults, TaskError, TaskKind, TaskResult, detect_git_operation,
+};
 use super::model::{
     AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus, WorkingTreeStatus,
 };
@@ -122,18 +124,17 @@ impl TaskContext {
                 .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::TimedOut)
         });
 
-        if is_timeout {
+        let cause = if is_timeout {
             let kind_str: &'static str = kind.into();
-            let branch = self
-                .branch_ref
-                .branch
-                .as_deref()
-                .unwrap_or(&self.branch_ref.commit_sha[..8]);
+            let sha = &self.branch_ref.commit_sha;
+            let short_sha = &sha[..sha.len().min(8)];
+            let branch = self.branch_ref.branch.as_deref().unwrap_or(short_sha);
             log::debug!("Task {} timed out for {}", kind_str, branch);
-            TaskError::timeout(self.item_idx, kind, err.to_string())
+            ErrorCause::Timeout
         } else {
-            TaskError::new(self.item_idx, kind, err.to_string())
-        }
+            ErrorCause::Other
+        };
+        TaskError::new(self.item_idx, kind, err.to_string(), cause)
     }
 
     /// Get the default branch (cached in Repository).

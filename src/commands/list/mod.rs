@@ -316,6 +316,7 @@ pub(crate) fn format_summary_message(
     items: &[ListItem],
     show_branches: bool,
     hidden_column_count: usize,
+    error_count: usize,
     timed_out_count: usize,
 ) -> String {
     use anstyle::Style;
@@ -327,11 +328,21 @@ pub(crate) fn format_summary_message(
         .summary_parts(show_branches, hidden_column_count)
         .join(", ");
 
-    if timed_out_count > 0 {
-        let plural = if timed_out_count == 1 { "" } else { "s" };
-        format!(
-            "{INFO_SYMBOL} {dim}Showing {summary}. {timed_out_count} task{plural} timed out (run with `-v` for details){dim:#}"
-        )
+    if error_count > 0 {
+        let failure_msg = if error_count == timed_out_count {
+            // All failures are timeouts
+            let plural = if timed_out_count == 1 { "" } else { "s" };
+            format!("{timed_out_count} task{plural} timed out")
+        } else if timed_out_count > 0 {
+            // Mix of timeouts and other errors
+            let plural = if error_count == 1 { "" } else { "s" };
+            format!("{error_count} task{plural} failed ({timed_out_count} timed out)")
+        } else {
+            // No timeouts, just other errors
+            let plural = if error_count == 1 { "" } else { "s" };
+            format!("{error_count} task{plural} failed")
+        };
+        format!("{INFO_SYMBOL} {dim}Showing {summary}. {failure_msg}{dim:#}")
     } else {
         format!("{INFO_SYMBOL} {dim}Showing {summary}{dim:#}")
     }
@@ -472,23 +483,45 @@ mod tests {
     }
 
     #[test]
-    fn test_format_summary_message_no_timeout() {
-        let msg = format_summary_message(&[], false, 0, 0);
+    fn test_format_summary_message_no_errors() {
+        let msg = format_summary_message(&[], false, 0, 0, 0);
         assert!(msg.contains("Showing 0 worktrees"));
+        assert!(!msg.contains("failed"));
         assert!(!msg.contains("timed out"));
     }
 
     #[test]
-    fn test_format_summary_message_single_timeout() {
-        let msg = format_summary_message(&[], false, 0, 1);
-        assert!(msg.contains("1 task timed out"));
-        assert!(msg.contains("run with `-v` for details"));
+    fn test_format_summary_message_all_timeouts() {
+        // 3 errors, all timeouts
+        let msg = format_summary_message(&[], false, 0, 3, 3);
+        assert!(msg.contains("3 tasks timed out"));
+        assert!(!msg.contains("failed"));
     }
 
     #[test]
-    fn test_format_summary_message_multiple_timeouts() {
-        let msg = format_summary_message(&[], false, 0, 3);
-        assert!(msg.contains("3 tasks timed out"));
-        assert!(msg.contains("run with `-v` for details"));
+    fn test_format_summary_message_mixed_errors() {
+        // 5 errors, 3 are timeouts
+        let msg = format_summary_message(&[], false, 0, 5, 3);
+        assert!(msg.contains("5 tasks failed (3 timed out)"));
+    }
+
+    #[test]
+    fn test_format_summary_message_no_timeouts() {
+        // 2 errors, none are timeouts
+        let msg = format_summary_message(&[], false, 0, 2, 0);
+        assert!(msg.contains("2 tasks failed"));
+        assert!(!msg.contains("timed out"));
+    }
+
+    #[test]
+    fn test_format_summary_message_single_error() {
+        let msg = format_summary_message(&[], false, 0, 1, 0);
+        assert!(msg.contains("1 task failed"));
+    }
+
+    #[test]
+    fn test_format_summary_message_single_timeout() {
+        let msg = format_summary_message(&[], false, 0, 1, 1);
+        assert!(msg.contains("1 task timed out"));
     }
 }

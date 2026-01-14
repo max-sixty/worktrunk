@@ -84,10 +84,10 @@ Set persistent flag values for commands. These apply unless explicitly overridde
 
 ```toml
 [list]
-full = true       # --full
-branches = true   # --branches
-remotes = true    # --remotes
-timeout-ms = 500  # (Experimental) per-task timeout in ms; 0 = no timeout; --full disables
+# All off by default
+full = true      # --full
+branches = true  # --branches
+remotes = true   # --remotes
 ```
 
 **`wt step commit` and `wt merge` staging:**

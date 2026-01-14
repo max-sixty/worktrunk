@@ -262,7 +262,7 @@ pub struct ListConfig {
     pub remotes: Option<bool>,
 
     /// (Experimental) Per-task timeout in milliseconds.
-    /// When set to a positive value, git operations that exceed this timeout are killed gracefully.
+    /// When set to a positive value, git operations that exceed this timeout are terminated.
     /// Timed-out tasks show defaults in the table. Set to 0 to explicitly disable timeout
     /// (useful to override a global setting). Disabled when --full is used.
     #[serde(rename = "timeout-ms", skip_serializing_if = "Option::is_none")]
