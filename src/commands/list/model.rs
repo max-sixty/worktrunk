@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use worktrunk::git::{IntegrationReason, LineDiff, PrecomputedIntegration, check_integration};
+use worktrunk::git::{IntegrationReason, IntegrationSignals, LineDiff, check_integration};
 
 use super::ci_status::PrStatus;
 use super::columns::ColumnKind;
@@ -296,15 +296,6 @@ impl UpstreamStatus {
             ahead: self.ahead,
             behind: self.behind,
         })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn from_parts(remote: Option<String>, ahead: usize, behind: usize) -> Self {
-        Self {
-            remote,
-            ahead,
-            behind,
-        }
     }
 }
 
@@ -763,20 +754,17 @@ impl ListItem {
 
         // Compute is_same_commit from ahead/behind counts (vs stats_base/main)
         // This detects "same commit as main" for the _ symbol
-        let is_same_commit = self
-            .counts
-            .as_ref()
-            .is_some_and(|c| c.ahead == 0 && c.behind == 0);
+        let is_same_commit = self.counts.as_ref().map(|c| c.ahead == 0 && c.behind == 0);
 
         // Use the shared integration check (same logic as wt remove)
-        let mut provider = PrecomputedIntegration {
+        let signals = IntegrationSignals {
             is_same_commit,
-            is_ancestor: self.is_ancestor.unwrap_or(false),
-            has_added_changes: self.has_file_changes.unwrap_or(true), // default: assume has changes
-            trees_match: self.committed_trees_match.unwrap_or(false),
-            would_merge_add: self.would_merge_add.unwrap_or(true), // default: assume would add
+            is_ancestor: self.is_ancestor,
+            has_added_changes: self.has_file_changes,
+            trees_match: self.committed_trees_match,
+            would_merge_add: self.would_merge_add,
         };
-        let reason = check_integration(&mut provider);
+        let reason = check_integration(&signals);
 
         // Convert to MainState, with SameCommit becoming Empty for display
         match reason {
@@ -1982,7 +1970,11 @@ mod tests {
 
     #[test]
     fn test_upstream_status_active_with_remote() {
-        let status = UpstreamStatus::from_parts(Some("origin".to_string()), 3, 2);
+        let status = UpstreamStatus {
+            remote: Some("origin".to_string()),
+            ahead: 3,
+            behind: 2,
+        };
         let active = status.active().unwrap();
         assert_eq!(active.remote, "origin");
         assert_eq!(active.ahead, 3);
@@ -1991,7 +1983,11 @@ mod tests {
 
     #[test]
     fn test_upstream_status_active_no_remote() {
-        let status = UpstreamStatus::from_parts(None, 0, 0);
+        let status = UpstreamStatus {
+            remote: None,
+            ahead: 0,
+            behind: 0,
+        };
         assert!(status.active().is_none());
     }
 

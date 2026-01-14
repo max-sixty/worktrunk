@@ -1345,7 +1345,7 @@ fn main() {
                 // This ensures approval happens once at the command entry point
                 // If user declines, skip hooks but continue with worktree operation
                 let approved = if verify {
-                    let repo_root = repo.worktree_base().context("Failed to switch worktree")?;
+                    let repo_root = repo.repo_path().context("Failed to switch worktree")?;
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
@@ -1428,7 +1428,7 @@ fn main() {
                 // - post-start: runs only when creating a NEW worktree
                 if !skip_hooks {
                     let repo = Repository::current()?;
-                    let repo_root = repo.worktree_base().context("Failed to switch worktree")?;
+                    let repo_root = repo.repo_path().context("Failed to switch worktree")?;
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
@@ -1452,7 +1452,7 @@ fn main() {
                 if let Some(cmd) = execute {
                     // Build template context for expansion (includes base vars when creating)
                     let repo = Repository::current()?;
-                    let repo_root = repo.worktree_base().context("Failed to get repo root")?;
+                    let repo_root = repo.repo_path().context("Failed to get repo root")?;
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
@@ -1773,10 +1773,8 @@ fn main() {
                     let _ = output::print(format_with_gutter(&chain_text, None));
                 } else if msg.contains('\n') {
                     // Multiline error without context - this shouldn't happen if all
-                    // errors have proper context. Fail in tests, log in production.
-                    if cfg!(test) {
-                        panic!("Multiline error without context: {msg}");
-                    }
+                    // errors have proper context. Catch in debug builds, log in release.
+                    debug_assert!(false, "Multiline error without context: {msg}");
                     log::warn!("Multiline error without context: {msg}");
                     let _ = output::print(error_message("Command failed"));
                     let _ = output::print(format_with_gutter(&msg, None));

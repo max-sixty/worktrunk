@@ -110,7 +110,7 @@ impl Repository {
                 }
 
                 // Fall back to repository name (use worktree base for consistency across all worktrees)
-                let repo_root = self.worktree_base()?;
+                let repo_root = self.repo_path()?;
                 let repo_name = repo_root
                     .file_name()
                     .and_then(|name| name.to_str())

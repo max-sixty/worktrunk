@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.4
+
+### Fixed
+
+- **LESS flag concatenation with long options**: Fixed "invalid option" error when users have long options in LESS (e.g., `LESS=--mouse`). The pager auto-quit feature from v0.13.1 now correctly separates flags. Fixes [#594](https://github.com/max-sixty/worktrunk/issues/594). (thanks @tnlanh for reporting)
+
+### Internal
+
+- **Homebrew formula generation**: Release workflow now uses cargo-dist for Homebrew formula generation, simplifying the release process.
+
 ## 0.13.2
 
 ### Improved

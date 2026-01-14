@@ -8,6 +8,12 @@ cargo-dist-version = "0.30.2"
 # CI backends to support
 ci = "github"
 # The installers to generate for each app
+# Note: The shell/powershell scripts attempt to add the install directory to PATH by
+# modifying shell config files (.profile, .bashrc, etc.), which can cause "Permission
+# denied" errors on non-standard setups. This is cargo-dist's default behavior and
+# reasonable for most users. Users with custom shell configs can set
+# WORKTRUNK_NO_MODIFY_PATH=1 or use Homebrew/cargo install instead.
+# See: https://github.com/max-sixty/worktrunk/issues/590
 installers = ["shell", "powershell", "homebrew"]
 # Homebrew tap repository
 tap = "max-sixty/homebrew-worktrunk"

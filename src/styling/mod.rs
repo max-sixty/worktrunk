@@ -84,9 +84,6 @@ pub fn fix_dim_after_color_reset(s: &str) -> String {
     s.replace("\x1b[39m\x1b[2m", "\x1b[0m\x1b[2m")
 }
 
-// Re-export for tests
-#[cfg(test)]
-use format::wrap_text_at_width;
 // ============================================================================
 // Tests
 // ============================================================================
@@ -228,14 +225,14 @@ command = "npm install"
     // Word-wrapping tests
     #[test]
     fn test_wrap_text_no_wrapping_needed() {
-        let result = super::wrap_text_at_width("short line", 50);
+        let result = super::format::wrap_text_at_width("short line", 50);
         assert_eq!(result, vec!["short line"]);
     }
 
     #[test]
     fn test_wrap_text_at_word_boundary() {
         let text = "This is a very long line that needs to be wrapped at word boundaries";
-        let result = super::wrap_text_at_width(text, 30);
+        let result = super::format::wrap_text_at_width(text, 30);
 
         // Should wrap at word boundaries
         assert!(result.len() > 1);
@@ -261,14 +258,14 @@ command = "npm install"
     #[test]
     fn test_wrap_text_single_long_word() {
         // A single word longer than max_width should still be included
-        let result = super::wrap_text_at_width("verylongwordthatcannotbewrapped", 10);
+        let result = super::format::wrap_text_at_width("verylongwordthatcannotbewrapped", 10);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], "verylongwordthatcannotbewrapped");
     }
 
     #[test]
     fn test_wrap_text_empty_input() {
-        let result = super::wrap_text_at_width("", 50);
+        let result = super::format::wrap_text_at_width("", 50);
         assert_eq!(result, vec![""]);
     }
 
@@ -276,7 +273,7 @@ command = "npm install"
     fn test_wrap_text_unicode() {
         // Unicode characters should be handled correctly by width
         let text = "This line has emoji 🎉 and should wrap correctly when needed";
-        let result = super::wrap_text_at_width(text, 30);
+        let result = super::format::wrap_text_at_width(text, 30);
 
         // Should wrap
         assert!(result.len() > 1);

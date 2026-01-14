@@ -1211,7 +1211,11 @@ mod tests {
             would_merge_add: None,
             is_ancestor: None,
             is_orphan: None,
-            upstream: Some(UpstreamStatus::from_parts(Some("origin".to_string()), 4, 2)),
+            upstream: Some(UpstreamStatus {
+                remote: Some("origin".to_string()),
+                ahead: 4,
+                behind: 2,
+            }),
             pr_status: None,
             url: None,
             url_active: None,

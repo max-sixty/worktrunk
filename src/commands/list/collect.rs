@@ -318,6 +318,15 @@ struct MissingResult {
     missing_kinds: Vec<TaskKind>,
 }
 
+/// Cause of a task error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorCause {
+    /// Command exceeded the configured timeout.
+    Timeout,
+    /// Any other error (permission denied, git error, etc.).
+    Other,
+}
+
 /// Error during task execution.
 ///
 /// Tasks return this instead of swallowing errors. The drain layer
@@ -327,15 +336,28 @@ pub struct TaskError {
     pub item_idx: usize,
     pub kind: TaskKind,
     pub message: String,
+    /// What caused this error. Use `is_timeout()` to check.
+    cause: ErrorCause,
 }
 
 impl TaskError {
-    pub fn new(item_idx: usize, kind: TaskKind, message: impl Into<String>) -> Self {
+    pub fn new(
+        item_idx: usize,
+        kind: TaskKind,
+        message: impl Into<String>,
+        cause: ErrorCause,
+    ) -> Self {
         Self {
             item_idx,
             kind,
             message: message.into(),
+            cause,
         }
+    }
+
+    /// Whether this error was caused by a timeout.
+    pub fn is_timeout(&self) -> bool {
+        self.cause == ErrorCause::Timeout
     }
 }
 
@@ -724,7 +746,7 @@ pub fn collect(
             let _ = default_branch_cell.set(repo.default_branch());
         });
         s.spawn(|_| {
-            // Populate is_bare cache (value used later via worktree_base)
+            // Populate is_bare cache (value used later via repo_path)
             let _ = repo.is_bare();
         });
         s.spawn(|_| {
@@ -1046,10 +1068,14 @@ pub fn collect(
     // counts in a single command. On older git versions, returns empty and all tasks run.
     // Skip if default_branch is unknown.
     if skip_expensive_for_stale && let Some(ref db) = default_branch {
-        // Branches more than 50 commits behind skip expensive merge-base operations.
+        // Branches more than 50 commits behind skip expensive operations.
         // 50 is low enough to catch truly stale branches while keeping info for
-        // recently-diverged ones. The "behind" count is the primary expense driver -
-        // git must traverse all those commits to find the merge-base.
+        // recently-diverged ones.
+        //
+        // "Behind" is a proxy for the actual cost driver: files changed on both
+        // sides since the merge-base. More commits on main → more files touched →
+        // more overlap with the branch. See `CollectOptions::stale_branches` for
+        // detailed rationale.
         let threshold: usize = std::env::var("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -1276,6 +1302,10 @@ pub fn collect(
         }
     }
 
+    // Count errors for summary
+    let error_count = errors.len();
+    let timed_out_count = errors.iter().filter(|e| e.is_timeout()).count();
+
     // Finalize progressive table or render buffered output
     if let Some(mut table) = progressive_table {
         // Build final summary string
@@ -1283,6 +1313,8 @@ pub fn collect(
             &all_items,
             show_branches || show_remotes,
             layout.hidden_column_count,
+            error_count,
+            timed_out_count,
         );
 
         if table.is_tty() {
@@ -1308,6 +1340,8 @@ pub fn collect(
             &all_items,
             show_branches || show_remotes,
             layout.hidden_column_count,
+            error_count,
+            timed_out_count,
         );
 
         crate::output::stdout(layout.format_header_line())?;
@@ -1321,13 +1355,17 @@ pub fn collect(
     // Status symbols are now computed during data collection (both modes), no fallback needed
 
     // Display collection errors/warnings (after table rendering)
-    if !errors.is_empty() || progress_overflow {
+    // Filter out timeout errors - they're shown in the summary footer
+    let non_timeout_errors: Vec<_> = errors.iter().filter(|e| !e.is_timeout()).collect();
+
+    if !non_timeout_errors.is_empty() || progress_overflow {
         let mut warning_parts = Vec::new();
 
-        if !errors.is_empty() {
+        if !non_timeout_errors.is_empty() {
             // Sort for deterministic output (tasks complete in arbitrary order)
-            errors.sort_by_key(|e| (e.item_idx, e.kind));
-            let error_lines: Vec<String> = errors
+            let mut sorted_errors = non_timeout_errors;
+            sorted_errors.sort_by_key(|e| (e.item_idx, e.kind));
+            let error_lines: Vec<String> = sorted_errors
                 .iter()
                 .map(|error| {
                     let name = all_items[error.item_idx].branch_name();
@@ -1578,4 +1616,21 @@ pub fn populate_item(
     item.finalize_display();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_task_error_other_is_not_timeout() {
+        let error = TaskError::new(0, TaskKind::AheadBehind, "test error", ErrorCause::Other);
+        assert!(!error.is_timeout());
+    }
+
+    #[test]
+    fn test_task_error_timeout_is_timeout() {
+        let error = TaskError::new(0, TaskKind::AheadBehind, "timed out", ErrorCause::Timeout);
+        assert!(error.is_timeout());
+    }
 }
