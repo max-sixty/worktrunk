@@ -147,6 +147,10 @@ harness = false
 name = "list"
 harness = false
 
+[[bench]]
+name = "cow_copy"
+harness = false
+
 [lints.rust]
 unsafe_code = "forbid"
 

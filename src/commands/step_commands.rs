@@ -606,8 +606,39 @@ fn list_ignored_entries(
     Ok(entries)
 }
 
-/// Copy a directory recursively using reflink (COW) for each file
+/// Copy a directory recursively using reflink (COW).
+///
+/// On macOS/APFS, attempts atomic directory clone first via `clonefile()` syscall,
+/// which is O(1) regardless of file count. Falls back to file-by-file copying on
+/// other platforms or when atomic clone fails.
 fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
+    // On macOS, try atomic directory clone first (single syscall for entire tree)
+    // This is dramatically faster for large directories like target/ with 100k+ files
+    #[cfg(target_os = "macos")]
+    {
+        use std::io::ErrorKind;
+
+        // reflink::reflink() on macOS uses clonefile() which supports directories
+        match reflink_copy::reflink(src, dest) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                // Destination exists - fall through to file-by-file for idempotent merging
+            }
+            Err(e) => {
+                // clonefile failed (cross-device, not APFS, etc.) - fall through
+                log::debug!("Atomic directory clone failed, using file-by-file fallback: {e}");
+            }
+        }
+    }
+
+    // Fallback: file-by-file copying (works on all platforms)
+    copy_dir_recursive_fallback(src, dest)
+}
+
+/// File-by-file recursive copy with reflink per file.
+///
+/// Used as fallback when atomic directory clone isn't available or fails.
+fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
     use std::fs;
     use std::io::ErrorKind;
 
@@ -617,20 +648,16 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
         let entry = entry?;
         let file_type = entry.file_type()?;
 
-        // Skip .git (file or directory) and symlinks
-        let file_name = entry.file_name();
-        if file_name == ".git" {
-            continue;
-        }
+        // Skip symlinks
         if file_type.is_symlink() {
             continue;
         }
 
         let src_path = entry.path();
-        let dest_path = dest.join(file_name);
+        let dest_path = dest.join(entry.file_name());
 
         if file_type.is_dir() {
-            copy_dir_recursive(&src_path, &dest_path)?;
+            copy_dir_recursive_fallback(&src_path, &dest_path)?;
         } else {
             // Skip existing files for idempotent hook usage
             match reflink_copy::reflink_or_copy(&src_path, &dest_path) {
