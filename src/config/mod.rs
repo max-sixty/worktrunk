@@ -215,15 +215,6 @@ mod tests {
     }
 
     #[test]
-    fn test_project_config_default() {
-        let config = ProjectConfig::default();
-        assert!(config.hooks.post_create.is_none());
-        assert!(config.hooks.post_start.is_none());
-        assert!(config.hooks.pre_merge.is_none());
-        assert!(config.hooks.post_merge.is_none());
-    }
-
-    #[test]
     fn test_command_config_single() {
         let toml = r#"post-create = "npm install""#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();

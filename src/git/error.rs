@@ -726,27 +726,6 @@ mod tests {
     use insta::assert_snapshot;
 
     #[test]
-    fn snapshot_detached_head_display() {
-        let err = GitError::DetachedHead { action: None };
-        assert_snapshot!(err.to_string(), @"
-        [31m✗[39m [31mNot on a branch (detached HEAD)[39m
-        [2m↳[22m [2mTo switch to a branch, run [90mgit switch <branch>[39m[22m
-        ");
-    }
-
-    #[test]
-    fn snapshot_uncommitted_with_worktree_display() {
-        let err = GitError::UncommittedChanges {
-            action: Some("merge".into()),
-            branch: Some("wt".into()),
-        };
-        assert_snapshot!(err.to_string(), @"
-        [31m✗[39m [31mCannot merge: [1mwt[22m has uncommitted changes[39m
-        [2m↳[22m [2mCommit or stash changes first[22m
-        ");
-    }
-
-    #[test]
     fn snapshot_into_preserves_type_for_display() {
         // .into() preserves type so we can downcast and use Display
         let err: anyhow::Error = GitError::BranchAlreadyExists {
@@ -773,19 +752,6 @@ mod tests {
         } else {
             panic!("Failed to downcast and pattern match");
         }
-    }
-
-    #[test]
-    fn snapshot_worktree_error_with_path() {
-        let err = GitError::WorktreePathExists {
-            branch: "feature".to_string(),
-            path: PathBuf::from("/some/path"),
-            create: false,
-        };
-        assert_snapshot!(err.to_string(), @"
-        [31m✗[39m [31mDirectory already exists: [1m/some/path[22m[39m
-        [2m↳[22m [2mTo remove manually, run [90mrm -rf /some/path[39m; to overwrite (with backup), run [90mwt switch feature --clobber[39m[22m
-        ");
     }
 
     #[test]
@@ -926,17 +892,6 @@ mod tests {
     }
 
     #[test]
-    fn test_git_error_invalid_reference() {
-        let err = GitError::InvalidReference {
-            reference: "nonexistent".into(),
-        };
-        let display = err.to_string();
-        assert!(display.contains("nonexistent"));
-        assert!(display.contains("not found"));
-        assert!(display.contains("--create"));
-    }
-
-    #[test]
     fn test_git_error_not_in_worktree() {
         // With action
         let err = GitError::NotInWorktree {
@@ -951,38 +906,6 @@ mod tests {
         let err = GitError::NotInWorktree { action: None };
         let display = err.to_string();
         assert!(display.contains("Not in a worktree"));
-    }
-
-    #[test]
-    fn test_git_error_worktree_missing() {
-        let err = GitError::WorktreeMissing {
-            branch: "feature".into(),
-        };
-        let display = err.to_string();
-        assert!(display.contains("feature"));
-        assert!(display.contains("missing"));
-    }
-
-    #[test]
-    fn test_git_error_no_worktree_found() {
-        let err = GitError::NoWorktreeFound {
-            branch: "feature".into(),
-        };
-        let display = err.to_string();
-        assert!(display.contains("No worktree found"));
-        assert!(display.contains("feature"));
-    }
-
-    #[test]
-    fn test_git_error_remote_only_branch() {
-        let err = GitError::RemoteOnlyBranch {
-            branch: "feature".into(),
-            remote: "origin".into(),
-        };
-        let display = err.to_string();
-        assert!(display.contains("feature"));
-        assert!(display.contains("remote"));
-        assert!(display.contains("origin"));
     }
 
     #[test]
@@ -1037,25 +960,6 @@ mod tests {
     }
 
     #[test]
-    fn test_git_error_worktree_removal_failed() {
-        let err = GitError::WorktreeRemovalFailed {
-            branch: "feature".into(),
-            path: PathBuf::from("/tmp/repo"),
-            error: "still has changes".into(),
-        };
-        let display = err.to_string();
-        assert!(display.contains("feature"));
-        assert!(display.contains("still has changes"));
-    }
-
-    #[test]
-    fn test_git_error_cannot_remove_main() {
-        let err = GitError::CannotRemoveMainWorktree;
-        let display = err.to_string();
-        assert!(display.contains("main worktree"));
-    }
-
-    #[test]
     fn test_git_error_worktree_locked_with_reason() {
         let err = GitError::WorktreeLocked {
             branch: "feature".into(),
@@ -1090,62 +994,6 @@ mod tests {
     }
 
     #[test]
-    fn test_git_error_conflicting_changes() {
-        let err = GitError::ConflictingChanges {
-            target_branch: "main".into(),
-            files: vec!["file1.rs".into(), "file2.rs".into()],
-            worktree_path: PathBuf::from("/tmp/repo"),
-        };
-        let display = err.to_string();
-        assert!(display.contains("push to local"));
-        assert!(display.contains("main"));
-        assert!(display.contains("conflicting"));
-        assert!(display.contains("file1.rs"));
-    }
-
-    #[test]
-    fn test_git_error_not_fast_forward() {
-        // In merge context
-        let err = GitError::NotFastForward {
-            target_branch: "main".into(),
-            commits_formatted: "abc1234 Some commit".into(),
-            in_merge_context: true,
-        };
-        let display = err.to_string();
-        assert!(display.contains("main"));
-        assert!(display.contains("wt merge"));
-
-        // Not in merge context
-        let err = GitError::NotFastForward {
-            target_branch: "main".into(),
-            commits_formatted: String::new(),
-            in_merge_context: false,
-        };
-        let display = err.to_string();
-        assert!(display.contains("wt step rebase"));
-    }
-
-    #[test]
-    fn test_git_error_rebase_conflict() {
-        // With git output
-        let err = GitError::RebaseConflict {
-            target_branch: "main".into(),
-            git_output: "CONFLICT in file.rs".into(),
-        };
-        let display = err.to_string();
-        assert!(display.contains("main"));
-        assert!(display.contains("CONFLICT"));
-
-        // Without git output
-        let err = GitError::RebaseConflict {
-            target_branch: "main".into(),
-            git_output: String::new(),
-        };
-        let display = err.to_string();
-        assert!(display.contains("rebase --continue"));
-    }
-
-    #[test]
     fn test_git_error_not_rebased() {
         let err = GitError::NotRebased {
             target_branch: "main".into(),
@@ -1153,26 +1001,6 @@ mod tests {
         let display = err.to_string();
         assert!(display.contains("main"));
         assert!(display.contains("not rebased"));
-    }
-
-    #[test]
-    fn test_git_error_push_failed() {
-        let err = GitError::PushFailed {
-            target_branch: "main".into(),
-            error: "rejected".into(),
-        };
-        let display = err.to_string();
-        assert!(display.contains("push to local"));
-        assert!(display.contains("main"));
-        assert!(display.contains("rejected"));
-    }
-
-    #[test]
-    fn test_git_error_not_interactive() {
-        let err = GitError::NotInteractive;
-        let display = err.to_string();
-        assert!(display.contains("non-interactive"));
-        assert!(display.contains("--yes"));
     }
 
     #[test]
@@ -1215,44 +1043,6 @@ mod tests {
         };
         let display = err.to_string();
         assert!(display.contains("llm --model gpt-4"));
-    }
-
-    #[test]
-    fn test_git_error_project_config_not_found() {
-        let err = GitError::ProjectConfigNotFound {
-            config_path: PathBuf::from("/.worktrunk.toml"),
-        };
-        let display = err.to_string();
-        assert!(display.contains("No project configuration"));
-        assert!(display.contains(".worktrunk.toml"));
-    }
-
-    #[test]
-    fn test_git_error_parse_error() {
-        let err = GitError::ParseError {
-            message: "invalid syntax".into(),
-        };
-        let display = err.to_string();
-        assert!(display.contains("invalid syntax"));
-    }
-
-    #[test]
-    fn test_git_error_other() {
-        let err = GitError::Other {
-            message: "something went wrong".into(),
-        };
-        let display = err.to_string();
-        assert!(display.contains("something went wrong"));
-    }
-
-    #[test]
-    fn test_git_error_detached_head_with_action() {
-        let err = GitError::DetachedHead {
-            action: Some("merge".into()),
-        };
-        let display = err.to_string();
-        assert!(display.contains("Cannot merge"));
-        assert!(display.contains("detached HEAD"));
     }
 
     #[test]

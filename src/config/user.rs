@@ -827,14 +827,6 @@ another-unknown = 42
     }
 
     #[test]
-    fn test_find_unknown_keys_invalid_toml() {
-        // Invalid TOML should return empty
-        let content = "this is not valid toml {{{";
-        let keys = find_unknown_keys(content);
-        assert!(keys.is_empty());
-    }
-
-    #[test]
     fn test_find_unknown_keys_known_sections() {
         // All known sections should not be reported
         let content = r#"

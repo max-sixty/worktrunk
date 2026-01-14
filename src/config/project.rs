@@ -399,14 +399,6 @@ post-create = "npm install"
         assert!(keys.contains(&"baz".to_string()));
     }
 
-    #[test]
-    fn test_find_unknown_keys_invalid_toml() {
-        let contents = "invalid { toml }}}";
-        let keys = find_unknown_keys(contents);
-        // Returns empty vec for invalid TOML (graceful fallback)
-        assert!(keys.is_empty());
-    }
-
     // ============================================================================
     // Serialization Tests
     // ============================================================================

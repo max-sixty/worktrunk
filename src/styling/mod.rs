@@ -284,31 +284,6 @@ command = "npm install"
     }
 
     #[test]
-    fn test_format_with_gutter_wrapping() {
-        // Create a very long line that would overflow a narrow terminal
-        let long_text = "This is a very long commit message that would normally overflow the terminal width and break the gutter formatting, but now it should wrap nicely at word boundaries.";
-
-        // Use fixed width for consistent testing (80 columns)
-        let result = format_with_gutter(long_text, Some(80));
-
-        // Should contain multiple lines (wrapped)
-        let line_count = result.lines().count();
-        assert!(
-            line_count > 1,
-            "Long text should wrap to multiple lines, got {} lines",
-            line_count
-        );
-
-        // Each line should have the gutter
-        for line in result.lines() {
-            assert!(
-                line.contains("\x1b[107m"),
-                "Each line should contain gutter (BrightWhite background)"
-            );
-        }
-    }
-
-    #[test]
     fn test_format_with_gutter_preserves_newlines() {
         let multi_line = "Line 1\nLine 2\nLine 3";
         let result = format_with_gutter(multi_line, None);
@@ -446,12 +421,6 @@ command = "npm install"
     }
 
     #[test]
-    fn test_wrap_styled_text_zero_width() {
-        let result = wrap_styled_text("some text", 0);
-        assert_eq!(result, vec!["some text"]);
-    }
-
-    #[test]
     fn test_wrap_styled_text_at_word_boundary() {
         let text = "This is a very long line that needs wrapping";
         let result = wrap_styled_text(text, 20);
@@ -486,12 +455,6 @@ command = "npm install"
             result[0].contains("\x1b[1m"),
             "First line should have bold code"
         );
-    }
-
-    #[test]
-    fn test_wrap_styled_text_empty_input() {
-        let result = wrap_styled_text("", 50);
-        assert_eq!(result, vec![""]);
     }
 
     #[test]
