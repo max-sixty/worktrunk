@@ -43,75 +43,90 @@ Show current configuration and file locations:
 wt config show
 ```
 
-## User config
+# Worktrunk User Configuration
 
-The user config stores personal preferences that apply across all repositories. Create it with `wt config create` and view with `wt config show`.
+Location: `~/.config/worktrunk/config.toml`
 
-### Worktree path template
+Create with `wt config create`. Alternative locations follow XDG Base Directory
+spec: `$XDG_CONFIG_HOME/worktrunk/config.toml` on macOS/Linux,
+`%APPDATA%\worktrunk\config.toml` on Windows.
 
-Controls where new worktrees are created. The template is relative to the repository root.
+## Worktree Path Template
 
-**Available variables:**
+Controls where new worktrees are created. Paths are relative to the repository
+root.
+
+**Variables:**
+
 - `{{ repo }}` — repository directory name
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
-- `{{ branch | sanitize }}` — branch name with `/` and `\` replaced by `-`
+- `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
+- `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
 
-**Examples** for a repo at `~/code/myproject` creating branch `feature/login`:
+**Examples** for repo at `~/code/myproject`, branch `feature/auth`:
+
+Siblings in parent directory (default) → `~/code/myproject.feature-auth`:
 
 ```toml
-# Default — siblings in parent directory
-# Creates: ~/code/myproject.feature-login
 worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
-
-# Inside the repository
-# Creates: ~/code/myproject/.worktrees/feature-login
-worktree-path = ".worktrees/{{ branch | sanitize }}"
-
-# Namespaced (useful when multiple repos share a parent directory)
-# Creates: ~/code/worktrees/myproject/feature-login
-worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
-
-# Nested bare repo (git clone --bare <url> project/.git)
-# Creates: ~/code/project/feature-login (sibling to .git)
-worktree-path = "../{{ branch | sanitize }}"
 ```
 
-### Command settings
+Inside the repository → `~/code/myproject/.worktrees/feature-auth`:
 
-Set persistent flag values for commands. These apply unless explicitly overridden on the command line.
+```toml
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+```
 
-**`wt list`:**
+## List Command Defaults
+
+Persistent flag values for `wt list`. Override on command line as needed.
 
 ```toml
 [list]
-# All off by default
-full = true      # --full
-branches = true  # --branches
-remotes = true   # --remotes
+full = false       # Show CI status and main…± diffstat columns (--full)
+branches = false   # Include branches without worktrees (--branches)
+remotes = false    # Include remote-only branches (--remotes)
 ```
 
-**`wt step commit` and `wt merge` staging:**
+## Commit Defaults
+
+Shared by `wt step commit`, `wt step squash`, and `wt merge`.
 
 ```toml
 [commit]
-stage = "all"    # "all" (default), "tracked", or "none"
+stage = "all"      # What to stage before commit: "all", "tracked", or "none"
 ```
 
-**`wt merge`:**
+## Merge Command Defaults
+
+All flags are on by default. Set to false to change default behavior.
 
 ```toml
 [merge]
-# These flags are on by default; set to false to disable
-squash = false  # Preserve individual commits (--no-squash)
-commit = false  # Skip committing uncommitted changes (also disables squash)
-rebase = false  # Skip rebase (fails if not already rebased)
-remove = false  # Keep worktree after merge (--no-remove)
-verify = false  # Skip hooks (--no-verify)
+squash = true      # Squash commits into one (--no-squash to preserve history)
+commit = true      # Commit uncommitted changes first (--no-commit to skip)
+rebase = true      # Rebase onto target before merge (--no-rebase to skip)
+remove = true      # Remove worktree after merge (--no-remove to keep)
+verify = true      # Run project hooks (--no-verify to skip)
 ```
 
-### LLM commit messages
+## Select Command Defaults
 
-Configure automatic commit message generation. Requires an external tool like [llm](https://llm.datasette.io/):
+Pager behavior for `wt select` diff previews.
+
+```toml
+[select]
+# Pager command with flags for diff preview (overrides git's core.pager)
+# Use this to specify pager flags needed for non-TTY contexts
+# Example: pager = "delta --paging=never"
+```
+
+## LLM Commit Messages
+
+Generate commit messages automatically during merge. Requires an external CLI
+tool. See <https://worktrunk.dev/llm-commits/> for setup.
+
+Using [llm](https://github.com/simonw/llm) (install: `pip install llm llm-anthropic`):
 
 ```toml
 [commit-generation]
@@ -119,34 +134,125 @@ command = "llm"
 args = ["-m", "claude-haiku-4.5"]
 ```
 
-See [LLM Commit Messages](@/llm-commits.md) for setup details and template customization.
-
-### Approved commands
-
-When project hooks run for the first time, Worktrunk prompts for approval. Approved commands are saved here automatically:
+Using [aichat](https://github.com/sigoden/aichat):
 
 ```toml
-[projects."my-project"]
+[commit-generation]
+command = "aichat"
+args = ["-m", "claude:claude-haiku-4.5"]
+```
+
+Load templates from external files (supports `~` expansion):
+
+```toml
+[commit-generation]
+template-file = "~/.config/worktrunk/commit-template.txt"
+squash-template-file = "~/.config/worktrunk/squash-template.txt"
+```
+
+See [Custom Prompt Templates](#custom-prompt-templates) for inline template options.
+
+## Approved Commands
+
+Commands approved for project hooks. Auto-populated when approving hooks on
+first run, or via `wt hook approvals add`.
+
+```toml
+[projects."github.com/user/repo"]
 approved-commands = ["npm ci", "npm test"]
 ```
 
-Manage approvals with `wt hook approvals add` to review and pre-approve commands, and `wt hook approvals clear` to reset (add `--global` to clear all projects).
+For project-specific hooks (post-create, post-start, pre-merge, etc.), use a
+separate project config at `<repo>/.config/wt.toml`. Run `wt config create --project`
+to create one, or see <https://worktrunk.dev/hook/>.
 
-### User hooks
+## Custom Prompt Templates
 
-Personal hooks that run for all repositories. Use the same syntax as project hooks:
+These options belong under the `[commit-generation]` section. Uses
+[minijinja](https://docs.rs/minijinja/) syntax.
 
+### Commit Template
+
+Available variables: `{{ git_diff }}`, `{{ git_diff_stat }}`, `{{ branch }}`,
+`{{ recent_commits }}`, `{{ repo }}`
+
+Default template:
+
+<!-- DEFAULT_TEMPLATE_START -->
 ```toml
-[post-create]
-setup = "echo 'Setting up worktree...'"
+[commit-generation]
+template = """
+Write a commit message for the staged changes below.
 
-[pre-merge]
-notify = "notify-send 'Merging {{ branch }}'"
+<format>
+- Subject under 50 chars, blank line, then optional body
+- Output only the commit message, no quotes or code blocks
+</format>
+
+<style>
+- Imperative mood: "Add feature" not "Added feature"
+- Match recent commit style (conventional commits if used)
+- Describe the change, not the intent or benefit
+</style>
+
+<diffstat>
+{{ git_diff_stat }}
+</diffstat>
+
+<diff>
+{{ git_diff }}
+</diff>
+
+<context>
+Branch: {{ branch }}
+{% if recent_commits %}<recent_commits>
+{% for commit in recent_commits %}- {{ commit }}
+{% endfor %}</recent_commits>{% endif %}
+</context>
+
+"""
 ```
+<!-- DEFAULT_TEMPLATE_END -->
 
-User hooks run before project hooks and don't require approval. Skip with `--no-verify`.
+### Squash Template
 
-See [`wt hook`](@/hook.md#user-hooks) for complete documentation.
+Available variables: `{{ git_diff }}`, `{{ git_diff_stat }}`, `{{ branch }}`,
+`{{ recent_commits }}`, `{{ repo }}`, `{{ commits }}`, `{{ target_branch }}`
+
+Default template:
+
+<!-- DEFAULT_SQUASH_TEMPLATE_START -->
+```toml
+[commit-generation]
+squash-template = """
+Combine these commits into a single commit message.
+
+<format>
+- Subject under 50 chars, blank line, then optional body
+- Output only the commit message, no quotes or code blocks
+</format>
+
+<style>
+- Imperative mood: "Add feature" not "Added feature"
+- Match the style of commits being squashed (conventional commits if used)
+- Describe the change, not the intent or benefit
+</style>
+
+<commits branch="{{ branch }}" target="{{ target_branch }}">
+{% for commit in commits %}- {{ commit }}
+{% endfor %}</commits>
+
+<diffstat>
+{{ git_diff_stat }}
+</diffstat>
+
+<diff>
+{{ git_diff }}
+</diff>
+
+"""
+```
+<!-- DEFAULT_SQUASH_TEMPLATE_END -->
 
 ## Project config
 
@@ -307,100 +413,123 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
 Creates `~/.config/worktrunk/config.toml` with the following content:
 
 ```
-# Worktrunk Global Configuration
-# Copy to: ~/.config/worktrunk/config.toml (or use `wt config create`)
+# # Worktrunk User Configuration
 #
-# Alternative locations (XDG Base Directory spec):
-#   macOS/Linux:   $XDG_CONFIG_HOME/worktrunk/config.toml
-#   Windows:       %APPDATA%\worktrunk\config.toml
-
-# Commit Message Generation (Optional)
-# For generating commit messages during merge operations (wt merge)
+# Location: `~/.config/worktrunk/config.toml`
+#
+# Create with `wt config create`. Alternative locations follow XDG Base Directory
+# spec: `$XDG_CONFIG_HOME/worktrunk/config.toml` on macOS/Linux,
+# `%APPDATA%\worktrunk\config.toml` on Windows.
+#
+# ## Worktree Path Template
+#
+# Controls where new worktrees are created. Paths are relative to the repository
+# root.
+#
+# **Variables:**
+#
+# - `{{ repo }}` — repository directory name
+# - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
+# - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
+# - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
+#
+# **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
+#
+# Siblings in parent directory (default) → `~/code/myproject.feature-auth`:
+#
+# worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+#
+# Inside the repository → `~/code/myproject/.worktrees/feature-auth`:
+#
+# worktree-path = ".worktrees/{{ branch | sanitize }}"
+#
+# ## List Command Defaults
+#
+# Persistent flag values for `wt list`. Override on command line as needed.
+#
+# [list]
+# full = false       # Show CI status and main…± diffstat columns (--full)
+# branches = false   # Include branches without worktrees (--branches)
+# remotes = false    # Include remote-only branches (--remotes)
+#
+# ## Commit Defaults
+#
+# Shared by `wt step commit`, `wt step squash`, and `wt merge`.
+#
+# [commit]
+# stage = "all"      # What to stage before commit: "all", "tracked", or "none"
+#
+# ## Merge Command Defaults
+#
+# All flags are on by default. Set to false to change default behavior.
+#
+# [merge]
+# squash = true      # Squash commits into one (--no-squash to preserve history)
+# commit = true      # Commit uncommitted changes first (--no-commit to skip)
+# rebase = true      # Rebase onto target before merge (--no-rebase to skip)
+# remove = true      # Remove worktree after merge (--no-remove to keep)
+# verify = true      # Run project hooks (--no-verify to skip)
+#
+# ## Select Command Defaults
+#
+# Pager behavior for `wt select` diff previews.
+#
+# [select]
+# # Pager command with flags for diff preview (overrides git's core.pager)
+# # Use this to specify pager flags needed for non-TTY contexts
+# # Example: pager = "delta --paging=never"
+#
+# ## LLM Commit Messages
+#
+# Generate commit messages automatically during merge. Requires an external CLI
+# tool. See <https://worktrunk.dev/llm-commits/> for setup.
+#
+# Using [llm](https://github.com/simonw/llm) (install: `pip install llm llm-anthropic`):
+#
 # [commit-generation]
-# Example: Simon Willison's llm CLI (https://github.com/simonw/llm)
-# Install: pip install llm llm-anthropic
 # command = "llm"
 # args = ["-m", "claude-haiku-4.5"]
-
-# Alternative: AIChat - Rust-based, supports 20+ providers
-# Install from: https://github.com/sigoden/aichat
+#
+# Using [aichat](https://github.com/sigoden/aichat):
+#
+# [commit-generation]
 # command = "aichat"
 # args = ["-m", "claude:claude-haiku-4.5"]
-
-# Optional: Load template from file (mutually exclusive with 'template')
-# Supports ~ expansion: ~/.config/worktrunk/commit-template.txt
+#
+# Load templates from external files (supports `~` expansion):
+#
+# [commit-generation]
 # template-file = "~/.config/worktrunk/commit-template.txt"
-
-# Optional: Load squash template from file (mutually exclusive with 'squash-template')
-# Supports ~ expansion: ~/.config/worktrunk/squash-template.txt
 # squash-template-file = "~/.config/worktrunk/squash-template.txt"
-
-# See "Custom Prompt Templates" section at end of file for inline template options.
-
-# Worktree Path Template
-# Variables:
-#   {{ repo }}                 - Repository directory name (e.g., "myproject")
-#   {{ branch }}               - Raw branch name (e.g., "feature/auth")
-#   {{ branch | sanitize }}    - Filesystem-safe: / and \ replaced by - (e.g., "feature-auth")
-#   {{ branch | sanitize_db }} - Database-safe: lowercase, underscores, hash suffix (e.g., "feature_auth_x7k")
 #
-# Paths are relative to the main worktree root (original repository directory).
+# See [Custom Prompt Templates](#custom-prompt-templates) for inline template options.
 #
-# Example paths created (repo at /Users/dev/myproject, branch feature/auth):
-#   "../{{ repo }}.{{ branch | sanitize }}" → /Users/dev/myproject.feature-auth
-#   ".worktrees/{{ branch | sanitize }}"    → /Users/dev/myproject/.worktrees/feature-auth
-worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
-
-# Alternative: Inside repo (useful for bare repos)
-# worktree-path = ".worktrees/{{ branch | sanitize }}"
-
-# List Command Defaults
-# Configure default behavior for `wt list`
-[list]
-full = false       # Show CI and default-branch merge-base diffstat (`main…±` column) by default
-branches = false   # Include branches without worktrees by default
-remotes = false    # Include remote branches by default
-
-# Commit Defaults (shared by `wt step commit`, `wt step squash`, and `wt merge`)
-[commit]
-stage = "all"          # What to stage: "all", "tracked", or "none"
-
-# Merge Command Defaults
-# Note: `stage` defaults from [commit] section above
-[merge]
-squash = true          # Squash commits when merging
-commit = true          # Commit uncommitted changes during merge (disables squash when false)
-rebase = true          # Rebase onto target before merging
-remove = true          # Remove worktree after merge
-verify = true          # Run project hooks
-
-# Select Command Defaults
-# Configure pager behavior for `wt select` diff previews
-[select]
-# Pager command with flags for diff preview (overrides git's core.pager)
-# Use this to specify pager flags needed for non-TTY contexts
-# Example: pager = "delta --paging=never"
-
-# Approved Commands
-# Commands approved for project hooks in this repo
-# Auto-populated when approving hooks (prompt on first run) or via `wt hook approvals add`
-[projects."github.com/user/repo"]
-approved-commands = ["npm ci", "npm test"]
-
-# NOTE: For project-specific hooks (post-create, post-start, pre-merge, etc.),
-# use a separate PROJECT config file at <repo>/.config/wt.toml
-# Run `wt config create --project` to create one, or see https://worktrunk.dev/hook/
-
-# ============================================================================
-# Custom Prompt Templates (Advanced)
-# ============================================================================
-# These options belong under [commit-generation] section above.
-# NOTE: Templates are synced from src/llm.rs by `cargo test readme_sync`
-
-# Optional: Custom prompt template (inline) - Uses minijinja syntax
-# Available variables: {{ git_diff }}, {{ git_diff_stat }}, {{ branch }}, {{ recent_commits }}, {{ repo }}
-# If not specified, uses the default template shown below:
+# ## Approved Commands
+#
+# Commands approved for project hooks. Auto-populated when approving hooks on
+# first run, or via `wt hook approvals add`.
+#
+# [projects."github.com/user/repo"]
+# approved-commands = ["npm ci", "npm test"]
+#
+# For project-specific hooks (post-create, post-start, pre-merge, etc.), use a
+# separate project config at `<repo>/.config/wt.toml`. Run `wt config create --project`
+# to create one, or see <https://worktrunk.dev/hook/>.
+#
+# ## Custom Prompt Templates
+#
+# These options belong under the `[commit-generation]` section. Uses
+# [minijinja](https://docs.rs/minijinja/) syntax.
+#
+# ### Commit Template
+#
+# Available variables: `{{ git_diff }}`, `{{ git_diff_stat }}`, `{{ branch }}`,
+# `{{ recent_commits }}`, `{{ repo }}`
+#
+# Default template:
+#
 # <!-- DEFAULT_TEMPLATE_START -->
+# [commit-generation]
 # template = """
 # Write a commit message for the staged changes below.
 #
@@ -429,37 +558,19 @@ approved-commands = ["npm ci", "npm test"]
 # {% for commit in recent_commits %}- {{ commit }}
 # {% endfor %}</recent_commits>{% endif %}
 # </context>
+#
 # """
 # <!-- DEFAULT_TEMPLATE_END -->
 #
-# Example alternative template with different style:
-# template = """
-# Generate a commit message for {{ repo | upper }}.
+# ### Squash Template
 #
-# Branch: {{ branch }}
-# {%- if recent_commits %}
+# Available variables: `{{ git_diff }}`, `{{ git_diff_stat }}`, `{{ branch }}`,
+# `{{ recent_commits }}`, `{{ repo }}`, `{{ commits }}`, `{{ target_branch }}`
 #
-# Recent commit style ({{ recent_commits | length }} commits):
-# {%- for commit in recent_commits %}
-#   {{ loop.index }}. {{ commit }}
-# {%- endfor %}
-# {%- endif %}
+# Default template:
 #
-# Changes to commit:
-# ```
-# {{ git_diff }}
-# ```
-#
-# Requirements:
-# - Follow the style of recent commits above
-# - First line under 50 chars
-# - Focus on WHY, not HOW
-# """
-
-# Optional: Custom squash commit message template (inline) - Uses minijinja syntax
-# Available variables: {{ git_diff }}, {{ branch }}, {{ recent_commits }}, {{ repo }}, {{ commits }}, {{ target_branch }}
-# If not specified, uses the default template:
 # <!-- DEFAULT_SQUASH_TEMPLATE_START -->
+# [commit-generation]
 # squash-template = """
 # Combine these commits into a single commit message.
 #
@@ -485,25 +596,9 @@ approved-commands = ["npm ci", "npm test"]
 # <diff>
 # {{ git_diff }}
 # </diff>
+#
 # """
 # <!-- DEFAULT_SQUASH_TEMPLATE_END -->
-#
-# Example alternative template:
-# squash-template = """
-# Squashing {{ commits | length }} commit(s) from {{ branch }} to {{ target_branch }}.
-#
-# {% if commits | length > 1 -%}
-# Commits being combined:
-# {%- for c in commits %}
-#   {{ loop.index }}/{{ loop.length }}: {{ c }}
-# {%- endfor %}
-# {%- else -%}
-# Single commit: {{ commits[0] }}
-# {%- endif %}
-#
-# Generate one cohesive commit message that captures the overall change.
-# Use conventional commit format (feat/fix/docs/refactor).
-# """
 ```
 
 ### Project config

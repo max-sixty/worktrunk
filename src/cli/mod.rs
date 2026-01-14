@@ -1453,7 +1453,7 @@ fi
 
     /// Manage configuration and shell integration
     #[command(
-        after_long_help = r#"Manages configuration, shell integration, and runtime settings.
+        after_long_help = concat!(r#"Manages configuration, shell integration, and runtime settings.
 
 Worktrunk uses two configuration files:
 
@@ -1488,111 +1488,9 @@ Show current configuration and file locations:
 wt config show
 ```
 
-## User config
-
-The user config stores personal preferences that apply across all repositories. Create it with `wt config create` and view with `wt config show`.
-
-### Worktree path template
-
-Controls where new worktrees are created. The template is relative to the repository root.
-
-**Available variables:**
-- `{{ repo }}` — repository directory name
-- `{{ branch }}` — raw branch name (e.g., `feature/auth`)
-- `{{ branch | sanitize }}` — branch name with `/` and `\` replaced by `-`
-
-**Examples** for a repo at `~/code/myproject` creating branch `feature/login`:
-
-```toml
-# Default — siblings in parent directory
-# Creates: ~/code/myproject.feature-login
-worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
-
-# Inside the repository
-# Creates: ~/code/myproject/.worktrees/feature-login
-worktree-path = ".worktrees/{{ branch | sanitize }}"
-
-# Namespaced (useful when multiple repos share a parent directory)
-# Creates: ~/code/worktrees/myproject/feature-login
-worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
-
-# Nested bare repo (git clone --bare <url> project/.git)
-# Creates: ~/code/project/feature-login (sibling to .git)
-worktree-path = "../{{ branch | sanitize }}"
-```
-
-### Command settings
-
-Set persistent flag values for commands. These apply unless explicitly overridden on the command line.
-
-**`wt list`:**
-
-```toml
-[list]
-# All off by default
-full = true      # --full
-branches = true  # --branches
-remotes = true   # --remotes
-```
-
-**`wt step commit` and `wt merge` staging:**
-
-```toml
-[commit]
-stage = "all"    # "all" (default), "tracked", or "none"
-```
-
-**`wt merge`:**
-
-```toml
-[merge]
-# These flags are on by default; set to false to disable
-squash = false  # Preserve individual commits (--no-squash)
-commit = false  # Skip committing uncommitted changes (also disables squash)
-rebase = false  # Skip rebase (fails if not already rebased)
-remove = false  # Keep worktree after merge (--no-remove)
-verify = false  # Skip hooks (--no-verify)
-```
-
-### LLM commit messages
-
-Configure automatic commit message generation. Requires an external tool like [llm](https://llm.datasette.io/):
-
-```toml
-[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
-```
-
-See [LLM Commit Messages](@/llm-commits.md) for setup details and template customization.
-
-### Approved commands
-
-When project hooks run for the first time, Worktrunk prompts for approval. Approved commands are saved here automatically:
-
-```toml
-[projects."my-project"]
-approved-commands = ["npm ci", "npm test"]
-```
-
-Manage approvals with `wt hook approvals add` to review and pre-approve commands, and `wt hook approvals clear` to reset (add `--global` to clear all projects).
-
-### User hooks
-
-Personal hooks that run for all repositories. Use the same syntax as project hooks:
-
-```toml
-[post-create]
-setup = "echo 'Setting up worktree...'"
-
-[pre-merge]
-notify = "notify-send 'Merging {{ branch }}'"
-```
-
-User hooks run before project hooks and don't require approval. Skip with `--no-verify`.
-
-See [`wt hook`](@/hook.md#user-hooks) for complete documentation.
-
+"#,
+            include_str!("../../dev/config.source.md"),
+            r#"
 ## Project config
 
 The project config defines lifecycle hooks and project-specific settings. This file is checked into version control and shared across the team.
@@ -1722,7 +1620,7 @@ WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
 <!-- subdoc: show -->
 
 <!-- subdoc: state -->
-"#
+"#)
     )]
     Config {
         #[command(subcommand)]
