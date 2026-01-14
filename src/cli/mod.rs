@@ -245,9 +245,9 @@ pub(crate) enum Commands {
     /// Switch to a worktree
     ///
     /// Change directory to a worktree, creating one if needed.
-    #[command(after_long_help = r#"<!-- demo: wt-switch.gif 1600x900 -->
-
-Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
+    #[command(
+        after_long_help = r#"Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
+<!-- demo: wt-switch.gif 1600x900 -->
 
 ## Examples
 
@@ -308,7 +308,8 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 - [`wt list`](@/list.md) — View all worktrees
 - [`wt remove`](@/remove.md) — Delete worktrees when done
 - [`wt merge`](@/merge.md) — Integrate changes back to the default branch
-"#)]
+"#
+    )]
     Switch {
         /// Branch name
         ///

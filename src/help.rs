@@ -248,14 +248,37 @@ fn handle_help_page(args: &[String]) {
         return;
     };
 
-    // Get the after_long_help content
+    // Get the long_about (subtitle) and after_long_help content
     // Transform for web docs: console→bash, status colors, demo images
     // Subdocs are expanded separately so main Command reference comes first
     let parent_name = format!("wt {}", subcommand);
-    let raw_help = sub
+    let about = sub.get_about().map(|s| s.to_string());
+    let long_about = sub.get_long_about().map(|s| s.to_string());
+    let after_long_help = sub
         .get_after_long_help()
         .map(|s| s.to_string())
         .unwrap_or_default();
+
+    // Extract subtitle: the part of long_about beyond the short about
+    // Doc comments produce: "Short about\n\nLong description" in long_about
+    // We only want the long description part (subtitle) for web docs
+    let subtitle = match (&about, &long_about) {
+        (Some(short), Some(long)) if long.starts_with(short) => {
+            let rest = long[short.len()..].trim_start();
+            if rest.is_empty() {
+                None
+            } else {
+                Some(rest.to_string())
+            }
+        }
+        _ => None,
+    };
+
+    // Combine: subtitle followed by after_long_help (conceptual docs)
+    let raw_help = match subtitle {
+        Some(sub) => format!("{sub}\n\n{after_long_help}"),
+        None => after_long_help,
+    };
 
     // Split content at first subdoc placeholder
     let subdoc_marker = "<!-- subdoc:";

@@ -8,6 +8,8 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt select --help-page` — edit cli.rs to update -->
 
+Browse and switch worktrees with live preview.
+
 Interactive worktree picker with live preview. Navigate worktrees with keyboard shortcuts and press Enter to switch.
 
 <figure class="demo">
