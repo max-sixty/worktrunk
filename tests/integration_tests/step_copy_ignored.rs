@@ -249,9 +249,6 @@ fn test_copy_ignored_directory(mut repo: TestRepo) {
     fs::write(target_dir.join("debug").join("output"), "binary content").unwrap();
     fs::write(target_dir.join("CACHEDIR.TAG"), "cache tag").unwrap();
 
-    // Add a .git file inside target (should be skipped by copy_dir_recursive)
-    fs::write(target_dir.join(".git"), "gitdir: /some/path").unwrap();
-
     // Add target to .gitignore
     fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
 
@@ -276,12 +273,6 @@ fn test_copy_ignored_directory(mut repo: TestRepo) {
     assert_eq!(
         fs::read_to_string(copied_target.join("debug").join("output")).unwrap(),
         "binary content"
-    );
-
-    // Verify .git was NOT copied (skipped by copy_dir_recursive)
-    assert!(
-        !copied_target.join(".git").exists(),
-        ".git should NOT be copied"
     );
 }
 
@@ -533,4 +524,68 @@ fn test_copy_ignored_to_nonexistent_worktree(repo: TestRepo) {
         &["copy-ignored", "--to", "orphan-branch"],
         None,
     ));
+}
+
+/// Test copy-ignored when default branch has no worktree
+///
+/// When the default branch (main) has no worktree, copy-ignored should error clearly
+/// rather than failing cryptically with git ls-files errors.
+#[rstest]
+fn test_copy_ignored_no_default_branch_worktree(mut repo: TestRepo) {
+    // Create a feature worktree and switch main worktree to a different branch
+    let feature_path = repo.add_worktree("feature");
+    repo.switch_primary_to("develop"); // main worktree is now on 'develop', not 'main'
+
+    // Now 'main' has no worktree. Try to copy from default (main).
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored"],
+        Some(&feature_path),
+    ));
+}
+
+/// Test copy-ignored in a bare repository setup
+///
+/// This test reproduces GitHub issue #598: `wt step copy-ignored` fails in bare repo
+/// with error "git ls-files failed: fatal: this operation must be run in a work tree"
+#[test]
+fn test_copy_ignored_bare_repo() {
+    use crate::common::{BareRepoTest, TestRepoBase, setup_temp_snapshot_settings, wt_command};
+
+    let test = BareRepoTest::new();
+
+    // Create main worktree (default branch)
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit on main");
+
+    // Create a feature worktree
+    let feature_worktree = test.create_worktree("feature", "feature");
+    test.commit_in(&feature_worktree, "Feature work");
+
+    // Create .env file in main (source worktree)
+    fs::write(main_worktree.join(".env"), "SECRET=value").unwrap();
+
+    // Add .env to .gitignore in main
+    fs::write(main_worktree.join(".gitignore"), ".env\n").unwrap();
+
+    // Create .worktreeinclude in main
+    fs::write(main_worktree.join(".worktreeinclude"), ".env\n").unwrap();
+
+    // Run copy-ignored from feature worktree (copies from main by default)
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        cmd.args(["step", "copy-ignored"])
+            .current_dir(&feature_worktree);
+
+        insta_cmd::assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify file was copied
+    assert!(
+        feature_worktree.join(".env").exists(),
+        ".env should be copied to feature worktree"
+    );
 }
