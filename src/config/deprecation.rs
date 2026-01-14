@@ -218,7 +218,7 @@ pub fn check_and_migrate(
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "to regenerate, rerun after <bright-black>wt config state hints clear {}</>",
+                "To regenerate, rerun after <bright-black>wt config state hints clear {}</>",
                 HINT_DEPRECATED_PROJECT_CONFIG
             ))
         );

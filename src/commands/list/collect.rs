@@ -1816,7 +1816,7 @@ pub fn collect(
         let msg =
             cformat!("Configured default branch <bold>{configured}</> does not exist locally");
         crate::output::print(warning_message(msg))?;
-        let hint = cformat!("Run <bright-black>wt config state default-branch clear</> to reset");
+        let hint = cformat!("To reset, run <bright-black>wt config state default-branch clear</>");
         crate::output::print(worktrunk::styling::hint_message(hint))?;
     }
 

@@ -521,7 +521,7 @@ pub fn plan_switch(
             let remove_cmd = suggest_command("remove", &[&resolved_branch], &[]);
             let switch_cmd = suggest_command("switch", &[&resolved_branch], &[]);
             crate::output::print(hint_message(cformat!(
-                "To switch to the remote branch, delete this branch and switch without --create: <bright-black>{remove_cmd} && {switch_cmd}</>"
+                "To switch to the remote branch, delete this branch and run without <bright-black>--create</>: <bright-black>{remove_cmd} && {switch_cmd}</>"
             )))?;
         }
     }
@@ -614,7 +614,7 @@ pub fn plan_switch(
             "Configured default branch <bold>{configured}</> does not exist locally"
         )))?;
         crate::output::print(hint_message(cformat!(
-            "Run <bright-black>wt config state default-branch clear</> to reset"
+            "To reset, run <bright-black>wt config state default-branch clear</>"
         )))?;
     }
 

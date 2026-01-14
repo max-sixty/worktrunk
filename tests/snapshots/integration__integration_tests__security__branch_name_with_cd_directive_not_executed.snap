@@ -9,7 +9,7 @@ info:
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -22,6 +22,7 @@ info:
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_DIRECTIVE_FILE: "[DIRECTIVE_FILE]"
@@ -34,4 +35,4 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mBranch [1m__WORKTRUNK_CD__/tmp[22m already exists[39m
-[2m↳[22m [2mTo switch to the existing branch, remove [90m--create[39m; run [90mwt switch __WORKTRUNK_CD__/tmp[39m[22m
+[2m↳[22m [2mTo switch to the existing branch, remove [90m--create[39m and run [90mwt switch __WORKTRUNK_CD__/tmp[39m[22m

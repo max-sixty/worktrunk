@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use color_print::cformat;
 use normalize_path::NormalizePath;
 
 use super::{GitError, Repository, ResolvedWorktree, WorktreeInfo};
@@ -132,16 +133,18 @@ impl Repository {
                 // Read from worktrunk.history (recorded by wt switch operations)
                 self.get_switch_previous().ok_or_else(|| {
                     GitError::Other {
-                        message:
-                            "No previous branch found in history. Use 'wt list' to see available worktrees."
-                                .into(),
+                        message: cformat!(
+                            "No previous branch found in history. Run <bright-black>wt list</> to see available worktrees."
+                        ),
                     }
                     .into()
                 })
             }
             "^" => self.default_branch().ok_or_else(|| {
                 GitError::Other {
-                    message: "Cannot determine default branch. Specify target explicitly or run 'wt config state default-branch set <branch>'.".into(),
+                    message: cformat!(
+                        "Cannot determine default branch. Specify target explicitly or run <bright-black>wt config state default-branch set <bold>BRANCH</></>"
+                    ),
                 }
                 .into()
             }),

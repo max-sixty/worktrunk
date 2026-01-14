@@ -36,4 +36,4 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mConfigured default branch [1mnonexistent[22m does not exist locally[39m
-[2m↳[22m [2mRun [90mwt config state default-branch clear[39m to reset[22m
+[2m↳[22m [2mTo reset, run [90mwt config state default-branch clear[39m[22m
