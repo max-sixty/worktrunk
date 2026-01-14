@@ -87,17 +87,17 @@ pub fn build_hook_context(
     map.insert("repo_root".into(), repo_path);
     map.insert("worktree".into(), worktree);
 
-    // Default branch and its worktree path
+    // Default branch
     if let Some(default_branch) = ctx.repo.default_branch() {
         map.insert("default_branch".into(), default_branch);
+    }
 
-        // main_worktree_path: path to the worktree with the default branch checked out
-        if let Ok(Some(path)) = ctx.repo.default_branch_worktree() {
-            map.insert(
-                "main_worktree_path".into(),
-                to_posix_path(&path.to_string_lossy()),
-            );
-        }
+    // Primary worktree path (where established files live)
+    if let Ok(Some(path)) = ctx.repo.primary_worktree() {
+        let path_str = to_posix_path(&path.to_string_lossy());
+        map.insert("primary_worktree_path".into(), path_str.clone());
+        // Deprecated alias
+        map.insert("main_worktree_path".into(), path_str);
     }
 
     if let Ok(commit) = ctx.repo.run_command(&["rev-parse", "HEAD"]) {

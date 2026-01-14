@@ -530,7 +530,7 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 #   {{ repo }}               - Repository directory name (e.g., "myproject")
 #   {{ branch }}             - Branch name (e.g., "feature/auth")
 #   {{ worktree_path }}      - Absolute path to worktree
-#   {{ main_worktree_path }} - Absolute path to main worktree
+#   {{ primary_worktree_path }} - Where established files live
 #   {{ default_branch }}     - Default branch name (e.g., "main")
 #   {{ target }}             - Target branch (merge hooks only)
 #

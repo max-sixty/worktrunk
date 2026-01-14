@@ -39,7 +39,7 @@ pub const TEMPLATE_VARS: &[&str] = &[
     "repo_path",
     "worktree_path",
     "default_branch",
-    "main_worktree_path",
+    "primary_worktree_path",
     "commit",
     "short_commit",
     "remote",
@@ -54,7 +54,13 @@ pub const TEMPLATE_VARS: &[&str] = &[
 /// - `main_worktree` → `repo`
 /// - `repo_root` → `repo_path`
 /// - `worktree` → `worktree_path`
-pub const DEPRECATED_TEMPLATE_VARS: &[&str] = &["main_worktree", "repo_root", "worktree"];
+/// - `main_worktree_path` → `primary_worktree_path`
+pub const DEPRECATED_TEMPLATE_VARS: &[&str] = &[
+    "main_worktree",
+    "repo_root",
+    "worktree",
+    "main_worktree_path",
+];
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};

@@ -305,8 +305,7 @@ impl Repository {
     /// For bare repositories: the bare repository directory itself.
     ///
     /// This is the base for template expansion (`{{ repo }}`, `{{ repo_path }}`).
-    /// NOT necessarily where the default branch is checked out — use
-    /// `default_branch_worktree()` for that.
+    /// NOT necessarily where established files live — use `primary_worktree()` for that.
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
     pub fn repo_path(&self) -> anyhow::Result<PathBuf> {
