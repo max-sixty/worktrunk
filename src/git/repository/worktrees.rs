@@ -67,10 +67,10 @@ impl Repository {
         self.worktree_for_branch(&branch)
     }
 
-    /// The primary worktree - where established files (ignored files, configs) typically live.
+    /// The primary worktree — where established files (ignored files, configs) typically live.
     ///
-    /// - Non-bare repos: the main worktree (repo root) - this is where you cloned and set things up
-    /// - Bare repos: the default branch's worktree - no main worktree exists
+    /// - Normal repos: the main worktree (repo root) — this is where you cloned and set things up
+    /// - Bare repos: the default branch's worktree — no main worktree exists
     ///
     /// Returns `None` for bare repos when no worktree has the default branch.
     pub fn primary_worktree(&self) -> anyhow::Result<Option<PathBuf>> {

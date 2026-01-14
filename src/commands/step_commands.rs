@@ -442,13 +442,17 @@ pub fn step_copy_ignored(
             (path, branch.to_string())
         }
         None => {
-            // Use primary worktree: main worktree for normal repos, default branch worktree for bare
+            // Default source is the primary worktree (main worktree for normal repos,
+            // default branch worktree for bare repos).
             let path = repo.primary_worktree()?.ok_or_else(|| {
                 anyhow::anyhow!(
                     "No primary worktree found (bare repo with no default branch worktree)"
                 )
             })?;
-            let context = repo.default_branch().unwrap_or_else(|| "primary".into());
+            let context = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
             (path, context)
         }
     };
