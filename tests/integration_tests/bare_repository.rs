@@ -195,7 +195,7 @@ fn test_bare_repo_identifies_primary_correctly() {
 }
 
 #[test]
-fn test_bare_repo_worktree_base_used_for_paths() {
+fn test_bare_repo_path_used_for_worktree_paths() {
     let test = BareRepoTest::new();
 
     // Create initial worktree
@@ -213,12 +213,12 @@ fn test_bare_repo_worktree_base_used_for_paths() {
 
     cmd.output().unwrap();
 
-    // Verify path is created inside bare repo (using worktree_base)
+    // Verify path is created inside bare repo (using repo_path as base)
     // Template: {{ branch }} -> repo/dev
     let expected = test.bare_repo_path().join("dev");
     assert!(
         expected.exists(),
-        "Worktree should be created using worktree_base: {:?}",
+        "Worktree should be created using repo_path: {:?}",
         expected
     );
 

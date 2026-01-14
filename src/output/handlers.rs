@@ -548,7 +548,7 @@ fn spawn_post_switch_after_remove(
     // is removed (cwd may no longer exist).
     let repo = Repository::at(main_path)?;
     let dest_branch = repo.worktree_at(main_path).branch()?;
-    let repo_root = repo.worktree_base()?;
+    let repo_root = repo.repo_path()?;
     let ctx = CommandContext::new(
         &repo,
         &config,

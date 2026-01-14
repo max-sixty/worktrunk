@@ -724,7 +724,7 @@ pub fn collect(
             let _ = default_branch_cell.set(repo.default_branch());
         });
         s.spawn(|_| {
-            // Populate is_bare cache (value used later via worktree_base)
+            // Populate is_bare cache (value used later via repo_path)
             let _ = repo.is_bare();
         });
         s.spawn(|_| {

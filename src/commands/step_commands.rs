@@ -442,18 +442,14 @@ pub fn step_copy_ignored(
             (path, branch.to_string())
         }
         None => {
-            // Default source is the default branch's worktree.
-            // For bare repos, worktree_base() returns the bare directory (which has no
-            // working tree for git ls-files). We need the actual worktree path.
-            let default_branch = repo
-                .default_branch()
-                .ok_or_else(|| anyhow::anyhow!("Cannot determine default branch"))?;
-            let path = repo.worktree_for_branch(&default_branch)?.ok_or_else(|| {
-                worktrunk::git::GitError::WorktreeNotFound {
-                    branch: default_branch.clone(),
-                }
+            // Use primary worktree: main worktree for normal repos, default branch worktree for bare
+            let path = repo.primary_worktree()?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No primary worktree found (bare repo with no default branch worktree)"
+                )
             })?;
-            (path, default_branch)
+            let context = repo.default_branch().unwrap_or_else(|| "primary".into());
+            (path, context)
         }
     };
 
