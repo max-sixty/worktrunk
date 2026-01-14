@@ -247,7 +247,7 @@ pub struct UserProjectConfig {
 }
 
 /// Configuration for the `wt list` command
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct ListConfig {
     /// Show CI and `main` diffstat by default
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -260,6 +260,13 @@ pub struct ListConfig {
     /// Include remote branches by default
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remotes: Option<bool>,
+
+    /// (Experimental) Per-task timeout in milliseconds.
+    /// When set to a positive value, git operations that exceed this timeout are terminated.
+    /// Timed-out tasks show defaults in the table. Set to 0 to explicitly disable timeout
+    /// (useful to override a global setting). Disabled when --full is used.
+    #[serde(rename = "timeout-ms", skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
 }
 
 /// Configuration for the `wt step commit` command
@@ -911,12 +918,14 @@ rename-tab = "echo 'switched'"
             full: Some(true),
             branches: Some(false),
             remotes: None,
+            timeout_ms: Some(500),
         };
         let json = serde_json::to_string(&config).unwrap();
         let parsed: ListConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.full, Some(true));
         assert_eq!(parsed.branches, Some(false));
         assert_eq!(parsed.remotes, None);
+        assert_eq!(parsed.timeout_ms, Some(500));
     }
 
     #[test]

@@ -19,12 +19,13 @@
 //! This avoids nested parallelism (Rayon → thread::scope) which could create 100+ threads.
 
 use crossbeam_channel::Sender;
-use std::fmt::Display;
 use std::sync::Arc;
 use worktrunk::git::{BranchRef, LineDiff, Repository, WorktreeInfo};
 
 use super::ci_status::PrStatus;
-use super::collect::{ExpectedResults, TaskError, TaskKind, TaskResult, detect_git_operation};
+use super::collect::{
+    ErrorCause, ExpectedResults, TaskError, TaskKind, TaskResult, detect_git_operation,
+};
 use super::model::{
     AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus, WorkingTreeStatus,
 };
@@ -116,8 +117,24 @@ pub struct TaskContext {
 }
 
 impl TaskContext {
-    fn error(&self, kind: TaskKind, message: impl Display) -> TaskError {
-        TaskError::new(self.item_idx, kind, message.to_string())
+    fn error(&self, kind: TaskKind, err: &anyhow::Error) -> TaskError {
+        // Check if any error in the chain is a timeout
+        let is_timeout = err.chain().any(|e| {
+            e.downcast_ref::<std::io::Error>()
+                .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::TimedOut)
+        });
+
+        let cause = if is_timeout {
+            let kind_str: &'static str = kind.into();
+            let sha = &self.branch_ref.commit_sha;
+            let short_sha = &sha[..sha.len().min(8)];
+            let branch = self.branch_ref.branch.as_deref().unwrap_or(short_sha);
+            log::debug!("Task {} timed out for {}", kind_str, branch);
+            ErrorCause::Timeout
+        } else {
+            ErrorCause::Other
+        };
+        TaskError::new(self.item_idx, kind, err.to_string(), cause)
     }
 
     /// Get the default branch (cached in Repository).
@@ -399,7 +416,7 @@ impl Task for CommitDetailsTask {
         let repo = &ctx.repo;
         let (timestamp, commit_message) = repo
             .commit_details(&ctx.branch_ref.commit_sha)
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::CommitDetails {
             item_idx: ctx.item_idx,
             commit: CommitDetails {
@@ -431,7 +448,7 @@ impl Task for AheadBehindTask {
         // merge_base() is cached, so this is cheap after first call.
         let is_orphan = repo
             .merge_base(&base, &ctx.branch_ref.commit_sha)
-            .map_err(|e| ctx.error(Self::KIND, e))?
+            .map_err(|e| ctx.error(Self::KIND, &e))?
             .is_none();
 
         if is_orphan {
@@ -450,11 +467,11 @@ impl Task for AheadBehindTask {
                 counts
             } else {
                 repo.ahead_behind(&base, &ctx.branch_ref.commit_sha)
-                    .map_err(|e| ctx.error(Self::KIND, e))?
+                    .map_err(|e| ctx.error(Self::KIND, &e))?
             }
         } else {
             repo.ahead_behind(&base, &ctx.branch_ref.commit_sha)
-                .map_err(|e| ctx.error(Self::KIND, e))?
+                .map_err(|e| ctx.error(Self::KIND, &e))?
         };
 
         Ok(TaskResult::AheadBehind {
@@ -486,7 +503,7 @@ impl Task for CommittedTreesMatchTask {
         // worktrees, HEAD is the main worktree's HEAD.
         let committed_trees_match = repo
             .trees_match(&ctx.branch_ref.commit_sha, &base)
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::CommittedTreesMatch {
             item_idx: ctx.item_idx,
             committed_trees_match,
@@ -528,7 +545,7 @@ impl Task for HasFileChangesTask {
         let repo = &ctx.repo;
         let has_file_changes = repo
             .has_added_changes(branch, &target)
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::HasFileChanges {
             item_idx: ctx.item_idx,
@@ -571,7 +588,7 @@ impl Task for WouldMergeAddTask {
         let repo = &ctx.repo;
         let would_merge_add = repo
             .would_merge_add_to_target(branch, &base)
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::WouldMergeAdd {
             item_idx: ctx.item_idx,
             would_merge_add,
@@ -603,7 +620,7 @@ impl Task for IsAncestorTask {
         let repo = &ctx.repo;
         let is_ancestor = repo
             .is_ancestor(&ctx.branch_ref.commit_sha, &base)
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::IsAncestor {
             item_idx: ctx.item_idx,
@@ -629,7 +646,7 @@ impl Task for BranchDiffTask {
         let repo = &ctx.repo;
         let diff = repo
             .branch_diff_stats(&base, &ctx.branch_ref.commit_sha)
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::BranchDiff {
             item_idx: ctx.item_idx,
@@ -657,14 +674,14 @@ impl Task for WorkingTreeDiffTask {
         // `git stash create` which needs the index lock.
         let status_output = wt
             .run_command(&["--no-optional-locks", "status", "--porcelain"])
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         let (working_tree_status, is_dirty, has_conflicts) =
             parse_working_tree_status(&status_output);
 
         let working_tree_diff = if is_dirty {
             wt.working_tree_diff_stats()
-                .map_err(|e| ctx.error(Self::KIND, e))?
+                .map_err(|e| ctx.error(Self::KIND, &e))?
         } else {
             LineDiff::default()
         };
@@ -698,7 +715,7 @@ impl Task for MergeTreeConflictsTask {
         let repo = &ctx.repo;
         let has_merge_tree_conflicts = repo
             .has_merge_conflicts(&base, &ctx.branch_ref.commit_sha)
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::MergeTreeConflicts {
             item_idx: ctx.item_idx,
             has_merge_tree_conflicts,
@@ -734,7 +751,7 @@ impl Task for WorkingTreeConflictsTask {
         // Both tasks run in parallel, and `git stash create` below needs the index lock.
         let status_output = wt
             .run_command(&["--no-optional-locks", "status", "--porcelain"])
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         let is_dirty = !status_output.trim().is_empty();
 
@@ -779,7 +796,7 @@ impl Task for WorkingTreeConflictsTask {
         let has_conflicts = ctx
             .repo
             .has_merge_conflicts(&base, stash_sha)
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::WorkingTreeConflicts {
             item_idx: ctx.item_idx,
@@ -844,7 +861,7 @@ impl Task for UpstreamTask {
         // Get upstream branch (None is valid - just means no upstream configured)
         let upstream_branch = repo
             .upstream_branch(branch)
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
         let Some(upstream_branch) = upstream_branch else {
             return Ok(TaskResult::Upstream {
                 item_idx: ctx.item_idx,
@@ -855,7 +872,7 @@ impl Task for UpstreamTask {
         let remote = upstream_branch.split_once('/').map(|(r, _)| r.to_string());
         let (ahead, behind) = repo
             .ahead_behind(&upstream_branch, &ctx.branch_ref.commit_sha)
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::Upstream {
             item_idx: ctx.item_idx,
@@ -1165,5 +1182,59 @@ mod tests {
     fn test_parse_port_from_url_edge_cases() {
         assert_eq!(parse_port_from_url("http://127.0.0.1:9000"), Some(9000));
         assert_eq!(parse_port_from_url("http://0.0.0.0:5000"), Some(5000));
+    }
+
+    #[test]
+    fn test_is_timeout_error_in_chain() {
+        use std::io::{Error as IoError, ErrorKind};
+
+        // Create a timeout error wrapped in anyhow
+        let timeout_io = IoError::new(ErrorKind::TimedOut, "operation timed out");
+        let anyhow_err = anyhow::Error::from(timeout_io).context("git status failed");
+
+        // Verify that checking the error chain finds the timeout
+        let is_timeout = anyhow_err.chain().any(|e| {
+            e.downcast_ref::<IoError>()
+                .is_some_and(|io_err| io_err.kind() == ErrorKind::TimedOut)
+        });
+        assert!(is_timeout, "should detect timeout in error chain");
+    }
+
+    #[test]
+    fn test_is_not_timeout_error() {
+        use std::io::{Error as IoError, ErrorKind};
+
+        // Create a non-timeout error
+        let other_io = IoError::new(ErrorKind::PermissionDenied, "access denied");
+        let anyhow_err = anyhow::Error::from(other_io).context("git status failed");
+
+        // Verify that checking the error chain does NOT find a timeout
+        let is_timeout = anyhow_err.chain().any(|e| {
+            e.downcast_ref::<IoError>()
+                .is_some_and(|io_err| io_err.kind() == ErrorKind::TimedOut)
+        });
+        assert!(
+            !is_timeout,
+            "should not detect timeout for non-timeout error"
+        );
+    }
+
+    #[test]
+    fn test_timeout_error_deeply_nested() {
+        use std::io::{Error as IoError, ErrorKind};
+
+        // Create a deeply nested timeout error
+        let timeout_io = IoError::new(ErrorKind::TimedOut, "operation timed out");
+        let anyhow_err = anyhow::Error::from(timeout_io)
+            .context("inner context")
+            .context("middle context")
+            .context("outer context");
+
+        // Verify that checking the error chain finds the timeout even when deeply nested
+        let is_timeout = anyhow_err.chain().any(|e| {
+            e.downcast_ref::<IoError>()
+                .is_some_and(|io_err| io_err.kind() == ErrorKind::TimedOut)
+        });
+        assert!(is_timeout, "should detect timeout even when deeply nested");
     }
 }
