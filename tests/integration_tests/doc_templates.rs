@@ -417,16 +417,16 @@ fn test_doc_combined_filters(repo: TestRepo) {
 }
 
 // =============================================================================
-// worktree_path Function
+// worktree_path_of_branch Function
 // =============================================================================
 
 #[rstest]
-fn test_worktree_path_function_registered(repo: TestRepo) {
-    // Test that worktree_path function is callable and returns empty for nonexistent branch
+fn test_worktree_path_of_branch_function_registered(repo: TestRepo) {
+    // Test that worktree_path_of_branch function is callable and returns empty for nonexistent branch
     let repository = Repository::at(repo.root_path()).unwrap();
     let vars: HashMap<&str, &str> = HashMap::new();
     let result = expand_template(
-        "{{ worktree_path('nonexistent') }}",
+        "{{ worktree_path_of_branch('nonexistent') }}",
         &vars,
         false,
         &repository,
