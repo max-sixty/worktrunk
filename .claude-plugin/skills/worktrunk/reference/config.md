@@ -30,10 +30,10 @@ wt config show
 
 ## Configuration files
 
-| File | Location | Purpose |
-|------|----------|---------|
-| **User config** | `~/.config/worktrunk/config.toml` | Personal settings, command defaults, approved project commands |
-| **Project config** | `.config/wt.toml` | Lifecycle hooks, checked into version control |
+| File | Location | Contains | Committed & shared |
+|------|----------|----------|--------------------|
+| **User config** | `~/.config/worktrunk/config.toml` | Worktree path template, LLM commit configs, etc | ✗ |
+| **Project config** | `.config/wt.toml` | Project hooks, dev server URL | ✓ |
 
 <!-- USER_CONFIG_START -->
 # Worktrunk User Configuration
