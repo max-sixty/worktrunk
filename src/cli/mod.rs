@@ -245,9 +245,9 @@ pub(crate) enum Commands {
     /// Switch to a worktree
     ///
     /// Change directory to a worktree, creating one if needed.
-    #[command(after_long_help = r#"<!-- demo: wt-switch.gif 1600x900 -->
-
-Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
+    #[command(
+        after_long_help = r#"Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
+<!-- demo: wt-switch.gif 1600x900 -->
 
 ## Examples
 
@@ -308,7 +308,8 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 - [`wt list`](@/list.md) — View all worktrees
 - [`wt remove`](@/remove.md) — Delete worktrees when done
 - [`wt merge`](@/merge.md) — Integrate changes back to the default branch
-"#)]
+"#
+    )]
     Switch {
         /// Branch name
         ///
@@ -968,7 +969,6 @@ Manual merge workflow with review between steps:
 ```console
 wt step commit
 wt step squash
-# Review the squashed commit
 wt step rebase
 wt step push
 ```
@@ -986,15 +986,10 @@ wt step push
 
 - [`wt merge`](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
 - [`wt hook`](@/hook.md) — Run configured hooks
-
 <!-- subdoc: commit -->
-
 <!-- subdoc: squash -->
-
 <!-- subdoc: copy-ignored -->
-
-<!-- subdoc: for-each -->
-"#
+<!-- subdoc: for-each -->"#
     )]
     Step {
         #[command(subcommand)]
@@ -1773,11 +1768,8 @@ WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
 | `NO_COLOR` | Disable colored output ([standard](https://no-color.org/)) |
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
-
 <!-- subdoc: show -->
-
-<!-- subdoc: state -->
-"#)
+<!-- subdoc: state -->"#)
     )]
     Config {
         #[command(subcommand)]

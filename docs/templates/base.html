@@ -229,6 +229,20 @@
             </a>
         </div>
     </footer>
+    <script>
+    // Wrap code blocks in containers SYNCHRONOUSLY before first paint to prevent layout jump.
+    // The deferred code-copy.js will add copy buttons to these wrappers later.
+    (function() {
+        var blocks = document.querySelectorAll('.content pre');
+        for (var i = 0; i < blocks.length; i++) {
+            var block = blocks[i];
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            block.parentNode.insertBefore(wrapper, block);
+            wrapper.appendChild(block);
+        }
+    })();
+    </script>
 </body>
 
 </html>

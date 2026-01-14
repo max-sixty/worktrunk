@@ -8,6 +8,8 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt merge --help-page` — edit cli.rs to update -->
 
+Squash & rebase, fast-forward target, remove the worktree.
+
 Merge the current branch into the target branch, defaulting to the main branch. Unlike `git merge`, this merges the current branch into a target (rather than a target into the current branch). Similar to clicking "Merge pull request" on GitHub.
 
 <figure class="demo">

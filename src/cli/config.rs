@@ -261,13 +261,9 @@ Clear all stored state:
 ```console
 wt config state clear
 ```
-
 <!-- subdoc: default-branch -->
-
 <!-- subdoc: ci-status -->
-
 <!-- subdoc: marker -->
-
 <!-- subdoc: logs -->"#
     )]
     State {

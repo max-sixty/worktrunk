@@ -451,7 +451,6 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
           Show debug info (-v), or also write diagnostic report (-vv)
 {% end %}
 
-
 ## wt config state
 
 State is stored in `.git/` (config entries and log files), separate from configuration files.
@@ -583,7 +582,6 @@ Usage: <b><span class=c>wt config state default-branch</span></b> <span class=c>
           Show debug info (-v), or also write diagnostic report (-vv)
 {% end %}
 
-
 ## wt config state ci-status
 
 Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
@@ -635,7 +633,6 @@ Usage: <b><span class=c>wt config state ci-status</span></b> <span class=c>[OPTI
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Show debug info (-v), or also write diagnostic report (-vv)
 {% end %}
-
 
 ## wt config state marker
 
@@ -694,7 +691,6 @@ Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Show debug info (-v), or also write diagnostic report (-vv)
 {% end %}
-
 
 ## wt config state logs
 

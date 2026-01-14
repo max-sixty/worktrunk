@@ -23,7 +23,6 @@ Manual merge workflow with review between steps:
 ```bash
 wt step commit
 wt step squash
-# Review the squashed commit
 wt step rebase
 wt step push
 ```
@@ -155,7 +154,6 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
           Show debug info (-v), or also write diagnostic report (-vv)
 {% end %}
 
-
 ## wt step squash
 
 Stages all changes (including untracked files), then squashes all commits since diverging from the target branch into a single commit with an [LLM-generated message](@/llm-commits.md).
@@ -241,7 +239,6 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Show debug info (-v), or also write diagnostic report (-vv)
 {% end %}
-
 
 ## wt step copy-ignored
 
@@ -355,7 +352,6 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Show debug info (-v), or also write diagnostic report (-vv)
 {% end %}
-
 
 ## wt step for-each
 

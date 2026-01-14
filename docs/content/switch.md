@@ -8,14 +8,16 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt switch --help-page` — edit cli.rs to update -->
 
+Change directory to a worktree, creating one if needed.
+
+Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
+
 <figure class="demo">
 <picture>
   <source srcset="/assets/docs/dark/wt-switch.gif" media="(prefers-color-scheme: dark)">
   <img src="/assets/docs/light/wt-switch.gif" alt="wt switch demo" width="1600" height="900">
 </picture>
 </figure>
-
-Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
 
 ## Examples
 

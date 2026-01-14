@@ -15,7 +15,6 @@ Manual merge workflow with review between steps:
 ```bash
 wt step commit
 wt step squash
-# Review the squashed commit
 wt step rebase
 wt step push
 ```

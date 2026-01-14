@@ -1,5 +1,7 @@
 # wt select
 
+Browse and switch worktrees with live preview.
+
 Interactive worktree picker with live preview. Navigate worktrees with keyboard shortcuts and press Enter to switch.
 
 ## Examples

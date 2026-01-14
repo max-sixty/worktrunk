@@ -1,16 +1,17 @@
 // Copy-to-clipboard for code blocks
 // Strips leading `$ ` from bash/shell blocks (detected via data-lang or syntect classes)
-// Wraps pre in a container so copy button stays fixed during horizontal scroll
+//
+// Split into two phases to prevent layout jump on page load:
+// 1. Wrapper script (inline, sync) - wraps <pre> elements before first paint
+// 2. Button script (deferred) - adds copy buttons after DOM ready
 
 document.addEventListener('DOMContentLoaded', function() {
-  const codeBlocks = document.querySelectorAll('.content pre');
+  // Find all code blocks that were wrapped by the inline script
+  const wrappers = document.querySelectorAll('.code-block-wrapper');
 
-  codeBlocks.forEach(function(block) {
-    // Wrap pre in a container for proper button positioning
-    const wrapper = document.createElement('div');
-    wrapper.className = 'code-block-wrapper';
-    block.parentNode.insertBefore(wrapper, block);
-    wrapper.appendChild(block);
+  wrappers.forEach(function(wrapper) {
+    const block = wrapper.querySelector('pre');
+    if (!block) return;
 
     const button = document.createElement('button');
     button.className = 'code-copy-btn';
@@ -45,7 +46,6 @@ document.addEventListener('DOMContentLoaded', function() {
       });
     });
 
-    // Add button to wrapper (outside the scrollable pre)
     wrapper.appendChild(button);
   });
 });
