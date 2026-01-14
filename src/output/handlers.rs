@@ -395,7 +395,7 @@ pub fn handle_switch_output(
                     .unwrap_or(false);
                 if !has_custom_config && !repo.has_shown_hint("worktree-path") {
                     let hint = hint_message(cformat!(
-                        "Customize worktree locations: <bright-black>wt config create</>"
+                        "To customize worktree locations, run <bright-black>wt config create</>"
                     ));
                     super::print(hint)?;
                     let _ = repo.mark_hint_shown("worktree-path");
@@ -1089,6 +1089,6 @@ mod tests {
     fn test_git_subcommand_warning() {
         let warning = git_subcommand_warning();
         assert!(warning.contains("git-wt"));
-        assert!(warning.contains("shell function"));
+        assert!(warning.contains("with the"));
     }
 }

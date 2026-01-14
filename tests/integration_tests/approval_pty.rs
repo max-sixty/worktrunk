@@ -329,6 +329,9 @@ test = "echo 'Running tests...'"
 
 #[rstest]
 fn test_approval_prompt_mixed_approved_unapproved_accept(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"
@@ -339,12 +342,11 @@ third = "echo 'Third command'"
     repo.commit("Add config");
 
     // Pre-approve the second command
-    let project_id = repo.root_path().file_name().unwrap().to_str().unwrap();
     repo.write_test_config(&format!(
         r#"[projects."{}"]
 approved-commands = ["echo 'Second command'"]
 "#,
-        project_id
+        repo.project_id()
     ));
 
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
@@ -388,6 +390,9 @@ approved-commands = ["echo 'Second command'"]
 
 #[rstest]
 fn test_approval_prompt_mixed_approved_unapproved_decline(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"
@@ -398,12 +403,11 @@ third = "echo 'Third command'"
     repo.commit("Add config");
 
     // Pre-approve the second command
-    let project_id = repo.root_path().file_name().unwrap().to_str().unwrap();
     repo.write_test_config(&format!(
         r#"[projects."{}"]
 approved-commands = ["echo 'Second command'"]
 "#,
-        project_id
+        repo.project_id()
     ));
 
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt

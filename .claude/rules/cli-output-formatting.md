@@ -255,11 +255,11 @@ each type.
 
 **Hint vs Info:** Hints suggest user action. Info acknowledges what happened.
 
-| Hint ↳                        | Info ○                                |
-| ----------------------------- | ------------------------------------- |
-| "Run `wt merge` to continue"  | "Already up to date with main"        |
-| "Use `--yes` to override"     | "Skipping hooks (--no-verify)"        |
-| "Branch can be deleted"       | "Worktree preserved (main worktree)"  |
+| Hint ↳                              | Info ○                                |
+| ----------------------------------- | ------------------------------------- |
+| "To continue, run `wt merge`"       | "Already up to date with main"        |
+| "Commit or stash changes first"     | "Skipping hooks (--no-verify)"        |
+| "Branch can be deleted"             | "Worktree preserved (main worktree)"  |
 
 **Warning placement:** When something unexpected happens, warn somewhere. Where
 depends on the nature of the issue:
@@ -313,8 +313,8 @@ log::warn!("Failed to parse CI JSON for {}: {}", branch, e);
 return None;
 ```
 
-**Command suggestions in hints:** Use "To X, run Y" pattern. End with the
-command for easy copying:
+**Command suggestions in hints:** When a hint includes a runnable command, use
+"To X, run Y" pattern. End with the command for easy copying:
 
 ```rust
 // GOOD - command at end for easy copying
@@ -322,13 +322,25 @@ command for easy copying:
 "To rebase onto main, run wt step rebase or wt merge"
 
 // GOOD - recovery command after shadowing a remote branch
-"To switch to the remote branch, remove this added branch and then run without --create: wt remove feature && wt switch feature"
+"To switch to the remote branch, delete this branch and run without --create: wt remove feature && wt switch feature"
 
 // BAD - command without context
 "wt remove feature -D deletes unmerged branches"
 
 // BAD - command not at end (hard to copy)
 "Run wt switch feature (without --create) to switch to the remote branch"
+```
+
+For general action guidance without a specific command, direct imperatives are
+clearer:
+
+```rust
+// GOOD - direct imperative for general guidance
+"Commit or stash changes first"
+"Run from inside a worktree, or specify a branch name"
+
+// VERBOSE - "To proceed" adds nothing
+"To proceed, commit or stash changes first"
 ```
 
 **Multiple suggestions in one hint:** When combining suggestions with semicolons,

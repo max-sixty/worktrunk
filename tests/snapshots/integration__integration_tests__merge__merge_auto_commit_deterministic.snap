@@ -35,7 +35,7 @@ exit_code: 0
 [36m◎[39m [36mSquashing 1 commit & working tree changes into a single commit [90m(1 file, [32m+1[39m[39m[90m)[39m...[39m
 [2m↳[22m [2mBackup created @ ba39431[22m
 [36m◎[39m [36mGenerating squash commit message...[39m
-[2m↳[22m [2mUsing fallback commit message. Run [90mwt config --help[39m for LLM setup guide[22m
+[2m↳[22m [2mUsing fallback commit message. For LLM setup guide, run [90mwt config --help[39m[22m
 [107m [0m [1mSquash commits from main[22m
 [107m [0m 
 [107m [0m Combined commits:

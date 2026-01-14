@@ -199,7 +199,7 @@ impl std::fmt::Display for GitError {
                     "{}\n{}",
                     error_message(cformat!("Branch <bold>{branch}</> already exists")),
                     hint_message(cformat!(
-                        "To switch to the existing branch, remove <bright-black>--create</>; run <bright-black>{switch_cmd}</>"
+                        "To switch to the existing branch, remove <bright-black>--create</> and run <bright-black>{switch_cmd}</>"
                     ))
                 )
             }
@@ -227,7 +227,7 @@ impl std::fmt::Display for GitError {
                     "{}\n{}",
                     error_message(&message),
                     hint_message(cformat!(
-                        "Run this command from inside a worktree, or specify a branch name"
+                        "Run from inside a worktree, or specify a branch name"
                     ))
                 )
             }
@@ -466,7 +466,7 @@ impl std::fmt::Display for GitError {
                     "{}\n{}",
                     error_message(cformat!("Branch not rebased onto <bold>{target_branch}</>")),
                     hint_message(cformat!(
-                        "Remove <bright-black>--no-rebase</>; or to rebase first, run <bright-black>{rebase_cmd}</>"
+                        "To rebase first, run <bright-black>{rebase_cmd}</>; or remove <bright-black>--no-rebase</>"
                     ))
                 )
             }
@@ -736,7 +736,7 @@ mod tests {
         let downcast = err.downcast_ref::<GitError>().expect("Should downcast");
         assert_snapshot!(downcast.to_string(), @"
         [31m✗[39m [31mBranch [1mmain[22m already exists[39m
-        [2m↳[22m [2mTo switch to the existing branch, remove [90m--create[39m; run [90mwt switch main[39m[22m
+        [2m↳[22m [2mTo switch to the existing branch, remove [90m--create[39m and run [90mwt switch main[39m[22m
         ");
     }
 
