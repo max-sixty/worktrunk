@@ -177,8 +177,7 @@ use std::path::{Path, PathBuf};
 use unicode_width::UnicodeWidthStr;
 use worktrunk::styling::{ADDITION, DELETION, Stream, supports_hyperlinks};
 
-use super::collect::TaskKind;
-use super::collect_progressive_impl::parse_port_from_url;
+use super::collect::{TaskKind, parse_port_from_url};
 use super::columns::{COLUMN_SPECS, ColumnKind, ColumnSpec, column_display_index};
 
 // Re-export DiffVariant for external use (e.g., select command)

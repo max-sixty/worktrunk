@@ -4,7 +4,7 @@ use std::path::Path;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::styling::{Stream, StyledLine, hyperlink_stdout, supports_hyperlinks};
 
-use super::collect_progressive_impl::parse_port_from_url;
+use super::collect::parse_port_from_url;
 use super::columns::{ColumnKind, DiffVariant};
 use super::layout::{ColumnFormat, ColumnLayout, DiffColumnConfig, LayoutConfig};
 use super::model::{ListItem, PositionMask};

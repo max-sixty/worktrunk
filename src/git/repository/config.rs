@@ -128,14 +128,14 @@ impl Repository {
     /// - Consider passing the result as a parameter if needed multiple times
     /// - For optional operations, provide a fallback (e.g., `.unwrap_or("main")`)
     ///
-    /// Uses a hybrid approach:
-    /// 1. Check worktrunk cache (`git config worktrunk.default-branch`) — single command
-    /// 2. Detect primary remote, try its cache (e.g., `origin/HEAD`)
+    /// Detection strategy:
+    /// 1. Check worktrunk cache (`git config worktrunk.default-branch`)
+    /// 2. Try primary remote's local cache (e.g., `origin/HEAD`)
     /// 3. Query remote (`git ls-remote`) — may take 100ms-2s
     /// 4. Infer from local branches if no remote
     ///
     /// Detection results are cached to `worktrunk.default-branch` for future calls.
-    /// Result is cached in the shared repo cache (shared across all worktrees).
+    /// Result is also cached in the shared repo cache (shared across all worktrees).
     ///
     /// Returns `None` if the default branch cannot be determined.
     pub fn default_branch(&self) -> Option<String> {
@@ -152,7 +152,6 @@ impl Repository {
                 // If configured, validate it exists locally
                 if let Some(ref branch) = configured {
                     if self.local_branch_exists(branch).unwrap_or(false) {
-                        // Valid config - no invalid branch to report
                         let _ = self.cache.invalid_default_branch.set(None);
                         return Some(branch.clone());
                     }
@@ -168,13 +167,19 @@ impl Repository {
                 // Not configured - no invalid branch to report
                 let _ = self.cache.invalid_default_branch.set(None);
 
-                // Not configured - detect and persist to git config
-                if let Ok(branch) = self.detect_default_branch() {
-                    let _ = self.run_command(&["config", "worktrunk.default-branch", &branch]);
-                    return Some(branch);
+                // Detect: try remote, then local inference
+                let detected = self.detect_from_remote().or_else(|| {
+                    self.infer_default_branch_locally()
+                        .inspect_err(|e| log::debug!("Local inference failed: {e}"))
+                        .ok()
+                });
+
+                // Cache detected result to git config for future runs
+                if let Some(ref branch) = detected {
+                    let _ = self.run_command(&["config", "worktrunk.default-branch", branch]);
                 }
 
-                None
+                detected
             })
             .clone()
     }
@@ -188,10 +193,9 @@ impl Repository {
     ///
     /// Used to show warnings when the configured branch is invalid.
     ///
-    /// **Performance:** Calls `default_branch()` internally to ensure the cache is
-    /// populated, but that call is itself cached so subsequent calls are free.
+    /// This is a cache read - `default_branch()` populates both caches when it runs.
     pub fn invalid_default_branch_config(&self) -> Option<String> {
-        // Ensure default_branch() has populated the cache (no-op if already called)
+        // Ensure default_branch() has run (populates both caches, no-op if already called)
         let _ = self.default_branch();
         self.cache
             .invalid_default_branch
@@ -199,33 +203,17 @@ impl Repository {
             .and_then(|opt| opt.clone())
     }
 
-    /// Detect the default branch without using worktrunk's cache.
-    ///
-    /// Used by `default_branch()` to populate the cache, and after
-    /// `wt config state default-branch clear` to force re-detection.
-    pub fn detect_default_branch(&self) -> anyhow::Result<String> {
-        // Try to get from the primary remote
-        if let Ok(remote) = self.primary_remote() {
-            // Try git's cache for this remote (e.g., origin/HEAD)
-            if let Ok(branch) = self.get_local_default_branch(&remote) {
-                return Ok(branch);
-            }
+    /// Try to detect default branch from remote.
+    fn detect_from_remote(&self) -> Option<String> {
+        let remote = self.primary_remote().ok()?;
 
-            // Query remote (no caching to git's remote HEAD - we only manage worktrunk's cache)
-            if let Ok(branch) = self.query_remote_default_branch(&remote) {
-                return Ok(branch);
-            }
+        // Try git's local cache for this remote (e.g., origin/HEAD)
+        if let Ok(branch) = self.get_local_default_branch(&remote) {
+            return Some(branch);
         }
 
-        // Fallback: No remote or remote query failed, try to infer locally
-        // TODO: Show message to user when using inference fallback:
-        //   "No remote configured. Using inferred default branch: {branch}"
-        //   "To set explicitly, run: wt config state default-branch set <branch>"
-        // Problem: git.rs is in lib crate, output module is in binary.
-        // Options: (1) Return info about whether fallback was used, let callers show message
-        //          (2) Add messages in specific commands (merge.rs, worktree.rs)
-        //          (3) Move output abstraction to lib crate
-        self.infer_default_branch_locally()
+        // Query remote directly (may be slow)
+        self.query_remote_default_branch(&remote).ok()
     }
 
     /// Resolve a target branch from an optional override
