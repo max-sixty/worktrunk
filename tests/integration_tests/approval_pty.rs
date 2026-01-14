@@ -450,3 +450,42 @@ approved-commands = ["echo 'Second command'"]
         normalized
     );
 }
+
+#[rstest]
+fn test_approval_prompt_remove_decline(repo: TestRepo) {
+    // Create a worktree to remove
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "to-remove", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "Initial switch should succeed");
+
+    // Add pre-remove hook
+    repo.write_project_config(r#"pre-remove = "echo 'pre-remove hook'""#);
+    repo.commit("Add pre-remove config");
+
+    // Configure shell integration
+    repo.configure_shell_integration();
+    let env_vars = test_env_vars_with_shell(&repo);
+
+    // Decline the approval prompt
+    let (output, exit_code) = exec_in_pty_with_input(
+        get_cargo_bin("wt").to_str().unwrap(),
+        &["remove", "to-remove"],
+        repo.root_path(),
+        &env_vars,
+        "n\n",
+    );
+
+    let normalized = normalize_output(&output);
+    assert_eq!(
+        exit_code, 0,
+        "Remove should succeed even when hooks declined"
+    );
+    assert!(
+        normalized.contains("Commands declined"),
+        "Should show 'Commands declined' message"
+    );
+    assert_snapshot!("approval_prompt_remove_decline", normalized);
+}

@@ -410,6 +410,34 @@ fn test_switch_execute_template_in_args(repo: TestRepo) {
     );
 }
 
+#[rstest]
+fn test_switch_execute_template_error(repo: TestRepo) {
+    // Test that invalid templates are rejected with a clear error
+    snapshot_switch(
+        "switch_execute_template_error",
+        &repo,
+        &["--create", "error-test", "--execute", "echo {{ unclosed"],
+    );
+}
+
+#[rstest]
+fn test_switch_execute_arg_template_error(repo: TestRepo) {
+    // Test that invalid templates in trailing args (after --) are rejected
+    snapshot_switch(
+        "switch_execute_arg_template_error",
+        &repo,
+        &[
+            "--create",
+            "arg-error-test",
+            "--execute",
+            "echo",
+            "--",
+            "valid={{ branch }}",
+            "invalid={{ unclosed",
+        ],
+    );
+}
+
 // --no-verify flag tests
 #[rstest]
 fn test_switch_no_config_commands_execute_still_runs(repo: TestRepo) {

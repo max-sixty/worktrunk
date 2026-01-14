@@ -22,6 +22,8 @@ exit_code: 0
 ----- stderr -----
 wt switch - Switch to a worktree
 
+Change directory to a worktree, creating one if needed.
+
 Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m]
 
 [1m[32mArguments:
@@ -82,7 +84,6 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
           Show debug info (-v), or also write diagnostic report (-vv)
 
-Change directory to a worktree, creating one if needed.
 
 Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike [2mgit switch[0m, this navigates between worktrees rather than changing branches in place.
 

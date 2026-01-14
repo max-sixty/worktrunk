@@ -411,6 +411,19 @@ fn test_remove_no_background_deprecated(mut repo: TestRepo) {
     ));
 }
 
+/// Tests that --force-delete and --no-delete-branch are mutually exclusive
+#[rstest]
+fn test_remove_conflicting_branch_flags(repo: TestRepo) {
+    // Try to use both --force-delete (-D) and --no-delete-branch together
+    // This should fail with an error
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["-D", "--no-delete-branch", "nonexistent"],
+        None
+    ));
+}
+
 #[rstest]
 fn test_remove_foreground_unmerged(mut repo: TestRepo) {
     // Create a worktree with an unmerged commit
@@ -1404,6 +1417,25 @@ fn test_remove_path_mismatch_warning_foreground(repo: TestRepo) {
         &repo,
         "remove",
         &["--foreground", "feature-fg"],
+        None
+    ));
+}
+
+#[rstest]
+fn test_remove_detached_worktree_in_multi(mut repo: TestRepo) {
+    // Create two worktrees
+    let _feature_a = repo.add_worktree("feature-a");
+    let _feature_b = repo.add_worktree("feature-b");
+
+    // Detach HEAD in feature-b
+    repo.detach_head_in_worktree("feature-b");
+
+    // From main, try to multi-remove both
+    // feature-a should succeed, feature-b should fail (detached HEAD)
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-a", "feature-b"],
         None
     ));
 }

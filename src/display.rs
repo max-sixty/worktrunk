@@ -11,7 +11,7 @@ use worktrunk::path::format_path_for_display;
 use worktrunk::utils::get_now;
 
 /// Format timestamp as abbreviated relative time (e.g., "2h")
-pub fn format_relative_time_short(timestamp: i64) -> String {
+pub(crate) fn format_relative_time_short(timestamp: i64) -> String {
     // Cast to i64 for signed arithmetic (handles future timestamps)
     format_relative_time_impl(timestamp, get_now() as i64)
 }
@@ -60,7 +60,7 @@ fn format_relative_time_impl(timestamp: i64, now: i64) -> String {
 /// - Child of main: `./subdir`
 /// - Sibling: `../sibling`
 /// - Unrelated paths fall back to `~/...` or absolute
-pub fn shorten_path(path: &Path, main_worktree_path: &Path) -> String {
+pub(crate) fn shorten_path(path: &Path, main_worktree_path: &Path) -> String {
     use std::path::Component;
 
     // Same path = main worktree
@@ -87,7 +87,7 @@ pub fn shorten_path(path: &Path, main_worktree_path: &Path) -> String {
 ///
 /// Truncates at character boundary (mid-word if needed) to fill the allocated
 /// column width exactly. This ensures consistent table output width.
-pub fn truncate_to_width(text: &str, max_width: usize) -> String {
+pub(crate) fn truncate_to_width(text: &str, max_width: usize) -> String {
     use unicode_width::UnicodeWidthChar;
     use worktrunk::styling::visual_width;
 
@@ -115,7 +115,7 @@ pub fn truncate_to_width(text: &str, max_width: usize) -> String {
 }
 
 // Re-export from styling for convenience
-pub use worktrunk::styling::{get_terminal_width, truncate_visible};
+pub(crate) use worktrunk::styling::{get_terminal_width, truncate_visible};
 
 #[cfg(test)]
 mod tests {

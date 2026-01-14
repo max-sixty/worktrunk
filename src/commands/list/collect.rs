@@ -1046,10 +1046,14 @@ pub fn collect(
     // counts in a single command. On older git versions, returns empty and all tasks run.
     // Skip if default_branch is unknown.
     if skip_expensive_for_stale && let Some(ref db) = default_branch {
-        // Branches more than 50 commits behind skip expensive merge-base operations.
+        // Branches more than 50 commits behind skip expensive operations.
         // 50 is low enough to catch truly stale branches while keeping info for
-        // recently-diverged ones. The "behind" count is the primary expense driver -
-        // git must traverse all those commits to find the merge-base.
+        // recently-diverged ones.
+        //
+        // "Behind" is a proxy for the actual cost driver: files changed on both
+        // sides since the merge-base. More commits on main → more files touched →
+        // more overlap with the branch. See `CollectOptions::stale_branches` for
+        // detailed rationale.
         let threshold: usize = std::env::var("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD")
             .ok()
             .and_then(|s| s.parse().ok())

@@ -49,7 +49,7 @@ exit_code: 0
 
 [2m○[22m [2mSkipped bash; ~/.bashrc not found[22m
 [2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
-[2m○[22m [2mSkipped fish; ~/.config/fish/conf.d not found[22m
+[2m○[22m [2mSkipped fish; ~/.config/fish/functions not found[22m
 
 [36mDIAGNOSTICS[39m
 [2m↳[22m [2mCI status requires GitHub or GitLab remote[22m

@@ -5,11 +5,12 @@ default-members = [".", "tests/helpers/mock-stub"]
 
 [package]
 name = "worktrunk"
-version = "0.12.0"
+version = "0.13.4"
 edition = "2024"
 rust-version = "1.89"
 build = "build.rs"
 repository = "https://github.com/max-sixty/worktrunk"
+homepage = "https://worktrunk.dev"
 description = "A CLI for Git worktree management, designed for parallel AI agent workflows"
 license = "MIT OR Apache-2.0"
 default-run = "wt"

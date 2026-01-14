@@ -16,7 +16,7 @@ use worktrunk::shell_exec::Cmd;
 use super::list::collect;
 use super::list::layout::{DiffDisplayConfig, DiffVariant};
 use super::list::model::ListItem;
-use super::worktree::handle_switch;
+use super::worktree::{execute_switch, plan_switch};
 use crate::output::handle_switch_output;
 use crate::pager::{git_config_pager, parse_pager_value};
 
@@ -1178,11 +1178,11 @@ pub fn handle_select(
 
         // Load config
         let config = WorktrunkConfig::load().context("Failed to load config")?;
+        let repo = Repository::current().context("Failed to switch worktree")?;
 
-        // Switch to the selected worktree
-        // handle_switch can handle both branch names and worktree paths
-        let (result, branch_info) =
-            handle_switch(&identifier, false, None, false, false, false, &config)?;
+        // Switch to the selected worktree (no creation, no approval prompts)
+        let plan = plan_switch(&repo, &identifier, false, None, false, &config)?;
+        let (result, branch_info) = execute_switch(&repo, plan, &config, false, true)?;
 
         // Clear the terminal screen after skim exits to prevent artifacts
         // Use stderr for terminal control - stdout is reserved for data output

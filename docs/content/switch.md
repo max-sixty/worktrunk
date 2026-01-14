@@ -8,8 +8,6 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt switch --help-page` — edit cli.rs to update -->
 
-Change directory to a worktree, creating one if needed.
-
 <figure class="demo">
 <picture>
   <source srcset="/assets/docs/dark/wt-switch.gif" media="(prefers-color-scheme: dark)">
@@ -83,6 +81,8 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 
 {% terminal() %}
 wt switch - Switch to a worktree
+
+Change directory to a worktree, creating one if needed.
 
 Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;BRANCH&gt;</span> <b><span class=c>[--</span></b> <span class=c>&lt;EXECUTE_ARGS&gt;...</span><b><span class=c>]</span></b>
 
