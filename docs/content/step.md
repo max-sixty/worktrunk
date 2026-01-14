@@ -279,20 +279,24 @@ Only gitignored files are copied — tracked files are never touched. If `.workt
 
 ### Features
 
-- Uses copy-on-write (reflink) when available for instant, space-efficient copies
+- Uses copy-on-write (reflink) when available for fast, space-efficient copies
+- On macOS, uses atomic directory cloning (`clonefile`) for 5x faster copies
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files (safe to re-run)
 - Skips symlinks and `.git` entries
 
 ### Performance
 
-Reflink copies share disk blocks until modified — no data is actually copied. For a 31GB `target/` directory with 110k files:
+Reflink copies share disk blocks until modified — no data is actually copied. For a 14GB `target/` directory:
 
-| Method | Time |
-|--------|------|
-| Full copy (`cp -R`) | 2m 5s |
-| COW copy (`cp -Rc`) | ~60s |
-| `wt step copy-ignored` | ~31s |
+| Command | Time |
+|---------|------|
+| `cp -R ../main/target .` | 2m |
+| `cp -Rc ../main/target .` | 20s |
+| `wt step copy-ignored` (Linux) | 20s |
+| `wt step copy-ignored` (macOS) | 4s |
+
+On Linux (Btrfs, XFS), performance matches `cp -Rc` — both use file-by-file reflink. On macOS (APFS), the `clonefile()` syscall clones entire directory trees atomically, avoiding per-file overhead.
 
 ### Language-specific notes
 
@@ -312,6 +316,14 @@ deps = "ln -sf {{ primary_worktree_path }}/node_modules ."
 #### Python
 
 Virtual environments contain absolute paths and can't be copied. Use `uv sync` instead — it's fast enough that copying isn't worth it.
+
+### Behavior vs Claude Code on desktop
+
+The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://code.claude.com/docs/en/desktop), which copies matching files when creating worktrees. Differences:
+
+- worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`
+- worktrunk uses copy-on-write for large directories like `target/` — potentially 30x faster on macOS, 6x on Linux
+- worktrunk runs as a configurable hook in the worktree lifecycle
 
 ### Command reference
 
