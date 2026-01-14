@@ -122,138 +122,103 @@ impl IntegrationReason {
     }
 }
 
-/// Provider of integration signals for checking if a branch is integrated into target.
+/// Integration signals for checking if a branch is integrated into target.
 ///
-/// This trait enables short-circuit evaluation: methods are called in priority order,
-/// and expensive checks (like `would_merge_add`) are skipped if cheaper checks succeed.
+/// `None` means "unknown/failed to check". The check functions treat `None`
+/// conservatively (as if not integrated).
 ///
-/// Implementations:
-/// - [`LazyGitIntegration`]: Makes fresh git calls (for `wt remove`)
-/// - [`PrecomputedIntegration`]: Uses cached data (for `wt list` progressive rendering)
-pub trait IntegrationProvider {
-    fn is_same_commit(&mut self) -> bool;
-    fn is_ancestor(&mut self) -> bool;
-    fn has_added_changes(&mut self) -> bool;
-    fn trees_match(&mut self) -> bool;
-    fn would_merge_add(&mut self) -> bool;
+/// Used by:
+/// - `wt list`: Built from parallel task results
+/// - `wt remove`/`wt merge`: Built via [`compute_integration_lazy`]
+#[derive(Debug, Default)]
+pub struct IntegrationSignals {
+    pub is_same_commit: Option<bool>,
+    pub is_ancestor: Option<bool>,
+    pub has_added_changes: Option<bool>,
+    pub trees_match: Option<bool>,
+    pub would_merge_add: Option<bool>,
 }
 
-/// Canonical integration check with short-circuit evaluation.
+/// Canonical integration check using pre-computed signals.
 ///
 /// Checks signals in priority order (cheapest first). Returns as soon as any
-/// integration reason is found, avoiding expensive checks when possible.
+/// integration reason is found.
 ///
-/// This is the single source of truth for integration priority logic,
-/// used by both `wt list` and `wt remove`.
-pub fn check_integration(provider: &mut impl IntegrationProvider) -> Option<IntegrationReason> {
+/// `None` values are treated conservatively: unknown signals don't match.
+/// This is the single source of truth for integration priority logic.
+pub fn check_integration(signals: &IntegrationSignals) -> Option<IntegrationReason> {
     // Priority 1 (cheapest): Same commit as target
-    if provider.is_same_commit() {
+    if signals.is_same_commit == Some(true) {
         return Some(IntegrationReason::SameCommit);
     }
 
     // Priority 2 (cheap): Branch is ancestor of target (target has moved past)
-    if provider.is_ancestor() {
+    if signals.is_ancestor == Some(true) {
         return Some(IntegrationReason::Ancestor);
     }
 
     // Priority 3: No file changes beyond merge-base (empty three-dot diff)
-    if !provider.has_added_changes() {
+    if signals.has_added_changes == Some(false) {
         return Some(IntegrationReason::NoAddedChanges);
     }
 
     // Priority 4: Tree SHA matches target (handles squash merge/rebase)
-    if provider.trees_match() {
+    if signals.trees_match == Some(true) {
         return Some(IntegrationReason::TreesMatch);
     }
 
     // Priority 5 (most expensive ~500ms-2s): Merge would not add anything
-    if !provider.would_merge_add() {
+    if signals.would_merge_add == Some(false) {
         return Some(IntegrationReason::MergeAddsNothing);
     }
 
     None
 }
 
-/// Lazy integration provider that makes fresh git calls.
+/// Compute integration signals lazily with short-circuit evaluation.
 ///
-/// Used by `wt remove` where short-circuit evaluation matters:
-/// expensive checks are skipped if cheaper ones succeed.
-pub struct LazyGitIntegration<'a> {
-    repo: &'a Repository,
-    branch: &'a str,
-    target: &'a str,
-}
-
-impl<'a> LazyGitIntegration<'a> {
-    pub fn new(repo: &'a Repository, branch: &'a str, target: &'a str) -> Self {
-        Self {
-            repo,
-            branch,
-            target,
-        }
-    }
-}
-
-impl IntegrationProvider for LazyGitIntegration<'_> {
-    fn is_same_commit(&mut self) -> bool {
-        self.repo
-            .same_commit(self.branch, self.target)
-            .unwrap_or(false)
-    }
-
-    fn is_ancestor(&mut self) -> bool {
-        self.repo
-            .is_ancestor(self.branch, self.target)
-            .unwrap_or(false)
-    }
-
-    fn has_added_changes(&mut self) -> bool {
-        self.repo
-            .has_added_changes(self.branch, self.target)
-            .unwrap_or(true) // Conservative: assume has changes
-    }
-
-    fn trees_match(&mut self) -> bool {
-        self.repo
-            .trees_match(self.branch, self.target)
-            .unwrap_or(false)
-    }
-
-    fn would_merge_add(&mut self) -> bool {
-        self.repo
-            .would_merge_add_to_target(self.branch, self.target)
-            .unwrap_or(true) // Conservative: assume would add
-    }
-}
-
-/// Pre-computed integration provider for cached data.
+/// Runs git commands in priority order, stopping as soon as integration is
+/// confirmed. This avoids expensive checks (like `would_merge_add` which
+/// takes ~500ms-2s) when cheaper checks succeed.
 ///
-/// Used by `wt list` where signals are pre-computed during progressive rendering.
-/// Short-circuit doesn't help here since data is already computed.
-pub struct PrecomputedIntegration {
-    pub is_same_commit: bool,
-    pub is_ancestor: bool,
-    pub has_added_changes: bool,
-    pub trees_match: bool,
-    pub would_merge_add: bool,
-}
+/// Used by `wt remove` and `wt merge` for single-branch checks.
+/// For batch operations, use parallel tasks to build [`IntegrationSignals`] directly.
+#[allow(clippy::field_reassign_with_default)] // Intentional: short-circuit populates fields incrementally
+pub fn compute_integration_lazy(
+    repo: &Repository,
+    branch: &str,
+    target: &str,
+) -> anyhow::Result<IntegrationSignals> {
+    let mut signals = IntegrationSignals::default();
 
-impl IntegrationProvider for PrecomputedIntegration {
-    fn is_same_commit(&mut self) -> bool {
-        self.is_same_commit
+    // Priority 1: Same commit
+    signals.is_same_commit = Some(repo.same_commit(branch, target)?);
+    if signals.is_same_commit == Some(true) {
+        return Ok(signals);
     }
-    fn is_ancestor(&mut self) -> bool {
-        self.is_ancestor
+
+    // Priority 2: Ancestor
+    signals.is_ancestor = Some(repo.is_ancestor(branch, target)?);
+    if signals.is_ancestor == Some(true) {
+        return Ok(signals);
     }
-    fn has_added_changes(&mut self) -> bool {
-        self.has_added_changes
+
+    // Priority 3: No added changes
+    signals.has_added_changes = Some(repo.has_added_changes(branch, target)?);
+    if signals.has_added_changes == Some(false) {
+        return Ok(signals);
     }
-    fn trees_match(&mut self) -> bool {
-        self.trees_match
+
+    // Priority 4: Trees match
+    signals.trees_match = Some(repo.trees_match(branch, target)?);
+    if signals.trees_match == Some(true) {
+        return Ok(signals);
     }
-    fn would_merge_add(&mut self) -> bool {
-        self.would_merge_add
-    }
+
+    // Priority 5: Would merge add (most expensive)
+    signals.would_merge_add = Some(repo.would_merge_add_to_target(branch, target)?);
+
+    Ok(signals)
 }
 
 /// Category of branch for completion display
@@ -496,35 +461,63 @@ mod tests {
     #[test]
     fn test_check_integration() {
         // Each integration reason + not integrated
+        // Tuple: (is_same_commit, is_ancestor, has_added_changes, trees_match, would_merge_add)
         let cases = [
             (
-                (true, false, true, false, true),
+                (Some(true), Some(false), Some(true), Some(false), Some(true)),
                 Some(IntegrationReason::SameCommit),
             ),
             (
-                (false, true, true, false, true),
+                (Some(false), Some(true), Some(true), Some(false), Some(true)),
                 Some(IntegrationReason::Ancestor),
             ),
             (
-                (false, false, false, false, true),
+                (
+                    Some(false),
+                    Some(false),
+                    Some(false),
+                    Some(false),
+                    Some(true),
+                ),
                 Some(IntegrationReason::NoAddedChanges),
             ),
             (
-                (false, false, true, true, true),
+                (Some(false), Some(false), Some(true), Some(true), Some(true)),
                 Some(IntegrationReason::TreesMatch),
             ),
             (
-                (false, false, true, false, false),
+                (
+                    Some(false),
+                    Some(false),
+                    Some(true),
+                    Some(false),
+                    Some(false),
+                ),
                 Some(IntegrationReason::MergeAddsNothing),
             ),
-            ((false, false, true, false, true), None), // Not integrated
             (
-                (true, true, false, true, false),
+                (
+                    Some(false),
+                    Some(false),
+                    Some(true),
+                    Some(false),
+                    Some(true),
+                ),
+                None,
+            ), // Not integrated
+            (
+                (Some(true), Some(true), Some(false), Some(true), Some(false)),
                 Some(IntegrationReason::SameCommit),
-            ), // Priority test
+            ), // Priority test: is_same_commit wins
+            // None values are treated conservatively (as if not integrated)
+            ((None, None, None, None, None), None),
+            (
+                (None, Some(true), Some(false), Some(true), Some(false)),
+                Some(IntegrationReason::Ancestor),
+            ),
         ];
         for ((same, ancestor, added, trees, merge), expected) in cases {
-            let mut provider = PrecomputedIntegration {
+            let signals = IntegrationSignals {
                 is_same_commit: same,
                 is_ancestor: ancestor,
                 has_added_changes: added,
@@ -532,9 +525,9 @@ mod tests {
                 would_merge_add: merge,
             };
             assert_eq!(
-                check_integration(&mut provider),
+                check_integration(&signals),
                 expected,
-                "case: {same},{ancestor},{added},{trees},{merge}"
+                "case: {same:?},{ancestor:?},{added:?},{trees:?},{merge:?}"
             );
         }
     }

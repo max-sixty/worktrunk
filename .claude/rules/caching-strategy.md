@@ -25,7 +25,7 @@ shares the cache — all clones see the same cached values.
 
 - `git_common_dir` — computed at construction, stored on struct
 - `worktree_root()` — per-worktree, keyed by path
-- `worktree_base()` — derived from git_common_dir and is_bare
+- `repo_path()` — derived from git_common_dir and is_bare
 - `is_bare()` — git config, doesn't change
 - `current_branch()` — per-worktree, keyed by path
 - `project_identifier()` — derived from remote URL

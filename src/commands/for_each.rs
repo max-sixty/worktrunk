@@ -61,7 +61,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
     let command_template = args.join(" ");
 
     // Get repo root for context
-    let repo_root = repo.worktree_base()?;
+    let repo_root = repo.repo_path()?;
 
     for wt in &worktrees {
         let display_name = worktree_display_name(wt, &repo, &config);

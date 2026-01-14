@@ -265,8 +265,8 @@ impl Repository {
         // - Empty repos: No branches exist yet, but HEAD tells us the intended default
         // - Linked worktrees: HEAD points to CURRENT branch, so skip this heuristic
         // - Normal repos: HEAD points to CURRENT branch, so skip this heuristic
-        let is_bare = self.is_bare().unwrap_or(false);
-        let in_linked_worktree = self.current_worktree().is_linked().unwrap_or(false);
+        let is_bare = self.is_bare()?;
+        let in_linked_worktree = self.current_worktree().is_linked()?;
         if ((is_bare && !in_linked_worktree) || branches.is_empty())
             && let Ok(head_ref) = self.run_command(&["symbolic-ref", "HEAD"])
             && let Some(branch) = head_ref.trim().strip_prefix("refs/heads/")

@@ -87,12 +87,12 @@ pub fn build_hook_context(
     map.insert("repo_root".into(), repo_path);
     map.insert("worktree".into(), worktree);
 
-    // Default branch and main worktree path
+    // Default branch and its worktree path
     if let Some(default_branch) = ctx.repo.default_branch() {
-        map.insert("default_branch".into(), default_branch.clone());
+        map.insert("default_branch".into(), default_branch);
 
-        // main_worktree_path: path to the worktree on the default branch
-        if let Ok(Some(path)) = ctx.repo.worktree_for_branch(&default_branch) {
+        // main_worktree_path: path to the worktree with the default branch checked out
+        if let Ok(Some(path)) = ctx.repo.default_branch_worktree() {
             map.insert(
                 "main_worktree_path".into(),
                 to_posix_path(&path.to_string_lossy()),

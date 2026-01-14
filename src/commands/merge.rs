@@ -210,9 +210,9 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         let worktree_root = repo.current_worktree().root()?.to_path_buf();
         // After a successful merge, compute integration reason from main_path
         let effective_target = repo.effective_integration_target(&target_branch);
-        let mut provider =
-            worktrunk::git::LazyGitIntegration::new(repo, &current_branch, &effective_target);
-        let integration_reason = worktrunk::git::check_integration(&mut provider);
+        let signals =
+            worktrunk::git::compute_integration_lazy(repo, &current_branch, &effective_target)?;
+        let integration_reason = worktrunk::git::check_integration(&signals);
         // Compute expected_path for path mismatch detection
         let expected_path = get_path_mismatch(repo, &current_branch, &worktree_root, config);
         let remove_result = RemoveResult::RemovedWorktree {
