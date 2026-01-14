@@ -84,10 +84,10 @@ Set persistent flag values for commands. These apply unless explicitly overridde
 
 ```toml
 [list]
-# All off by default
-full = true      # --full
-branches = true  # --branches
-remotes = true   # --remotes
+full = true       # --full
+branches = true   # --branches
+remotes = true    # --remotes
+timeout-ms = 500  # (Experimental) per-task timeout in ms; 0 = no timeout; --full disables
 ```
 
 **`wt step commit` and `wt merge` staging:**
@@ -360,6 +360,7 @@ worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 full = false       # Show CI and default-branch merge-base diffstat (`main…±` column) by default
 branches = false   # Include branches without worktrees by default
 remotes = false    # Include remote branches by default
+timeout-ms = 0     # (Experimental) Per-task timeout in ms; 0 = no timeout; --full disables
 
 # Commit Defaults (shared by `wt step commit`, `wt step squash`, and `wt merge`)
 [commit]

@@ -156,9 +156,6 @@ pub fn handle_list(
 
     // Build skip set based on flags
     // Without --full: skip expensive operations (BranchDiff, CiStatus, WorkingTreeConflicts)
-    // TODO: WouldMergeAdd (~500ms-2s per worktree) is currently enabled for ⊂ detection.
-    // If this causes performance issues, consider adding it back to skip_tasks or
-    // implementing a timeout for the merge simulation.
     let skip_tasks: std::collections::HashSet<TaskKind> = if show_full {
         std::collections::HashSet::new() // Compute everything
     } else {
@@ -183,6 +180,18 @@ pub fn handle_list(
     // For testing: allow enabling skip_expensive_for_stale via env var
     let skip_expensive_for_stale = std::env::var("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD").is_ok();
 
+    // Per-task timeout from config (disabled with --full or timeout-ms = 0)
+    let command_timeout = if show_full {
+        None // --full disables timeout for complete data collection
+    } else {
+        config
+            .list
+            .as_ref()
+            .and_then(|l| l.timeout_ms)
+            .filter(|&ms| ms > 0) // 0 means "no timeout" (explicit disable)
+            .map(std::time::Duration::from_millis)
+    };
+
     let list_data = collect::collect(
         &repo,
         show_branches,
@@ -191,7 +200,7 @@ pub fn handle_list(
         show_progress,
         render_table,
         config,
-        None, // No timeout for wt list
+        command_timeout,
         skip_expensive_for_stale,
     )?;
 
@@ -307,6 +316,7 @@ pub(crate) fn format_summary_message(
     items: &[ListItem],
     show_branches: bool,
     hidden_column_count: usize,
+    timed_out_count: usize,
 ) -> String {
     use anstyle::Style;
     use worktrunk::styling::INFO_SYMBOL;
@@ -316,7 +326,15 @@ pub(crate) fn format_summary_message(
     let summary = metrics
         .summary_parts(show_branches, hidden_column_count)
         .join(", ");
-    format!("{INFO_SYMBOL} {dim}Showing {summary}{dim:#}")
+
+    if timed_out_count > 0 {
+        let plural = if timed_out_count == 1 { "" } else { "s" };
+        format!(
+            "{INFO_SYMBOL} {dim}Showing {summary}. {timed_out_count} task{plural} timed out (run with `-v` for details){dim:#}"
+        )
+    } else {
+        format!("{INFO_SYMBOL} {dim}Showing {summary}{dim:#}")
+    }
 }
 
 #[cfg(test)]
@@ -451,5 +469,26 @@ mod tests {
                 "2 columns hidden"
             ]
         );
+    }
+
+    #[test]
+    fn test_format_summary_message_no_timeout() {
+        let msg = format_summary_message(&[], false, 0, 0);
+        assert!(msg.contains("Showing 0 worktrees"));
+        assert!(!msg.contains("timed out"));
+    }
+
+    #[test]
+    fn test_format_summary_message_single_timeout() {
+        let msg = format_summary_message(&[], false, 0, 1);
+        assert!(msg.contains("1 task timed out"));
+        assert!(msg.contains("run with `-v` for details"));
+    }
+
+    #[test]
+    fn test_format_summary_message_multiple_timeouts() {
+        let msg = format_summary_message(&[], false, 0, 3);
+        assert!(msg.contains("3 tasks timed out"));
+        assert!(msg.contains("run with `-v` for details"));
     }
 }
