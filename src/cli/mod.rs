@@ -1469,13 +1469,6 @@ fi
     #[command(
         after_long_help = concat!(r#"Manages configuration, shell integration, and runtime settings.
 
-Worktrunk uses two configuration files:
-
-| File | Location | Purpose |
-|------|----------|---------|
-| **User config** | `~/.config/worktrunk/config.toml` | Personal settings, command defaults, approved project commands |
-| **Project config** | `.config/wt.toml` | Lifecycle hooks, checked into version control |
-
 ## Examples
 
 Install shell integration (required for directory switching):
@@ -1501,6 +1494,13 @@ Show current configuration and file locations:
 ```console
 wt config show
 ```
+
+## Configuration files
+
+| File | Location | Purpose |
+|------|----------|---------|
+| **User config** | `~/.config/worktrunk/config.toml` | Personal settings, command defaults, approved project commands |
+| **Project config** | `.config/wt.toml` | Lifecycle hooks, checked into version control |
 
 <!-- USER_CONFIG_START -->
 # Worktrunk User Configuration
@@ -1837,8 +1837,6 @@ WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
 | `NO_COLOR` | Disable colored output ([standard](https://no-color.org/)) |
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
-
-<!-- subdoc: create -->
 
 <!-- subdoc: show -->
 

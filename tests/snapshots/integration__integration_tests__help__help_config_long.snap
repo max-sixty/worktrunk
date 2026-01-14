@@ -46,13 +46,6 @@ Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>
 
 Manages configuration, shell integration, and runtime settings.
 
-Worktrunk uses two configuration files:
-
-        File                 Location                                        Purpose                             
-   ────────────── ─────────────────────────────── ────────────────────────────────────────────────────────────── 
-   User config    ~/.config/worktrunk/config.toml Personal settings, command defaults, approved project commands 
-   Project config .config/wt.toml                 Lifecycle hooks, checked into version control                  
-
 [32mExamples
 
 Install shell integration (required for directory switching):
@@ -70,6 +63,13 @@ Create project config file ([2m.config/wt.toml[0m) for hooks:
 Show current configuration and file locations:
 
   [2mwt config show
+
+[32mConfiguration files
+
+        File                 Location                                        Purpose                             
+   ────────────── ─────────────────────────────── ────────────────────────────────────────────────────────────── 
+   User config    ~/.config/worktrunk/config.toml Personal settings, command defaults, approved project commands 
+   Project config .config/wt.toml                 Lifecycle hooks, checked into version control                  
 
 [32mWorktrunk User Configuration
 
