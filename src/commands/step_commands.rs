@@ -603,12 +603,12 @@ fn list_ignored_entries(
 /// which is O(1) regardless of file count. Falls back to file-by-file copying on
 /// other platforms or when atomic clone fails.
 fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
-    use std::io::ErrorKind;
-
     // On macOS, try atomic directory clone first (single syscall for entire tree)
     // This is dramatically faster for large directories like target/ with 100k+ files
     #[cfg(target_os = "macos")]
     {
+        use std::io::ErrorKind;
+
         // reflink::reflink() on macOS uses clonefile() which supports directories
         match reflink_copy::reflink(src, dest) {
             Ok(()) => return Ok(()),
