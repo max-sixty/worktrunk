@@ -71,7 +71,7 @@ fn test_user_hooks_run_before_project_hooks(repo: TestRepo) {
         r#"[post-create]
 log = "echo 'USER_HOOK' >> hook_order.txt"
 
-[projects."repo"]
+[projects."../origin"]
 approved-commands = ["echo 'PROJECT_HOOK' >> hook_order.txt"]
 "#,
     );
@@ -123,7 +123,7 @@ fn test_no_verify_flag_skips_all_hooks(repo: TestRepo) {
         r#"[post-create]
 log = "echo 'USER_HOOK' > user_marker.txt"
 
-[projects."repo"]
+[projects."../origin"]
 approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
 "#,
     );
@@ -675,7 +675,7 @@ fn test_user_and_project_post_start_both_run(repo: TestRepo) {
         r#"[post-start]
 bg = "echo 'USER_POST_START' > user_bg.txt"
 
-[projects."repo"]
+[projects."../origin"]
 approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
 "#,
     );

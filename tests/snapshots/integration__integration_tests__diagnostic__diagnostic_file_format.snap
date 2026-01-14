@@ -28,6 +28,18 @@ branch refs/heads/main
 
 worktree [PATH]
 HEAD [COMMIT]
+
+worktree [PATH]
+HEAD [COMMIT]
+branch refs/heads/feature-a
+
+worktree [PATH]
+HEAD [COMMIT]
+branch refs/heads/feature-b
+
+worktree [PATH]
+HEAD [COMMIT]
+branch refs/heads/feature-c
 ```
 </details>
 

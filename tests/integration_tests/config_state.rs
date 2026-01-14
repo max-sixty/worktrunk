@@ -80,6 +80,9 @@ fn test_state_get_default_branch_no_remote(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_default_branch_fails_when_undetermined(repo: TestRepo) {
+    // Remove origin (fixture has it) - otherwise remote can determine default branch
+    repo.run_git(&["remote", "remove", "origin"]);
+
     // Rename main to something non-standard so default branch can't be determined
     repo.git_command()
         .args(["branch", "-m", "main", "xyz"])
@@ -149,9 +152,7 @@ fn test_state_clear_default_branch(mut repo: TestRepo) {
 
 #[rstest]
 fn test_state_clear_default_branch_empty(repo: TestRepo) {
-    // Set up remote but don't set default branch cache
-    repo.run_git(&["remote", "add", "origin", "https://example.com/repo.git"]);
-
+    // Fixture already has origin remote, no default branch cache set
     let output = wt_state_cmd(&repo, "default-branch", "clear", &[])
         .output()
         .unwrap();

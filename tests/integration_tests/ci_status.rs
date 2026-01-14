@@ -32,9 +32,10 @@ fn run_ci_status_test(repo: &mut TestRepo, snapshot_name: &str, pr_json: &str, r
 
 /// Setup a repo with GitHub remote and feature worktree, returns head SHA
 fn setup_github_repo_with_feature(repo: &mut TestRepo) -> String {
+    // Set origin URL (origin already exists from fixture, just update URL)
     repo.run_git(&[
         "remote",
-        "add",
+        "set-url",
         "origin",
         "https://github.com/test-owner/test-repo.git",
     ]);
@@ -220,7 +221,7 @@ fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
     // Use different org name
     repo.run_git(&[
         "remote",
-        "add",
+        "set-url",
         "origin",
         "https://github.com/my-org/test-repo.git",
     ]);
@@ -253,10 +254,10 @@ fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
 
 #[rstest]
 fn test_list_full_with_platform_override_github(mut repo: TestRepo) {
-    // Add a non-GitHub remote (bitbucket) - platform won't be auto-detected
+    // Set a non-GitHub remote (bitbucket) - platform won't be auto-detected
     repo.run_git(&[
         "remote",
-        "add",
+        "set-url",
         "origin",
         "https://bitbucket.org/test-owner/test-repo.git",
     ]);
@@ -302,10 +303,10 @@ platform = "github"
 
 #[rstest]
 fn test_list_full_with_gitlab_remote(mut repo: TestRepo) {
-    // Add GitLab remote - tests get_gitlab_host_for_repo path
+    // Set GitLab remote URL - tests get_gitlab_host_for_repo path
     repo.run_git(&[
         "remote",
-        "add",
+        "set-url",
         "origin",
         "https://gitlab.example.com/test-owner/test-repo.git",
     ]);
@@ -327,10 +328,10 @@ fn test_list_full_with_gitlab_remote(mut repo: TestRepo) {
 
 #[rstest]
 fn test_list_full_with_invalid_platform_override(mut repo: TestRepo) {
-    // Add GitHub remote
+    // Set GitHub remote URL
     repo.run_git(&[
         "remote",
-        "add",
+        "set-url",
         "origin",
         "https://github.com/test-owner/test-repo.git",
     ]);
@@ -396,9 +397,10 @@ fn run_gitlab_ci_status_test(
 
 /// Setup a repo with GitLab remote and feature worktree, returns head SHA
 fn setup_gitlab_repo_with_feature(repo: &mut TestRepo) -> String {
+    // Set origin URL (origin already exists from fixture, just update URL)
     repo.run_git(&[
         "remote",
-        "add",
+        "set-url",
         "origin",
         "https://gitlab.com/test-group/test-project.git",
     ]);
@@ -483,7 +485,7 @@ fn test_list_full_with_gitlab_filters_by_project_id(mut repo: TestRepo) {
     // Use a specific project for our repo
     repo.run_git(&[
         "remote",
-        "add",
+        "set-url",
         "origin",
         "https://gitlab.com/my-group/my-project.git",
     ]);

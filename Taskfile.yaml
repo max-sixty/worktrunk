@@ -218,6 +218,87 @@ tasks:
         echo "Done:"
         ls -lh "$OUTPUT_DIR"/*.png
 
+  test:create-standard-fixture:
+    desc: Create/recreate the standard test fixture (repo + worktrees + remote)
+    dir: "{{.REPO_ROOT}}"
+    cmds:
+      - |
+        set -euo pipefail
+
+        FIXTURE_DIR="tests/fixtures/standard"
+        TIMESTAMP="2025-01-01T00:00:00"
+
+        echo "Creating standard test fixture..."
+
+        # Clean slate
+        rm -rf "$FIXTURE_DIR"
+        mkdir -p "$FIXTURE_DIR"
+        cd "$FIXTURE_DIR"
+
+        # Create the main repo
+        git init repo
+        cd repo
+
+        # Configure for deterministic output (disable GPG signing)
+        git config user.name "Test User"
+        git config user.email "test@example.com"
+        git config commit.gpgsign false
+
+        # Initial commit on main
+        echo "initial content" > file.txt
+        cat > .gitattributes << 'EOF'
+        * text=auto eol=lf
+        EOF
+        git add -A
+        GIT_AUTHOR_DATE="$TIMESTAMP" GIT_COMMITTER_DATE="$TIMESTAMP" \
+            git commit -m "Initial commit"
+
+        # Create bare remote and push
+        cd ..
+        git clone --bare repo origin.git
+        cd repo
+        git remote add origin ../origin.git
+        git push -u origin main
+
+        # Create worktrees with commits
+        for branch in feature-a feature-b feature-c; do
+            git worktree add -b "$branch" "../repo.$branch"
+            echo "$branch content" > "../repo.$branch/$branch.txt"
+            git -C "../repo.$branch" add "$branch.txt"
+            GIT_AUTHOR_DATE="$TIMESTAMP" GIT_COMMITTER_DATE="$TIMESTAMP" \
+                git -C "../repo.$branch" commit -m "Add $branch file"
+        done
+
+        cd ..
+
+        # Rename .git directories to _git to avoid git treating fixture as repo
+        mv repo/.git repo/_git
+        mv origin.git origin_git
+        for wt in repo.feature-a repo.feature-b repo.feature-c; do
+            # Worktrees have .git files pointing to main repo, rename those too
+            mv "$wt/.git" "$wt/_git"
+        done
+
+        # Update worktree gitdir references (they point to .git, need to point to _git)
+        for wt in feature-a feature-b feature-c; do
+            # Fix the gitdir file in worktree (it's a file, not a directory)
+            sed -i.bak 's/\.git/_git/g' "repo.$wt/_git"
+            rm -f "repo.$wt/_git.bak"
+            # Fix the worktree config in main repo (worktree dir is repo.$wt)
+            sed -i.bak 's/\.git/_git/g' "repo/_git/worktrees/repo.$wt/gitdir"
+            rm -f "repo/_git/worktrees/repo.$wt/gitdir.bak"
+        done
+
+        # Fix remote URL (origin.git -> origin_git)
+        sed -i.bak 's/origin\.git/origin_git/g' "repo/_git/config"
+        rm -f "repo/_git/config.bak"
+
+        echo ""
+        echo "Created fixture structure:"
+        find . -maxdepth 2 -type d | head -20
+        echo ""
+        echo "Done! Fixture at: tests/fixtures/standard/"
+
   generate-logo:
     desc: Generate logo using Gemini AI
     dir: "{{.REPO_ROOT}}"

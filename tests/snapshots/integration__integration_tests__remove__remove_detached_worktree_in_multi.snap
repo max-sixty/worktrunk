@@ -33,6 +33,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎ Removing [1mfeature-a[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
+[36m◎ Removing [1mfeature-a[22m worktree in background[39m
+[2m↳[22m [2mBranch unmerged; to delete, run [90mwt remove feature-a -D[39m[22m
 [33m▲[39m [33mNo worktree found for branch [1mfeature-b[22m[39m
-[32m✓ Removed branch [1mfeature-b[22m (same commit as [1mmain[22m,[39m [2m_[22m[32m)[39m
+[2m○[22m Branch [1mfeature-b[22m retained; has unmerged changes
+[2m↳[22m [2mTo delete the unmerged branch, run [90mwt remove feature-b -D[39m[22m

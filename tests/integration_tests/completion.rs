@@ -338,18 +338,14 @@ fn test_complete_excludes_remote_branches(repo: TestRepo) {
     // Create local branches
     repo.run_git(&["branch", "feature/local"]);
 
-    // Set up a fake remote
-    repo.run_git(&["remote", "add", "origin", "https://example.com/repo.git"]);
-
-    // Create a remote-tracking branch by fetching from a local "remote"
-    // First, create a bare repo to act as remote
+    // Create a new bare repo to act as remote (fixture already has origin remote)
     let remote_dir = repo.root_path().parent().unwrap().join("remote.git");
     repo.git_command()
         .args(["init", "--bare", remote_dir.to_str().unwrap()])
         .output()
         .unwrap();
 
-    // Update remote URL to point to our bare repo
+    // Update origin URL to point to our bare repo
     repo.run_git(&["remote", "set-url", "origin", remote_dir.to_str().unwrap()]);
 
     // Push to create remote branches

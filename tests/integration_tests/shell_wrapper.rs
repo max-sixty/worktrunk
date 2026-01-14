@@ -945,7 +945,7 @@ watch = "echo 'Watching for file changes'"
         // Pre-approve the commands in user config
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = [
     "echo 'Installing dependencies...'",
     "echo 'Building project...'",
@@ -992,7 +992,7 @@ test = "echo '✓ All 47 tests passed in 2.3s'"
         // Pre-approve commands
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = [
     "echo '✓ Code formatting check passed'",
     "echo '✓ Linting passed - no warnings'",
@@ -1048,7 +1048,7 @@ test = "echo '✗ Test suite failed: 3 tests failing' && exit 1"
         // Pre-approve the commands
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = [
     "echo '✓ Code formatting check passed'",
     "echo '✗ Test suite failed: 3 tests failing' && exit 1",
@@ -1116,7 +1116,7 @@ check2 = "{} check2 3"
             format!(
                 r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
-[projects."repo"]
+[projects."../origin"]
 approved-commands = [
     "{} check1 3",
     "{} check2 3",
@@ -1166,7 +1166,7 @@ approved-commands = [
         // Pre-approve the command in user config
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'test command executed'"]
 "#,
         )
@@ -1309,7 +1309,7 @@ approved-commands = ["echo 'test command executed'"]
         // Pre-approve the command in user config
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'background task'"]
 "#,
         )
@@ -1357,7 +1357,7 @@ approved-commands = ["echo 'background task'"]
         // Pre-approve the command in user config
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'fish background task'"]
 "#,
         )
@@ -1571,7 +1571,7 @@ approved-commands = ["echo 'fish background task'"]
         // Pre-approve the command
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'background job'"]
 "#,
         )
@@ -1621,7 +1621,7 @@ approved-commands = ["echo 'background job'"]
         // Pre-approve the command
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'bash background'"]
 "#,
         )
@@ -2119,7 +2119,7 @@ approved-commands = ["echo 'bash background'"]
         // Pre-approve the command
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'cleanup test'"]
 "#,
         )

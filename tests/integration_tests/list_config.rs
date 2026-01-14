@@ -262,6 +262,28 @@ fn test_list_json_no_url_without_template(repo: TestRepo, temp_home: TempDir) {
 /// Only worktrees should have URLs - branches without worktrees can't have running dev servers.
 #[rstest]
 fn test_list_url_with_branches_flag(repo: TestRepo, temp_home: TempDir) {
+    // Remove fixture worktrees and their branches to isolate test (keep only main worktree)
+    for branch in &["feature-a", "feature-b", "feature-c"] {
+        let worktree_path = repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{}", branch));
+        if worktree_path.exists() {
+            let _ = repo
+                .git_command()
+                .args([
+                    "worktree",
+                    "remove",
+                    "--force",
+                    worktree_path.to_str().unwrap(),
+                ])
+                .output();
+        }
+        // Delete the branch after removing the worktree
+        let _ = repo.git_command().args(["branch", "-D", branch]).output();
+    }
+
     // Create a branch without a worktree
     repo.run_git(&["branch", "feature"]);
 

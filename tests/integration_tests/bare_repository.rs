@@ -235,6 +235,26 @@ fn test_bare_repo_equivalent_to_normal_repo(repo: TestRepo) {
     // This test verifies that bare repos behave identically to normal repos
     // from the user's perspective
 
+    // Remove fixture worktrees to get a clean state with just main
+    for branch in &["feature-a", "feature-b", "feature-c"] {
+        let worktree_path = repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{}", branch));
+        if worktree_path.exists() {
+            repo.git_command()
+                .args([
+                    "worktree",
+                    "remove",
+                    "--force",
+                    worktree_path.to_str().unwrap(),
+                ])
+                .output()
+                .unwrap();
+        }
+    }
+
     // Set up bare repo
     let bare_test = BareRepoTest::new();
     let bare_main = bare_test.create_worktree("main", "main");

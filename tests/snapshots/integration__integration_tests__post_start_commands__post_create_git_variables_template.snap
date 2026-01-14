@@ -35,9 +35,9 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRunning post-create [1mproject:commit[22m @ [1m_REPO_.feature[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Commit: 5caad75ed9319b7bd5c35c626d7051d252f987e7'[0m[2m [0m[2m[36m>[0m[2m git_vars.txt
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Commit: f9680d376e0968fcb45a0029cf83898054742923'[0m[2m [0m[2m[36m>[0m[2m git_vars.txt
 [0m[36m◎[39m [36mRunning post-create [1mproject:short[22m @ [1m_REPO_.feature[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Short: 5caad75'[0m[2m [0m[2m[36m>>[0m[2m git_vars.txt
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Short: f9680d3'[0m[2m [0m[2m[36m>>[0m[2m git_vars.txt
 [0m[36m◎[39m [36mRunning post-create [1mproject:remote[22m @ [1m_REPO_.feature[22m:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Remote: origin'[0m[2m [0m[2m[36m>>[0m[2m git_vars.txt
 [0m[36m◎[39m [36mRunning post-create [1mproject:worktree_name[22m @ [1m_REPO_.feature[22m:[39m

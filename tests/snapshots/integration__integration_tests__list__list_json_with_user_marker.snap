@@ -36,8 +36,8 @@ exit_code: 0
     "path": "_REPO_",
     "kind": "worktree",
     "commit": {
-      "sha": "a058e792cfd4836c913fdbc0d4559af34b352b07",
-      "short_sha": "a058e79",
+      "sha": "33323bc15e5a41f2dff1a997b9cd2345d6b74871",
+      "short_sha": "33323bc",
       "message": "Initial commit",
       "timestamp": 1735689600
     },
@@ -53,22 +53,133 @@ exit_code: 0
       }
     },
     "main_state": "is_main",
+    "remote": {
+      "name": "origin",
+      "branch": "main",
+      "ahead": 1,
+      "behind": 0
+    },
     "worktree": {
       "detached": false
     },
     "is_main": true,
     "is_current": true,
     "is_previous": false,
-    "statusline": "main  /u001b[2m^/u001b[22m",
-    "symbols": "^"
+    "statusline": "main  /u001b[2m^/u001b[22m/u001b[2m⇡/u001b[22m  /u001b[32m⇡1/u001b[0m",
+    "symbols": "^⇡"
+  },
+  {
+    "branch": "feature-a",
+    "path": "_REPO_.feature-a",
+    "kind": "worktree",
+    "commit": {
+      "sha": "1b87d4731ea707905d15a726e193531c20affa14",
+      "short_sha": "1b87d47",
+      "message": "Add feature-a file",
+      "timestamp": 1735718400
+    },
+    "working_tree": {
+      "staged": false,
+      "modified": false,
+      "untracked": false,
+      "renamed": false,
+      "deleted": false,
+      "diff": {
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "main_state": "diverged",
+    "main": {
+      "ahead": 1,
+      "behind": 1
+    },
+    "worktree": {
+      "detached": false
+    },
+    "is_main": false,
+    "is_current": false,
+    "is_previous": false,
+    "statusline": "feature-a  /u001b[2m↕/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓1/u001b[0m",
+    "symbols": "↕"
+  },
+  {
+    "branch": "feature-b",
+    "path": "_REPO_.feature-b",
+    "kind": "worktree",
+    "commit": {
+      "sha": "f62940fcec424585adf98625e722fdf990810614",
+      "short_sha": "f62940f",
+      "message": "Add feature-b file",
+      "timestamp": 1735718400
+    },
+    "working_tree": {
+      "staged": false,
+      "modified": false,
+      "untracked": false,
+      "renamed": false,
+      "deleted": false,
+      "diff": {
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "main_state": "diverged",
+    "main": {
+      "ahead": 1,
+      "behind": 1
+    },
+    "worktree": {
+      "detached": false
+    },
+    "is_main": false,
+    "is_current": false,
+    "is_previous": false,
+    "statusline": "feature-b  /u001b[2m↕/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓1/u001b[0m",
+    "symbols": "↕"
+  },
+  {
+    "branch": "feature-c",
+    "path": "_REPO_.feature-c",
+    "kind": "worktree",
+    "commit": {
+      "sha": "345c7c93ad7c3d8f5b08380898d78e024019599c",
+      "short_sha": "345c7c9",
+      "message": "Add feature-c file",
+      "timestamp": 1735718400
+    },
+    "working_tree": {
+      "staged": false,
+      "modified": false,
+      "untracked": false,
+      "renamed": false,
+      "deleted": false,
+      "diff": {
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "main_state": "diverged",
+    "main": {
+      "ahead": 1,
+      "behind": 1
+    },
+    "worktree": {
+      "detached": false
+    },
+    "is_main": false,
+    "is_current": false,
+    "is_previous": false,
+    "statusline": "feature-c  /u001b[2m↕/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓1/u001b[0m",
+    "symbols": "↕"
   },
   {
     "branch": "with-status",
     "path": "_REPO_.with-status",
     "kind": "worktree",
     "commit": {
-      "sha": "a058e792cfd4836c913fdbc0d4559af34b352b07",
-      "short_sha": "a058e79",
+      "sha": "33323bc15e5a41f2dff1a997b9cd2345d6b74871",
+      "short_sha": "33323bc",
       "message": "Initial commit",
       "timestamp": 1735689600
     },
@@ -102,8 +213,8 @@ exit_code: 0
     "path": "_REPO_.without-status",
     "kind": "worktree",
     "commit": {
-      "sha": "a058e792cfd4836c913fdbc0d4559af34b352b07",
-      "short_sha": "a058e79",
+      "sha": "33323bc15e5a41f2dff1a997b9cd2345d6b74871",
+      "short_sha": "33323bc",
       "message": "Initial commit",
       "timestamp": 1735689600
     },

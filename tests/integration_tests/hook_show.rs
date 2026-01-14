@@ -121,7 +121,7 @@ fn test_hook_show_approval_status(repo: TestRepo, temp_home: TempDir) {
         &config_path,
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
-[projects."repo"]
+[projects."../origin"]
 approved-commands = ["cargo build"]
 "#,
     )

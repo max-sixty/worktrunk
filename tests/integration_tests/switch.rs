@@ -574,11 +574,11 @@ fn test_switch_previous_branch_no_history(repo: TestRepo) {
 
 #[rstest]
 fn test_switch_main_branch(repo: TestRepo) {
-    // Create a feature branch
-    repo.run_git(&["branch", "feature-a"]);
+    // Create a feature branch (use unique name to avoid fixture conflicts)
+    repo.run_git(&["branch", "test-feat-x"]);
 
-    // Switch to feature-a first
-    snapshot_switch("switch_main_branch_to_feature", &repo, &["feature-a"]);
+    // Switch to test-feat-x first
+    snapshot_switch("switch_main_branch_to_feature", &repo, &["test-feat-x"]);
 
     // Now wt switch ^ should resolve to main
     snapshot_switch("switch_main_branch", &repo, &["^"]);
@@ -836,50 +836,50 @@ fn test_switch_previous_with_stale_history(repo: TestRepo) {
 /// changes the working directory before the next command runs.
 #[rstest]
 fn test_switch_ping_pong_realistic(repo: TestRepo) {
-    // Create feature-a branch
-    repo.run_git(&["branch", "feature-a"]);
+    // Create ping-pong branch (unique name to avoid fixture conflicts)
+    repo.run_git(&["branch", "ping-pong"]);
 
-    // Step 1: From main worktree, switch to feature-a (creates worktree)
-    // History: current=feature-a, previous=main
+    // Step 1: From main worktree, switch to ping-pong (creates worktree)
+    // History: current=ping-pong, previous=main
     snapshot_switch_from_dir(
-        "ping_pong_1_main_to_feature_a",
+        "ping_pong_1_main_to_feature",
         &repo,
-        &["feature-a"],
+        &["ping-pong"],
         repo.root_path(),
     );
 
-    // Calculate feature-a worktree path
-    let feature_a_path = repo.root_path().parent().unwrap().join(format!(
-        "{}.feature-a",
+    // Calculate ping-pong worktree path
+    let ping_pong_path = repo.root_path().parent().unwrap().join(format!(
+        "{}.ping-pong",
         repo.root_path().file_name().unwrap().to_str().unwrap()
     ));
 
-    // Step 2: From feature-a worktree, switch back to main
-    // History: current=main, previous=feature-a
+    // Step 2: From ping-pong worktree, switch back to main
+    // History: current=main, previous=ping-pong
     snapshot_switch_from_dir(
-        "ping_pong_2_feature_a_to_main",
+        "ping_pong_2_feature_to_main",
         &repo,
         &["main"],
-        &feature_a_path,
+        &ping_pong_path,
     );
 
-    // Step 3: From main worktree, wt switch - should go to feature-a
-    // History: current=feature-a, previous=main
+    // Step 3: From main worktree, wt switch - should go to ping-pong
+    // History: current=ping-pong, previous=main
     snapshot_switch_from_dir(
-        "ping_pong_3_dash_to_feature_a",
+        "ping_pong_3_dash_to_feature",
         &repo,
         &["-"],
         repo.root_path(),
     );
 
-    // Step 4: From feature-a worktree, wt switch - should go back to main
-    // History: current=main, previous=feature-a
-    snapshot_switch_from_dir("ping_pong_4_dash_to_main", &repo, &["-"], &feature_a_path);
+    // Step 4: From ping-pong worktree, wt switch - should go back to main
+    // History: current=main, previous=ping-pong
+    snapshot_switch_from_dir("ping_pong_4_dash_to_main", &repo, &["-"], &ping_pong_path);
 
-    // Step 5: From main worktree, wt switch - should go to feature-a again (ping-pong!)
-    // History: current=feature-a, previous=main
+    // Step 5: From main worktree, wt switch - should go to ping-pong again (ping-pong!)
+    // History: current=ping-pong, previous=main
     snapshot_switch_from_dir(
-        "ping_pong_5_dash_to_feature_a_again",
+        "ping_pong_5_dash_to_feature_again",
         &repo,
         &["-"],
         repo.root_path(),

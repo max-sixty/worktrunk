@@ -38,7 +38,7 @@ exit_code: 0
 ----- stderr -----
 [2m○[22m Skipping pre-commit hooks (--no-verify)
 [36m◎[39m [36mSquashing 2 commits & tracked changes into a single commit [90m(3 files, [32m+3[39m[39m[90m)[39m...[39m
-[2m↳[22m [2mBackup created @ ef0df66[22m
+[2m↳[22m [2mBackup created @ 91a335e[22m
 [36m◎[39m [36mGenerating squash commit message...[39m
 [107m [0m [1msquash: combined commits[22m
 [32m✓[39m [32mSquashed @ [HASH][39m

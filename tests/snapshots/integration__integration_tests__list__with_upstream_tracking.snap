@@ -9,7 +9,7 @@ info:
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -22,6 +22,7 @@ info:
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -31,13 +32,16 @@ success: true
 exit_code: 0
 ----- stdout -----
   [1mBranch[0m       [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m     [1mmain…±[0m  [1mPath[0m                 [1mRemote⇅[0m  [1mCI[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
-@ main             [2m^[22m[2m|[22m                                   .                       [2m|[0m         [2mb8b9f445[0m  [2m1d[0m    [2mInitial commit on main
-+ ahead            [2m↑[22m[2m⇡[22m                [32m↑2[0m        [32m+2[0m       ../repo.ahead         [32m⇡2[0m          [2m9c8b56b3[0m  [2m1d[0m    [2mAhead commit 2
-+ [2mbehind[0m           [2m_[22m[2m⇣[22m                                   [2m../repo.behind[0m            [2m[31m⇣1[0m      [2mb8b9f445[0m  [2m1d[0m    [2mInitial commit on main
-+ diverged         [2m↑[22m[2m⇅[22m                [32m↑1[0m        [32m+1[0m       ../repo.diverged      [32m⇡1[0m  [2m[31m⇣1[0m      [2m3b16f5c5[0m  [2m1d[0m    [2mDiverged local commit
-+ [2min-sync[0m          [2m_[22m[2m|[22m                                   [2m../repo.in-sync[0m         [2m|[0m         [2mb8b9f445[0m  [2m1d[0m    [2mInitial commit on main
-+ [2mno-upstream[0m      [2m_[22m                                    [2m../repo.no-upstream[0m               [2mb8b9f445[0m  [2m1d[0m    [2mInitial commit on main
+@ main             [2m^[22m[2m⇡[22m                                   .                     [32m⇡1[0m          [2m01cab36c[0m  [2m1d[0m    [2mInitial commit on main
++ feature-a        [2m↕[22m                 [32m↑1[0m  [2m[31m↓1[0m    [32m+1[0m       ../repo.feature-a                 [2m1b87d473[0m  [2m16h[0m   [2mAdd feature-a file
++ feature-b        [2m↕[22m                 [32m↑1[0m  [2m[31m↓1[0m    [32m+1[0m       ../repo.feature-b                 [2mf62940fc[0m  [2m16h[0m   [2mAdd feature-b file
++ feature-c        [2m↕[22m                 [32m↑1[0m  [2m[31m↓1[0m    [32m+1[0m       ../repo.feature-c                 [2m345c7c93[0m  [2m16h[0m   [2mAdd feature-c file
++ ahead            [2m↑[22m[2m⇡[22m                [32m↑2[0m        [32m+2[0m       ../repo.ahead         [32m⇡2[0m          [2ma25eff2a[0m  [2m1d[0m    [2mAhead commit 2
++ [2mbehind[0m           [2m_[22m[2m⇣[22m                                   [2m../repo.behind[0m            [2m[31m⇣1[0m      [2m01cab36c[0m  [2m1d[0m    [2mInitial commit on main
++ diverged         [2m↑[22m[2m⇅[22m                [32m↑1[0m        [32m+1[0m       ../repo.diverged      [32m⇡1[0m  [2m[31m⇣1[0m      [2mf035d2c5[0m  [2m1d[0m    [2mDiverged local commit
++ [2min-sync[0m          [2m_[22m[2m|[22m                                   [2m../repo.in-sync[0m         [2m|[0m         [2m01cab36c[0m  [2m1d[0m    [2mInitial commit on main
++ [2mno-upstream[0m      [2m_[22m                                    [2m../repo.no-upstream[0m               [2m01cab36c[0m  [2m1d[0m    [2mInitial commit on main
 
-[2m○[22m [2mShowing 6 worktrees, 2 ahead
+[2m○[22m [2mShowing 9 worktrees, 5 ahead
 
 ----- stderr -----

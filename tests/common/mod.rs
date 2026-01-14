@@ -397,49 +397,125 @@ use tempfile::TempDir;
 use worktrunk::config::sanitize_branch_name;
 use worktrunk::path::to_posix_path;
 
-/// Path to the fixture template repo (relative to crate root).
-/// Contains `_git/` (renamed .git) and `gitconfig`.
-fn fixture_template_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/template-repo")
+/// Path to the standard fixture (relative to crate root).
+/// Contains repo/, repo.feature-a/, repo.feature-b/, repo.feature-c/, origin_git/.
+fn standard_fixture_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/standard")
 }
 
-/// Copy the fixture template to create a new test repo.
+/// Worktree info returned from fixture copy.
+struct FixtureWorktrees {
+    worktrees: HashMap<String, PathBuf>,
+    remote: PathBuf,
+}
+
+/// Copy the standard fixture to create a new test repo with worktrees and remote.
 ///
-/// The fixture contains a git repo with one initial commit (on `main` branch).
-/// Copies `_git/` to `.git/`, `file.txt`, and `gitconfig` to `test-gitconfig`.
+/// The fixture contains:
+/// - Main repo on `main` branch with one commit
+/// - Remote (origin) bare repository
+/// - Three feature worktrees (feature-a, feature-b, feature-c) each with one commit
+///
 /// Uses `cp -r` which benchmarks faster than native Rust fs operations.
-fn copy_fixture_template(dest: &Path) {
-    let template = fixture_template_path();
+fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
+    let fixture = standard_fixture_path();
 
-    // Create repo subdirectory
-    let repo_path = dest.join("repo");
-    std::fs::create_dir(&repo_path).unwrap();
+    // Copy all directories from fixture (suppress stderr for socket file warnings)
+    for entry in std::fs::read_dir(&fixture).unwrap() {
+        let entry = entry.unwrap();
+        let src = entry.path();
+        let dest_name = entry.file_name();
+        let dest_path = dest.join(&dest_name);
 
-    // Copy _git to repo/.git (suppress stderr for socket file warnings)
-    let output = Command::new("cp")
-        .args(["-r", "--"])
-        .arg(template.join("_git"))
-        .arg(repo_path.join(".git"))
-        .stderr(std::process::Stdio::null())
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "Failed to copy template _git directory"
-    );
+        let output = Command::new("cp")
+            .args(["-r", "--"])
+            .arg(&src)
+            .arg(&dest_path)
+            .stderr(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "Failed to copy fixture directory {:?}",
+            src
+        );
+    }
 
-    // Copy file.txt (part of the initial commit)
-    std::fs::copy(template.join("file.txt"), repo_path.join("file.txt")).unwrap();
+    // Rename _git to .git in all locations
+    let renames = [
+        ("repo/_git", "repo/.git"),
+        ("origin_git", "origin.git"),
+        ("repo.feature-a/_git", "repo.feature-a/.git"),
+        ("repo.feature-b/_git", "repo.feature-b/.git"),
+        ("repo.feature-c/_git", "repo.feature-c/.git"),
+    ];
+    for (from, to) in renames {
+        let from_path = dest.join(from);
+        let to_path = dest.join(to);
+        if from_path.exists() {
+            std::fs::rename(&from_path, &to_path).unwrap();
+        }
+    }
 
-    // Copy .gitattributes (forces LF line endings on all platforms)
-    std::fs::copy(
-        template.join(".gitattributes"),
-        repo_path.join(".gitattributes"),
+    // Canonicalize dest for path replacements (on macOS /var -> /private/var)
+    // This ensures gitdir paths match what TestRepo::root will be
+    let canonical_dest = canonicalize(dest).unwrap();
+
+    // Fix absolute paths in gitdir files - they reference the fixture location
+    let dest_str = canonical_dest.to_str().unwrap();
+    let fixture_str = fixture.to_str().unwrap();
+
+    // Fix worktree gitdir files (they're text files pointing to main repo)
+    for wt in ["feature-a", "feature-b", "feature-c"] {
+        let gitdir_path = dest.join(format!("repo.{wt}/.git"));
+        if gitdir_path.exists() {
+            let content = std::fs::read_to_string(&gitdir_path).unwrap();
+            let fixed = content
+                .replace(fixture_str, dest_str)
+                .replace("_git", ".git");
+            std::fs::write(&gitdir_path, fixed).unwrap();
+        }
+
+        // Fix main repo's worktree gitdir reference
+        let main_gitdir = dest.join(format!("repo/.git/worktrees/repo.{wt}/gitdir"));
+        if main_gitdir.exists() {
+            let content = std::fs::read_to_string(&main_gitdir).unwrap();
+            let fixed = content
+                .replace(fixture_str, dest_str)
+                .replace("_git", ".git");
+            std::fs::write(&main_gitdir, fixed).unwrap();
+        }
+    }
+
+    // Fix remote URL in config (origin_git -> origin.git)
+    let config_path = dest.join("repo/.git/config");
+    if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        let fixed = content.replace("origin_git", "origin.git");
+        std::fs::write(&config_path, fixed).unwrap();
+    }
+
+    // Build worktrees map using canonical paths
+    let mut worktrees = HashMap::new();
+    for wt in ["feature-a", "feature-b", "feature-c"] {
+        worktrees.insert(wt.to_string(), canonical_dest.join(format!("repo.{wt}")));
+    }
+
+    let remote = canonical_dest.join("origin.git");
+
+    FixtureWorktrees { worktrees, remote }
+}
+
+/// Write a gitconfig file for tests.
+fn write_test_gitconfig(path: &Path) {
+    std::fs::write(
+        path,
+        "[user]\n\tname = Test User\n\temail = test@example.com\n\
+         [advice]\n\tmergeConflict = false\n\tresolveConflict = false\n\
+         [init]\n\tdefaultBranch = main\n\
+         [commit]\n\tgpgsign = false\n",
     )
     .unwrap();
-
-    // Copy gitconfig
-    std::fs::copy(template.join("gitconfig"), dest.join("test-gitconfig")).unwrap();
 }
 
 /// Canonicalize a path without Windows verbatim prefix (`\\?\`).
@@ -832,18 +908,21 @@ pub struct TestRepo {
 impl TestRepo {
     /// Create a new test repository with isolated git environment.
     ///
-    /// The repo is initialized on `main` branch with one initial commit.
-    /// Uses a fixture template for fast initialization - copies a pre-initialized
-    /// git repo from `tests/fixtures/template-repo/` instead of running `git init`.
-    /// This saves ~10ms per test by avoiding process spawns.
+    /// The repo includes:
+    /// - Main branch with one initial commit
+    /// - Remote (origin) bare repository
+    /// - Three feature worktrees (feature-a, feature-b, feature-c) each with one commit
+    ///
+    /// Uses a pre-created fixture for fast initialization - copies the fixture
+    /// from `tests/fixtures/standard/` instead of running git commands.
     ///
     /// Also sets up mock gh/glab commands that appear authenticated to prevent
     /// CI status hints from appearing in test output.
     pub fn new() -> Self {
         let temp_dir = TempDir::new().unwrap();
 
-        // Copy from fixture template (includes initial commit)
-        copy_fixture_template(temp_dir.path());
+        // Copy from standard fixture (includes worktrees and remote)
+        let fixture = copy_standard_fixture(temp_dir.path());
 
         // Canonicalize to resolve symlinks (important on macOS where /var is symlink to /private/var)
         let root = canonicalize(&temp_dir.path().join("repo")).unwrap();
@@ -852,15 +931,18 @@ impl TestRepo {
         let test_config_path = temp_dir.path().join("test-config.toml");
         let git_config_path = temp_dir.path().join("test-gitconfig");
 
+        // Write gitconfig for tests
+        write_test_gitconfig(&git_config_path);
+
         // Bind full snapshot settings (including ANSI cleanup) for all tests
-        let worktrees = HashMap::new();
-        let snapshot_guard = setup_snapshot_settings_for_paths(&root, &worktrees).bind_to_scope();
+        let snapshot_guard =
+            setup_snapshot_settings_for_paths(&root, &fixture.worktrees).bind_to_scope();
 
         let mut repo = Self {
             temp_dir,
             root,
-            worktrees,
-            remote: None,
+            worktrees: fixture.worktrees,
+            remote: Some(fixture.remote),
             test_config_path,
             git_config_path,
             mock_bin_path: None,
@@ -1252,7 +1334,15 @@ impl TestRepo {
     ///
     /// The worktree path follows the default template format: `repo.{branch}`
     /// (sanitized, with slashes replaced by dashes).
+    ///
+    /// If the worktree already exists (from the standard fixture), returns its path
+    /// without creating a new one.
     pub fn add_worktree(&mut self, branch: &str) -> PathBuf {
+        // If worktree already exists (from fixture), just return its path
+        if let Some(path) = self.worktrees.get(branch) {
+            return path.clone();
+        }
+
         let safe_branch = sanitize_branch_name(branch);
         // Use default template path format: ../{{ repo }}.{{ branch }}
         // From {temp_dir}/repo, this resolves to {temp_dir}/repo.{branch}
@@ -1422,9 +1512,23 @@ impl TestRepo {
     /// This creates a bare git repository in the temp directory and configures
     /// it with the specified remote name. The remote will have the same default
     /// branch as the local repository.
+    ///
+    /// If the remote already exists (from fixture), this is a no-op.
     pub fn setup_custom_remote(&mut self, remote_name: &str, default_branch: &str) {
+        // If origin remote already exists (from fixture), just ensure HEAD is set
+        if remote_name == "origin" && self.remote.is_some() {
+            // Set origin/HEAD (fixture may not have this set)
+            self.run_git(&["remote", "set-head", "origin", default_branch]);
+            return;
+        }
+
         // Create bare remote repository
         let remote_path = self.temp_dir.path().join(format!("{}.git", remote_name));
+        if remote_path.exists() {
+            // Remote directory already exists, just use it
+            self.remote = Some(canonicalize(&remote_path).unwrap());
+            return;
+        }
         std::fs::create_dir(&remote_path).unwrap();
 
         self.run_git_in(
