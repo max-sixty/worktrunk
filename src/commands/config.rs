@@ -57,6 +57,9 @@ pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
     if project {
         let repo = Repository::current()?;
         let config_path = repo.current_worktree().root()?.join(".config/wt.toml");
+        let user_config_exists = require_user_config_path()
+            .map(|p| p.exists())
+            .unwrap_or(false);
         create_config_file(
             config_path,
             PROJECT_CONFIG_EXAMPLE,
@@ -65,13 +68,21 @@ pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
                 "Edit this file to configure hooks for this repository",
                 "See https://worktrunk.dev/hook/ for hook documentation",
             ],
+            user_config_exists,
+            true, // is_project
         )
     } else {
+        let project_config_exists = Repository::current()
+            .and_then(|repo| repo.current_worktree().root())
+            .map(|root| root.join(".config/wt.toml").exists())
+            .unwrap_or(false);
         create_config_file(
             require_user_config_path()?,
             USER_CONFIG_EXAMPLE,
             "User config",
             &["Edit this file to customize worktree paths and LLM settings"],
+            project_config_exists,
+            false, // is_project
         )
     }
 }
@@ -82,6 +93,8 @@ fn create_config_file(
     content: &str,
     config_type: &str,
     success_hints: &[&str],
+    other_config_exists: bool,
+    is_project: bool,
 ) -> anyhow::Result<()> {
     // Check if file already exists
     if path.exists() {
@@ -89,10 +102,23 @@ fn create_config_file(
             "{config_type} already exists: <bold>{}</>",
             format_path_for_display(&path)
         )))?;
-        output::blank()?;
-        output::print(hint_message(cformat!(
-            "For format reference, run <bright-black>wt config create --help</>; to view, run <bright-black>wt config show</>"
-        )))?;
+
+        // Build hint message based on whether the other config exists
+        let hint = if other_config_exists {
+            // Both configs exist
+            cformat!("To view both user and project configs, run <bright-black>wt config show</>")
+        } else if is_project {
+            // Project config exists, no user config
+            cformat!(
+                "To view, run <bright-black>wt config show</>. To create a user config, run <bright-black>wt config create</>"
+            )
+        } else {
+            // User config exists, no project config
+            cformat!(
+                "To view, run <bright-black>wt config show</>. To create a project config, run <bright-black>wt config create --project</>"
+            )
+        };
+        output::print(hint_message(hint))?;
         return Ok(());
     }
 
