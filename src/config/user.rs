@@ -780,8 +780,27 @@ mod tests {
     use super::*;
     use crate::git::Repository;
 
-    fn test_repo() -> Repository {
-        Repository::test_dummy()
+    /// Test fixture that creates a real temporary git repository.
+    struct TestRepo {
+        _dir: tempfile::TempDir,
+        repo: Repository,
+    }
+
+    impl TestRepo {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            std::process::Command::new("git")
+                .args(["init"])
+                .current_dir(dir.path())
+                .output()
+                .unwrap();
+            let repo = Repository::at(dir.path()).unwrap();
+            Self { _dir: dir, repo }
+        }
+    }
+
+    fn test_repo() -> TestRepo {
+        TestRepo::new()
     }
 
     #[test]
@@ -1046,22 +1065,22 @@ rename-tab = "echo 'switched'"
 
     #[test]
     fn test_worktrunk_config_format_path() {
-        let repo = test_repo();
+        let test = test_repo();
         let config = WorktrunkConfig::default();
         let path = config
-            .format_path("myrepo", "feature/branch", &repo)
+            .format_path("myrepo", "feature/branch", &test.repo)
             .unwrap();
         assert_eq!(path, "../myrepo.feature-branch");
     }
 
     #[test]
     fn test_worktrunk_config_format_path_custom_template() {
-        let repo = test_repo();
+        let test = test_repo();
         let config = WorktrunkConfig {
             worktree_path: Some(".worktrees/{{ branch }}".to_string()),
             ..Default::default()
         };
-        let path = config.format_path("myrepo", "feature", &repo).unwrap();
+        let path = config.format_path("myrepo", "feature", &test.repo).unwrap();
         assert_eq!(path, ".worktrees/feature");
     }
 
