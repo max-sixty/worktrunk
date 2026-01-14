@@ -120,7 +120,6 @@
 
 pub mod ci_status;
 pub(crate) mod collect;
-mod collect_progressive_impl;
 pub(crate) mod columns;
 mod json_output;
 pub(crate) mod layout;

@@ -561,6 +561,179 @@ fn spawn_post_switch_after_remove(
     ctx.spawn_post_switch_commands(&[], super::post_hook_display_path(main_path))
 }
 
+// ============================================================================
+// Removal Display Info: Shared data for background/foreground output
+// ============================================================================
+
+/// Information needed to display removal messages and hints.
+///
+/// This struct captures the outcome of a branch deletion decision (whether
+/// pre-computed for background mode or actual for foreground mode) so that
+/// message formatting can be shared between both modes.
+struct RemovalDisplayInfo {
+    /// The deletion outcome (NotDeleted, ForceDeleted, or Integrated)
+    outcome: BranchDeletionOutcome,
+    /// The effective target branch used for integration check
+    effective_target: Option<String>,
+    /// Whether the branch was integrated (used for hints when branch is kept)
+    branch_was_integrated: bool,
+    /// Whether to show the "unmerged, run -D" hint (foreground only, based on actual deletion)
+    show_unmerged_hint: bool,
+}
+
+impl RemovalDisplayInfo {
+    /// Build display info from pre-computed integration (background mode).
+    ///
+    /// Uses the pre-computed integration reason to avoid race conditions when
+    /// removing multiple worktrees (background processes can hold git locks).
+    fn from_precomputed(
+        deletion_mode: BranchDeletionMode,
+        pre_computed_integration: Option<IntegrationReason>,
+        target_branch: Option<&str>,
+    ) -> Self {
+        let (outcome, effective_target) = if deletion_mode.should_keep() {
+            (
+                BranchDeletionOutcome::NotDeleted,
+                target_branch.map(String::from),
+            )
+        } else if deletion_mode.is_force() {
+            (
+                BranchDeletionOutcome::ForceDeleted,
+                target_branch.map(String::from),
+            )
+        } else {
+            let outcome = match pre_computed_integration {
+                Some(r) => BranchDeletionOutcome::Integrated(r),
+                None => BranchDeletionOutcome::NotDeleted,
+            };
+            (outcome, target_branch.map(String::from))
+        };
+
+        Self {
+            outcome,
+            effective_target,
+            branch_was_integrated: pre_computed_integration.is_some(),
+            show_unmerged_hint: false, // Background mode never shows this hint
+        }
+    }
+
+    /// Build display info from actual deletion result (foreground mode).
+    fn from_actual(
+        repo: &Repository,
+        branch_name: &str,
+        deletion_mode: BranchDeletionMode,
+        pre_computed_integration: Option<IntegrationReason>,
+        target_branch: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let branch_was_integrated = pre_computed_integration.is_some();
+
+        let (outcome, effective_target, show_unmerged_hint) = if !deletion_mode.should_keep() {
+            let check_target = target_branch.unwrap_or("HEAD");
+            let result =
+                delete_branch_if_safe(repo, branch_name, check_target, deletion_mode.is_force());
+            let (deletion, needs_hint) = handle_branch_deletion_result(result, branch_name, true)?;
+            // Only use effective_target for display if we had a real target (not "HEAD" fallback)
+            let display_target = target_branch.map(|_| deletion.effective_target);
+            (deletion.outcome, display_target, needs_hint)
+        } else {
+            (
+                BranchDeletionOutcome::NotDeleted,
+                target_branch.map(String::from),
+                false,
+            )
+        };
+
+        Ok(Self {
+            outcome,
+            effective_target,
+            branch_was_integrated,
+            show_unmerged_hint,
+        })
+    }
+
+    /// Whether the branch will be/was deleted.
+    fn branch_deleted(&self) -> bool {
+        matches!(
+            self.outcome,
+            BranchDeletionOutcome::ForceDeleted | BranchDeletionOutcome::Integrated(_)
+        )
+    }
+
+    /// Print the removal message (progress for background, success for foreground).
+    fn print_message(&self, branch_name: &str, is_background: bool) -> anyhow::Result<()> {
+        let flag_note = get_flag_note(
+            if self.branch_deleted() {
+                BranchDeletionMode::SafeDelete // Doesn't matter, outcome already determined
+            } else {
+                BranchDeletionMode::Keep
+            },
+            &self.outcome,
+            self.effective_target.as_deref(),
+        );
+
+        if is_background {
+            let flag_text = &flag_note.text;
+            let flag_after = flag_note.after_cyan();
+            let msg = if self.branch_deleted() {
+                cformat!(
+                    "<cyan>◎ Removing <bold>{branch_name}</> worktree & branch in background{flag_text}</>{flag_after}"
+                )
+            } else {
+                cformat!("<cyan>◎ Removing <bold>{branch_name}</> worktree in background</>")
+            };
+            Ok(super::print(FormattedMessage::new(msg))?)
+        } else {
+            let msg = if self.branch_deleted() {
+                let flag_text = &flag_note.text;
+                let flag_after = flag_note.after_green();
+                cformat!(
+                    "<green>✓ Removed <bold>{branch_name}</> worktree & branch{flag_text}</>{flag_after}"
+                )
+            } else {
+                cformat!("<green>✓ Removed <bold>{branch_name}</> worktree</>")
+            };
+            Ok(super::print(FormattedMessage::new(msg))?)
+        }
+    }
+
+    /// Print hints about branch status (why it was kept, how to force delete).
+    fn print_hints(
+        &self,
+        branch_name: &str,
+        deletion_mode: BranchDeletionMode,
+        pre_computed_integration: Option<IntegrationReason>,
+    ) -> anyhow::Result<()> {
+        if self.branch_deleted() {
+            return Ok(());
+        }
+
+        if deletion_mode.should_keep() && self.branch_was_integrated {
+            // User kept an integrated branch - show integration info
+            let reason = pre_computed_integration.as_ref().unwrap();
+            let target = self.effective_target.as_deref().unwrap_or("target");
+            let desc = reason.description();
+            let symbol = reason.symbol();
+            super::print(hint_message(cformat!(
+                "Branch integrated ({desc} <bold>{target}</>, <dim>{symbol}</>); retained with <bright-black>--no-delete-branch</>"
+            )))?;
+        } else if self.show_unmerged_hint
+            || (!deletion_mode.should_keep() && !self.branch_was_integrated)
+        {
+            // Unmerged, no flag - show how to force delete
+            // (Background: !should_keep && !integrated, Foreground: show_unmerged_hint)
+            let cmd = suggest_command("remove", &[branch_name], &["-D"]);
+            super::print(hint_message(cformat!(
+                "Branch unmerged; to delete, run <bright-black>{cmd}</>"
+            )))?;
+        }
+        // else: Unmerged + flag - no hint (flag had no effect)
+
+        Ok(())
+    }
+}
+
+// ============================================================================
+
 /// Handle output for RemovedWorktree removal
 #[allow(clippy::too_many_arguments)]
 fn handle_removed_worktree_output(
@@ -649,90 +822,26 @@ fn handle_removed_worktree_output(
     };
 
     if background {
-        // Background mode: spawn detached process
-
-        // Use pre-computed integration reason to avoid race conditions when removing
-        // multiple worktrees (background processes can hold git locks)
-        let (outcome, effective_target) = if deletion_mode.should_keep() {
-            (
-                BranchDeletionOutcome::NotDeleted,
-                target_branch.map(String::from),
-            )
-        } else if deletion_mode.is_force() {
-            (
-                BranchDeletionOutcome::ForceDeleted,
-                target_branch.map(String::from),
-            )
-        } else {
-            // Use pre-computed integration reason
-            let outcome = match pre_computed_integration {
-                Some(r) => BranchDeletionOutcome::Integrated(r),
-                None => BranchDeletionOutcome::NotDeleted,
-            };
-            (outcome, target_branch.map(String::from))
-        };
-
-        let should_delete_branch = matches!(
-            outcome,
-            BranchDeletionOutcome::ForceDeleted | BranchDeletionOutcome::Integrated(_)
-        );
-
-        let flag_note = get_flag_note(deletion_mode, &outcome, effective_target.as_deref());
-        let flag_text = &flag_note.text;
-        let flag_after = flag_note.after_cyan();
-
-        // Reason in parentheses: user flags shown explicitly, integration reason for automatic cleanup
-        // Note: We use FormattedMessage directly instead of progress_message() to control
-        // where cyan styling ends. Symbol must be inside the <cyan> block to get proper coloring.
-        //
-        // Message structure by case:
-        // - Branch deleted (integrated/force): "worktree & branch in background (reason)"
-        // - Branch kept (any reason): "worktree in background" + hint (if relevant)
-        let branch_was_integrated = pre_computed_integration.is_some();
-
-        // Show path mismatch warning first - we discovered this while evaluating the removal
+        // Background mode: show warning before decision announcement
         if let Some(expected) = expected_path {
             super::print(format_path_mismatch_warning(branch_name, expected))?;
         }
 
-        let action = if should_delete_branch {
-            // Branch will be deleted (integrated or force-deleted)
-            cformat!(
-                "<cyan>◎ Removing <bold>{branch_name}</> worktree & branch in background{flag_text}</>{flag_after}"
-            )
-        } else {
-            // Branch kept: hint will explain why (integrated+flag, unmerged, or unmerged+flag)
-            cformat!("<cyan>◎ Removing <bold>{branch_name}</> worktree in background</>")
-        };
-        super::print(FormattedMessage::new(action))?;
+        // Background mode: spawn detached process
+        let display_info = RemovalDisplayInfo::from_precomputed(
+            deletion_mode,
+            pre_computed_integration,
+            target_branch,
+        );
 
-        // Show hints for branch status
-        if !should_delete_branch {
-            if deletion_mode.should_keep() && branch_was_integrated {
-                // User kept an integrated branch - show integration info
-                let reason = pre_computed_integration.as_ref().unwrap();
-                let target = effective_target.as_deref().unwrap_or("target");
-                let desc = reason.description();
-                let symbol = reason.symbol();
-                super::print(hint_message(cformat!(
-                    "Branch integrated ({desc} <bold>{target}</>, <dim>{symbol}</>); retained with <bright-black>--no-delete-branch</>"
-                )))?;
-            } else if !deletion_mode.should_keep() {
-                // Unmerged, no flag - show how to force delete
-                let cmd = suggest_command("remove", &[branch_name], &["-D"]);
-                super::print(hint_message(cformat!(
-                    "Branch unmerged; to delete, run <bright-black>{cmd}</>"
-                )))?;
-            }
-            // else: Unmerged + flag - no hint (flag had no effect)
-        }
-
+        display_info.print_message(branch_name, true)?;
+        display_info.print_hints(branch_name, deletion_mode, pre_computed_integration)?;
         print_switch_message_if_changed(changed_directory, main_path)?;
 
         // Build command with the decision we already made
         let remove_command = build_remove_command(
             worktree_path,
-            should_delete_branch.then_some(branch_name),
+            display_info.branch_deleted().then_some(branch_name),
             force_worktree,
         );
 
@@ -750,12 +859,17 @@ fn handle_removed_worktree_output(
         super::flush()?;
         Ok(())
     } else {
-        // Synchronous mode: remove immediately and report actual results
+        // Foreground mode: remove immediately and report actual results
 
         // Progress message after pre-remove hooks, before actual removal
         super::print(progress_message(cformat!(
             "Removing <bold>{branch_name}</> worktree..."
         )))?;
+
+        // Foreground mode: show warning after progress (contextual info during operation)
+        if let Some(expected) = expected_path {
+            super::print(format_path_mismatch_warning(branch_name, expected))?;
+        }
 
         // Stop fsmonitor daemon first (best effort - ignore errors)
         // This prevents zombie daemons from accumulating when using builtin fsmonitor
@@ -763,7 +877,6 @@ fn handle_removed_worktree_output(
             .worktree_at(worktree_path)
             .run_command(&["fsmonitor--daemon", "stop"]);
 
-        // Track whether branch was actually deleted (will be computed based on deletion attempt)
         if let Err(err) = repo.remove_worktree(worktree_path, force_worktree) {
             return Err(GitError::WorktreeRemovalFailed {
                 branch: branch_name.into(),
@@ -773,72 +886,16 @@ fn handle_removed_worktree_output(
             .into());
         }
 
-        // Delete the branch (unless --no-delete-branch was specified)
-        // Only show effective_target in message if we had a meaningful target (not tautological "HEAD" fallback)
-        let branch_was_integrated = pre_computed_integration.is_some();
+        let display_info = RemovalDisplayInfo::from_actual(
+            &repo,
+            branch_name,
+            deletion_mode,
+            pre_computed_integration,
+            target_branch,
+        )?;
 
-        let (outcome, effective_target, show_unmerged_hint) = if !deletion_mode.should_keep() {
-            let check_target = target_branch.unwrap_or("HEAD");
-            let result =
-                delete_branch_if_safe(&repo, branch_name, check_target, deletion_mode.is_force());
-            let (deletion, needs_hint) = handle_branch_deletion_result(result, branch_name, true)?;
-            // Only use effective_target for display if we had a real target (not "HEAD" fallback)
-            let display_target = target_branch.map(|_| deletion.effective_target);
-            (deletion.outcome, display_target, needs_hint)
-        } else {
-            (
-                BranchDeletionOutcome::NotDeleted,
-                target_branch.map(String::from),
-                false,
-            )
-        };
-
-        let branch_deleted = matches!(
-            outcome,
-            BranchDeletionOutcome::ForceDeleted | BranchDeletionOutcome::Integrated(_)
-        );
-        // Message structure parallel to background mode:
-        // - Branch deleted (integrated/force): "worktree & branch (reason)"
-        // - Branch kept (any reason): "worktree" + hint (if relevant)
-        // Show path mismatch warning first - we discovered this while evaluating the removal
-        if let Some(expected) = expected_path {
-            super::print(format_path_mismatch_warning(branch_name, expected))?;
-        }
-
-        let msg = if branch_deleted {
-            let flag_note = get_flag_note(deletion_mode, &outcome, effective_target.as_deref());
-            let flag_text = &flag_note.text;
-            let flag_after = flag_note.after_green();
-            cformat!(
-                "<green>✓ Removed <bold>{branch_name}</> worktree & branch{flag_text}</>{flag_after}"
-            )
-        } else {
-            // Branch kept: hint will explain why (integrated+flag, unmerged, or unmerged+flag)
-            cformat!("<green>✓ Removed <bold>{branch_name}</> worktree</>")
-        };
-        super::print(FormattedMessage::new(msg))?;
-
-        // Show hints for branch status
-        if !branch_deleted {
-            if deletion_mode.should_keep() && branch_was_integrated {
-                // User kept an integrated branch - show integration info
-                let reason = pre_computed_integration.as_ref().unwrap();
-                let target = effective_target.as_deref().unwrap_or("target");
-                let desc = reason.description();
-                let symbol = reason.symbol();
-                super::print(hint_message(cformat!(
-                    "Branch integrated ({desc} <bold>{target}</>, <dim>{symbol}</>); retained with <bright-black>--no-delete-branch</>"
-                )))?;
-            } else if show_unmerged_hint {
-                // Unmerged, no flag - show how to force delete
-                let cmd = suggest_command("remove", &[branch_name], &["-D"]);
-                super::print(hint_message(cformat!(
-                    "Branch unmerged; to delete, run <bright-black>{cmd}</>"
-                )))?;
-            }
-            // else: Unmerged + flag - no hint (flag had no effect)
-        }
-
+        display_info.print_message(branch_name, false)?;
+        display_info.print_hints(branch_name, deletion_mode, pre_computed_integration)?;
         print_switch_message_if_changed(changed_directory, main_path)?;
 
         spawn_post_switch_after_remove(main_path, verify, changed_directory)?;
