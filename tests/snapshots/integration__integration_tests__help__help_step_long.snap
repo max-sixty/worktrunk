@@ -6,11 +6,9 @@ info:
     - step
     - "--help"
   env:
-    CARGO_LLVM_COV: "1"
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_EDITOR: ""
-    LLVM_PROFILE_FILE: /Users/maximilian/workspace/worktrunk.worktreeinclude/target/llvm-cov-target/worktrunk.worktreeinclude-%p-%m.profraw
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     TERM: alacritty

@@ -106,6 +106,10 @@ mentioned in the error message.
 // Hint:  "Use --create to create a new branch"
 ```
 
+## Heading Case
+
+Use **sentence case** for help text headings: "Configuration files", "JSON output", "LLM commit messages".
+
 ## Message Consistency Patterns
 
 Use consistent punctuation and structure for related messages:

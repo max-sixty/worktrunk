@@ -45,7 +45,7 @@ Location:
 - macOS/Linux: `~/.config/worktrunk/config.toml` (or `$XDG_CONFIG_HOME` if set)
 - Windows: `%APPDATA%\worktrunk\config.toml`
 
-## Worktree Path Template
+## Worktree path template
 
 Controls where new worktrees are created. Paths are relative to the repository root.
 
@@ -76,7 +76,7 @@ worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
 worktree-path = "../{{ branch | sanitize }}"
 ```
 
-## List Command Defaults
+## List command defaults
 
 Persistent flag values for `wt list`. Override on command line as needed.
 
@@ -87,7 +87,7 @@ branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
 ```
 
-## Commit Defaults
+## Commit defaults
 
 Shared by `wt step commit`, `wt step squash`, and `wt merge`.
 
@@ -96,7 +96,7 @@ Shared by `wt step commit`, `wt step squash`, and `wt merge`.
 stage = "all"      # What to stage before commit: "all", "tracked", or "none"
 ```
 
-## Merge Command Defaults
+## Merge command defaults
 
 All flags are on by default. Set to false to change default behavior.
 
@@ -109,7 +109,7 @@ remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
 ```
 
-## Select Command Defaults
+## Select command defaults
 
 Pager behavior for `wt select` diff previews.
 
@@ -121,7 +121,7 @@ Pager behavior for `wt select` diff previews.
 # pager = "delta --paging=never"
 ```
 
-## LLM Commit Messages
+## LLM commit messages
 
 Generate commit messages automatically during merge. Requires an external CLI tool. See <https://worktrunk.dev/llm-commits/> for setup details and template customization.
 
@@ -143,7 +143,7 @@ args = ["-m", "claude:claude-haiku-4.5"]
 
 See [Custom Prompt Templates](#custom-prompt-templates) for inline template options.
 
-## Approved Commands
+## Approved commands
 
 Commands approved for project hooks. Auto-populated when approving hooks on first run, or via `wt hook approvals add`.
 
@@ -154,11 +154,11 @@ approved-commands = ["npm ci", "npm test"]
 
 For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see <https://worktrunk.dev/hook/>.
 
-## Custom Prompt Templates
+## Custom prompt templates
 
 Templates use [minijinja](https://docs.rs/minijinja/) syntax.
 
-### Commit Template
+### Commit template
 
 Available variables:
 
@@ -204,7 +204,7 @@ Branch: {{ branch }}
 ```
 <!-- DEFAULT_TEMPLATE_END -->
 
-### Squash Template
+### Squash template
 
 Available variables (in addition to commit template variables):
 

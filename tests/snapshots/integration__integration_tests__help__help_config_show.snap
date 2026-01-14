@@ -8,7 +8,7 @@ info:
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"

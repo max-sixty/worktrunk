@@ -201,7 +201,7 @@ Query structured data with [2m--format=json[0m:
    statusline         string      Pre-formatted status with ANSI colors                               
    symbols            string      Raw status symbols without colors (e.g., "!?↓")                     
 
-[1mcommit object
+[1mCommit object
 
      Field    Type          Description         
    ───────── ────── ─────────────────────────── 

@@ -80,7 +80,7 @@ Location:
 - macOS/Linux: [2m~/.config/worktrunk/config.toml[0m (or [2m$XDG_CONFIG_HOME[0m if set)
 - Windows: [2m%APPDATA%\worktrunk\config.toml
 
-[32mWorktree Path Template
+[32mWorktree path template
 
 Controls where new worktrees are created. Paths are relative to the repository root.
 
@@ -109,7 +109,7 @@ Controls where new worktrees are created. Paths are relative to the repository r
   [2m# Creates: ~/code/project/feature-auth (sibling to .git)
   [2mworktree-path = "../{{ branch | sanitize }}"
 
-[32mList Command Defaults
+[32mList command defaults
 
 Persistent flag values for [2mwt list[0m. Override on command line as needed.
 
@@ -118,14 +118,14 @@ Persistent flag values for [2mwt list[0m. Override on command line as needed.
   [2mbranches = false   # Include branches without worktrees (--branches)
   [2mremotes = false    # Include remote-only branches (--remotes)
 
-[32mCommit Defaults
+[32mCommit defaults
 
 Shared by [2mwt step commit[0m, [2mwt step squash[0m, and [2mwt merge[0m.
 
   [2m[commit]
   [2mstage = "all"      # What to stage before commit: "all", "tracked", or "none"
 
-[32mMerge Command Defaults
+[32mMerge command defaults
 
 All flags are on by default. Set to false to change default behavior.
 
@@ -136,7 +136,7 @@ All flags are on by default. Set to false to change default behavior.
   [2mremove = true      # Remove worktree after merge (--no-remove to keep)
   [2mverify = true      # Run project hooks (--no-verify to skip)
 
-[32mSelect Command Defaults
+[32mSelect command defaults
 
 Pager behavior for [2mwt select[0m diff previews.
 
@@ -146,7 +146,7 @@ Pager behavior for [2mwt select[0m diff previews.
   [2m# Example:
   [2m# pager = "delta --paging=never"
 
-[32mLLM Commit Messages
+[32mLLM commit messages
 
 Generate commit messages automatically during merge. Requires an external CLI tool. See <https://worktrunk.dev/llm-commits/> for setup details and template customization.
 
@@ -164,7 +164,7 @@ Using aichat:
 
 See Custom Prompt Templates for inline template options.
 
-[32mApproved Commands
+[32mApproved commands
 
 Commands approved for project hooks. Auto-populated when approving hooks on first run, or via [2mwt hook approvals add[0m.
 
@@ -173,11 +173,11 @@ Commands approved for project hooks. Auto-populated when approving hooks on firs
 
 For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at [2m<repo>/.config/wt.toml[0m. Run [2mwt config create --project[0m to create one, or see <https://worktrunk.dev/hook/>.
 
-[32mCustom Prompt Templates
+[32mCustom prompt templates
 
 Templates use minijinja syntax.
 
-[1mCommit Template
+[1mCommit template
 
 Available variables:
 
@@ -219,7 +219,7 @@ Default template:
   [2m
   [2m"""
 
-[1mSquash Template
+[1mSquash template
 
 Available variables (in addition to commit template variables):
 

@@ -156,7 +156,7 @@ Hooks can use template variables that expand at runtime:
 | `{{ base }}` | main | Base branch (creation hooks only) |
 | `{{ base_worktree_path }}` | /path/to/myproject | Base branch worktree (creation hooks only) |
 
-### Worktrunk Filters
+### Worktrunk filters
 
 Templates support Jinja2 filters for transforming values:
 
@@ -180,7 +180,7 @@ Hash any string, including concatenations:
 dev = "npm run dev --port {{ (repo ~ '-' ~ branch) | hash_port }}"
 ```
 
-### Worktrunk Functions
+### Worktrunk functions
 
 Templates also support functions for dynamic lookups:
 

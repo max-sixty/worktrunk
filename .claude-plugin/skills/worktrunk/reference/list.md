@@ -164,7 +164,7 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 
-### commit object
+### Commit object
 
 | Field | Type | Description |
 |-------|------|-------------|
