@@ -68,13 +68,19 @@ static TMPDIR_MAIN_REGEX: LazyLock<Regex> =
 /// Regex for REPO placeholder
 static REPO_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[REPO\]").unwrap());
 
-/// Regex to find DEFAULT_TEMPLATE marker in config.source.md (markdown format)
+/// Regex to extract user config section from src/cli/mod.rs
+/// Matches content between USER_CONFIG_START and USER_CONFIG_END markers
+static USER_CONFIG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)<!-- USER_CONFIG_START -->\n(.*?)\n<!-- USER_CONFIG_END -->").unwrap()
+});
+
+/// Regex to find DEFAULT_TEMPLATE marker in user config section (markdown format)
 static DEFAULT_TEMPLATE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?s)(<!-- DEFAULT_TEMPLATE_START -->\n).*?(<!-- DEFAULT_TEMPLATE_END -->)")
         .unwrap()
 });
 
-/// Regex to find DEFAULT_SQUASH_TEMPLATE marker in config.source.md (markdown format)
+/// Regex to find DEFAULT_SQUASH_TEMPLATE marker in user config section (markdown format)
 static SQUASH_TEMPLATE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?s)(<!-- DEFAULT_SQUASH_TEMPLATE_START -->\n).*?(<!-- DEFAULT_SQUASH_TEMPLATE_END -->)",
@@ -864,20 +870,19 @@ fn sync_readme_markers(
     }
 }
 
-/// Transform config.source.md to config.example.toml format
+/// Transform user config markdown to config.example.toml format
 ///
 /// # Design
 ///
-/// The source file (`dev/config.source.md`) is a markdown document designed as a great
-/// explainer for configuration options. It contains prose explanations and TOML code
-/// blocks showing example values.
+/// The source content is the user config section in `src/cli/mod.rs`, embedded between
+/// `<!-- USER_CONFIG_START -->` and `<!-- USER_CONFIG_END -->` markers. This markdown
+/// is designed as a great explainer for configuration options, containing prose
+/// explanations and TOML code blocks showing example values.
 ///
 /// The generated file (`dev/config.example.toml`) is the entire source with every line
 /// `# ` prefixed and code fence markers stripped. This creates a fully-commented config
 /// file that serves as inline documentation — users read through, find what they want,
 /// and uncomment the relevant `key = value` line.
-///
-/// The user-facing spec is in `dev/config-format.md` (included in `wt config create --help`).
 ///
 /// # Transform Rules
 ///
@@ -913,16 +918,30 @@ fn transform_config_source_to_toml(source: &str) -> String {
     result.join("\n")
 }
 
+/// Extract user config documentation from src/cli/mod.rs
+///
+/// The user config section is embedded in mod.rs between USER_CONFIG_START
+/// and USER_CONFIG_END markers. This function extracts that content for
+/// transforming into config.example.toml.
+fn extract_user_config_from_cli(cli_mod_content: &str) -> String {
+    USER_CONFIG_PATTERN
+        .captures(cli_mod_content)
+        .and_then(|cap| cap.get(1))
+        .map(|m| m.as_str().to_string())
+        .expect("USER_CONFIG_START/END markers not found in src/cli/mod.rs")
+}
+
 #[test]
 fn test_config_source_generates_example_toml() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let source_path = project_root.join("dev/config.source.md");
+    let cli_mod_path = project_root.join("src/cli/mod.rs");
     let config_path = project_root.join("dev/config.example.toml");
 
-    let source_content = fs::read_to_string(&source_path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", source_path.display(), e));
+    let cli_mod_content = fs::read_to_string(&cli_mod_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", cli_mod_path.display(), e));
 
-    let expected = transform_config_source_to_toml(&source_content);
+    let user_config_content = extract_user_config_from_cli(&cli_mod_content);
+    let expected = transform_config_source_to_toml(&user_config_content);
     let expected = trim_lines(&expected);
 
     let current = fs::read_to_string(&config_path)
@@ -932,7 +951,7 @@ fn test_config_source_generates_example_toml() {
     if current != expected {
         fs::write(&config_path, format!("{}\n", expected)).unwrap();
         panic!(
-            "config.example.toml out of sync with config.source.md. \
+            "config.example.toml out of sync with user config section in src/cli/mod.rs. \
              Run tests locally and commit the changes."
         );
     }
@@ -942,10 +961,10 @@ fn test_config_source_generates_example_toml() {
 fn test_config_source_templates_are_in_sync() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let llm_rs_path = project_root.join("src/llm.rs");
-    let source_path = project_root.join("dev/config.source.md");
+    let cli_mod_path = project_root.join("src/cli/mod.rs");
 
     let llm_content = fs::read_to_string(&llm_rs_path).unwrap();
-    let source_content = fs::read_to_string(&source_path).unwrap();
+    let cli_mod_content = fs::read_to_string(&cli_mod_path).unwrap();
 
     // Extract templates from llm.rs
     let templates = extract_templates(&llm_content);
@@ -958,7 +977,7 @@ fn test_config_source_templates_are_in_sync() {
         "DEFAULT_SQUASH_TEMPLATE not found in src/llm.rs"
     );
 
-    let mut updated_content = source_content.clone();
+    let mut updated_content = cli_mod_content.clone();
     let mut updated_count = 0;
 
     // Helper to replace a template section in markdown format
@@ -972,7 +991,7 @@ fn test_config_source_templates_are_in_sync() {
                 .get(name)
                 .unwrap_or_else(|| panic!("{name} not found in src/llm.rs"));
 
-            // Format as markdown code block (non-active, so it stays commented in output)
+            // Format as markdown code block
             let replacement = format!(
                 r#"{prefix}```toml
 [commit-generation]
@@ -998,9 +1017,9 @@ fn test_config_source_templates_are_in_sync() {
     );
 
     if updated_count > 0 {
-        fs::write(&source_path, &updated_content).unwrap();
+        fs::write(&cli_mod_path, &updated_content).unwrap();
         panic!(
-            "Templates out of sync: updated {} section(s) in config.source.md. \
+            "Templates out of sync: updated {} section(s) in src/cli/mod.rs. \
              Run tests locally and commit the changes.",
             updated_count
         );

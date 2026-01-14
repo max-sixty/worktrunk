@@ -35,6 +35,7 @@ Show current configuration and file locations:
 wt config show
 ```
 
+<!-- USER_CONFIG_START -->
 # Worktrunk User Configuration
 
 Location: `~/.config/worktrunk/config.toml`
@@ -245,6 +246,7 @@ Combine these commits into a single commit message.
 """
 ```
 <!-- DEFAULT_SQUASH_TEMPLATE_END -->
+<!-- USER_CONFIG_END -->
 
 ## Project config
 
