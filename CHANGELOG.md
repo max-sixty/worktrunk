@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.14.1
+
+### Improved
+
+- **`--base` accepts commit-ish refs**: `wt switch --create --base` now accepts HEAD, tags, commit SHAs, and relative refs (e.g., `HEAD~2`), not just branch names. Fixes [#630](https://github.com/max-sixty/worktrunk/issues/630). (thanks @myhau)
+- **Upfront validation for target refs**: `wt merge` and `wt step` commands now validate target refs before approval prompts, giving clearer "Branch X not found" errors immediately.
+- **Visual hierarchy in help**: Section dividers, improved heading structure, and sentence case in `--help` output.
+
+### Fixed
+
+- **macOS shell freeze during `copy-ignored`**: Atomic `clonefile()` on directories saturated disk I/O, blocking shell startup. Now uses per-file reflink which is slower but keeps the system responsive.
+- **`copy-ignored` no longer copies nested worktrees**: When `worktree-path` places worktrees inside the main worktree, `copy-ignored` now skips them. Also now copies symlinks (fixes `node_modules/.bin/` etc.). Fixes [#641](https://github.com/max-sixty/worktrunk/issues/641). (thanks @razor-x)
+- **Context-aware hints for `wt config create`**: Hints now suggest relevant next steps based on which configs exist.
+
 ## 0.14.0
 
 ### Improved
