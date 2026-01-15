@@ -767,6 +767,7 @@ mod tests {
     // TODO: Consider adding a test assertion that compares bash/zsh/fish outputs are
     // byte-identical before the snapshot check, so we can identify which shell diverged.
 
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -798,6 +799,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -822,6 +824,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -842,6 +845,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -903,6 +907,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -923,6 +928,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -961,6 +967,7 @@ mod tests {
     /// Test that --execute command exit codes are propagated
     /// Verifies that when wt succeeds but the --execute command fails,
     /// the wrapper returns the command's exit code, not wt's.
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1003,6 +1010,7 @@ mod tests {
     /// TODO: Fix timing/race condition in bash where "Building project..." output appears
     /// before the command display, causing snapshot mismatch (appears on line 7 instead of line 9).
     /// This is a non-deterministic PTY output ordering issue.
+    #[cfg(unix)]
     #[rstest]
     // #[case("bash")] // TODO: Flaky PTY output ordering - command output appears before command display
     #[case("zsh")]
@@ -1054,6 +1062,7 @@ approved-commands = [
     /// Test merge with successful pre-merge validation
     /// Note: fish disabled due to flaky PTY buffering race conditions
     /// TODO: bash variant occasionally fails on Ubuntu CI with snapshot mismatches due to PTY timing
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1104,6 +1113,7 @@ approved-commands = [
 
     /// Test merge with failing pre-merge that aborts the merge
     /// Note: fish disabled due to flaky PTY buffering race conditions
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1159,6 +1169,7 @@ approved-commands = [
     /// Test merge with pre-merge commands that output to both stdout and stderr
     /// Verifies that interleaved stdout/stderr appears in correct temporal order
     /// Note: fish disabled due to flaky PTY buffering race conditions
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1235,6 +1246,7 @@ approved-commands = [
     // Bash Shell Wrapper Tests
     // ========================================================================
 
+    #[cfg(unix)]
     #[rstest]
     fn test_switch_with_post_start_command_no_directive_leak(repo: TestRepo) {
         // Configure a post-start command in the project config (this is where the bug manifests)
@@ -1274,6 +1286,7 @@ approved-commands = ["echo 'test command executed'"]
         assert_snapshot!(output.normalized());
     }
 
+    #[cfg(unix)]
     #[rstest]
     fn test_switch_with_execute_through_wrapper(repo: TestRepo) {
         // Use --yes to skip approval prompt in tests
@@ -1305,6 +1318,7 @@ approved-commands = ["echo 'test command executed'"]
         assert_snapshot!(output.normalized());
     }
 
+    #[cfg(unix)]
     #[rstest]
     fn test_bash_shell_integration_hint_suppressed(repo: TestRepo) {
         // When running through the shell wrapper, the "To enable automatic cd" hint
@@ -1327,6 +1341,7 @@ approved-commands = ["echo 'test command executed'"]
         assert_snapshot!(output.normalized());
     }
 
+    #[cfg(unix)]
     #[rstest]
     fn test_readme_example_simple_switch(repo: TestRepo) {
         // Create worktree through shell wrapper (suppresses hint)
@@ -1340,6 +1355,7 @@ approved-commands = ["echo 'test command executed'"]
         assert_snapshot!(output.normalized());
     }
 
+    #[cfg(unix)]
     #[rstest]
     fn test_readme_example_switch_back(repo: TestRepo) {
         // Create worktrees (fix-auth is where we are after step 2, feature-api exists from earlier)
@@ -1360,6 +1376,7 @@ approved-commands = ["echo 'test command executed'"]
         assert_snapshot!(output.normalized());
     }
 
+    #[cfg(unix)]
     #[rstest]
     fn test_readme_example_remove(repo: TestRepo) {
         // Create worktrees
@@ -1378,6 +1395,7 @@ approved-commands = ["echo 'test command executed'"]
         assert_snapshot!(output.normalized());
     }
 
+    #[cfg(unix)]
     #[rstest]
     fn test_wrapper_preserves_progress_messages(repo: TestRepo) {
         // Configure a post-start background command that will trigger progress output
@@ -1528,6 +1546,7 @@ approved-commands = ["echo 'fish background task'"]
     // This test runs `cargo run` inside a PTY which can take longer than the
     // default 60s timeout when cargo checks/compiles dependencies. Extended
     // timeout configured in .config/nextest.toml.
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1640,6 +1659,7 @@ approved-commands = ["echo 'fish background task'"]
 
     /// Test that zsh doesn't show job control notifications inline
     /// The NO_MONITOR option should suppress [1] 12345 and [1] + done messages
+    #[cfg(unix)]
     #[rstest]
     fn test_zsh_no_job_control_notifications(repo: TestRepo) {
         // Configure a post-start command that will trigger background job
@@ -1771,6 +1791,7 @@ approved-commands = ["echo 'bash background'"]
 
     /// Test that bash completions are properly registered
     /// Note: Completions are inline in the wrapper script (lazy loading)
+    #[cfg(unix)]
     #[rstest]
     fn test_bash_completions_registered(repo: TestRepo) {
         let wt_bin = get_cargo_bin("wt");
@@ -1808,6 +1829,7 @@ approved-commands = ["echo 'bash background'"]
     }
 
     /// Test that fish completions are properly registered
+    #[cfg(unix)]
     #[rstest]
     fn test_fish_completions_registered(repo: TestRepo) {
         let wt_bin = get_cargo_bin("wt");
@@ -1851,6 +1873,7 @@ approved-commands = ["echo 'bash background'"]
 
     /// Test that zsh wrapper function is properly defined
     /// Note: Completions are inline in the wrapper script (lazy loading via compdef)
+    #[cfg(unix)]
     #[rstest]
     fn test_zsh_wrapper_function_registered(repo: TestRepo) {
         let wt_bin = get_cargo_bin("wt");
@@ -1911,6 +1934,7 @@ approved-commands = ["echo 'bash background'"]
     // ========================================================================
 
     /// Test that branch names with special characters work correctly
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1931,6 +1955,7 @@ approved-commands = ["echo 'bash background'"]
     }
 
     /// Test that branch names with dashes and underscores work
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1953,6 +1978,7 @@ approved-commands = ["echo 'bash background'"]
     // ========================================================================
 
     /// Test that shell integration works when wt is not in PATH but WORKTRUNK_BIN is set
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -2058,6 +2084,7 @@ approved-commands = ["echo 'bash background'"]
     /// The fish function should show "wt: command not found" and exit 127.
     /// This is fish-specific because bash/zsh have an outer guard that prevents
     /// the function from being defined when wt isn't available.
+    #[cfg(unix)]
     #[rstest]
     #[case("fish")]
     fn test_fish_binary_not_found_clear_error(#[case] shell: &str, repo: TestRepo) {
@@ -2119,6 +2146,7 @@ approved-commands = ["echo 'bash background'"]
     ///
     /// This is different from test_fish_binary_not_found_clear_error which tests
     /// the FULL function (which has its own WORKTRUNK_BIN check).
+    #[cfg(unix)]
     #[rstest]
     #[case("fish")]
     fn test_fish_wrapper_binary_not_found_no_infinite_loop(#[case] shell: &str, repo: TestRepo) {
@@ -2186,6 +2214,7 @@ approved-commands = ["echo 'bash background'"]
     /// Test that shell integration completes without leaving zombie processes
     /// Note: Temp directory cleanup is verified implicitly by successful test completion.
     /// We can't check for specific temp files because tests run in parallel.
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -2247,6 +2276,7 @@ approved-commands = ["echo 'cleanup test'"]
     /// - Pre-merge hooks (test, lint) running before merge
     ///
     /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_pre_merge.snap
+    #[cfg(unix)]
     #[rstest]
     fn test_readme_example_hooks_pre_merge(mut repo: TestRepo) {
         // Create project config with pre-merge hooks
@@ -2465,6 +2495,7 @@ command = "{}"
     /// Uses shell wrapper to avoid "To enable automatic cd" hint.
     ///
     /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_post_create.snap
+    #[cfg(unix)]
     #[rstest]
     fn test_readme_example_hooks_post_create(repo: TestRepo) {
         // Create project config with post-create and post-start hooks
@@ -2542,6 +2573,7 @@ fi
     /// Note: This uses direct PTY execution (not shell wrapper) because interactive prompts
     /// require direct stdin access. The shell wrapper approach detects non-interactive mode.
     /// The shell integration hint is truncated from the output.
+    #[cfg(unix)]
     #[rstest]
     fn test_readme_example_approval_prompt(repo: TestRepo) {
         use portable_pty::CommandBuilder;
@@ -2905,6 +2937,7 @@ fi
     /// Black-box test: zsh completion produces correct subcommands.
     ///
     /// Sources actual `wt config shell init zsh`, triggers completion, snapshots result.
+    #[cfg(unix)]
     #[test]
     fn test_zsh_completion_subcommands() {
         let wt_bin = get_cargo_bin("wt");
@@ -2948,6 +2981,7 @@ _wt_lazy_complete
     /// Black-box test: bash completion produces correct subcommands.
     ///
     /// Sources actual `wt config shell init bash`, triggers completion, snapshots result.
+    #[cfg(unix)]
     #[test]
     fn test_bash_completion_subcommands() {
         let wt_bin = get_cargo_bin("wt");
@@ -2986,6 +3020,7 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     /// Black-box test: fish completion produces correct subcommands.
     ///
     /// Fish completions call binary with COMPLETE=fish (separate from init script).
+    #[cfg(unix)]
     #[test]
     fn test_fish_completion_subcommands() {
         let wt_bin = get_cargo_bin("wt");
