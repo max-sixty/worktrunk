@@ -79,6 +79,15 @@ impl ShellOutput {
             self.combined
         );
     }
+
+    /// Assert command exited successfully (exit code 0)
+    fn assert_success(&self) {
+        assert_eq!(
+            self.exit_code, 0,
+            "Expected exit code 0, got {}.\nOutput:\n{}",
+            self.exit_code, self.combined
+        );
+    }
 }
 
 /// Create insta settings configured for shell wrapper snapshot tests.
@@ -86,7 +95,6 @@ impl ShellOutput {
 /// This sets up filters for:
 /// - PTY-specific artifacts (CRLF, ^D control sequences, ANSI resets)
 /// - Temporary directory paths
-/// - Commit hashes (non-deterministic in PTY tests)
 /// - Project root paths (for fixture references)
 fn shell_wrapper_settings() -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
@@ -97,9 +105,6 @@ fn shell_wrapper_settings() -> insta::Settings {
 
     // Add temp directory path filters
     add_pty_tmpdir_filters(&mut settings, "[TMPDIR]");
-
-    // Add commit hash filters (PTY tests produce non-deterministic SHAs)
-    add_pty_hash_filters(&mut settings);
 
     // Normalize project root paths (for fixture references like tests/fixtures/)
     if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
@@ -1161,7 +1166,7 @@ approved-commands = ["echo 'test command executed'"]
         output.assert_no_directive_leaks();
         output.assert_no_job_control_messages();
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // Normalize paths in output for snapshot testing
         // Snapshot the output
@@ -1186,8 +1191,7 @@ approved-commands = ["echo 'test command executed'"]
 
         // No directives should leak
         output.assert_no_directive_leaks();
-
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // The executed command output should appear
         assert!(
@@ -1300,7 +1304,7 @@ approved-commands = ["echo 'background task'"]
         // No directives should leak
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // Snapshot verifies progress messages appear to users
         // (catches the bug where progress() was incorrectly suppressed)
@@ -1348,7 +1352,7 @@ approved-commands = ["echo 'fish background task'"]
         // No directives should leak
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // Snapshot verifies progress messages appear to users through Fish wrapper
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
@@ -1379,7 +1383,7 @@ approved-commands = ["echo 'fish background task'"]
         // No directives should leak
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // All three lines should be executed and visible
         assert!(output.combined.contains("line 1"), "First line missing");
@@ -1400,7 +1404,7 @@ approved-commands = ["echo 'fish background task'"]
         // No directives should leak even with minimal output
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // Should still show success message
         assert!(
@@ -1561,7 +1565,7 @@ approved-commands = ["echo 'background job'"]
 
         let output = exec_through_wrapper("zsh", &repo, "switch", &["--create", "zsh-job-test"]);
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
         output.assert_no_directive_leaks();
 
         // Critical: zsh should NOT show job control notifications
@@ -2348,7 +2352,7 @@ command = "{}"
             &[("PATH", &path_with_bin)],
         );
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
@@ -2428,7 +2432,7 @@ fi
             &[("PATH", &path_with_bin)],
         );
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
