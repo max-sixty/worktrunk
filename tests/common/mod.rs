@@ -416,28 +416,62 @@ struct FixtureWorktrees {
 /// - Remote (origin) bare repository
 /// - Three feature worktrees (feature-a, feature-b, feature-c) each with one commit
 ///
-/// Uses `cp -r` which benchmarks faster than native Rust fs operations.
+/// Uses platform-specific copy command which benchmarks faster than native Rust fs operations.
 fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
     let fixture = standard_fixture_path();
 
-    // Copy all directories from fixture (suppress stderr for socket file warnings)
+    // Copy all directories from fixture
     for entry in std::fs::read_dir(&fixture).unwrap() {
         let entry = entry.unwrap();
         let src = entry.path();
         let dest_name = entry.file_name();
         let dest_path = dest.join(&dest_name);
 
-        let output = Command::new("cp")
-            .args(["-r", "--"])
-            .arg(&src)
-            .arg(&dest_path)
-            .stderr(std::process::Stdio::null())
-            .output()
-            .unwrap();
+        #[cfg(unix)]
+        {
+            let output = Command::new("cp")
+                .args(["-r", "--"])
+                .arg(&src)
+                .arg(&dest_path)
+                .output()
+                .expect("Failed to run cp command");
+            assert!(
+                output.status.success(),
+                "Failed to copy fixture directory {:?}: {}",
+                src,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        #[cfg(windows)]
+        {
+            // Use robocopy on Windows (exits 0-7 for success)
+            let output = Command::new("robocopy")
+                .args(["/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP"])
+                .arg(&src)
+                .arg(&dest_path)
+                .output()
+                .expect("Failed to run robocopy command");
+            // Robocopy returns 0-7 for various success states
+            let code = output.status.code().unwrap_or(99);
+            assert!(
+                code <= 7,
+                "Failed to copy fixture directory {:?}: exit code {}, stderr: {}",
+                src,
+                code,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    // Verify essential directories exist after copy
+    let essential = ["repo/_git", "origin_git", "repo.feature-a/_git"];
+    for path in essential {
+        let full_path = dest.join(path);
         assert!(
-            output.status.success(),
-            "Failed to copy fixture directory {:?}",
-            src
+            full_path.exists(),
+            "Essential fixture path missing after copy: {:?}",
+            full_path
         );
     }
 
@@ -453,9 +487,19 @@ fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
         let from_path = dest.join(from);
         let to_path = dest.join(to);
         if from_path.exists() {
-            std::fs::rename(&from_path, &to_path).unwrap();
+            std::fs::rename(&from_path, &to_path).unwrap_or_else(|e| {
+                panic!("Failed to rename {:?} to {:?}: {}", from_path, to_path, e)
+            });
         }
     }
+
+    // Verify origin.git is a valid bare repository
+    let origin_git = dest.join("origin.git");
+    assert!(
+        origin_git.join("HEAD").exists(),
+        "origin.git is not a valid git repository (missing HEAD): {:?}",
+        origin_git
+    );
 
     // Canonicalize dest for worktrees map (on macOS /var -> /private/var)
     let canonical_dest = canonicalize(dest).unwrap();
