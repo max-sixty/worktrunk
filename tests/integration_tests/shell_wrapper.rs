@@ -1690,6 +1690,7 @@ approved-commands = ["echo 'background job'"]
     /// The shell wrapper suppresses these via two mechanisms (see bash.sh/zsh.zsh templates):
     /// - START notifications (`[1] 12345`): stderr redirection around `&`
     /// - DONE notifications (`[1]+ Done`): `set +m` before backgrounding
+    #[cfg(unix)]
     #[rstest]
     fn test_bash_job_control_suppression(repo: TestRepo) {
         // Configure a post-start command that will trigger background job
@@ -2650,6 +2651,7 @@ test = "echo 'Running tests...'"
     /// - Completion not registered at all
     /// - Completion function not loading (lazy loading broken)
     /// - Completion output being executed as commands (the COMPLETE mode bug)
+    #[cfg(unix)]
     #[rstest]
     fn test_bash_completion_produces_correct_output(repo: TestRepo) {
         use std::io::Read;
@@ -2786,6 +2788,7 @@ fi
     /// This test verifies completion works WITHOUT knowing internal function names.
     /// It checks that a completion is registered for 'wt' and that calling the
     /// wt command with COMPLETE=zsh produces completion candidates.
+    #[cfg(unix)]
     #[rstest]
     fn test_zsh_completion_produces_correct_output(repo: TestRepo) {
         use std::io::Read;
@@ -3021,6 +3024,7 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     /// shell wrapper. The issue being tested: in some shells (particularly fish),
     /// command substitution doesn't propagate stderr redirects, causing help
     /// output to appear on the terminal even when redirected.
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -3171,6 +3175,7 @@ echo "SCRIPT_COMPLETED"
     ///
     /// We verify pager invocation by setting GIT_PAGER to a script that creates
     /// a marker file before passing through the content.
+    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
