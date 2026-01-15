@@ -105,6 +105,12 @@ brew install max-sixty/worktrunk/wt && wt config shell install
 
 Shell integration allows commands to change directories.
 
+**Winget (Windows):**
+
+```bash
+winget install --id max-sixty.worktrunk
+```
+
 **Cargo:**
 
 ```bash
