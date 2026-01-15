@@ -6,6 +6,7 @@ use std::path::PathBuf;
 mod diff;
 mod error;
 mod parse;
+pub mod pr_ref;
 mod repository;
 mod url;
 

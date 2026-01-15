@@ -5,6 +5,7 @@ use crate::common::{
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
+use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -1234,4 +1235,139 @@ fn test_switch_create_no_hint_with_custom_worktree_path(repo: TestRepo) {
         !stderr.contains("Customize worktree locations"),
         "Hint should be suppressed when user has custom worktree-path config"
     );
+}
+
+// ============================================================================
+// PR Syntax Tests (pr:<number>)
+// ============================================================================
+
+use crate::common::mock_commands::{MockConfig, MockResponse, copy_mock_binary};
+
+/// Helper to set up mock gh for PR tests with custom PR response.
+fn setup_mock_gh_for_pr(repo: &TestRepo, gh_response: Option<&str>) -> std::path::PathBuf {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    // Copy mock-stub binary as "gh"
+    copy_mock_binary(&mock_bin, "gh");
+
+    // Write PR response file if provided
+    if let Some(response) = gh_response {
+        fs::write(mock_bin.join("pr_response.json"), response).unwrap();
+
+        MockConfig::new("gh")
+            .version("gh version 2.0.0 (mock)")
+            .command("pr", MockResponse::file("pr_response.json"))
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+    }
+
+    mock_bin
+}
+
+/// Configure command environment for mock gh.
+fn configure_mock_gh_env(cmd: &mut std::process::Command, mock_bin: &Path) {
+    // Tell mock-stub where to find config files
+    cmd.env("MOCK_CONFIG_DIR", mock_bin);
+
+    // Build PATH with mock binary first
+    let (path_var_name, current_path) = std::env::vars_os()
+        .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))
+        .map(|(k, v)| (k.to_string_lossy().into_owned(), Some(v)))
+        .unwrap_or(("PATH".to_string(), None));
+
+    let mut paths: Vec<std::path::PathBuf> = current_path
+        .as_deref()
+        .map(|p| std::env::split_paths(p).collect())
+        .unwrap_or_default();
+    paths.insert(0, mock_bin.to_path_buf());
+    let new_path = std::env::join_paths(&paths)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+
+    cmd.env(path_var_name, new_path);
+}
+
+/// Test that --create flag conflicts with pr: syntax
+#[rstest]
+fn test_switch_pr_create_conflict(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
+        assert_cmd_snapshot!("switch_pr_create_conflict", cmd);
+    });
+}
+
+/// Test same-repo PR checkout (isCrossRepository: false)
+#[rstest]
+fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
+    // Create a feature branch and push it
+    repo.add_worktree("feature-auth");
+
+    let gh_response = r#"{
+        "headRefName": "feature-auth",
+        "headRepository": {"name": "test-repo"},
+        "headRepositoryOwner": {"login": "owner"},
+        "isCrossRepository": false,
+        "url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_same_repo", cmd);
+    });
+}
+
+/// Test fork PR checkout (isCrossRepository: true)
+#[rstest]
+fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    let gh_response = r#"{
+        "headRefName": "feature-fix",
+        "headRepository": {"name": "test-repo"},
+        "headRepositoryOwner": {"login": "contributor"},
+        "isCrossRepository": true,
+        "url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_fork", cmd);
+    });
+}
+
+/// Test error when PR is not found
+#[rstest]
+fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    // Copy mock-stub binary as "gh"
+    copy_mock_binary(&mock_bin, "gh");
+
+    // Configure gh to return error for PR not found (errors go to stderr)
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "pr",
+            MockResponse::stderr("Could not resolve to a PullRequest with the number 9999")
+                .with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:9999"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_not_found", cmd);
+    });
 }

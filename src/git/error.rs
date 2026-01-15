@@ -146,6 +146,10 @@ pub enum GitError {
     WorktreeNotFound {
         branch: String,
     },
+    /// --create flag used with pr: syntax (conflict - PR branch already exists)
+    PrCreateConflict {
+        pr_number: u32,
+    },
     Other {
         message: String,
     },
@@ -561,6 +565,17 @@ impl std::fmt::Display for GitError {
                     f,
                     "{}",
                     error_message(cformat!("No worktree found for branch <bold>{branch}</>"))
+                )
+            }
+
+            GitError::PrCreateConflict { pr_number } => {
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!(
+                        "Cannot use <bold>--create</> with <bold>pr:{pr_number}</>"
+                    )),
+                    hint_message("The PR's branch already exists; remove --create")
                 )
             }
 
