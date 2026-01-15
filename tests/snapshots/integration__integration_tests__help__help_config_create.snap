@@ -86,21 +86,21 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#
   [2m# ## LLM commit messages
   [2m#
-  [2m# Generate commit messages automatically during merge. Requires an external CLI tool. See <https://worktrunk.dev/llm-commits/> for setup details and template customization.
+  [2m# Generate commit messages automatically during merge. Requires an external CLI tool. See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and template customization.
   [2m#
-  [2m# Using [llm](https://github.com/simonw/llm) (install: `pip install llm llm-anthropic`):
+  [2m# Using llm (https://github.com/simonw/llm) (install: `pip install llm llm-anthropic`):
   [2m#
   [2m# [commit-generation]
   [2m# command = "llm"
   [2m# args = ["-m", "claude-haiku-4.5"]
   [2m#
-  [2m# Using [aichat](https://github.com/sigoden/aichat):
+  [2m# Using aichat (https://github.com/sigoden/aichat):
   [2m#
   [2m# [commit-generation]
   [2m# command = "aichat"
   [2m# args = ["-m", "claude:claude-haiku-4.5"]
   [2m#
-  [2m# See [Custom prompt templates](#custom-prompt-templates) for inline template options.
+  [2m# See Custom prompt templates (#custom-prompt-templates) for inline template options.
   [2m#
   [2m# ## Commands
   [2m#
@@ -148,11 +148,11 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# [projects."github.com/user/repo"]
   [2m# approved-commands = ["npm ci", "npm test"]
   [2m#
-  [2m# For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see <https://worktrunk.dev/hook/>.
+  [2m# For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see `wt hook` docs (https://worktrunk.dev/hook/).
   [2m#
   [2m# ### Custom prompt templates
   [2m#
-  [2m# Templates use [minijinja](https://docs.rs/minijinja/) syntax.
+  [2m# Templates use minijinja (https://docs.rs/minijinja/) syntax.
   [2m#
   [2m# #### Commit template
   [2m#

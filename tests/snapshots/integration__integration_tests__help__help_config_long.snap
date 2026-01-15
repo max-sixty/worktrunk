@@ -113,7 +113,7 @@ Controls where new worktrees are created. Paths are relative to the repository r
 
 [1m[32mLLM commit messages
 
-Generate commit messages automatically during merge. Requires an external CLI tool. See <https://worktrunk.dev/llm-commits/> for setup details and template customization.
+Generate commit messages automatically during merge. Requires an external CLI tool. See LLM commits docs for setup and template customization.
 
 Using llm (install: [2mpip install llm llm-anthropic[0m):
 
@@ -175,7 +175,7 @@ Commands approved for project hooks. Auto-populated when approving hooks on firs
   [2m[projects."github.com/user/repo"]
   [2mapproved-commands = ["npm ci", "npm test"]
 
-For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at [2m<repo>/.config/wt.toml[0m. Run [2mwt config create --project[0m to create one, or see <https://worktrunk.dev/hook/>.
+For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at [2m<repo>/.config/wt.toml[0m. Run [2mwt config create --project[0m to create one, or see [2mwt hook[0m docs.
 
 [32mCustom prompt templates
 

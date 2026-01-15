@@ -1481,7 +1481,7 @@ worktree-path = "../{{ branch | sanitize }}"
 
 ## LLM commit messages
 
-Generate commit messages automatically during merge. Requires an external CLI tool. See <https://worktrunk.dev/llm-commits/> for setup details and template customization.
+Generate commit messages automatically during merge. Requires an external CLI tool. See [LLM commits docs](@/llm-commits.md) for setup and template customization.
 
 Using [llm](https://github.com/simonw/llm) (install: `pip install llm llm-anthropic`):
 
@@ -1557,7 +1557,7 @@ Commands approved for project hooks. Auto-populated when approving hooks on firs
 approved-commands = ["npm ci", "npm test"]
 ```
 
-For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see <https://worktrunk.dev/hook/>.
+For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see [`wt hook` docs](@/hook.md).
 
 ### Custom prompt templates
 
