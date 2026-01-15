@@ -4,5 +4,3 @@
 	bare = true
 	ignorecase = true
 	precomposeunicode = true
-[remote "origin"]
-	url = /Users/maximilian/workspace/worktrunk.test-speed/tests/fixtures/standard/repo
