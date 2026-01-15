@@ -1110,6 +1110,36 @@ impl TestRepo {
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
+    /// Remove fixture worktrees to get a clean state for tests.
+    ///
+    /// The standard fixture includes worktrees for feature-a, feature-b, feature-c.
+    /// Call this method in tests that need a specific worktree state. Also clears
+    /// the worktrees map so `add_worktree` can recreate them if needed.
+    pub fn remove_fixture_worktrees(&mut self) {
+        for branch in &["feature-a", "feature-b", "feature-c"] {
+            let worktree_path = self
+                .root_path()
+                .parent()
+                .unwrap()
+                .join(format!("repo.{}", branch));
+            if worktree_path.exists() {
+                let _ = self
+                    .git_command()
+                    .args([
+                        "worktree",
+                        "remove",
+                        "--force",
+                        worktree_path.to_str().unwrap(),
+                    ])
+                    .output();
+            }
+            // Delete the branch after removing the worktree
+            let _ = self.git_command().args(["branch", "-D", branch]).output();
+            // Remove from worktrees map so add_worktree() can recreate if needed
+            self.worktrees.remove(*branch);
+        }
+    }
+
     /// Stage all changes in a directory.
     pub fn stage_all(&self, dir: &Path) {
         self.run_git_in(dir, &["add", "."]);

@@ -4,9 +4,9 @@ expression: normalized
 ---
 > [QUERY]                                                     │[PREVIEW_HEADER]
     Branch       Status        HEAD±    main↕  Remote⇅  Age │Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: tog
-> @ main             ^                                  1d  │
-  + feature-one      _                                  1d  │○ main has no uncommitted changes
-  + feature-two      _                                  1d  │
+> @ main             ^                                  16h │
+  + feature-one      _                                  16h │○ main has no uncommitted changes
+  + feature-two      _                                  16h │
                                                             │
                                                             │
                                                             │

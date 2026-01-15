@@ -157,6 +157,9 @@ fn test_env_vars_with_shell(repo: &TestRepo) -> Vec<(String, String)> {
 
 #[rstest]
 fn test_approval_prompt_accept(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
@@ -178,6 +181,9 @@ fn test_approval_prompt_accept(repo: TestRepo) {
 
 #[rstest]
 fn test_approval_prompt_decline(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
@@ -199,6 +205,9 @@ fn test_approval_prompt_decline(repo: TestRepo) {
 
 #[rstest]
 fn test_approval_prompt_multiple_commands(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"
@@ -228,6 +237,9 @@ third = "echo 'Third command'"
 /// See test_permission_error_prevents_save in approval_save.rs for details.
 #[rstest]
 fn test_approval_prompt_permission_error(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
@@ -290,6 +302,9 @@ fn test_approval_prompt_permission_error(repo: TestRepo) {
 
 #[rstest]
 fn test_approval_prompt_named_commands(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(
         r#"[post-create]
 install = "echo 'Installing dependencies...'"
@@ -457,6 +472,9 @@ approved-commands = ["echo 'Second command'"]
 
 #[rstest]
 fn test_approval_prompt_remove_decline(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     // Create a worktree to remove
     let output = repo
         .wt_command()

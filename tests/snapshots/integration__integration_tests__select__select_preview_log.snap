@@ -4,13 +4,13 @@ expression: normalized
 ---
 > [QUERY]                                                     │[PREVIEW_HEADER]
     Branch   Status        HEAD±    main↕  Remote⇅  Commit  │Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: tog
-> + feature      ↑                 ↑5               a7f9eb..│
-                                                            │* a7f9ebb   +1        1d (feature) Add file 5 with content
-                                                            │* cd19d36   +1        1d Add file 4 with content
-                                                            │* 17c13c5   +1        1d Add file 3 with content
-                                                            │* fad018c   +1        1d Add file 2 with content
-                                                            │* 8df4920   +1        1d Add file 1 with content
-                                                            │* a1e809f   +3        1d (HEAD -> main) Initial commit
+> + feature      ↑                 ↑5               855962..│
+                                                            │* 8559621   +1        1d (feature) Add file 5 with content
+                                                            │* b8208db   +1        1d Add file 4 with content
+                                                            │* 046917d   +1        1d Add file 3 with content
+                                                            │* b0684ea   +1        1d Add file 2 with content
+                                                            │* 19be611   +1        1d Add file 1 with content
+                                                            │* 05a4a45   +2       16h (HEAD -> main) Initial commit
                                                             │
                                                             │
                                                             │

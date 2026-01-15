@@ -4,7 +4,7 @@ expression: normalized
 ---
 > [QUERY]                                                     │[PREVIEW_HEADER]
     Branch   Status        HEAD±    main↕  Remote⇅  Commit  │Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: tog
-> + feature   !  ↑       +3   -1   ↑1               ef7f61..│
+> + feature   !  ↑       +3   -1   ↑1               c605f9..│
                                                             │ tracked.txt | 4 +++-
                                                             │ 1 file changed, 3 insertions(+), 1 deletion(-)
                                                             │diff --git a/tracked.txt b/tracked.txt

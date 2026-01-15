@@ -764,6 +764,9 @@ mod tests {
     #[case("zsh")]
     #[case("fish")]
     fn test_wrapper_step_for_each(#[case] shell: &str, mut repo: TestRepo) {
+        // Remove fixture worktrees so we can create our own feature-a and feature-b
+        repo.remove_fixture_worktrees();
+
         repo.commit("Initial commit");
 
         // Create additional worktrees
@@ -2460,6 +2463,9 @@ fi
     fn test_readme_example_approval_prompt(repo: TestRepo) {
         use portable_pty::CommandBuilder;
         use std::io::{Read, Write};
+
+        // Remove origin so worktrunk uses directory name as project identifier
+        repo.run_git(&["remote", "remove", "origin"]);
 
         // Create project config with named post-create commands
         repo.write_project_config(
