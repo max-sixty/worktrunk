@@ -157,6 +157,10 @@ pub struct WorktrunkConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub select: Option<SelectConfig>,
 
+    /// Configuration for the `wt switch` command
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub switch: Option<SwitchConfig>,
+
     // =========================================================================
     // User-level hooks (same syntax as project hooks, run before project hooks)
     // =========================================================================
@@ -319,6 +323,14 @@ pub struct SelectConfig {
     /// Example: `pager = "delta --paging=never"`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pager: Option<String>,
+}
+
+/// Configuration for the `wt switch` command
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct SwitchConfig {
+    /// Create a new branch by default (default: false)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub create: Option<bool>,
 }
 
 /// Default worktree path template

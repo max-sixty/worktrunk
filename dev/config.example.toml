@@ -83,6 +83,13 @@
 # remove = true      # Remove worktree after merge (--no-remove to keep)
 # verify = true      # Run project hooks (--no-verify to skip)
 #
+# ### Switch
+#
+# Default behavior for `wt switch`.
+#
+# [switch]
+# create = true       # Create new branch by default
+#
 # ### Select
 #
 # Pager behavior for `wt select` diff previews.

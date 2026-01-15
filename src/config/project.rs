@@ -66,6 +66,26 @@ impl ProjectConfig {
     }
 }
 
+/// Project-specific configuration for `wt switch` command.
+///
+/// Allows setting default behavior for creating branches when switching.
+///
+/// # Example
+///
+/// ```toml
+/// [switch]
+/// create = true
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+pub struct ProjectSwitchConfig {
+    /// Create a new branch by default when switching.
+    ///
+    /// When set to `true`, `wt switch <branch>` behaves like `wt switch --create <branch>`.
+    /// Users can still override with explicit flags (`--create` or `--no-create`).
+    #[serde(default)]
+    pub create: Option<bool>,
+}
+
 /// Project-specific configuration with hooks.
 ///
 /// This config is stored at `<repo>/.config/wt.toml` within the repository and
@@ -107,6 +127,10 @@ pub struct ProjectConfig {
     /// CI configuration (platform override)
     #[serde(default)]
     pub ci: Option<ProjectCiConfig>,
+
+    /// Configuration for `wt switch` command
+    #[serde(default)]
+    pub switch: Option<ProjectSwitchConfig>,
 
     /// Captures unknown fields for validation warnings
     #[serde(flatten, default, skip_serializing)]
@@ -189,6 +213,40 @@ mod tests {
         assert!(config.hooks.pre_remove.is_none());
         assert!(config.list.is_none());
         assert!(config.ci.is_none());
+        assert!(config.switch.is_none());
+    }
+
+    // ============================================================================
+    // SwitchConfig Tests
+    // ============================================================================
+
+    #[test]
+    fn test_deserialize_switch_create() {
+        let contents = r#"
+[switch]
+create = true
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.switch.is_some());
+        let switch = config.switch.unwrap();
+        assert_eq!(switch.create, Some(true));
+    }
+
+    #[test]
+    fn test_deserialize_switch_empty() {
+        let contents = r#"
+[switch]
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.switch.is_some());
+        let switch = config.switch.unwrap();
+        assert!(switch.create.is_none());
+    }
+
+    #[test]
+    fn test_switch_config_default() {
+        let config = ProjectSwitchConfig::default();
+        assert!(config.create.is_none());
     }
 
     // ============================================================================

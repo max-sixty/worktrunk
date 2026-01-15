@@ -710,8 +710,27 @@ fn main() {
             .and_then(|mut config| {
                 let repo = Repository::current().context("Failed to switch worktree")?;
 
+                // Get config defaults (project config takes precedence over user config)
+                let project_config = repo.load_project_config()?;
+                let user_switch_config = config.switch.as_ref();
+                let project_switch_config = project_config.as_ref().and_then(|c| c.switch.as_ref());
+                let create_default = project_switch_config
+                    .and_then(|s| s.create)
+                    .or_else(|| user_switch_config.and_then(|s| s.create))
+                    .unwrap_or(false);
+
+                // CLI flag overrides config
+                let create_final = if create { true } else { create_default };
+
                 // Validate FIRST (before approval) - fails fast if branch doesn't exist, etc.
-                let plan = plan_switch(&repo, &branch, create, base.as_deref(), clobber, &config)?;
+                let plan = plan_switch(
+                    &repo,
+                    &branch,
+                    create_final,
+                    base.as_deref(),
+                    clobber,
+                    &config,
+                )?;
 
                 // "Approve at the Gate": collect and approve hooks upfront
                 // This ensures approval happens once at the command entry point
