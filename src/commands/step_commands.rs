@@ -102,8 +102,8 @@ pub fn handle_squash(
     let ctx = env.context(yes);
     let generator = CommitGenerator::new(&env.config.commit_generation);
 
-    // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    // Get and validate target ref (any commit-ish for merge-base calculation)
+    let target_branch = repo.require_target_ref(target)?;
 
     // Auto-stage changes before running pre-commit hooks so both beta and merge paths behave identically
     match stage_mode {
@@ -295,8 +295,8 @@ pub fn step_show_squash_prompt(
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
 
-    // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    // Get and validate target ref (any commit-ish for merge-base calculation)
+    let target_branch = repo.require_target_ref(target)?;
 
     // Get current branch
     let current_branch = repo
@@ -346,8 +346,8 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 
     let repo = Repository::current()?;
 
-    // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    // Get and validate target ref (any commit-ish for rebase)
+    let target_branch = repo.require_target_ref(target)?;
 
     // Check if already up-to-date (linear extension of target, no merge commits)
     if repo.is_rebased_onto(&target_branch)? {

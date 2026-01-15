@@ -938,8 +938,8 @@ pub fn handle_push(
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
 
-    // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    // Get and validate target branch (must be a branch since we're updating it)
+    let target_branch = repo.require_target_branch(target)?;
 
     // A worktree for the target branch is optional for push:
     // - If present, we use it to check for overlapping dirty files.
