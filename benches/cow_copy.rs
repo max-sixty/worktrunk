@@ -1,8 +1,7 @@
 // Benchmarks for `wt step copy-ignored` COW directory copying
 //
 // Tests copy performance with realistic Rust target/ directory structures.
-// On macOS, this uses atomic `clonefile()` syscall; on other platforms,
-// file-by-file reflink.
+// Uses file-by-file reflink copying on all platforms.
 //
 // Run:
 //   cargo bench --bench cow_copy
@@ -70,17 +69,10 @@ fn create_target_dir(file_count: usize) -> TempDir {
 
 /// Copy directory using the same approach as `wt step copy-ignored`.
 ///
-/// On macOS: atomic clonefile() then remove .git entries
-/// On other platforms: file-by-file reflink
+/// Uses file-by-file reflink on all platforms. We intentionally avoid atomic
+/// directory cloning on macOS (via clonefile()) because it saturates disk I/O
+/// and freezes interactive processes. See step_commands.rs for details.
 fn copy_dir_cow(src: &Path, dest: &Path) -> std::io::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        if reflink_copy::reflink(src, dest).is_ok() {
-            return Ok(());
-        }
-    }
-
-    // Fallback: file-by-file
     copy_dir_recursive(src, dest)
 }
 

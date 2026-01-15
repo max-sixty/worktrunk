@@ -195,20 +195,14 @@ Only gitignored files are copied — tracked files are never touched. If `.workt
 
 ## Features
 
-- Uses copy-on-write (reflink) when available for instant, space-efficient copies
+- Uses copy-on-write (reflink) when available for space-efficient copies
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files (safe to re-run)
 - Skips symlinks and `.git` entries
 
 ## Performance
 
-Reflink copies share disk blocks until modified — no data is actually copied. For a 31GB `target/` directory with 110k files:
-
-| Method | Time |
-|--------|------|
-| Full copy (`cp -R`) | 2m 5s |
-| COW copy (`cp -Rc`) | ~60s |
-| `wt step copy-ignored` | ~31s |
+Reflink copies share disk blocks until modified — no data is actually copied. Copy time scales with file count, not size. Runs in background via `post-create` hook.
 
 ## Language-specific notes
 
