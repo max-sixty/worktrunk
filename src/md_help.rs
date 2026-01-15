@@ -89,6 +89,14 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
 
         // Horizontal rules (---, ***, ___) render as visible divider
         // No extra newlines - markdown source already has blank lines around ---
+        //
+        // TODO: We use `---` dividers instead of H1 headers because H1s break web docs
+        // (pages already have a title from frontmatter). This decouples visual hierarchy
+        // from heading semantics. Alternatives considered:
+        // - Strip H1s during doc sync (demote to H2 for web)
+        // - Treat `---` + H2 combo as "major section" (render H2 as UPPERCASE when preceded by ---)
+        // - Use marker comments like `<!-- major -->` before H2
+        // See git history for discussion.
         if trimmed == "---" || trimmed == "***" || trimmed == "___" {
             let dimmed = Style::new().dimmed();
             let rule_width = width.unwrap_or(40);
