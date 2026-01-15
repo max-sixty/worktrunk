@@ -420,12 +420,20 @@ struct FixtureWorktrees {
 fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
     let fixture = standard_fixture_path();
 
-    // Copy all directories from fixture
+    // Copy all entries from fixture
     for entry in std::fs::read_dir(&fixture).unwrap() {
         let entry = entry.unwrap();
         let src = entry.path();
         let dest_name = entry.file_name();
         let dest_path = dest.join(&dest_name);
+        let is_dir = entry.file_type().unwrap().is_dir();
+
+        // Use Rust's fs::copy for files (cross-platform)
+        if !is_dir {
+            std::fs::copy(&src, &dest_path)
+                .unwrap_or_else(|e| panic!("Failed to copy file {:?}: {}", src, e));
+            continue;
+        }
 
         #[cfg(unix)]
         {
@@ -445,7 +453,7 @@ fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
 
         #[cfg(windows)]
         {
-            // Use robocopy on Windows (exits 0-7 for success)
+            // Use robocopy on Windows for directories (exits 0-7 for success)
             let output = Command::new("robocopy")
                 .args(["/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP"])
                 .arg(&src)
