@@ -2403,26 +2403,6 @@ pub fn add_pty_tmpdir_filters(settings: &mut insta::Settings, placeholder: &str)
     settings.add_filter(&collapse_pattern, placeholder);
 }
 
-/// Add filters for commit hashes in PTY output.
-///
-/// Shell wrapper tests produce non-deterministic commit hashes due to
-/// PTY timing and environment variations.
-pub fn add_pty_hash_filters(settings: &mut insta::Settings) {
-    // 7-character commit hashes (short form)
-    // No word boundaries because ANSI codes (ending with 'm') directly precede hashes
-    settings.add_filter(r"[0-9a-f]{7}", "[HASH]");
-}
-
-/// Add filters for home directory paths in PTY output.
-///
-/// # Arguments
-/// * `settings` - The insta Settings to add filters to
-/// * `home_path` - The home directory path to normalize
-/// * `placeholder` - The placeholder text (e.g., "~", "[HOME]")
-pub fn add_pty_home_filter(settings: &mut insta::Settings, home_path: &Path, placeholder: &str) {
-    settings.add_filter(&regex::escape(&home_path.to_string_lossy()), placeholder);
-}
-
 /// Add filters for binary paths (target/debug/wt) in PTY output.
 ///
 /// Test binaries are run from the cargo target directory, which varies.

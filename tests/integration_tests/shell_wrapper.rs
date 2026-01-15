@@ -29,7 +29,7 @@
 use crate::common::TestRepo;
 use crate::common::canonicalize;
 use crate::common::wait_for_file_content;
-use crate::common::{add_pty_filters, add_pty_hash_filters, add_pty_tmpdir_filters};
+use crate::common::{add_pty_filters, add_pty_tmpdir_filters};
 use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
 use std::fs;

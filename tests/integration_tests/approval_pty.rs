@@ -67,9 +67,7 @@ fn exec_in_pty_with_input(
 
 /// Create insta settings for approval PTY tests.
 ///
-/// Uses shared PTY filters plus test-specific normalizations for:
-/// - Config file paths
-/// - Blank line timing variations in PTY output
+/// Uses shared PTY filters plus test-specific normalizations for config file paths.
 fn approval_pty_settings(repo: &TestRepo) -> insta::Settings {
     let mut settings = crate::common::setup_snapshot_settings(repo);
 
@@ -81,13 +79,6 @@ fn approval_pty_settings(repo: &TestRepo) -> insta::Settings {
 
     // Config paths specific to these tests
     settings.add_filter(r"/var/folders/[^\s]+/test-config\.toml", "[CONFIG]");
-
-    // Blank line normalization for PTY timing variations:
-    // Ensure consistent blank line after user input (y or n)
-    settings.add_filter(r"^(y|n)\n🟡", "$1\n\n🟡");
-
-    // Remove extra blank lines between prompt response and next message
-    settings.add_filter(r"\[y/N](\x1b\[\d+m)* \n\n(🔄|⚪)", "[y/N]$1 \n$2");
 
     settings
 }
