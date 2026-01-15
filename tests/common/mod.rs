@@ -42,8 +42,8 @@ pub mod list_snapshots;
 // Progressive output tests use PTY and are Unix-only for now
 #[cfg(unix)]
 pub mod progressive_output;
-// Shell integration tests are Unix-only for now (Windows support planned)
-#[cfg(all(unix, feature = "shell-integration-tests"))]
+// Shell integration tests - cross-platform with PTY support
+#[cfg(feature = "shell-integration-tests")]
 pub mod shell;
 
 // Cross-platform mock command helpers
@@ -351,19 +351,23 @@ pub fn merge_scenario_multi_commit(mut repo: TestRepo) -> (TestRepo, PathBuf) {
     (repo, feature_wt)
 }
 
-/// Returns a PTY system with a guard that restores the TTY foreground pgrp on drop.
+/// Returns a PTY system with platform-appropriate setup.
 ///
-/// Use this instead of `portable_pty::native_pty_system()` directly to ensure:
-/// 1. PTY tests work in background process groups (signals blocked)
-/// 2. SIGTTIN/SIGTTOU are blocked to prevent test processes from being stopped
+/// On Unix, this blocks SIGTTIN/SIGTTOU signals to prevent test processes from
+/// being stopped when PTY operations interact with terminal control.
+///
+/// On Windows, this returns the native ConPTY system directly.
+///
+/// Use this instead of `portable_pty::native_pty_system()` directly to ensure
+/// PTY tests work correctly across platforms.
 ///
 /// NOTE: PTY tests are behind the `shell-integration-tests` feature because they can
 /// trigger a nextest bug where its InputHandler cleanup receives SIGTTOU. This happens
 /// when tests spawn interactive shells (zsh -ic, bash -ic) which take control of the
 /// foreground process group. See https://github.com/nextest-rs/nextest/issues/2878
 /// Workaround: run with NEXTEST_NO_INPUT_HANDLER=1. See CLAUDE.md for details.
-#[cfg(unix)]
 pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
+    #[cfg(unix)]
     ignore_tty_signals();
     portable_pty::native_pty_system()
 }
@@ -371,13 +375,11 @@ pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
 /// Open a PTY pair with default size (48 rows x 200 cols).
 ///
 /// Most PTY tests use this standard size. Returns the master/slave pair.
-#[cfg(unix)]
 pub fn open_pty() -> portable_pty::PtyPair {
     open_pty_with_size(48, 200)
 }
 
 /// Open a PTY pair with specified size.
-#[cfg(unix)]
 pub fn open_pty_with_size(rows: u16, cols: u16) -> portable_pty::PtyPair {
     native_pty_system()
         .openpty(portable_pty::PtySize {

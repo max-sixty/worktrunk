@@ -32,8 +32,8 @@
 //! is necessary, and file snapshots are the right storage format for escape-code-heavy output.
 
 // All shell integration tests and infrastructure gated by feature flag
-// Unix-only for now - Windows shell integration is planned
-#![cfg(all(unix, feature = "shell-integration-tests"))]
+// Supports both Unix (bash/zsh/fish) and Windows (PowerShell)
+#![cfg(feature = "shell-integration-tests")]
 
 use crate::common::TestRepo;
 use crate::common::canonicalize;
@@ -227,6 +227,12 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// Quote a path for PowerShell (escape backticks and single quotes)
+fn powershell_quote(s: &str) -> String {
+    // PowerShell string escaping: use single quotes and escape embedded single quotes by doubling
+    format!("'{}'", s.replace('\'', "''"))
+}
+
 /// Build a shell script that sources the wrapper and runs a command
 fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&str]) -> String {
     let wt_bin = get_cargo_bin("wt");
@@ -264,6 +270,17 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
             ));
             script.push_str("export CLICOLOR_FORCE=1\n");
         }
+        "powershell" | "pwsh" => {
+            // PowerShell uses $env: for environment variables
+            let wt_bin_ps = powershell_quote(&wt_bin.display().to_string());
+            let config_path_ps = powershell_quote(&repo.test_config_path().display().to_string());
+            script.push_str(&format!("$env:WORKTRUNK_BIN = {}\n", wt_bin_ps));
+            script.push_str(&format!(
+                "$env:WORKTRUNK_CONFIG_PATH = {}\n",
+                config_path_ps
+            ));
+            script.push_str("$env:CLICOLOR_FORCE = '1'\n");
+        }
         _ => {
             // bash
             script.push_str(&format!("export WORKTRUNK_BIN={}\n", wt_bin_quoted));
@@ -275,16 +292,37 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
         }
     }
 
-    // Source the wrapper
-    script.push_str(&wrapper_script);
-    script.push('\n');
+    // Source the wrapper (PowerShell uses . for sourcing inline code via Invoke-Expression)
+    match shell {
+        "powershell" | "pwsh" => {
+            // The wrapper_script is PowerShell code; we include it directly
+            script.push_str(&wrapper_script);
+            script.push('\n');
+        }
+        _ => {
+            script.push_str(&wrapper_script);
+            script.push('\n');
+        }
+    }
 
     // Build the command
     script.push_str("wt ");
     script.push_str(subcommand);
     for arg in args {
         script.push(' ');
-        script.push_str(&quote_arg(arg));
+        match shell {
+            "powershell" | "pwsh" => {
+                // PowerShell argument quoting
+                if arg.contains(' ') || arg.contains(';') || arg.contains('\'') {
+                    script.push_str(&powershell_quote(arg));
+                } else {
+                    script.push_str(arg);
+                }
+            }
+            _ => {
+                script.push_str(&quote_arg(arg));
+            }
+        }
     }
     script.push('\n');
 
@@ -305,6 +343,11 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
             // This ensures job control messages (like "[1] 12345" and "[1]+ Done") are captured,
             // allowing tests to catch these leaks.
             format!("exec 2>&1\n{}", script)
+        }
+        "powershell" | "pwsh" => {
+            // PowerShell: use & to run script block with merged output
+            // Wrap the script in a script block and redirect stderr (2) to stdout (1)
+            format!("& {{\n{}\n}} 2>&1", script)
         }
         _ => {
             // zsh uses parentheses for subshell grouping
@@ -342,6 +385,14 @@ fn normalize_newlines(s: &str) -> String {
 /// );
 /// // The output will show: "Allow? [y/N] y"
 /// ```
+/// Get the actual shell binary name (handles powershell -> pwsh mapping)
+fn get_shell_binary(shell: &str) -> &str {
+    match shell {
+        "powershell" => "pwsh",
+        _ => shell,
+    }
+}
+
 #[cfg(test)]
 fn exec_in_pty_interactive(
     shell: &str,
@@ -355,43 +406,66 @@ fn exec_in_pty_interactive(
 
     let pair = crate::common::open_pty();
 
-    let mut cmd = CommandBuilder::new(shell);
+    let shell_binary = get_shell_binary(shell);
+    let mut cmd = CommandBuilder::new(shell_binary);
 
     // Clear inherited environment for test isolation
     cmd.env_clear();
 
     // Set minimal required environment for shells to function
-    cmd.env(
-        "HOME",
-        home::home_dir().unwrap().to_string_lossy().to_string(),
-    );
+    let home_dir = home::home_dir().unwrap().to_string_lossy().to_string();
+    cmd.env("HOME", &home_dir);
+    // Windows: Also set USERPROFILE for PowerShell
+    #[cfg(windows)]
+    cmd.env("USERPROFILE", &home_dir);
+
+    // Use platform-appropriate default PATH
+    #[cfg(unix)]
+    let default_path = "/usr/bin:/bin";
+    #[cfg(windows)]
+    let default_path = std::env::var("PATH").unwrap_or_default();
+
     cmd.env(
         "PATH",
-        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
+        std::env::var("PATH").unwrap_or_else(|_| default_path.to_string()),
     );
     cmd.env("USER", "testuser");
-    cmd.env("SHELL", shell);
+    cmd.env("SHELL", shell_binary);
 
     // Run in interactive mode to simulate real user environment.
     // This ensures tests catch job control message leaks like "[1] 12345" and "[1]+ Done".
     // Interactive shells have job control enabled by default.
-    if shell == "zsh" {
-        // Isolate from user rc files
-        cmd.env("ZDOTDIR", "/dev/null");
-        cmd.arg("-i");
-        cmd.arg("--no-rcs");
-        cmd.arg("-o");
-        cmd.arg("NO_GLOBAL_RCS");
-        cmd.arg("-o");
-        cmd.arg("NO_RCS");
+    match shell {
+        "zsh" => {
+            // Isolate from user rc files
+            cmd.env("ZDOTDIR", "/dev/null");
+            cmd.arg("-i");
+            cmd.arg("--no-rcs");
+            cmd.arg("-o");
+            cmd.arg("NO_GLOBAL_RCS");
+            cmd.arg("-o");
+            cmd.arg("NO_RCS");
+            cmd.arg("-c");
+            cmd.arg(script);
+        }
+        "bash" => {
+            cmd.arg("-i");
+            cmd.arg("-c");
+            cmd.arg(script);
+        }
+        "powershell" | "pwsh" => {
+            // PowerShell uses -NoProfile to skip user profile
+            cmd.arg("-NoProfile");
+            cmd.arg("-Command");
+            cmd.arg(script);
+        }
+        _ => {
+            // fish and other shells
+            cmd.arg("-c");
+            cmd.arg(script);
+        }
     }
 
-    if shell == "bash" {
-        cmd.arg("-i");
-    }
-
-    cmd.arg("-c");
-    cmd.arg(script);
     cmd.cwd(working_dir);
 
     // Add test-specific environment variables (convert &str tuples to String tuples)
@@ -435,7 +509,7 @@ fn exec_in_pty_interactive(
 ///
 /// The setup_script is written to a temp file and sourced. Then final_cmd is run
 /// directly at the prompt (where job notifications appear).
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn exec_bash_truly_interactive(
     setup_script: &str,
     final_cmd: &str,
@@ -3231,6 +3305,82 @@ echo "SCRIPT_COMPLETED"
              Terminal output:\n{}",
             shell,
             terminal_output
+        );
+    }
+
+    // ========================================================================
+    // Windows PowerShell Tests
+    // ========================================================================
+    //
+    // These tests verify shell integration works correctly on Windows with PowerShell.
+    // They test both `wt` and `git-wt` command names to ensure Windows users can use
+    // either depending on whether they've disabled the Windows Terminal alias.
+
+    /// Test that PowerShell shell integration works for switch --create
+    #[cfg(windows)]
+    #[rstest]
+    fn test_powershell_switch_create(repo: TestRepo) {
+        let output = exec_through_wrapper("powershell", &repo, "switch", &["--create", "feature"]);
+
+        assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
+        output.assert_no_directive_leaks();
+
+        assert!(
+            output.combined.contains("Created branch") && output.combined.contains("and worktree"),
+            "PowerShell: Should show success message.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
+    /// Test that PowerShell shell integration handles command failures correctly
+    #[cfg(windows)]
+    #[rstest]
+    fn test_powershell_command_failure(mut repo: TestRepo) {
+        // Create a worktree that already exists
+        repo.add_worktree("existing");
+
+        // Try to create it again - should fail
+        let output = exec_through_wrapper("powershell", &repo, "switch", &["--create", "existing"]);
+
+        assert_eq!(
+            output.exit_code, 1,
+            "PowerShell: Command should fail with exit code 1"
+        );
+        output.assert_no_directive_leaks();
+        assert!(
+            output.combined.contains("already exists"),
+            "PowerShell: Error message should mention 'already exists'.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
+    /// Test that PowerShell shell integration works for remove
+    #[cfg(windows)]
+    #[rstest]
+    fn test_powershell_remove(mut repo: TestRepo) {
+        // Create a worktree to remove
+        repo.add_worktree("to-remove");
+
+        let output = exec_through_wrapper("powershell", &repo, "remove", &["to-remove"]);
+
+        assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test that PowerShell shell integration works for wt list
+    #[cfg(windows)]
+    #[rstest]
+    fn test_powershell_list(repo: TestRepo) {
+        let output = exec_through_wrapper("powershell", &repo, "list", &[]);
+
+        assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
+        output.assert_no_directive_leaks();
+
+        // Should show the main worktree
+        assert!(
+            output.combined.contains("main"),
+            "PowerShell: Should show main branch.\nOutput:\n{}",
+            output.combined
         );
     }
 }

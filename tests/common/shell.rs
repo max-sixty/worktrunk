@@ -15,7 +15,8 @@ pub fn get_shell_binary(shell: &str) -> &str {
 ///
 /// Uses a PTY so that stdout appears as a terminal to the shell. This simulates
 /// real terminal behavior for shell wrapper tests (combined stdout/stderr, ANSI codes).
-#[cfg(unix)]
+///
+/// Works on both Unix (bash/zsh/fish) and Windows (PowerShell, Git Bash).
 pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> String {
     use portable_pty::CommandBuilder;
     use std::io::Read;
@@ -29,9 +30,22 @@ pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> Strin
 
     // Set minimal required environment for shells to function
     cmd.env("HOME", repo.home_path().to_string_lossy().to_string());
+    // Windows: Also set USERPROFILE for PowerShell and Git Bash
+    #[cfg(windows)]
+    cmd.env(
+        "USERPROFILE",
+        repo.home_path().to_string_lossy().to_string(),
+    );
+
+    // Use platform-appropriate PATH
+    #[cfg(unix)]
+    let default_path = "/usr/bin:/bin";
+    #[cfg(windows)]
+    let default_path = std::env::var("PATH").unwrap_or_default();
+
     cmd.env(
         "PATH",
-        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
+        std::env::var("PATH").unwrap_or_else(|_| default_path.to_string()),
     );
     cmd.env("USER", "testuser");
     cmd.env("SHELL", get_shell_binary(shell));
@@ -69,8 +83,18 @@ pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> Strin
     // PTY combines stdout/stderr at the terminal device level, so we don't need
     // explicit redirection. Redirecting would break the shell wrapper protocol:
     // wt_exec() captures stdout for directives, and stderr must stay separate.
-    cmd.arg("-c");
-    cmd.arg(script);
+    //
+    // PowerShell uses -Command, all other shells use -c
+    match shell {
+        "powershell" | "pwsh" => {
+            cmd.arg("-Command");
+            cmd.arg(script);
+        }
+        _ => {
+            cmd.arg("-c");
+            cmd.arg(script);
+        }
+    }
     cmd.cwd(repo.root_path());
 
     // Pass through LLVM coverage env vars for subprocess coverage collection
@@ -144,7 +168,7 @@ pub fn path_export_syntax(shell: &str, bin_path: &str) -> String {
     match shell {
         "fish" => format!(r#"set -x PATH {} $PATH"#, bin_path),
         "nushell" => format!(r#"$env.PATH = ($env.PATH | prepend "{}")"#, bin_path),
-        "powershell" => format!(r#"$env:PATH = "{}:$env:PATH""#, bin_path),
+        "powershell" => format!(r#"$env:PATH = "{};$env:PATH""#, bin_path),
         "elvish" => format!(r#"set E:PATH = {}:$E:PATH"#, bin_path),
         "xonsh" => format!(r#"$PATH.insert(0, "{}")"#, bin_path),
         _ => format!(r#"export PATH="{}:$PATH""#, bin_path),
