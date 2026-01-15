@@ -2333,6 +2333,90 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     settings
 }
 
+// =============================================================================
+// PTY Test Filters
+// =============================================================================
+//
+// PTY-based tests (shell wrappers, approval prompts, TUI select) capture output
+// from pseudo-terminals. This output has platform-specific artifacts that need
+// normalization for stable snapshots.
+//
+// These filters consolidate patterns that were previously scattered across
+// individual `normalize_*` functions in each test file. Using insta filters
+// instead of custom normalization functions:
+// - Reduces code duplication
+// - Ensures consistent normalization across all PTY tests
+// - Makes it easier to add new normalizations in one place
+//
+// Usage:
+//   let mut settings = insta::Settings::clone_current();
+//   add_pty_filters(&mut settings);
+//   settings.bind(|| {
+//       assert_snapshot!(output);
+//   });
+
+/// Add filters for PTY-specific artifacts that vary between platforms.
+///
+/// This handles:
+/// - CRLF line endings (PTYs use \r\n)
+/// - macOS PTY control sequences (^D followed by backspaces)
+/// - Leading ANSI reset codes that vary between macOS and Linux
+pub fn add_pty_filters(settings: &mut insta::Settings) {
+    // PTYs use \r\n line endings, normalize to \n
+    settings.add_filter(r"\r\n", "\n");
+
+    // macOS PTYs emit ^D (literal caret-D) followed by backspaces (0x08)
+    // when EOF is signaled. Linux PTYs don't. Strip these for consistency.
+    settings.add_filter(r"\^D\x08+", "");
+
+    // Remove redundant leading reset codes per line.
+    // macOS and Linux PTYs generate ANSI codes slightly differently.
+    // This handles lines that start with ESC[0m (reset).
+    settings.add_filter(r"(?m)^\x1b\[0m", "");
+}
+
+/// Add filters for temporary directory paths in PTY output.
+///
+/// PTY tests create temp directories that appear in output. These paths vary
+/// per test run and need normalization.
+///
+/// # Arguments
+/// * `settings` - The insta Settings to add filters to
+/// * `placeholder` - The placeholder text to use (e.g., "[TMPDIR]", "_REPO_")
+pub fn add_pty_tmpdir_filters(settings: &mut insta::Settings, placeholder: &str) {
+    // macOS temp paths: /private/var/folders/.../T/.tmpXXX or /var/folders/.../T/.tmpXXX
+    settings.add_filter(
+        r"(?:/private)?/var/folders/[^/]+/[^/]+/T/\.tmp[^\s/'\x1b\)]+",
+        placeholder,
+    );
+
+    // Linux temp paths: /tmp/.tmpXXX
+    settings.add_filter(r"/tmp/\.tmp[^\s/'\x1b\)]+", placeholder);
+
+    // Fish shell temp paths: /tmp/.psubXXX (process substitution)
+    settings.add_filter(r"/tmp/\.psub[^\s/'\x1b\)]+", placeholder);
+
+    // Collapse duplicate placeholders that can appear with nested mktemp paths.
+    // e.g., [TMPDIR]/[TMPDIR]/foo -> [TMPDIR]/foo
+    let collapse_pattern = format!(
+        r"\[{0}](?:/?\[{0}])+",
+        regex::escape(placeholder.trim_matches(|c| c == '[' || c == ']'))
+    );
+    settings.add_filter(&collapse_pattern, placeholder);
+}
+
+/// Add filters for binary paths (target/debug/wt) in PTY output.
+///
+/// Test binaries are run from the cargo target directory, which varies.
+pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
+    // Match paths ending in target/debug/wt or target/release/wt
+    // Also handles llvm-cov-target used by cargo-llvm-cov
+    settings.add_filter(
+        r"[^\s]+/target/(?:llvm-cov-target/)?(?:debug|release)/wt",
+        "[BIN]",
+    );
+}
+
 /// Create a configured Command for snapshot testing
 ///
 /// This extracts the common command setup while allowing the test file

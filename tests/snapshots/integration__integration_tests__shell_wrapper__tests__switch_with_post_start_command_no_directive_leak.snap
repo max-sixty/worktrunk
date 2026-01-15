@@ -1,8 +1,8 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
-expression: output.normalized()
+expression: "&output.combined"
 ---
-[32m✓[39m [32mCreated branch [1mfeature-with-hooks[22m from [1mmain[22m and worktree @ [1m[TMPDIR]/repo.feature-with-hooks[22m[39m
+[32m✓[39m [32mCreated branch [1mfeature-with-hooks[22m from [1mmain[22m and worktree @ [1m_REPO_.feature-with-hooks[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
 [36m◎[39m [36mRunning post-start project hook:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'test command executed'[0m[2m

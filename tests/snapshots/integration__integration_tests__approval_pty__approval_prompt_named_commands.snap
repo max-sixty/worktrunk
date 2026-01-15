@@ -1,27 +1,27 @@
 ---
 source: tests/integration_tests/approval_pty.rs
-expression: normalized
+expression: "&output"
 ---
 y
 
 [33m▲[39m [33m[1mrepo[22m needs approval to execute [1m3[22m commands:[39m
 
 [2m○[22m post-create [1minstall[22m:
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing dependencies...'[0m[2m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing dependencies...'[0m[2m[0m
 [2m○[22m post-create [1mbuild[22m:
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Building project...'[0m[2m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Building project...'[0m[2m[0m
 [2m○[22m post-create [1mtest[22m:
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running tests...'[0m[2m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running tests...'[0m[2m[0m
 [36m❯[39m Allow and remember? [1m[y/N][22m 
-[36m◎[39m [36mRunning post-create [1mproject:install[22m @ [1m_REPO_/repo.BRANCH[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing dependencies...'[0m[2m
-[0mInstalling dependencies...
-[36m◎[39m [36mRunning post-create [1mproject:build[22m @ [1m_REPO_/repo.BRANCH[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Building project...'[0m[2m
-[0mBuilding project...
-[36m◎[39m [36mRunning post-create [1mproject:test[22m @ [1m_REPO_/repo.BRANCH[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running tests...'[0m[2m
-[0mRunning tests...
-[32m✓[39m [32mCreated branch [1mtest-named[22m from [1mmain[22m and worktree @ [1m_REPO_/repo.BRANCH[22m[39m
+[36m◎[39m [36mRunning post-create [1mproject:install[22m @ [1m_REPO_.test-named[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing dependencies...'[0m[2m[0m
+Installing dependencies...
+[36m◎[39m [36mRunning post-create [1mproject:build[22m @ [1m_REPO_.test-named[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Building project...'[0m[2m[0m
+Building project...
+[36m◎[39m [36mRunning post-create [1mproject:test[22m @ [1m_REPO_.test-named[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running tests...'[0m[2m[0m
+Running tests...
+[32m✓[39m [32mCreated branch [1mtest-named[22m from [1mmain[22m and worktree @ [1m_REPO_.test-named[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
 [33m▲[39m [33mCannot change directory — ran [BIN][22m; shell integration wraps [1mwt[22m[39m

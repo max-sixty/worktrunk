@@ -1,27 +1,27 @@
 ---
 source: tests/integration_tests/approval_pty.rs
-expression: normalized
+expression: "&output"
 ---
 y
 
 [33m▲[39m [33m[1mrepo[22m needs approval to execute [1m3[22m commands:[39m
 
 [2m○[22m post-create [1mfirst[22m:
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'First command'[0m[2m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'First command'[0m[2m[0m
 [2m○[22m post-create [1msecond[22m:
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Second command'[0m[2m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Second command'[0m[2m[0m
 [2m○[22m post-create [1mthird[22m:
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Third command'[0m[2m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Third command'[0m[2m[0m
 [36m❯[39m Allow and remember? [1m[y/N][22m 
-[36m◎[39m [36mRunning post-create [1mproject:first[22m @ [1m_REPO_/repo.BRANCH[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'First command'[0m[2m
-[0mFirst command
-[36m◎[39m [36mRunning post-create [1mproject:second[22m @ [1m_REPO_/repo.BRANCH[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Second command'[0m[2m
-[0mSecond command
-[36m◎[39m [36mRunning post-create [1mproject:third[22m @ [1m_REPO_/repo.BRANCH[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Third command'[0m[2m
-[0mThird command
-[32m✓[39m [32mCreated branch [1mtest-multi[22m from [1mmain[22m and worktree @ [1m_REPO_/repo.BRANCH[22m[39m
+[36m◎[39m [36mRunning post-create [1mproject:first[22m @ [1m_REPO_.test-multi[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'First command'[0m[2m[0m
+First command
+[36m◎[39m [36mRunning post-create [1mproject:second[22m @ [1m_REPO_.test-multi[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Second command'[0m[2m[0m
+Second command
+[36m◎[39m [36mRunning post-create [1mproject:third[22m @ [1m_REPO_.test-multi[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Third command'[0m[2m[0m
+Third command
+[32m✓[39m [32mCreated branch [1mtest-multi[22m from [1mmain[22m and worktree @ [1m_REPO_.test-multi[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
 [33m▲[39m [33mCannot change directory — ran [BIN][22m; shell integration wraps [1mwt[22m[39m
