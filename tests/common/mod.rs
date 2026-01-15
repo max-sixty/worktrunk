@@ -1806,6 +1806,9 @@ impl TestRepo {
     /// caller's PATH instead of a hardcoded minimal list.
     pub fn configure_mock_commands(&self, cmd: &mut Command) {
         if let Some(mock_bin) = &self.mock_bin_path {
+            // Tell mock-stub where to find config files directly, avoiding PATH search
+            cmd.env("MOCK_CONFIG_DIR", mock_bin);
+
             // On Windows, env vars are case-insensitive but Rust stores them
             // case-sensitively. Find the actual PATH variable name to avoid
             // creating a duplicate with different case.
