@@ -722,8 +722,7 @@ pub fn execute_switch(
 
             // Check if local branch exists BEFORE git worktree add (for DWIM detection).
             // Only relevant when not using --create (which explicitly creates the branch).
-            let local_branch_existed =
-                !create_branch && repo.local_branch_exists(&branch).unwrap_or(false);
+            let local_branch_existed = !create_branch && repo.local_branch_exists(&branch)?;
 
             // Build git worktree add command
             let worktree_path_str = worktree_path.to_string_lossy();
