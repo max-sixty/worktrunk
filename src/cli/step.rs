@@ -198,7 +198,7 @@ Only gitignored files are copied — tracked files are never touched. If `.workt
 - Uses copy-on-write (reflink) when available for space-efficient copies
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files (safe to re-run)
-- Skips symlinks and `.git` entries
+- Skips `.git` entries and other worktrees
 
 ## Performance
 

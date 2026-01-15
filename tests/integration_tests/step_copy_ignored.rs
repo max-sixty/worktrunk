@@ -600,3 +600,58 @@ fn test_copy_ignored_bare_repo() {
         ".env should be copied to feature worktree"
     );
 }
+
+/// Test that worktrees nested inside the source are not copied (GitHub issue #641)
+///
+/// When worktree-path is configured to place worktrees inside the primary worktree
+/// (e.g., `.worktrees/{{ branch | sanitize }}`), copy-ignored should NOT copy
+/// those nested worktrees, as this would cause recursive copying.
+#[rstest]
+fn test_copy_ignored_skips_nested_worktrees(mut repo: TestRepo) {
+    // Create a .worktrees directory inside the main repo (simulating worktree-path = ".worktrees/...")
+    let nested_worktrees_dir = repo.root_path().join(".worktrees");
+    fs::create_dir_all(&nested_worktrees_dir).unwrap();
+
+    // Create a worktree inside .worktrees/ using raw git commands
+    let nested_worktree_path = nested_worktrees_dir.join("feature-nested");
+    repo.git_command()
+        .args([
+            "worktree",
+            "add",
+            "-b",
+            "feature-nested",
+            nested_worktree_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    // Add .worktrees to .gitignore (typical for this setup)
+    fs::write(repo.root_path().join(".gitignore"), ".worktrees/\n").unwrap();
+
+    // Also create a regular ignored file that SHOULD be copied
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".worktrees/\n.env\n").unwrap();
+
+    // Create another worktree (outside the main repo, using default path)
+    let dest_path = repo.add_worktree("destination");
+
+    // Run copy-ignored
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored"],
+        Some(&dest_path),
+    ));
+
+    // Verify: .env was copied (regular ignored file)
+    assert!(
+        dest_path.join(".env").exists(),
+        ".env should be copied to destination"
+    );
+
+    // Verify: .worktrees was NOT copied (contains a worktree)
+    assert!(
+        !dest_path.join(".worktrees").exists(),
+        ".worktrees directory should NOT be copied (contains nested worktree)"
+    );
+}

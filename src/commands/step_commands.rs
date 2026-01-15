@@ -7,7 +7,7 @@
 //! - `handle_rebase` - Rebase onto target branch
 //! - `step_copy_ignored` - Copy gitignored files matching .worktreeinclude
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
@@ -498,6 +498,23 @@ pub fn step_copy_ignored(
         ignored_entries
     };
 
+    // Filter out entries that contain other worktrees (prevents recursive copying when
+    // worktrees are nested inside the source, e.g., worktree-path = ".worktrees/...")
+    let worktree_paths: Vec<PathBuf> = repo
+        .list_worktrees()?
+        .into_iter()
+        .map(|wt| wt.path)
+        .collect();
+    let entries_to_copy: Vec<_> = entries_to_copy
+        .into_iter()
+        .filter(|(entry_path, _)| {
+            // Exclude if any worktree (other than source) is inside or equal to this entry
+            !worktree_paths
+                .iter()
+                .any(|wt_path| wt_path != &source_path && wt_path.starts_with(entry_path))
+        })
+        .collect();
+
     if entries_to_copy.is_empty() {
         crate::output::print(info_message("No matching files to copy"))?;
         return Ok(());
@@ -647,16 +664,27 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let file_type = entry.file_type()?;
-
-        // Skip symlinks
-        if file_type.is_symlink() {
-            continue;
-        }
-
         let src_path = entry.path();
         let dest_path = dest.join(entry.file_name());
 
-        if file_type.is_dir() {
+        if file_type.is_symlink() {
+            // Copy symlink (preserves the link, doesn't follow it)
+            if !dest_path.exists() {
+                let target = fs::read_link(&src_path)?;
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&target, &dest_path)?;
+                #[cfg(windows)]
+                {
+                    // Check source to determine symlink type (target may be relative/broken)
+                    let is_dir = src_path.metadata().map(|m| m.is_dir()).unwrap_or(false);
+                    if is_dir {
+                        std::os::windows::fs::symlink_dir(&target, &dest_path)?;
+                    } else {
+                        std::os::windows::fs::symlink_file(&target, &dest_path)?;
+                    }
+                }
+            }
+        } else if file_type.is_dir() {
             copy_dir_recursive_fallback(&src_path, &dest_path)?;
         } else {
             // Skip existing files for idempotent hook usage
