@@ -1,5 +1,5 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
-expression: output.normalized()
+expression: "&output.combined"
 ---
-[2m○[22m Switched to worktree for [1mfeature-api[22m @ [1m[TMPDIR]/repo.feature-api[22m
+[2m○[22m Switched to worktree for [1mfeature-api[22m @ [1m_REPO_.feature-api[22m

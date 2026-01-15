@@ -10,26 +10,17 @@
 //!
 //! ## Why Manual PTY Execution + File Snapshots (Not insta_cmd)?
 //!
-//! These tests use a pattern that might seem redundant at first glance:
-//! - Manual command execution through PTY (`exec_in_pty`)
-//! - Manual output normalization (`normalized()`)
-//! - File snapshots via `assert_snapshot!(output.normalized())`
+//! These tests use PTY execution because testing shell wrappers requires real TTY behavior
+//! (streaming output, ANSI codes, signal handling). `insta_cmd` uses `std::process::Command`
+//! which doesn't provide a TTY to child processes.
 //!
-//! This is the correct approach because:
-//!
-//! 1. **PTY execution is required** - Testing shell wrappers requires real TTY behavior
-//!    (streaming output, ANSI codes, signal handling). `insta_cmd` uses `std::process::Command`
-//!    which doesn't provide a TTY to child processes.
-//!
-//! 2. **File snapshots are appropriate** - The output contains ANSI escape codes and complex
-//!    formatting. File snapshots keep these out of source files (unlike inline snapshots).
-//!
-//! 3. **Full output is valuable** - While specific assertions verify critical properties
-//!    (no directive leaks, correct exit codes), file snapshots make it easy for humans to
-//!    see the complete user experience at a glance.
-//!
-//! In summary: This isn't a case of "should use insta_cmd instead" - the manual execution
-//! is necessary, and file snapshots are the right storage format for escape-code-heavy output.
+//! Output normalization uses insta's `add_filter()` API via `shell_wrapper_settings()`,
+//! which is consistent with how other tests in the codebase handle path and hash
+//! normalization. The filters handle:
+//! - PTY-specific artifacts (CRLF, ^D control sequences, ANSI resets)
+//! - Temporary directory paths
+//! - Commit hashes (non-deterministic in PTY tests due to timing/environment)
+//! - Project root paths
 
 // All shell integration tests and infrastructure gated by feature flag
 // Unix-only for now - Windows shell integration is planned
@@ -38,6 +29,7 @@
 use crate::common::TestRepo;
 use crate::common::canonicalize;
 use crate::common::wait_for_file_content;
+use crate::common::{add_pty_filters, add_pty_hash_filters, add_pty_tmpdir_filters};
 use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
 use std::fs;
@@ -45,34 +37,6 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::LazyLock;
 use worktrunk::shell;
-
-/// Regex for normalizing temporary directory paths in test snapshots
-static TMPDIR_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(
-        r#"(/private/var/folders/[^/]+/[^/]+/T/\.tmp[^\s/'"]+|/tmp/\.(?:tmp|psub)[^\s/'"]+)"#,
-    )
-    .unwrap()
-});
-
-/// Regex that collapses repeated TMPDIR placeholders (caused by nested mktemp paths)
-/// so `[TMPDIR][TMPDIR]/foo` becomes `[TMPDIR]/foo` and `[TMPDIR]/[TMPDIR]` becomes `[TMPDIR]`
-static TMPDIR_PLACEHOLDER_COLLAPSE_REGEX: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"\[TMPDIR](?:/?\[TMPDIR])+").unwrap());
-
-/// Regex for normalizing workspace paths (dynamically built from CARGO_MANIFEST_DIR)
-/// Matches: <project_root>/tests/fixtures/
-/// Replaces with: [WORKSPACE]/tests/fixtures/
-static WORKSPACE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let pattern = format!(r"{}/tests/fixtures/", regex::escape(manifest_dir));
-    regex::Regex::new(&pattern).unwrap()
-});
-
-/// Regex for normalizing git commit hashes (7-character hex)
-/// Note: No word boundaries because ANSI codes (ending with 'm') directly precede hashes
-/// Shell wrapper tests produce non-deterministic SHAs due to PTY timing/environment
-static COMMIT_HASH_REGEX: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"[0-9a-f]{7}").unwrap());
 
 /// Output from executing a command through a shell wrapper
 #[derive(Debug)]
@@ -115,41 +79,34 @@ impl ShellOutput {
             self.combined
         );
     }
+}
 
-    /// Normalize paths and ANSI codes in output for snapshot testing
-    fn normalized(&self) -> String {
-        // First normalize temporary directory paths
-        let tmpdir_normalized = TMPDIR_REGEX.replace_all(&self.combined, "[TMPDIR]");
+/// Create insta settings configured for shell wrapper snapshot tests.
+///
+/// This sets up filters for:
+/// - PTY-specific artifacts (CRLF, ^D control sequences, ANSI resets)
+/// - Temporary directory paths
+/// - Commit hashes (non-deterministic in PTY tests)
+/// - Project root paths (for fixture references)
+fn shell_wrapper_settings() -> insta::Settings {
+    let mut settings = insta::Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
 
-        // Then normalize workspace paths (varying directory names)
-        let workspace_normalized =
-            WORKSPACE_REGEX.replace_all(&tmpdir_normalized, "[WORKSPACE]/tests/fixtures/");
+    // Add common PTY filters (CRLF, ^D, leading ANSI resets)
+    add_pty_filters(&mut settings);
 
-        // Normalize commit hashes (shell wrapper tests produce non-deterministic SHAs)
-        let hash_normalized = COMMIT_HASH_REGEX.replace_all(&workspace_normalized, "[HASH]");
+    // Add temp directory path filters
+    add_pty_tmpdir_filters(&mut settings, "[TMPDIR]");
 
-        // Collapse duplicate TMPDIR placeholders that can appear with nested mktemp paths.
-        let tmpdir_collapsed =
-            TMPDIR_PLACEHOLDER_COLLAPSE_REGEX.replace_all(&hash_normalized, "[TMPDIR]");
+    // Add commit hash filters (PTY tests produce non-deterministic SHAs)
+    add_pty_hash_filters(&mut settings);
 
-        // Then normalize ANSI codes: remove redundant leading reset codes
-        // This handles differences between macOS and Linux PTY ANSI generation
-        let has_trailing_newline = tmpdir_collapsed.ends_with('\n');
-        let mut result = tmpdir_collapsed
-            .lines()
-            .map(|line| {
-                // Strip leading \x1b[0m reset codes (may appear as ESC[0m in the output)
-                line.strip_prefix("\x1b[0m").unwrap_or(line)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        // Preserve trailing newline if it existed
-        if has_trailing_newline {
-            result.push('\n');
-        }
-        result
+    // Normalize project root paths (for fixture references like tests/fixtures/)
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        settings.add_filter(&regex::escape(&manifest_dir), "[PROJECT_ROOT]");
     }
+
+    settings
 }
 
 /// Generate a shell wrapper script using the actual `wt config shell init` command
@@ -710,9 +667,11 @@ mod tests {
         );
 
         // Consolidated snapshot - output should be identical across all shells
-        insta::allow_duplicates! {
-            assert_snapshot!("command_failure", output.normalized());
-        }
+        shell_wrapper_settings().bind(|| {
+            insta::allow_duplicates! {
+                assert_snapshot!("command_failure", &output.combined);
+            }
+        });
     }
 
     #[rstest]
@@ -734,9 +693,11 @@ mod tests {
         );
 
         // Consolidated snapshot - output should be identical across all shells
-        insta::allow_duplicates! {
-            assert_snapshot!("switch_create", output.normalized());
-        }
+        shell_wrapper_settings().bind(|| {
+            insta::allow_duplicates! {
+                assert_snapshot!("switch_create", &output.combined);
+            }
+        });
     }
 
     #[rstest]
@@ -754,9 +715,11 @@ mod tests {
         output.assert_no_directive_leaks();
 
         // Consolidated snapshot - output should be identical across all shells
-        insta::allow_duplicates! {
-            assert_snapshot!("remove", output.normalized());
-        }
+        shell_wrapper_settings().bind(|| {
+            insta::allow_duplicates! {
+                assert_snapshot!("remove", &output.combined);
+            }
+        });
     }
 
     #[rstest]
@@ -815,9 +778,11 @@ mod tests {
         );
 
         // Consolidated snapshot - output should be identical across all shells
-        insta::allow_duplicates! {
-            assert_snapshot!("step_for_each", output.normalized());
-        }
+        shell_wrapper_settings().bind(|| {
+            insta::allow_duplicates! {
+                assert_snapshot!("step_for_each", &output.combined);
+            }
+        });
     }
 
     #[rstest]
@@ -835,9 +800,11 @@ mod tests {
         output.assert_no_directive_leaks();
 
         // Consolidated snapshot - output should be identical across all shells
-        insta::allow_duplicates! {
-            assert_snapshot!("merge", output.normalized());
-        }
+        shell_wrapper_settings().bind(|| {
+            insta::allow_duplicates! {
+                assert_snapshot!("merge", &output.combined);
+            }
+        });
     }
 
     #[rstest]
@@ -870,9 +837,11 @@ mod tests {
         );
 
         // Consolidated snapshot - output should be identical across all shells
-        insta::allow_duplicates! {
-            assert_snapshot!("switch_with_execute", output.normalized());
-        }
+        shell_wrapper_settings().bind(|| {
+            insta::allow_duplicates! {
+                assert_snapshot!("switch_with_execute", &output.combined);
+            }
+        });
     }
 
     /// Test that --execute command exit codes are propagated
@@ -965,7 +934,9 @@ approved-commands = [
         output.assert_no_directive_leaks();
 
         // Shell-specific snapshot - output ordering varies due to PTY buffering
-        assert_snapshot!(format!("switch_with_hooks_{}", shell), output.normalized());
+        shell_wrapper_settings().bind(|| {
+            assert_snapshot!(format!("switch_with_hooks_{}", shell), &output.combined);
+        });
     }
 
     /// Test merge with successful pre-merge validation
@@ -1013,10 +984,12 @@ approved-commands = [
         output.assert_no_directive_leaks();
 
         // Shell-specific snapshot - output ordering varies due to PTY buffering
-        assert_snapshot!(
-            format!("merge_with_pre_merge_success_{}", shell),
-            output.normalized()
-        );
+        shell_wrapper_settings().bind(|| {
+            assert_snapshot!(
+                format!("merge_with_pre_merge_success_{}", shell),
+                &output.combined
+            );
+        });
     }
 
     /// Test merge with failing pre-merge that aborts the merge
@@ -1067,10 +1040,12 @@ approved-commands = [
         output.assert_no_directive_leaks();
 
         // Shell-specific snapshot - output ordering varies due to PTY buffering
-        assert_snapshot!(
-            format!("merge_with_pre_merge_failure_{}", shell),
-            output.normalized()
-        );
+        shell_wrapper_settings().bind(|| {
+            assert_snapshot!(
+                format!("merge_with_pre_merge_failure_{}", shell),
+                &output.combined
+            );
+        });
     }
 
     /// Test merge with pre-merge commands that output to both stdout and stderr
@@ -1142,10 +1117,12 @@ approved-commands = [
         // header1 → all check1 output (interleaved stdout/stderr) → header2 → all check2 output
         // This ensures that stdout/stderr from child processes properly stream through
         // to the terminal in real-time, maintaining correct ordering
-        assert_snapshot!(
-            format!("merge_with_mixed_stdout_stderr_{}", shell),
-            output.normalized()
-        );
+        shell_wrapper_settings().bind(|| {
+            assert_snapshot!(
+                format!("merge_with_mixed_stdout_stderr_{}", shell),
+                &output.combined
+            );
+        });
     }
 
     // ========================================================================
@@ -1188,7 +1165,7 @@ approved-commands = ["echo 'test command executed'"]
 
         // Normalize paths in output for snapshot testing
         // Snapshot the output
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     #[rstest]
@@ -1220,7 +1197,7 @@ approved-commands = ["echo 'test command executed'"]
 
         // Normalize paths in output for snapshot testing
         // Snapshot the output
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     #[rstest]
@@ -1242,7 +1219,7 @@ approved-commands = ["echo 'test command executed'"]
             "Success message missing"
         );
 
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     #[rstest]
@@ -1255,7 +1232,7 @@ approved-commands = ["echo 'test command executed'"]
             "Shell integration hint should be suppressed"
         );
 
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     #[rstest]
@@ -1275,7 +1252,7 @@ approved-commands = ["echo 'test command executed'"]
             "Shell integration hint should be suppressed"
         );
 
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     #[rstest]
@@ -1293,7 +1270,7 @@ approved-commands = ["echo 'test command executed'"]
             "Shell integration hint should be suppressed"
         );
 
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     #[rstest]
@@ -1327,7 +1304,7 @@ approved-commands = ["echo 'background task'"]
 
         // Snapshot verifies progress messages appear to users
         // (catches the bug where progress() was incorrectly suppressed)
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     // ============================================================================
@@ -1374,7 +1351,7 @@ approved-commands = ["echo 'fish background task'"]
         assert_eq!(output.exit_code, 0);
 
         // Snapshot verifies progress messages appear to users through Fish wrapper
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     #[cfg(unix)]
@@ -1410,7 +1387,7 @@ approved-commands = ["echo 'fish background task'"]
         assert!(output.combined.contains("line 3"), "Third line missing");
 
         // Normalize paths in output for snapshot testing
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     #[cfg(unix)]
@@ -1432,7 +1409,7 @@ approved-commands = ["echo 'fish background task'"]
         );
 
         // Normalize paths in output for snapshot testing
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     // ========================================================================
@@ -1543,9 +1520,11 @@ approved-commands = ["echo 'fish background task'"]
 
         // Consolidated snapshot - output should be identical across shells
         // (wt error messages are deterministic)
-        insta::allow_duplicates! {
-            assert_snapshot!("source_flag_error_passthrough", output.normalized());
-        }
+        shell_wrapper_settings().bind(|| {
+            insta::allow_duplicates! {
+                assert_snapshot!("source_flag_error_passthrough", &output.combined);
+            }
+        });
     }
 
     // ========================================================================
@@ -2370,7 +2349,7 @@ command = "{}"
         );
 
         assert_eq!(output.exit_code, 0);
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     /// README example: Creating worktree with post-create and post-start hooks
@@ -2450,7 +2429,7 @@ fi
         );
 
         assert_eq!(output.exit_code, 0);
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     /// README example: approval prompt for post-create commands
@@ -2530,11 +2509,14 @@ test = "echo 'Running tests...'"
         let ctrl_d_regex = regex::Regex::new(r"\^D\x08+").unwrap();
         let output = ctrl_d_regex.replace_all(&output, "").to_string();
 
-        // Normalize paths
-        let output = TMPDIR_REGEX.replace_all(&output, "[TMPDIR]").to_string();
-        let output = TMPDIR_PLACEHOLDER_COLLAPSE_REGEX
-            .replace_all(&output, "[TMPDIR]")
-            .to_string();
+        // Normalize paths (local regexes since we're extracting content, not snapshotting)
+        let tmpdir_regex = regex::Regex::new(
+            r#"(?:/private)?/var/folders/[^/]+/[^/]+/T/\.tmp[^\s/'\x1b\)]+|/tmp/\.tmp[^\s/'\x1b\)]+"#,
+        )
+        .unwrap();
+        let output = tmpdir_regex.replace_all(&output, "[TMPDIR]").to_string();
+        let collapse_regex = regex::Regex::new(r"\[TMPDIR](?:/?\[TMPDIR])+").unwrap();
+        let output = collapse_regex.replace_all(&output, "[TMPDIR]").to_string();
 
         assert!(
             output.contains("needs approval"),

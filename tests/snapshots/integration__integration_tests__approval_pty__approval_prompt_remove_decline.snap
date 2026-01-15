@@ -1,13 +1,13 @@
 ---
 source: tests/integration_tests/approval_pty.rs
-expression: normalized
+expression: "&output"
 ---
 n
 
 [33m▲[39m [33m[1mrepo[22m needs approval to execute [1m1[22m command:[39m
 
 [2m○[22m pre-remove:
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'pre-remove hook'[0m[2m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'pre-remove hook'[0m[2m[0m
 [36m❯[39m Allow and remember? [1m[y/N][22m 
 [2m○[22m Commands declined, continuing removal
 [36m◎ Removing [1mto-remove[22m worktree & branch in background (ancestor of [1mmain[22m,[39m [2m⊂[22m[36m)[39m

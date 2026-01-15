@@ -1,9 +1,9 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
-expression: output.normalized()
+expression: "&output.combined"
 ---
 [36m◎[39m [36mRunning pre-merge [1mproject:check1[22m:[39m
-[107m [0m [2m[0m[2m[34m[TMPDIR]/repo/mixed-output.sh[0m[2m check1 3
+[107m [0m [2m[0m[2m[34m_REPO_/mixed-output.sh[0m[2m check1 3
 [check1] stdout line 1
 [check1] stderr line 1
 [check1] stdout line 2
@@ -13,7 +13,7 @@ expression: output.normalized()
 [check1] stdout complete
 [check1] stderr complete
 [36m◎[39m [36mRunning pre-merge [1mproject:check2[22m:[39m
-[107m [0m [2m[0m[2m[34m[TMPDIR]/repo/mixed-output.sh[0m[2m check2 3
+[107m [0m [2m[0m[2m[34m_REPO_/mixed-output.sh[0m[2m check2 3
 [check2] stdout line 1
 [check2] stderr line 1
 [check2] stdout line 2
@@ -28,4 +28,4 @@ expression: output.normalized()
 [107m [0m  1 file changed, 1 insertion(+)
 [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
 [36m◎ Removing [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
-[2m○[22m Switched to worktree for [1mmain[22m @ [1m[TMPDIR]/repo[22m
+[2m○[22m Switched to worktree for [1mmain[22m @ [1m_REPO_[22m
