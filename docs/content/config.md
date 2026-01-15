@@ -8,6 +8,8 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt config --help-page` — edit cli.rs to update -->
 
+Manage configuration and shell integration
+
 Manages configuration, shell integration, and runtime settings.
 
 ## Examples

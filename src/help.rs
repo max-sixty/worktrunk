@@ -274,10 +274,12 @@ fn handle_help_page(args: &[String]) {
         _ => None,
     };
 
-    // Combine: subtitle followed by after_long_help (conceptual docs)
-    let raw_help = match subtitle {
-        Some(sub) => format!("{sub}\n\n{after_long_help}"),
-        None => after_long_help,
+    // Combine: definition (about), subtitle, and after_long_help (conceptual docs)
+    let raw_help = match (&about, &subtitle) {
+        (Some(def), Some(sub)) => format!("{def}\n\n{sub}\n\n{after_long_help}"),
+        (Some(def), None) => format!("{def}\n\n{after_long_help}"),
+        (None, Some(sub)) => format!("{sub}\n\n{after_long_help}"),
+        (None, None) => after_long_help,
     };
 
     // Split content at first subdoc placeholder

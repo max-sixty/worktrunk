@@ -8,6 +8,8 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt list --help-page` — edit cli.rs to update -->
 
+List worktrees and their status
+
 Show all worktrees with their status. The table includes uncommitted changes, divergence from the default branch and remote, and optional CI status.
 
 <figure class="demo">

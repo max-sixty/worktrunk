@@ -1,5 +1,7 @@
 # wt step
 
+Run individual operations
+
 Run individual git workflow operations: commits, squashes, rebases, and pushes.
 
 ## Examples

@@ -1,5 +1,7 @@
 # wt config
 
+Manage configuration and shell integration
+
 Manages configuration, shell integration, and runtime settings.
 
 ## Examples

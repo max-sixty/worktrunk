@@ -8,6 +8,8 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt remove --help-page` — edit cli.rs to update -->
 
+Remove worktree; delete branch if merged
+
 Removes worktrees and their branches (if merged), returning to the main worktree. Defaults to removing the current worktree.
 
 ## Examples

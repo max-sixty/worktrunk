@@ -8,6 +8,8 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt step --help-page` — edit cli.rs to update -->
 
+Run individual operations
+
 Run individual git workflow operations: commits, squashes, rebases, and pushes.
 
 ## Examples
