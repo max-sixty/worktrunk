@@ -35,23 +35,23 @@
 // Supports both Unix (bash/zsh/fish) and Windows (PowerShell)
 #![cfg(feature = "shell-integration-tests")]
 
+// =============================================================================
+// Imports
+// =============================================================================
+
+// Shared imports (both platforms)
 use crate::common::TestRepo;
-#[cfg(unix)]
-use crate::common::canonicalize;
-#[cfg(unix)]
-use crate::common::wait_for_file_content;
-#[cfg(unix)]
-use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
-#[cfg(unix)]
-use std::fs;
-#[cfg(unix)]
-use std::path::PathBuf;
 use std::process::Command;
+
+// Unix-only imports
 #[cfg(unix)]
-use std::sync::LazyLock;
-#[cfg(unix)]
-use worktrunk::shell;
+use {
+    crate::common::{canonicalize, wait_for_file_content},
+    insta::assert_snapshot,
+    std::{fs, path::PathBuf, sync::LazyLock},
+    worktrunk::shell,
+};
 
 /// Regex for normalizing temporary directory paths in test snapshots
 #[cfg(unix)]
@@ -761,8 +761,26 @@ mod tests {
     use rstest::rstest;
 
     // ========================================================================
-    // Cross-Shell Error Handling Tests
+    // Test Organization
     // ========================================================================
+    //
+    // Tests are organized by platform:
+    //
+    // - **Unix tests** (bash/zsh/fish): Marked with `#[cfg(unix)]` on each test.
+    //   These make up the majority of shell integration tests.
+    //
+    // - **Windows tests** (PowerShell): In the `windows_tests` submodule at the
+    //   bottom of this file, gated by a single `#[cfg(windows)]`.
+    //
+    // Shared infrastructure (exec_through_wrapper, ShellOutput, etc.) works on
+    // both platforms - only the tests themselves are platform-gated.
+
+    // ========================================================================
+    // Unix Shell Tests (bash/zsh/fish)
+    // ========================================================================
+    //
+    // Cross-Shell Error Handling Tests
+    // --------------------------------
     //
     // These tests use parametrized testing to verify consistent behavior
     // across all supported shells (bash, zsh, fish).
@@ -3368,79 +3386,82 @@ echo "SCRIPT_COMPLETED"
     // Windows PowerShell Tests
     // ========================================================================
     //
-    // These tests verify shell integration works correctly on Windows with PowerShell.
-    // They test both `wt` and `git-wt` command names to ensure Windows users can use
-    // either depending on whether they've disabled the Windows Terminal alias.
+    // All Windows-specific tests are in this module, gated by #[cfg(windows)].
+    // This keeps platform-specific tests clearly separated.
 
-    /// Test that PowerShell shell integration works for switch --create
     #[cfg(windows)]
-    #[rstest]
-    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
-    fn test_powershell_switch_create(repo: TestRepo) {
-        let output = exec_through_wrapper("powershell", &repo, "switch", &["--create", "feature"]);
+    mod windows_tests {
+        use super::*;
 
-        assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
-        output.assert_no_directive_leaks();
+        /// Test that PowerShell shell integration works for switch --create
+        #[rstest]
+        #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+        fn test_powershell_switch_create(repo: TestRepo) {
+            let output =
+                exec_through_wrapper("powershell", &repo, "switch", &["--create", "feature"]);
 
-        assert!(
-            output.combined.contains("Created branch") && output.combined.contains("and worktree"),
-            "PowerShell: Should show success message.\nOutput:\n{}",
-            output.combined
-        );
-    }
+            assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
+            output.assert_no_directive_leaks();
 
-    /// Test that PowerShell shell integration handles command failures correctly
-    #[cfg(windows)]
-    #[rstest]
-    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
-    fn test_powershell_command_failure(mut repo: TestRepo) {
-        // Create a worktree that already exists
-        repo.add_worktree("existing");
+            assert!(
+                output.combined.contains("Created branch")
+                    && output.combined.contains("and worktree"),
+                "PowerShell: Should show success message.\nOutput:\n{}",
+                output.combined
+            );
+        }
 
-        // Try to create it again - should fail
-        let output = exec_through_wrapper("powershell", &repo, "switch", &["--create", "existing"]);
+        /// Test that PowerShell shell integration handles command failures correctly
+        #[rstest]
+        #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+        fn test_powershell_command_failure(mut repo: TestRepo) {
+            // Create a worktree that already exists
+            repo.add_worktree("existing");
 
-        assert_eq!(
-            output.exit_code, 1,
-            "PowerShell: Command should fail with exit code 1"
-        );
-        output.assert_no_directive_leaks();
-        assert!(
-            output.combined.contains("already exists"),
-            "PowerShell: Error message should mention 'already exists'.\nOutput:\n{}",
-            output.combined
-        );
-    }
+            // Try to create it again - should fail
+            let output =
+                exec_through_wrapper("powershell", &repo, "switch", &["--create", "existing"]);
 
-    /// Test that PowerShell shell integration works for remove
-    #[cfg(windows)]
-    #[rstest]
-    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
-    fn test_powershell_remove(mut repo: TestRepo) {
-        // Create a worktree to remove
-        repo.add_worktree("to-remove");
+            assert_eq!(
+                output.exit_code, 1,
+                "PowerShell: Command should fail with exit code 1"
+            );
+            output.assert_no_directive_leaks();
+            assert!(
+                output.combined.contains("already exists"),
+                "PowerShell: Error message should mention 'already exists'.\nOutput:\n{}",
+                output.combined
+            );
+        }
 
-        let output = exec_through_wrapper("powershell", &repo, "remove", &["to-remove"]);
+        /// Test that PowerShell shell integration works for remove
+        #[rstest]
+        #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+        fn test_powershell_remove(mut repo: TestRepo) {
+            // Create a worktree to remove
+            repo.add_worktree("to-remove");
 
-        assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
-        output.assert_no_directive_leaks();
-    }
+            let output = exec_through_wrapper("powershell", &repo, "remove", &["to-remove"]);
 
-    /// Test that PowerShell shell integration works for wt list
-    #[cfg(windows)]
-    #[rstest]
-    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
-    fn test_powershell_list(repo: TestRepo) {
-        let output = exec_through_wrapper("powershell", &repo, "list", &[]);
+            assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
+            output.assert_no_directive_leaks();
+        }
 
-        assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
-        output.assert_no_directive_leaks();
+        /// Test that PowerShell shell integration works for wt list
+        #[rstest]
+        #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+        fn test_powershell_list(repo: TestRepo) {
+            let output = exec_through_wrapper("powershell", &repo, "list", &[]);
 
-        // Should show the main worktree
-        assert!(
-            output.combined.contains("main"),
-            "PowerShell: Should show main branch.\nOutput:\n{}",
-            output.combined
-        );
+            assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
+            output.assert_no_directive_leaks();
+
+            // Should show the main worktree
+            assert!(
+                output.combined.contains("main"),
+                "PowerShell: Should show main branch.\nOutput:\n{}",
+                output.combined
+            );
+        }
     }
 }
