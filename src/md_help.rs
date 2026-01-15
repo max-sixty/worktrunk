@@ -30,17 +30,11 @@ fn help_table_skin() -> MadSkin {
     skin
 }
 
-/// Render markdown in help text to ANSI without prose wrapping
-#[cfg(test)]
-fn render_markdown_in_help(help: &str) -> String {
-    render_markdown_in_help_with_width(help, None)
-}
-
 /// Render markdown in help text to ANSI with minimal styling (green headers only)
 ///
 /// If `width` is provided, prose text is wrapped to that width. Tables, code blocks,
 /// and headers are never wrapped (tables need full-width rows for alignment).
-pub fn render_markdown_in_help_with_width(help: &str, width: Option<usize>) -> String {
+pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize>) -> String {
     let green = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green)));
     let dimmed = Style::new().dimmed();
 
@@ -93,14 +87,43 @@ pub fn render_markdown_in_help_with_width(help: &str, width: Option<usize>) -> S
             continue;
         }
 
+        // Horizontal rules (---, ***, ___) render as visible divider
+        // No extra newlines - markdown source already has blank lines around ---
+        //
+        // TODO: We use `---` dividers instead of H1 headers because H1s break web docs
+        // (pages already have a title from frontmatter). This decouples visual hierarchy
+        // from heading semantics. Alternatives considered:
+        // - Strip H1s during doc sync (demote to H2 for web)
+        // - Treat `---` + H2 combo as "major section" (render H2 as UPPERCASE when preceded by ---)
+        // - Use marker comments like `<!-- major -->` before H2
+        // See git history for discussion.
+        if trimmed == "---" || trimmed == "***" || trimmed == "___" {
+            let dimmed = Style::new().dimmed();
+            let rule_width = width.unwrap_or(40);
+            let rule: String = "─".repeat(rule_width);
+            result.push_str(&format!("{dimmed}{rule}{dimmed:#}\n"));
+            i += 1;
+            continue;
+        }
+
         // Outside code blocks, render markdown headers (never wrapped)
-        if let Some(header_text) = trimmed.strip_prefix("### ") {
+        // Visual hierarchy: H1 > H2 > H3 > H4
+        // - H1: UPPERCASE green (most prominent, rarely used)
+        // - H2: Bold green (major sections like "Examples", "Columns")
+        // - H3: Normal green (subsections like "CI status", "commit object")
+        // - H4: Bold (nested subsections like "Commit template")
+        if let Some(header_text) = trimmed.strip_prefix("#### ") {
             let bold = Style::new().bold();
             result.push_str(&format!("{bold}{header_text}{bold:#}\n"));
+        } else if let Some(header_text) = trimmed.strip_prefix("### ") {
+            result.push_str(&format!("{green}{header_text}{green:#}\n"));
         } else if let Some(header_text) = trimmed.strip_prefix("## ") {
-            result.push_str(&format!("{green}{header_text}{green:#}\n"));
+            let bold_green = Style::new()
+                .bold()
+                .fg_color(Some(Color::Ansi(AnsiColor::Green)));
+            result.push_str(&format!("{bold_green}{header_text}{bold_green:#}\n"));
         } else if let Some(header_text) = trimmed.strip_prefix("# ") {
-            result.push_str(&format!("{green}{header_text}{green:#}\n"));
+            result.push_str(&format!("{green}{}{green:#}\n", header_text.to_uppercase()));
         } else {
             // Prose text - wrap if width is specified
             let formatted = render_inline_formatting(line);
@@ -128,7 +151,7 @@ fn render_table(lines: &[&str], max_width: Option<usize>) -> String {
 }
 
 /// Render a markdown table from markdown source string (no indent)
-pub fn render_markdown_table(markdown: &str) -> String {
+pub(crate) fn render_markdown_table(markdown: &str) -> String {
     let lines: Vec<&str> = markdown
         .lines()
         .filter(|l| l.trim().starts_with('|') && l.trim().ends_with('|'))
@@ -385,6 +408,11 @@ fn colorize_status_symbols(text: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Test helper: render markdown without prose wrapping
+    fn render_markdown_in_help(help: &str) -> String {
+        render_markdown_in_help_with_width(help, None)
+    }
+
     #[test]
     fn test_render_inline_formatting_strips_links() {
         assert_eq!(render_inline_formatting("[text](url)"), "text");
@@ -481,24 +509,46 @@ mod tests {
     #[test]
     fn test_render_markdown_in_help_h1() {
         let result = render_markdown_in_help("# Header");
-        // H1 should be green
-        assert!(result.contains("Header"));
-        assert!(result.contains("\u{1b}[")); // Has color codes
+        // H1 should be UPPERCASE green
+        assert!(result.contains("HEADER")); // Uppercase
+        assert!(result.contains("\u{1b}[32m")); // Green
     }
 
     #[test]
     fn test_render_markdown_in_help_h2() {
         let result = render_markdown_in_help("## Section");
+        // H2 should be bold green (anstyle emits separate codes)
         assert!(result.contains("Section"));
-        assert!(result.contains("\u{1b}[")); // Has color codes
+        assert!(result.contains("\u{1b}[1m")); // Bold
+        assert!(result.contains("\u{1b}[32m")); // Green
     }
 
     #[test]
     fn test_render_markdown_in_help_h3() {
         let result = render_markdown_in_help("### Subsection");
+        // H3 should be green (no bold)
         assert!(result.contains("Subsection"));
-        // H3 is bold
+        assert!(result.contains("\u{1b}[32m")); // Green
+        assert!(!result.contains("\u{1b}[1m")); // Not bold
+    }
+
+    #[test]
+    fn test_render_markdown_in_help_h4() {
+        let result = render_markdown_in_help("#### Nested");
+        // H4 should be bold (no color)
+        assert!(result.contains("Nested"));
         assert!(result.contains("\u{1b}[1m")); // Bold
+        assert!(!result.contains("\u{1b}[32m")); // Not green
+    }
+
+    #[test]
+    fn test_render_markdown_in_help_horizontal_rule() {
+        let result = render_markdown_in_help("before\n\n---\n\n## Section");
+        // Horizontal rule becomes visible divider line
+        assert!(!result.contains("---"));
+        assert!(result.contains("────────────────────────────────────────"));
+        assert!(result.contains("before"));
+        assert!(result.contains("Section"));
     }
 
     #[test]

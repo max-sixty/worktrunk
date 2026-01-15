@@ -7,7 +7,7 @@
 //! - `handle_rebase` - Rebase onto target branch
 //! - `step_copy_ignored` - Copy gitignored files matching .worktreeinclude
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
@@ -102,8 +102,8 @@ pub fn handle_squash(
     let ctx = env.context(yes);
     let generator = CommitGenerator::new(&env.config.commit_generation);
 
-    // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    // Get and validate target ref (any commit-ish for merge-base calculation)
+    let target_branch = repo.require_target_ref(target)?;
 
     // Auto-stage changes before running pre-commit hooks so both beta and merge paths behave identically
     match stage_mode {
@@ -295,8 +295,8 @@ pub fn step_show_squash_prompt(
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
 
-    // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    // Get and validate target ref (any commit-ish for merge-base calculation)
+    let target_branch = repo.require_target_ref(target)?;
 
     // Get current branch
     let current_branch = repo
@@ -346,8 +346,8 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 
     let repo = Repository::current()?;
 
-    // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    // Get and validate target ref (any commit-ish for rebase)
+    let target_branch = repo.require_target_ref(target)?;
 
     // Check if already up-to-date (linear extension of target, no merge commits)
     if repo.is_rebased_onto(&target_branch)? {
@@ -441,11 +441,20 @@ pub fn step_copy_ignored(
             })?;
             (path, branch.to_string())
         }
-        None => (
-            repo.worktree_base()?,
-            repo.default_branch()
-                .ok_or_else(|| anyhow::anyhow!("Cannot determine default branch"))?,
-        ),
+        None => {
+            // Default source is the primary worktree (main worktree for normal repos,
+            // default branch worktree for bare repos).
+            let path = repo.primary_worktree()?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No primary worktree found (bare repo with no default branch worktree)"
+                )
+            })?;
+            let context = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            (path, context)
+        }
     };
 
     let dest_path = match to {
@@ -488,6 +497,23 @@ pub fn step_copy_ignored(
         // No .worktreeinclude file — default to copying all ignored entries
         ignored_entries
     };
+
+    // Filter out entries that contain other worktrees (prevents recursive copying when
+    // worktrees are nested inside the source, e.g., worktree-path = ".worktrees/...")
+    let worktree_paths: Vec<PathBuf> = repo
+        .list_worktrees()?
+        .into_iter()
+        .map(|wt| wt.path)
+        .collect();
+    let entries_to_copy: Vec<_> = entries_to_copy
+        .into_iter()
+        .filter(|(entry_path, _)| {
+            // Exclude if any worktree (other than source) is inside or equal to this entry
+            !worktree_paths
+                .iter()
+                .any(|wt_path| wt_path != &source_path && wt_path.starts_with(entry_path))
+        })
+        .collect();
 
     if entries_to_copy.is_empty() {
         crate::output::print(info_message("No matching files to copy"))?;
@@ -597,8 +623,39 @@ fn list_ignored_entries(
     Ok(entries)
 }
 
-/// Copy a directory recursively using reflink (COW) for each file
+/// Copy a directory recursively using reflink (COW).
+///
+/// Uses file-by-file copying with per-file reflink on all platforms. This spreads
+/// I/O operations over time rather than issuing them in a single burst.
+///
+/// ## Why not use atomic directory cloning on macOS?
+///
+/// macOS/APFS supports `clonefile()` on directories, which clones an entire tree
+/// atomically. However, Apple's documentation explicitly discourages this:
+///
+/// > "Directories can be cloned just as easily as regular files. However, when
+/// > cloning a directory hierarchy [...] the kernel must create a separate inode
+/// > for each item in the tree (even though no data is being duplicated). For
+/// > large hierarchies, this can require significant disk I/O, which defeats the
+/// > purpose of cloning a file rather than simply copying it."
+/// > — Apple Developer Documentation: Cloning Files and Directories
+/// > <https://developer.apple.com/documentation/foundation/file_system/cloning_files_and_directories>
+///
+/// In practice, atomic `clonefile()` on a Rust `target/` directory (~236K files)
+/// saturates disk I/O at ~45K ops/sec, blocking interactive processes like shell
+/// startup for several seconds. The per-file approach spreads operations over
+/// time, keeping the system responsive even though total copy time is longer.
+///
+/// Apple recommends `copyfile()` with `COPYFILE_CLONE` for directories, which
+/// internally walks the tree and clones per-file — equivalent to what we do here.
 fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
+    copy_dir_recursive_fallback(src, dest)
+}
+
+/// File-by-file recursive copy with reflink per file.
+///
+/// Used as fallback when atomic directory clone isn't available or fails.
+fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
     use std::fs;
     use std::io::ErrorKind;
 
@@ -607,21 +664,28 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let file_type = entry.file_type()?;
-
-        // Skip .git (file or directory) and symlinks
-        let file_name = entry.file_name();
-        if file_name == ".git" {
-            continue;
-        }
-        if file_type.is_symlink() {
-            continue;
-        }
-
         let src_path = entry.path();
-        let dest_path = dest.join(file_name);
+        let dest_path = dest.join(entry.file_name());
 
-        if file_type.is_dir() {
-            copy_dir_recursive(&src_path, &dest_path)?;
+        if file_type.is_symlink() {
+            // Copy symlink (preserves the link, doesn't follow it)
+            if !dest_path.exists() {
+                let target = fs::read_link(&src_path)?;
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&target, &dest_path)?;
+                #[cfg(windows)]
+                {
+                    // Check source to determine symlink type (target may be relative/broken)
+                    let is_dir = src_path.metadata().map(|m| m.is_dir()).unwrap_or(false);
+                    if is_dir {
+                        std::os::windows::fs::symlink_dir(&target, &dest_path)?;
+                    } else {
+                        std::os::windows::fs::symlink_file(&target, &dest_path)?;
+                    }
+                }
+            }
+        } else if file_type.is_dir() {
+            copy_dir_recursive_fallback(&src_path, &dest_path)?;
         } else {
             // Skip existing files for idempotent hook usage
             match reflink_copy::reflink_or_copy(&src_path, &dest_path) {

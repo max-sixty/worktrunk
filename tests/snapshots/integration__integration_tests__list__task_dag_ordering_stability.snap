@@ -8,7 +8,7 @@ info:
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -21,6 +21,7 @@ info:
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -30,12 +31,15 @@ success: true
 exit_code: 0
 ----- stdout -----
   [1mBranch[0m           [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m                     [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
-@ feature-current      [2m↑[22m                 [32m↑1[0m      ../repo.feature-current           [2m431987e2[0m  [2m23h[0m   [2mCommit at 01:00
-^ main                 [2m^[22m                         .                                 [2mb8b9f445[0m  [2m1d[0m    [2mInitial commit on main
-+ feature-newest       [2m↑[22m                 [32m↑1[0m      ../repo.feature-newest            [2m721211d9[0m  [2m21h[0m   [2mCommit at 03:00
-+ feature-middle       [2m↑[22m                 [32m↑1[0m      ../repo.feature-middle            [2ma84219ce[0m  [2m22h[0m   [2mCommit at 02:00
-+ feature-oldest       [2m↑[22m                 [32m↑1[0m      ../repo.feature-oldest            [2m9777b5e4[0m  [2m23h[0m   [2mCommit at 00:30
+@ feature-current      [2m↑[22m                 [32m↑1[0m      ../repo.feature-current           [2mf8d9dc91[0m  [2m23h[0m   [2mCommit at 01:00
+^ main                 [2m^[22m[2m⇡[22m                        .                         [32m⇡1[0m      [2m01cab36c[0m  [2m1d[0m    [2mInitial commit on main
++ feature-a            [2m↕[22m                 [32m↑1[0m  [2m[31m↓1[0m  ../repo.feature-a                 [2m1b87d473[0m  [2m16h[0m   [2mAdd feature-a file
++ feature-b            [2m↕[22m                 [32m↑1[0m  [2m[31m↓1[0m  ../repo.feature-b                 [2mf62940fc[0m  [2m16h[0m   [2mAdd feature-b file
++ feature-c            [2m↕[22m                 [32m↑1[0m  [2m[31m↓1[0m  ../repo.feature-c                 [2m345c7c93[0m  [2m16h[0m   [2mAdd feature-c file
++ feature-newest       [2m↑[22m                 [32m↑1[0m      ../repo.feature-newest            [2m57c29ea7[0m  [2m21h[0m   [2mCommit at 03:00
++ feature-middle       [2m↑[22m                 [32m↑1[0m      ../repo.feature-middle            [2ma63f3739[0m  [2m22h[0m   [2mCommit at 02:00
++ feature-oldest       [2m↑[22m                 [32m↑1[0m      ../repo.feature-oldest            [2ma9b3e5b7[0m  [2m23h[0m   [2mCommit at 00:30
 
-[2m○[22m [2mShowing 5 worktrees, 4 ahead
+[2m○[22m [2mShowing 8 worktrees, 7 ahead
 
 ----- stderr -----

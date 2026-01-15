@@ -577,7 +577,11 @@ mod tests {
 
     #[test]
     fn test_upstream_to_json_with_remote() {
-        let upstream = UpstreamStatus::from_parts(Some("origin".to_string()), 3, 2);
+        let upstream = UpstreamStatus {
+            remote: Some("origin".to_string()),
+            ahead: 3,
+            behind: 2,
+        };
         let branch = Some("feature".to_string());
         let json = upstream_to_json(&upstream, &branch);
         assert!(json.is_some());
@@ -590,7 +594,11 @@ mod tests {
 
     #[test]
     fn test_upstream_to_json_no_remote() {
-        let upstream = UpstreamStatus::from_parts(None, 0, 0);
+        let upstream = UpstreamStatus {
+            remote: None,
+            ahead: 0,
+            behind: 0,
+        };
         let branch = Some("feature".to_string());
         let json = upstream_to_json(&upstream, &branch);
         assert!(json.is_none());
@@ -598,7 +606,11 @@ mod tests {
 
     #[test]
     fn test_upstream_to_json_no_branch() {
-        let upstream = UpstreamStatus::from_parts(Some("origin".to_string()), 1, 0);
+        let upstream = UpstreamStatus {
+            remote: Some("origin".to_string()),
+            ahead: 1,
+            behind: 0,
+        };
         let branch = None;
         let json = upstream_to_json(&upstream, &branch);
         assert!(json.is_some());

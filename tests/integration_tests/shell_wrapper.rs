@@ -37,12 +37,14 @@
 
 use crate::common::TestRepo;
 use crate::common::canonicalize;
+use crate::common::wait_for_file_content;
 use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::LazyLock;
+use worktrunk::shell;
 
 /// Regex for normalizing temporary directory paths in test snapshots
 static TMPDIR_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
@@ -762,6 +764,9 @@ mod tests {
     #[case("zsh")]
     #[case("fish")]
     fn test_wrapper_step_for_each(#[case] shell: &str, mut repo: TestRepo) {
+        // Remove fixture worktrees so we can create our own feature-a and feature-b
+        repo.remove_fixture_worktrees();
+
         repo.commit("Initial commit");
 
         // Create additional worktrees
@@ -943,7 +948,7 @@ watch = "echo 'Watching for file changes'"
         // Pre-approve the commands in user config
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = [
     "echo 'Installing dependencies...'",
     "echo 'Building project...'",
@@ -990,7 +995,7 @@ test = "echo '✓ All 47 tests passed in 2.3s'"
         // Pre-approve commands
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = [
     "echo '✓ Code formatting check passed'",
     "echo '✓ Linting passed - no warnings'",
@@ -1046,7 +1051,7 @@ test = "echo '✗ Test suite failed: 3 tests failing' && exit 1"
         // Pre-approve the commands
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = [
     "echo '✓ Code formatting check passed'",
     "echo '✗ Test suite failed: 3 tests failing' && exit 1",
@@ -1114,7 +1119,7 @@ check2 = "{} check2 3"
             format!(
                 r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
-[projects."repo"]
+[projects."../origin"]
 approved-commands = [
     "{} check1 3",
     "{} check2 3",
@@ -1164,7 +1169,7 @@ approved-commands = [
         // Pre-approve the command in user config
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'test command executed'"]
 "#,
         )
@@ -1307,7 +1312,7 @@ approved-commands = ["echo 'test command executed'"]
         // Pre-approve the command in user config
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'background task'"]
 "#,
         )
@@ -1355,7 +1360,7 @@ approved-commands = ["echo 'background task'"]
         // Pre-approve the command in user config
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'fish background task'"]
 "#,
         )
@@ -1569,7 +1574,7 @@ approved-commands = ["echo 'fish background task'"]
         // Pre-approve the command
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'background job'"]
 "#,
         )
@@ -1619,7 +1624,7 @@ approved-commands = ["echo 'background job'"]
         // Pre-approve the command
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'bash background'"]
 "#,
         )
@@ -1768,22 +1773,31 @@ approved-commands = ["echo 'bash background'"]
         let wt_bin = get_cargo_bin("wt");
         let wrapper_script = generate_wrapper(&repo, "zsh");
 
+        // Use a marker file to avoid PTY output race conditions.
+        // PTY buffer flushing is unreliable on CI, so we write to a file and poll for it.
+        let marker_file = repo.root_path().join(".wrapper_test_marker");
+        let marker_path = marker_file.to_string_lossy().to_string();
+
         // Script that sources wrapper and checks if wt function exists
         let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
         let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
+        let marker_quoted = shell_quote(&marker_path);
         let script = format!(
             r#"
-            export WORKTRUNK_BIN={}
-            export WORKTRUNK_CONFIG_PATH={}
-            {}
-            # Check if wt wrapper function is defined
+            export WORKTRUNK_BIN={wt_bin}
+            export WORKTRUNK_CONFIG_PATH={config}
+            {wrapper}
+            # Check if wt wrapper function is defined and write result to marker file
             if (( $+functions[wt] )); then
-                echo "__WRAPPER_REGISTERED__"
+                echo "__WRAPPER_REGISTERED__" > {marker}
             else
-                echo "__NO_WRAPPER__"
+                echo "__NO_WRAPPER__" > {marker}
             fi
             "#,
-            wt_bin_quoted, config_quoted, wrapper_script
+            wt_bin = wt_bin_quoted,
+            config = config_quoted,
+            wrapper = wrapper_script,
+            marker = marker_quoted,
         );
 
         let final_script = format!("( {} ) 2>&1", script);
@@ -1794,14 +1808,18 @@ approved-commands = ["echo 'bash background'"]
             ("ZDOTDIR", "/dev/null"),
         ];
 
-        let (combined, exit_code) =
+        let (_combined, exit_code) =
             exec_in_pty_interactive("zsh", &final_script, repo.root_path(), &env_vars, &[]);
 
         assert_eq!(exit_code, 0);
+
+        // Poll for marker file instead of relying on PTY output
+        wait_for_file_content(&marker_file);
+        let result = std::fs::read_to_string(&marker_file).unwrap();
         assert!(
-            combined.contains("__WRAPPER_REGISTERED__"),
-            "Zsh wrapper function should be registered after sourcing.\nOutput:\n{}",
-            combined
+            result.contains("__WRAPPER_REGISTERED__"),
+            "Zsh wrapper function should be registered after sourcing.\nMarker file content:\n{}",
+            result
         );
     }
 
@@ -1947,6 +1965,137 @@ approved-commands = ["echo 'bash background'"]
         );
     }
 
+    /// Test that fish wrapper shows clear error when wt binary is not available
+    ///
+    /// This tests the scenario where:
+    /// 1. User has shell integration installed (functions/wt.fish exists)
+    /// 2. But wt binary is not in PATH
+    /// 3. And WORKTRUNK_BIN is not set
+    ///
+    /// The fish function should show "wt: command not found" and exit 127.
+    /// This is fish-specific because bash/zsh have an outer guard that prevents
+    /// the function from being defined when wt isn't available.
+    #[rstest]
+    #[case("fish")]
+    fn test_fish_binary_not_found_clear_error(#[case] shell: &str, repo: TestRepo) {
+        let wrapper_script = generate_wrapper(&repo, shell);
+
+        // Script that clears PATH and does NOT set WORKTRUNK_BIN
+        // This simulates having the fish function installed but wt not available
+        let script = format!(
+            r#"
+            # Clear PATH to ensure wt is not found via PATH
+            set -x PATH /usr/bin /bin
+            # Explicitly unset WORKTRUNK_BIN to ensure it's not set
+            set -e WORKTRUNK_BIN
+            set -x CLICOLOR_FORCE 1
+            {}
+            wt --version
+            echo "exit_code: $status"
+            "#,
+            wrapper_script
+        );
+
+        let final_script = format!("begin\n{}\nend 2>&1", script);
+
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path);
+
+        let (combined, exit_code) =
+            exec_in_pty_interactive(shell, &final_script, repo.root_path(), &env_vars, &[]);
+
+        let output = ShellOutput {
+            combined,
+            exit_code,
+        };
+
+        // The function should show a clear error message
+        assert!(
+            output.combined.contains("wt: command not found"),
+            "Fish wrapper should show 'wt: command not found' when binary is missing.\nOutput:\n{}",
+            output.combined
+        );
+
+        // And return exit code 127 (standard "command not found" exit code)
+        assert!(
+            output.combined.contains("exit_code: 127"),
+            "Fish wrapper should return exit code 127 when binary is missing.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
+    /// Test that fish WRAPPER (bootstrap) handles missing binary gracefully
+    ///
+    /// This tests the WRAPPER file (fish_wrapper.fish) that gets installed to
+    /// ~/.config/fish/functions/wt.fish. Unlike the full function (tested above),
+    /// the wrapper tries to SOURCE the full function from the binary at runtime.
+    ///
+    /// When wt isn't in PATH:
+    /// - `command wt config shell init fish` fails
+    /// - The wrapper should return 127, NOT infinite loop
+    ///
+    /// This is different from test_fish_binary_not_found_clear_error which tests
+    /// the FULL function (which has its own WORKTRUNK_BIN check).
+    #[rstest]
+    #[case("fish")]
+    fn test_fish_wrapper_binary_not_found_no_infinite_loop(#[case] shell: &str, repo: TestRepo) {
+        // Use the WRAPPER template (not the full function from generate_wrapper)
+        let init = shell::ShellInit::with_prefix(shell::Shell::Fish, "wt".to_string());
+        let wrapper_content = init.generate_fish_wrapper().unwrap();
+
+        // Script that clears PATH so wt isn't found, then calls wt
+        let script = format!(
+            r#"
+            # Clear PATH to ensure wt is not found
+            set -x PATH /usr/bin /bin
+            set -x CLICOLOR_FORCE 1
+            {}
+            wt --version
+            echo "exit_code: $status"
+            "#,
+            wrapper_content
+        );
+
+        let final_script = format!("begin\n{}\nend 2>&1", script);
+
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path);
+
+        let (combined, exit_code) =
+            exec_in_pty_interactive(shell, &final_script, repo.root_path(), &env_vars, &[]);
+
+        let output = ShellOutput {
+            combined,
+            exit_code,
+        };
+
+        // Should NOT show signs of infinite recursion (stack overflow, repeated function calls)
+        // One occurrence of "in function 'wt'" is normal (fish's error trace).
+        // Infinite recursion would show this MANY times.
+        let function_call_count = output.combined.matches("in function 'wt'").count();
+        assert!(
+            function_call_count <= 1,
+            "Fish wrapper should not infinite loop (found {} recursive calls).\nOutput:\n{}",
+            function_call_count,
+            output.combined
+        );
+
+        // Should return exit code 127 (command not found)
+        assert!(
+            output.combined.contains("exit_code: 127"),
+            "Fish wrapper should return exit code 127 when binary is missing.\nOutput:\n{}",
+            output.combined
+        );
+
+        // Should show fish's error message about unknown command
+        assert!(
+            output.combined.contains("Unknown command")
+                || output.combined.contains("command not found"),
+            "Fish wrapper should show error when binary is missing.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
     // ========================================================================
     // Interrupt/Cleanup Tests
     // ========================================================================
@@ -1973,7 +2122,7 @@ approved-commands = ["echo 'bash background'"]
         // Pre-approve the command
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'cleanup test'"]
 "#,
         )
@@ -2314,6 +2463,9 @@ fi
     fn test_readme_example_approval_prompt(repo: TestRepo) {
         use portable_pty::CommandBuilder;
         use std::io::{Read, Write};
+
+        // Remove origin so worktrunk uses directory name as project identifier
+        repo.run_git(&["remote", "remove", "origin"]);
 
         // Create project config with named post-create commands
         repo.write_project_config(

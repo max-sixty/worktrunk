@@ -1,6 +1,6 @@
 # wt step
 
-Run individual git workflow operations: commits, squashes, rebases, and pushes.
+Run individual operations. The building blocks of wt merge — commit, squash, rebase, push — plus standalone utilities.
 
 ## Examples
 
@@ -15,7 +15,6 @@ Manual merge workflow with review between steps:
 ```bash
 wt step commit
 wt step squash
-# Review the squashed commit
 wt step rebase
 wt step push
 ```
@@ -29,45 +28,12 @@ wt step push
 - `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
 
-## Options
-
-### `--stage`
-
-Controls what to stage before committing. Available for `commit` and `squash`:
-
-| Value | Behavior |
-|-------|----------|
-| `all` | Stage all changes including untracked files (default) |
-| `tracked` | Stage only modified tracked files |
-| `none` | Don't stage anything, commit only what's already staged |
-
-```bash
-wt step commit --stage=tracked
-wt step squash --stage=none
-```
-
-Configure the default in user config:
-
-```toml
-[commit]
-stage = "tracked"
-```
-
-### `--show-prompt`
-
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
-
-```bash
-# Inspect the rendered prompt
-wt step commit --show-prompt | less
-
-# Pipe to a different LLM
-wt step commit --show-prompt | llm -m gpt-5-nano
-```
-
 ## Command reference
 
 wt step - Run individual operations
+
+The building blocks of <b>wt merge</b> — commit, squash, rebase, push — plus standalone
+utilities.
 
 Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
@@ -93,13 +59,178 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Show debug info (-v), or also write diagnostic report (-vv)
 
+## wt step commit
+
+Stages all changes (including untracked files) and commits with an [LLM-generated message](https://worktrunk.dev/llm-commits/).
+
+### Options
+
+#### `--stage`
+
+Controls what to stage before committing:
+
+| Value | Behavior |
+|-------|----------|
+| `all` | Stage all changes including untracked files (default) |
+| `tracked` | Stage only modified tracked files |
+| `none` | Don't stage anything, commit only what's already staged |
+
+```bash
+wt step commit --stage=tracked
+```
+
+Configure the default in user config:
+
+```toml
+[commit]
+stage = "tracked"
+```
+
+#### `--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+```bash
+# Inspect the rendered prompt
+wt step commit --show-prompt | less
+
+# Pipe to a different LLM
+wt step commit --show-prompt | llm -m gpt-5-nano
+```
+
+### Command reference
+
+wt step commit - Commit changes with LLM commit message
+
+Stages working tree changes and commits with an LLM-generated message.
+
+Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+
+      <b><span class=c>--no-verify</span></b>
+          Skip hooks
+
+      <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
+          What to stage before committing [default: all]
+
+          Possible values:
+          - <b><span class=c>all</span></b>:     Stage everything: untracked files + unstaged tracked
+            changes
+          - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
+          - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
+
+      <b><span class=c>--show-prompt</span></b>
+          Show prompt without running LLM
+
+          Outputs the rendered prompt to stdout for debugging or manual piping.
+
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
+
+## wt step squash
+
+Stages all changes (including untracked files), then squashes all commits since diverging from the target branch into a single commit with an [LLM-generated message](https://worktrunk.dev/llm-commits/).
+
+### Options
+
+#### `--stage`
+
+Controls what to stage before squashing:
+
+| Value | Behavior |
+|-------|----------|
+| `all` | Stage all changes including untracked files (default) |
+| `tracked` | Stage only modified tracked files |
+| `none` | Don't stage anything, squash only committed changes |
+
+```bash
+wt step squash --stage=none
+```
+
+Configure the default in user config:
+
+```toml
+[commit]
+stage = "tracked"
+```
+
+#### `--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+```bash
+wt step squash --show-prompt | less
+```
+
+### Command reference
+
+wt step squash - Squash commits since branching
+
+Stages working tree changes, squashes all commits since diverging from target
+into one, generates message with LLM.
+
+Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span> <span class=c>[TARGET]</span>
+
+<b><span class=g>Arguments:</span></b>
+  <span class=c>[TARGET]</span>
+          Target branch
+
+          Defaults to default branch.
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+
+      <b><span class=c>--no-verify</span></b>
+          Skip hooks
+
+      <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
+          What to stage before committing [default: all]
+
+          Possible values:
+          - <b><span class=c>all</span></b>:     Stage everything: untracked files + unstaged tracked
+            changes
+          - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
+          - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
+
+      <b><span class=c>--show-prompt</span></b>
+          Show prompt without running LLM
+
+          Outputs the rendered prompt to stdout for debugging or manual piping.
+
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
+
 ## wt step copy-ignored
 
 Git worktrees share the repository but not untracked files. This command copies gitignored files to another worktree, eliminating cold starts.
 
 ### Setup
 
-Add to your project config:
+Add to the project config:
 
 ```toml
 # .config/wt.toml
@@ -132,20 +263,23 @@ Only gitignored files are copied — tracked files are never touched. If `.workt
 
 ### Features
 
-- Uses copy-on-write (reflink) when available for instant, space-efficient copies
+- Uses copy-on-write (reflink) when available for space-efficient copies
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files (safe to re-run)
-- Skips symlinks and `.git` entries
+- Skips `.git` entries and other worktrees
 
 ### Performance
 
-Reflink copies share disk blocks until modified — no data is actually copied. For a 31GB `target/` directory with 110k files:
+Reflink copies share disk blocks until modified — no data is actually copied. For a 14GB `target/` directory:
 
-| Method | Time |
-|--------|------|
-| Full copy (`cp -R`) | 2m 5s |
-| COW copy (`cp -Rc`) | ~60s |
-| `wt step copy-ignored` | ~31s |
+| Command | Time |
+|---------|------|
+| `cp -R` (full copy) | 2m |
+| `cp -Rc` / `wt step copy-ignored` | 20s |
+
+Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
+
+If the files are needed before any commands run in the worktree, put `wt step copy-ignored` in the `post-create` hook. Otherwise use the `post-start` hook so the copy runs in the background.
 
 ### Language-specific notes
 
@@ -159,12 +293,20 @@ The `target/` directory is huge (often 1-10GB). Copying with reflink cuts first 
 
 ```toml
 [post-create]
-deps = "ln -sf {{ main_worktree_path }}/node_modules ."
+deps = "ln -sf {{ primary_worktree_path }}/node_modules ."
 ```
 
 #### Python
 
 Virtual environments contain absolute paths and can't be copied. Use `uv sync` instead — it's fast enough that copying isn't worth it.
+
+### Behavior vs Claude Code on desktop
+
+The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://code.claude.com/docs/en/desktop), which copies matching files when creating worktrees. Differences:
+
+- worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`
+- worktrunk uses copy-on-write for large directories like `target/` — potentially 30x faster on macOS, 6x on Linux
+- worktrunk runs as a configurable hook in the worktree lifecycle
 
 ### Command reference
 

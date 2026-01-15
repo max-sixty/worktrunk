@@ -7,7 +7,7 @@ info:
     - "-h"
   env:
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
@@ -20,7 +20,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt merge - Merge worktree into target branch
+wt merge - Merge current branch into target
 
 Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET]
 

@@ -33,6 +33,7 @@ const DEPRECATED_VARS: &[(&str, &str)] = &[
     ("repo_root", "repo_path"),
     ("worktree", "worktree_path"),
     ("main_worktree", "repo"),
+    ("main_worktree_path", "primary_worktree_path"),
 ];
 
 /// Normalize a template string by replacing deprecated variables with their canonical names.
@@ -217,7 +218,7 @@ pub fn check_and_migrate(
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "to regenerate, rerun after <bright-black>wt config state hints clear {}</>",
+                "To regenerate, rerun after <bright-black>wt config state hints clear {}</>",
                 HINT_DEPRECATED_PROJECT_CONFIG
             ))
         );
@@ -310,6 +311,15 @@ worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 "#;
         let found = find_deprecated_vars(content);
         assert_eq!(found, vec![("main_worktree", "repo")]);
+    }
+
+    #[test]
+    fn test_find_deprecated_vars_main_worktree_path() {
+        let content = r#"
+post-create = "ln -sf {{ main_worktree_path }}/node_modules ."
+"#;
+        let found = find_deprecated_vars(content);
+        assert_eq!(found, vec![("main_worktree_path", "primary_worktree_path")]);
     }
 
     #[test]

@@ -68,6 +68,9 @@ fn test_get_default_branch_caches_result(#[from(repo_with_remote)] repo: TestRep
 
 #[rstest]
 fn test_get_default_branch_no_remote(repo: TestRepo) {
+    // Remove origin (fixture has it) for this no-remote test
+    repo.run_git(&["remote", "remove", "origin"]);
+
     // No remote configured, should infer from local branches
     // Since there's only one local branch, it should return that
     let result = Repository::at(repo.root_path()).unwrap().default_branch();
@@ -98,6 +101,9 @@ fn test_get_default_branch_with_custom_remote(mut repo: TestRepo) {
 
 #[rstest]
 fn test_primary_remote_detects_custom_remote(mut repo: TestRepo) {
+    // Remove origin (fixture has it) so upstream becomes the primary
+    repo.run_git(&["remote", "remove", "origin"]);
+
     // Use "main" since that's the local branch - the test only cares about remote name detection
     repo.setup_custom_remote("upstream", "main");
 
@@ -122,6 +128,9 @@ fn test_branch_exists_with_custom_remote(mut repo: TestRepo) {
 
 #[rstest]
 fn test_get_default_branch_no_remote_common_names_fallback(repo: TestRepo) {
+    // Remove origin (fixture has it) for this no-remote test
+    repo.run_git(&["remote", "remove", "origin"]);
+
     // Create additional branches (no remote configured)
     repo.git_command()
         .args(["branch", "feature"])
@@ -143,6 +152,9 @@ fn test_get_default_branch_no_remote_common_names_fallback(repo: TestRepo) {
 
 #[rstest]
 fn test_get_default_branch_no_remote_master_fallback(repo: TestRepo) {
+    // Remove origin (fixture has it) for this no-remote test
+    repo.run_git(&["remote", "remove", "origin"]);
+
     // Rename main to master, then create other branches
     repo.git_command()
         .args(["branch", "-m", "main", "master"])
@@ -168,6 +180,9 @@ fn test_get_default_branch_no_remote_master_fallback(repo: TestRepo) {
 
 #[rstest]
 fn test_default_branch_no_remote_uses_init_config(repo: TestRepo) {
+    // Remove origin (fixture has it) for this no-remote test
+    repo.run_git(&["remote", "remove", "origin"]);
+
     // Rename main to something non-standard, create the configured default
     repo.git_command()
         .args(["branch", "-m", "main", "primary"])
@@ -246,6 +261,9 @@ fn test_invalid_default_branch_config_returns_none_when_valid(repo: TestRepo) {
 
 #[rstest]
 fn test_get_default_branch_no_remote_fails_when_no_match(repo: TestRepo) {
+    // Remove origin (fixture has it) for this no-remote test
+    repo.run_git(&["remote", "remove", "origin"]);
+
     // Rename main to something non-standard
     repo.git_command()
         .args(["branch", "-m", "main", "xyz"])
@@ -268,6 +286,9 @@ fn test_get_default_branch_no_remote_fails_when_no_match(repo: TestRepo) {
 
 #[rstest]
 fn test_resolve_caret_fails_when_default_branch_unavailable(repo: TestRepo) {
+    // Remove origin (fixture has it) for this no-remote test
+    repo.run_git(&["remote", "remove", "origin"]);
+
     // Rename main to something non-standard so default branch can't be determined
     repo.git_command()
         .args(["branch", "-m", "main", "xyz"])

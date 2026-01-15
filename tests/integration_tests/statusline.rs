@@ -102,14 +102,14 @@ fn add_commits_ahead(repo: &mut TestRepo) {
 #[rstest]
 fn test_statusline_basic(repo: TestRepo) {
     let output = run_statusline(&repo, &[], None);
-    assert_snapshot!(output, @"[0m main  [2m^[22m");
+    assert_snapshot!(output, @"[0m main  [2m^[22m[2m|[22m");
 }
 
 #[rstest]
 fn test_statusline_with_changes(repo: TestRepo) {
     add_uncommitted_changes(&repo);
     let output = run_statusline(&repo, &[], None);
-    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m");
+    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m");
 }
 
 #[rstest]
@@ -170,7 +170,7 @@ fn test_statusline_claude_code_full_context(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [36m?[0m[2m^[22m  | Opus");
+        assert_snapshot!(output, @"[PATH]  main  [36m?[0m[2m^[22m[2m|[22m  | Opus");
     });
 }
 
@@ -181,7 +181,7 @@ fn test_statusline_claude_code_minimal(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m");
     });
 }
 
@@ -197,7 +197,7 @@ fn test_statusline_claude_code_with_model(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m  | Haiku");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Haiku");
     });
 }
 
@@ -288,7 +288,7 @@ url = "http://{{ branch }}.localhost:3000"
 
     let output = run_statusline(&repo, &[], None);
     // Shows `?` because writing project config creates uncommitted file
-    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m  http://main.localhost:3000");
+    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m  http://main.localhost:3000");
 }
 
 #[rstest]

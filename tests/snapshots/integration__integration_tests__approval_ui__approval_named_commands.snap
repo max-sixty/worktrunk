@@ -6,7 +6,7 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33m[1mrepo[22m needs approval to execute [1m3[22m commands:[39m
+[33m▲[39m [33m[1morigin[22m needs approval to execute [1m3[22m commands:[39m
 
 [2m○[22m post-create [1minstall[22m:
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing dependencies...'[0m[2m

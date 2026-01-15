@@ -36,8 +36,8 @@ exit_code: 0
     "path": "_REPO_",
     "kind": "worktree",
     "commit": {
-      "sha": "4803e9416c19681b83017135ac3a8c1b04898868",
-      "short_sha": "4803e94",
+      "sha": "e52e0f4263b6ea30cadae914ebde3d46431b69ca",
+      "short_sha": "e52e0f4",
       "message": "Main commit 2",
       "timestamp": 1735689600
     },
@@ -53,22 +53,133 @@ exit_code: 0
       }
     },
     "main_state": "is_main",
+    "remote": {
+      "name": "origin",
+      "branch": "main",
+      "ahead": 3,
+      "behind": 0
+    },
     "worktree": {
       "detached": false
     },
     "is_main": true,
     "is_current": true,
     "is_previous": false,
-    "statusline": "main  /u001b[2m^/u001b[22m",
-    "symbols": "^"
+    "statusline": "main  /u001b[2m^/u001b[22m/u001b[2m⇡/u001b[22m  /u001b[32m⇡3/u001b[0m",
+    "symbols": "^⇡"
+  },
+  {
+    "branch": "feature-a",
+    "path": "_REPO_.feature-a",
+    "kind": "worktree",
+    "commit": {
+      "sha": "1b87d4731ea707905d15a726e193531c20affa14",
+      "short_sha": "1b87d47",
+      "message": "Add feature-a file",
+      "timestamp": 1735718400
+    },
+    "working_tree": {
+      "staged": false,
+      "modified": false,
+      "untracked": false,
+      "renamed": false,
+      "deleted": false,
+      "diff": {
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "main_state": "diverged",
+    "main": {
+      "ahead": 1,
+      "behind": 3
+    },
+    "worktree": {
+      "detached": false
+    },
+    "is_main": false,
+    "is_current": false,
+    "is_previous": false,
+    "statusline": "feature-a  /u001b[2m↕/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓3/u001b[0m",
+    "symbols": "↕"
+  },
+  {
+    "branch": "feature-b",
+    "path": "_REPO_.feature-b",
+    "kind": "worktree",
+    "commit": {
+      "sha": "f62940fcec424585adf98625e722fdf990810614",
+      "short_sha": "f62940f",
+      "message": "Add feature-b file",
+      "timestamp": 1735718400
+    },
+    "working_tree": {
+      "staged": false,
+      "modified": false,
+      "untracked": false,
+      "renamed": false,
+      "deleted": false,
+      "diff": {
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "main_state": "diverged",
+    "main": {
+      "ahead": 1,
+      "behind": 3
+    },
+    "worktree": {
+      "detached": false
+    },
+    "is_main": false,
+    "is_current": false,
+    "is_previous": false,
+    "statusline": "feature-b  /u001b[2m↕/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓3/u001b[0m",
+    "symbols": "↕"
+  },
+  {
+    "branch": "feature-c",
+    "path": "_REPO_.feature-c",
+    "kind": "worktree",
+    "commit": {
+      "sha": "345c7c93ad7c3d8f5b08380898d78e024019599c",
+      "short_sha": "345c7c9",
+      "message": "Add feature-c file",
+      "timestamp": 1735718400
+    },
+    "working_tree": {
+      "staged": false,
+      "modified": false,
+      "untracked": false,
+      "renamed": false,
+      "deleted": false,
+      "diff": {
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "main_state": "diverged",
+    "main": {
+      "ahead": 1,
+      "behind": 3
+    },
+    "worktree": {
+      "detached": false
+    },
+    "is_main": false,
+    "is_current": false,
+    "is_previous": false,
+    "statusline": "feature-c  /u001b[2m↕/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓3/u001b[0m",
+    "symbols": "↕"
   },
   {
     "branch": "feature-ahead",
     "path": "_REPO_.feature-ahead",
     "kind": "worktree",
     "commit": {
-      "sha": "1080181c245695ed0d64aba6b0b0b7c0bfff9530",
-      "short_sha": "1080181",
+      "sha": "e0c9ce16d24b8c17f0c763f73816037180c89d7f",
+      "short_sha": "e0c9ce1",
       "message": "Feature commit 2",
       "timestamp": 1735689600
     },
@@ -102,8 +213,8 @@ exit_code: 0
     "path": "_REPO_.feature-behind",
     "kind": "worktree",
     "commit": {
-      "sha": "b8b9f4453f95a585105de3ae3439d8017dee67f3",
-      "short_sha": "b8b9f44",
+      "sha": "01cab36ce221a5ff5c7a6cf60cea6bab3c6315d7",
+      "short_sha": "01cab36",
       "message": "Initial commit on main",
       "timestamp": 1735689600
     },

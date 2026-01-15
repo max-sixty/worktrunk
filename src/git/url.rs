@@ -12,20 +12,8 @@
 /// - `git@<host>:<owner>/<repo>.git`
 /// - `ssh://git@<host>/<owner>/<repo>.git`
 /// - `ssh://<host>/<owner>/<repo>.git`
-///
-/// # Example
-///
-/// ```
-/// use worktrunk::git::GitRemoteUrl;
-///
-/// let url = GitRemoteUrl::parse("git@github.com:owner/repo.git").unwrap();
-/// assert_eq!(url.host(), "github.com");
-/// assert_eq!(url.owner(), "owner");
-/// assert_eq!(url.repo(), "repo");
-/// assert_eq!(url.project_identifier(), "github.com/owner/repo");
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitRemoteUrl {
+pub(crate) struct GitRemoteUrl {
     host: String,
     owner: String,
     repo: String,
@@ -95,11 +83,6 @@ impl GitRemoteUrl {
         })
     }
 
-    /// The hostname (e.g., "github.com", "gitlab.example.com").
-    pub fn host(&self) -> &str {
-        &self.host
-    }
-
     /// The repository owner or organization (e.g., "owner", "company-org").
     pub fn owner(&self) -> &str {
         &self.owner
@@ -146,11 +129,6 @@ pub fn parse_owner_repo(url: &str) -> Option<(String, String)> {
     GitRemoteUrl::parse(url).map(|u| (u.owner().to_string(), u.repo().to_string()))
 }
 
-/// Extract hostname from a git remote URL.
-pub fn parse_remote_host(url: &str) -> Option<String> {
-    GitRemoteUrl::parse(url).map(|u| u.host().to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,7 +136,6 @@ mod tests {
     #[test]
     fn test_https_urls() {
         let url = GitRemoteUrl::parse("https://github.com/owner/repo.git").unwrap();
-        assert_eq!(url.host(), "github.com");
         assert_eq!(url.owner(), "owner");
         assert_eq!(url.repo(), "repo");
         assert_eq!(url.project_identifier(), "github.com/owner/repo");
@@ -175,17 +152,16 @@ mod tests {
     #[test]
     fn test_http_urls() {
         let url = GitRemoteUrl::parse("http://gitlab.internal.company.com/owner/repo.git").unwrap();
-        assert_eq!(url.host(), "gitlab.internal.company.com");
-        assert_eq!(url.owner(), "owner");
-        assert_eq!(url.repo(), "repo");
+        assert_eq!(
+            url.project_identifier(),
+            "gitlab.internal.company.com/owner/repo"
+        );
     }
 
     #[test]
     fn test_git_at_urls() {
         let url = GitRemoteUrl::parse("git@github.com:owner/repo.git").unwrap();
-        assert_eq!(url.host(), "github.com");
-        assert_eq!(url.owner(), "owner");
-        assert_eq!(url.repo(), "repo");
+        assert_eq!(url.project_identifier(), "github.com/owner/repo");
 
         // Without .git suffix
         let url = GitRemoteUrl::parse("git@github.com:owner/repo").unwrap();
@@ -193,24 +169,22 @@ mod tests {
 
         // GitLab
         let url = GitRemoteUrl::parse("git@gitlab.example.com:owner/repo.git").unwrap();
-        assert_eq!(url.host(), "gitlab.example.com");
+        assert!(url.project_identifier().starts_with("gitlab.example.com/"));
 
         // Bitbucket
         let url = GitRemoteUrl::parse("git@bitbucket.org:owner/repo.git").unwrap();
-        assert_eq!(url.host(), "bitbucket.org");
+        assert!(url.project_identifier().starts_with("bitbucket.org/"));
     }
 
     #[test]
     fn test_ssh_urls() {
         // With git@ user
         let url = GitRemoteUrl::parse("ssh://git@github.com/owner/repo.git").unwrap();
-        assert_eq!(url.host(), "github.com");
-        assert_eq!(url.owner(), "owner");
-        assert_eq!(url.repo(), "repo");
+        assert_eq!(url.project_identifier(), "github.com/owner/repo");
 
         // Without user
         let url = GitRemoteUrl::parse("ssh://github.com/owner/repo.git").unwrap();
-        assert_eq!(url.host(), "github.com");
+        assert!(url.project_identifier().starts_with("github.com/"));
         assert_eq!(url.owner(), "owner");
     }
 
@@ -284,45 +258,6 @@ mod tests {
         assert_eq!(parse_remote_owner("https://github.com/"), None);
         assert_eq!(parse_remote_owner("git@github.com:"), None);
         assert_eq!(parse_remote_owner(""), None);
-    }
-
-    #[test]
-    fn test_parse_remote_host() {
-        assert_eq!(
-            parse_remote_host("https://gitlab.com/owner/repo.git"),
-            Some("gitlab.com".to_string())
-        );
-        assert_eq!(
-            parse_remote_host("https://gitlab.example.com/owner/repo.git"),
-            Some("gitlab.example.com".to_string())
-        );
-        assert_eq!(
-            parse_remote_host("  https://github.com/owner/repo\n"),
-            Some("github.com".to_string())
-        );
-        assert_eq!(
-            parse_remote_host("http://gitlab.internal.company.com/owner/repo.git"),
-            Some("gitlab.internal.company.com".to_string())
-        );
-        assert_eq!(
-            parse_remote_host("git@gitlab.com:owner/repo.git"),
-            Some("gitlab.com".to_string())
-        );
-        assert_eq!(
-            parse_remote_host("git@gitlab.example.com:owner/repo.git"),
-            Some("gitlab.example.com".to_string())
-        );
-        assert_eq!(
-            parse_remote_host("ssh://git@gitlab.example.com/owner/repo.git"),
-            Some("gitlab.example.com".to_string())
-        );
-        assert_eq!(
-            parse_remote_host("ssh://gitlab.example.com/owner/repo.git"),
-            Some("gitlab.example.com".to_string())
-        );
-        assert_eq!(parse_remote_host("https://"), None);
-        assert_eq!(parse_remote_host("git@"), None);
-        assert_eq!(parse_remote_host(""), None);
     }
 
     #[test]

@@ -47,16 +47,53 @@ struct CommandResponse {
     exit_code: i32,
 }
 
+/// Find the executable path, preserving symlinks.
+///
+/// When spawned via PATH lookup (e.g., `Command::new("gh")`), argv\[0\] has no
+/// directory component. We look it up in PATH to find the symlink location,
+/// which is critical for finding the config file (e.g., `gh.json`).
+fn find_executable_path() -> std::path::PathBuf {
+    let argv0 = env::args().next().expect("mock: no argv[0]");
+    let exe_path = std::path::Path::new(&argv0);
+
+    // If argv[0] has a path component, use it directly
+    if exe_path.parent().is_some_and(|p| !p.as_os_str().is_empty()) {
+        return exe_path.to_path_buf();
+    }
+
+    // argv[0] is just a name (e.g., "gh"), look it up in PATH
+    if let Some(path_var) = env::var_os("PATH") {
+        for dir in env::split_paths(&path_var) {
+            let candidate = dir.join(&argv0);
+            if candidate.exists() {
+                return candidate;
+            }
+            // On Windows, also check with .exe extension
+            #[cfg(windows)]
+            {
+                let candidate_exe = dir.join(format!("{}.exe", argv0));
+                if candidate_exe.exists() {
+                    return candidate_exe;
+                }
+            }
+        }
+    }
+
+    // Last resort: current_exe() (resolves symlinks, may break config lookup)
+    env::current_exe().expect("failed to get executable path")
+}
+
 fn main() {
-    let exe_path = env::current_exe().expect("failed to get executable path");
+    let exe_path = find_executable_path();
     let exe_dir = exe_path
         .parent()
-        .expect("mock: executable has no parent directory");
-
+        .expect("mock: executable has no parent directory")
+        .to_path_buf();
     let cmd_name = exe_path
         .file_stem()
         .expect("mock: executable has no file stem")
-        .to_string_lossy();
+        .to_string_lossy()
+        .into_owned();
 
     let config_path = exe_dir.join(format!("{}.json", cmd_name));
 

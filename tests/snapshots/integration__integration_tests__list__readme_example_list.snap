@@ -20,6 +20,7 @@ info:
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -29,9 +30,9 @@ success: true
 exit_code: 0
 ----- stdout -----
   [1mBranch[0m       [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
-@ feature-api  [36m+[39m   [2m↕[22m[2m⇡[22m     [32m+54[0m   [31m-5[0m   [32m↑4[0m  [2m[31m↓1[0m   [32m⇡3[0m      [2mec97decc[0m  [2m30m[0m   [2mAdd API tests
-^ main             [2m^[22m[2m⇅[22m                         [32m⇡1[0m  [2m[31m⇣1[0m  [2m6088adb3[0m  [2m4d[0m    [2mMerge fix-auth: hardened to…
-+ fix-auth         [2m↕[22m[2m|[22m                [32m↑2[0m  [2m[31m↓1[0m     [2m|[0m     [2m127407de[0m  [2m5h[0m    [2mAdd secure token storage
+@ feature-api  [36m+[39m   [2m↕[22m[2m⇡[22m     [32m+54[0m   [31m-5[0m   [32m↑4[0m  [2m[31m↓1[0m   [32m⇡3[0m      [2m6814f02a[0m  [2m30m[0m   [2mAdd API tests
+^ main             [2m^[22m[2m⇅[22m                         [32m⇡1[0m  [2m[31m⇣1[0m  [2m41ee0834[0m  [2m4d[0m    [2mMerge fix-auth: hardened to…
++ fix-auth         [2m↕[22m[2m|[22m                [32m↑2[0m  [2m[31m↓1[0m     [2m|[0m     [2mb772e68b[0m  [2m5h[0m    [2mAdd secure token storage
 
 [2m○[22m [2mShowing 3 worktrees, 1 with changes, 2 ahead, 1 column hidden
 

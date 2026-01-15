@@ -61,6 +61,8 @@ fn test_clear_approvals_no_approvals(repo: TestRepo) {
 
 #[rstest]
 fn test_clear_approvals_with_approvals(repo: TestRepo) {
+    // Remove origin so project_id uses directory name (matches test expectation)
+    repo.run_git(&["remote", "remove", "origin"]);
     let project_id = format!("{}/origin", repo.root_path().display());
     repo.commit("Initial commit");
     repo.write_project_config(r#"post-create = "echo 'test'""#);
@@ -87,6 +89,8 @@ fn test_clear_approvals_global_no_approvals(repo: TestRepo) {
 
 #[rstest]
 fn test_clear_approvals_global_with_approvals(repo: TestRepo) {
+    // Remove origin so project_id uses directory name (matches test expectation)
+    repo.run_git(&["remote", "remove", "origin"]);
     let project_id = format!("{}/origin", repo.root_path().display());
     repo.commit("Initial commit");
     repo.write_project_config(r#"post-create = "echo 'test'""#);
@@ -112,6 +116,8 @@ fn test_clear_approvals_global_with_approvals(repo: TestRepo) {
 
 #[rstest]
 fn test_clear_approvals_after_clear(repo: TestRepo) {
+    // Remove origin so project_id uses directory name (matches test expectation)
+    repo.run_git(&["remote", "remove", "origin"]);
     let project_id = format!("{}/origin", repo.root_path().display());
     repo.commit("Initial commit");
     repo.write_project_config(r#"post-create = "echo 'test'""#);
@@ -138,6 +144,8 @@ fn test_clear_approvals_after_clear(repo: TestRepo) {
 
 #[rstest]
 fn test_clear_approvals_multiple_approvals(repo: TestRepo) {
+    // Remove origin so project_id uses directory name (matches test expectation)
+    repo.run_git(&["remote", "remove", "origin"]);
     repo.write_project_config(
         r#"
 post-create = "echo 'first'"

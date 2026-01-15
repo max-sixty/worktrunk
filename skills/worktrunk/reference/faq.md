@@ -138,9 +138,9 @@ If shell integration isn't working (auto-cd not happening, completions missing, 
 1. Install the [Worktrunk plugin](https://worktrunk.dev/claude-code/) in Claude Code
 2. Ask Claude to debug the Worktrunk shell integration
 
-Claude will run `wt config show`, inspect your shell config files, and identify the issue.
+Claude will run `wt config show`, inspect the shell config files, and identify the issue.
 
-If Claude can't fix it, please [open an issue](https://github.com/max-sixty/worktrunk/issues/new?title=Shell%20setup%20issue&body=%23%23%20Shell%20and%20OS%0A%0A-%20Shell%3A%20%0A-%20OS%3A%20%0A%0A%23%23%20Output%20of%20%60wt%20config%20show%60%0A%0A%60%60%60%0A%0A%60%60%60%0A%0A%23%23%20What%20Claude%20found%20%28if%20available%29%0A%0A) with the output of `wt config show`, your shell (bash/zsh/fish), and OS. (And even if it fixes the problem, feel free to open an issue: non-standard success cases are useful for ensuring Worktrunk is easy to set up for others.)
+If Claude can't fix it, please [open an issue](https://github.com/max-sixty/worktrunk/issues/new?title=Shell%20setup%20issue&body=%23%23%20Shell%20and%20OS%0A%0A-%20Shell%3A%20%0A-%20OS%3A%20%0A%0A%23%23%20Output%20of%20%60wt%20config%20show%60%0A%0A%60%60%60%0A%0A%60%60%60%0A%0A%23%23%20What%20Claude%20found%20%28if%20available%29%0A%0A) with the output of `wt config show`, the shell (bash/zsh/fish), and OS. (And even if it fixes the problem, feel free to open an issue: non-standard success cases are useful for ensuring Worktrunk is easy to set up for others.)
 
 ## What files does Worktrunk create?
 
@@ -175,7 +175,7 @@ Created by `wt config shell install`:
 
 ### 4. Metadata in `.git/` (automatic)
 
-Worktrunk stores small amounts of cache and log data in your repository's `.git/` directory:
+Worktrunk stores small amounts of cache and log data in the repository's `.git/` directory:
 
 | Location | Purpose | Created by |
 |----------|---------|------------|

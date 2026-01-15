@@ -61,11 +61,12 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS]
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
           Show debug info (-v), or also write diagnostic report (-vv)
 
-Show all worktrees with their status. The table includes uncommitted changes, divergence from the default branch and remote, and optional CI status.
+Shows uncommitted changes, divergence from the default branch and remote, and optional CI status.
+
 
 The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With [2m--full[0m, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
 
-[32mExamples
+[1m[32mExamples
 
 List all worktrees:
 
@@ -83,7 +84,7 @@ Output as JSON for scripting:
 
   [2m$ wt list --format=json
 
-[32mColumns
+[1m[32mColumns
 
    Column                                Shows                               
    ─────── ───────────────────────────────────────────────────────────────── 
@@ -102,7 +103,7 @@ Output as JSON for scripting:
 
 Note: [2mmain↕[0m and [2mmain…±[0m refer to the default branch (header label stays [2mmain[0m for compactness). [2mmain…±[0m uses a merge-base (three-dot) diff.
 
-[1mCI status
+[32mCI status
 
 The CI column shows GitHub/GitLab pipeline status:
 
@@ -118,7 +119,7 @@ The CI column shows GitHub/GitLab pipeline status:
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank. Results are cached for 30-60 seconds; use [2mwt config state[0m to view or clear.
 
-[32mStatus symbols
+[1m[32mStatus symbols
 
 The Status column has multiple subcolumns. Within each, only the first matching symbol is shown (listed in priority order):
 
@@ -149,7 +150,9 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 
 Rows are dimmed when safe to delete ([2m_[0m same commit with clean working tree or [2m⊂[0m content integrated).
 
-[32mJSON output
+[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+[1m[32mJSON output
 
 Query structured data with [2m--format=json[0m:
 
@@ -201,7 +204,7 @@ Query structured data with [2m--format=json[0m:
    statusline         string      Pre-formatted status with ANSI colors                               
    symbols            string      Raw status symbols without colors (e.g., "!?↓")                     
 
-[1mcommit object
+[32mCommit object
 
      Field    Type          Description         
    ───────── ────── ─────────────────────────── 
@@ -210,7 +213,7 @@ Query structured data with [2m--format=json[0m:
    message   string Commit message (first line) 
    timestamp number Unix timestamp              
 
-[1mworking_tree object
+[32mworking_tree object
 
      Field    Type                 Description               
    ───────── ─────── ─────────────────────────────────────── 
@@ -221,7 +224,7 @@ Query structured data with [2m--format=json[0m:
    deleted   boolean Has deleted files                       
    diff      object  Lines changed vs HEAD: {added, deleted} 
 
-[1mmain object
+[32mmain object
 
    Field   Type                       Description                      
    ────── ────── ───────────────────────────────────────────────────── 
@@ -229,7 +232,7 @@ Query structured data with [2m--format=json[0m:
    behind number Commits behind the default branch                     
    diff   object Lines changed vs the default branch: {added, deleted} 
 
-[1mremote object
+[32mremote object
 
    Field   Type          Description          
    ────── ────── ──────────────────────────── 
@@ -238,7 +241,7 @@ Query structured data with [2m--format=json[0m:
    ahead  number Commits ahead of remote      
    behind number Commits behind remote        
 
-[1mworktree object
+[32mworktree object
 
     Field    Type                                Description                              
    ──────── ─────── ───────────────────────────────────────────────────────────────────── 
@@ -246,7 +249,7 @@ Query structured data with [2m--format=json[0m:
    reason   string  Reason for locked/prunable state                                      
    detached boolean HEAD is detached                                                      
 
-[1mci object
+[32mci object
 
    Field   Type                      Description                    
    ────── ─────── ───────────────────────────────────────────────── 
@@ -255,22 +258,22 @@ Query structured data with [2m--format=json[0m:
    stale  boolean Local HEAD differs from remote (unpushed changes) 
    url    string  URL to the PR/MR page                             
 
-[1mmain_state values
+[32mmain_state values
 
 These values describe relation to the default branch.
 
 [2m"is_main"[0m [2m"would_conflict"[0m [2m"empty"[0m [2m"same_commit"[0m [2m"integrated"[0m [2m"diverged"[0m [2m"ahead"[0m [2m"behind"
 
-[1mintegration_reason values
+[32mintegration_reason values
 
 When [2mmain_state == "integrated"[0m: [2m"ancestor"[0m [2m"trees_match"[0m [2m"no_added_changes"[0m [2m"merge_adds_nothing"
 
-[1mci.status values
+[32mci.status values
 
 [2m"passed"[0m [2m"running"[0m [2m"failed"[0m [2m"conflicts"[0m [2m"no-ci"[0m [2m"error"
 
 Missing a field that would be generally useful? Open an issue at https://github.com/max-sixty/worktrunk.
 
-[32mSee also
+[1m[32mSee also
 
 - [2mwt select[0m — Interactive worktree picker with live preview

@@ -8,7 +8,9 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt switch --help-page` — edit cli.rs to update -->
 
-Change directory to a worktree, creating one if needed.
+Switch to a worktree. Creates one if needed.
+
+Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
 
 <figure class="demo">
 <picture>
@@ -16,9 +18,6 @@ Change directory to a worktree, creating one if needed.
   <img src="/assets/docs/light/wt-switch.gif" alt="wt switch demo" width="1600" height="900">
 </picture>
 </figure>
-
-Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
-
 ## Examples
 
 ```bash
@@ -83,6 +82,8 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 
 {% terminal() %}
 wt switch - Switch to a worktree
+
+Creates one if needed.
 
 Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;BRANCH&gt;</span> <b><span class=c>[--</span></b> <span class=c>&lt;EXECUTE_ARGS&gt;...</span><b><span class=c>]</span></b>
 

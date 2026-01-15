@@ -22,6 +22,7 @@ info:
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -31,11 +32,11 @@ success: true
 exit_code: 0
 ----- stdout -----
   [1mBranch[0m       [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m     [1mmain…±[0m  [1mRemote⇅[0m  [1mCI[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
-@ feature-api  [36m+[39m   [2m↕[22m[2m⇡[22m     [32m+54[0m   [31m-5[0m   [32m↑4[0m  [2m[31m↓1[0m  [32m+234[0m  [31m-24[0m   [32m⇡3[0m      [2m[34m●[0m   [2mec97decc[0m  [2m30m[0m   [2mAdd API tests
-^ main             [2m^[22m[2m⇅[22m                                    [32m⇡1[0m  [2m[31m⇣1[0m  [32m●[0m   [2m6088adb3[0m  [2m4d[0m    [2mMerge fix-au…
-+ fix-auth         [2m↕[22m[2m|[22m                [32m↑2[0m  [2m[31m↓1[0m   [32m+25[0m  [31m-11[0m     [2m|[0m     [32m●[0m   [2m127407de[0m  [2m5h[0m    [2mAdd secure t…
-  exp             [2m/[22m[2m↕[22m                 [32m↑2[0m  [2m[31m↓1[0m  [32m+137[0m                    [2m99e114de[0m  [2m2d[0m    [2mAdd GraphQL…
-  wip             [2m/[22m[2m↕[22m                 [32m↑1[0m  [2m[31m↓1[0m   [32m+33[0m                    [2md62fd0e8[0m  [2m3d[0m    [2mStart API do…
+@ feature-api  [36m+[39m   [2m↕[22m[2m⇡[22m     [32m+54[0m   [31m-5[0m   [32m↑4[0m  [2m[31m↓1[0m  [32m+234[0m  [31m-24[0m   [32m⇡3[0m      [2m[34m●[0m   [2m6814f02a[0m  [2m30m[0m   [2mAdd API tests
+^ main             [2m^[22m[2m⇅[22m                                    [32m⇡1[0m  [2m[31m⇣1[0m  [32m●[0m   [2m41ee0834[0m  [2m4d[0m    [2mMerge fix-au…
++ fix-auth         [2m↕[22m[2m|[22m                [32m↑2[0m  [2m[31m↓1[0m   [32m+25[0m  [31m-11[0m     [2m|[0m     [32m●[0m   [2mb772e68b[0m  [2m5h[0m    [2mAdd secure t…
+  exp             [2m/[22m[2m↕[22m                 [32m↑2[0m  [2m[31m↓1[0m  [32m+137[0m                    [2m96379229[0m  [2m2d[0m    [2mAdd GraphQL…
+  wip             [2m/[22m[2m↕[22m                 [32m↑1[0m  [2m[31m↓1[0m   [32m+33[0m                    [2mb40716dc[0m  [2m3d[0m    [2mStart API do…
 
 [2m○[22m [2mShowing 3 worktrees, 2 branches, 1 with changes, 4 ahead, 1 column hidden
 

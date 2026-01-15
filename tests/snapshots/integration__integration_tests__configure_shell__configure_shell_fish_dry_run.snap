@@ -1,0 +1,58 @@
+---
+source: tests/integration_tests/configure_shell.rs
+info:
+  program: wt
+  args:
+    - config
+    - shell
+    - install
+    - fish
+    - "--dry-run"
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    PATH: "[PATH]"
+    RUST_LOG: warn
+    SHELL: /bin/fish
+    SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+[2m○[22m Will create shell extension for [1mfish[0m @ [1m~/.config/fish/functions/wt.fish
+[107m [0m [2m# worktrunk shell integration for fish[0m[2m
+[107m [0m [2m# Sources full integration from binary on first use.[0m[2m
+[107m [0m [2m# Docs: https://worktrunk.dev/docs/shell-integration[0m[2m
+[107m [0m [2m# Check: wt config show | Uninstall: wt config shell uninstall[0m[2m
+[107m [0m [2m
+[107m [0m [2m[0m[2m[35mfunction[0m[2m wt
+[107m [0m [2m    [0m[2m[34mcommand[0m[2m wt config shell init fish [0m[2m[36m|[0m[2m [0m[2m[34msource[0m[2m
+[107m [0m [2m    # Check both command exit code ($pipestatus[1]) and source exit code ($pipestatus[2])[0m[2m
+[107m [0m [2m    # If source fails, the function isn't replaced and we'd infinite-loop calling ourselves[0m[2m
+[107m [0m [2m    [0m[2m[34mset[0m[2m [0m[2m[36m-l[0m[2m wt_status [0m[2m[36m$[0m[2mpipestatus[1]
+[107m [0m [2m    [0m[2m[34mset[0m[2m [0m[2m[36m-l[0m[2m source_status [0m[2m[36m$[0m[2mpipestatus[2]
+[107m [0m [2m    [0m[2m[34mtest[0m[2m [0m[2m[36m$[0m[2mwt_status [0m[2m[36m-eq[0m[2m 0; [0m[2m[34mor[0m[2m return [0m[2m[36m$[0m[2mwt_status
+[107m [0m [2m    [0m[2m[34mtest[0m[2m [0m[2m[36m$[0m[2msource_status [0m[2m[36m-eq[0m[2m 0; [0m[2m[34mor[0m[2m return [0m[2m[36m$[0m[2msource_status
+[107m [0m [2m    [0m[2m[34mwt[0m[2m [0m[2m[36m$[0m[2margv
+[107m [0m [2m[0m[2m[34mend[0m[2m
+
+[2m○[22m Will create completions for [1mfish[0m @ [1m~/.config/fish/completions/wt.fish
+[107m [0m [2m# worktrunk completions for fish[0m[2m
+[107m [0m [2m[0m[2m[34mcomplete[0m[2m [0m[2m[36m--keep-order[0m[2m [0m[2m[36m--exclusive[0m[2m [0m[2m[36m--command[0m[2m wt [0m[2m[36m--arguments[0m[2m [0m[2m[32m"(test -n /"/$WORKTRUNK_BIN/"; or set -l WORKTRUNK_BIN (type -P wt 2>/dev/null); and COMPLETE=fish /$WORKTRUNK_BIN -- (commandline --current-process --tokenize --cut-at-cursor) (commandline --current-token))"[0m[2m

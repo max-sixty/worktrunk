@@ -87,17 +87,17 @@ pub fn build_hook_context(
     map.insert("repo_root".into(), repo_path);
     map.insert("worktree".into(), worktree);
 
-    // Default branch and main worktree path
+    // Default branch
     if let Some(default_branch) = ctx.repo.default_branch() {
-        map.insert("default_branch".into(), default_branch.clone());
+        map.insert("default_branch".into(), default_branch);
+    }
 
-        // main_worktree_path: path to the worktree on the default branch
-        if let Ok(Some(path)) = ctx.repo.worktree_for_branch(&default_branch) {
-            map.insert(
-                "main_worktree_path".into(),
-                to_posix_path(&path.to_string_lossy()),
-            );
-        }
+    // Primary worktree path (where established files live)
+    if let Ok(Some(path)) = ctx.repo.primary_worktree() {
+        let path_str = to_posix_path(&path.to_string_lossy());
+        map.insert("primary_worktree_path".into(), path_str.clone());
+        // Deprecated alias
+        map.insert("main_worktree_path".into(), path_str);
     }
 
     if let Ok(commit) = ctx.repo.run_command(&["rev-parse", "HEAD"]) {
@@ -154,7 +154,7 @@ fn expand_commands(
     let mut result = Vec::new();
 
     for cmd in commands {
-        let expanded_str = expand_template(&cmd.template, &vars, true).map_err(|e| {
+        let expanded_str = expand_template(&cmd.template, &vars, true, ctx.repo).map_err(|e| {
             anyhow::anyhow!(
                 "Failed to expand command template '{}': {}",
                 cmd.template,

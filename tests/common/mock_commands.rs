@@ -153,21 +153,27 @@ impl MockConfig {
     }
 }
 
-/// Copy the mock-stub binary to bin_dir with the given name.
+/// Create mock binary in bin_dir with the given name.
+/// Uses symlinks on Unix (instant, works across filesystems).
+/// Uses hard links on Windows (symlinks require admin privileges).
 pub fn copy_mock_binary(bin_dir: &Path, name: &str) {
     let stub = mock_stub_binary();
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         let dest = bin_dir.join(name);
-        fs::copy(&stub, &dest).expect("failed to copy mock-stub binary");
-        fs::set_permissions(&dest, fs::Permissions::from_mode(0o755)).unwrap();
+        // Remove existing (config may have changed)
+        let _ = fs::remove_file(&dest);
+        std::os::unix::fs::symlink(&stub, &dest).expect("failed to symlink mock-stub binary");
     }
 
     #[cfg(windows)]
     {
         let dest = bin_dir.join(format!("{}.exe", name));
+        // Remove existing (config may have changed)
+        let _ = fs::remove_file(&dest);
+        // Copy on Windows - hard links fail across drives (common on CI),
+        // and symlinks require admin privileges
         fs::copy(&stub, &dest).expect("failed to copy mock-stub.exe");
     }
 }

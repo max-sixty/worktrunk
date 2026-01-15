@@ -17,7 +17,7 @@ use worktrunk::git::{BranchCategory, HookType, Repository};
 const DEPRECATED_ARGS: &[&str] = &["--no-background"];
 
 /// Handle shell-initiated completion requests via `COMPLETE=$SHELL wt`
-pub fn maybe_handle_env_completion() -> bool {
+pub(crate) fn maybe_handle_env_completion() -> bool {
     let Some(shell_name) = std::env::var_os("COMPLETE") else {
         return false;
     };
@@ -152,7 +152,7 @@ pub fn maybe_handle_env_completion() -> bool {
 }
 
 /// Branch completion without additional context filtering (e.g., --base, merge target).
-pub fn branch_value_completer() -> ArgValueCompleter {
+pub(crate) fn branch_value_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
         suppress_with_create: false,
         exclude_remote_only: false,
@@ -162,7 +162,7 @@ pub fn branch_value_completer() -> ArgValueCompleter {
 
 /// Branch completion for positional arguments (switch, select).
 /// Suppresses completions when --create flag is present.
-pub fn worktree_branch_completer() -> ArgValueCompleter {
+pub(crate) fn worktree_branch_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
         suppress_with_create: true,
         exclude_remote_only: false,
@@ -171,7 +171,7 @@ pub fn worktree_branch_completer() -> ArgValueCompleter {
 }
 
 /// Branch completion for remove command - excludes remote-only branches.
-pub fn local_branches_completer() -> ArgValueCompleter {
+pub(crate) fn local_branches_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
         suppress_with_create: false,
         exclude_remote_only: true,
@@ -180,7 +180,7 @@ pub fn local_branches_completer() -> ArgValueCompleter {
 }
 
 /// Branch completion for commands that only operate on worktrees (e.g., copy-ignored).
-pub fn worktree_only_completer() -> ArgValueCompleter {
+pub(crate) fn worktree_only_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
         suppress_with_create: false,
         exclude_remote_only: false,
@@ -190,7 +190,7 @@ pub fn worktree_only_completer() -> ArgValueCompleter {
 
 /// Hook command name completion for `wt step <hook-type> <name>`.
 /// Completes with command names from the project config for the hook type being invoked.
-pub fn hook_command_name_completer() -> ArgValueCompleter {
+pub(crate) fn hook_command_name_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(HookCommandCompleter)
 }
 

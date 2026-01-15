@@ -35,7 +35,7 @@ impl CommandEnv {
         let branch = repo.require_current_branch(action)?;
         let config = WorktrunkConfig::load().context("Failed to load config")?;
         let repo_root = repo
-            .worktree_base()
+            .repo_path()
             .context("Failed to determine repository root")?;
 
         Ok(Self {
@@ -61,7 +61,7 @@ impl CommandEnv {
             .context("Failed to determine current branch")?;
         let config = WorktrunkConfig::load().context("Failed to load config")?;
         let repo_root = repo
-            .worktree_base()
+            .repo_path()
             .context("Failed to determine repository root")?;
 
         Ok(Self {

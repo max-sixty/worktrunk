@@ -1,6 +1,6 @@
 # wt remove
 
-Removes worktrees and their branches (if merged), returning to the main worktree. Defaults to removing the current worktree.
+Remove worktree; delete branch if merged. For finished feature branches. Removes the current worktree by default.
 
 ## Examples
 
@@ -69,6 +69,8 @@ Removal runs in the background by default (returns immediately). Logs are writte
 ## Command reference
 
 wt remove - Remove worktree; delete branch if merged
+
+For finished feature branches. Removes the current worktree by default.
 
 Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <span class=c>[BRANCHES]...</span>
 

@@ -326,7 +326,11 @@ fn normalize_output(output: &str) -> String {
 }
 
 #[rstest]
-fn test_select_abort_with_escape(repo: TestRepo) {
+fn test_select_abort_with_escape(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so snapshots don't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+
     let env_vars = repo.test_env_vars();
     let (raw_output, exit_code) = exec_in_pty_with_input(
         get_cargo_bin("wt").to_str().unwrap(),
@@ -345,6 +349,10 @@ fn test_select_abort_with_escape(repo: TestRepo) {
 
 #[rstest]
 fn test_select_with_multiple_worktrees(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so snapshots don't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.add_worktree("feature-one");
     repo.add_worktree("feature-two");
 
@@ -366,6 +374,10 @@ fn test_select_with_multiple_worktrees(mut repo: TestRepo) {
 
 #[rstest]
 fn test_select_with_branches(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so snapshots don't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.add_worktree("active-worktree");
     // Create a branch without a worktree
     let output = repo
@@ -393,6 +405,10 @@ fn test_select_with_branches(mut repo: TestRepo) {
 
 #[rstest]
 fn test_select_preview_panel_uncommitted(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so snapshots don't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+
     let feature_path = repo.add_worktree("feature");
 
     // First, create and commit a file so we have something to modify
@@ -447,6 +463,10 @@ fn test_select_preview_panel_uncommitted(mut repo: TestRepo) {
 
 #[rstest]
 fn test_select_preview_panel_log(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so snapshots don't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+
     let feature_path = repo.add_worktree("feature");
 
     // Make several commits in the feature worktree
@@ -500,6 +520,10 @@ fn test_select_preview_panel_log(mut repo: TestRepo) {
 
 #[rstest]
 fn test_select_preview_panel_main_diff(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so snapshots don't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+
     let feature_path = repo.add_worktree("feature");
 
     // Make commits in the feature worktree that differ from main

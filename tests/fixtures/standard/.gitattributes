@@ -1,0 +1,7 @@
+# Ensure git internal files always use LF line endings
+# These files are part of the test fixture and must not have CRLF
+**/packed-refs text eol=lf
+**/HEAD text eol=lf
+**/config text eol=lf
+**/_git text eol=lf
+**/gitdir text eol=lf

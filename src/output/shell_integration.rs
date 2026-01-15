@@ -88,7 +88,9 @@ fn shell_integration_unsupported_shell(shell_path: &str) -> String {
 
 /// Warning message when running as git subcommand (cd cannot work).
 pub(crate) fn git_subcommand_warning() -> String {
-    cformat!("Use <bright-black>git-wt</> directly (via shell function) for automatic cd")
+    cformat!(
+        "For automatic cd, invoke directly (with the <bright-black>-</>): <bright-black>git-wt</>"
+    )
 }
 
 /// Compute the shell warning reason for display in messages.
@@ -123,15 +125,20 @@ fn compute_shell_warning_reason_inner(
                 .and_then(|s| s.to_str())
                 .unwrap_or(invoked);
 
-            // Check if the only difference is .exe suffix (case-insensitive for Windows)
-            let invoked_lower = invoked_name.to_lowercase();
-            let wraps_lower = wraps.to_lowercase();
-            if invoked_lower == format!("{wraps_lower}.exe") {
-                // Windows .exe mismatch - give targeted advice
-                cformat!(
-                    "ran <bold>{invoked_name}</>; use <bold>{wraps}</> (without .exe) for auto-cd"
-                )
-            } else if invoked_name == wraps {
+            // Windows: check if the only difference is .exe suffix (case-insensitive)
+            #[cfg(windows)]
+            {
+                let invoked_lower = invoked_name.to_lowercase();
+                let wraps_lower = wraps.to_lowercase();
+                if invoked_lower == format!("{wraps_lower}.exe") {
+                    // Windows .exe mismatch - give targeted advice
+                    return cformat!(
+                        "ran <bold>{invoked_name}</>; use <bold>{wraps}</> (without .exe) for auto-cd"
+                    );
+                }
+            }
+
+            if invoked_name == wraps {
                 // Filename matches but full path differs - show full path for clarity
                 // (e.g., "./target/debug/wt" vs "wt" - the path IS the useful info)
                 cformat!("ran <bold>{invoked}</>; shell integration wraps <bold>{wraps}</>")
@@ -244,6 +251,21 @@ pub fn print_shell_install_result(
                 }
             }
         }
+    }
+
+    // Show legacy file cleanups (migration from conf.d to functions)
+    for legacy_path in &scan_result.legacy_cleanups {
+        let old_path = format_path_for_display(legacy_path);
+        // Find the new canonical path from the configured results
+        let new_path = scan_result
+            .configured
+            .iter()
+            .find(|r| r.shell == Shell::Fish)
+            .map(|r| format_path_for_display(&r.path))
+            .unwrap_or_else(|| "~/.config/fish/functions/".to_string());
+        super::print(info_message(cformat!(
+            "Removed <bold>{old_path}</> (deprecated; now using <bold>{new_path}</>)"
+        )))?;
     }
 
     // Show skipped shells
@@ -409,7 +431,7 @@ mod tests {
     fn test_git_subcommand_warning() {
         let warning = git_subcommand_warning();
         assert!(warning.contains("git-wt"));
-        assert!(warning.contains("shell function"));
+        assert!(warning.contains("with the"));
     }
 
     #[test]

@@ -517,8 +517,34 @@ fn test_list_primary_on_different_branch(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
+/// NOTE: This test is used for doc generation (claude-code.md). It removes fixture
+/// worktrees to produce clean output.
+/// TODO: Consider extracting fixture cleanup into a helper function shared with
+/// setup_readme_example_repo.
 #[rstest]
 fn test_list_with_user_marker(mut repo: TestRepo) {
+    // Remove fixture worktrees for clean doc output (used by claude-code.md)
+    for branch in &["feature-a", "feature-b", "feature-c"] {
+        let worktree_path = repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{}", branch));
+        if worktree_path.exists() {
+            let _ = repo
+                .git_command()
+                .args([
+                    "worktree",
+                    "remove",
+                    "--force",
+                    worktree_path.to_str().unwrap(),
+                ])
+                .output();
+        }
+        // Delete the branch after removing the worktree
+        let _ = repo.git_command().args(["branch", "-D", branch]).output();
+    }
+
     repo.commit_with_age("Initial commit", DAY);
 
     // Branch ahead of main with commits and user marker 🤖
@@ -691,7 +717,34 @@ fn test_list_user_marker_with_special_characters(mut repo: TestRepo) {
 ///   - `⎇` branch without worktree
 ///
 /// Returns feature_api_path for running commands from feature-api.
+///
+/// NOTE: This function is used for doc generation. It removes fixture worktrees
+/// to produce clean output for README/docs. If you need the fixture worktrees,
+/// use a different setup function.
 fn setup_readme_example_repo(repo: &mut TestRepo) -> std::path::PathBuf {
+    // Remove fixture worktrees to produce clean doc output
+    // These doc tests are used to generate README and website examples
+    for branch in &["feature-a", "feature-b", "feature-c"] {
+        let worktree_path = repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{}", branch));
+        if worktree_path.exists() {
+            let _ = repo
+                .git_command()
+                .args([
+                    "worktree",
+                    "remove",
+                    "--force",
+                    worktree_path.to_str().unwrap(),
+                ])
+                .output();
+        }
+        // Delete the branch after removing the worktree
+        let _ = repo.git_command().args(["branch", "-D", branch]).output();
+    }
+
     // === Set up main branch with initial codebase ===
     // Main has a working API with security issues that fix-auth will harden
     std::fs::write(

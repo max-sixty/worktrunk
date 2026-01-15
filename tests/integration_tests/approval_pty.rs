@@ -157,6 +157,9 @@ fn test_env_vars_with_shell(repo: &TestRepo) -> Vec<(String, String)> {
 
 #[rstest]
 fn test_approval_prompt_accept(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
@@ -178,6 +181,9 @@ fn test_approval_prompt_accept(repo: TestRepo) {
 
 #[rstest]
 fn test_approval_prompt_decline(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
@@ -199,6 +205,9 @@ fn test_approval_prompt_decline(repo: TestRepo) {
 
 #[rstest]
 fn test_approval_prompt_multiple_commands(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"
@@ -228,6 +237,9 @@ third = "echo 'Third command'"
 /// See test_permission_error_prevents_save in approval_save.rs for details.
 #[rstest]
 fn test_approval_prompt_permission_error(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
@@ -290,6 +302,9 @@ fn test_approval_prompt_permission_error(repo: TestRepo) {
 
 #[rstest]
 fn test_approval_prompt_named_commands(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(
         r#"[post-create]
 install = "echo 'Installing dependencies...'"
@@ -329,6 +344,9 @@ test = "echo 'Running tests...'"
 
 #[rstest]
 fn test_approval_prompt_mixed_approved_unapproved_accept(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"
@@ -339,12 +357,11 @@ third = "echo 'Third command'"
     repo.commit("Add config");
 
     // Pre-approve the second command
-    let project_id = repo.root_path().file_name().unwrap().to_str().unwrap();
     repo.write_test_config(&format!(
         r#"[projects."{}"]
 approved-commands = ["echo 'Second command'"]
 "#,
-        project_id
+        repo.project_id()
     ));
 
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
@@ -388,6 +405,9 @@ approved-commands = ["echo 'Second command'"]
 
 #[rstest]
 fn test_approval_prompt_mixed_approved_unapproved_decline(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"
@@ -398,12 +418,11 @@ third = "echo 'Third command'"
     repo.commit("Add config");
 
     // Pre-approve the second command
-    let project_id = repo.root_path().file_name().unwrap().to_str().unwrap();
     repo.write_test_config(&format!(
         r#"[projects."{}"]
 approved-commands = ["echo 'Second command'"]
 "#,
-        project_id
+        repo.project_id()
     ));
 
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
@@ -449,4 +468,46 @@ approved-commands = ["echo 'Second command'"]
         "approval_prompt_mixed_approved_unapproved_decline",
         normalized
     );
+}
+
+#[rstest]
+fn test_approval_prompt_remove_decline(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Create a worktree to remove
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "to-remove", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "Initial switch should succeed");
+
+    // Add pre-remove hook
+    repo.write_project_config(r#"pre-remove = "echo 'pre-remove hook'""#);
+    repo.commit("Add pre-remove config");
+
+    // Configure shell integration
+    repo.configure_shell_integration();
+    let env_vars = test_env_vars_with_shell(&repo);
+
+    // Decline the approval prompt
+    let (output, exit_code) = exec_in_pty_with_input(
+        get_cargo_bin("wt").to_str().unwrap(),
+        &["remove", "to-remove"],
+        repo.root_path(),
+        &env_vars,
+        "n\n",
+    );
+
+    let normalized = normalize_output(&output);
+    assert_eq!(
+        exit_code, 0,
+        "Remove should succeed even when hooks declined"
+    );
+    assert!(
+        normalized.contains("Commands declined"),
+        "Should show 'Commands declined' message"
+    );
+    assert_snapshot!("approval_prompt_remove_decline", normalized);
 }

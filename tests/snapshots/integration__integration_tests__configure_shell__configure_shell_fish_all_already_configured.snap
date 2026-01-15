@@ -11,7 +11,7 @@ info:
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -25,6 +25,7 @@ info:
     RUST_LOG: warn
     SHELL: /bin/fish
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -35,7 +36,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Already configured shell extension for [1mfish[22m @ [1m~/.config/fish/conf.d/wt.fish[22m
+[2m○[22m Already configured shell extension for [1mfish[22m @ [1m~/.config/fish/functions/wt.fish[22m
 [32m✓[39m [32mCreated completions for [1mfish[22m @ [1m~/.config/fish/completions/wt.fish[22m[39m
 
 [32m✓[39m [32mConfigured 1 shell[39m
