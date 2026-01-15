@@ -1,15 +1,14 @@
 use crate::common::{TEST_EPOCH, TestRepo, repo, wt_command};
 use insta::assert_snapshot;
-use regex::Regex;
 use rstest::rstest;
 use std::process::Command;
 
-/// Normalize LOG FILES path in output for stable snapshots (temp dir varies per test)
-fn normalize_log_path(output: &str) -> String {
-    // Match "LOG FILES" followed by ANSI codes, spaces, and "@ " then the path
-    // Pattern: LOG FILES + optional ANSI reset + spaces + @ + path until newline
-    let re = Regex::new(r"(LOG FILES\x1b\[39m\s+@ )[^\n]+").unwrap();
-    re.replace_all(output, "${1}<PATH>").to_string()
+/// Settings for `wt config state get` snapshots (normalizes log paths)
+fn state_get_settings() -> insta::Settings {
+    let mut settings = insta::Settings::clone_current();
+    // LOG FILES path varies per test (temp dir), normalize for stable snapshots
+    settings.add_filter(r"(LOG FILES\x1b\[39m\s+@ )[^\n]+", "${1}<PATH>");
+    settings
 }
 
 /// Write CI status to the file-based cache at .git/wt-cache/ci-status/<branch>.json
@@ -652,7 +651,8 @@ fn test_state_clear_all_nothing_to_clear(repo: TestRepo) {
 fn test_state_get_empty(repo: TestRepo) {
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(normalize_log_path(&String::from_utf8_lossy(&output.stderr)), @"
+    state_get_settings().bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
     [36mDEFAULT BRANCH[39m
     [107m [0m main
 
@@ -671,6 +671,7 @@ fn test_state_get_empty(repo: TestRepo) {
     [36mLOG FILES[39m  @ <PATH>
     [107m [0m (none)
     ");
+    });
 }
 
 #[rstest]
@@ -700,7 +701,9 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
 
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(normalize_log_path(&String::from_utf8_lossy(&output.stderr)));
+    state_get_settings().bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr));
+    });
 }
 
 #[rstest]
@@ -747,7 +750,9 @@ fn test_state_get_comprehensive(repo: TestRepo) {
 
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(normalize_log_path(&String::from_utf8_lossy(&output.stderr)));
+    state_get_settings().bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr));
+    });
 }
 
 #[rstest]

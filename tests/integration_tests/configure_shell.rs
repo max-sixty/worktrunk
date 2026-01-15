@@ -1532,7 +1532,9 @@ fn test_uninstall_shell_dry_run_multiple(repo: TestRepo, temp_home: TempDir) {
 // PTY-based tests for interactive install preview
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {
-    use crate::common::{TestRepo, configure_pty_command, open_pty, repo, temp_home};
+    use crate::common::{
+        TestRepo, add_pty_filters, configure_pty_command, open_pty, repo, temp_home,
+    };
     use insta::assert_snapshot;
     use insta_cmd::get_cargo_bin;
     use portable_pty::CommandBuilder;
@@ -1583,39 +1585,27 @@ mod pty_tests {
         (buf, exit_code)
     }
 
-    /// Normalize output for snapshot testing
-    fn normalize_output(output: &str, temp_home: &TempDir) -> String {
-        // PTYs use \r\n line endings, normalize to \n
-        let output = output.replace("\r\n", "\n");
+    /// Create insta settings for install PTY tests.
+    fn install_pty_settings(temp_home: &TempDir) -> insta::Settings {
+        let mut settings = insta::Settings::clone_current();
 
-        // Remove ^D control sequence that appears on macOS
-        let output = regex::Regex::new(r"\^D\x08+")
-            .unwrap()
-            .replace_all(&output, "");
+        // Add PTY filters (CRLF, ^D, leading ANSI resets)
+        add_pty_filters(&mut settings);
 
         // Remove echoed user input at end of prompt line (PTY echo timing varies).
-        // The prompt ends with [y/N/?][22m  and then the echoed input appears.
-        // Normalize to just the prompt without echoed input.
-        let output = regex::Regex::new(r"(\[y/N/\?\]\x1b\[22m) [yn]")
-            .unwrap()
-            .replace_all(&output, "$1 ");
+        // The prompt ends with [y/N/?][22m and then the echoed input appears.
+        settings.add_filter(r"(\[y/N/\?\]\x1b\[22m) [yn]", "$1 ");
 
         // Remove standalone echoed input lines (just y or n on their own line)
-        // that appear due to PTY timing differences
-        let output = regex::Regex::new(r"^[yn]\n").unwrap().replace(&output, "");
+        settings.add_filter(r"^[yn]\n", "");
 
-        // Normalize blank lines caused by PTY echo timing variations.
-        // The newline from user input can appear at different positions relative
-        // to the prompt text depending on the system. Collapse consecutive newlines
-        // to a single newline, then strip any leading newline.
-        let output = regex::Regex::new(r"\n{2,}")
-            .unwrap()
-            .replace_all(&output, "\n");
-        let output = output.trim_start_matches('\n');
+        // Collapse consecutive newlines (PTY timing variations)
+        settings.add_filter(r"\n{2,}", "\n");
 
         // Replace temp home path with ~/
-        let home_path = temp_home.path().to_string_lossy();
-        output.replace(&*home_path, "~").to_string()
+        settings.add_filter(&regex::escape(&temp_home.path().to_string_lossy()), "~");
+
+        settings
     }
 
     /// Test that `wt config shell install` shows preview with gutter-formatted config lines
@@ -1626,10 +1616,11 @@ mod pty_tests {
         fs::write(&zshrc_path, "# Existing config\n").unwrap();
 
         let (output, exit_code) = exec_install_in_pty(&temp_home, &repo, "y\n");
-        let normalized = normalize_output(&output, &temp_home);
 
         assert_eq!(exit_code, 0);
-        assert_snapshot!(normalized);
+        install_pty_settings(&temp_home).bind(|| {
+            assert_snapshot!(output.trim_start_matches('\n'));
+        });
     }
 
     /// Test that declining install shows preview but doesn't modify files
@@ -1639,11 +1630,12 @@ mod pty_tests {
         fs::write(&zshrc_path, "# Existing config\n").unwrap();
 
         let (output, exit_code) = exec_install_in_pty(&temp_home, &repo, "n\n");
-        let normalized = normalize_output(&output, &temp_home);
 
         // User declined, so exit code is 1
         assert_eq!(exit_code, 1);
-        assert_snapshot!(normalized);
+        install_pty_settings(&temp_home).bind(|| {
+            assert_snapshot!(output.trim_start_matches('\n'));
+        });
 
         // Verify file was not modified
         let content = fs::read_to_string(&zshrc_path).unwrap();

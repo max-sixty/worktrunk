@@ -27,9 +27,9 @@
 #![cfg(all(unix, feature = "shell-integration-tests"))]
 
 use crate::common::TestRepo;
+use crate::common::add_pty_filters;
 use crate::common::canonicalize;
 use crate::common::wait_for_file_content;
-use crate::common::{add_pty_filters, add_pty_tmpdir_filters};
 use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
 use std::fs;
@@ -92,24 +92,14 @@ impl ShellOutput {
 
 /// Create insta settings configured for shell wrapper snapshot tests.
 ///
-/// This sets up filters for:
-/// - PTY-specific artifacts (CRLF, ^D control sequences, ANSI resets)
-/// - Temporary directory paths
-/// - Project root paths (for fixture references)
+/// Inherits path normalization filters from TestRepo (bound to scope on creation),
+/// then adds PTY-specific filters for cross-platform consistency.
 fn shell_wrapper_settings() -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
 
-    // Add common PTY filters (CRLF, ^D, leading ANSI resets)
+    // Add PTY filters (CRLF line endings, macOS ^D sequences, leading ANSI resets)
     add_pty_filters(&mut settings);
-
-    // Add temp directory path filters
-    add_pty_tmpdir_filters(&mut settings, "[TMPDIR]");
-
-    // Normalize project root paths (for fixture references like tests/fixtures/)
-    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        settings.add_filter(&regex::escape(&manifest_dir), "[PROJECT_ROOT]");
-    }
 
     settings
 }
@@ -266,11 +256,6 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
     }
 }
 
-/// Normalize line endings (CRLF -> LF)
-fn normalize_newlines(s: &str) -> String {
-    s.replace("\r\n", "\n")
-}
-
 /// Execute a command in a PTY with interactive input support
 ///
 /// This is similar to `exec_in_pty` but allows sending input during execution.
@@ -377,7 +362,7 @@ fn exec_in_pty_interactive(
 
     let status = child.wait().unwrap();
 
-    (normalize_newlines(&buf), status.exit_code() as i32)
+    (buf, status.exit_code() as i32)
 }
 
 /// Execute bash in true interactive mode by writing commands to the PTY
@@ -484,7 +469,7 @@ fn exec_bash_truly_interactive(
     // Get the captured output
     let buf = reader_thread.join().unwrap();
 
-    (normalize_newlines(&buf), status.exit_code() as i32)
+    (buf, status.exit_code() as i32)
 }
 
 /// Execute a command through a shell wrapper

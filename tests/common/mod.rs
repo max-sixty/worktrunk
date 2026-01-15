@@ -2373,36 +2373,6 @@ pub fn add_pty_filters(settings: &mut insta::Settings) {
     settings.add_filter(r"(?m)^\x1b\[0m", "");
 }
 
-/// Add filters for temporary directory paths in PTY output.
-///
-/// PTY tests create temp directories that appear in output. These paths vary
-/// per test run and need normalization.
-///
-/// # Arguments
-/// * `settings` - The insta Settings to add filters to
-/// * `placeholder` - The placeholder text to use (e.g., "[TMPDIR]", "_REPO_")
-pub fn add_pty_tmpdir_filters(settings: &mut insta::Settings, placeholder: &str) {
-    // macOS temp paths: /private/var/folders/.../T/.tmpXXX or /var/folders/.../T/.tmpXXX
-    settings.add_filter(
-        r"(?:/private)?/var/folders/[^/]+/[^/]+/T/\.tmp[^\s/'\x1b\)]+",
-        placeholder,
-    );
-
-    // Linux temp paths: /tmp/.tmpXXX
-    settings.add_filter(r"/tmp/\.tmp[^\s/'\x1b\)]+", placeholder);
-
-    // Fish shell temp paths: /tmp/.psubXXX (process substitution)
-    settings.add_filter(r"/tmp/\.psub[^\s/'\x1b\)]+", placeholder);
-
-    // Collapse duplicate placeholders that can appear with nested mktemp paths.
-    // e.g., [TMPDIR]/[TMPDIR]/foo -> [TMPDIR]/foo
-    let collapse_pattern = format!(
-        r"\[{0}](?:/?\[{0}])+",
-        regex::escape(placeholder.trim_matches(|c| c == '[' || c == ']'))
-    );
-    settings.add_filter(&collapse_pattern, placeholder);
-}
-
 /// Add filters for binary paths (target/debug/wt) in PTY output.
 ///
 /// Test binaries are run from the cargo target directory, which varies.
