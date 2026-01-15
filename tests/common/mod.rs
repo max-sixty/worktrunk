@@ -557,7 +557,8 @@ fn write_test_gitconfig(path: &Path) {
         "[user]\n\tname = Test User\n\temail = test@example.com\n\
          [advice]\n\tmergeConflict = false\n\tresolveConflict = false\n\
          [init]\n\tdefaultBranch = main\n\
-         [commit]\n\tgpgsign = false\n",
+         [commit]\n\tgpgsign = false\n\
+         [rerere]\n\tenabled = true\n",
     )
     .unwrap();
 }
