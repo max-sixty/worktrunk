@@ -102,8 +102,8 @@ pub fn handle_squash(
     let ctx = env.context(yes);
     let generator = CommitGenerator::new(&env.config.commit_generation);
 
-    // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    // Get and validate target ref (any commit-ish for merge-base calculation)
+    let target_branch = repo.require_target_ref(target)?;
 
     // Auto-stage changes before running pre-commit hooks so both beta and merge paths behave identically
     match stage_mode {
@@ -295,8 +295,8 @@ pub fn step_show_squash_prompt(
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
 
-    // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    // Get and validate target ref (any commit-ish for merge-base calculation)
+    let target_branch = repo.require_target_ref(target)?;
 
     // Get current branch
     let current_branch = repo
@@ -346,8 +346,8 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 
     let repo = Repository::current()?;
 
-    // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    // Get and validate target ref (any commit-ish for rebase)
+    let target_branch = repo.require_target_ref(target)?;
 
     // Check if already up-to-date (linear extension of target, no merge commits)
     if repo.is_rebased_onto(&target_branch)? {
@@ -608,30 +608,30 @@ fn list_ignored_entries(
 
 /// Copy a directory recursively using reflink (COW).
 ///
-/// On macOS/APFS, attempts atomic directory clone first via `clonefile()` syscall,
-/// which is O(1) regardless of file count. Falls back to file-by-file copying on
-/// other platforms or when atomic clone fails.
+/// Uses file-by-file copying with per-file reflink on all platforms. This spreads
+/// I/O operations over time rather than issuing them in a single burst.
+///
+/// ## Why not use atomic directory cloning on macOS?
+///
+/// macOS/APFS supports `clonefile()` on directories, which clones an entire tree
+/// atomically. However, Apple's documentation explicitly discourages this:
+///
+/// > "Directories can be cloned just as easily as regular files. However, when
+/// > cloning a directory hierarchy [...] the kernel must create a separate inode
+/// > for each item in the tree (even though no data is being duplicated). For
+/// > large hierarchies, this can require significant disk I/O, which defeats the
+/// > purpose of cloning a file rather than simply copying it."
+/// > — Apple Developer Documentation: Cloning Files and Directories
+/// > <https://developer.apple.com/documentation/foundation/file_system/cloning_files_and_directories>
+///
+/// In practice, atomic `clonefile()` on a Rust `target/` directory (~236K files)
+/// saturates disk I/O at ~45K ops/sec, blocking interactive processes like shell
+/// startup for several seconds. The per-file approach spreads operations over
+/// time, keeping the system responsive even though total copy time is longer.
+///
+/// Apple recommends `copyfile()` with `COPYFILE_CLONE` for directories, which
+/// internally walks the tree and clones per-file — equivalent to what we do here.
 fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
-    // On macOS, try atomic directory clone first (single syscall for entire tree)
-    // This is dramatically faster for large directories like target/ with 100k+ files
-    #[cfg(target_os = "macos")]
-    {
-        use std::io::ErrorKind;
-
-        // reflink::reflink() on macOS uses clonefile() which supports directories
-        match reflink_copy::reflink(src, dest) {
-            Ok(()) => return Ok(()),
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-                // Destination exists - fall through to file-by-file for idempotent merging
-            }
-            Err(e) => {
-                // clonefile failed (cross-device, not APFS, etc.) - fall through
-                log::debug!("Atomic directory clone failed, using file-by-file fallback: {e}");
-            }
-        }
-    }
-
-    // Fallback: file-by-file copying (works on all platforms)
     copy_dir_recursive_fallback(src, dest)
 }
 

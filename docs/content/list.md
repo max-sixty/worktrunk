@@ -143,6 +143,8 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 
 Rows are dimmed when [safe to delete](@/remove.md#branch-cleanup) (`_` same commit with clean working tree or `⊂` content integrated).
 
+---
+
 ## JSON output
 
 Query structured data with `--format=json`:

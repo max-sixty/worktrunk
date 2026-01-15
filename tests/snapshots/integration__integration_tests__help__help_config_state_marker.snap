@@ -47,7 +47,7 @@ Usage: [1m[36mwt config state marker[0m [36m[OPTIONS][0m [36m[COMMAND]
 
 Custom status text or emoji shown in the [2mwt list[0m Status column.
 
-[32mDisplay
+[1m[32mDisplay
 
 Markers appear at the start of the Status column:
 
@@ -56,13 +56,13 @@ Markers appear at the start of the Status column:
   [2mfeature   🚧↑      ~/code/myproject.feature
   [2mbugfix    🤖!↑⇡    ~/code/myproject.bugfix
 
-[32mUse cases
+[1m[32mUse cases
 
 - [1mWork status[0m — [2m🚧[0m WIP, [2m✅[0m ready for review, [2m🔥[0m urgent
 - [1mAgent tracking[0m — The Claude Code plugin sets markers automatically
 - [1mNotes[0m — Any short text: [2m"blocked"[0m, [2m"needs tests"
 
-[32mStorage
+[1m[32mStorage
 
 Stored in git config as [2mworktrunk.state.<branch>.marker[0m. Set directly with:
 

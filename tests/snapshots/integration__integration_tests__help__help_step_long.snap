@@ -48,7 +48,7 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
 
 Run individual git workflow operations: commits, squashes, rebases, and pushes.
 
-[32mExamples
+[1m[32mExamples
 
 Commit with LLM-generated message:
 
@@ -61,7 +61,7 @@ Manual merge workflow with review between steps:
   [2mwt step rebase
   [2mwt step push
 
-[32mOperations
+[1m[32mOperations
 
 - [2mcommit[0m — Stage and commit with LLM-generated message
 - [2msquash[0m — Squash all branch commits into one with LLM-generated message
@@ -70,7 +70,7 @@ Manual merge workflow with review between steps:
 - [2mcopy-ignored[0m — Copy gitignored files between worktrees
 - [2mfor-each[0m — [experimental] Run a command in every worktree
 
-[32mSee also
+[1m[32mSee also
 
 - [2mwt merge[0m — Runs commit → squash → rebase → hooks → push → cleanup automatically
 - [2mwt hook[0m — Run configured hooks

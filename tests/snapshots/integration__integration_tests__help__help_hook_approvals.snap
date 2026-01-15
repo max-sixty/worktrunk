@@ -45,7 +45,7 @@ Usage: [1m[36mwt hook approvals[0m [36m[OPTIONS][0m [36m<COMMAND>
 
 Project hooks require approval on first run to prevent untrusted projects from running arbitrary commands.
 
-[32mExamples
+[1m[32mExamples
 
 Pre-approve all commands for current project:
   [2mwt hook approvals add
@@ -56,6 +56,6 @@ Clear approvals for current project:
 Clear global approvals:
   [2mwt hook approvals clear --global
 
-[32mHow approvals work
+[1m[32mHow approvals work
 
 Approved commands are saved to user config. Re-approval is required when the command template changes or the project moves. Use [2m--yes[0m to bypass prompts in CI.

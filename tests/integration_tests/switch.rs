@@ -188,6 +188,18 @@ fn test_switch_create_with_invalid_base(repo: TestRepo) {
     );
 }
 
+#[rstest]
+fn test_switch_base_accepts_commitish(repo: TestRepo) {
+    // Issue #630: --base should accept any commit-ish, not just branch names
+    // Test HEAD as base (common use case: branch from current HEAD)
+    repo.commit("Initial commit on main");
+    snapshot_switch(
+        "switch_base_commitish_head",
+        &repo,
+        &["--create", "feature-from-head", "--base", "HEAD"],
+    );
+}
+
 // Internal mode tests
 #[rstest]
 fn test_switch_internal_mode(repo: TestRepo) {

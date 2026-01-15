@@ -47,7 +47,7 @@ Usage: [1m[36mwt config state previous-branch[0m [36m[OPTIONS][0m [36m[COM
 
 Enables [2mwt switch -[0m to return to the previous worktree, similar to [2mcd -[0m or [2mgit checkout -[0m.
 
-[32mHow it works
+[1m[32mHow it works
 
 Updated automatically on every [2mwt switch[0m. Stored in git config as [2mworktrunk.history[0m.
 

@@ -52,7 +52,7 @@ Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>
 State is stored in [2m.git/[0m (config entries and log files), separate from configuration files.
 Use [2mwt config show[0m to view file-based configuration.
 
-[32mKeys
+[1m[32mKeys
 
 - [1mdefault-branch[0m: The repository's default branch ([2mmain[0m, [2mmaster[0m, etc.)
 - [1mprevious-branch[0m: Previous branch for [2mwt switch -
@@ -60,7 +60,7 @@ Use [2mwt config show[0m to view file-based configuration.
 - [1mmarker[0m: Custom status marker for a branch (shown in [2mwt list[0m)
 - [1mlogs[0m: Background operation logs
 
-[32mExamples
+[1m[32mExamples
 
 Get the default branch:
   [2mwt config state default-branch

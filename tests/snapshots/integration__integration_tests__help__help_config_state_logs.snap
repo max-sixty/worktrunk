@@ -46,7 +46,7 @@ Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m[COMMAND]
 
 View and manage logs from background operations.
 
-[32mWhat's logged
+[1m[32mWhat's logged
 
        Operation                     Log file                 
    ────────────────── ─────────────────────────────────────── 
@@ -55,17 +55,17 @@ View and manage logs from background operations.
 
 Source is [2muser[0m or [2mproject[0m depending on where the hook is defined.
 
-[32mLocation
+[1m[32mLocation
 
 All logs are stored in [2m.git/wt-logs/[0m (in the main worktree's git directory).
 
-[32mBehavior
+[1m[32mBehavior
 
 - [1mOverwrites[0m — Same operation on same branch overwrites previous log
 - [1mPersists[0m — Logs from deleted branches remain until manually cleared
 - [1mShared[0m — All worktrees write to the same log directory
 
-[32mExamples
+[1m[32mExamples
 
 List all log files:
   [2mwt config state logs get

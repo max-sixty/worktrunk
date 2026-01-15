@@ -86,18 +86,18 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
 
 Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike [2mgit switch[0m, this navigates between worktrees rather than changing branches in place.
 
-[32mExamples
+[1m[32mExamples
 
   [2mwt switch feature-auth           # Switch to worktree
   [2mwt switch -                      # Previous worktree (like cd -)
   [2mwt switch --create new-feature   # Create new branch and worktree
   [2mwt switch --create hotfix --base production
 
-[32mCreating a branch
+[1m[32mCreating a branch
 
 The [2m--create[0m flag creates a new branch from the [2m--base[0m branch (defaults to default branch). Without [2m--create[0m, the branch must already exist.
 
-[32mCreating worktrees
+[1m[32mCreating worktrees
 
 If the branch already has a worktree, [2mwt switch[0m changes directories to it. Otherwise, it creates one, running hooks.
 
@@ -113,7 +113,7 @@ When creating a worktree, worktrunk:
   [2mwt switch --create fix --base release    # New branch from release
   [2mwt switch --create temp --no-verify      # Skip hooks
 
-[32mShortcuts
+[1m[32mShortcuts
 
    Shortcut            Meaning            
    ──────── ───────────────────────────── 
@@ -125,7 +125,7 @@ When creating a worktree, worktrunk:
   [2mwt switch ^                      # Default branch worktree
   [2mwt switch --create fix --base=@  # Branch from current HEAD
 
-[32mWhen wt switch fails
+[1m[32mWhen wt switch fails
 
 - [1mBranch doesn't exist[0m — Use [2m--create[0m, or check [2mwt list --branches
 - [1mPath occupied[0m — Another worktree is at the target path; switch to it or remove it
@@ -133,7 +133,7 @@ When creating a worktree, worktrunk:
 
 To change which branch a worktree is on, use [2mgit switch[0m inside that worktree.
 
-[32mSee also
+[1m[32mSee also
 
 - [2mwt select[0m — Interactive worktree selection
 - [2mwt list[0m — View all worktrees

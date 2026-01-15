@@ -30,13 +30,15 @@ wt config show
 
 ## Configuration files
 
-| File | Location | Purpose |
-|------|----------|---------|
-| **User config** | `~/.config/worktrunk/config.toml` | Personal settings, command defaults, approved project commands |
-| **Project config** | `.config/wt.toml` | Lifecycle hooks, checked into version control |
+| File | Location | Contains | Committed & shared |
+|------|----------|----------|--------------------|
+| **User config** | `~/.config/worktrunk/config.toml` | Worktree path template, LLM commit configs, etc | ✗ |
+| **Project config** | `.config/wt.toml` | Project hooks, dev server URL | ✓ |
+
+---
 
 <!-- USER_CONFIG_START -->
-# Worktrunk User Configuration
+## Worktrunk User Configuration
 
 Create with `wt config create`.
 
@@ -76,51 +78,6 @@ worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
 worktree-path = "../{{ branch | sanitize }}"
 ```
 
-## List command defaults
-
-Persistent flag values for `wt list`. Override on command line as needed.
-
-```toml
-[list]
-full = false       # Show CI status and main…± diffstat columns (--full)
-branches = false   # Include branches without worktrees (--branches)
-remotes = false    # Include remote-only branches (--remotes)
-```
-
-## Commit defaults
-
-Shared by `wt step commit`, `wt step squash`, and `wt merge`.
-
-```toml
-[commit]
-stage = "all"      # What to stage before commit: "all", "tracked", or "none"
-```
-
-## Merge command defaults
-
-All flags are on by default. Set to false to change default behavior.
-
-```toml
-[merge]
-squash = true      # Squash commits into one (--no-squash to preserve history)
-commit = true      # Commit uncommitted changes first (--no-commit to skip)
-rebase = true      # Rebase onto target before merge (--no-rebase to skip)
-remove = true      # Remove worktree after merge (--no-remove to keep)
-verify = true      # Run project hooks (--no-verify to skip)
-```
-
-## Select command defaults
-
-Pager behavior for `wt select` diff previews.
-
-```toml
-[select]
-# Pager command with flags for diff preview (overrides git's core.pager)
-# Use this to specify pager flags needed for non-TTY contexts
-# Example:
-# pager = "delta --paging=never"
-```
-
 ## LLM commit messages
 
 Generate commit messages automatically during merge. Requires an external CLI tool. See <https://worktrunk.dev/llm-commits/> for setup details and template customization.
@@ -141,9 +98,56 @@ command = "aichat"
 args = ["-m", "claude:claude-haiku-4.5"]
 ```
 
-See [Custom Prompt Templates](#custom-prompt-templates) for inline template options.
+See [Custom prompt templates](#custom-prompt-templates) for inline template options.
 
-## Approved commands
+## Commands
+
+### List
+
+Persistent flag values for `wt list`. Override on command line as needed.
+
+```toml
+[list]
+full = false       # Show CI status and main…± diffstat columns (--full)
+branches = false   # Include branches without worktrees (--branches)
+remotes = false    # Include remote-only branches (--remotes)
+```
+
+### Commit
+
+Shared by `wt step commit`, `wt step squash`, and `wt merge`.
+
+```toml
+[commit]
+stage = "all"      # What to stage before commit: "all", "tracked", or "none"
+```
+
+### Merge
+
+All flags are on by default. Set to false to change default behavior.
+
+```toml
+[merge]
+squash = true      # Squash commits into one (--no-squash to preserve history)
+commit = true      # Commit uncommitted changes first (--no-commit to skip)
+rebase = true      # Rebase onto target before merge (--no-rebase to skip)
+remove = true      # Remove worktree after merge (--no-remove to keep)
+verify = true      # Run project hooks (--no-verify to skip)
+```
+
+### Select
+
+Pager behavior for `wt select` diff previews.
+
+```toml
+[select]
+# Pager command with flags for diff preview (overrides git's core.pager)
+# Use this to specify pager flags needed for non-TTY contexts
+# Example:
+# pager = "delta --paging=never"
+```
+
+### Approved commands
 
 Commands approved for project hooks. Auto-populated when approving hooks on first run, or via `wt hook approvals add`.
 
@@ -154,11 +158,11 @@ approved-commands = ["npm ci", "npm test"]
 
 For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see <https://worktrunk.dev/hook/>.
 
-## Custom prompt templates
+### Custom prompt templates
 
 Templates use [minijinja](https://docs.rs/minijinja/) syntax.
 
-### Commit template
+#### Commit template
 
 Available variables:
 
@@ -204,7 +208,7 @@ Branch: {{ branch }}
 ```
 <!-- DEFAULT_TEMPLATE_END -->
 
-### Squash template
+#### Squash template
 
 Available variables (in addition to commit template variables):
 
@@ -247,7 +251,9 @@ Combine these commits into a single commit message.
 <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 <!-- USER_CONFIG_END -->
 
-## Project config
+---
+
+## Worktrunk Project Configuration
 
 The project config defines lifecycle hooks and project-specific settings. This file is checked into version control and shared across the team.
 
@@ -285,6 +291,8 @@ platform = "github"  # or "gitlab"
 ```
 
 By default, the platform is detected from the remote URL. Use this when URL detection fails (e.g., `git.mycompany.com` instead of `github.mycompany.com`).
+
+---
 
 ## Shell integration
 
