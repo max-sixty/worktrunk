@@ -703,32 +703,25 @@ fn build_test_env_vars(config_path: &str) -> Vec<(&str, &str)> {
     env_vars
 }
 
-mod tests {
+// =============================================================================
+// Unix Shell Tests (bash/zsh/fish)
+// =============================================================================
+//
+// All Unix shell integration tests are in this module, gated by #[cfg(unix)].
+// This includes tests for bash, zsh, and fish shells.
+//
+// Shared infrastructure (exec_through_wrapper, ShellOutput, etc.) is defined
+// above and works on both platforms.
+
+#[cfg(unix)]
+mod unix_tests {
     use super::*;
     use crate::common::repo;
     use rstest::rstest;
 
     // ========================================================================
-    // Test Organization
-    // ========================================================================
-    //
-    // Tests are organized by platform:
-    //
-    // - **Unix tests** (bash/zsh/fish): Marked with `#[cfg(unix)]` on each test.
-    //   These make up the majority of shell integration tests.
-    //
-    // - **Windows tests** (PowerShell): In the `windows_tests` submodule at the
-    //   bottom of this file, gated by a single `#[cfg(windows)]`.
-    //
-    // Shared infrastructure (exec_through_wrapper, ShellOutput, etc.) works on
-    // both platforms - only the tests themselves are platform-gated.
-
-    // ========================================================================
-    // Unix Shell Tests (bash/zsh/fish)
-    // ========================================================================
-    //
     // Cross-Shell Error Handling Tests
-    // --------------------------------
+    // ========================================================================
     //
     // These tests use parametrized testing to verify consistent behavior
     // across all supported shells (bash, zsh, fish).
@@ -749,7 +742,6 @@ mod tests {
     // TODO: Consider adding a test assertion that compares bash/zsh/fish outputs are
     // byte-identical before the snapshot check, so we can identify which shell diverged.
 
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -783,7 +775,6 @@ mod tests {
         });
     }
 
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -810,7 +801,6 @@ mod tests {
         });
     }
 
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -833,7 +823,6 @@ mod tests {
         });
     }
 
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -897,7 +886,6 @@ mod tests {
         });
     }
 
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -920,7 +908,6 @@ mod tests {
         });
     }
 
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -961,7 +948,6 @@ mod tests {
     /// Test that --execute command exit codes are propagated
     /// Verifies that when wt succeeds but the --execute command fails,
     /// the wrapper returns the command's exit code, not wt's.
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1004,7 +990,6 @@ mod tests {
     /// TODO: Fix timing/race condition in bash where "Building project..." output appears
     /// before the command display, causing snapshot mismatch (appears on line 7 instead of line 9).
     /// This is a non-deterministic PTY output ordering issue.
-    #[cfg(unix)]
     #[rstest]
     // #[case("bash")] // TODO: Flaky PTY output ordering - command output appears before command display
     #[case("zsh")]
@@ -1058,7 +1043,6 @@ approved-commands = [
     /// Test merge with successful pre-merge validation
     /// Note: fish disabled due to flaky PTY buffering race conditions
     /// TODO: bash variant occasionally fails on Ubuntu CI with snapshot mismatches due to PTY timing
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1111,7 +1095,6 @@ approved-commands = [
 
     /// Test merge with failing pre-merge that aborts the merge
     /// Note: fish disabled due to flaky PTY buffering race conditions
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1169,7 +1152,6 @@ approved-commands = [
     /// Test merge with pre-merge commands that output to both stdout and stderr
     /// Verifies that interleaved stdout/stderr appears in correct temporal order
     /// Note: fish disabled due to flaky PTY buffering race conditions
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1248,7 +1230,6 @@ approved-commands = [
     // Bash Shell Wrapper Tests
     // ========================================================================
 
-    #[cfg(unix)]
     #[rstest]
     fn test_switch_with_post_start_command_no_directive_leak(repo: TestRepo) {
         // Configure a post-start command in the project config (this is where the bug manifests)
@@ -1288,7 +1269,6 @@ approved-commands = ["echo 'test command executed'"]
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    #[cfg(unix)]
     #[rstest]
     fn test_switch_with_execute_through_wrapper(repo: TestRepo) {
         // Use --yes to skip approval prompt in tests
@@ -1320,7 +1300,6 @@ approved-commands = ["echo 'test command executed'"]
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    #[cfg(unix)]
     #[rstest]
     fn test_bash_shell_integration_hint_suppressed(repo: TestRepo) {
         // When running through the shell wrapper, the "To enable automatic cd" hint
@@ -1343,7 +1322,6 @@ approved-commands = ["echo 'test command executed'"]
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    #[cfg(unix)]
     #[rstest]
     fn test_readme_example_simple_switch(repo: TestRepo) {
         // Create worktree through shell wrapper (suppresses hint)
@@ -1357,7 +1335,6 @@ approved-commands = ["echo 'test command executed'"]
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    #[cfg(unix)]
     #[rstest]
     fn test_readme_example_switch_back(repo: TestRepo) {
         // Create worktrees (fix-auth is where we are after step 2, feature-api exists from earlier)
@@ -1378,7 +1355,6 @@ approved-commands = ["echo 'test command executed'"]
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    #[cfg(unix)]
     #[rstest]
     fn test_readme_example_remove(repo: TestRepo) {
         // Create worktrees
@@ -1397,7 +1373,6 @@ approved-commands = ["echo 'test command executed'"]
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    #[cfg(unix)]
     #[rstest]
     fn test_wrapper_preserves_progress_messages(repo: TestRepo) {
         // Configure a post-start background command that will trigger progress output
@@ -1445,7 +1420,6 @@ approved-commands = ["echo 'background task'"]
     // Fish uses `string collect` to join command substitution output into
     // a single string before eval (fish splits on newlines by default).
 
-    #[cfg(unix)]
     #[rstest]
     fn test_fish_wrapper_preserves_progress_messages(repo: TestRepo) {
         // Configure a post-start background command that will trigger progress output
@@ -1479,7 +1453,6 @@ approved-commands = ["echo 'fish background task'"]
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    #[cfg(unix)]
     #[rstest]
     fn test_fish_multiline_command_execution(repo: TestRepo) {
         // Test that Fish wrapper handles multi-line commands correctly
@@ -1515,7 +1488,6 @@ approved-commands = ["echo 'fish background task'"]
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    #[cfg(unix)]
     #[rstest]
     fn test_fish_wrapper_handles_empty_chunks(repo: TestRepo) {
         // Test edge case: command that produces minimal output
@@ -1548,7 +1520,6 @@ approved-commands = ["echo 'fish background task'"]
     // This test runs `cargo run` inside a PTY which can take longer than the
     // default 60s timeout when cargo checks/compiles dependencies. Extended
     // timeout configured in .config/nextest.toml.
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1663,7 +1634,6 @@ approved-commands = ["echo 'fish background task'"]
 
     /// Test that zsh doesn't show job control notifications inline
     /// The NO_MONITOR option should suppress [1] 12345 and [1] + done messages
-    #[cfg(unix)]
     #[rstest]
     fn test_zsh_no_job_control_notifications(repo: TestRepo) {
         // Configure a post-start command that will trigger background job
@@ -1714,7 +1684,6 @@ approved-commands = ["echo 'background job'"]
     /// The shell wrapper suppresses these via two mechanisms (see bash.sh/zsh.zsh templates):
     /// - START notifications (`[1] 12345`): stderr redirection around `&`
     /// - DONE notifications (`[1]+ Done`): `set +m` before backgrounding
-    #[cfg(unix)]
     #[rstest]
     fn test_bash_job_control_suppression(repo: TestRepo) {
         // Configure a post-start command that will trigger background job
@@ -1795,7 +1764,6 @@ approved-commands = ["echo 'bash background'"]
 
     /// Test that bash completions are properly registered
     /// Note: Completions are inline in the wrapper script (lazy loading)
-    #[cfg(unix)]
     #[rstest]
     fn test_bash_completions_registered(repo: TestRepo) {
         let wt_bin = get_cargo_bin("wt");
@@ -1833,7 +1801,6 @@ approved-commands = ["echo 'bash background'"]
     }
 
     /// Test that fish completions are properly registered
-    #[cfg(unix)]
     #[rstest]
     fn test_fish_completions_registered(repo: TestRepo) {
         let wt_bin = get_cargo_bin("wt");
@@ -1877,7 +1844,6 @@ approved-commands = ["echo 'bash background'"]
 
     /// Test that zsh wrapper function is properly defined
     /// Note: Completions are inline in the wrapper script (lazy loading via compdef)
-    #[cfg(unix)]
     #[rstest]
     fn test_zsh_wrapper_function_registered(repo: TestRepo) {
         let wt_bin = get_cargo_bin("wt");
@@ -1938,7 +1904,6 @@ approved-commands = ["echo 'bash background'"]
     // ========================================================================
 
     /// Test that branch names with special characters work correctly
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1959,7 +1924,6 @@ approved-commands = ["echo 'bash background'"]
     }
 
     /// Test that branch names with dashes and underscores work
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1982,7 +1946,6 @@ approved-commands = ["echo 'bash background'"]
     // ========================================================================
 
     /// Test that shell integration works when wt is not in PATH but WORKTRUNK_BIN is set
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -2088,7 +2051,6 @@ approved-commands = ["echo 'bash background'"]
     /// The fish function should show "wt: command not found" and exit 127.
     /// This is fish-specific because bash/zsh have an outer guard that prevents
     /// the function from being defined when wt isn't available.
-    #[cfg(unix)]
     #[rstest]
     #[case("fish")]
     fn test_fish_binary_not_found_clear_error(#[case] shell: &str, repo: TestRepo) {
@@ -2150,7 +2112,6 @@ approved-commands = ["echo 'bash background'"]
     ///
     /// This is different from test_fish_binary_not_found_clear_error which tests
     /// the FULL function (which has its own WORKTRUNK_BIN check).
-    #[cfg(unix)]
     #[rstest]
     #[case("fish")]
     fn test_fish_wrapper_binary_not_found_no_infinite_loop(#[case] shell: &str, repo: TestRepo) {
@@ -2218,7 +2179,6 @@ approved-commands = ["echo 'bash background'"]
     /// Test that shell integration completes without leaving zombie processes
     /// Note: Temp directory cleanup is verified implicitly by successful test completion.
     /// We can't check for specific temp files because tests run in parallel.
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -2280,7 +2240,6 @@ approved-commands = ["echo 'cleanup test'"]
     /// - Pre-merge hooks (test, lint) running before merge
     ///
     /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_pre_merge.snap
-    #[cfg(unix)]
     #[rstest]
     fn test_readme_example_hooks_pre_merge(mut repo: TestRepo) {
         // Create project config with pre-merge hooks
@@ -2499,7 +2458,6 @@ command = "{}"
     /// Uses shell wrapper to avoid "To enable automatic cd" hint.
     ///
     /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_post_create.snap
-    #[cfg(unix)]
     #[rstest]
     fn test_readme_example_hooks_post_create(repo: TestRepo) {
         // Create project config with post-create and post-start hooks
@@ -2577,7 +2535,6 @@ fi
     /// Note: This uses direct PTY execution (not shell wrapper) because interactive prompts
     /// require direct stdin access. The shell wrapper approach detects non-interactive mode.
     /// The shell integration hint is truncated from the output.
-    #[cfg(unix)]
     #[rstest]
     fn test_readme_example_approval_prompt(repo: TestRepo) {
         use portable_pty::CommandBuilder;
@@ -2690,7 +2647,6 @@ test = "echo 'Running tests...'"
     /// - Completion not registered at all
     /// - Completion function not loading (lazy loading broken)
     /// - Completion output being executed as commands (the COMPLETE mode bug)
-    #[cfg(unix)]
     #[rstest]
     fn test_bash_completion_produces_correct_output(repo: TestRepo) {
         use std::io::Read;
@@ -2827,7 +2783,6 @@ fi
     /// This test verifies completion works WITHOUT knowing internal function names.
     /// It checks that a completion is registered for 'wt' and that calling the
     /// wt command with COMPLETE=zsh produces completion candidates.
-    #[cfg(unix)]
     #[rstest]
     fn test_zsh_completion_produces_correct_output(repo: TestRepo) {
         use std::io::Read;
@@ -2944,7 +2899,6 @@ fi
     /// Black-box test: zsh completion produces correct subcommands.
     ///
     /// Sources actual `wt config shell init zsh`, triggers completion, snapshots result.
-    #[cfg(unix)]
     #[test]
     fn test_zsh_completion_subcommands() {
         let wt_bin = get_cargo_bin("wt");
@@ -2988,7 +2942,6 @@ _wt_lazy_complete
     /// Black-box test: bash completion produces correct subcommands.
     ///
     /// Sources actual `wt config shell init bash`, triggers completion, snapshots result.
-    #[cfg(unix)]
     #[test]
     fn test_bash_completion_subcommands() {
         let wt_bin = get_cargo_bin("wt");
@@ -3027,7 +2980,6 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     /// Black-box test: fish completion produces correct subcommands.
     ///
     /// Fish completions call binary with COMPLETE=fish (separate from init script).
-    #[cfg(unix)]
     #[test]
     fn test_fish_completion_subcommands() {
         let wt_bin = get_cargo_bin("wt");
@@ -3066,7 +3018,6 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     /// shell wrapper. The issue being tested: in some shells (particularly fish),
     /// command substitution doesn't propagate stderr redirects, causing help
     /// output to appear on the terminal even when redirected.
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -3217,7 +3168,6 @@ echo "SCRIPT_COMPLETED"
     ///
     /// We verify pager invocation by setting GIT_PAGER to a script that creates
     /// a marker file before passing through the content.
-    #[cfg(unix)]
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -3354,87 +3304,86 @@ echo "SCRIPT_COMPLETED"
             terminal_output
         );
     }
+}
 
-    // ========================================================================
-    // Windows PowerShell Tests
-    // ========================================================================
-    //
-    // All Windows-specific tests are in this module, gated by #[cfg(windows)].
-    // This keeps platform-specific tests clearly separated.
+// =============================================================================
+// Windows PowerShell Tests
+// =============================================================================
+//
+// All Windows-specific tests are in this module, gated by #[cfg(windows)].
+// This keeps platform-specific tests clearly separated.
 
-    #[cfg(windows)]
-    mod windows_tests {
-        use super::*;
+#[cfg(windows)]
+mod windows_tests {
+    use super::*;
+    use crate::common::repo;
+    use rstest::rstest;
 
-        /// Test that PowerShell shell integration works for switch --create
-        #[rstest]
-        #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
-        fn test_powershell_switch_create(repo: TestRepo) {
-            let output =
-                exec_through_wrapper("powershell", &repo, "switch", &["--create", "feature"]);
+    /// Test that PowerShell shell integration works for switch --create
+    #[rstest]
+    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+    fn test_powershell_switch_create(repo: TestRepo) {
+        let output = exec_through_wrapper("powershell", &repo, "switch", &["--create", "feature"]);
 
-            assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
-            output.assert_no_directive_leaks();
+        assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
+        output.assert_no_directive_leaks();
 
-            assert!(
-                output.combined.contains("Created branch")
-                    && output.combined.contains("and worktree"),
-                "PowerShell: Should show success message.\nOutput:\n{}",
-                output.combined
-            );
-        }
+        assert!(
+            output.combined.contains("Created branch") && output.combined.contains("and worktree"),
+            "PowerShell: Should show success message.\nOutput:\n{}",
+            output.combined
+        );
+    }
 
-        /// Test that PowerShell shell integration handles command failures correctly
-        #[rstest]
-        #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
-        fn test_powershell_command_failure(mut repo: TestRepo) {
-            // Create a worktree that already exists
-            repo.add_worktree("existing");
+    /// Test that PowerShell shell integration handles command failures correctly
+    #[rstest]
+    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+    fn test_powershell_command_failure(mut repo: TestRepo) {
+        // Create a worktree that already exists
+        repo.add_worktree("existing");
 
-            // Try to create it again - should fail
-            let output =
-                exec_through_wrapper("powershell", &repo, "switch", &["--create", "existing"]);
+        // Try to create it again - should fail
+        let output = exec_through_wrapper("powershell", &repo, "switch", &["--create", "existing"]);
 
-            assert_eq!(
-                output.exit_code, 1,
-                "PowerShell: Command should fail with exit code 1"
-            );
-            output.assert_no_directive_leaks();
-            assert!(
-                output.combined.contains("already exists"),
-                "PowerShell: Error message should mention 'already exists'.\nOutput:\n{}",
-                output.combined
-            );
-        }
+        assert_eq!(
+            output.exit_code, 1,
+            "PowerShell: Command should fail with exit code 1"
+        );
+        output.assert_no_directive_leaks();
+        assert!(
+            output.combined.contains("already exists"),
+            "PowerShell: Error message should mention 'already exists'.\nOutput:\n{}",
+            output.combined
+        );
+    }
 
-        /// Test that PowerShell shell integration works for remove
-        #[rstest]
-        #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
-        fn test_powershell_remove(mut repo: TestRepo) {
-            // Create a worktree to remove
-            repo.add_worktree("to-remove");
+    /// Test that PowerShell shell integration works for remove
+    #[rstest]
+    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+    fn test_powershell_remove(mut repo: TestRepo) {
+        // Create a worktree to remove
+        repo.add_worktree("to-remove");
 
-            let output = exec_through_wrapper("powershell", &repo, "remove", &["to-remove"]);
+        let output = exec_through_wrapper("powershell", &repo, "remove", &["to-remove"]);
 
-            assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
-            output.assert_no_directive_leaks();
-        }
+        assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
+        output.assert_no_directive_leaks();
+    }
 
-        /// Test that PowerShell shell integration works for wt list
-        #[rstest]
-        #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
-        fn test_powershell_list(repo: TestRepo) {
-            let output = exec_through_wrapper("powershell", &repo, "list", &[]);
+    /// Test that PowerShell shell integration works for wt list
+    #[rstest]
+    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+    fn test_powershell_list(repo: TestRepo) {
+        let output = exec_through_wrapper("powershell", &repo, "list", &[]);
 
-            assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
-            output.assert_no_directive_leaks();
+        assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
+        output.assert_no_directive_leaks();
 
-            // Should show the main worktree
-            assert!(
-                output.combined.contains("main"),
-                "PowerShell: Should show main branch.\nOutput:\n{}",
-                output.combined
-            );
-        }
+        // Should show the main worktree
+        assert!(
+            output.combined.contains("main"),
+            "PowerShell: Should show main branch.\nOutput:\n{}",
+            output.combined
+        );
     }
 }
