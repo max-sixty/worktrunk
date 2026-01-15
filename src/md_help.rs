@@ -87,19 +87,35 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
             continue;
         }
 
-        // Horizontal rules (---, ***, ___) render as blank line for visual separation
+        // Horizontal rules (---, ***, ___) render as visible divider
+        // No extra newlines - markdown source already has blank lines around ---
+        //
+        // TODO: We use `---` dividers instead of H1 headers because H1s break web docs
+        // (pages already have a title from frontmatter). This decouples visual hierarchy
+        // from heading semantics. Alternatives considered:
+        // - Strip H1s during doc sync (demote to H2 for web)
+        // - Treat `---` + H2 combo as "major section" (render H2 as UPPERCASE when preceded by ---)
+        // - Use marker comments like `<!-- major -->` before H2
+        // See git history for discussion.
         if trimmed == "---" || trimmed == "***" || trimmed == "___" {
-            result.push('\n');
+            let dimmed = Style::new().dimmed();
+            let rule_width = width.unwrap_or(40);
+            let rule: String = "─".repeat(rule_width);
+            result.push_str(&format!("{dimmed}{rule}{dimmed:#}\n"));
             i += 1;
             continue;
         }
 
         // Outside code blocks, render markdown headers (never wrapped)
-        // Visual hierarchy: H1 > H2 > H3
+        // Visual hierarchy: H1 > H2 > H3 > H4
         // - H1: UPPERCASE green (most prominent, rarely used)
         // - H2: Bold green (major sections like "Examples", "Columns")
         // - H3: Normal green (subsections like "CI status", "commit object")
-        if let Some(header_text) = trimmed.strip_prefix("### ") {
+        // - H4: Bold (nested subsections like "Commit template")
+        if let Some(header_text) = trimmed.strip_prefix("#### ") {
+            let bold = Style::new().bold();
+            result.push_str(&format!("{bold}{header_text}{bold:#}\n"));
+        } else if let Some(header_text) = trimmed.strip_prefix("### ") {
             result.push_str(&format!("{green}{header_text}{green:#}\n"));
         } else if let Some(header_text) = trimmed.strip_prefix("## ") {
             let bold_green = Style::new()
@@ -517,10 +533,20 @@ mod tests {
     }
 
     #[test]
+    fn test_render_markdown_in_help_h4() {
+        let result = render_markdown_in_help("#### Nested");
+        // H4 should be bold (no color)
+        assert!(result.contains("Nested"));
+        assert!(result.contains("\u{1b}[1m")); // Bold
+        assert!(!result.contains("\u{1b}[32m")); // Not green
+    }
+
+    #[test]
     fn test_render_markdown_in_help_horizontal_rule() {
         let result = render_markdown_in_help("before\n\n---\n\n## Section");
-        // Horizontal rule becomes blank line, not literal ---
+        // Horizontal rule becomes visible divider line
         assert!(!result.contains("---"));
+        assert!(result.contains("────────────────────────────────────────"));
         assert!(result.contains("before"));
         assert!(result.contains("Section"));
     }

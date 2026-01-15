@@ -32,6 +32,22 @@ impl Repository {
             .is_ok())
     }
 
+    /// Check if a git reference exists (branch, tag, commit SHA, HEAD, etc.).
+    ///
+    /// Accepts any valid commit-ish: branch names, tags, HEAD, commit SHAs,
+    /// and relative refs like HEAD~2.
+    pub fn ref_exists(&self, reference: &str) -> anyhow::Result<bool> {
+        // Use rev-parse to check if the reference resolves to a valid commit
+        // The ^{commit} suffix ensures we get the commit object, not a tag
+        Ok(self
+            .run_command(&[
+                "rev-parse",
+                "--verify",
+                &format!("{}^{{commit}}", reference),
+            ])
+            .is_ok())
+    }
+
     /// Find which remotes have a branch with the given name.
     ///
     /// Returns a list of remote names that have this branch (e.g., `["origin"]`).

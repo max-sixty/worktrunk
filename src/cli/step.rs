@@ -202,7 +202,16 @@ Only gitignored files are copied — tracked files are never touched. If `.workt
 
 ## Performance
 
-Reflink copies share disk blocks until modified — no data is actually copied. Copy time scales with file count, not size. Runs in background via `post-create` hook.
+Reflink copies share disk blocks until modified — no data is actually copied. For a 14GB `target/` directory:
+
+| Command | Time |
+|---------|------|
+| `cp -R` (full copy) | 2m |
+| `cp -Rc` / `wt step copy-ignored` | 20s |
+
+Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
+
+If the files are needed before any commands run in the worktree, put `wt step copy-ignored` in the `post-create` hook. Otherwise use the `post-start` hook so the copy runs in the background.
 
 ## Language-specific notes
 
@@ -222,6 +231,14 @@ deps = "ln -sf {{ primary_worktree_path }}/node_modules ."
 ### Python
 
 Virtual environments contain absolute paths and can't be copied. Use `uv sync` instead — it's fast enough that copying isn't worth it.
+
+## Behavior vs Claude Code on desktop
+
+The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://code.claude.com/docs/en/desktop), which copies matching files when creating worktrees. Differences:
+
+- worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`
+- worktrunk uses copy-on-write for large directories like `target/` — potentially 30x faster on macOS, 6x on Linux
+- worktrunk runs as a configurable hook in the worktree lifecycle
 "#
     )]
     CopyIgnored {

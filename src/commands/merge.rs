@@ -95,8 +95,8 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // --no-commit implies --no-squash
     let squash_enabled = squash && commit;
 
-    // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    // Get and validate target branch (must be a branch since we're updating it)
+    let target_branch = repo.require_target_branch(target)?;
     // Worktree for target is optional: if present we use it for safety checks and as destination.
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
 

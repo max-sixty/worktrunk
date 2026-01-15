@@ -221,6 +221,9 @@ impl Repository {
     /// If target is Some, expands special symbols ("@", "-", "^") via `resolve_worktree_name`.
     /// Otherwise, queries the default branch.
     /// This is a common pattern used throughout commands that accept an optional --target flag.
+    ///
+    /// Note: This does not validate that the target exists. Use `require_target_branch` or
+    /// `require_target_ref` for validation before approval prompts.
     pub fn resolve_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
         match target {
             Some(b) => self.resolve_worktree_name(b),
@@ -231,6 +234,30 @@ impl Repository {
                 .into()
             }),
         }
+    }
+
+    /// Resolve and validate a target that must be a branch.
+    ///
+    /// Use this for commands that update a branch ref (merge, push).
+    /// Validates before approval prompts to avoid wasting user time.
+    pub fn require_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
+        let branch = self.resolve_target_branch(target)?;
+        if !self.branch_exists(&branch)? {
+            return Err(GitError::InvalidReference { reference: branch }.into());
+        }
+        Ok(branch)
+    }
+
+    /// Resolve and validate a target that can be any commit-ish.
+    ///
+    /// Use this for commands that reference a commit (rebase, squash).
+    /// Validates before approval prompts to avoid wasting user time.
+    pub fn require_target_ref(&self, target: Option<&str>) -> anyhow::Result<String> {
+        let reference = self.resolve_target_branch(target)?;
+        if !self.ref_exists(&reference)? {
+            return Err(GitError::InvalidReference { reference }.into());
+        }
+        Ok(reference)
     }
 
     /// Infer the default branch locally (without remote).

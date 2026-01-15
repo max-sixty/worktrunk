@@ -25,6 +25,9 @@ exclude = [
     # Private or authenticated GitHub resources
     "github\\.com/anthropics/claude-code/issues",
 
+    # GitHub commit links (immutable, but GitHub occasionally returns 504 on heavy load)
+    "github\\.com/[^/]+/[^/]+/commit/",
+
     # Social media (blocks GitHub Actions)
     "twitter\\.com",
     "x\\.com",
