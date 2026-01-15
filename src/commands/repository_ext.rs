@@ -161,8 +161,10 @@ impl RepositoryCliExt for Repository {
             return Err(GitError::CannotRemoveMainWorktree.into());
         }
 
-        // Ensure the working tree is clean
-        target_wt.ensure_clean("remove worktree", branch_name.as_deref())?;
+        // Check working tree cleanliness (unless --force, which passes through to git)
+        if !force_worktree {
+            target_wt.ensure_clean("remove worktree", branch_name.as_deref())?;
+        }
 
         // Compute main_path and changed_directory based on whether we're removing current
         let (main_path, changed_directory) = if is_current {

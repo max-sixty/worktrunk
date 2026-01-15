@@ -322,6 +322,115 @@ fn test_remove_by_name_dirty_target(mut repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["feature-dirty"], None));
 }
 
+/// --force allows removal of dirty worktrees (issue #658)
+/// This test: untracked files, branch at same commit as main
+#[rstest]
+fn test_remove_force_with_untracked_files(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-untracked");
+
+    // Create an untracked file (like devbox.lock, .env, build artifacts)
+    std::fs::write(worktree_path.join("devbox.lock"), "untracked content").unwrap();
+
+    // Verify git sees it as untracked only
+    let status = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+    let status_output = String::from_utf8_lossy(&status.stdout);
+    assert!(
+        status_output.contains("?? devbox.lock"),
+        "File should be untracked"
+    );
+
+    // Remove with --force should succeed
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["--force", "feature-untracked"],
+        None
+    ));
+}
+
+/// --force allows removal of dirty worktrees (issue #658)
+/// This test: modified tracked file, branch ahead of main (unmerged)
+#[rstest]
+fn test_remove_force_with_modified_files(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-modified");
+
+    // Add a file to the worktree and commit it first
+    std::fs::write(worktree_path.join("tracked.txt"), "original content").unwrap();
+    repo.git_command()
+        .args(["add", "tracked.txt"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "Add tracked file"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+
+    // Now modify the tracked file
+    std::fs::write(worktree_path.join("tracked.txt"), "modified content").unwrap();
+
+    // --force passes through to git, which allows this
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["--force", "feature-modified"],
+        None
+    ));
+}
+
+/// --force allows removal of dirty worktrees (issue #658)
+/// This test: staged (uncommitted) file, branch at same commit as main
+#[rstest]
+fn test_remove_force_with_staged_files(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-staged");
+
+    // Create and stage a new file (but don't commit)
+    std::fs::write(worktree_path.join("staged.txt"), "staged content").unwrap();
+    repo.git_command()
+        .args(["add", "staged.txt"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+
+    // --force passes through to git, which allows this
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["--force", "feature-staged"],
+        None
+    ));
+}
+
+/// --force + -D: dirty worktree AND unmerged branch
+#[rstest]
+fn test_remove_force_with_force_delete(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-dirty-unmerged");
+
+    // Make a commit so the branch is ahead of main (unmerged)
+    repo.git_command()
+        .args(["commit", "--allow-empty", "-m", "feature commit"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+
+    // Add untracked file to make the worktree dirty
+    std::fs::write(worktree_path.join("untracked.txt"), "dirty").unwrap();
+
+    // --force (dirty worktree) + -D (force delete unmerged branch)
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["--force", "-D", "feature-dirty-unmerged"],
+        None
+    ));
+}
+
 #[rstest]
 fn test_remove_multiple_worktrees(mut repo: TestRepo) {
     // Create three worktrees
