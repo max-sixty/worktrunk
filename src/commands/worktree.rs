@@ -618,11 +618,11 @@ pub fn plan_switch(
         )))?;
     }
 
-    // Resolve base branch for creation
+    // Resolve base ref for creation (accepts any commit-ish: branch, tag, SHA, HEAD)
     let base_branch = if create {
         match resolved_base {
             Some(ref b) => {
-                if !repo.branch_exists(b)? {
+                if !repo.ref_exists(b)? {
                     return Err(GitError::InvalidReference {
                         reference: b.clone(),
                     }
