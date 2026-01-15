@@ -71,18 +71,16 @@ fn find_executable_path() -> std::path::PathBuf {
 
             let candidate = dir.join(&argv0);
             // Use try_exists() with error handling to avoid hangs
-            match candidate.try_exists() {
-                Ok(true) => return candidate,
-                Ok(false) | Err(_) => {} // Continue searching
+            if let Ok(true) = candidate.try_exists() {
+                return candidate;
             }
 
             // On Windows, also check with .exe extension
             #[cfg(windows)]
             {
                 let candidate_exe = dir.join(format!("{}.exe", argv0));
-                match candidate_exe.try_exists() {
-                    Ok(true) => return candidate_exe,
-                    Ok(false) | Err(_) => {} // Continue searching
+                if let Ok(true) = candidate_exe.try_exists() {
+                    return candidate_exe;
                 }
             }
         }
