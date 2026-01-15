@@ -50,7 +50,7 @@ struct CommandResponse {
     exit_code: i32,
 }
 
-/// Get command name from argv[0].
+/// Get command name from argv\[0\].
 fn command_name() -> String {
     let argv0 = env::args().next().expect("mock: no argv[0]");
     std::path::Path::new(&argv0)
