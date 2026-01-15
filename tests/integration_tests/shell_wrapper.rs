@@ -90,17 +90,13 @@ impl ShellOutput {
     }
 }
 
-/// Create insta settings configured for shell wrapper snapshot tests.
+/// Insta settings for shell wrapper tests.
 ///
-/// Inherits path normalization filters from TestRepo (bound to scope on creation),
+/// Inherits snapshot_path and path filters from TestRepo (bound to scope),
 /// then adds PTY-specific filters for cross-platform consistency.
 fn shell_wrapper_settings() -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-
-    // Add PTY filters (CRLF line endings, macOS ^D sequences, leading ANSI resets)
     add_pty_filters(&mut settings);
-
     settings
 }
 
@@ -362,7 +358,12 @@ fn exec_in_pty_interactive(
 
     let status = child.wait().unwrap();
 
-    (buf, status.exit_code() as i32)
+    // Normalize CRLF to LF. While add_pty_filters() has a regex filter for this,
+    // that only applies during snapshot comparison. Normalizing here ensures
+    // consistent data for all downstream processing (assertions, string matching).
+    let normalized = buf.replace("\r\n", "\n");
+
+    (normalized, status.exit_code() as i32)
 }
 
 /// Execute bash in true interactive mode by writing commands to the PTY
@@ -469,7 +470,10 @@ fn exec_bash_truly_interactive(
     // Get the captured output
     let buf = reader_thread.join().unwrap();
 
-    (buf, status.exit_code() as i32)
+    // Normalize CRLF to LF (same as exec_in_pty_interactive)
+    let normalized = buf.replace("\r\n", "\n");
+
+    (normalized, status.exit_code() as i32)
 }
 
 /// Execute a command through a shell wrapper
