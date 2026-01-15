@@ -130,6 +130,7 @@ impl ShellOutput {
     }
 
     /// Assert command exited successfully (exit code 0)
+    #[cfg(unix)]
     fn assert_success(&self) {
         assert_eq!(
             self.exit_code, 0,
