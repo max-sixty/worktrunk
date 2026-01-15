@@ -376,6 +376,8 @@ pub enum SwitchPlan {
         clobber_backup: Option<PathBuf>,
         /// Branch to record as "previous" for `wt switch -`
         new_previous: Option<String>,
+        /// True if local branch already exists (for DWIM detection)
+        local_branch_exists: bool,
     },
 }
 
@@ -563,6 +565,11 @@ pub fn plan_switch(
         .into());
     }
 
+    // Track whether local branch exists (for DWIM detection in output messages)
+    // If !create and we got here, branch_exists() returned true, which could mean
+    // either local branch exists OR only remote branch exists (DWIM will create local)
+    let local_branch_exists = create || repo.local_branch_exists(&resolved_branch)?;
+
     // Check if expected path is occupied by a different branch's worktree
     if let Some((existing_path, path_branch)) = repo.worktree_at_path(&expected_path)? {
         if !existing_path.exists() {
@@ -646,6 +653,7 @@ pub fn plan_switch(
         base_branch,
         clobber_backup,
         new_previous,
+        local_branch_exists,
     })
 }
 
@@ -706,6 +714,7 @@ pub fn execute_switch(
             base_branch,
             clobber_backup,
             new_previous,
+            local_branch_exists,
         } => {
             // Handle --clobber backup if needed
             if let Some(backup_path) = clobber_backup {
@@ -745,7 +754,8 @@ pub fn execute_switch(
             }
 
             // Check if git's DWIM created a tracking branch from a remote
-            let from_remote = if !create_branch {
+            // Only report this if the local branch didn't exist before (DWIM created it)
+            let from_remote = if !create_branch && !local_branch_exists {
                 repo.upstream_branch(&branch)?
             } else {
                 None

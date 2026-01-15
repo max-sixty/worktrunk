@@ -91,6 +91,39 @@ fn test_switch_create_with_remote_branch_only(#[from(repo_with_remote)] repo: Te
     );
 }
 
+/// Git's DWIM creates local tracking branch from remote when no local branch exists.
+/// Should report "Created branch X (tracking remote)" since DWIM actually created the branch.
+#[rstest]
+fn test_switch_dwim_from_remote(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a branch on the remote only (no local branch)
+    repo.run_git(&["branch", "dwim-feature"]);
+    repo.run_git(&["push", "origin", "dwim-feature"]);
+    repo.run_git(&["branch", "-D", "dwim-feature"]);
+
+    // Now we have origin/dwim-feature but no local dwim-feature
+    // DWIM should create local branch from remote
+    snapshot_switch("switch_dwim_from_remote", &repo, &["dwim-feature"]);
+}
+
+/// When local branch already exists and tracks a remote, should report
+/// "Created worktree for X" NOT "Created branch X (tracking remote)".
+/// This is the bug fix for GitHub issue #656.
+#[rstest]
+fn test_switch_existing_local_branch_with_upstream(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create local branch tracking remote
+    repo.run_git(&["checkout", "-b", "tracked-feature"]);
+    repo.run_git(&["commit", "--allow-empty", "-m", "feature commit"]);
+    repo.run_git(&["push", "-u", "origin", "tracked-feature"]);
+    repo.run_git(&["checkout", "main"]);
+
+    // Switch to the existing local branch (should NOT say "Created branch")
+    snapshot_switch(
+        "switch_existing_local_with_upstream",
+        &repo,
+        &["tracked-feature"],
+    );
+}
+
 #[rstest]
 fn test_switch_existing_branch(mut repo: TestRepo) {
     repo.add_worktree("feature-z");
