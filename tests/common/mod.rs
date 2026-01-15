@@ -416,61 +416,27 @@ struct FixtureWorktrees {
 /// - Remote (origin) bare repository
 /// - Three feature worktrees (feature-a, feature-b, feature-c) each with one commit
 ///
-/// Uses platform-specific copy command which benchmarks faster than native Rust fs operations.
+/// Pure Rust recursive copy - 2.5x faster than spawning cp/robocopy.
+/// Benchmarked at 21ms vs 53ms per fixture copy on macOS.
 fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
-    let fixture = standard_fixture_path();
-
-    // Copy all entries from fixture
-    for entry in std::fs::read_dir(&fixture).unwrap() {
-        let entry = entry.unwrap();
-        let src = entry.path();
-        let dest_name = entry.file_name();
-        let dest_path = dest.join(&dest_name);
-        let is_dir = entry.file_type().unwrap().is_dir();
-
-        // Use Rust's fs::copy for files (cross-platform)
-        if !is_dir {
-            std::fs::copy(&src, &dest_path)
-                .unwrap_or_else(|e| panic!("Failed to copy file {:?}: {}", src, e));
-            continue;
-        }
-
-        #[cfg(unix)]
-        {
-            let output = Command::new("cp")
-                .args(["-r", "--"])
-                .arg(&src)
-                .arg(&dest_path)
-                .output()
-                .expect("Failed to run cp command");
-            assert!(
-                output.status.success(),
-                "Failed to copy fixture directory {:?}: {}",
-                src,
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-
-        #[cfg(windows)]
-        {
-            // Use robocopy on Windows for directories (exits 0-7 for success)
-            let output = Command::new("robocopy")
-                .args(["/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP"])
-                .arg(&src)
-                .arg(&dest_path)
-                .output()
-                .expect("Failed to run robocopy command");
-            // Robocopy returns 0-7 for various success states
-            let code = output.status.code().unwrap_or(99);
-            assert!(
-                code <= 7,
-                "Failed to copy fixture directory {:?}: exit code {}, stderr: {}",
-                src,
-                code,
-                String::from_utf8_lossy(&output.stderr)
-            );
+    fn copy_dir_recursive(src: &Path, dest: &Path) {
+        std::fs::create_dir_all(dest).unwrap();
+        for entry in std::fs::read_dir(src).unwrap() {
+            let entry = entry.unwrap();
+            let file_type = entry.file_type().unwrap();
+            let src_path = entry.path();
+            let dest_path = dest.join(entry.file_name());
+            if file_type.is_dir() {
+                copy_dir_recursive(&src_path, &dest_path);
+            } else if file_type.is_file() {
+                std::fs::copy(&src_path, &dest_path).unwrap();
+            }
+            // Skip symlinks, sockets, etc (shouldn't be in fixture)
         }
     }
+
+    let fixture = standard_fixture_path();
+    copy_dir_recursive(&fixture, dest);
 
     // Verify essential directories exist after copy
     let essential = ["repo/_git", "origin_git", "repo.feature-a/_git"];
