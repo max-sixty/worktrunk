@@ -64,16 +64,25 @@ fn find_executable_path() -> std::path::PathBuf {
     // argv[0] is just a name (e.g., "gh"), look it up in PATH
     if let Some(path_var) = env::var_os("PATH") {
         for dir in env::split_paths(&path_var) {
-            let candidate = dir.join(&argv0);
-            if candidate.exists() {
-                return candidate;
+            // Skip invalid/inaccessible directories to avoid hangs on network mounts
+            if !dir.is_dir() {
+                continue;
             }
+
+            let candidate = dir.join(&argv0);
+            // Use try_exists() with error handling to avoid hangs
+            match candidate.try_exists() {
+                Ok(true) => return candidate,
+                Ok(false) | Err(_) => {} // Continue searching
+            }
+
             // On Windows, also check with .exe extension
             #[cfg(windows)]
             {
                 let candidate_exe = dir.join(format!("{}.exe", argv0));
-                if candidate_exe.exists() {
-                    return candidate_exe;
+                match candidate_exe.try_exists() {
+                    Ok(true) => return candidate_exe,
+                    Ok(false) | Err(_) => {} // Continue searching
                 }
             }
         }
