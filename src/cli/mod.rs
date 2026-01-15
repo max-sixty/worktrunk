@@ -1272,6 +1272,8 @@ Both run when creating a worktree. The difference:
 
 Many tasks work well in `post-start` — they'll likely be ready by the time they're needed, especially when the fallback is recompiling. If unsure, prefer `post-start` for faster worktree creation.
 
+Background processes spawned by `post-start` outlive the worktree — pair them with `pre-remove` hooks to clean up. See [Dev servers](#dev-servers) and [Databases](#databases) for examples.
+
 ### Copying untracked files
 
 Git worktrees share the repository but not untracked files (dependencies, caches, `.env`). Use [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) to copy gitignored files:
@@ -1290,6 +1292,9 @@ Run a dev server per worktree on a deterministic port using `hash_port`:
 ```toml
 [post-start]
 server = "npm run dev -- --port {{ branch | hash_port }}"
+
+[pre-remove]
+server = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
 ```
 
 The port is stable across machines and restarts — `feature-api` always gets the same port. Show it in `wt list`:
