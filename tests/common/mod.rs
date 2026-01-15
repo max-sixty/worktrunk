@@ -457,22 +457,16 @@ fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
         }
     }
 
-    // Canonicalize dest for path replacements (on macOS /var -> /private/var)
-    // This ensures gitdir paths match what TestRepo::root will be
+    // Canonicalize dest for worktrees map (on macOS /var -> /private/var)
     let canonical_dest = canonicalize(dest).unwrap();
 
-    // Fix absolute paths in gitdir files - they reference the fixture location
-    let dest_str = canonical_dest.to_str().unwrap();
-    let fixture_str = fixture.to_str().unwrap();
-
-    // Fix worktree gitdir files (they're text files pointing to main repo)
+    // Fix gitdir files - fixture uses _git which we rename to .git
+    // Paths are relative so no absolute path replacement needed
     for wt in ["feature-a", "feature-b", "feature-c"] {
         let gitdir_path = dest.join(format!("repo.{wt}/.git"));
         if gitdir_path.exists() {
             let content = std::fs::read_to_string(&gitdir_path).unwrap();
-            let fixed = content
-                .replace(fixture_str, dest_str)
-                .replace("_git", ".git");
+            let fixed = content.replace("_git", ".git");
             std::fs::write(&gitdir_path, fixed).unwrap();
         }
 
@@ -480,9 +474,7 @@ fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
         let main_gitdir = dest.join(format!("repo/.git/worktrees/repo.{wt}/gitdir"));
         if main_gitdir.exists() {
             let content = std::fs::read_to_string(&main_gitdir).unwrap();
-            let fixed = content
-                .replace(fixture_str, dest_str)
-                .replace("_git", ".git");
+            let fixed = content.replace("_git", ".git");
             std::fs::write(&main_gitdir, fixed).unwrap();
         }
     }
