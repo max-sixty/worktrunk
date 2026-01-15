@@ -139,6 +139,50 @@ After editing, run the sync test (which auto-updates out-of-sync pages):
 cargo test --test integration test_command_pages_and_skill_files_are_in_sync
 ```
 
+### Command documentation structure
+
+Each command has three documentation pieces in `src/cli.rs`:
+
+| Piece | Source | Purpose |
+|-------|--------|---------|
+| **Definition** | First `///` line | Short identifier for command lists |
+| **Subdefinition** | Second `///` line (optional) | Adds context when relevant |
+| **after_long_help** | `#[command(after_long_help = "...")]` | Full documentation |
+
+**Where each appears:**
+
+| Context | What's shown |
+|---------|--------------|
+| Command list (`wt --help`) | Definition only |
+| Terminal `-h` | Definition in header |
+| Terminal `--help` | Definition (header) + Subdefinition (under header) + after_long_help (after options) |
+| Web docs | "Definition. Subdefinition." as lead paragraph, then after_long_help |
+
+**Content principles:**
+
+1. **Definition must be short** — It appears in command lists; keep it to a noun phrase or brief imperative.
+
+2. **Subdefinition adds context** — Only include if it provides information the definition doesn't. If the definition is complete, omit the subdefinition.
+
+3. **after_long_help must not repeat** — Start with NEW information that expands on or provides context for the definition. Each piece should add information the previous pieces didn't provide.
+
+4. **after_long_help should mostly stand alone** — The opener should give context or purpose, not just continue with details that only make sense after reading the definition. Avoid non-sequiturs.
+
+**Good patterns for after_long_help openers:**
+
+- Explain the mental model: "Worktrees are addressed by branch name..."
+- Contrast with similar tools: "Unlike `git merge`, this merges current into target..."
+- State the use case: "Use when you're done with a feature branch."
+- Explain what something is: "Shell commands that run at key points..."
+- Describe relationship to other commands: "The building blocks of `wt merge`: commit, squash, rebase, push."
+
+**Patterns to avoid:**
+
+- Repeating the definition with different words
+- Starting with details that assume context ("The table shows..." when there's no prior mention of a table)
+- Leading with configuration defaults before establishing what the command does
+- Non-sequiturs that jump to side-effects without context
+
 ### Example output expansion (wt list)
 
 The `wt list` examples use **HTML comments + code blocks** that expand to full snapshot output. In `cli.rs`, you write:

@@ -20,7 +20,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt merge - Merge worktree into target branch
+wt merge - Merge current branch into target
 
 Squash & rebase, fast-forward target, remove the worktree.
 
@@ -72,7 +72,8 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET]
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
           Show debug info (-v), or also write diagnostic report (-vv)
 
-Merge the current branch into the target branch, defaulting to the main branch. Unlike [2mgit merge[0m, this merges the current branch into a target (rather than a target into the current branch). Similar to clicking "Merge pull request" on GitHub.
+Unlike [2mgit merge[0m, this merges current into target (not target into current). Similar to clicking "Merge pull request" on GitHub, but locally. Target defaults to the default branch.
+
 
 [1m[32mExamples
 

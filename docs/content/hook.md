@@ -10,9 +10,7 @@ group = "Commands"
 
 Run configured hooks
 
-Shell commands that run at key points in the worktree lifecycle.
-
-Hooks run automatically during `wt switch`, `wt merge`, & `wt remove`. `wt hook <type>` runs them on demand. Both user hooks (from `~/.config/worktrunk/config.toml`) and project hooks (from `.config/wt.toml`) are supported.
+Hooks are shell commands that run at key points in the worktree lifecycle — automatically during `wt switch`, `wt merge`, & `wt remove`, or on demand via `wt hook <type>`. Both user (`~/.config/worktrunk/config.toml`) and project (`.config/wt.toml`) hooks are supported.
 
 ## Hook types
 

@@ -1,8 +1,6 @@
 # wt config
 
-Manage configuration and shell integration
-
-Manages configuration, shell integration, and runtime settings.
+Manage user & project configs. Includes shell integration, hooks, and saved state.
 
 ## Examples
 
@@ -381,7 +379,9 @@ WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
 
 ## Command reference
 
-wt config - Manage configuration and shell integration
+wt config - Manage user &amp; project configs
+
+Includes shell integration, hooks, and saved state.
 
 Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 

@@ -20,7 +20,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt config - Manage configuration and shell integration
+wt config - Manage user & project configs
+
+Includes shell integration, hooks, and saved state.
 
 Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>
 
@@ -43,8 +45,6 @@ Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
           Show debug info (-v), or also write diagnostic report (-vv)
-
-Manages configuration, shell integration, and runtime settings.
 
 [1m[32mExamples
 

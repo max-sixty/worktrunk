@@ -244,11 +244,11 @@ pub(crate) struct Cli {
 pub(crate) enum Commands {
     /// Switch to a worktree
     ///
-    /// Change directory to a worktree, creating one if needed.
+    /// Creates one if needed.
     #[command(
         after_long_help = r#"Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
-<!-- demo: wt-switch.gif 1600x900 -->
 
+<!-- demo: wt-switch.gif 1600x900 -->
 ## Examples
 
 ```console
@@ -377,7 +377,8 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 
     /// List worktrees and their status
     #[command(
-        after_long_help = r#"Show all worktrees with their status. The table includes uncommitted changes, divergence from the default branch and remote, and optional CI status.
+        after_long_help = r#"Shows uncommitted changes, divergence from the default branch and remote, and optional CI status.
+
 <!-- demo: wt-list.gif 1600x900 -->
 
 The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
@@ -646,10 +647,9 @@ Missing a field that would be generally useful? Open an issue at https://github.
     },
 
     /// Remove worktree; delete branch if merged
-    #[command(
-        after_long_help = r#"Removes worktrees and their branches (if merged), returning to the main worktree. Defaults to removing the current worktree.
-
-## Examples
+    ///
+    /// For finished feature branches. Removes the current worktree by default.
+    #[command(after_long_help = r#"## Examples
 
 Remove current worktree:
 
@@ -717,8 +717,7 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 - [`wt merge`](@/merge.md) — Remove worktree after merging
 - [`wt list`](@/list.md) — View all worktrees
-"#
-    )]
+"#)]
     Remove {
         /// Branch name [default: current]
         #[arg(add = crate::completion::local_branches_completer())]
@@ -756,11 +755,12 @@ Removal runs in the background by default (returns immediately). Logs are writte
         force: bool,
     },
 
-    /// Merge worktree into target branch
+    /// Merge current branch into target
     ///
     /// Squash & rebase, fast-forward target, remove the worktree.
     #[command(
-        after_long_help = r#"Merge the current branch into the target branch, defaulting to the main branch. Unlike `git merge`, this merges the current branch into a target (rather than a target into the current branch). Similar to clicking "Merge pull request" on GitHub.
+        after_long_help = r#"Unlike `git merge`, this merges current into target (not target into current). Similar to clicking "Merge pull request" on GitHub, but locally. Target defaults to the default branch.
+
 <!-- demo: wt-merge.gif 1600x900 -->
 
 ## Examples
@@ -889,9 +889,7 @@ lint = "cargo clippy"
     ///
     /// Browse and switch worktrees with live preview.
     #[cfg_attr(not(unix), command(hide = true))]
-    #[command(
-        after_long_help = r#"Interactive worktree picker with live preview. Navigate worktrees with keyboard shortcuts and press Enter to switch.
-<!-- demo: wt-select.gif 1600x800 -->
+    #[command(after_long_help = r#"<!-- demo: wt-select.gif 1600x800 -->
 
 ## Examples
 
@@ -941,8 +939,7 @@ This is useful when the default pager doesn't render correctly in the embedded p
 
 - [`wt list`](@/list.md) — Static table view with all worktree metadata
 - [`wt switch`](@/switch.md) — Direct switching to a known target branch
-"#
-    )]
+"#)]
     Select {
         /// Include branches without worktrees
         #[arg(long)]
@@ -954,11 +951,11 @@ This is useful when the default pager doesn't render correctly in the embedded p
     },
 
     /// Run individual operations
+    ///
+    /// The building blocks of `wt merge` — commit, squash, rebase, push — plus standalone utilities.
     #[command(
         name = "step",
-        after_long_help = r#"Run individual git workflow operations: commits, squashes, rebases, and pushes.
-
-## Examples
+        after_long_help = r#"## Examples
 
 Commit with LLM-generated message:
 
@@ -1001,9 +998,7 @@ wt step push
     /// Run configured hooks
     #[command(
         name = "hook",
-        after_long_help = r#"Shell commands that run at key points in the worktree lifecycle.
-
-Hooks run automatically during `wt switch`, `wt merge`, & `wt remove`. `wt hook <type>` runs them on demand. Both user hooks (from `~/.config/worktrunk/config.toml`) and project hooks (from `.config/wt.toml`) are supported.
+        after_long_help = r#"Hooks are shell commands that run at key points in the worktree lifecycle — automatically during `wt switch`, `wt merge`, & `wt remove`, or on demand via `wt hook <type>`. Both user (`~/.config/worktrunk/config.toml`) and project (`.config/wt.toml`) hooks are supported.
 
 ## Hook types
 
@@ -1398,11 +1393,11 @@ For copying dependencies and caches between worktrees, see [`wt step copy-ignore
         action: HookCommand,
     },
 
-    /// Manage configuration and shell integration
+    /// Manage user & project configs
+    ///
+    /// Includes shell integration, hooks, and saved state.
     #[command(
-        after_long_help = concat!(r#"Manages configuration, shell integration, and runtime settings.
-
-## Examples
+        after_long_help = concat!(r#"## Examples
 
 Install shell integration (required for directory switching):
 

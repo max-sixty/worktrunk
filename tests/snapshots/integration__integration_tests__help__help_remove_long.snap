@@ -22,6 +22,8 @@ exit_code: 0
 ----- stderr -----
 wt remove - Remove worktree; delete branch if merged
 
+For finished feature branches. Removes the current worktree by default.
+
 Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...
 
 [1m[32mArguments:
@@ -61,8 +63,6 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
           Show debug info (-v), or also write diagnostic report (-vv)
-
-Removes worktrees and their branches (if merged), returning to the main worktree. Defaults to removing the current worktree.
 
 [1m[32mExamples
 

@@ -8,9 +8,7 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt step --help-page` — edit cli.rs to update -->
 
-Run individual operations
-
-Run individual git workflow operations: commits, squashes, rebases, and pushes.
+Run individual operations. The building blocks of wt merge — commit, squash, rebase, push — plus standalone utilities.
 
 ## Examples
 
@@ -47,6 +45,9 @@ wt step push
 
 {% terminal() %}
 wt step - Run individual operations
+
+The building blocks of <b>wt merge</b> — commit, squash, rebase, push — plus standalone
+utilities.
 
 Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 

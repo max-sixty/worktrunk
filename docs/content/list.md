@@ -10,7 +10,7 @@ group = "Commands"
 
 List worktrees and their status
 
-Show all worktrees with their status. The table includes uncommitted changes, divergence from the default branch and remote, and optional CI status.
+Shows uncommitted changes, divergence from the default branch and remote, and optional CI status.
 
 <figure class="demo">
 <picture>

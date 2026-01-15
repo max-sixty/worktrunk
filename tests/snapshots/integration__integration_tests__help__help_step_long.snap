@@ -22,6 +22,8 @@ exit_code: 0
 ----- stderr -----
 wt step - Run individual operations
 
+The building blocks of [1mwt merge[0m — commit, squash, rebase, push — plus standalone utilities.
+
 Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
 
 [1m[32mCommands:
@@ -45,8 +47,6 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
           Show debug info (-v), or also write diagnostic report (-vv)
-
-Run individual git workflow operations: commits, squashes, rebases, and pushes.
 
 [1m[32mExamples
 

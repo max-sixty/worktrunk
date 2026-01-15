@@ -274,9 +274,10 @@ fn handle_help_page(args: &[String]) {
         _ => None,
     };
 
-    // Combine: definition (about), subtitle, and after_long_help (conceptual docs)
+    // Combine: definition + subtitle as single lead paragraph, then after_long_help
+    // Definition doesn't have trailing period, subtitle does, so join with ". "
     let raw_help = match (&about, &subtitle) {
-        (Some(def), Some(sub)) => format!("{def}\n\n{sub}\n\n{after_long_help}"),
+        (Some(def), Some(sub)) => format!("{def}. {sub}\n\n{after_long_help}"),
         (Some(def), None) => format!("{def}\n\n{after_long_help}"),
         (None, Some(sub)) => format!("{sub}\n\n{after_long_help}"),
         (None, None) => after_long_help,
@@ -539,9 +540,9 @@ fn expand_demo_placeholders(text: &str) -> String {
             // Use figure.demo class for proper mobile styling (no shrink, horizontal scroll)
             // Generate <picture> element for light/dark theme switching
             // Assets are organized as: /assets/docs/{light,dark}/filename.gif
-            // Add blank line before the figure; blank line after is already in source
+            // Blank line after is already in source; blank line before comes from section separation
             let replacement = format!(
-                "\n<figure class=\"demo\">\n<picture>\n  <source srcset=\"/assets/docs/dark/{filename}\" media=\"(prefers-color-scheme: dark)\">\n  <img src=\"/assets/docs/light/{filename}\" alt=\"{alt_text} demo\"{dim_attrs}>\n</picture>\n</figure>"
+                "<figure class=\"demo\">\n<picture>\n  <source srcset=\"/assets/docs/dark/{filename}\" media=\"(prefers-color-scheme: dark)\">\n  <img src=\"/assets/docs/light/{filename}\" alt=\"{alt_text} demo\"{dim_attrs}>\n</picture>\n</figure>"
             );
             let end = after_prefix + end_offset + SUFFIX.len();
             result.replace_range(start..end, &replacement);
