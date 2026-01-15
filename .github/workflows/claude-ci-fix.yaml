@@ -123,3 +123,12 @@ jobs:
 
           claude_args: |
             --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch
+
+      - name: 📋 Upload Claude Code session logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-session-logs
+          path: ~/.claude/
+          retention-days: 30
+          if-no-files-found: warn

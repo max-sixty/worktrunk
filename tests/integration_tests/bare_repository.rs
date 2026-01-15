@@ -1,6 +1,6 @@
 use crate::common::{
     BareRepoTest, TestRepo, TestRepoBase, canonicalize, configure_directive_file, directive_file,
-    repo, setup_temp_snapshot_settings, wait_for_file, wt_command,
+    repo, setup_temp_snapshot_settings, wait_for, wait_for_file, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -364,16 +364,7 @@ fn test_bare_repo_merge_workflow() {
     }
 
     // Wait for background removal to complete
-    for _ in 0..50 {
-        if !feature_worktree.exists() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    assert!(
-        !feature_worktree.exists(),
-        "Feature worktree should be removed after merge"
-    );
+    wait_for("feature worktree removed", || !feature_worktree.exists());
 
     // Verify main worktree still exists and has the feature commit
     assert!(main_worktree.exists());

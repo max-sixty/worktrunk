@@ -257,19 +257,18 @@ Add to the project config:
 copy = "wt step copy-ignored"
 ```
 
-All gitignored files are copied by default, as if `.worktreeinclude` contained `**`. To copy only specific patterns, create a `.worktreeinclude` file using gitignore syntax:
+### What gets copied
+
+All gitignored files are copied by default. Tracked files are never touched.
+
+To limit what gets copied, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
 
 ```gitignore
-# .worktreeinclude — optional, limits what gets copied
+# .worktreeinclude
 .env
 node_modules/
 target/
-.cache/
 ```
-
-### What gets copied
-
-Only gitignored files are copied — tracked files are never touched. If `.worktreeinclude` exists, files must match **both** `.worktreeinclude` **and** be gitignored.
 
 ### Common patterns
 

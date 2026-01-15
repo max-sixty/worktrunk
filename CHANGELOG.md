@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.14.2
+
+### Fixed
+
+- **`wt remove --force` works with dirty worktrees**: The `--force` flag was documented to allow removal with uncommitted changes, but worktrunk's own cleanliness check blocked it before git could apply the flag. Fixes [#658](https://github.com/max-sixty/worktrunk/issues/658). (thanks @pedro93)
+- **Correct output when switching to existing local branch**: When switching to a local branch that tracks a remote, worktrunk incorrectly reported "Created branch X" instead of "Created worktree for X". Now only reports branch creation when git's DWIM actually creates a new tracking branch from a remote. Fixes [#656](https://github.com/max-sixty/worktrunk/issues/656). (thanks @guidupuy-ws)
+- **PowerShell handles multiple `wt.exe` binaries**: On Windows, when both Windows Terminal's `wt.exe` and worktrunk's `wt.exe` exist in PATH, shell integration errored with "Cannot convert 'System.Object[]' to the type 'System.String'". Now correctly uses the first match. Relates to [#648](https://github.com/max-sixty/worktrunk/issues/648). (thanks @Farley-Chen)
+
+## 0.14.1
+
+### Improved
+
+- **`--base` accepts commit-ish refs**: `wt switch --create --base` now accepts HEAD, tags, commit SHAs, and relative refs (e.g., `HEAD~2`), not just branch names. Fixes [#630](https://github.com/max-sixty/worktrunk/issues/630). (thanks @myhau)
+- **Upfront validation for target refs**: `wt merge` and `wt step` commands now validate target refs before approval prompts, giving clearer "Branch X not found" errors immediately.
+- **Visual hierarchy in help**: Section dividers, improved heading structure, and sentence case in `--help` output.
+
+### Fixed
+
+- **macOS shell freeze during `copy-ignored`**: Atomic `clonefile()` on directories saturated disk I/O, blocking shell startup. Now uses per-file reflink which is slower but keeps the system responsive.
+- **`copy-ignored` no longer copies nested worktrees**: When `worktree-path` places worktrees inside the main worktree, `copy-ignored` now skips them. Also now copies symlinks (fixes `node_modules/.bin/` etc.). Fixes [#641](https://github.com/max-sixty/worktrunk/issues/641). (thanks @razor-x)
+- **Context-aware hints for `wt config create`**: Hints now suggest relevant next steps based on which configs exist.
+
 ## 0.14.0
 
 ### Improved

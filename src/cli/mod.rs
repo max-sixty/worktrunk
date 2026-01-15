@@ -1017,31 +1017,30 @@ wt step push
 
 ### post-create
 
-Installing dependencies, database migrations, copying environment files.
+Copying caches, installing dependencies, generating environment files.
 
 ```toml
 [post-create]
+copy = "wt step copy-ignored"
 install = "npm ci"
-migrate = "npm run db:migrate"
-env = "cp .env.example .env"
 ```
 
 ### post-start
 
-Long builds, dev servers, file watchers, downloading large assets. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
+Dev servers, long builds, file watchers. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
 
 ```toml
 [post-start]
-build = "npm run build"
-server = "npm run dev"
+server = "npm run dev -- --port {{ branch | hash_port }}"
 ```
 
 ### post-switch
 
-Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current. Useful for terminal tab renaming, tmux window names, IDE notifications. Output logged to `.git/wt-logs/{branch}-{source}-post-switch-{name}.log`.
+Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current. Output logged to `.git/wt-logs/{branch}-{source}-post-switch-{name}.log`.
 
 ```toml
-post-switch = "echo 'Switched to {{ branch }}'"
+[post-switch]
+tmux = "[ -n \"$TMUX\" ] && tmux rename-window '{{ branch | sanitize }}'"
 ```
 
 ### pre-commit
@@ -1105,7 +1104,11 @@ Manage approvals with `wt hook approvals add` and `wt hook approvals clear`.
 
 ## Configuration
 
-Hooks are defined in `.config/wt.toml`. They can be a single command or multiple named commands:
+Hooks can be defined in two places: project config (`.config/wt.toml`) for repository-specific automation, or user config (`~/.config/worktrunk/config.toml`) for personal automation across all repositories.
+
+### Project hooks
+
+Project hooks are defined in `.config/wt.toml`. They can be a single command or multiple named commands:
 
 ```toml
 # Single command (string)
@@ -1276,14 +1279,12 @@ Background processes spawned by `post-start` outlive the worktree — pair them 
 
 ### Copying untracked files
 
-Git worktrees share the repository but not untracked files (dependencies, caches, `.env`). Use [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) to copy gitignored files:
+Git worktrees share the repository but not untracked files. [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) copies gitignored files between worktrees:
 
 ```toml
 [post-create]
 copy = "wt step copy-ignored"
 ```
-
-See [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) for limiting what gets copied, common patterns, and language-specific notes.
 
 ### Dev servers
 
@@ -1480,7 +1481,7 @@ worktree-path = "../{{ branch | sanitize }}"
 
 ## LLM commit messages
 
-Generate commit messages automatically during merge. Requires an external CLI tool. See <https://worktrunk.dev/llm-commits/> for setup details and template customization.
+Generate commit messages automatically during merge. Requires an external CLI tool. See [LLM commits docs](@/llm-commits.md) for setup and template customization.
 
 Using [llm](https://github.com/simonw/llm) (install: `pip install llm llm-anthropic`):
 
@@ -1556,7 +1557,7 @@ Commands approved for project hooks. Auto-populated when approving hooks on firs
 approved-commands = ["npm ci", "npm test"]
 ```
 
-For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see <https://worktrunk.dev/hook/>.
+For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see [`wt hook` docs](@/hook.md).
 
 ### Custom prompt templates
 

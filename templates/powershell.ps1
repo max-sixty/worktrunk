@@ -15,7 +15,8 @@ if (Get-Command {{ cmd }} -ErrorAction SilentlyContinue) {
             [string[]]$Arguments
         )
 
-        $wtBin = (Get-Command {{ cmd }} -CommandType Application).Source
+        # Select-Object -First 1 handles case where multiple binaries match (e.g., wt.exe from Windows Terminal)
+        $wtBin = (Get-Command {{ cmd }} -CommandType Application | Select-Object -First 1).Source
         $directiveFile = [System.IO.Path]::GetTempFileName()
 
         try {
@@ -63,7 +64,7 @@ if (Get-Command {{ cmd }} -ErrorAction SilentlyContinue) {
     # This registers Register-ArgumentCompleter with proper handling
     $env:COMPLETE = "powershell"
     try {
-        & (Get-Command {{ cmd }} -CommandType Application) | Out-String | Invoke-Expression
+        & (Get-Command {{ cmd }} -CommandType Application | Select-Object -First 1) | Out-String | Invoke-Expression
     }
     finally {
         Remove-Item Env:\COMPLETE -ErrorAction SilentlyContinue

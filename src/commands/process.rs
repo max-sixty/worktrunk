@@ -105,7 +105,7 @@ fn spawn_detached_unix(
         None => command.to_string(),
     };
 
-    let shell_cmd = format!("sh -c {} &", shell_escape::escape(full_command.into()));
+    let shell_cmd = format!("{} &", full_command);
 
     // Log only the operation identifier, not the full command (which may contain context_json
     // with user data that shouldn't appear in debug logs)

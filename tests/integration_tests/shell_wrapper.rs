@@ -116,6 +116,15 @@ impl ShellOutput {
         );
     }
 
+    /// Assert command exited successfully (exit code 0)
+    fn assert_success(&self) {
+        assert_eq!(
+            self.exit_code, 0,
+            "Expected exit code 0, got {}.\nOutput:\n{}",
+            self.exit_code, self.combined
+        );
+    }
+
     /// Normalize paths and ANSI codes in output for snapshot testing
     fn normalized(&self) -> String {
         // First normalize temporary directory paths
@@ -1184,7 +1193,7 @@ approved-commands = ["echo 'test command executed'"]
         output.assert_no_directive_leaks();
         output.assert_no_job_control_messages();
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // Normalize paths in output for snapshot testing
         // Snapshot the output
@@ -1209,8 +1218,7 @@ approved-commands = ["echo 'test command executed'"]
 
         // No directives should leak
         output.assert_no_directive_leaks();
-
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // The executed command output should appear
         assert!(
@@ -1323,7 +1331,7 @@ approved-commands = ["echo 'background task'"]
         // No directives should leak
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // Snapshot verifies progress messages appear to users
         // (catches the bug where progress() was incorrectly suppressed)
@@ -1371,7 +1379,7 @@ approved-commands = ["echo 'fish background task'"]
         // No directives should leak
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // Snapshot verifies progress messages appear to users through Fish wrapper
         assert_snapshot!(output.normalized());
@@ -1402,7 +1410,7 @@ approved-commands = ["echo 'fish background task'"]
         // No directives should leak
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // All three lines should be executed and visible
         assert!(output.combined.contains("line 1"), "First line missing");
@@ -1423,7 +1431,7 @@ approved-commands = ["echo 'fish background task'"]
         // No directives should leak even with minimal output
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // Should still show success message
         assert!(
@@ -1582,7 +1590,7 @@ approved-commands = ["echo 'background job'"]
 
         let output = exec_through_wrapper("zsh", &repo, "switch", &["--create", "zsh-job-test"]);
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
         output.assert_no_directive_leaks();
 
         // Critical: zsh should NOT show job control notifications
@@ -2369,7 +2377,7 @@ command = "{}"
             &[("PATH", &path_with_bin)],
         );
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
         assert_snapshot!(output.normalized());
     }
 
@@ -2449,7 +2457,7 @@ fi
             &[("PATH", &path_with_bin)],
         );
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
         assert_snapshot!(output.normalized());
     }
 

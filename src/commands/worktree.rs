@@ -720,6 +720,11 @@ pub fn execute_switch(
                 })?;
             }
 
+            // Check if local branch exists BEFORE git worktree add (for DWIM detection).
+            // Only relevant when not using --create (which explicitly creates the branch).
+            let local_branch_existed =
+                !create_branch && repo.local_branch_exists(&branch).unwrap_or(false);
+
             // Build git worktree add command
             let worktree_path_str = worktree_path.to_string_lossy();
             let mut args = vec!["worktree", "add", worktree_path_str.as_ref()];
@@ -744,8 +749,8 @@ pub fn execute_switch(
                 .into());
             }
 
-            // Check if git's DWIM created a tracking branch from a remote
-            let from_remote = if !create_branch {
+            // Report tracking info only if git's DWIM created the branch from a remote
+            let from_remote = if !create_branch && !local_branch_existed {
                 repo.upstream_branch(&branch)?
             } else {
                 None

@@ -887,8 +887,9 @@ fn sync_readme_markers(
 /// # Transform Rules
 ///
 /// 1. Code fence markers (```` ``` ````, ```` ```toml ````) → stripped entirely
-/// 2. All other lines → prefixed with `# `
-/// 3. Trailing empty comment lines → trimmed
+/// 2. Markdown links → converted to plain URLs (config files aren't rendered as markdown)
+/// 3. All other lines → prefixed with `# `
+/// 4. Trailing empty comment lines → trimmed
 fn transform_config_source_to_toml(source: &str) -> String {
     let mut result = Vec::new();
     let mut in_code_block = false;
@@ -901,6 +902,11 @@ fn transform_config_source_to_toml(source: &str) -> String {
             in_code_block = !in_code_block;
             continue;
         }
+
+        // Convert markdown links to plain text for config file readability
+        // [Link text](@/page.md) → Link text (https://worktrunk.dev/page/)
+        // [Link text](https://...) → Link text (https://...)
+        let line = convert_markdown_links_for_config(line);
 
         // Comment all lines
         if line.is_empty() {
@@ -916,6 +922,36 @@ fn transform_config_source_to_toml(source: &str) -> String {
     }
 
     result.join("\n")
+}
+
+/// Convert markdown links to plain text with URL in parentheses.
+///
+/// Config files aren't rendered as markdown, so links need to be readable as plain text.
+/// - `[Link text](@/page.md)` → `Link text (https://worktrunk.dev/page/)`
+/// - `[Link text](https://example.com)` → `Link text (https://example.com)`
+fn convert_markdown_links_for_config(line: &str) -> String {
+    use regex::Regex;
+    use std::sync::LazyLock;
+
+    static MARKDOWN_LINK: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
+
+    MARKDOWN_LINK
+        .replace_all(line, |caps: &regex::Captures| {
+            let text = &caps[1];
+            let url = &caps[2];
+
+            // Convert Zola @/ links to full URLs
+            let url = if let Some(path) = url.strip_prefix("@/") {
+                let page = path.trim_end_matches(".md");
+                format!("https://worktrunk.dev/{page}/")
+            } else {
+                url.to_string()
+            };
+
+            format!("{text} ({url})")
+        })
+        .to_string()
 }
 
 /// Extract user config documentation from src/cli/mod.rs
