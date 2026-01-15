@@ -1085,12 +1085,16 @@ command = "{llm_path_str}"
 
     // Merge with --yes to skip approval prompts for commands
     let (path_var, path_with_bin) = make_path_with_mock_bin(&bin_dir);
+    let bin_dir_str = bin_dir.to_string_lossy();
     snapshot_merge_with_env(
         "readme_example_complex",
         &repo,
         &["main", "--yes"],
         Some(&feature_wt),
-        &[(&path_var, &path_with_bin)],
+        &[
+            (&path_var, &path_with_bin),
+            ("MOCK_CONFIG_DIR", &bin_dir_str),
+        ],
     );
 }
 
