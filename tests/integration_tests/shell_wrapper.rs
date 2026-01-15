@@ -36,17 +36,25 @@
 #![cfg(feature = "shell-integration-tests")]
 
 use crate::common::TestRepo;
+#[cfg(unix)]
 use crate::common::canonicalize;
+#[cfg(unix)]
 use crate::common::wait_for_file_content;
+#[cfg(unix)]
 use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
+#[cfg(unix)]
 use std::fs;
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::process::Command;
+#[cfg(unix)]
 use std::sync::LazyLock;
+#[cfg(unix)]
 use worktrunk::shell;
 
 /// Regex for normalizing temporary directory paths in test snapshots
+#[cfg(unix)]
 static TMPDIR_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(
         r#"(/private/var/folders/[^/]+/[^/]+/T/\.tmp[^\s/'"]+|/tmp/\.(?:tmp|psub)[^\s/'"]+)"#,
@@ -56,12 +64,14 @@ static TMPDIR_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
 
 /// Regex that collapses repeated TMPDIR placeholders (caused by nested mktemp paths)
 /// so `[TMPDIR][TMPDIR]/foo` becomes `[TMPDIR]/foo` and `[TMPDIR]/[TMPDIR]` becomes `[TMPDIR]`
+#[cfg(unix)]
 static TMPDIR_PLACEHOLDER_COLLAPSE_REGEX: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\[TMPDIR](?:/?\[TMPDIR])+").unwrap());
 
 /// Regex for normalizing workspace paths (dynamically built from CARGO_MANIFEST_DIR)
 /// Matches: <project_root>/tests/fixtures/
 /// Replaces with: [WORKSPACE]/tests/fixtures/
+#[cfg(unix)]
 static WORKSPACE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let pattern = format!(r"{}/tests/fixtures/", regex::escape(manifest_dir));
@@ -71,6 +81,7 @@ static WORKSPACE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
 /// Regex for normalizing git commit hashes (7-character hex)
 /// Note: No word boundaries because ANSI codes (ending with 'm') directly precede hashes
 /// Shell wrapper tests produce non-deterministic SHAs due to PTY timing/environment
+#[cfg(unix)]
 static COMMIT_HASH_REGEX: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"[0-9a-f]{7}").unwrap());
 
@@ -85,6 +96,7 @@ struct ShellOutput {
 
 /// Regex for detecting bash job control messages
 /// Matches patterns like "[1] 12345" (job start) and "[1]+ Done" (job completion)
+#[cfg(unix)]
 static JOB_CONTROL_REGEX: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\[\d+\][+-]?\s+(Done|\d+)").unwrap());
 
@@ -108,6 +120,7 @@ impl ShellOutput {
     /// Job control messages like "[1] 12345" (job start) and "[1]+ Done ..." (job completion)
     /// should not appear in user-facing output. These are internal shell artifacts from
     /// background process management that leak implementation details.
+    #[cfg(unix)]
     fn assert_no_job_control_messages(&self) {
         assert!(
             !JOB_CONTROL_REGEX.is_match(&self.combined),
@@ -126,6 +139,7 @@ impl ShellOutput {
     }
 
     /// Normalize paths and ANSI codes in output for snapshot testing
+    #[cfg(unix)]
     fn normalized(&self) -> String {
         // First normalize temporary directory paths
         let tmpdir_normalized = TMPDIR_REGEX.replace_all(&self.combined, "[TMPDIR]");
@@ -197,6 +211,7 @@ fn generate_wrapper(repo: &TestRepo, shell: &str) -> String {
 ///
 /// Note: Fish completions are custom (use $WORKTRUNK_BIN to bypass shell wrapper).
 /// Bash and Zsh use inline lazy loading in the init script.
+#[cfg(unix)]
 fn generate_completions(_repo: &TestRepo, shell: &str) -> String {
     match shell {
         "fish" => {
