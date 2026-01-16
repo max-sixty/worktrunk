@@ -3374,7 +3374,6 @@ mod windows_tests {
 
     /// Test that PowerShell shell integration works for switch --create
     #[rstest]
-    #[ignore = "PowerShell PTY timeout - see module TODO"]
     fn test_powershell_switch_create(repo: TestRepo) {
         let output = exec_through_wrapper("powershell", &repo, "switch", &["--create", "feature"]);
 
@@ -3390,7 +3389,6 @@ mod windows_tests {
 
     /// Test that PowerShell shell integration handles command failures correctly
     #[rstest]
-    #[ignore = "PowerShell PTY timeout - see module TODO"]
     fn test_powershell_command_failure(mut repo: TestRepo) {
         // Create a worktree that already exists
         repo.add_worktree("existing");
