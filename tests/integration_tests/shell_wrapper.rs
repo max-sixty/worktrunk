@@ -3591,9 +3591,10 @@ mod windows_tests {
         let wrapper_script = generate_wrapper(&repo, "powershell");
 
         // Build a script that sources the wrapper and checks if wt is a function
+        // Note: powershell_quote adds single quotes, so don't add them in the format string
         let script = format!(
-            "$env:WORKTRUNK_BIN = '{}'\n\
-             $env:WORKTRUNK_CONFIG_PATH = '{}'\n\
+            "$env:WORKTRUNK_BIN = {}\n\
+             $env:WORKTRUNK_CONFIG_PATH = {}\n\
              {}\n\
              if (Get-Command wt -CommandType Function -ErrorAction SilentlyContinue) {{\n\
                  Write-Host 'WRAPPER_REGISTERED'\n\
@@ -3632,9 +3633,10 @@ mod windows_tests {
         let wrapper_script = generate_wrapper(&repo, "powershell");
 
         // Build a script that sources the wrapper and checks for completion
+        // Note: powershell_quote adds single quotes, so don't add them in the format string
         let script = format!(
-            "$env:WORKTRUNK_BIN = '{}'\n\
-             $env:WORKTRUNK_CONFIG_PATH = '{}'\n\
+            "$env:WORKTRUNK_BIN = {}\n\
+             $env:WORKTRUNK_CONFIG_PATH = {}\n\
              {}\n\
              $completers = Get-ArgumentCompleter -Native\n\
              if ($completers | Where-Object {{ $_.CommandName -eq 'wt' }}) {{\n\
@@ -3714,9 +3716,10 @@ mod windows_tests {
         let wrapper_script = generate_wrapper(&repo, "powershell");
 
         // Script that prints which binary would be used
+        // Note: powershell_quote adds single quotes, so don't add them in the format string
         let script = format!(
-            "$env:WORKTRUNK_BIN = '{}'\n\
-             $env:WORKTRUNK_CONFIG_PATH = '{}'\n\
+            "$env:WORKTRUNK_BIN = {}\n\
+             $env:WORKTRUNK_CONFIG_PATH = {}\n\
              {}\n\
              Write-Host \"BIN_PATH: $env:WORKTRUNK_BIN\"",
             powershell_quote(&wt_bin.display().to_string()),
