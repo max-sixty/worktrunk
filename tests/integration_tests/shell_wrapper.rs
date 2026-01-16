@@ -3402,8 +3402,6 @@ mod windows_tests {
     /// Diagnostic test: Verify basic PowerShell execution works via PTY.
     #[test]
     fn test_conpty_powershell_basic() {
-        use std::io::Write;
-
         let pair = crate::common::open_pty();
         let shell_binary = get_shell_binary("powershell");
         let mut cmd = portable_pty::CommandBuilder::new(shell_binary);
