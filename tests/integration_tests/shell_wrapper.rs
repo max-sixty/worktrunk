@@ -3717,4 +3717,205 @@ mod windows_tests {
             output.combined
         );
     }
+
+    /// Test that PowerShell suppresses shell integration hint when running through wrapper
+    #[rstest]
+    fn test_powershell_shell_integration_hint_suppressed(repo: TestRepo) {
+        // When running through the shell wrapper, the "To enable automatic cd" hint
+        // should NOT appear because the user already has shell integration
+        let output = exec_through_wrapper("powershell", &repo, "switch", &["--create", "ps-test"]);
+
+        // Critical: shell integration hint must be suppressed when shell integration is active
+        assert!(
+            !output.combined.contains("To enable automatic cd"),
+            "PowerShell: Shell integration hint should not appear when running through wrapper.\nOutput:\n{}",
+            output.combined
+        );
+
+        // Should still have the success message
+        assert!(
+            output.combined.contains("Created branch") && output.combined.contains("worktree"),
+            "PowerShell: Success message missing.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
+    /// Test PowerShell select command to pick from worktrees
+    #[rstest]
+    fn test_powershell_select_basic(mut repo: TestRepo) {
+        // Create some worktrees to select from
+        repo.add_worktree("feature-a");
+        repo.add_worktree("feature-b");
+
+        // List worktrees (select without TUI will list them)
+        let output = exec_through_wrapper("powershell", &repo, "select", &["--list"]);
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: select --list should succeed.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test PowerShell switch from one worktree to another
+    #[rstest]
+    fn test_powershell_switch_between_worktrees(mut repo: TestRepo) {
+        // Create two worktrees
+        repo.add_worktree("feature-first");
+        repo.add_worktree("feature-second");
+
+        // Switch from main to feature-first
+        let output = exec_through_wrapper("powershell", &repo, "switch", &["feature-first"]);
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: switch to existing worktree should succeed.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test PowerShell with long branch names
+    #[rstest]
+    fn test_powershell_long_branch_name(repo: TestRepo) {
+        let long_name = "feature-with-a-really-long-descriptive-branch-name-that-goes-on";
+        let output = exec_through_wrapper("powershell", &repo, "switch", &["--create", long_name]);
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: Should handle long branch names.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test PowerShell remove with branch name argument
+    #[rstest]
+    fn test_powershell_remove_by_name(mut repo: TestRepo) {
+        // Create a worktree
+        repo.add_worktree("to-delete");
+
+        // Remove it by name
+        let output = exec_through_wrapper("powershell", &repo, "remove", &["to-delete"]);
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: remove by name should succeed.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test PowerShell list with verbose output
+    #[rstest]
+    fn test_powershell_list_verbose(mut repo: TestRepo) {
+        // Create a worktree
+        repo.add_worktree("verbose-test");
+
+        let output = exec_through_wrapper("powershell", &repo, "list", &["--verbose"]);
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: list --verbose should succeed.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test PowerShell config shell init output
+    #[rstest]
+    fn test_powershell_config_shell_init(repo: TestRepo) {
+        let output = exec_through_wrapper(
+            "powershell",
+            &repo,
+            "config",
+            &["shell", "init", "powershell"],
+        );
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: config shell init should succeed.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+
+        // Should output PowerShell init script
+        assert!(
+            output.combined.contains("function") || output.combined.contains("WORKTRUNK"),
+            "PowerShell: Should output shell init script.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
+    /// Test PowerShell handles missing branch gracefully
+    #[rstest]
+    fn test_powershell_switch_nonexistent_branch(repo: TestRepo) {
+        // Try to switch to a branch that doesn't exist (without --create)
+        let output = exec_through_wrapper("powershell", &repo, "switch", &["nonexistent-branch"]);
+
+        // Should fail with appropriate error
+        assert_ne!(
+            output.exit_code, 0,
+            "PowerShell: switch to nonexistent branch should fail.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test PowerShell step next command
+    #[rstest]
+    fn test_powershell_step_next(mut repo: TestRepo) {
+        // Create worktrees to step through
+        repo.add_worktree("step-1");
+        repo.add_worktree("step-2");
+
+        let output = exec_through_wrapper("powershell", &repo, "step", &["next"]);
+
+        // Step next might succeed or indicate nothing to step to
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test PowerShell step prev command
+    #[rstest]
+    fn test_powershell_step_prev(mut repo: TestRepo) {
+        // Create worktrees
+        repo.add_worktree("prev-1");
+        repo.add_worktree("prev-2");
+
+        let output = exec_through_wrapper("powershell", &repo, "step", &["prev"]);
+
+        // Step prev might succeed or indicate nothing to step to
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test PowerShell handles paths with spaces (common on Windows)
+    /// Note: This test creates a branch name, not a path with spaces
+    /// Path with spaces handling is tested implicitly via temp directories
+    #[rstest]
+    fn test_powershell_special_branch_name(repo: TestRepo) {
+        // Test a branch name with various special characters
+        let output =
+            exec_through_wrapper("powershell", &repo, "switch", &["--create", "fix_bug-123"]);
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: Should handle special chars in branch names.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test PowerShell hook show command
+    #[rstest]
+    fn test_powershell_hook_show(repo: TestRepo) {
+        let output = exec_through_wrapper("powershell", &repo, "hook", &["show"]);
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: hook show should succeed.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+    }
 }
