@@ -138,8 +138,48 @@ fn generate_wrapper(repo: &TestRepo, shell: &str) -> String {
         );
     }
 
-    String::from_utf8(output.stdout)
-        .unwrap_or_else(|_| panic!("wt config shell init {} produced invalid UTF-8", shell))
+    let wrapper = String::from_utf8(output.stdout)
+        .unwrap_or_else(|_| panic!("wt config shell init {} produced invalid UTF-8", shell));
+
+    // For PowerShell tests running in ConPTY (via portable_pty), we need to modify
+    // the wrapper to capture output explicitly. ConPTY has a known issue where the
+    // `&` operator's output doesn't appear when the host process has stdout redirected
+    // (which cargo test does). See: https://github.com/microsoft/terminal/issues/11276
+    //
+    // The production template uses simple `& $wtBin @Arguments` which works in real
+    // terminals. For tests, we inject output capture + Out-Host to make it visible.
+    if shell == "powershell" || shell == "pwsh" {
+        // ConPTY workaround: capture output first, then pipe through Out-Host
+        // The production template uses `& $wtBin @Arguments` which works in normal
+        // PowerShell, but ConPTY doesn't surface the output. Capturing to a variable
+        // first and then piping through Out-Host makes the output visible.
+        //
+        // We use a regex-like approach: find the line with "& $wtBin @Arguments"
+        // and modify it to capture output. The indentation (12 spaces) is preserved.
+        let mut modified = wrapper.clone();
+        if let Some(pos) = wrapper.find("& $wtBin @Arguments\n") {
+            // Find the start of this line (after the indentation)
+            let line_end = pos + "& $wtBin @Arguments".len();
+            // Replace just the call with output capture version
+            modified = format!(
+                "{}$wtOutput = & $wtBin @Arguments 2>&1{}",
+                &wrapper[..pos],
+                &wrapper[line_end..]
+            );
+            // Now insert the Out-Host call after $exitCode = $LASTEXITCODE
+            if let Some(exit_pos) = modified.find("$exitCode = $LASTEXITCODE\n") {
+                let after_exit = exit_pos + "$exitCode = $LASTEXITCODE\n".len();
+                modified = format!(
+                    "{}            if ($wtOutput) {{ $wtOutput | Out-Host }}\n{}",
+                    &modified[..after_exit],
+                    &modified[after_exit..]
+                );
+            }
+        }
+        modified
+    } else {
+        wrapper
+    }
 }
 
 /// Generate shell completions script for the given shell
