@@ -339,7 +339,7 @@ fn exec_in_pty_interactive(
     inputs: &[&str],
 ) -> (String, i32) {
     use portable_pty::CommandBuilder;
-    use std::io::{Read, Write};
+    use std::io::Write;
 
     let pair = crate::common::open_pty();
 
@@ -416,29 +416,25 @@ fn exec_in_pty_interactive(
     let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave); // Close slave in parent
 
-    // Clone the reader for capturing output
-    let mut reader = pair.master.try_clone_reader().unwrap();
+    // Get reader and writer for the PTY master
+    let reader = pair.master.try_clone_reader().unwrap();
+    let mut writer = pair.master.take_writer().unwrap();
 
     // Write input synchronously if we have any (matches approval_pty.rs approach)
-    if !inputs.is_empty() {
-        let mut writer = pair.master.take_writer().unwrap();
-        for input in inputs {
-            writer.write_all(input.as_bytes()).unwrap();
-            writer.flush().unwrap();
-        }
-        drop(writer); // Explicitly drop writer so PTY sees EOF
+    for input in inputs {
+        writer.write_all(input.as_bytes()).unwrap();
+        writer.flush().unwrap();
     }
 
-    // Read everything the "terminal" would display (including echoed input)
-    let mut buf = String::new();
-    reader.read_to_string(&mut buf).unwrap(); // Blocks until child exits & PTY closes
-
-    let status = child.wait().unwrap();
+    // Read output and wait for exit using platform-aware handling
+    // On Windows ConPTY, this handles cursor queries and proper pipe closure
+    let (buf, exit_code) =
+        crate::common::pty::read_pty_output(reader, writer, pair.master, &mut child);
 
     // Normalize CRLF to LF (PTYs use CRLF on some platforms)
     let normalized = buf.replace("\r\n", "\n");
 
-    (normalized, status.exit_code() as i32)
+    (normalized, exit_code)
 }
 
 /// Execute bash in true interactive mode by writing commands to the PTY

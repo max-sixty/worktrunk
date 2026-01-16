@@ -43,7 +43,7 @@ use std::path::Path;
 /// - ClosePseudoConsole must be called on a separate thread while draining output
 ///
 /// See: https://learn.microsoft.com/en-us/windows/console/closepseudoconsole
-fn read_pty_output(
+pub fn read_pty_output(
     reader: Box<dyn Read + Send>,
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
