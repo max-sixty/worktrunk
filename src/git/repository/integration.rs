@@ -194,7 +194,7 @@ impl Repository {
     /// Check if a branch is integrated into a target.
     ///
     /// This is a convenience method that combines [`compute_integration_lazy()`] and
-    /// [`check_integration()`]. The `target` is transformed via [`effective_integration_target()`]
+    /// [`check_integration()`]. The `target` is transformed via [`Self::effective_integration_target()`]
     /// before checking, which may use an upstream ref if it's ahead of the local target.
     ///
     /// Uses lazy evaluation with short-circuit: stops as soon as any check confirms
