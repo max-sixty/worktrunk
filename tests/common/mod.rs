@@ -42,8 +42,11 @@ pub mod list_snapshots;
 // Progressive output tests use PTY and are Unix-only for now
 #[cfg(unix)]
 pub mod progressive_output;
-// Shell integration tests are Unix-only for now (Windows support planned)
-#[cfg(all(unix, feature = "shell-integration-tests"))]
+// PTY execution helpers - Unix-only
+#[cfg(unix)]
+pub mod pty;
+// Shell integration tests - cross-platform with PTY support
+#[cfg(feature = "shell-integration-tests")]
 pub mod shell;
 
 // Cross-platform mock command helpers
@@ -351,19 +354,23 @@ pub fn merge_scenario_multi_commit(mut repo: TestRepo) -> (TestRepo, PathBuf) {
     (repo, feature_wt)
 }
 
-/// Returns a PTY system with a guard that restores the TTY foreground pgrp on drop.
+/// Returns a PTY system with platform-appropriate setup.
 ///
-/// Use this instead of `portable_pty::native_pty_system()` directly to ensure:
-/// 1. PTY tests work in background process groups (signals blocked)
-/// 2. SIGTTIN/SIGTTOU are blocked to prevent test processes from being stopped
+/// On Unix, this blocks SIGTTIN/SIGTTOU signals to prevent test processes from
+/// being stopped when PTY operations interact with terminal control.
+///
+/// On Windows, this returns the native ConPTY system directly.
+///
+/// Use this instead of `portable_pty::native_pty_system()` directly to ensure
+/// PTY tests work correctly across platforms.
 ///
 /// NOTE: PTY tests are behind the `shell-integration-tests` feature because they can
 /// trigger a nextest bug where its InputHandler cleanup receives SIGTTOU. This happens
 /// when tests spawn interactive shells (zsh -ic, bash -ic) which take control of the
 /// foreground process group. See https://github.com/nextest-rs/nextest/issues/2878
 /// Workaround: run with NEXTEST_NO_INPUT_HANDLER=1. See CLAUDE.md for details.
-#[cfg(unix)]
 pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
+    #[cfg(unix)]
     ignore_tty_signals();
     portable_pty::native_pty_system()
 }
@@ -371,13 +378,11 @@ pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
 /// Open a PTY pair with default size (48 rows x 200 cols).
 ///
 /// Most PTY tests use this standard size. Returns the master/slave pair.
-#[cfg(unix)]
 pub fn open_pty() -> portable_pty::PtyPair {
     open_pty_with_size(48, 200)
 }
 
 /// Open a PTY pair with specified size.
-#[cfg(unix)]
 pub fn open_pty_with_size(rows: u16, cols: u16) -> portable_pty::PtyPair {
     native_pty_system()
         .openpty(portable_pty::PtySize {
@@ -2361,13 +2366,11 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
 /// Add filters for PTY-specific artifacts that vary between platforms.
 ///
 /// This handles:
-/// - CRLF line endings (PTYs use \r\n)
 /// - macOS PTY control sequences (^D followed by backspaces)
 /// - Leading ANSI reset codes that vary between macOS and Linux
+///
+/// Note: CRLF normalization is done eagerly in PTY exec functions, not here.
 pub fn add_pty_filters(settings: &mut insta::Settings) {
-    // PTYs use \r\n line endings, normalize to \n
-    settings.add_filter(r"\r\n", "\n");
-
     // macOS PTYs emit ^D (literal caret-D) followed by backspaces (0x08)
     // when EOF is signaled. Linux PTYs don't. Strip these for consistency.
     settings.add_filter(r"\^D\x08+", "");
@@ -2376,36 +2379,6 @@ pub fn add_pty_filters(settings: &mut insta::Settings) {
     // macOS and Linux PTYs generate ANSI codes slightly differently.
     // This handles lines that start with ESC[0m (reset).
     settings.add_filter(r"(?m)^\x1b\[0m", "");
-}
-
-/// Add filters for temporary directory paths in PTY output.
-///
-/// PTY tests create temp directories that appear in output. These paths vary
-/// per test run and need normalization.
-///
-/// # Arguments
-/// * `settings` - The insta Settings to add filters to
-/// * `placeholder` - The placeholder text to use (e.g., "[TMPDIR]", "_REPO_")
-pub fn add_pty_tmpdir_filters(settings: &mut insta::Settings, placeholder: &str) {
-    // macOS temp paths: /private/var/folders/.../T/.tmpXXX or /var/folders/.../T/.tmpXXX
-    settings.add_filter(
-        r"(?:/private)?/var/folders/[^/]+/[^/]+/T/\.tmp[^\s/'\x1b\)]+",
-        placeholder,
-    );
-
-    // Linux temp paths: /tmp/.tmpXXX
-    settings.add_filter(r"/tmp/\.tmp[^\s/'\x1b\)]+", placeholder);
-
-    // Fish shell temp paths: /tmp/.psubXXX (process substitution)
-    settings.add_filter(r"/tmp/\.psub[^\s/'\x1b\)]+", placeholder);
-
-    // Collapse duplicate placeholders that can appear with nested mktemp paths.
-    // e.g., [TMPDIR]/[TMPDIR]/foo -> [TMPDIR]/foo
-    let collapse_pattern = format!(
-        r"\[{0}](?:/?\[{0}])+",
-        regex::escape(placeholder.trim_matches(|c| c == '[' || c == ']'))
-    );
-    settings.add_filter(&collapse_pattern, placeholder);
 }
 
 /// Add filters for binary paths (target/debug/wt) in PTY output.

@@ -23,20 +23,26 @@
 //! - Project root paths
 
 // All shell integration tests and infrastructure gated by feature flag
-// Unix-only for now - Windows shell integration is planned
-#![cfg(all(unix, feature = "shell-integration-tests"))]
+// Supports both Unix (bash/zsh/fish) and Windows (PowerShell)
+#![cfg(feature = "shell-integration-tests")]
 
-use crate::common::TestRepo;
-use crate::common::canonicalize;
-use crate::common::wait_for_file_content;
-use crate::common::{add_pty_filters, add_pty_tmpdir_filters};
-use insta::assert_snapshot;
+// =============================================================================
+// Imports
+// =============================================================================
+
+// Shared imports (both platforms)
+use crate::common::{TestRepo, shell::get_shell_binary};
 use insta_cmd::get_cargo_bin;
-use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
-use std::sync::LazyLock;
-use worktrunk::shell;
+
+// Unix-only imports
+#[cfg(unix)]
+use {
+    crate::common::{add_pty_filters, canonicalize, wait_for_file_content},
+    insta::assert_snapshot,
+    std::{fs, path::PathBuf, sync::LazyLock},
+    worktrunk::shell,
+};
 
 /// Output from executing a command through a shell wrapper
 #[derive(Debug)]
@@ -49,6 +55,7 @@ struct ShellOutput {
 
 /// Regex for detecting bash job control messages
 /// Matches patterns like "[1] 12345" (job start) and "[1]+ Done" (job completion)
+#[cfg(unix)]
 static JOB_CONTROL_REGEX: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\[\d+\][+-]?\s+(Done|\d+)").unwrap());
 
@@ -72,6 +79,7 @@ impl ShellOutput {
     /// Job control messages like "[1] 12345" (job start) and "[1]+ Done ..." (job completion)
     /// should not appear in user-facing output. These are internal shell artifacts from
     /// background process management that leak implementation details.
+    #[cfg(unix)]
     fn assert_no_job_control_messages(&self) {
         assert!(
             !JOB_CONTROL_REGEX.is_match(&self.combined),
@@ -81,6 +89,7 @@ impl ShellOutput {
     }
 
     /// Assert command exited successfully (exit code 0)
+    #[cfg(unix)]
     fn assert_success(&self) {
         assert_eq!(
             self.exit_code, 0,
@@ -90,27 +99,14 @@ impl ShellOutput {
     }
 }
 
-/// Create insta settings configured for shell wrapper snapshot tests.
+/// Insta settings for shell wrapper tests.
 ///
-/// This sets up filters for:
-/// - PTY-specific artifacts (CRLF, ^D control sequences, ANSI resets)
-/// - Temporary directory paths
-/// - Project root paths (for fixture references)
+/// Inherits snapshot_path and path filters from TestRepo (bound to scope),
+/// then adds PTY-specific filters for cross-platform consistency.
+#[cfg(unix)]
 fn shell_wrapper_settings() -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-
-    // Add common PTY filters (CRLF, ^D, leading ANSI resets)
     add_pty_filters(&mut settings);
-
-    // Add temp directory path filters
-    add_pty_tmpdir_filters(&mut settings, "[TMPDIR]");
-
-    // Normalize project root paths (for fixture references like tests/fixtures/)
-    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        settings.add_filter(&regex::escape(&manifest_dir), "[PROJECT_ROOT]");
-    }
-
     settings
 }
 
@@ -150,6 +146,7 @@ fn generate_wrapper(repo: &TestRepo, shell: &str) -> String {
 ///
 /// Note: Fish completions are custom (use $WORKTRUNK_BIN to bypass shell wrapper).
 /// Bash and Zsh use inline lazy loading in the init script.
+#[cfg(unix)]
 fn generate_completions(_repo: &TestRepo, shell: &str) -> String {
     match shell {
         "fish" => {
@@ -178,6 +175,12 @@ fn quote_arg(arg: &str) -> String {
 /// Handles paths like `/path/to/worktrunk.'∅'/target/debug/wt`
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Quote a path for PowerShell (escape backticks and single quotes)
+fn powershell_quote(s: &str) -> String {
+    // PowerShell string escaping: use single quotes and escape embedded single quotes by doubling
+    format!("'{}'", s.replace('\'', "''"))
 }
 
 /// Build a shell script that sources the wrapper and runs a command
@@ -217,6 +220,17 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
             ));
             script.push_str("export CLICOLOR_FORCE=1\n");
         }
+        "powershell" | "pwsh" => {
+            // PowerShell uses $env: for environment variables
+            let wt_bin_ps = powershell_quote(&wt_bin.display().to_string());
+            let config_path_ps = powershell_quote(&repo.test_config_path().display().to_string());
+            script.push_str(&format!("$env:WORKTRUNK_BIN = {}\n", wt_bin_ps));
+            script.push_str(&format!(
+                "$env:WORKTRUNK_CONFIG_PATH = {}\n",
+                config_path_ps
+            ));
+            script.push_str("$env:CLICOLOR_FORCE = '1'\n");
+        }
         _ => {
             // bash
             script.push_str(&format!("export WORKTRUNK_BIN={}\n", wt_bin_quoted));
@@ -228,16 +242,37 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
         }
     }
 
-    // Source the wrapper
-    script.push_str(&wrapper_script);
-    script.push('\n');
+    // Source the wrapper (PowerShell uses . for sourcing inline code via Invoke-Expression)
+    match shell {
+        "powershell" | "pwsh" => {
+            // The wrapper_script is PowerShell code; we include it directly
+            script.push_str(&wrapper_script);
+            script.push('\n');
+        }
+        _ => {
+            script.push_str(&wrapper_script);
+            script.push('\n');
+        }
+    }
 
     // Build the command
     script.push_str("wt ");
     script.push_str(subcommand);
     for arg in args {
         script.push(' ');
-        script.push_str(&quote_arg(arg));
+        match shell {
+            "powershell" | "pwsh" => {
+                // PowerShell argument quoting
+                if arg.contains(' ') || arg.contains(';') || arg.contains('\'') {
+                    script.push_str(&powershell_quote(arg));
+                } else {
+                    script.push_str(arg);
+                }
+            }
+            _ => {
+                script.push_str(&quote_arg(arg));
+            }
+        }
     }
     script.push('\n');
 
@@ -259,16 +294,16 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
             // allowing tests to catch these leaks.
             format!("exec 2>&1\n{}", script)
         }
+        "powershell" | "pwsh" => {
+            // PowerShell: use & to run script block with merged output
+            // Wrap the script in a script block and redirect stderr (2) to stdout (1)
+            format!("& {{\n{}\n}} 2>&1", script)
+        }
         _ => {
             // zsh uses parentheses for subshell grouping
             format!("( {} ) 2>&1", script)
         }
     }
-}
-
-/// Normalize line endings (CRLF -> LF)
-fn normalize_newlines(s: &str) -> String {
-    s.replace("\r\n", "\n")
 }
 
 /// Execute a command in a PTY with interactive input support
@@ -308,43 +343,66 @@ fn exec_in_pty_interactive(
 
     let pair = crate::common::open_pty();
 
-    let mut cmd = CommandBuilder::new(shell);
+    let shell_binary = get_shell_binary(shell);
+    let mut cmd = CommandBuilder::new(shell_binary);
 
     // Clear inherited environment for test isolation
     cmd.env_clear();
 
     // Set minimal required environment for shells to function
-    cmd.env(
-        "HOME",
-        home::home_dir().unwrap().to_string_lossy().to_string(),
-    );
+    let home_dir = home::home_dir().unwrap().to_string_lossy().to_string();
+    cmd.env("HOME", &home_dir);
+    // Windows: Also set USERPROFILE for PowerShell
+    #[cfg(windows)]
+    cmd.env("USERPROFILE", &home_dir);
+
+    // Use platform-appropriate default PATH
+    #[cfg(unix)]
+    let default_path = "/usr/bin:/bin";
+    #[cfg(windows)]
+    let default_path = std::env::var("PATH").unwrap_or_default();
+
     cmd.env(
         "PATH",
-        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
+        std::env::var("PATH").unwrap_or_else(|_| default_path.to_string()),
     );
     cmd.env("USER", "testuser");
-    cmd.env("SHELL", shell);
+    cmd.env("SHELL", shell_binary);
 
     // Run in interactive mode to simulate real user environment.
     // This ensures tests catch job control message leaks like "[1] 12345" and "[1]+ Done".
     // Interactive shells have job control enabled by default.
-    if shell == "zsh" {
-        // Isolate from user rc files
-        cmd.env("ZDOTDIR", "/dev/null");
-        cmd.arg("-i");
-        cmd.arg("--no-rcs");
-        cmd.arg("-o");
-        cmd.arg("NO_GLOBAL_RCS");
-        cmd.arg("-o");
-        cmd.arg("NO_RCS");
+    match shell {
+        "zsh" => {
+            // Isolate from user rc files
+            cmd.env("ZDOTDIR", "/dev/null");
+            cmd.arg("-i");
+            cmd.arg("--no-rcs");
+            cmd.arg("-o");
+            cmd.arg("NO_GLOBAL_RCS");
+            cmd.arg("-o");
+            cmd.arg("NO_RCS");
+            cmd.arg("-c");
+            cmd.arg(script);
+        }
+        "bash" => {
+            cmd.arg("-i");
+            cmd.arg("-c");
+            cmd.arg(script);
+        }
+        "powershell" | "pwsh" => {
+            // PowerShell uses -NoProfile to skip user profile
+            cmd.arg("-NoProfile");
+            cmd.arg("-Command");
+            cmd.arg(script);
+        }
+        _ => {
+            // fish and other shells
+            cmd.arg("-c");
+            cmd.arg(script);
+        }
     }
 
-    if shell == "bash" {
-        cmd.arg("-i");
-    }
-
-    cmd.arg("-c");
-    cmd.arg(script);
     cmd.cwd(working_dir);
 
     // Add test-specific environment variables (convert &str tuples to String tuples)
@@ -377,7 +435,10 @@ fn exec_in_pty_interactive(
 
     let status = child.wait().unwrap();
 
-    (normalize_newlines(&buf), status.exit_code() as i32)
+    // Normalize CRLF to LF (PTYs use CRLF on some platforms)
+    let normalized = buf.replace("\r\n", "\n");
+
+    (normalized, status.exit_code() as i32)
 }
 
 /// Execute bash in true interactive mode by writing commands to the PTY
@@ -388,7 +449,7 @@ fn exec_in_pty_interactive(
 ///
 /// The setup_script is written to a temp file and sourced. Then final_cmd is run
 /// directly at the prompt (where job notifications appear).
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn exec_bash_truly_interactive(
     setup_script: &str,
     final_cmd: &str,
@@ -484,7 +545,10 @@ fn exec_bash_truly_interactive(
     // Get the captured output
     let buf = reader_thread.join().unwrap();
 
-    (normalize_newlines(&buf), status.exit_code() as i32)
+    // Normalize CRLF to LF (same as exec_in_pty_interactive)
+    let normalized = buf.replace("\r\n", "\n");
+
+    (normalized, status.exit_code() as i32)
 }
 
 /// Execute a command through a shell wrapper
@@ -618,7 +682,18 @@ fn build_test_env_vars(config_path: &str) -> Vec<(&str, &str)> {
     env_vars
 }
 
-mod tests {
+// =============================================================================
+// Unix Shell Tests (bash/zsh/fish)
+// =============================================================================
+//
+// All Unix shell integration tests are in this module, gated by #[cfg(unix)].
+// This includes tests for bash, zsh, and fish shells.
+//
+// Shared infrastructure (exec_through_wrapper, ShellOutput, etc.) is defined
+// above and works on both platforms.
+
+#[cfg(unix)]
+mod unix_tests {
     use super::*;
     use crate::common::repo;
     use rstest::rstest;
@@ -1324,7 +1399,6 @@ approved-commands = ["echo 'background task'"]
     // Fish uses `string collect` to join command substitution output into
     // a single string before eval (fish splits on newlines by default).
 
-    #[cfg(unix)]
     #[rstest]
     fn test_fish_wrapper_preserves_progress_messages(repo: TestRepo) {
         // Configure a post-start background command that will trigger progress output
@@ -1358,7 +1432,6 @@ approved-commands = ["echo 'fish background task'"]
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    #[cfg(unix)]
     #[rstest]
     fn test_fish_multiline_command_execution(repo: TestRepo) {
         // Test that Fish wrapper handles multi-line commands correctly
@@ -1394,7 +1467,6 @@ approved-commands = ["echo 'fish background task'"]
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    #[cfg(unix)]
     #[rstest]
     fn test_fish_wrapper_handles_empty_chunks(repo: TestRepo) {
         // Test edge case: command that produces minimal output
@@ -3209,6 +3281,88 @@ echo "SCRIPT_COMPLETED"
              Terminal output:\n{}",
             shell,
             terminal_output
+        );
+    }
+}
+
+// =============================================================================
+// Windows PowerShell Tests
+// =============================================================================
+//
+// All Windows-specific tests are in this module, gated by #[cfg(windows)].
+// This keeps platform-specific tests clearly separated.
+
+#[cfg(windows)]
+mod windows_tests {
+    use super::*;
+    use crate::common::repo;
+    use rstest::rstest;
+
+    /// Test that PowerShell shell integration works for switch --create
+    #[rstest]
+    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+    fn test_powershell_switch_create(repo: TestRepo) {
+        let output = exec_through_wrapper("powershell", &repo, "switch", &["--create", "feature"]);
+
+        assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
+        output.assert_no_directive_leaks();
+
+        assert!(
+            output.combined.contains("Created branch") && output.combined.contains("and worktree"),
+            "PowerShell: Should show success message.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
+    /// Test that PowerShell shell integration handles command failures correctly
+    #[rstest]
+    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+    fn test_powershell_command_failure(mut repo: TestRepo) {
+        // Create a worktree that already exists
+        repo.add_worktree("existing");
+
+        // Try to create it again - should fail
+        let output = exec_through_wrapper("powershell", &repo, "switch", &["--create", "existing"]);
+
+        assert_eq!(
+            output.exit_code, 1,
+            "PowerShell: Command should fail with exit code 1"
+        );
+        output.assert_no_directive_leaks();
+        assert!(
+            output.combined.contains("already exists"),
+            "PowerShell: Error message should mention 'already exists'.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
+    /// Test that PowerShell shell integration works for remove
+    #[rstest]
+    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+    fn test_powershell_remove(mut repo: TestRepo) {
+        // Create a worktree to remove
+        repo.add_worktree("to-remove");
+
+        let output = exec_through_wrapper("powershell", &repo, "remove", &["to-remove"]);
+
+        assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test that PowerShell shell integration works for wt list
+    #[rstest]
+    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+    fn test_powershell_list(repo: TestRepo) {
+        let output = exec_through_wrapper("powershell", &repo, "list", &[]);
+
+        assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
+        output.assert_no_directive_leaks();
+
+        // Should show the main worktree
+        assert!(
+            output.combined.contains("main"),
+            "PowerShell: Should show main branch.\nOutput:\n{}",
+            output.combined
         );
     }
 }

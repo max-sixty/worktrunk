@@ -163,7 +163,7 @@ impl RepositoryCliExt for Repository {
 
         // Check working tree cleanliness (unless --force, which passes through to git)
         if !force_worktree {
-            target_wt.ensure_clean("remove worktree", branch_name.as_deref())?;
+            target_wt.ensure_clean("remove worktree", branch_name.as_deref(), true)?;
         }
 
         // Compute main_path and changed_directory based on whether we're removing current
