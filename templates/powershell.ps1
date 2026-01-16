@@ -8,6 +8,18 @@
 # Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
 if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
 
+    # Helper function to escape an argument for Windows command line
+    # Windows uses CommandLineToArgvW rules: double-quote arguments with spaces,
+    # escape internal quotes, and handle backslashes before quotes
+    function _wt_escape_arg {
+        param([string]$arg)
+        if ($arg -eq '') { return '""' }
+        if ($arg -notmatch '[ \t"\\]') { return $arg }
+        # Escape backslashes followed by quotes, then escape quotes
+        $escaped = $arg -replace '(\\+)"', '$1$1\"' -replace '"', '\"'
+        return "`"$escaped`""
+    }
+
     # wt wrapper function - uses temp file for directives
     function {{ cmd }} {
         param(
@@ -35,7 +47,8 @@ if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN
             $env:WORKTRUNK_SHELL = "powershell"
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName = $wtBin
-            $psi.Arguments = $Arguments -join ' '
+            # Properly escape each argument for Windows command line
+            $psi.Arguments = ($Arguments | ForEach-Object { _wt_escape_arg $_ }) -join ' '
             $psi.UseShellExecute = $false
             $psi.RedirectStandardOutput = $true
             $psi.RedirectStandardError = $true
