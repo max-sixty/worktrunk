@@ -40,8 +40,13 @@ if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN
             $env:WORKTRUNK_SHELL = "powershell"
             Write-Host "[DEBUG wt func] About to execute: $wtBin $Arguments"
             try {
-                & $wtBin @Arguments 2>&1
-                Write-Host "[DEBUG wt func] Binary executed"
+                $wtOutput = & $wtBin @Arguments 2>&1
+                Write-Host "[DEBUG wt func] Binary executed, output length: $($wtOutput.Length)"
+                Write-Host "[DEBUG wt func] Output type: $($wtOutput.GetType().Name)"
+                if ($wtOutput) {
+                    # Write the captured output to the console
+                    $wtOutput | Write-Host
+                }
             }
             catch {
                 Write-Host "[DEBUG wt func] Exception: $_"
