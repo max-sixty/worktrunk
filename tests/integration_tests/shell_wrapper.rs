@@ -3418,8 +3418,7 @@ mod windows_tests {
 
         // Verify the worktree was created with sanitized name
         assert!(
-            output.combined.contains("feature/auth")
-                || output.combined.contains("feature-auth"),
+            output.combined.contains("feature/auth") || output.combined.contains("feature-auth"),
             "PowerShell: Should show branch name.\nOutput:\n{}",
             output.combined
         );
@@ -3669,8 +3668,7 @@ mod windows_tests {
     /// Test PowerShell with --format json output
     #[rstest]
     fn test_powershell_list_json(repo: TestRepo) {
-        let output =
-            exec_through_wrapper("powershell", &repo, "list", &["--format", "json"]);
+        let output = exec_through_wrapper("powershell", &repo, "list", &["--format", "json"]);
 
         assert_eq!(
             output.exit_code, 0,
