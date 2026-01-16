@@ -209,4 +209,80 @@ impl<'a> WorkingTree<'a> {
         let stdout = self.run_command(&["diff", "--numstat", ref_name])?;
         LineDiff::from_numstat(&stdout)
     }
+
+    /// Determine whether there are staged changes in the index.
+    ///
+    /// Returns `Ok(true)` when staged changes are present, `Ok(false)` otherwise.
+    ///
+    /// Note: The index is per-worktree in git, so this checks this specific
+    /// worktree's staging area.
+    pub fn has_staged_changes(&self) -> anyhow::Result<bool> {
+        // Exit code 0 = no diff (no staged changes), exit code 1 = diff exists (has staged changes)
+        // run_command returns Ok on exit 0, Err on non-zero
+        // So: Err means has changes
+        Ok(self
+            .run_command(&["diff", "--cached", "--quiet", "--exit-code"])
+            .is_err())
+    }
+
+    /// Create a safety backup of current working tree state without affecting the working tree.
+    ///
+    /// This creates a backup commit containing all changes (staged, unstaged, and untracked files)
+    /// and stores it in a custom ref (`refs/wt-backup/<branch>`). This creates a reflog entry
+    /// for recovery without polluting the stash list. The working tree remains unchanged.
+    ///
+    /// Users can find safety backups with: `git reflog show refs/wt-backup/<branch>`
+    ///
+    /// Returns the short SHA of the backup commit.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use worktrunk::git::Repository;
+    ///
+    /// let repo = Repository::current()?;
+    /// let wt = repo.current_worktree();
+    /// let sha = wt.create_safety_backup("feature → main (squash)")?;
+    /// println!("Backup created: {}", sha);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn create_safety_backup(&self, message: &str) -> anyhow::Result<String> {
+        // Create a backup commit using git stash create (without storing it in the stash list)
+        let backup_sha = self
+            .run_command(&["stash", "create", "--include-untracked"])?
+            .trim()
+            .to_string();
+
+        // Validate that we got a SHA back
+        if backup_sha.is_empty() {
+            return Err(GitError::Other {
+                message: "git stash create returned empty SHA - no changes to backup".into(),
+            }
+            .into());
+        }
+
+        // Get current branch name to use in the ref name
+        let branch = self
+            .run_command(&["rev-parse", "--abbrev-ref", "HEAD"])?
+            .trim()
+            .to_string();
+
+        // Sanitize branch name for use in ref path (replace / with -)
+        let safe_branch = branch.replace('/', "-");
+
+        // Update a custom ref to point to this commit
+        // --create-reflog ensures the reflog is created for this custom ref
+        // This creates a reflog entry but doesn't add to the stash list
+        let ref_name = format!("refs/wt-backup/{}", safe_branch);
+        self.run_command(&[
+            "update-ref",
+            "--create-reflog",
+            "-m",
+            message,
+            &ref_name,
+            &backup_sha,
+        ])
+        .context("Failed to create backup ref")?;
+
+        Ok(backup_sha[..7].to_string())
+    }
 }

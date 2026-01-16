@@ -66,6 +66,8 @@ This is useful when the default pager doesn't render correctly in the embedded p
 - [`wt list`](@/list.md) — Static table view with all worktree metadata
 - [`wt switch`](@/switch.md) — Direct switching to a known target branch
 
+Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch` directly.
+
 ## Command reference
 
 {% terminal() %}

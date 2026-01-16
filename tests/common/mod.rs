@@ -42,8 +42,8 @@ pub mod list_snapshots;
 // Progressive output tests use PTY and are Unix-only for now
 #[cfg(unix)]
 pub mod progressive_output;
-// PTY execution helpers - Unix-only
-#[cfg(unix)]
+// PTY execution helpers - cross-platform (uses portable_pty with ConPTY on Windows)
+#[cfg(feature = "shell-integration-tests")]
 pub mod pty;
 // Shell integration tests - cross-platform with PTY support
 #[cfg(feature = "shell-integration-tests")]
@@ -786,14 +786,46 @@ pub fn configure_pty_command(cmd: &mut portable_pty::CommandBuilder) {
     cmd.env_clear();
 
     // Minimal environment for shells/binaries to function
-    cmd.env(
-        "HOME",
-        home::home_dir().unwrap().to_string_lossy().to_string(),
-    );
+    let home_dir = home::home_dir().unwrap().to_string_lossy().to_string();
+    cmd.env("HOME", &home_dir);
     cmd.env(
         "PATH",
         std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
     );
+
+    // Windows-specific env vars required for processes to run
+    #[cfg(windows)]
+    {
+        // USERPROFILE is Windows equivalent of HOME
+        cmd.env("USERPROFILE", &home_dir);
+
+        // SystemRoot is critical - many DLLs and system components need this
+        if let Ok(val) = std::env::var("SystemRoot") {
+            cmd.env("SystemRoot", &val);
+            cmd.env("windir", &val); // Alias used by some programs
+        }
+
+        // SystemDrive (usually C:)
+        if let Ok(val) = std::env::var("SystemDrive") {
+            cmd.env("SystemDrive", val);
+        }
+
+        // TEMP/TMP directories
+        if let Ok(val) = std::env::var("TEMP") {
+            cmd.env("TEMP", &val);
+            cmd.env("TMP", val);
+        }
+
+        // COMSPEC (cmd.exe path) - needed by some programs
+        if let Ok(val) = std::env::var("COMSPEC") {
+            cmd.env("COMSPEC", val);
+        }
+
+        // PSModulePath for PowerShell
+        if let Ok(val) = std::env::var("PSModulePath") {
+            cmd.env("PSModulePath", val);
+        }
+    }
 
     // Pass through LLVM coverage profiling environment for subprocess coverage.
     // Without this, spawned binaries can't write coverage data.
