@@ -21,6 +21,7 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
 
         # DEBUG: Trace function entry
         Write-Host "[DEBUG wt func] Called with args: $Arguments"
+        Write-Host "[DEBUG wt func] Current dir: $(Get-Location)"
 
         # Use WORKTRUNK_BIN if set (for testing dev builds), otherwise find via Get-Command
         # Select-Object -First 1 handles case where multiple binaries match (e.g., wt.exe from Windows Terminal)

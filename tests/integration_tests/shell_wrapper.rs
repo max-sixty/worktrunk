@@ -226,6 +226,8 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
             let config_path_ps = powershell_quote(&repo.test_config_path().display().to_string());
             // DEBUG: Trace script execution
             script.push_str("Write-Host '[DEBUG] Script starting'\n");
+            script.push_str("Write-Host \"[DEBUG] Script working dir: $(Get-Location)\"\n");
+            script.push_str("Write-Host \"[DEBUG] Is git repo: $(Test-Path .git)\"\n");
             script.push_str(&format!("$env:WORKTRUNK_BIN = {}\n", wt_bin_ps));
             script.push_str(&format!(
                 "$env:WORKTRUNK_CONFIG_PATH = {}\n",
