@@ -211,7 +211,7 @@ pub(super) fn detect_gitlab_pipeline(branch: &str, local_head: &str) -> Option<P
 /// GitLab MR info from `glab mr list --output json`
 ///
 /// Note: We include `source_project_id` for client-side filtering by source project.
-/// See [`parse_remote_owner`] for why we filter by source, not by author.
+/// See [`worktrunk::git::parse_remote_owner`] for why we filter by source, not by author.
 #[derive(Debug, Deserialize)]
 pub(super) struct GitLabMrInfo {
     pub sha: String,
