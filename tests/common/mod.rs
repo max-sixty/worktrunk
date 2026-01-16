@@ -42,8 +42,8 @@ pub mod list_snapshots;
 // Progressive output tests use PTY and are Unix-only for now
 #[cfg(unix)]
 pub mod progressive_output;
-// PTY execution helpers - Unix-only
-#[cfg(unix)]
+// PTY execution helpers - cross-platform (uses portable_pty with ConPTY on Windows)
+#[cfg(feature = "shell-integration-tests")]
 pub mod pty;
 // Shell integration tests - cross-platform with PTY support
 #[cfg(feature = "shell-integration-tests")]

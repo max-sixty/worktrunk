@@ -3888,7 +3888,6 @@ mod windows_tests {
     #[test]
     fn test_diag_14_exec_in_pty_helper() {
         use crate::common::pty::exec_in_pty;
-        use std::path::PathBuf;
 
         eprintln!("DIAG14: Testing with exec_in_pty() helper");
 
