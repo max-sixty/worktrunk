@@ -15,6 +15,9 @@ if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN
             [string[]]$Arguments
         )
 
+        # DEBUG: Trace function entry
+        Write-Host "[DEBUG wt func] Called with args: $Arguments"
+
         # Use WORKTRUNK_BIN if set (for testing dev builds), otherwise find via Get-Command
         # Select-Object -First 1 handles case where multiple binaries match (e.g., wt.exe from Windows Terminal)
         if ($env:WORKTRUNK_BIN) {
@@ -22,6 +25,11 @@ if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN
         } else {
             $wtBin = (Get-Command {{ cmd }} -CommandType Application | Select-Object -First 1).Source
         }
+
+        # DEBUG: Show resolved binary path and check existence
+        Write-Host "[DEBUG wt func] wtBin = $wtBin"
+        Write-Host "[DEBUG wt func] Exists? $(Test-Path $wtBin)"
+
         $directiveFile = [System.IO.Path]::GetTempFileName()
 
         try {
@@ -30,8 +38,10 @@ if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN
             # stdout and stderr both go to console normally
             $env:WORKTRUNK_DIRECTIVE_FILE = $directiveFile
             $env:WORKTRUNK_SHELL = "powershell"
+            Write-Host "[DEBUG wt func] About to execute: $wtBin $Arguments"
             & $wtBin @Arguments
             $exitCode = $LASTEXITCODE
+            Write-Host "[DEBUG wt func] Binary returned: $exitCode"
         }
         finally {
             Remove-Item Env:\WORKTRUNK_DIRECTIVE_FILE -ErrorAction SilentlyContinue
