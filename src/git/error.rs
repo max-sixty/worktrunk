@@ -49,6 +49,8 @@ pub enum GitError {
         action: Option<String>,
         /// Branch name (for multi-worktree operations)
         branch: Option<String>,
+        /// When true, hint mentions --force as an alternative to stashing
+        force_hint: bool,
     },
     BranchAlreadyExists {
         branch: String,
@@ -171,7 +173,11 @@ impl std::fmt::Display for GitError {
                 )
             }
 
-            GitError::UncommittedChanges { action, branch } => {
+            GitError::UncommittedChanges {
+                action,
+                branch,
+                force_hint,
+            } => {
                 let message = match (action, branch) {
                     (Some(action), Some(b)) => {
                         cformat!("Cannot {action}: <bold>{b}</> has uncommitted changes")
@@ -184,12 +190,17 @@ impl std::fmt::Display for GitError {
                     }
                     (None, None) => cformat!("Working tree has uncommitted changes"),
                 };
-                write!(
-                    f,
-                    "{}\n{}",
-                    error_message(&message),
-                    hint_message("Commit or stash changes first")
-                )
+                let hint = if *force_hint {
+                    // Construct full command: "wt remove [branch] --force"
+                    let args: Vec<&str> = branch.as_deref().into_iter().collect();
+                    let cmd = suggest_command("remove", &args, &["--force"]);
+                    cformat!(
+                        "Commit or stash changes first, or to lose uncommitted changes, run <bright-black>{cmd}</>"
+                    )
+                } else {
+                    "Commit or stash changes first".to_string()
+                };
+                write!(f, "{}\n{}", error_message(&message), hint_message(hint))
             }
 
             GitError::BranchAlreadyExists { branch } => {
@@ -1051,15 +1062,18 @@ mod tests {
         let err = GitError::UncommittedChanges {
             action: Some("push".into()),
             branch: None,
+            force_hint: false,
         };
         let display = err.to_string();
         assert!(display.contains("Cannot push"));
         assert!(display.contains("working tree"));
+        assert!(!display.contains("--force"));
 
         // Branch only
         let err = GitError::UncommittedChanges {
             action: None,
             branch: Some("feature".into()),
+            force_hint: false,
         };
         let display = err.to_string();
         assert!(display.contains("feature"));
@@ -1069,9 +1083,21 @@ mod tests {
         let err = GitError::UncommittedChanges {
             action: None,
             branch: None,
+            force_hint: false,
         };
         let display = err.to_string();
         assert!(display.contains("Working tree"));
+
+        // With force_hint
+        let err = GitError::UncommittedChanges {
+            action: Some("remove worktree".into()),
+            branch: Some("feature".into()),
+            force_hint: true,
+        };
+        let display = err.to_string();
+        assert!(display.contains("Cannot remove worktree"));
+        assert!(display.contains("wt remove feature --force"));
+        assert!(display.contains("to lose uncommitted changes, run"));
     }
 
     #[test]

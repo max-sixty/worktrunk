@@ -18,6 +18,7 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    MOCK_CONFIG_DIR: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpFvoLMc/mock-bin
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
@@ -33,4 +34,4 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mCannot remove worktree: [1mfeature-dirty[22m has uncommitted changes[39m
-[2m↳[22m [2mCommit or stash changes first[22m
+[2m↳[22m [2mCommit or stash changes first, or to lose uncommitted changes, run [90mwt remove feature-dirty --force[39m[22m

@@ -188,11 +188,18 @@ impl<'a> WorkingTree<'a> {
     /// Returns an error if there are uncommitted changes.
     /// - `action` describes what was blocked (e.g., "remove worktree").
     /// - `branch` identifies which branch for multi-worktree operations.
-    pub fn ensure_clean(&self, action: &str, branch: Option<&str>) -> anyhow::Result<()> {
+    /// - `force_hint` when true, the error hint mentions `--force` as an alternative.
+    pub fn ensure_clean(
+        &self,
+        action: &str,
+        branch: Option<&str>,
+        force_hint: bool,
+    ) -> anyhow::Result<()> {
         if self.is_dirty()? {
             return Err(GitError::UncommittedChanges {
                 action: Some(action.into()),
                 branch: branch.map(String::from),
+                force_hint,
             }
             .into());
         }
