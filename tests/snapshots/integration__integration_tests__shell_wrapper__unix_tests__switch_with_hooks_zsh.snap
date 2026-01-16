@@ -1,6 +1,6 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
-expression: output.normalized()
+expression: "&output.combined"
 ---
 [36m◎[39m [36mRunning post-create [1mproject:install[22m:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing dependencies...'[0m[2m
@@ -8,7 +8,7 @@ Installing dependencies...
 [36m◎[39m [36mRunning post-create [1mproject:build[22m:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Building project...'[0m[2m
 Building project...
-[32m✓[39m [32mCreated branch [1mfeature-hooks[22m from [1mmain[22m and worktree @ [1m[TMPDIR]/repo.feature-hooks[22m[39m
+[32m✓[39m [32mCreated branch [1mfeature-hooks[22m from [1mmain[22m and worktree @ [1m_REPO_.feature-hooks[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
 [36m◎[39m [36mRunning post-start [1mproject:server[22m:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Starting dev server on port 3000'[0m[2m

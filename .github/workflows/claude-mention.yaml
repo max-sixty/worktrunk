@@ -104,3 +104,12 @@ jobs:
 
             This project is a git worktree manager that integrates with shells (bash, zsh, fish).
             Pay attention to shell integration, output formatting (anstyle), and snapshot tests."
+
+      - name: 📋 Upload Claude Code session logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-session-logs
+          path: ~/.claude/
+          retention-days: 30
+          if-no-files-found: warn

@@ -579,6 +579,8 @@ struct RemovalDisplayInfo {
     branch_was_integrated: bool,
     /// Whether to show the "unmerged, run -D" hint (foreground only, based on actual deletion)
     show_unmerged_hint: bool,
+    /// Whether --force was used (for display purposes)
+    force_worktree: bool,
 }
 
 impl RemovalDisplayInfo {
@@ -590,6 +592,7 @@ impl RemovalDisplayInfo {
         deletion_mode: BranchDeletionMode,
         pre_computed_integration: Option<IntegrationReason>,
         target_branch: Option<&str>,
+        force_worktree: bool,
     ) -> Self {
         let (outcome, effective_target) = if deletion_mode.should_keep() {
             (
@@ -614,6 +617,7 @@ impl RemovalDisplayInfo {
             effective_target,
             branch_was_integrated: pre_computed_integration.is_some(),
             show_unmerged_hint: false, // Background mode never shows this hint
+            force_worktree,
         }
     }
 
@@ -624,6 +628,7 @@ impl RemovalDisplayInfo {
         deletion_mode: BranchDeletionMode,
         pre_computed_integration: Option<IntegrationReason>,
         target_branch: Option<&str>,
+        force_worktree: bool,
     ) -> anyhow::Result<Self> {
         let branch_was_integrated = pre_computed_integration.is_some();
 
@@ -648,6 +653,7 @@ impl RemovalDisplayInfo {
             effective_target,
             branch_was_integrated,
             show_unmerged_hint,
+            force_worktree,
         })
     }
 
@@ -670,16 +676,23 @@ impl RemovalDisplayInfo {
             &self.outcome,
             self.effective_target.as_deref(),
         );
+        let force_text = if self.force_worktree {
+            " (--force)"
+        } else {
+            ""
+        };
 
         if is_background {
             let flag_text = &flag_note.text;
             let flag_after = flag_note.after_cyan();
             let msg = if self.branch_deleted() {
                 cformat!(
-                    "<cyan>◎ Removing <bold>{branch_name}</> worktree & branch in background{flag_text}</>{flag_after}"
+                    "<cyan>◎ Removing <bold>{branch_name}</> worktree{force_text} & branch in background{flag_text}</>{flag_after}"
                 )
             } else {
-                cformat!("<cyan>◎ Removing <bold>{branch_name}</> worktree in background</>")
+                cformat!(
+                    "<cyan>◎ Removing <bold>{branch_name}</> worktree{force_text} in background</>"
+                )
             };
             Ok(super::print(FormattedMessage::new(msg))?)
         } else {
@@ -687,10 +700,10 @@ impl RemovalDisplayInfo {
                 let flag_text = &flag_note.text;
                 let flag_after = flag_note.after_green();
                 cformat!(
-                    "<green>✓ Removed <bold>{branch_name}</> worktree & branch{flag_text}</>{flag_after}"
+                    "<green>✓ Removed <bold>{branch_name}</> worktree{force_text} & branch{flag_text}</>{flag_after}"
                 )
             } else {
-                cformat!("<green>✓ Removed <bold>{branch_name}</> worktree</>")
+                cformat!("<green>✓ Removed <bold>{branch_name}</> worktree{force_text}</>")
             };
             Ok(super::print(FormattedMessage::new(msg))?)
         }
@@ -832,6 +845,7 @@ fn handle_removed_worktree_output(
             deletion_mode,
             pre_computed_integration,
             target_branch,
+            force_worktree,
         );
 
         display_info.print_message(branch_name, true)?;
@@ -892,6 +906,7 @@ fn handle_removed_worktree_output(
             deletion_mode,
             pre_computed_integration,
             target_branch,
+            force_worktree,
         )?;
 
         display_info.print_message(branch_name, false)?;

@@ -1,13 +1,13 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
-expression: output.normalized()
+expression: "&output.combined"
 ---
 [36m◎[39m [36mRunning post-create [1mproject:install[22m:[39m
 [107m [0m [2m[0m[2m[34muv[0m[2m sync
 
   Resolved 24 packages in 145ms
   Installed 24 packages in 1.2s
-[32m✓[39m [32mCreated branch [1mfeature-x[22m from [1mmain[22m and worktree @ [1m[TMPDIR]/repo.feature-x[22m[39m
+[32m✓[39m [32mCreated branch [1mfeature-x[22m from [1mmain[22m and worktree @ [1m_REPO_.feature-x[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
 [36m◎[39m [36mRunning post-start [1mproject:dev[22m:[39m
 [107m [0m [2m[0m[2m[34muv[0m[2m run dev

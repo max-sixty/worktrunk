@@ -1,6 +1,6 @@
 ---
 source: tests/integration_tests/approval_pty.rs
-expression: normalized
+expression: "&output"
 ---
 n
 

@@ -42,8 +42,11 @@ pub mod list_snapshots;
 // Progressive output tests use PTY and are Unix-only for now
 #[cfg(unix)]
 pub mod progressive_output;
-// Shell integration tests are Unix-only for now (Windows support planned)
-#[cfg(all(unix, feature = "shell-integration-tests"))]
+// PTY execution helpers - Unix-only
+#[cfg(unix)]
+pub mod pty;
+// Shell integration tests - cross-platform with PTY support
+#[cfg(feature = "shell-integration-tests")]
 pub mod shell;
 
 // Cross-platform mock command helpers
@@ -351,19 +354,23 @@ pub fn merge_scenario_multi_commit(mut repo: TestRepo) -> (TestRepo, PathBuf) {
     (repo, feature_wt)
 }
 
-/// Returns a PTY system with a guard that restores the TTY foreground pgrp on drop.
+/// Returns a PTY system with platform-appropriate setup.
 ///
-/// Use this instead of `portable_pty::native_pty_system()` directly to ensure:
-/// 1. PTY tests work in background process groups (signals blocked)
-/// 2. SIGTTIN/SIGTTOU are blocked to prevent test processes from being stopped
+/// On Unix, this blocks SIGTTIN/SIGTTOU signals to prevent test processes from
+/// being stopped when PTY operations interact with terminal control.
+///
+/// On Windows, this returns the native ConPTY system directly.
+///
+/// Use this instead of `portable_pty::native_pty_system()` directly to ensure
+/// PTY tests work correctly across platforms.
 ///
 /// NOTE: PTY tests are behind the `shell-integration-tests` feature because they can
 /// trigger a nextest bug where its InputHandler cleanup receives SIGTTOU. This happens
 /// when tests spawn interactive shells (zsh -ic, bash -ic) which take control of the
 /// foreground process group. See https://github.com/nextest-rs/nextest/issues/2878
 /// Workaround: run with NEXTEST_NO_INPUT_HANDLER=1. See CLAUDE.md for details.
-#[cfg(unix)]
 pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
+    #[cfg(unix)]
     ignore_tty_signals();
     portable_pty::native_pty_system()
 }
@@ -371,13 +378,11 @@ pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
 /// Open a PTY pair with default size (48 rows x 200 cols).
 ///
 /// Most PTY tests use this standard size. Returns the master/slave pair.
-#[cfg(unix)]
 pub fn open_pty() -> portable_pty::PtyPair {
     open_pty_with_size(48, 200)
 }
 
 /// Open a PTY pair with specified size.
-#[cfg(unix)]
 pub fn open_pty_with_size(rows: u16, cols: u16) -> portable_pty::PtyPair {
     native_pty_system()
         .openpty(portable_pty::PtySize {
@@ -2329,6 +2334,58 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     add_standard_env_redactions(&mut settings);
 
     settings
+}
+
+// =============================================================================
+// PTY Test Filters
+// =============================================================================
+//
+// PTY-based tests (shell wrappers, approval prompts, TUI select) capture output
+// from pseudo-terminals. This output has platform-specific artifacts that need
+// normalization for stable snapshots.
+//
+// These filters consolidate patterns that were previously scattered across
+// individual `normalize_*` functions in each test file. Using insta filters
+// instead of custom normalization functions:
+// - Reduces code duplication
+// - Ensures consistent normalization across all PTY tests
+// - Makes it easier to add new normalizations in one place
+//
+// Usage:
+//   let mut settings = insta::Settings::clone_current();
+//   add_pty_filters(&mut settings);
+//   settings.bind(|| {
+//       assert_snapshot!(output);
+//   });
+
+/// Add filters for PTY-specific artifacts that vary between platforms.
+///
+/// This handles:
+/// - macOS PTY control sequences (^D followed by backspaces)
+/// - Leading ANSI reset codes that vary between macOS and Linux
+///
+/// Note: CRLF normalization is done eagerly in PTY exec functions, not here.
+pub fn add_pty_filters(settings: &mut insta::Settings) {
+    // macOS PTYs emit ^D (literal caret-D) followed by backspaces (0x08)
+    // when EOF is signaled. Linux PTYs don't. Strip these for consistency.
+    settings.add_filter(r"\^D\x08+", "");
+
+    // Remove redundant leading reset codes per line.
+    // macOS and Linux PTYs generate ANSI codes slightly differently.
+    // This handles lines that start with ESC[0m (reset).
+    settings.add_filter(r"(?m)^\x1b\[0m", "");
+}
+
+/// Add filters for binary paths (target/debug/wt) in PTY output.
+///
+/// Test binaries are run from the cargo target directory, which varies.
+pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
+    // Match paths ending in target/debug/wt or target/release/wt
+    // Also handles llvm-cov-target used by cargo-llvm-cov
+    settings.add_filter(
+        r"[^\s]+/target/(?:llvm-cov-target/)?(?:debug|release)/wt",
+        "[BIN]",
+    );
 }
 
 /// Create a configured Command for snapshot testing

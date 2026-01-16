@@ -86,23 +86,6 @@ If the remote's default branch has changed (e.g., renamed from master to main), 
 
 For full details on the detection mechanism, see `wt config state default-branch --help`.
 
-## On Windows, `wt` conflicts with Windows Terminal
-
-Windows Terminal uses `wt` as its command-line launcher, so running `wt` invokes Terminal instead of Worktrunk.
-
-As an immediate workaround, install as `git-wt`:
-
-```bash
-cargo install worktrunk --features git-wt
-git-wt config shell install
-```
-
-This creates a `git-wt` shell function with directory changing and completions.
-
-`git wt` (as a git subcommand) also works but cannot change directories since git runs subcommands as subprocesses.
-
-We're considering better solutions — a better name, anyone?
-
 ## Does Worktrunk work on Windows?
 
 **Experimental.** Core functionality works, but some features are unavailable.

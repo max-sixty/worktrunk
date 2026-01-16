@@ -100,6 +100,7 @@ fn display_uncommitted_changes() {
     let err = GitError::UncommittedChanges {
         action: Some("remove worktree".into()),
         branch: None,
+        force_hint: false,
     };
 
     assert_snapshot!("uncommitted_changes", err.to_string());
@@ -110,9 +111,21 @@ fn display_uncommitted_changes_with_branch() {
     let err = GitError::UncommittedChanges {
         action: Some("remove worktree".into()),
         branch: Some("feature-branch".into()),
+        force_hint: false,
     };
 
     assert_snapshot!("uncommitted_changes_with_branch", err.to_string());
+}
+
+#[test]
+fn display_uncommitted_changes_with_force_hint() {
+    let err = GitError::UncommittedChanges {
+        action: Some("remove worktree".into()),
+        branch: Some("feature-branch".into()),
+        force_hint: true,
+    };
+
+    assert_snapshot!("uncommitted_changes_with_force_hint", err.to_string());
 }
 
 #[test]

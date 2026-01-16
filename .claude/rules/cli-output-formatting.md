@@ -140,6 +140,20 @@ behavior:
 "Removing feature worktree in background; retaining branch"
 ```
 
+**Flag locality:** Place flag indicators adjacent to the concept they modify.
+Flags should appear immediately after the noun/action they affect, not at the
+end of the message:
+
+```rust
+// GOOD - (--force) is adjacent to "worktree" which it modifies
+"Removing feature worktree (--force) & branch in background (same commit as main, _)"
+// BAD - (--force) at end, disconnected from the worktree removal it enables
+"Removing feature worktree & branch in background (same commit as main, _) (--force)"
+```
+
+This principle ensures readers can immediately understand what each annotation
+modifies.
+
 **Parallel structure:** Related messages should follow the same pattern:
 
 ```rust
