@@ -3298,6 +3298,294 @@ mod windows_tests {
     use crate::common::repo;
     use rstest::rstest;
 
+    // =========================================================================
+    // DIAGNOSTIC TESTS - These run (not ignored) to help debug PTY issues
+    // =========================================================================
+
+    /// Diagnostic: Can we spawn pwsh via ConPTY at all?
+    /// This is the most basic test - just spawn pwsh, print something, exit.
+    #[test]
+    fn test_diag_01_pwsh_spawn_basic() {
+        use portable_pty::CommandBuilder;
+        use std::io::Read;
+        use std::time::{Duration, Instant};
+
+        eprintln!("DIAG01: Starting basic pwsh spawn test");
+
+        let pair = crate::common::open_pty();
+        eprintln!("DIAG01: PTY opened successfully");
+
+        let mut cmd = CommandBuilder::new("pwsh");
+        cmd.arg("-NoProfile");
+        cmd.arg("-NonInteractive");
+        cmd.arg("-Command");
+        cmd.arg("Write-Host 'HELLO_FROM_PWSH'; exit 0");
+
+        eprintln!("DIAG01: Spawning pwsh...");
+        let start = Instant::now();
+        let mut child = pair.slave.spawn_command(cmd).expect("Failed to spawn pwsh");
+        eprintln!("DIAG01: pwsh spawned in {:?}", start.elapsed());
+
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        eprintln!("DIAG01: Reading output (with 30s timeout)...");
+
+        // Use a thread with timeout for reading
+        let (tx, rx) = std::sync::mpsc::channel();
+        let read_thread = std::thread::spawn(move || {
+            let mut buf = String::new();
+            let result = reader.read_to_string(&mut buf);
+            let _ = tx.send(());
+            (buf, result)
+        });
+
+        // Wait up to 30 seconds for the read to complete
+        let read_result = rx.recv_timeout(Duration::from_secs(30));
+        let output = match read_result {
+            Ok(()) => {
+                let (buf, _) = read_thread.join().unwrap();
+                buf
+            }
+            Err(_) => {
+                eprintln!("DIAG01: TIMEOUT waiting for output after 30s");
+                // Try to get partial output from thread if possible
+                if read_thread.is_finished() {
+                    let (buf, _) = read_thread.join().unwrap();
+                    buf
+                } else {
+                    eprintln!("DIAG01: Read thread still blocked");
+                    String::from("<timeout - no output>")
+                }
+            }
+        };
+
+        eprintln!("DIAG01: Output received: {:?}", output);
+
+        let status = child.wait().expect("Failed to wait for child");
+        eprintln!("DIAG01: Exit code: {:?}", status.exit_code());
+
+        assert!(
+            output.contains("HELLO_FROM_PWSH"),
+            "Should see pwsh output. Got: {}",
+            output
+        );
+    }
+
+    /// Diagnostic: Does pwsh work with env vars set?
+    #[test]
+    fn test_diag_02_pwsh_with_env() {
+        use portable_pty::CommandBuilder;
+        use std::io::Read;
+
+        eprintln!("DIAG02: Testing pwsh with environment variables");
+
+        let pair = crate::common::open_pty();
+
+        let mut cmd = CommandBuilder::new("pwsh");
+        cmd.arg("-NoProfile");
+        cmd.arg("-NonInteractive");
+        cmd.arg("-Command");
+        cmd.arg("Write-Host \"TEST_VAR=$env:TEST_VAR\"; exit 0");
+        cmd.env("TEST_VAR", "hello_test");
+
+        eprintln!("DIAG02: Spawning pwsh with TEST_VAR=hello_test...");
+        let mut child = pair.slave.spawn_command(cmd).expect("Failed to spawn");
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).ok();
+
+        eprintln!("DIAG02: Output: {:?}", buf);
+
+        let status = child.wait().expect("Failed to wait");
+        eprintln!("DIAG02: Exit code: {:?}", status.exit_code());
+
+        assert!(
+            buf.contains("TEST_VAR=hello_test"),
+            "Should see env var. Got: {}",
+            buf
+        );
+    }
+
+    /// Diagnostic: Does pwsh work with cleared environment?
+    #[test]
+    fn test_diag_03_pwsh_env_clear() {
+        use portable_pty::CommandBuilder;
+        use std::io::Read;
+
+        eprintln!("DIAG03: Testing pwsh with env_clear()");
+
+        let pair = crate::common::open_pty();
+
+        let mut cmd = CommandBuilder::new("pwsh");
+        cmd.env_clear();
+        // Restore minimal env needed for pwsh
+        cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
+        cmd.env(
+            "USERPROFILE",
+            home::home_dir().unwrap().to_string_lossy().to_string(),
+        );
+        cmd.env(
+            "SystemRoot",
+            std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into()),
+        );
+
+        cmd.arg("-NoProfile");
+        cmd.arg("-NonInteractive");
+        cmd.arg("-Command");
+        cmd.arg("Write-Host 'ENV_CLEAR_WORKS'; exit 0");
+
+        eprintln!("DIAG03: Spawning pwsh with cleared env...");
+        let mut child = pair.slave.spawn_command(cmd).expect("Failed to spawn");
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).ok();
+
+        eprintln!("DIAG03: Output: {:?}", buf);
+
+        let status = child.wait().expect("Failed to wait");
+        eprintln!("DIAG03: Exit code: {:?}", status.exit_code());
+
+        assert!(
+            buf.contains("ENV_CLEAR_WORKS"),
+            "Should work with cleared env. Got: {}",
+            buf
+        );
+    }
+
+    /// Diagnostic: Can we run a multi-line PowerShell script?
+    #[test]
+    fn test_diag_04_pwsh_multiline_script() {
+        use portable_pty::CommandBuilder;
+        use std::io::Read;
+
+        eprintln!("DIAG04: Testing multi-line PowerShell script");
+
+        let pair = crate::common::open_pty();
+
+        let script = r#"
+            $x = 'MULTI'
+            $y = 'LINE'
+            Write-Host "$x$y_WORKS"
+            exit 0
+        "#;
+
+        let mut cmd = CommandBuilder::new("pwsh");
+        cmd.arg("-NoProfile");
+        cmd.arg("-NonInteractive");
+        cmd.arg("-Command");
+        cmd.arg(script);
+
+        eprintln!("DIAG04: Running multi-line script...");
+        let mut child = pair.slave.spawn_command(cmd).expect("Failed to spawn");
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).ok();
+
+        eprintln!("DIAG04: Output: {:?}", buf);
+
+        let status = child.wait().expect("Failed to wait");
+        eprintln!("DIAG04: Exit code: {:?}", status.exit_code());
+
+        assert!(
+            buf.contains("MULTILINE_WORKS") || buf.contains("MULTI"),
+            "Should run multi-line script. Got: {}",
+            buf
+        );
+    }
+
+    /// Diagnostic: Can we run the wt binary directly (no wrapper)?
+    #[test]
+    fn test_diag_05_wt_binary_direct() {
+        use portable_pty::CommandBuilder;
+        use std::io::Read;
+
+        eprintln!("DIAG05: Testing wt binary directly via PTY");
+
+        let wt_bin = get_cargo_bin("wt");
+        eprintln!("DIAG05: wt binary path: {:?}", wt_bin);
+
+        let pair = crate::common::open_pty();
+
+        let mut cmd = CommandBuilder::new(&wt_bin);
+        cmd.arg("--version");
+
+        eprintln!("DIAG05: Running wt --version...");
+        let mut child = pair.slave.spawn_command(cmd).expect("Failed to spawn wt");
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).ok();
+
+        eprintln!("DIAG05: Output: {:?}", buf);
+
+        let status = child.wait().expect("Failed to wait");
+        eprintln!("DIAG05: Exit code: {:?}", status.exit_code());
+
+        assert!(
+            buf.contains("wt") || buf.contains("worktrunk"),
+            "Should show version. Got: {}",
+            buf
+        );
+    }
+
+    /// Diagnostic: Can pwsh invoke the wt binary?
+    #[test]
+    fn test_diag_06_pwsh_invokes_wt() {
+        use portable_pty::CommandBuilder;
+        use std::io::Read;
+
+        eprintln!("DIAG06: Testing pwsh invoking wt binary");
+
+        let wt_bin = get_cargo_bin("wt");
+        let wt_bin_str = wt_bin.display().to_string().replace('\\', "\\\\");
+
+        let pair = crate::common::open_pty();
+
+        let script = format!(
+            "& '{}' --version; Write-Host 'PWSH_INVOKED_WT'; exit $LASTEXITCODE",
+            wt_bin_str
+        );
+
+        let mut cmd = CommandBuilder::new("pwsh");
+        cmd.arg("-NoProfile");
+        cmd.arg("-NonInteractive");
+        cmd.arg("-Command");
+        cmd.arg(&script);
+
+        eprintln!("DIAG06: Script: {}", script);
+        eprintln!("DIAG06: Running...");
+
+        let mut child = pair.slave.spawn_command(cmd).expect("Failed to spawn");
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).ok();
+
+        eprintln!("DIAG06: Output: {:?}", buf);
+
+        let status = child.wait().expect("Failed to wait");
+        eprintln!("DIAG06: Exit code: {:?}", status.exit_code());
+
+        assert!(
+            buf.contains("PWSH_INVOKED_WT"),
+            "pwsh should invoke wt successfully. Got: {}",
+            buf
+        );
+    }
+
+    // =========================================================================
+    // END DIAGNOSTIC TESTS
+    // =========================================================================
+
     // TODO: PowerShell PTY tests timeout in Windows CI (~60s per test).
     //
     // Investigation done:
