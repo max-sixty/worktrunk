@@ -1548,3 +1548,43 @@ fn test_remove_detached_worktree_in_multi(mut repo: TestRepo) {
         None
     ));
 }
+
+/// Test that resolve_worktree("@") works when the worktree is accessed via a symlink.
+///
+/// This tests the path normalization fix where:
+/// - `root()` returns a canonicalized path (symlinks resolved)
+/// - `wt.path` from git is the raw path (symlinks not resolved)
+///
+/// Without proper canonicalization, comparison fails on systems with symlinks
+/// (e.g., macOS /var -> /private/var).
+#[cfg(unix)]
+#[rstest]
+fn test_remove_at_symbol_via_symlink(mut repo: TestRepo) {
+    use std::os::unix::fs::symlink;
+
+    let worktree_path = repo.add_worktree("feature-symlink");
+
+    // Create a symlink pointing to the worktree
+    let symlink_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("symlink-to-feature");
+    symlink(&worktree_path, &symlink_path).expect("Failed to create symlink");
+
+    // Verify symlink was created
+    assert!(
+        symlink_path.is_symlink(),
+        "Symlink should exist at {:?}",
+        symlink_path
+    );
+
+    // Run `wt remove @` from the symlinked path
+    // This tests that resolve_worktree("@") properly handles symlinked paths
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["@"],
+        Some(&symlink_path)
+    ));
+}

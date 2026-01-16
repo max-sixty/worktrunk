@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use color_print::cformat;
+use dunce::canonicalize;
 use normalize_path::NormalizePath;
 
 use super::{GitError, Repository, ResolvedWorktree, WorktreeInfo};
@@ -30,12 +31,18 @@ impl Repository {
     /// Note: For worktree-specific operations, use [`current_worktree()`](Self::current_worktree)
     /// to get a [`WorkingTree`](super::WorkingTree) instead.
     pub fn current_worktree_info(&self) -> anyhow::Result<Option<WorktreeInfo>> {
+        // root() returns canonicalized path, so canonicalize worktree paths for comparison
+        // to handle symlinks (e.g., macOS /var -> /private/var)
         let current_path = match self.current_worktree().root() {
-            Ok(p) => p.to_path_buf(),
+            Ok(p) => p,
             Err(_) => return Ok(None),
         };
         let worktrees = self.list_worktrees()?;
-        Ok(worktrees.into_iter().find(|wt| wt.path == current_path))
+        Ok(worktrees.into_iter().find(|wt| {
+            canonicalize(&wt.path)
+                .map(|p| p == current_path)
+                .unwrap_or(false)
+        }))
     }
 
     /// Find the worktree path for a given branch, if one exists.
@@ -180,15 +187,14 @@ impl Repository {
                     .map_err(|_| GitError::NotInWorktree {
                         action: Some("resolve '@'".into()),
                     })?;
+                // root() returns canonicalized path, so canonicalize worktree paths
+                // for comparison to handle symlinks (e.g., macOS /var -> /private/var)
                 let worktrees = self.list_worktrees()?;
                 let branch = worktrees
                     .iter()
-                    .find(|wt| wt.path == path)
+                    .find(|wt| canonicalize(&wt.path).map(|p| p == path).unwrap_or(false))
                     .and_then(|wt| wt.branch.clone());
-                Ok(ResolvedWorktree::Worktree {
-                    path: path.to_path_buf(),
-                    branch,
-                })
+                Ok(ResolvedWorktree::Worktree { path, branch })
             }
             _ => {
                 // Resolve to branch name first, then find its worktree
