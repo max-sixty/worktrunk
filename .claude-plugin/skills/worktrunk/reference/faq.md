@@ -88,21 +88,11 @@ For full details on the detection mechanism, see `wt config state default-branch
 
 ## Does Worktrunk work on Windows?
 
-**Experimental.** Core functionality works, but some features are unavailable.
+Yes. Core commands, shell integration, and tab completion work in both Git Bash and PowerShell. See [installation](https://worktrunk.dev/worktrunk/#install) for setup details, including avoiding the Windows Terminal `wt` conflict.
 
-| Feature | Git Bash | PowerShell |
-|---------|----------|------------|
-| Core commands (`list`, `switch`, `merge`, etc.) | ✅ | ✅ |
-| Shell integration | ✅ | ✅ |
-| Tab completion | ✅ | ✅ |
-| Hooks | ✅ | ❌ (bash syntax) |
-| `wt select` | ❌ | ❌ |
+**Git for Windows required** — Hooks use bash syntax and execute via Git Bash, so [Git for Windows](https://gitforwindows.org/) must be installed even when PowerShell is the interactive shell.
 
-**Git for Windows** is required — it provides Git Bash, which Worktrunk uses for hook execution. [Download here](https://gitforwindows.org/).
-
-**PowerShell** works as the interactive shell for core commands, shell integration, and tab completion. Hooks use bash syntax and run via Git Bash, so Git for Windows must be installed even when PowerShell is the interactive shell.
-
-**`wt select`** uses [skim](https://github.com/skim-rs/skim), which only supports Unix. Use `wt list` and `wt switch <branch>` instead.
+**`wt select` unavailable** — Uses [skim](https://github.com/skim-rs/skim), which doesn't support Windows. Use `wt list` and `wt switch <branch>` instead.
 
 ## Installation fails with C compilation errors
 
