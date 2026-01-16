@@ -1231,6 +1231,56 @@ approved-commands = ["exit 1"]
     );
 }
 
+/// Pre-remove hook failure should NOT write cd directive.
+/// Bug: cd directive was written before pre-remove hooks ran, so if hooks failed,
+/// the shell would still cd to main_path even though the worktree wasn't removed.
+#[rstest]
+fn test_pre_remove_hook_failure_no_cd_directive(mut repo: TestRepo) {
+    // Create project config with failing hook
+    repo.write_project_config(r#"pre-remove = "exit 1""#);
+    repo.commit("Add config");
+
+    // Pre-approve the command
+    repo.write_test_config(
+        r#"[projects."../origin"]
+approved-commands = ["exit 1"]
+"#,
+    );
+
+    // Create a worktree to remove
+    let worktree_path = repo.add_worktree("feature-cd-test");
+
+    // Set up directive file
+    let (directive_path, _guard) = directive_file();
+
+    // Run remove from within the worktree (which would trigger cd to main if it worked)
+    let mut cmd = repo.wt_command();
+    cmd.args(["remove", "--foreground"]);
+    cmd.current_dir(&worktree_path);
+    configure_directive_file(&mut cmd, &directive_path);
+    let output = cmd.output().unwrap();
+
+    // Command should have failed (hook failure)
+    assert!(
+        !output.status.success(),
+        "Remove should fail when pre-remove hook fails"
+    );
+
+    // Directive file should be empty (no cd written)
+    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    assert!(
+        !directives.contains("cd "),
+        "Directive file should NOT contain cd when hook fails, got: {}",
+        directives
+    );
+
+    // Worktree should still exist
+    assert!(
+        worktree_path.exists(),
+        "Worktree should NOT be removed when hook fails"
+    );
+}
+
 #[rstest]
 fn test_pre_remove_hook_not_for_branch_only(repo: TestRepo) {
     // Create a marker file that the hook would create

@@ -762,18 +762,13 @@ fn handle_removed_worktree_output(
     background: bool,
     verify: bool,
 ) -> anyhow::Result<()> {
-    // 1. Emit cd directive if needed - shell will execute this immediately
-    if changed_directory {
-        super::change_directory(main_path)?;
-        super::flush()?; // Force flush to ensure shell processes the cd
-    }
-
     // Use main_path for discovery - the worktree being removed might be cwd,
     // and git operations after removal need a valid working directory.
     let repo = worktrunk::git::Repository::at(main_path)?;
 
-    // Execute pre-remove hooks in the worktree being removed
-    // Non-zero exit aborts removal (FailFast strategy)
+    // Execute pre-remove hooks in the worktree being removed BEFORE writing cd directive.
+    // Non-zero exit aborts removal (FailFast strategy).
+    // If hooks fail, we don't want the shell to cd to main_path.
     // For detached HEAD, {{ branch }} expands to "HEAD" in templates
     if verify && let Ok(config) = WorktrunkConfig::load() {
         let ctx = CommandContext::new(
@@ -791,6 +786,12 @@ fn handle_removed_worktree_output(
             Some(worktree_path) // Show path when user is elsewhere
         };
         execute_pre_remove_commands(&ctx, None, display_path, &[])?;
+    }
+
+    // Emit cd directive only after pre-remove hooks succeed
+    if changed_directory {
+        super::change_directory(main_path)?;
+        super::flush()?; // Force flush to ensure shell processes the cd
     }
 
     // Handle detached HEAD case (no branch known)
