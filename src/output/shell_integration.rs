@@ -88,7 +88,9 @@ fn shell_integration_unsupported_shell(shell_path: &str) -> String {
 
 /// Warning message when running as git subcommand (cd cannot work).
 pub(crate) fn git_subcommand_warning() -> String {
-    cformat!("Use <bright-black>git-wt</> directly (via shell function) for automatic cd")
+    cformat!(
+        "For automatic cd, invoke directly (with the <bright-black>-</>): <bright-black>git-wt</>"
+    )
 }
 
 /// Compute the shell warning reason for display in messages.
@@ -429,7 +431,7 @@ mod tests {
     fn test_git_subcommand_warning() {
         let warning = git_subcommand_warning();
         assert!(warning.contains("git-wt"));
-        assert!(warning.contains("shell function"));
+        assert!(warning.contains("with the"));
     }
 
     #[test]

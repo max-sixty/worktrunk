@@ -161,8 +161,10 @@ impl RepositoryCliExt for Repository {
             return Err(GitError::CannotRemoveMainWorktree.into());
         }
 
-        // Ensure the working tree is clean
-        target_wt.ensure_clean("remove worktree", branch_name.as_deref())?;
+        // Check working tree cleanliness (unless --force, which passes through to git)
+        if !force_worktree {
+            target_wt.ensure_clean("remove worktree", branch_name.as_deref(), true)?;
+        }
 
         // Compute main_path and changed_directory based on whether we're removing current
         let (main_path, changed_directory) = if is_current {
@@ -344,8 +346,10 @@ fn compute_integration_reason(
     // removed during the operation.
     let repo = Repository::at(main_path).ok()?;
     let effective_target = repo.effective_integration_target(target);
-    let mut provider = worktrunk::git::LazyGitIntegration::new(&repo, branch, &effective_target);
-    worktrunk::git::check_integration(&mut provider)
+    // Use lazy computation with short-circuit. On error, return None (informational only).
+    let signals =
+        worktrunk::git::compute_integration_lazy(&repo, branch, &effective_target).ok()?;
+    worktrunk::git::check_integration(&signals)
 }
 
 /// Warn about untracked files that will be auto-staged.
@@ -392,20 +396,18 @@ impl StashData {
             format_path_for_display(&self.path)
         )));
 
-        let Ok(repo) = Repository::current() else {
+        let success = Repository::current()
+            .ok()
+            .and_then(|repo| {
+                repo.worktree_at(&self.path)
+                    .run_command(&["stash", "pop", "--quiet", &self.stash_ref])
+                    .ok()
+            })
+            .is_some();
+
+        if !success {
             let _ = crate::output::print(warning_message(cformat!(
-                "Failed to restore stash <bold>{stash_ref}</> - run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
-                stash_ref = self.stash_ref,
-                path = format_path_for_display(&self.path),
-            )));
-            return;
-        };
-        if let Err(_e) =
-            repo.worktree_at(&self.path)
-                .run_command(&["stash", "pop", "--quiet", &self.stash_ref])
-        {
-            let _ = crate::output::print(warning_message(cformat!(
-                "Failed to restore stash <bold>{stash_ref}</> - run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
+                "Failed to restore stash <bold>{stash_ref}</>; run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
                 stash_ref = self.stash_ref,
                 path = format_path_for_display(&self.path),
             )));

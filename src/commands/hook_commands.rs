@@ -424,7 +424,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
     )?;
 
     // Display through pager (fall back to stderr if pager unavailable)
-    if show_help_in_pager(&output).is_err() {
+    if show_help_in_pager(&output, true).is_err() {
         worktrunk::styling::eprintln!("{}", output);
     }
 
@@ -626,6 +626,6 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
         .collect();
 
     // Use the standard template expansion (shell-escaped)
-    worktrunk::config::expand_template(template, &vars, true)
+    worktrunk::config::expand_template(template, &vars, true, ctx.repo)
         .unwrap_or_else(|_| template.to_string())
 }

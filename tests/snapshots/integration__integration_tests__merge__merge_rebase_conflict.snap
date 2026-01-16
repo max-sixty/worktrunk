@@ -8,7 +8,7 @@ info:
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -21,6 +21,7 @@ info:
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -34,7 +35,8 @@ exit_code: 1
 [36m◎[39m [36mRebasing onto [1mmain[22m...[39m
 [31m✗[39m [31mRebase onto [1mmain[22m incomplete[39m
 [107m [0m Rebasing (1/1)
-[107m [0m error: could not apply bed6661... Update shared.txt in feature
-[107m [0m Could not apply bed6661... # Update shared.txt in feature
+[107m [0m error: could not apply b0165c1... Update shared.txt in feature
+[107m [0m Recorded preimage for 'shared.txt'
+[107m [0m Could not apply b0165c1... # Update shared.txt in feature
 [107m [0m Auto-merging shared.txt
 [107m [0m CONFLICT (content): Merge conflict in shared.txt

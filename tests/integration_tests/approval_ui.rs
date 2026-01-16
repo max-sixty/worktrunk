@@ -75,6 +75,9 @@ pwd = "cd {{ worktree_path }} && pwd"
 
 #[rstest]
 fn test_approval_mixed_approved_unapproved(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"
@@ -86,12 +89,11 @@ third = "echo 'Third command'"
     repo.commit("Add config");
 
     // Pre-approve the second command
-    let project_id = repo.root_path().file_name().unwrap().to_str().unwrap();
     repo.write_test_config(&format!(
         r#"[projects."{}"]
 approved-commands = ["echo 'Second command'"]
 "#,
-        project_id
+        repo.project_id()
     ));
 
     snapshot_approval(
@@ -131,17 +133,19 @@ fn test_yes_flag_does_not_save_approvals(repo: TestRepo) {
 
 #[rstest]
 fn test_already_approved_commands_skip_prompt(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(r#"post-create = "echo 'approved' > output.txt""#);
 
     repo.commit("Add config");
 
     // Pre-approve the command
-    let project_id = repo.root_path().file_name().unwrap().to_str().unwrap();
     repo.write_test_config(&format!(
         r#"[projects."{}"]
 approved-commands = ["echo 'approved' > output.txt"]
 "#,
-        project_id
+        repo.project_id()
     ));
 
     // Should execute without prompting
@@ -153,6 +157,9 @@ approved-commands = ["echo 'approved' > output.txt"]
 
 #[rstest]
 fn test_decline_approval_skips_only_unapproved(repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"
@@ -164,14 +171,13 @@ third = "echo 'Third command'"
     repo.commit("Add config");
 
     // Pre-approve the second command
-    let project_id = repo.root_path().file_name().unwrap().to_str().unwrap();
     fs::write(
         repo.test_config_path(),
         format!(
             r#"[projects."{}"]
 approved-commands = ["echo 'Second command'"]
 "#,
-            project_id
+            repo.project_id()
         ),
     )
     .unwrap();

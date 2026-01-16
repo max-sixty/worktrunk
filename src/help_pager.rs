@@ -64,7 +64,14 @@ fn detect_help_pager() -> Option<String> {
 
 /// Show help text through a pager with TTY access for interactive scrolling.
 ///
-/// Only uses pager when stdout or stderr is a terminal. Falls back to direct output if:
+/// The `use_pager` flag controls whether to attempt pager display:
+/// - `true` (--help): Uses pager when available and terminal is detected
+/// - `false` (-h): Always prints directly to stderr, never uses pager
+///
+/// This follows git's convention where `-h` never opens a pager (muscle-memory safe)
+/// while `--help` uses a pager for longer content.
+///
+/// Even when `use_pager=true`, falls back to direct output if:
 /// - No pager configured (prints to stderr)
 /// - Neither stdout nor stderr is a TTY (prints to stderr)
 /// - Pager spawn fails (prints to stderr)
@@ -72,7 +79,14 @@ fn detect_help_pager() -> Option<String> {
 /// Note: All fallbacks output to stderr for consistency with pager behavior
 /// (which sends output to stderr via `>&2`). This ensures `config show`
 /// works correctly since stdout is reserved for data output.
-pub(crate) fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
+pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) -> std::io::Result<()> {
+    // Short help (-h) never uses a pager
+    if !use_pager {
+        log::debug!("Short help (-h) requested, printing directly to stderr");
+        eprint!("{}", help_text);
+        return Ok(());
+    }
+
     let Some(pager_cmd) = detect_help_pager() else {
         log::debug!("No pager configured, printing help directly to stderr");
         eprint!("{}", help_text);
@@ -92,8 +106,7 @@ pub(crate) fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
 
     log::debug!("Invoking pager: {}", pager_cmd);
 
-    // LESS flags: F=quit if one screen, R=allow colors, X=no termcap init
-    let less_flags = std::env::var("LESS").unwrap_or_else(|_| "FRX".to_string());
+    let less_flags = compute_less_flags(std::env::var("LESS").ok().as_deref());
 
     // Always send pager output to stderr (standard for help text, like git)
     // This works in all cases: direct invocation, shell wrapper, piping, etc.
@@ -104,6 +117,7 @@ pub(crate) fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
     // Spawn pager with TTY access (interactive, unlike detached diff renderer)
     // Falls back to direct output if pager unavailable (e.g., less not installed)
     let shell = ShellConfig::get();
+    log::debug!("$ {} (pager)", pager_cmd);
     let mut cmd = shell.command(&final_cmd);
     // Prevent subprocesses from writing to the directive file
     cmd.env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR);
@@ -129,8 +143,17 @@ pub(crate) fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Compute LESS flags by appending our required flags to user's existing LESS setting.
+///
+/// Returns flags suitable for setting LESS env var when spawning less.
+/// Ensures F (quit if one screen), R (colors), X (no termcap init) are always active.
+fn compute_less_flags(user_less: Option<&str>) -> String {
+    format!("{} -FRX", user_less.unwrap_or_default())
+}
+
 #[cfg(test)]
 mod tests {
+    use super::compute_less_flags;
     use crate::pager::parse_pager_value;
 
     #[test]
@@ -147,5 +170,36 @@ mod tests {
         assert_eq!(parse_pager_value("  less  "), Some("less".to_string()));
         assert_eq!(parse_pager_value("delta"), Some("delta".to_string()));
         assert_eq!(parse_pager_value("less -R"), Some("less -R".to_string()));
+    }
+
+    #[test]
+    fn test_compute_less_flags_empty() {
+        // Leading space is fine - less ignores it
+        assert_eq!(compute_less_flags(None), " -FRX");
+        assert_eq!(compute_less_flags(Some("")), " -FRX");
+    }
+
+    #[test]
+    fn test_compute_less_flags_short_options() {
+        // Common case: user has -R (oh-my-zsh default)
+        assert_eq!(compute_less_flags(Some("-R")), "-R -FRX");
+        // User has multiple short flags
+        assert_eq!(compute_less_flags(Some("-iMRS")), "-iMRS -FRX");
+    }
+
+    #[test]
+    fn test_compute_less_flags_long_options() {
+        // Issue #594: --mouse must not become --mouseFRX
+        assert_eq!(compute_less_flags(Some("--mouse")), "--mouse -FRX");
+        // Multiple long options
+        assert_eq!(
+            compute_less_flags(Some("--mouse --shift=4")),
+            "--mouse --shift=4 -FRX"
+        );
+    }
+
+    #[test]
+    fn test_compute_less_flags_mixed() {
+        assert_eq!(compute_less_flags(Some("-R --mouse")), "-R --mouse -FRX");
     }
 }

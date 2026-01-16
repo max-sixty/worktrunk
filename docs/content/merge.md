@@ -8,7 +8,9 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt merge --help-page` — edit cli.rs to update -->
 
-Merge the current branch into the target branch, defaulting to the main branch. Unlike `git merge`, this merges the current branch into a target (rather than a target into the current branch). Similar to clicking "Merge pull request" on GitHub.
+Merge current branch into target. Squash & rebase, fast-forward target, remove the worktree.
+
+Unlike `git merge`, this merges current into target (not target into current). Similar to clicking "Merge pull request" on GitHub, but locally. Target defaults to the default branch.
 
 <figure class="demo">
 <picture>
@@ -86,7 +88,7 @@ lint = "cargo clippy"
 ## Command reference
 
 {% terminal() %}
-wt merge - Merge worktree into target branch
+wt merge - Merge current branch into target
 
 Squash &amp; rebase, fast-forward target, remove the worktree.
 

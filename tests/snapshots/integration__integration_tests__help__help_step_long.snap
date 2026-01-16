@@ -6,11 +6,9 @@ info:
     - step
     - "--help"
   env:
-    CARGO_LLVM_COV: "1"
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_EDITOR: ""
-    LLVM_PROFILE_FILE: /Users/maximilian/workspace/worktrunk.worktreeinclude/target/llvm-cov-target/worktrunk.worktreeinclude-%p-%m.profraw
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     TERM: alacritty
@@ -23,6 +21,8 @@ exit_code: 0
 
 ----- stderr -----
 wt step - Run individual operations
+
+The building blocks of [1mwt merge[0m — commit, squash, rebase, push — plus standalone utilities.
 
 Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
 
@@ -48,9 +48,7 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
           Show debug info (-v), or also write diagnostic report (-vv)
 
-Run individual git workflow operations: commits, squashes, rebases, and pushes.
-
-[32mExamples
+[1m[32mExamples
 
 Commit with LLM-generated message:
 
@@ -60,11 +58,10 @@ Manual merge workflow with review between steps:
 
   [2mwt step commit
   [2mwt step squash
-  [2m# Review the squashed commit
   [2mwt step rebase
   [2mwt step push
 
-[32mOperations
+[1m[32mOperations
 
 - [2mcommit[0m — Stage and commit with LLM-generated message
 - [2msquash[0m — Squash all branch commits into one with LLM-generated message
@@ -73,37 +70,7 @@ Manual merge workflow with review between steps:
 - [2mcopy-ignored[0m — Copy gitignored files between worktrees
 - [2mfor-each[0m — [experimental] Run a command in every worktree
 
-[32mOptions
-
-[1m`--stage`
-
-Controls what to stage before committing. Available for [2mcommit[0m and [2msquash[0m:
-
-    Value                         Behavior                         
-   ─────── ─────────────────────────────────────────────────────── 
-   all     Stage all changes including untracked files (default)   
-   tracked Stage only modified tracked files                       
-   none    Don't stage anything, commit only what's already staged 
-
-  [2mwt step commit --stage=tracked
-  [2mwt step squash --stage=none
-
-Configure the default in user config:
-
-  [2m[commit]
-  [2mstage = "tracked"
-
-[1m`--show-prompt`
-
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
-
-  [2m# Inspect the rendered prompt
-  [2mwt step commit --show-prompt | less
-  [2m
-  [2m# Pipe to a different LLM
-  [2mwt step commit --show-prompt | llm -m gpt-5-nano
-
-[32mSee also
+[1m[32mSee also
 
 - [2mwt merge[0m — Runs commit → squash → rebase → hooks → push → cleanup automatically
 - [2mwt hook[0m — Run configured hooks

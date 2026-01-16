@@ -1,7 +1,7 @@
 # worktrunk shell integration for zsh
 #
 # Completions require zsh's completion system (compinit). If completions don't work:
-#   autoload -Uz compinit && compinit  # add before this line in your .zshrc
+#   autoload -Uz compinit && compinit  # add before this line in .zshrc
 
 # Only initialize if {{ cmd }} is available (in PATH or via WORKTRUNK_BIN)
 if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then

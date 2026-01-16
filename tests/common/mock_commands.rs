@@ -53,6 +53,7 @@ pub struct MockConfig {
 pub struct MockResponse {
     file: Option<String>,
     output: Option<String>,
+    stderr: Option<String>,
     exit_code: i32,
 }
 
@@ -62,15 +63,27 @@ impl MockResponse {
         Self {
             file: Some(path.to_string()),
             output: None,
+            stderr: None,
             exit_code: 0,
         }
     }
 
-    /// Respond with literal output.
+    /// Respond with literal output (stdout).
     pub fn output(text: &str) -> Self {
         Self {
             file: None,
             output: Some(text.to_string()),
+            stderr: None,
+            exit_code: 0,
+        }
+    }
+
+    /// Respond with stderr output.
+    pub fn stderr(text: &str) -> Self {
+        Self {
+            file: None,
+            output: None,
+            stderr: Some(text.to_string()),
             exit_code: 0,
         }
     }
@@ -80,6 +93,7 @@ impl MockResponse {
         Self {
             file: None,
             output: None,
+            stderr: None,
             exit_code: code,
         }
     }
@@ -87,6 +101,12 @@ impl MockResponse {
     /// Set exit code (chainable).
     pub fn with_exit_code(mut self, code: i32) -> Self {
         self.exit_code = code;
+        self
+    }
+
+    /// Add stderr output (chainable).
+    pub fn with_stderr(mut self, text: &str) -> Self {
+        self.stderr = Some(text.to_string());
         self
     }
 
@@ -98,7 +118,12 @@ impl MockResponse {
         if let Some(o) = &self.output {
             obj.insert("output".to_string(), json!(o));
         }
-        if self.exit_code != 0 || (self.file.is_none() && self.output.is_none()) {
+        if let Some(e) = &self.stderr {
+            obj.insert("stderr".to_string(), json!(e));
+        }
+        if self.exit_code != 0
+            || (self.file.is_none() && self.output.is_none() && self.stderr.is_none())
+        {
             obj.insert("exit_code".to_string(), json!(self.exit_code));
         }
         serde_json::Value::Object(obj)
@@ -153,21 +178,27 @@ impl MockConfig {
     }
 }
 
-/// Copy the mock-stub binary to bin_dir with the given name.
+/// Create mock binary in bin_dir with the given name.
+/// Uses symlinks on Unix (instant, works across filesystems).
+/// Uses hard links on Windows (symlinks require admin privileges).
 pub fn copy_mock_binary(bin_dir: &Path, name: &str) {
     let stub = mock_stub_binary();
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         let dest = bin_dir.join(name);
-        fs::copy(&stub, &dest).expect("failed to copy mock-stub binary");
-        fs::set_permissions(&dest, fs::Permissions::from_mode(0o755)).unwrap();
+        // Remove existing (config may have changed)
+        let _ = fs::remove_file(&dest);
+        std::os::unix::fs::symlink(&stub, &dest).expect("failed to symlink mock-stub binary");
     }
 
     #[cfg(windows)]
     {
         let dest = bin_dir.join(format!("{}.exe", name));
+        // Remove existing (config may have changed)
+        let _ = fs::remove_file(&dest);
+        // Copy on Windows - hard links fail across drives (common on CI),
+        // and symlinks require admin privileges
         fs::copy(&stub, &dest).expect("failed to copy mock-stub.exe");
     }
 }

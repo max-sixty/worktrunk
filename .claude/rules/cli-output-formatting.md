@@ -106,24 +106,28 @@ mentioned in the error message.
 // Hint:  "Use --create to create a new branch"
 ```
 
+## Heading Case
+
+Use **sentence case** for help text headings: "Configuration files", "JSON output", "LLM commit messages".
+
 ## Message Consistency Patterns
 
-Use consistent punctuation and structure for related messages:
+Use consistent punctuation and structure for related messages.
 
-**Semicolon for qualifiers:** Separate the action from a qualifier/reason:
-
-```rust
-// Action; qualifier (flag)
-"Removing feature worktree in background; retaining branch (--no-delete-branch)"
-"Commands approved; not saved (--yes)"
-```
-
-**Ampersand for conjunctions:** Use `&` for combined actions:
+**Ampersand for combined actions:** Use `&` when a single operation does
+multiple things:
 
 ```rust
-// Action & additional action
 "Removing feature worktree & branch in background"
 "Commands approved & saved to config"
+```
+
+**Semicolon for joining clauses:** Use semicolons to connect related information:
+
+```rust
+"Removing feature worktree in background; retaining branch (--no-delete-branch)"
+"Branch unmerged; to delete, run <bright-black>wt remove -D</>"  // hint uses bright-black
+"{tool} not authenticated; run <bold>{tool} auth login</>"       // warning uses bold
 ```
 
 **Explicit flag acknowledgment:** Show flags in parentheses when they change
@@ -135,6 +139,20 @@ behavior:
 // BAD - doesn't acknowledge user's explicit choice
 "Removing feature worktree in background; retaining branch"
 ```
+
+**Flag locality:** Place flag indicators adjacent to the concept they modify.
+Flags should appear immediately after the noun/action they affect, not at the
+end of the message:
+
+```rust
+// GOOD - (--force) is adjacent to "worktree" which it modifies
+"Removing feature worktree (--force) & branch in background (same commit as main, _)"
+// BAD - (--force) at end, disconnected from the worktree removal it enables
+"Removing feature worktree & branch in background (same commit as main, _) (--force)"
+```
+
+This principle ensures readers can immediately understand what each annotation
+modifies.
 
 **Parallel structure:** Related messages should follow the same pattern:
 
@@ -251,11 +269,11 @@ each type.
 
 **Hint vs Info:** Hints suggest user action. Info acknowledges what happened.
 
-| Hint ↳                        | Info ○                                |
-| ----------------------------- | ------------------------------------- |
-| "Run `wt merge` to continue"  | "Already up to date with main"        |
-| "Use `--yes` to override"     | "Skipping hooks (--no-verify)"        |
-| "Branch can be deleted"       | "Worktree preserved (main worktree)"  |
+| Hint ↳                              | Info ○                                |
+| ----------------------------------- | ------------------------------------- |
+| "To continue, run `wt merge`"       | "Already up to date with main"        |
+| "Commit or stash changes first"     | "Skipping hooks (--no-verify)"        |
+| "Branch can be deleted"             | "Worktree preserved (main worktree)"  |
 
 **Warning placement:** When something unexpected happens, warn somewhere. Where
 depends on the nature of the issue:
@@ -309,22 +327,48 @@ log::warn!("Failed to parse CI JSON for {}: {}", branch, e);
 return None;
 ```
 
-**Command suggestions in hints:** Use "To X, run Y" pattern. End with the
-command for easy copying:
+**Command suggestions in hints:** When a hint includes a runnable command, use
+"To X, run Y" pattern. End with the command for easy copying:
 
 ```rust
 // GOOD - command at end for easy copying
 "To delete the unmerged branch, run wt remove feature -D"
 "To rebase onto main, run wt step rebase or wt merge"
 
-// GOOD - when user needs to modify their command
-"To switch to the remote branch, remove --create; run wt switch feature"
+// GOOD - recovery command after shadowing a remote branch
+"To switch to the remote branch, delete this branch and run without --create: wt remove feature && wt switch feature"
 
 // BAD - command without context
 "wt remove feature -D deletes unmerged branches"
 
 // BAD - command not at end (hard to copy)
 "Run wt switch feature (without --create) to switch to the remote branch"
+```
+
+For general action guidance without a specific command, direct imperatives are
+clearer:
+
+```rust
+// GOOD - direct imperative for general guidance
+"Commit or stash changes first"
+"Run from inside a worktree, or specify a branch name"
+
+// VERBOSE - "To proceed" adds nothing
+"To proceed, commit or stash changes first"
+```
+
+**Description + command in single message:** For warnings/errors that include a
+recovery command, join with semicolon. Use `<bold>` for commands in
+warnings/errors (only hints use `<bright-black>`):
+
+```rust
+// Warning with inline recovery command (bold for commands)
+warning_message("Failed to restore stash; run <bold>git stash pop {ref}</> to restore manually")
+warning_message("{tool} not authenticated; run <bold>{tool} auth login</>")
+
+// For longer suggestions, use separate hint message (bright-black for commands)
+warning_message("Failed to restore stash")
+hint_message("To restore manually, run <bright-black>git stash pop {ref}</>")
 ```
 
 **Multiple suggestions in one hint:** When combining suggestions with semicolons,

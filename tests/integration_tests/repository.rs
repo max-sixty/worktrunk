@@ -289,7 +289,8 @@ fn test_project_identifier_ssh_protocol_with_port() {
 #[test]
 fn test_project_identifier_no_remote_fallback() {
     let repo = TestRepo::new();
-    // Don't create a remote - should fall back to directory name
+    // Remove origin (fixture has it) for this no-remote test
+    repo.run_git(&["remote", "remove", "origin"]);
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let id = repository.project_identifier().unwrap();

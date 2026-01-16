@@ -42,8 +42,11 @@ pub mod list_snapshots;
 // Progressive output tests use PTY and are Unix-only for now
 #[cfg(unix)]
 pub mod progressive_output;
-// Shell integration tests are Unix-only for now (Windows support planned)
-#[cfg(all(unix, feature = "shell-integration-tests"))]
+// PTY execution helpers - Unix-only
+#[cfg(unix)]
+pub mod pty;
+// Shell integration tests - cross-platform with PTY support
+#[cfg(feature = "shell-integration-tests")]
 pub mod shell;
 
 // Cross-platform mock command helpers
@@ -351,19 +354,23 @@ pub fn merge_scenario_multi_commit(mut repo: TestRepo) -> (TestRepo, PathBuf) {
     (repo, feature_wt)
 }
 
-/// Returns a PTY system with a guard that restores the TTY foreground pgrp on drop.
+/// Returns a PTY system with platform-appropriate setup.
 ///
-/// Use this instead of `portable_pty::native_pty_system()` directly to ensure:
-/// 1. PTY tests work in background process groups (signals blocked)
-/// 2. SIGTTIN/SIGTTOU are blocked to prevent test processes from being stopped
+/// On Unix, this blocks SIGTTIN/SIGTTOU signals to prevent test processes from
+/// being stopped when PTY operations interact with terminal control.
+///
+/// On Windows, this returns the native ConPTY system directly.
+///
+/// Use this instead of `portable_pty::native_pty_system()` directly to ensure
+/// PTY tests work correctly across platforms.
 ///
 /// NOTE: PTY tests are behind the `shell-integration-tests` feature because they can
 /// trigger a nextest bug where its InputHandler cleanup receives SIGTTOU. This happens
 /// when tests spawn interactive shells (zsh -ic, bash -ic) which take control of the
 /// foreground process group. See https://github.com/nextest-rs/nextest/issues/2878
 /// Workaround: run with NEXTEST_NO_INPUT_HANDLER=1. See CLAUDE.md for details.
-#[cfg(unix)]
 pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
+    #[cfg(unix)]
     ignore_tty_signals();
     portable_pty::native_pty_system()
 }
@@ -371,13 +378,11 @@ pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
 /// Open a PTY pair with default size (48 rows x 200 cols).
 ///
 /// Most PTY tests use this standard size. Returns the master/slave pair.
-#[cfg(unix)]
 pub fn open_pty() -> portable_pty::PtyPair {
     open_pty_with_size(48, 200)
 }
 
 /// Open a PTY pair with specified size.
-#[cfg(unix)]
 pub fn open_pty_with_size(rows: u16, cols: u16) -> portable_pty::PtyPair {
     native_pty_system()
         .openpty(portable_pty::PtySize {
@@ -397,49 +402,136 @@ use tempfile::TempDir;
 use worktrunk::config::sanitize_branch_name;
 use worktrunk::path::to_posix_path;
 
-/// Path to the fixture template repo (relative to crate root).
-/// Contains `_git/` (renamed .git) and `gitconfig`.
-fn fixture_template_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/template-repo")
+/// Path to the standard fixture (relative to crate root).
+/// Contains repo/, repo.feature-a/, repo.feature-b/, repo.feature-c/, origin_git/.
+fn standard_fixture_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/standard")
 }
 
-/// Copy the fixture template to create a new test repo.
+/// Worktree info returned from fixture copy.
+struct FixtureWorktrees {
+    worktrees: HashMap<String, PathBuf>,
+    remote: PathBuf,
+}
+
+/// Copy the standard fixture to create a new test repo with worktrees and remote.
 ///
-/// The fixture contains a git repo with one initial commit (on `main` branch).
-/// Copies `_git/` to `.git/`, `file.txt`, and `gitconfig` to `test-gitconfig`.
-/// Uses `cp -r` which benchmarks faster than native Rust fs operations.
-fn copy_fixture_template(dest: &Path) {
-    let template = fixture_template_path();
+/// The fixture contains:
+/// - Main repo on `main` branch with one commit
+/// - Remote (origin) bare repository
+/// - Three feature worktrees (feature-a, feature-b, feature-c) each with one commit
+///
+/// Pure Rust recursive copy - 2.5x faster than spawning cp/robocopy.
+/// Benchmarked at 21ms vs 53ms per fixture copy on macOS.
+fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
+    fn copy_dir_recursive(src: &Path, dest: &Path) {
+        std::fs::create_dir_all(dest).unwrap();
+        for entry in std::fs::read_dir(src).unwrap() {
+            let entry = entry.unwrap();
+            let file_type = entry.file_type().unwrap();
+            let src_path = entry.path();
+            let dest_path = dest.join(entry.file_name());
+            if file_type.is_dir() {
+                copy_dir_recursive(&src_path, &dest_path);
+            } else if file_type.is_file() {
+                std::fs::copy(&src_path, &dest_path).unwrap();
+            }
+            // Skip symlinks, sockets, etc (shouldn't be in fixture)
+        }
+    }
 
-    // Create repo subdirectory
-    let repo_path = dest.join("repo");
-    std::fs::create_dir(&repo_path).unwrap();
+    let fixture = standard_fixture_path();
+    copy_dir_recursive(&fixture, dest);
 
-    // Copy _git to repo/.git (suppress stderr for socket file warnings)
-    let output = Command::new("cp")
-        .args(["-r", "--"])
-        .arg(template.join("_git"))
-        .arg(repo_path.join(".git"))
-        .stderr(std::process::Stdio::null())
-        .output()
-        .unwrap();
+    // Verify essential directories exist after copy
+    let essential = ["repo/_git", "origin_git", "repo.feature-a/_git"];
+    for path in essential {
+        let full_path = dest.join(path);
+        assert!(
+            full_path.exists(),
+            "Essential fixture path missing after copy: {:?}",
+            full_path
+        );
+    }
+
+    // Rename _git to .git in all locations
+    let renames = [
+        ("repo/_git", "repo/.git"),
+        ("origin_git", "origin.git"),
+        ("repo.feature-a/_git", "repo.feature-a/.git"),
+        ("repo.feature-b/_git", "repo.feature-b/.git"),
+        ("repo.feature-c/_git", "repo.feature-c/.git"),
+    ];
+    for (from, to) in renames {
+        let from_path = dest.join(from);
+        let to_path = dest.join(to);
+        if from_path.exists() {
+            std::fs::rename(&from_path, &to_path).unwrap_or_else(|e| {
+                panic!("Failed to rename {:?} to {:?}: {}", from_path, to_path, e)
+            });
+        }
+    }
+
+    // Verify origin.git is a valid bare repository
+    let origin_git = dest.join("origin.git");
     assert!(
-        output.status.success(),
-        "Failed to copy template _git directory"
+        origin_git.join("HEAD").exists(),
+        "origin.git is not a valid git repository (missing HEAD): {:?}",
+        origin_git
     );
 
-    // Copy file.txt (part of the initial commit)
-    std::fs::copy(template.join("file.txt"), repo_path.join("file.txt")).unwrap();
+    // Canonicalize dest for worktrees map (on macOS /var -> /private/var)
+    let canonical_dest = canonicalize(dest).unwrap();
 
-    // Copy .gitattributes (forces LF line endings on all platforms)
-    std::fs::copy(
-        template.join(".gitattributes"),
-        repo_path.join(".gitattributes"),
+    // Fix gitdir files - fixture uses _git which we rename to .git
+    // Paths are relative so no absolute path replacement needed
+    for wt in ["feature-a", "feature-b", "feature-c"] {
+        let gitdir_path = dest.join(format!("repo.{wt}/.git"));
+        if gitdir_path.exists() {
+            let content = std::fs::read_to_string(&gitdir_path).unwrap();
+            let fixed = content.replace("_git", ".git");
+            std::fs::write(&gitdir_path, fixed).unwrap();
+        }
+
+        // Fix main repo's worktree gitdir reference
+        let main_gitdir = dest.join(format!("repo/.git/worktrees/repo.{wt}/gitdir"));
+        if main_gitdir.exists() {
+            let content = std::fs::read_to_string(&main_gitdir).unwrap();
+            let fixed = content.replace("_git", ".git");
+            std::fs::write(&main_gitdir, fixed).unwrap();
+        }
+    }
+
+    // Fix remote URL in config (origin_git -> origin.git)
+    let config_path = dest.join("repo/.git/config");
+    if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        let fixed = content.replace("origin_git", "origin.git");
+        std::fs::write(&config_path, fixed).unwrap();
+    }
+
+    // Build worktrees map using canonical paths
+    let mut worktrees = HashMap::new();
+    for wt in ["feature-a", "feature-b", "feature-c"] {
+        worktrees.insert(wt.to_string(), canonical_dest.join(format!("repo.{wt}")));
+    }
+
+    let remote = canonical_dest.join("origin.git");
+
+    FixtureWorktrees { worktrees, remote }
+}
+
+/// Write a gitconfig file for tests.
+fn write_test_gitconfig(path: &Path) {
+    std::fs::write(
+        path,
+        "[user]\n\tname = Test User\n\temail = test@example.com\n\
+         [advice]\n\tmergeConflict = false\n\tresolveConflict = false\n\
+         [init]\n\tdefaultBranch = main\n\
+         [commit]\n\tgpgsign = false\n\
+         [rerere]\n\tenabled = true\n",
     )
     .unwrap();
-
-    // Copy gitconfig
-    std::fs::copy(template.join("gitconfig"), dest.join("test-gitconfig")).unwrap();
 }
 
 /// Canonicalize a path without Windows verbatim prefix (`\\?\`).
@@ -832,18 +924,21 @@ pub struct TestRepo {
 impl TestRepo {
     /// Create a new test repository with isolated git environment.
     ///
-    /// The repo is initialized on `main` branch with one initial commit.
-    /// Uses a fixture template for fast initialization - copies a pre-initialized
-    /// git repo from `tests/fixtures/template-repo/` instead of running `git init`.
-    /// This saves ~10ms per test by avoiding process spawns.
+    /// The repo includes:
+    /// - Main branch with one initial commit
+    /// - Remote (origin) bare repository
+    /// - Three feature worktrees (feature-a, feature-b, feature-c) each with one commit
+    ///
+    /// Uses a pre-created fixture for fast initialization - copies the fixture
+    /// from `tests/fixtures/standard/` instead of running git commands.
     ///
     /// Also sets up mock gh/glab commands that appear authenticated to prevent
     /// CI status hints from appearing in test output.
     pub fn new() -> Self {
         let temp_dir = TempDir::new().unwrap();
 
-        // Copy from fixture template (includes initial commit)
-        copy_fixture_template(temp_dir.path());
+        // Copy from standard fixture (includes worktrees and remote)
+        let fixture = copy_standard_fixture(temp_dir.path());
 
         // Canonicalize to resolve symlinks (important on macOS where /var is symlink to /private/var)
         let root = canonicalize(&temp_dir.path().join("repo")).unwrap();
@@ -852,15 +947,18 @@ impl TestRepo {
         let test_config_path = temp_dir.path().join("test-config.toml");
         let git_config_path = temp_dir.path().join("test-gitconfig");
 
+        // Write gitconfig for tests
+        write_test_gitconfig(&git_config_path);
+
         // Bind full snapshot settings (including ANSI cleanup) for all tests
-        let worktrees = HashMap::new();
-        let snapshot_guard = setup_snapshot_settings_for_paths(&root, &worktrees).bind_to_scope();
+        let snapshot_guard =
+            setup_snapshot_settings_for_paths(&root, &fixture.worktrees).bind_to_scope();
 
         let mut repo = Self {
             temp_dir,
             root,
-            worktrees,
-            remote: None,
+            worktrees: fixture.worktrees,
+            remote: Some(fixture.remote),
             test_config_path,
             git_config_path,
             mock_bin_path: None,
@@ -1028,6 +1126,36 @@ impl TestRepo {
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
+    /// Remove fixture worktrees to get a clean state for tests.
+    ///
+    /// The standard fixture includes worktrees for feature-a, feature-b, feature-c.
+    /// Call this method in tests that need a specific worktree state. Also clears
+    /// the worktrees map so `add_worktree` can recreate them if needed.
+    pub fn remove_fixture_worktrees(&mut self) {
+        for branch in &["feature-a", "feature-b", "feature-c"] {
+            let worktree_path = self
+                .root_path()
+                .parent()
+                .unwrap()
+                .join(format!("repo.{}", branch));
+            if worktree_path.exists() {
+                let _ = self
+                    .git_command()
+                    .args([
+                        "worktree",
+                        "remove",
+                        "--force",
+                        worktree_path.to_str().unwrap(),
+                    ])
+                    .output();
+            }
+            // Delete the branch after removing the worktree
+            let _ = self.git_command().args(["branch", "-D", branch]).output();
+            // Remove from worktrees map so add_worktree() can recreate if needed
+            self.worktrees.remove(*branch);
+        }
+    }
+
     /// Stage all changes in a directory.
     pub fn stage_all(&self, dir: &Path) {
         self.run_git_in(dir, &["add", "."]);
@@ -1125,6 +1253,26 @@ impl TestRepo {
     /// Get the root path of the repository
     pub fn root_path(&self) -> &Path {
         &self.root
+    }
+
+    /// Get the path to the bare remote repository, if created.
+    pub fn remote_path(&self) -> Option<&Path> {
+        self.remote.as_deref()
+    }
+
+    /// Get the project identifier for test configs.
+    ///
+    /// Returns the repository directory name. This works because the standard
+    /// fixture uses a local path remote (`../origin_git`) which doesn't parse
+    /// as a proper git URL, causing worktrunk to fall back to the directory name.
+    ///
+    /// Use this when writing test configs with `[projects."<id>"]` sections.
+    pub fn project_id(&self) -> String {
+        self.root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("repo")
+            .to_string()
     }
 
     /// Get the path to the isolated test config file
@@ -1252,7 +1400,15 @@ impl TestRepo {
     ///
     /// The worktree path follows the default template format: `repo.{branch}`
     /// (sanitized, with slashes replaced by dashes).
+    ///
+    /// If the worktree already exists (from the standard fixture), returns its path
+    /// without creating a new one.
     pub fn add_worktree(&mut self, branch: &str) -> PathBuf {
+        // If worktree already exists (from fixture), just return its path
+        if let Some(path) = self.worktrees.get(branch) {
+            return path.clone();
+        }
+
         let safe_branch = sanitize_branch_name(branch);
         // Use default template path format: ../{{ repo }}.{{ branch }}
         // From {temp_dir}/repo, this resolves to {temp_dir}/repo.{branch}
@@ -1422,9 +1578,23 @@ impl TestRepo {
     /// This creates a bare git repository in the temp directory and configures
     /// it with the specified remote name. The remote will have the same default
     /// branch as the local repository.
+    ///
+    /// If the remote already exists (from fixture), this is a no-op.
     pub fn setup_custom_remote(&mut self, remote_name: &str, default_branch: &str) {
+        // If origin remote already exists (from fixture), just ensure HEAD is set
+        if remote_name == "origin" && self.remote.is_some() {
+            // Set origin/HEAD (fixture may not have this set)
+            self.run_git(&["remote", "set-head", "origin", default_branch]);
+            return;
+        }
+
         // Create bare remote repository
         let remote_path = self.temp_dir.path().join(format!("{}.git", remote_name));
+        if remote_path.exists() {
+            // Remote directory already exists, just use it
+            self.remote = Some(canonicalize(&remote_path).unwrap());
+            return;
+        }
         std::fs::create_dir(&remote_path).unwrap();
 
         self.run_git_in(
@@ -1646,6 +1816,9 @@ impl TestRepo {
     /// caller's PATH instead of a hardcoded minimal list.
     pub fn configure_mock_commands(&self, cmd: &mut Command) {
         if let Some(mock_bin) = &self.mock_bin_path {
+            // Tell mock-stub where to find config files directly, avoiding PATH search
+            cmd.env("MOCK_CONFIG_DIR", mock_bin);
+
             // On Windows, env vars are case-insensitive but Rust stores them
             // case-sensitively. Find the actual PATH variable name to avoid
             // creating a duplicate with different case.
@@ -2166,6 +2339,58 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     add_standard_env_redactions(&mut settings);
 
     settings
+}
+
+// =============================================================================
+// PTY Test Filters
+// =============================================================================
+//
+// PTY-based tests (shell wrappers, approval prompts, TUI select) capture output
+// from pseudo-terminals. This output has platform-specific artifacts that need
+// normalization for stable snapshots.
+//
+// These filters consolidate patterns that were previously scattered across
+// individual `normalize_*` functions in each test file. Using insta filters
+// instead of custom normalization functions:
+// - Reduces code duplication
+// - Ensures consistent normalization across all PTY tests
+// - Makes it easier to add new normalizations in one place
+//
+// Usage:
+//   let mut settings = insta::Settings::clone_current();
+//   add_pty_filters(&mut settings);
+//   settings.bind(|| {
+//       assert_snapshot!(output);
+//   });
+
+/// Add filters for PTY-specific artifacts that vary between platforms.
+///
+/// This handles:
+/// - macOS PTY control sequences (^D followed by backspaces)
+/// - Leading ANSI reset codes that vary between macOS and Linux
+///
+/// Note: CRLF normalization is done eagerly in PTY exec functions, not here.
+pub fn add_pty_filters(settings: &mut insta::Settings) {
+    // macOS PTYs emit ^D (literal caret-D) followed by backspaces (0x08)
+    // when EOF is signaled. Linux PTYs don't. Strip these for consistency.
+    settings.add_filter(r"\^D\x08+", "");
+
+    // Remove redundant leading reset codes per line.
+    // macOS and Linux PTYs generate ANSI codes slightly differently.
+    // This handles lines that start with ESC[0m (reset).
+    settings.add_filter(r"(?m)^\x1b\[0m", "");
+}
+
+/// Add filters for binary paths (target/debug/wt) in PTY output.
+///
+/// Test binaries are run from the cargo target directory, which varies.
+pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
+    // Match paths ending in target/debug/wt or target/release/wt
+    // Also handles llvm-cov-target used by cargo-llvm-cov
+    settings.add_filter(
+        r"[^\s]+/target/(?:llvm-cov-target/)?(?:debug|release)/wt",
+        "[BIN]",
+    );
 }
 
 /// Create a configured Command for snapshot testing

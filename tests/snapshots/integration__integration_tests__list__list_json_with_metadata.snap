@@ -36,10 +36,10 @@ exit_code: 0
     "path": "_REPO_",
     "kind": "worktree",
     "commit": {
-      "sha": "a1e809f511b21ee516412a4520497f0cea4af366",
-      "short_sha": "a1e809f",
+      "sha": "05a4a45d0b981dad5c27db59dca482836d59f89e",
+      "short_sha": "05a4a45",
       "message": "Initial commit",
-      "timestamp": 1735689600
+      "timestamp": 1735718400
     },
     "working_tree": {
       "staged": false,
@@ -53,24 +53,135 @@ exit_code: 0
       }
     },
     "main_state": "is_main",
+    "remote": {
+      "name": "origin",
+      "branch": "main",
+      "ahead": 0,
+      "behind": 0
+    },
     "worktree": {
       "detached": false
     },
     "is_main": true,
     "is_current": true,
     "is_previous": false,
-    "statusline": "main  /u001b[2m^/u001b[22m",
-    "symbols": "^"
+    "statusline": "main  /u001b[2m^/u001b[22m/u001b[2m|/u001b[22m",
+    "symbols": "^|"
+  },
+  {
+    "branch": "feature-a",
+    "path": "_REPO_.feature-a",
+    "kind": "worktree",
+    "commit": {
+      "sha": "1b87d4731ea707905d15a726e193531c20affa14",
+      "short_sha": "1b87d47",
+      "message": "Add feature-a file",
+      "timestamp": 1735718400
+    },
+    "working_tree": {
+      "staged": false,
+      "modified": false,
+      "untracked": false,
+      "renamed": false,
+      "deleted": false,
+      "diff": {
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "main_state": "ahead",
+    "main": {
+      "ahead": 1,
+      "behind": 0
+    },
+    "worktree": {
+      "detached": false
+    },
+    "is_main": false,
+    "is_current": false,
+    "is_previous": false,
+    "statusline": "feature-a  /u001b[2m↑/u001b[22m  /u001b[32m↑1/u001b[0m",
+    "symbols": "↑"
+  },
+  {
+    "branch": "feature-b",
+    "path": "_REPO_.feature-b",
+    "kind": "worktree",
+    "commit": {
+      "sha": "f62940fcec424585adf98625e722fdf990810614",
+      "short_sha": "f62940f",
+      "message": "Add feature-b file",
+      "timestamp": 1735718400
+    },
+    "working_tree": {
+      "staged": false,
+      "modified": false,
+      "untracked": false,
+      "renamed": false,
+      "deleted": false,
+      "diff": {
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "main_state": "ahead",
+    "main": {
+      "ahead": 1,
+      "behind": 0
+    },
+    "worktree": {
+      "detached": false
+    },
+    "is_main": false,
+    "is_current": false,
+    "is_previous": false,
+    "statusline": "feature-b  /u001b[2m↑/u001b[22m  /u001b[32m↑1/u001b[0m",
+    "symbols": "↑"
+  },
+  {
+    "branch": "feature-c",
+    "path": "_REPO_.feature-c",
+    "kind": "worktree",
+    "commit": {
+      "sha": "345c7c93ad7c3d8f5b08380898d78e024019599c",
+      "short_sha": "345c7c9",
+      "message": "Add feature-c file",
+      "timestamp": 1735718400
+    },
+    "working_tree": {
+      "staged": false,
+      "modified": false,
+      "untracked": false,
+      "renamed": false,
+      "deleted": false,
+      "diff": {
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "main_state": "ahead",
+    "main": {
+      "ahead": 1,
+      "behind": 0
+    },
+    "worktree": {
+      "detached": false
+    },
+    "is_main": false,
+    "is_current": false,
+    "is_previous": false,
+    "statusline": "feature-c  /u001b[2m↑/u001b[22m  /u001b[32m↑1/u001b[0m",
+    "symbols": "↑"
   },
   {
     "branch": "feature-detached",
     "path": "_REPO_.feature-detached",
     "kind": "worktree",
     "commit": {
-      "sha": "a1e809f511b21ee516412a4520497f0cea4af366",
-      "short_sha": "a1e809f",
+      "sha": "05a4a45d0b981dad5c27db59dca482836d59f89e",
+      "short_sha": "05a4a45",
       "message": "Initial commit",
-      "timestamp": 1735689600
+      "timestamp": 1735718400
     },
     "working_tree": {
       "staged": false,
@@ -102,10 +213,10 @@ exit_code: 0
     "path": "_REPO_.locked-feature",
     "kind": "worktree",
     "commit": {
-      "sha": "a1e809f511b21ee516412a4520497f0cea4af366",
-      "short_sha": "a1e809f",
+      "sha": "05a4a45d0b981dad5c27db59dca482836d59f89e",
+      "short_sha": "05a4a45",
       "message": "Initial commit",
-      "timestamp": 1735689600
+      "timestamp": 1735718400
     },
     "working_tree": {
       "staged": false,

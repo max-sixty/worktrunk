@@ -64,9 +64,6 @@ impl<'a> WorkingTree<'a> {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stderr = stderr.replace('\r', "\n");
-            for line in stderr.trim().lines() {
-                log::debug!("  ! {}", line);
-            }
             let stdout = String::from_utf8_lossy(&output.stdout);
             let error_msg = [stderr.trim(), stdout.trim()]
                 .into_iter()
@@ -77,11 +74,6 @@ impl<'a> WorkingTree<'a> {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        if !stdout.is_empty() {
-            for line in stdout.trim().lines() {
-                log::debug!("  {}", line);
-            }
-        }
         Ok(stdout)
     }
 
@@ -188,11 +180,18 @@ impl<'a> WorkingTree<'a> {
     /// Returns an error if there are uncommitted changes.
     /// - `action` describes what was blocked (e.g., "remove worktree").
     /// - `branch` identifies which branch for multi-worktree operations.
-    pub fn ensure_clean(&self, action: &str, branch: Option<&str>) -> anyhow::Result<()> {
+    /// - `force_hint` when true, the error hint mentions `--force` as an alternative.
+    pub fn ensure_clean(
+        &self,
+        action: &str,
+        branch: Option<&str>,
+        force_hint: bool,
+    ) -> anyhow::Result<()> {
         if self.is_dirty()? {
             return Err(GitError::UncommittedChanges {
                 action: Some(action.into()),
                 branch: branch.map(String::from),
+                force_hint,
             }
             .into());
         }

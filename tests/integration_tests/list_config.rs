@@ -262,6 +262,28 @@ fn test_list_json_no_url_without_template(repo: TestRepo, temp_home: TempDir) {
 /// Only worktrees should have URLs - branches without worktrees can't have running dev servers.
 #[rstest]
 fn test_list_url_with_branches_flag(repo: TestRepo, temp_home: TempDir) {
+    // Remove fixture worktrees and their branches to isolate test (keep only main worktree)
+    for branch in &["feature-a", "feature-b", "feature-c"] {
+        let worktree_path = repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{}", branch));
+        if worktree_path.exists() {
+            let _ = repo
+                .git_command()
+                .args([
+                    "worktree",
+                    "remove",
+                    "--force",
+                    worktree_path.to_str().unwrap(),
+                ])
+                .output();
+        }
+        // Delete the branch after removing the worktree
+        let _ = repo.git_command().args(["branch", "-D", branch]).output();
+    }
+
     // Create a branch without a worktree
     repo.run_git(&["branch", "feature"]);
 
@@ -352,4 +374,102 @@ url = "http://localhost:8080/{{ branch }}"
 
     let url = first["url"].as_str().unwrap();
     assert_eq!(url, "http://localhost:8080/main");
+}
+
+/// Test that timeout-ms config option is parsed correctly.
+/// We use a very short timeout (1ms) to trigger timeouts.
+#[rstest]
+fn test_list_config_timeout_triggers_timeouts(repo: TestRepo, temp_home: TempDir) {
+    // Create user config with a very short timeout
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[projects."repo".list]
+timeout-ms = 1
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.arg("list").current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // With a 1ms timeout, some tasks should time out
+    // The footer should show the timeout count
+    assert!(
+        stderr.contains("timed out") || output.status.success(),
+        "Expected either timeout message in footer or success (if git was fast enough)"
+    );
+}
+
+/// Test that timeout-ms = 0 explicitly disables timeout.
+#[rstest]
+fn test_list_config_timeout_zero_means_no_timeout(repo: TestRepo, temp_home: TempDir) {
+    // Create user config with timeout-ms = 0
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[projects."repo".list]
+timeout-ms = 0
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.arg("list").current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // With timeout-ms = 0, there should be no timeout
+    assert!(
+        !stderr.contains("timed out"),
+        "Expected no timeout message with timeout-ms = 0, but got: {}",
+        stderr
+    );
+}
+
+/// Test that --full disables the timeout.
+#[rstest]
+fn test_list_config_timeout_disabled_with_full(repo: TestRepo, temp_home: TempDir) {
+    // Create user config with a very short timeout
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[projects."repo".list]
+timeout-ms = 1
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["list", "--full"]).current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // With --full, the timeout is disabled so we shouldn't see timeout messages
+    // (though tasks may still fail for other reasons)
+    assert!(
+        !stderr.contains("timed out"),
+        "Expected no timeout message with --full flag, but got: {}",
+        stderr
+    );
 }

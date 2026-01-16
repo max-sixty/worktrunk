@@ -88,6 +88,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         return Err(worktrunk::git::GitError::UncommittedChanges {
             action: Some("merge with --no-commit".into()),
             branch: Some(current_branch.clone()),
+            force_hint: false,
         }
         .into());
     }
@@ -95,8 +96,8 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // --no-commit implies --no-squash
     let squash_enabled = squash && commit;
 
-    // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    // Get and validate target branch (must be a branch since we're updating it)
+    let target_branch = repo.require_target_branch(target)?;
     // Worktree for target is optional: if present we use it for safety checks and as destination.
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
 
@@ -203,16 +204,19 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     if remove_effective {
         // STEP 1: Check for uncommitted changes before attempting cleanup
         // This prevents showing "Cleaning up worktree..." before failing
-        repo.current_worktree()
-            .ensure_clean("remove worktree after merge", Some(&current_branch))?;
+        repo.current_worktree().ensure_clean(
+            "remove worktree after merge",
+            Some(&current_branch),
+            false,
+        )?;
 
         // STEP 2: Remove worktree via shared remove output handler so final message matches wt remove
         let worktree_root = repo.current_worktree().root()?.to_path_buf();
         // After a successful merge, compute integration reason from main_path
         let effective_target = repo.effective_integration_target(&target_branch);
-        let mut provider =
-            worktrunk::git::LazyGitIntegration::new(repo, &current_branch, &effective_target);
-        let integration_reason = worktrunk::git::check_integration(&mut provider);
+        let signals =
+            worktrunk::git::compute_integration_lazy(repo, &current_branch, &effective_target)?;
+        let integration_reason = worktrunk::git::check_integration(&signals);
         // Compute expected_path for path mismatch detection
         let expected_path = get_path_mismatch(repo, &current_branch, &worktree_root, config);
         let remove_result = RemoveResult::RemovedWorktree {

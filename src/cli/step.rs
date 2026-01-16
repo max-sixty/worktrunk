@@ -6,6 +6,45 @@ pub enum StepCommand {
     /// Commit changes with LLM commit message
     ///
     /// Stages working tree changes and commits with an LLM-generated message.
+    #[command(
+        after_long_help = r#"Stages all changes (including untracked files) and commits with an [LLM-generated message](@/llm-commits.md).
+
+## Options
+
+### `--stage`
+
+Controls what to stage before committing:
+
+| Value | Behavior |
+|-------|----------|
+| `all` | Stage all changes including untracked files (default) |
+| `tracked` | Stage only modified tracked files |
+| `none` | Don't stage anything, commit only what's already staged |
+
+```console
+wt step commit --stage=tracked
+```
+
+Configure the default in user config:
+
+```toml
+[commit]
+stage = "tracked"
+```
+
+### `--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+```console
+# Inspect the rendered prompt
+wt step commit --show-prompt | less
+
+# Pipe to a different LLM
+wt step commit --show-prompt | llm -m gpt-5-nano
+```
+"#
+    )]
     Commit {
         /// Skip approval prompts
         #[arg(short, long)]
@@ -29,6 +68,41 @@ pub enum StepCommand {
     /// Squash commits since branching
     ///
     /// Stages working tree changes, squashes all commits since diverging from target into one, generates message with LLM.
+    #[command(
+        after_long_help = r#"Stages all changes (including untracked files), then squashes all commits since diverging from the target branch into a single commit with an [LLM-generated message](@/llm-commits.md).
+
+## Options
+
+### `--stage`
+
+Controls what to stage before squashing:
+
+| Value | Behavior |
+|-------|----------|
+| `all` | Stage all changes including untracked files (default) |
+| `tracked` | Stage only modified tracked files |
+| `none` | Don't stage anything, squash only committed changes |
+
+```console
+wt step squash --stage=none
+```
+
+Configure the default in user config:
+
+```toml
+[commit]
+stage = "tracked"
+```
+
+### `--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+```console
+wt step squash --show-prompt | less
+```
+"#
+    )]
     Squash {
         /// Target branch
         ///
@@ -88,7 +162,7 @@ pub enum StepCommand {
 
 ## Setup
 
-Add to your project config:
+Add to the project config:
 
 ```toml
 # .config/wt.toml
@@ -96,19 +170,18 @@ Add to your project config:
 copy = "wt step copy-ignored"
 ```
 
-All gitignored files are copied by default, as if `.worktreeinclude` contained `**`. To copy only specific patterns, create a `.worktreeinclude` file using gitignore syntax:
+## What gets copied
+
+All gitignored files are copied by default. Tracked files are never touched.
+
+To limit what gets copied, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
 
 ```gitignore
-# .worktreeinclude — optional, limits what gets copied
+# .worktreeinclude
 .env
 node_modules/
 target/
-.cache/
 ```
-
-## What gets copied
-
-Only gitignored files are copied — tracked files are never touched. If `.worktreeinclude` exists, files must match **both** `.worktreeinclude` **and** be gitignored.
 
 ## Common patterns
 
@@ -121,20 +194,23 @@ Only gitignored files are copied — tracked files are never touched. If `.workt
 
 ## Features
 
-- Uses copy-on-write (reflink) when available for instant, space-efficient copies
+- Uses copy-on-write (reflink) when available for space-efficient copies
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files (safe to re-run)
-- Skips symlinks and `.git` entries
+- Skips `.git` entries and other worktrees
 
 ## Performance
 
-Reflink copies share disk blocks until modified — no data is actually copied. For a 31GB `target/` directory with 110k files:
+Reflink copies share disk blocks until modified — no data is actually copied. For a 14GB `target/` directory:
 
-| Method | Time |
-|--------|------|
-| Full copy (`cp -R`) | 2m 5s |
-| COW copy (`cp -Rc`) | ~60s |
-| `wt step copy-ignored` | ~31s |
+| Command | Time |
+|---------|------|
+| `cp -R` (full copy) | 2m |
+| `cp -Rc` / `wt step copy-ignored` | 20s |
+
+Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
+
+If the files are needed before any commands run in the worktree, put `wt step copy-ignored` in the `post-create` hook. Otherwise use the `post-start` hook so the copy runs in the background.
 
 ## Language-specific notes
 
@@ -148,12 +224,20 @@ The `target/` directory is huge (often 1-10GB). Copying with reflink cuts first 
 
 ```toml
 [post-create]
-deps = "ln -sf {{ main_worktree_path }}/node_modules ."
+deps = "ln -sf {{ primary_worktree_path }}/node_modules ."
 ```
 
 ### Python
 
 Virtual environments contain absolute paths and can't be copied. Use `uv sync` instead — it's fast enough that copying isn't worth it.
+
+## Behavior vs Claude Code on desktop
+
+The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://code.claude.com/docs/en/desktop), which copies matching files when creating worktrees. Differences:
+
+- worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`
+- worktrunk uses copy-on-write for large directories like `target/` — potentially 30x faster on macOS, 6x on Linux
+- worktrunk runs as a configurable hook in the worktree lifecycle
 "#
     )]
     CopyIgnored {

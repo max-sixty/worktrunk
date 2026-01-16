@@ -5,6 +5,7 @@ use crate::common::{
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
+use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -88,6 +89,39 @@ fn test_switch_create_with_remote_branch_only(#[from(repo_with_remote)] repo: Te
         "switch_create_remote_only",
         &repo,
         &["--create", "remote-feature"],
+    );
+}
+
+/// Git's DWIM creates local tracking branch from remote when no local branch exists.
+/// Should report "Created branch X (tracking remote)" since DWIM actually created the branch.
+#[rstest]
+fn test_switch_dwim_from_remote(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a branch on the remote only (no local branch)
+    repo.run_git(&["branch", "dwim-feature"]);
+    repo.run_git(&["push", "origin", "dwim-feature"]);
+    repo.run_git(&["branch", "-D", "dwim-feature"]);
+
+    // Now we have origin/dwim-feature but no local dwim-feature
+    // DWIM should create local branch from remote
+    snapshot_switch("switch_dwim_from_remote", &repo, &["dwim-feature"]);
+}
+
+/// When local branch already exists and tracks a remote, should report
+/// "Created worktree for X" NOT "Created branch X (tracking remote)".
+/// This is the bug fix for GitHub issue #656.
+#[rstest]
+fn test_switch_existing_local_branch_with_upstream(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create local branch tracking remote
+    repo.run_git(&["checkout", "-b", "tracked-feature"]);
+    repo.run_git(&["commit", "--allow-empty", "-m", "feature commit"]);
+    repo.run_git(&["push", "-u", "origin", "tracked-feature"]);
+    repo.run_git(&["checkout", "main"]);
+
+    // Switch to the existing local branch (should NOT say "Created branch")
+    snapshot_switch(
+        "switch_existing_local_with_upstream",
+        &repo,
+        &["tracked-feature"],
     );
 }
 
@@ -188,6 +222,18 @@ fn test_switch_create_with_invalid_base(repo: TestRepo) {
     );
 }
 
+#[rstest]
+fn test_switch_base_accepts_commitish(repo: TestRepo) {
+    // Issue #630: --base should accept any commit-ish, not just branch names
+    // Test HEAD as base (common use case: branch from current HEAD)
+    repo.commit("Initial commit on main");
+    snapshot_switch(
+        "switch_base_commitish_head",
+        &repo,
+        &["--create", "feature-from-head", "--base", "HEAD"],
+    );
+}
+
 // Internal mode tests
 #[rstest]
 fn test_switch_internal_mode(repo: TestRepo) {
@@ -225,6 +271,28 @@ fn test_switch_error_missing_worktree_directory(mut repo: TestRepo) {
 
     // Try to switch to the missing worktree (should fail)
     snapshot_switch("switch_error_missing_directory", &repo, &["missing-wt"]);
+}
+
+/// Test error when target path is registered to a worktree whose directory is missing.
+///
+/// Scenario: branch "feature/collision" has a worktree at "repo.feature-collision",
+/// but the directory was deleted. Trying to create "feature-collision" (which maps
+/// to the same path) should error about the missing worktree, not try to overwrite.
+#[rstest]
+fn test_switch_error_path_occupied_by_missing_worktree(mut repo: TestRepo) {
+    // Create a worktree for "feature/collision" -> path "repo.feature-collision"
+    let wt_path = repo.add_worktree("feature/collision");
+
+    // Delete the worktree directory (but leave it registered in git)
+    std::fs::remove_dir_all(&wt_path).unwrap();
+
+    // Try to create "feature-collision" which maps to the same path
+    // Should fail because the path is registered to a missing worktree
+    snapshot_switch(
+        "switch_error_path_occupied_missing",
+        &repo,
+        &["--create", "feature-collision"],
+    );
 }
 
 #[rstest]
@@ -410,6 +478,34 @@ fn test_switch_execute_template_in_args(repo: TestRepo) {
     );
 }
 
+#[rstest]
+fn test_switch_execute_template_error(repo: TestRepo) {
+    // Test that invalid templates are rejected with a clear error
+    snapshot_switch(
+        "switch_execute_template_error",
+        &repo,
+        &["--create", "error-test", "--execute", "echo {{ unclosed"],
+    );
+}
+
+#[rstest]
+fn test_switch_execute_arg_template_error(repo: TestRepo) {
+    // Test that invalid templates in trailing args (after --) are rejected
+    snapshot_switch(
+        "switch_execute_arg_template_error",
+        &repo,
+        &[
+            "--create",
+            "arg-error-test",
+            "--execute",
+            "echo",
+            "--",
+            "valid={{ branch }}",
+            "invalid={{ unclosed",
+        ],
+    );
+}
+
 // --no-verify flag tests
 #[rstest]
 fn test_switch_no_config_commands_execute_still_runs(repo: TestRepo) {
@@ -546,11 +642,11 @@ fn test_switch_previous_branch_no_history(repo: TestRepo) {
 
 #[rstest]
 fn test_switch_main_branch(repo: TestRepo) {
-    // Create a feature branch
-    repo.run_git(&["branch", "feature-a"]);
+    // Create a feature branch (use unique name to avoid fixture conflicts)
+    repo.run_git(&["branch", "test-feat-x"]);
 
-    // Switch to feature-a first
-    snapshot_switch("switch_main_branch_to_feature", &repo, &["feature-a"]);
+    // Switch to test-feat-x first
+    snapshot_switch("switch_main_branch_to_feature", &repo, &["test-feat-x"]);
 
     // Now wt switch ^ should resolve to main
     snapshot_switch("switch_main_branch", &repo, &["^"]);
@@ -808,50 +904,50 @@ fn test_switch_previous_with_stale_history(repo: TestRepo) {
 /// changes the working directory before the next command runs.
 #[rstest]
 fn test_switch_ping_pong_realistic(repo: TestRepo) {
-    // Create feature-a branch
-    repo.run_git(&["branch", "feature-a"]);
+    // Create ping-pong branch (unique name to avoid fixture conflicts)
+    repo.run_git(&["branch", "ping-pong"]);
 
-    // Step 1: From main worktree, switch to feature-a (creates worktree)
-    // History: current=feature-a, previous=main
+    // Step 1: From main worktree, switch to ping-pong (creates worktree)
+    // History: current=ping-pong, previous=main
     snapshot_switch_from_dir(
-        "ping_pong_1_main_to_feature_a",
+        "ping_pong_1_main_to_feature",
         &repo,
-        &["feature-a"],
+        &["ping-pong"],
         repo.root_path(),
     );
 
-    // Calculate feature-a worktree path
-    let feature_a_path = repo.root_path().parent().unwrap().join(format!(
-        "{}.feature-a",
+    // Calculate ping-pong worktree path
+    let ping_pong_path = repo.root_path().parent().unwrap().join(format!(
+        "{}.ping-pong",
         repo.root_path().file_name().unwrap().to_str().unwrap()
     ));
 
-    // Step 2: From feature-a worktree, switch back to main
-    // History: current=main, previous=feature-a
+    // Step 2: From ping-pong worktree, switch back to main
+    // History: current=main, previous=ping-pong
     snapshot_switch_from_dir(
-        "ping_pong_2_feature_a_to_main",
+        "ping_pong_2_feature_to_main",
         &repo,
         &["main"],
-        &feature_a_path,
+        &ping_pong_path,
     );
 
-    // Step 3: From main worktree, wt switch - should go to feature-a
-    // History: current=feature-a, previous=main
+    // Step 3: From main worktree, wt switch - should go to ping-pong
+    // History: current=ping-pong, previous=main
     snapshot_switch_from_dir(
-        "ping_pong_3_dash_to_feature_a",
+        "ping_pong_3_dash_to_feature",
         &repo,
         &["-"],
         repo.root_path(),
     );
 
-    // Step 4: From feature-a worktree, wt switch - should go back to main
-    // History: current=main, previous=feature-a
-    snapshot_switch_from_dir("ping_pong_4_dash_to_main", &repo, &["-"], &feature_a_path);
+    // Step 4: From ping-pong worktree, wt switch - should go back to main
+    // History: current=main, previous=ping-pong
+    snapshot_switch_from_dir("ping_pong_4_dash_to_main", &repo, &["-"], &ping_pong_path);
 
-    // Step 5: From main worktree, wt switch - should go to feature-a again (ping-pong!)
-    // History: current=feature-a, previous=main
+    // Step 5: From main worktree, wt switch - should go to ping-pong again (ping-pong!)
+    // History: current=ping-pong, previous=main
     snapshot_switch_from_dir(
-        "ping_pong_5_dash_to_feature_a_again",
+        "ping_pong_5_dash_to_feature_again",
         &repo,
         &["-"],
         repo.root_path(),
@@ -1161,4 +1257,429 @@ fn test_switch_create_no_hint_with_custom_worktree_path(repo: TestRepo) {
         !stderr.contains("Customize worktree locations"),
         "Hint should be suppressed when user has custom worktree-path config"
     );
+}
+
+// ============================================================================
+// PR Syntax Tests (pr:<number>)
+// ============================================================================
+
+use crate::common::mock_commands::{MockConfig, MockResponse, copy_mock_binary};
+
+/// Helper to set up mock gh for PR tests with custom PR response.
+fn setup_mock_gh_for_pr(repo: &TestRepo, gh_response: Option<&str>) -> std::path::PathBuf {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    // Copy mock-stub binary as "gh"
+    copy_mock_binary(&mock_bin, "gh");
+
+    // Write PR response file if provided
+    if let Some(response) = gh_response {
+        fs::write(mock_bin.join("pr_response.json"), response).unwrap();
+
+        MockConfig::new("gh")
+            .version("gh version 2.0.0 (mock)")
+            .command("pr", MockResponse::file("pr_response.json"))
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+    }
+
+    mock_bin
+}
+
+/// Configure command environment for mock gh.
+fn configure_mock_gh_env(cmd: &mut std::process::Command, mock_bin: &Path) {
+    // Tell mock-stub where to find config files
+    cmd.env("MOCK_CONFIG_DIR", mock_bin);
+
+    // Build PATH with mock binary first
+    let (path_var_name, current_path) = std::env::vars_os()
+        .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))
+        .map(|(k, v)| (k.to_string_lossy().into_owned(), Some(v)))
+        .unwrap_or(("PATH".to_string(), None));
+
+    let mut paths: Vec<std::path::PathBuf> = current_path
+        .as_deref()
+        .map(|p| std::env::split_paths(p).collect())
+        .unwrap_or_default();
+    paths.insert(0, mock_bin.to_path_buf());
+    let new_path = std::env::join_paths(&paths)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+
+    cmd.env(path_var_name, new_path);
+}
+
+/// Test that --create flag conflicts with pr: syntax
+#[rstest]
+fn test_switch_pr_create_conflict(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
+        assert_cmd_snapshot!("switch_pr_create_conflict", cmd);
+    });
+}
+
+/// Test same-repo PR checkout (isCrossRepository: false)
+#[rstest]
+fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
+    // Create a feature branch and push it
+    repo.add_worktree("feature-auth");
+
+    let gh_response = r#"{
+        "headRefName": "feature-auth",
+        "headRepository": {"name": "test-repo"},
+        "headRepositoryOwner": {"login": "owner"},
+        "isCrossRepository": false,
+        "url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_same_repo", cmd);
+    });
+}
+
+/// Test fork PR checkout (isCrossRepository: true)
+#[rstest]
+fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a PR ref on the remote that can be fetched
+    // First, create a commit that represents the PR head
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+
+    // Get the commit SHA and push to remote as refs/pull/42/head
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+
+    // Push the ref to the bare remote
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+
+    // Go back to main
+    repo.run_git(&["checkout", "main"]);
+
+    let gh_response = r#"{
+        "headRefName": "feature-fix",
+        "headRepository": {"name": "test-repo"},
+        "headRepositoryOwner": {"login": "contributor"},
+        "isCrossRepository": true,
+        "url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_fork", cmd);
+    });
+}
+
+/// Test error when PR is not found
+#[rstest]
+fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    // Copy mock-stub binary as "gh"
+    copy_mock_binary(&mock_bin, "gh");
+
+    // Configure gh to return error for PR not found (errors go to stderr)
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "pr",
+            MockResponse::stderr("Could not resolve to a PullRequest with the number 9999")
+                .with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:9999"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_not_found", cmd);
+    });
+}
+
+/// Test that --base flag conflicts with pr: syntax
+#[rstest]
+fn test_switch_pr_base_conflict(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--base", "main", "pr:101"], None);
+        assert_cmd_snapshot!("switch_pr_base_conflict", cmd);
+    });
+}
+
+/// Test fork PR where branch already exists and tracks same PR (should reuse)
+#[rstest]
+fn test_switch_pr_fork_existing_same_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    // First, manually create the branch with correct tracking config
+    let branch_name = "contributor/feature-fix";
+    repo.run_git(&["branch", branch_name, "main"]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.remote", branch_name),
+        "origin",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.merge", branch_name),
+        "refs/pull/42/head",
+    ]);
+
+    let gh_response = r#"{
+        "headRefName": "feature-fix",
+        "headRepository": {"name": "test-repo"},
+        "headRepositoryOwner": {"login": "contributor"},
+        "isCrossRepository": true,
+        "url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_fork_existing_same_pr", cmd);
+    });
+}
+
+/// Test fork PR where branch already exists but tracks different PR (should error)
+#[rstest]
+fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create the branch with tracking config for a DIFFERENT PR
+    let branch_name = "contributor/feature-fix";
+    repo.run_git(&["branch", branch_name, "main"]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.remote", branch_name),
+        "origin",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.merge", branch_name),
+        "refs/pull/99/head", // Different PR!
+    ]);
+
+    let gh_response = r#"{
+        "headRefName": "feature-fix",
+        "headRepository": {"name": "test-repo"},
+        "headRepositoryOwner": {"login": "contributor"},
+        "isCrossRepository": true,
+        "url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_fork_existing_different_pr", cmd);
+    });
+}
+
+/// Test fork PR where branch exists but has no tracking config
+#[rstest]
+fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create the branch without any tracking config
+    let branch_name = "contributor/feature-fix";
+    repo.run_git(&["branch", branch_name, "main"]);
+    // No config set - branch exists but doesn't track anything
+
+    let gh_response = r#"{
+        "headRefName": "feature-fix",
+        "headRepository": {"name": "test-repo"},
+        "headRepositoryOwner": {"login": "contributor"},
+        "isCrossRepository": true,
+        "url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_fork_existing_no_tracking", cmd);
+    });
+}
+
+/// Test pr: when gh is not authenticated
+#[rstest]
+fn test_switch_pr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "gh");
+
+    // Configure gh to return auth error
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "pr",
+            MockResponse::stderr(
+                "To use GitHub CLI in a non-interactive context, please run gh auth login",
+            )
+            .with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_not_authenticated", cmd);
+    });
+}
+
+/// Test pr: when hitting GitHub rate limit
+#[rstest]
+fn test_switch_pr_rate_limit(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "gh");
+
+    // Configure gh to return rate limit error
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "pr",
+            MockResponse::stderr("API rate limit exceeded for user").with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_rate_limit", cmd);
+    });
+}
+
+/// Test pr: when gh returns invalid JSON
+#[rstest]
+fn test_switch_pr_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "gh");
+
+    // Configure gh to return invalid JSON
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command("pr", MockResponse::output("not valid json {{{"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_invalid_json", cmd);
+    });
+}
+
+/// Test pr: when network error occurs
+#[rstest]
+fn test_switch_pr_network_error(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "gh");
+
+    // Configure gh to return network error
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "pr",
+            MockResponse::stderr("connection refused: network is unreachable").with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_network_error", cmd);
+    });
+}
+
+/// Test pr: when gh returns unknown error
+#[rstest]
+fn test_switch_pr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "gh");
+
+    // Configure gh to return an unrecognized error
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "pr",
+            MockResponse::stderr("something completely unexpected happened").with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_unknown_error", cmd);
+    });
+}
+
+/// Test pr: when PR has empty branch name
+#[rstest]
+fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "gh");
+
+    // Configure gh to return valid JSON but with empty branch name
+    let gh_response = r#"{
+        "headRefName": "",
+        "headRepository": {"name": "test-repo"},
+        "headRepositoryOwner": {"login": "contributor"},
+        "isCrossRepository": false,
+        "url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command("pr", MockResponse::output(gh_response))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_empty_branch", cmd);
+    });
 }

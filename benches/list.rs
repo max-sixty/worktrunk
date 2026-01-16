@@ -76,17 +76,8 @@ fn run_git(path: &Path, args: &[&str]) {
     );
 }
 
-fn get_release_binary() -> PathBuf {
-    let build_output = Command::new("cargo")
-        .args(["build", "--release"])
-        .output()
-        .unwrap();
-    assert!(
-        build_output.status.success(),
-        "Failed to build release binary: {}",
-        String::from_utf8_lossy(&build_output.stderr)
-    );
-    std::env::current_dir().unwrap().join("target/release/wt")
+fn get_release_binary() -> &'static Path {
+    Path::new(env!("CARGO_BIN_EXE_wt"))
 }
 
 /// Run a benchmark with the given config.
@@ -139,7 +130,7 @@ fn bench_skeleton(c: &mut Criterion) {
                 |b, config| {
                     run_benchmark(
                         b,
-                        &binary,
+                        binary,
                         &repo_path,
                         config,
                         &["list"],
@@ -168,7 +159,7 @@ fn bench_complete(c: &mut Criterion) {
                 BenchmarkId::new(config.label(), worktrees),
                 &config,
                 |b, config| {
-                    run_benchmark(b, &binary, &repo_path, config, &["list"], None);
+                    run_benchmark(b, binary, &repo_path, config, &["list"], None);
                 },
             );
         }
@@ -192,7 +183,7 @@ fn bench_worktree_scaling(c: &mut Criterion) {
                 BenchmarkId::new(config.label(), worktrees),
                 &config,
                 |b, config| {
-                    run_benchmark(b, &binary, &repo_path, config, &["list"], None);
+                    run_benchmark(b, binary, &repo_path, config, &["list"], None);
                 },
             );
         }
@@ -281,7 +272,7 @@ fn bench_real_repo(c: &mut Criterion) {
                         b.iter_batched(
                             || invalidate_caches(&workspace_main, worktrees),
                             |_| {
-                                Command::new(&binary)
+                                Command::new(binary)
                                     .arg("list")
                                     .current_dir(&workspace_main)
                                     .output()
@@ -292,7 +283,7 @@ fn bench_real_repo(c: &mut Criterion) {
                     } else {
                         run_git(&workspace_main, &["status"]);
                         b.iter(|| {
-                            Command::new(&binary)
+                            Command::new(binary)
                                 .arg("list")
                                 .current_dir(&workspace_main)
                                 .output()
@@ -320,7 +311,7 @@ fn bench_many_branches(c: &mut Criterion) {
         group.bench_function(config.label(), |b| {
             run_benchmark(
                 b,
-                &binary,
+                binary,
                 &repo_path,
                 &config,
                 &["list", "--branches", "--progressive"],
@@ -348,7 +339,7 @@ fn bench_divergent_branches(c: &mut Criterion) {
         group.bench_function(config.label(), |b| {
             run_benchmark(
                 b,
-                &binary,
+                binary,
                 &repo_path,
                 &config,
                 &["list", "--branches", "--progressive"],
@@ -451,7 +442,7 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     group.bench_function("warm", |b| {
         let (_temp, workspace_main) = setup_workspace();
         b.iter(|| {
-            Command::new(&binary)
+            Command::new(binary)
                 .args(["list", "--branches"])
                 .current_dir(&workspace_main)
                 .output()
@@ -463,7 +454,7 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     group.bench_function("warm_optimized", |b| {
         let (_temp, workspace_main) = setup_workspace();
         b.iter(|| {
-            Command::new(&binary)
+            Command::new(binary)
                 .args(["list", "--branches"])
                 .env("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD", "1")
                 .current_dir(&workspace_main)
@@ -476,7 +467,7 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     group.bench_function("warm_worktrees_only", |b| {
         let (_temp, workspace_main) = setup_workspace();
         b.iter(|| {
-            Command::new(&binary)
+            Command::new(binary)
                 .arg("list") // no --branches
                 .current_dir(&workspace_main)
                 .output()
@@ -506,7 +497,7 @@ fn bench_timeout_effect(c: &mut Criterion) {
     // Without timeout (baseline)
     group.bench_function("no_timeout", |b| {
         b.iter(|| {
-            Command::new(&binary)
+            Command::new(binary)
                 .args(["list", "--branches"])
                 .current_dir(&workspace_main)
                 .output()
@@ -517,7 +508,7 @@ fn bench_timeout_effect(c: &mut Criterion) {
     // With 500ms timeout (GH #461 fix)
     group.bench_function("timeout_500ms", |b| {
         b.iter(|| {
-            Command::new(&binary)
+            Command::new(binary)
                 .args(["list", "--branches"])
                 .env("WORKTRUNK_COMMAND_TIMEOUT_MS", "500")
                 .current_dir(&workspace_main)

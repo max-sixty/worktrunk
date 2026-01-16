@@ -1085,12 +1085,16 @@ command = "{llm_path_str}"
 
     // Merge with --yes to skip approval prompts for commands
     let (path_var, path_with_bin) = make_path_with_mock_bin(&bin_dir);
+    let bin_dir_str = bin_dir.to_string_lossy();
     snapshot_merge_with_env(
         "readme_example_complex",
         &repo,
         &["main", "--yes"],
         Some(&feature_wt),
-        &[(&path_var, &path_with_bin)],
+        &[
+            (&path_var, &path_with_bin),
+            ("MOCK_CONFIG_DIR", &bin_dir_str),
+        ],
     );
 }
 
@@ -1942,4 +1946,75 @@ fn test_step_rebase_with_merge_commit(mut repo: TestRepo) {
         cmd.arg("rebase").args(["main"]);
         cmd
     });
+}
+
+/// Test `wt step rebase` when the feature branch is already up to date with main.
+///
+/// This should show "Already up to date with main" message.
+#[rstest]
+fn test_step_rebase_already_up_to_date(mut repo: TestRepo) {
+    // Create a feature worktree but don't advance main (feature is based on main's HEAD)
+    let feature_wt = repo.add_worktree("feature");
+
+    // Run `wt step rebase` - should show "Already up to date with main"
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["rebase"],
+        Some(&feature_wt)
+    ));
+}
+
+// =============================================================================
+// Target validation tests
+// =============================================================================
+
+#[rstest]
+fn test_merge_invalid_target(mut repo: TestRepo) {
+    // Create a feature worktree
+    let feature_wt = repo.add_worktree("feature");
+
+    // Try to merge into nonexistent branch - should fail with clear error
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["nonexistent-branch"],
+        Some(&feature_wt)
+    ));
+}
+
+#[rstest]
+fn test_step_rebase_invalid_target(mut repo: TestRepo) {
+    // Create a feature worktree
+    let feature_wt = repo.add_worktree("feature");
+
+    // Try to rebase onto nonexistent ref - should fail with clear error
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["rebase", "nonexistent-ref"],
+        Some(&feature_wt)
+    ));
+}
+
+#[rstest]
+fn test_step_rebase_accepts_tag(mut repo: TestRepo) {
+    // Create a tag on main
+    repo.run_git(&["tag", "v1.0"]);
+
+    // Advance main
+    fs::write(repo.root_path().join("after-tag.txt"), "content").unwrap();
+    repo.run_git(&["add", "after-tag.txt"]);
+    repo.run_git(&["commit", "-m", "After tag"]);
+
+    // Create feature from current main
+    let feature_wt = repo.add_worktree("feature");
+
+    // Rebase onto the tag - should work (commit-ish accepted)
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["rebase", "v1.0"],
+        Some(&feature_wt)
+    ));
 }

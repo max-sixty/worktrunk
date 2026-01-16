@@ -10,68 +10,39 @@
 //!
 //! ## Why Manual PTY Execution + File Snapshots (Not insta_cmd)?
 //!
-//! These tests use a pattern that might seem redundant at first glance:
-//! - Manual command execution through PTY (`exec_in_pty`)
-//! - Manual output normalization (`normalized()`)
-//! - File snapshots via `assert_snapshot!(output.normalized())`
+//! These tests use PTY execution because testing shell wrappers requires real TTY behavior
+//! (streaming output, ANSI codes, signal handling). `insta_cmd` uses `std::process::Command`
+//! which doesn't provide a TTY to child processes.
 //!
-//! This is the correct approach because:
-//!
-//! 1. **PTY execution is required** - Testing shell wrappers requires real TTY behavior
-//!    (streaming output, ANSI codes, signal handling). `insta_cmd` uses `std::process::Command`
-//!    which doesn't provide a TTY to child processes.
-//!
-//! 2. **File snapshots are appropriate** - The output contains ANSI escape codes and complex
-//!    formatting. File snapshots keep these out of source files (unlike inline snapshots).
-//!
-//! 3. **Full output is valuable** - While specific assertions verify critical properties
-//!    (no directive leaks, correct exit codes), file snapshots make it easy for humans to
-//!    see the complete user experience at a glance.
-//!
-//! In summary: This isn't a case of "should use insta_cmd instead" - the manual execution
-//! is necessary, and file snapshots are the right storage format for escape-code-heavy output.
+//! Output normalization uses insta's `add_filter()` API via `shell_wrapper_settings()`,
+//! which is consistent with how other tests in the codebase handle path and hash
+//! normalization. The filters handle:
+//! - PTY-specific artifacts (CRLF, ^D control sequences, ANSI resets)
+//! - Temporary directory paths
+//! - Commit hashes (non-deterministic in PTY tests due to timing/environment)
+//! - Project root paths
 
 // All shell integration tests and infrastructure gated by feature flag
-// Unix-only for now - Windows shell integration is planned
-#![cfg(all(unix, feature = "shell-integration-tests"))]
+// Supports both Unix (bash/zsh/fish) and Windows (PowerShell)
+#![cfg(feature = "shell-integration-tests")]
 
-use crate::common::TestRepo;
-use crate::common::canonicalize;
-use insta::assert_snapshot;
+// =============================================================================
+// Imports
+// =============================================================================
+
+// Shared imports (both platforms)
+use crate::common::{TestRepo, shell::get_shell_binary};
 use insta_cmd::get_cargo_bin;
-use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
-use std::sync::LazyLock;
-use worktrunk::shell;
 
-/// Regex for normalizing temporary directory paths in test snapshots
-static TMPDIR_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(
-        r#"(/private/var/folders/[^/]+/[^/]+/T/\.tmp[^\s/'"]+|/tmp/\.(?:tmp|psub)[^\s/'"]+)"#,
-    )
-    .unwrap()
-});
-
-/// Regex that collapses repeated TMPDIR placeholders (caused by nested mktemp paths)
-/// so `[TMPDIR][TMPDIR]/foo` becomes `[TMPDIR]/foo` and `[TMPDIR]/[TMPDIR]` becomes `[TMPDIR]`
-static TMPDIR_PLACEHOLDER_COLLAPSE_REGEX: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"\[TMPDIR](?:/?\[TMPDIR])+").unwrap());
-
-/// Regex for normalizing workspace paths (dynamically built from CARGO_MANIFEST_DIR)
-/// Matches: <project_root>/tests/fixtures/
-/// Replaces with: [WORKSPACE]/tests/fixtures/
-static WORKSPACE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let pattern = format!(r"{}/tests/fixtures/", regex::escape(manifest_dir));
-    regex::Regex::new(&pattern).unwrap()
-});
-
-/// Regex for normalizing git commit hashes (7-character hex)
-/// Note: No word boundaries because ANSI codes (ending with 'm') directly precede hashes
-/// Shell wrapper tests produce non-deterministic SHAs due to PTY timing/environment
-static COMMIT_HASH_REGEX: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"[0-9a-f]{7}").unwrap());
+// Unix-only imports
+#[cfg(unix)]
+use {
+    crate::common::{add_pty_filters, canonicalize, wait_for_file_content},
+    insta::assert_snapshot,
+    std::{fs, path::PathBuf, sync::LazyLock},
+    worktrunk::shell,
+};
 
 /// Output from executing a command through a shell wrapper
 #[derive(Debug)]
@@ -84,6 +55,7 @@ struct ShellOutput {
 
 /// Regex for detecting bash job control messages
 /// Matches patterns like "[1] 12345" (job start) and "[1]+ Done" (job completion)
+#[cfg(unix)]
 static JOB_CONTROL_REGEX: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\[\d+\][+-]?\s+(Done|\d+)").unwrap());
 
@@ -107,6 +79,7 @@ impl ShellOutput {
     /// Job control messages like "[1] 12345" (job start) and "[1]+ Done ..." (job completion)
     /// should not appear in user-facing output. These are internal shell artifacts from
     /// background process management that leak implementation details.
+    #[cfg(unix)]
     fn assert_no_job_control_messages(&self) {
         assert!(
             !JOB_CONTROL_REGEX.is_match(&self.combined),
@@ -115,40 +88,26 @@ impl ShellOutput {
         );
     }
 
-    /// Normalize paths and ANSI codes in output for snapshot testing
-    fn normalized(&self) -> String {
-        // First normalize temporary directory paths
-        let tmpdir_normalized = TMPDIR_REGEX.replace_all(&self.combined, "[TMPDIR]");
-
-        // Then normalize workspace paths (varying directory names)
-        let workspace_normalized =
-            WORKSPACE_REGEX.replace_all(&tmpdir_normalized, "[WORKSPACE]/tests/fixtures/");
-
-        // Normalize commit hashes (shell wrapper tests produce non-deterministic SHAs)
-        let hash_normalized = COMMIT_HASH_REGEX.replace_all(&workspace_normalized, "[HASH]");
-
-        // Collapse duplicate TMPDIR placeholders that can appear with nested mktemp paths.
-        let tmpdir_collapsed =
-            TMPDIR_PLACEHOLDER_COLLAPSE_REGEX.replace_all(&hash_normalized, "[TMPDIR]");
-
-        // Then normalize ANSI codes: remove redundant leading reset codes
-        // This handles differences between macOS and Linux PTY ANSI generation
-        let has_trailing_newline = tmpdir_collapsed.ends_with('\n');
-        let mut result = tmpdir_collapsed
-            .lines()
-            .map(|line| {
-                // Strip leading \x1b[0m reset codes (may appear as ESC[0m in the output)
-                line.strip_prefix("\x1b[0m").unwrap_or(line)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        // Preserve trailing newline if it existed
-        if has_trailing_newline {
-            result.push('\n');
-        }
-        result
+    /// Assert command exited successfully (exit code 0)
+    #[cfg(unix)]
+    fn assert_success(&self) {
+        assert_eq!(
+            self.exit_code, 0,
+            "Expected exit code 0, got {}.\nOutput:\n{}",
+            self.exit_code, self.combined
+        );
     }
+}
+
+/// Insta settings for shell wrapper tests.
+///
+/// Inherits snapshot_path and path filters from TestRepo (bound to scope),
+/// then adds PTY-specific filters for cross-platform consistency.
+#[cfg(unix)]
+fn shell_wrapper_settings() -> insta::Settings {
+    let mut settings = insta::Settings::clone_current();
+    add_pty_filters(&mut settings);
+    settings
 }
 
 /// Generate a shell wrapper script using the actual `wt config shell init` command
@@ -187,6 +146,7 @@ fn generate_wrapper(repo: &TestRepo, shell: &str) -> String {
 ///
 /// Note: Fish completions are custom (use $WORKTRUNK_BIN to bypass shell wrapper).
 /// Bash and Zsh use inline lazy loading in the init script.
+#[cfg(unix)]
 fn generate_completions(_repo: &TestRepo, shell: &str) -> String {
     match shell {
         "fish" => {
@@ -215,6 +175,12 @@ fn quote_arg(arg: &str) -> String {
 /// Handles paths like `/path/to/worktrunk.'∅'/target/debug/wt`
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Quote a path for PowerShell (escape backticks and single quotes)
+fn powershell_quote(s: &str) -> String {
+    // PowerShell string escaping: use single quotes and escape embedded single quotes by doubling
+    format!("'{}'", s.replace('\'', "''"))
 }
 
 /// Build a shell script that sources the wrapper and runs a command
@@ -254,6 +220,17 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
             ));
             script.push_str("export CLICOLOR_FORCE=1\n");
         }
+        "powershell" | "pwsh" => {
+            // PowerShell uses $env: for environment variables
+            let wt_bin_ps = powershell_quote(&wt_bin.display().to_string());
+            let config_path_ps = powershell_quote(&repo.test_config_path().display().to_string());
+            script.push_str(&format!("$env:WORKTRUNK_BIN = {}\n", wt_bin_ps));
+            script.push_str(&format!(
+                "$env:WORKTRUNK_CONFIG_PATH = {}\n",
+                config_path_ps
+            ));
+            script.push_str("$env:CLICOLOR_FORCE = '1'\n");
+        }
         _ => {
             // bash
             script.push_str(&format!("export WORKTRUNK_BIN={}\n", wt_bin_quoted));
@@ -265,16 +242,37 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
         }
     }
 
-    // Source the wrapper
-    script.push_str(&wrapper_script);
-    script.push('\n');
+    // Source the wrapper (PowerShell uses . for sourcing inline code via Invoke-Expression)
+    match shell {
+        "powershell" | "pwsh" => {
+            // The wrapper_script is PowerShell code; we include it directly
+            script.push_str(&wrapper_script);
+            script.push('\n');
+        }
+        _ => {
+            script.push_str(&wrapper_script);
+            script.push('\n');
+        }
+    }
 
     // Build the command
     script.push_str("wt ");
     script.push_str(subcommand);
     for arg in args {
         script.push(' ');
-        script.push_str(&quote_arg(arg));
+        match shell {
+            "powershell" | "pwsh" => {
+                // PowerShell argument quoting
+                if arg.contains(' ') || arg.contains(';') || arg.contains('\'') {
+                    script.push_str(&powershell_quote(arg));
+                } else {
+                    script.push_str(arg);
+                }
+            }
+            _ => {
+                script.push_str(&quote_arg(arg));
+            }
+        }
     }
     script.push('\n');
 
@@ -296,16 +294,16 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
             // allowing tests to catch these leaks.
             format!("exec 2>&1\n{}", script)
         }
+        "powershell" | "pwsh" => {
+            // PowerShell: use & to run script block with merged output
+            // Wrap the script in a script block and redirect stderr (2) to stdout (1)
+            format!("& {{\n{}\n}} 2>&1", script)
+        }
         _ => {
             // zsh uses parentheses for subshell grouping
             format!("( {} ) 2>&1", script)
         }
     }
-}
-
-/// Normalize line endings (CRLF -> LF)
-fn normalize_newlines(s: &str) -> String {
-    s.replace("\r\n", "\n")
 }
 
 /// Execute a command in a PTY with interactive input support
@@ -345,43 +343,66 @@ fn exec_in_pty_interactive(
 
     let pair = crate::common::open_pty();
 
-    let mut cmd = CommandBuilder::new(shell);
+    let shell_binary = get_shell_binary(shell);
+    let mut cmd = CommandBuilder::new(shell_binary);
 
     // Clear inherited environment for test isolation
     cmd.env_clear();
 
     // Set minimal required environment for shells to function
-    cmd.env(
-        "HOME",
-        home::home_dir().unwrap().to_string_lossy().to_string(),
-    );
+    let home_dir = home::home_dir().unwrap().to_string_lossy().to_string();
+    cmd.env("HOME", &home_dir);
+    // Windows: Also set USERPROFILE for PowerShell
+    #[cfg(windows)]
+    cmd.env("USERPROFILE", &home_dir);
+
+    // Use platform-appropriate default PATH
+    #[cfg(unix)]
+    let default_path = "/usr/bin:/bin";
+    #[cfg(windows)]
+    let default_path = std::env::var("PATH").unwrap_or_default();
+
     cmd.env(
         "PATH",
-        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
+        std::env::var("PATH").unwrap_or_else(|_| default_path.to_string()),
     );
     cmd.env("USER", "testuser");
-    cmd.env("SHELL", shell);
+    cmd.env("SHELL", shell_binary);
 
     // Run in interactive mode to simulate real user environment.
     // This ensures tests catch job control message leaks like "[1] 12345" and "[1]+ Done".
     // Interactive shells have job control enabled by default.
-    if shell == "zsh" {
-        // Isolate from user rc files
-        cmd.env("ZDOTDIR", "/dev/null");
-        cmd.arg("-i");
-        cmd.arg("--no-rcs");
-        cmd.arg("-o");
-        cmd.arg("NO_GLOBAL_RCS");
-        cmd.arg("-o");
-        cmd.arg("NO_RCS");
+    match shell {
+        "zsh" => {
+            // Isolate from user rc files
+            cmd.env("ZDOTDIR", "/dev/null");
+            cmd.arg("-i");
+            cmd.arg("--no-rcs");
+            cmd.arg("-o");
+            cmd.arg("NO_GLOBAL_RCS");
+            cmd.arg("-o");
+            cmd.arg("NO_RCS");
+            cmd.arg("-c");
+            cmd.arg(script);
+        }
+        "bash" => {
+            cmd.arg("-i");
+            cmd.arg("-c");
+            cmd.arg(script);
+        }
+        "powershell" | "pwsh" => {
+            // PowerShell uses -NoProfile to skip user profile
+            cmd.arg("-NoProfile");
+            cmd.arg("-Command");
+            cmd.arg(script);
+        }
+        _ => {
+            // fish and other shells
+            cmd.arg("-c");
+            cmd.arg(script);
+        }
     }
 
-    if shell == "bash" {
-        cmd.arg("-i");
-    }
-
-    cmd.arg("-c");
-    cmd.arg(script);
     cmd.cwd(working_dir);
 
     // Add test-specific environment variables (convert &str tuples to String tuples)
@@ -414,7 +435,10 @@ fn exec_in_pty_interactive(
 
     let status = child.wait().unwrap();
 
-    (normalize_newlines(&buf), status.exit_code() as i32)
+    // Normalize CRLF to LF (PTYs use CRLF on some platforms)
+    let normalized = buf.replace("\r\n", "\n");
+
+    (normalized, status.exit_code() as i32)
 }
 
 /// Execute bash in true interactive mode by writing commands to the PTY
@@ -425,7 +449,7 @@ fn exec_in_pty_interactive(
 ///
 /// The setup_script is written to a temp file and sourced. Then final_cmd is run
 /// directly at the prompt (where job notifications appear).
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn exec_bash_truly_interactive(
     setup_script: &str,
     final_cmd: &str,
@@ -521,7 +545,10 @@ fn exec_bash_truly_interactive(
     // Get the captured output
     let buf = reader_thread.join().unwrap();
 
-    (normalize_newlines(&buf), status.exit_code() as i32)
+    // Normalize CRLF to LF (same as exec_in_pty_interactive)
+    let normalized = buf.replace("\r\n", "\n");
+
+    (normalized, status.exit_code() as i32)
 }
 
 /// Execute a command through a shell wrapper
@@ -655,7 +682,18 @@ fn build_test_env_vars(config_path: &str) -> Vec<(&str, &str)> {
     env_vars
 }
 
-mod tests {
+// =============================================================================
+// Unix Shell Tests (bash/zsh/fish)
+// =============================================================================
+//
+// All Unix shell integration tests are in this module, gated by #[cfg(unix)].
+// This includes tests for bash, zsh, and fish shells.
+//
+// Shared infrastructure (exec_through_wrapper, ShellOutput, etc.) is defined
+// above and works on both platforms.
+
+#[cfg(unix)]
+mod unix_tests {
     use super::*;
     use crate::common::repo;
     use rstest::rstest;
@@ -709,9 +747,11 @@ mod tests {
         );
 
         // Consolidated snapshot - output should be identical across all shells
-        insta::allow_duplicates! {
-            assert_snapshot!("command_failure", output.normalized());
-        }
+        shell_wrapper_settings().bind(|| {
+            insta::allow_duplicates! {
+                assert_snapshot!("command_failure", &output.combined);
+            }
+        });
     }
 
     #[rstest]
@@ -733,9 +773,11 @@ mod tests {
         );
 
         // Consolidated snapshot - output should be identical across all shells
-        insta::allow_duplicates! {
-            assert_snapshot!("switch_create", output.normalized());
-        }
+        shell_wrapper_settings().bind(|| {
+            insta::allow_duplicates! {
+                assert_snapshot!("switch_create", &output.combined);
+            }
+        });
     }
 
     #[rstest]
@@ -753,9 +795,11 @@ mod tests {
         output.assert_no_directive_leaks();
 
         // Consolidated snapshot - output should be identical across all shells
-        insta::allow_duplicates! {
-            assert_snapshot!("remove", output.normalized());
-        }
+        shell_wrapper_settings().bind(|| {
+            insta::allow_duplicates! {
+                assert_snapshot!("remove", &output.combined);
+            }
+        });
     }
 
     #[rstest]
@@ -763,6 +807,9 @@ mod tests {
     #[case("zsh")]
     #[case("fish")]
     fn test_wrapper_step_for_each(#[case] shell: &str, mut repo: TestRepo) {
+        // Remove fixture worktrees so we can create our own feature-a and feature-b
+        repo.remove_fixture_worktrees();
+
         repo.commit("Initial commit");
 
         // Create additional worktrees
@@ -811,9 +858,11 @@ mod tests {
         );
 
         // Consolidated snapshot - output should be identical across all shells
-        insta::allow_duplicates! {
-            assert_snapshot!("step_for_each", output.normalized());
-        }
+        shell_wrapper_settings().bind(|| {
+            insta::allow_duplicates! {
+                assert_snapshot!("step_for_each", &output.combined);
+            }
+        });
     }
 
     #[rstest]
@@ -831,9 +880,11 @@ mod tests {
         output.assert_no_directive_leaks();
 
         // Consolidated snapshot - output should be identical across all shells
-        insta::allow_duplicates! {
-            assert_snapshot!("merge", output.normalized());
-        }
+        shell_wrapper_settings().bind(|| {
+            insta::allow_duplicates! {
+                assert_snapshot!("merge", &output.combined);
+            }
+        });
     }
 
     #[rstest]
@@ -866,9 +917,11 @@ mod tests {
         );
 
         // Consolidated snapshot - output should be identical across all shells
-        insta::allow_duplicates! {
-            assert_snapshot!("switch_with_execute", output.normalized());
-        }
+        shell_wrapper_settings().bind(|| {
+            insta::allow_duplicates! {
+                assert_snapshot!("switch_with_execute", &output.combined);
+            }
+        });
     }
 
     /// Test that --execute command exit codes are propagated
@@ -944,7 +997,7 @@ watch = "echo 'Watching for file changes'"
         // Pre-approve the commands in user config
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = [
     "echo 'Installing dependencies...'",
     "echo 'Building project...'",
@@ -961,7 +1014,9 @@ approved-commands = [
         output.assert_no_directive_leaks();
 
         // Shell-specific snapshot - output ordering varies due to PTY buffering
-        assert_snapshot!(format!("switch_with_hooks_{}", shell), output.normalized());
+        shell_wrapper_settings().bind(|| {
+            assert_snapshot!(format!("switch_with_hooks_{}", shell), &output.combined);
+        });
     }
 
     /// Test merge with successful pre-merge validation
@@ -991,7 +1046,7 @@ test = "echo '✓ All 47 tests passed in 2.3s'"
         // Pre-approve commands
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = [
     "echo '✓ Code formatting check passed'",
     "echo '✓ Linting passed - no warnings'",
@@ -1009,10 +1064,12 @@ approved-commands = [
         output.assert_no_directive_leaks();
 
         // Shell-specific snapshot - output ordering varies due to PTY buffering
-        assert_snapshot!(
-            format!("merge_with_pre_merge_success_{}", shell),
-            output.normalized()
-        );
+        shell_wrapper_settings().bind(|| {
+            assert_snapshot!(
+                format!("merge_with_pre_merge_success_{}", shell),
+                &output.combined
+            );
+        });
     }
 
     /// Test merge with failing pre-merge that aborts the merge
@@ -1047,7 +1104,7 @@ test = "echo '✗ Test suite failed: 3 tests failing' && exit 1"
         // Pre-approve the commands
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = [
     "echo '✓ Code formatting check passed'",
     "echo '✗ Test suite failed: 3 tests failing' && exit 1",
@@ -1063,10 +1120,12 @@ approved-commands = [
         output.assert_no_directive_leaks();
 
         // Shell-specific snapshot - output ordering varies due to PTY buffering
-        assert_snapshot!(
-            format!("merge_with_pre_merge_failure_{}", shell),
-            output.normalized()
-        );
+        shell_wrapper_settings().bind(|| {
+            assert_snapshot!(
+                format!("merge_with_pre_merge_failure_{}", shell),
+                &output.combined
+            );
+        });
     }
 
     /// Test merge with pre-merge commands that output to both stdout and stderr
@@ -1115,7 +1174,7 @@ check2 = "{} check2 3"
             format!(
                 r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
-[projects."repo"]
+[projects."../origin"]
 approved-commands = [
     "{} check1 3",
     "{} check2 3",
@@ -1138,10 +1197,12 @@ approved-commands = [
         // header1 → all check1 output (interleaved stdout/stderr) → header2 → all check2 output
         // This ensures that stdout/stderr from child processes properly stream through
         // to the terminal in real-time, maintaining correct ordering
-        assert_snapshot!(
-            format!("merge_with_mixed_stdout_stderr_{}", shell),
-            output.normalized()
-        );
+        shell_wrapper_settings().bind(|| {
+            assert_snapshot!(
+                format!("merge_with_mixed_stdout_stderr_{}", shell),
+                &output.combined
+            );
+        });
     }
 
     // ========================================================================
@@ -1165,7 +1226,7 @@ approved-commands = [
         // Pre-approve the command in user config
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'test command executed'"]
 "#,
         )
@@ -1180,11 +1241,11 @@ approved-commands = ["echo 'test command executed'"]
         output.assert_no_directive_leaks();
         output.assert_no_job_control_messages();
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // Normalize paths in output for snapshot testing
         // Snapshot the output
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     #[rstest]
@@ -1205,8 +1266,7 @@ approved-commands = ["echo 'test command executed'"]
 
         // No directives should leak
         output.assert_no_directive_leaks();
-
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // The executed command output should appear
         assert!(
@@ -1216,7 +1276,7 @@ approved-commands = ["echo 'test command executed'"]
 
         // Normalize paths in output for snapshot testing
         // Snapshot the output
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     #[rstest]
@@ -1238,7 +1298,7 @@ approved-commands = ["echo 'test command executed'"]
             "Success message missing"
         );
 
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     #[rstest]
@@ -1251,7 +1311,7 @@ approved-commands = ["echo 'test command executed'"]
             "Shell integration hint should be suppressed"
         );
 
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     #[rstest]
@@ -1271,7 +1331,7 @@ approved-commands = ["echo 'test command executed'"]
             "Shell integration hint should be suppressed"
         );
 
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     #[rstest]
@@ -1289,7 +1349,7 @@ approved-commands = ["echo 'test command executed'"]
             "Shell integration hint should be suppressed"
         );
 
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     #[rstest]
@@ -1308,7 +1368,7 @@ approved-commands = ["echo 'test command executed'"]
         // Pre-approve the command in user config
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'background task'"]
 "#,
         )
@@ -1319,11 +1379,11 @@ approved-commands = ["echo 'background task'"]
         // No directives should leak
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // Snapshot verifies progress messages appear to users
         // (catches the bug where progress() was incorrectly suppressed)
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     // ============================================================================
@@ -1339,7 +1399,6 @@ approved-commands = ["echo 'background task'"]
     // Fish uses `string collect` to join command substitution output into
     // a single string before eval (fish splits on newlines by default).
 
-    #[cfg(unix)]
     #[rstest]
     fn test_fish_wrapper_preserves_progress_messages(repo: TestRepo) {
         // Configure a post-start background command that will trigger progress output
@@ -1356,7 +1415,7 @@ approved-commands = ["echo 'background task'"]
         // Pre-approve the command in user config
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'fish background task'"]
 "#,
         )
@@ -1367,13 +1426,12 @@ approved-commands = ["echo 'fish background task'"]
         // No directives should leak
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // Snapshot verifies progress messages appear to users through Fish wrapper
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    #[cfg(unix)]
     #[rstest]
     fn test_fish_multiline_command_execution(repo: TestRepo) {
         // Test that Fish wrapper handles multi-line commands correctly
@@ -1398,7 +1456,7 @@ approved-commands = ["echo 'fish background task'"]
         // No directives should leak
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // All three lines should be executed and visible
         assert!(output.combined.contains("line 1"), "First line missing");
@@ -1406,10 +1464,9 @@ approved-commands = ["echo 'fish background task'"]
         assert!(output.combined.contains("line 3"), "Third line missing");
 
         // Normalize paths in output for snapshot testing
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    #[cfg(unix)]
     #[rstest]
     fn test_fish_wrapper_handles_empty_chunks(repo: TestRepo) {
         // Test edge case: command that produces minimal output
@@ -1419,7 +1476,7 @@ approved-commands = ["echo 'fish background task'"]
         // No directives should leak even with minimal output
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
 
         // Should still show success message
         assert!(
@@ -1428,7 +1485,7 @@ approved-commands = ["echo 'fish background task'"]
         );
 
         // Normalize paths in output for snapshot testing
-        assert_snapshot!(output.normalized());
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     // ========================================================================
@@ -1539,9 +1596,11 @@ approved-commands = ["echo 'fish background task'"]
 
         // Consolidated snapshot - output should be identical across shells
         // (wt error messages are deterministic)
-        insta::allow_duplicates! {
-            assert_snapshot!("source_flag_error_passthrough", output.normalized());
-        }
+        shell_wrapper_settings().bind(|| {
+            insta::allow_duplicates! {
+                assert_snapshot!("source_flag_error_passthrough", &output.combined);
+            }
+        });
     }
 
     // ========================================================================
@@ -1570,7 +1629,7 @@ approved-commands = ["echo 'fish background task'"]
         // Pre-approve the command
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'background job'"]
 "#,
         )
@@ -1578,7 +1637,7 @@ approved-commands = ["echo 'background job'"]
 
         let output = exec_through_wrapper("zsh", &repo, "switch", &["--create", "zsh-job-test"]);
 
-        assert_eq!(output.exit_code, 0);
+        output.assert_success();
         output.assert_no_directive_leaks();
 
         // Critical: zsh should NOT show job control notifications
@@ -1620,7 +1679,7 @@ approved-commands = ["echo 'background job'"]
         // Pre-approve the command
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'bash background'"]
 "#,
         )
@@ -1769,22 +1828,31 @@ approved-commands = ["echo 'bash background'"]
         let wt_bin = get_cargo_bin("wt");
         let wrapper_script = generate_wrapper(&repo, "zsh");
 
+        // Use a marker file to avoid PTY output race conditions.
+        // PTY buffer flushing is unreliable on CI, so we write to a file and poll for it.
+        let marker_file = repo.root_path().join(".wrapper_test_marker");
+        let marker_path = marker_file.to_string_lossy().to_string();
+
         // Script that sources wrapper and checks if wt function exists
         let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
         let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
+        let marker_quoted = shell_quote(&marker_path);
         let script = format!(
             r#"
-            export WORKTRUNK_BIN={}
-            export WORKTRUNK_CONFIG_PATH={}
-            {}
-            # Check if wt wrapper function is defined
+            export WORKTRUNK_BIN={wt_bin}
+            export WORKTRUNK_CONFIG_PATH={config}
+            {wrapper}
+            # Check if wt wrapper function is defined and write result to marker file
             if (( $+functions[wt] )); then
-                echo "__WRAPPER_REGISTERED__"
+                echo "__WRAPPER_REGISTERED__" > {marker}
             else
-                echo "__NO_WRAPPER__"
+                echo "__NO_WRAPPER__" > {marker}
             fi
             "#,
-            wt_bin_quoted, config_quoted, wrapper_script
+            wt_bin = wt_bin_quoted,
+            config = config_quoted,
+            wrapper = wrapper_script,
+            marker = marker_quoted,
         );
 
         let final_script = format!("( {} ) 2>&1", script);
@@ -1795,14 +1863,18 @@ approved-commands = ["echo 'bash background'"]
             ("ZDOTDIR", "/dev/null"),
         ];
 
-        let (combined, exit_code) =
+        let (_combined, exit_code) =
             exec_in_pty_interactive("zsh", &final_script, repo.root_path(), &env_vars, &[]);
 
         assert_eq!(exit_code, 0);
+
+        // Poll for marker file instead of relying on PTY output
+        wait_for_file_content(&marker_file);
+        let result = std::fs::read_to_string(&marker_file).unwrap();
         assert!(
-            combined.contains("__WRAPPER_REGISTERED__"),
-            "Zsh wrapper function should be registered after sourcing.\nOutput:\n{}",
-            combined
+            result.contains("__WRAPPER_REGISTERED__"),
+            "Zsh wrapper function should be registered after sourcing.\nMarker file content:\n{}",
+            result
         );
     }
 
@@ -2105,7 +2177,7 @@ approved-commands = ["echo 'bash background'"]
         // Pre-approve the command
         fs::write(
             repo.test_config_path(),
-            r#"[projects."repo"]
+            r#"[projects."../origin"]
 approved-commands = ["echo 'cleanup test'"]
 "#,
         )
@@ -2352,8 +2424,8 @@ command = "{}"
             &[("PATH", &path_with_bin)],
         );
 
-        assert_eq!(output.exit_code, 0);
-        assert_snapshot!(output.normalized());
+        output.assert_success();
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     /// README example: Creating worktree with post-create and post-start hooks
@@ -2432,8 +2504,8 @@ fi
             &[("PATH", &path_with_bin)],
         );
 
-        assert_eq!(output.exit_code, 0);
-        assert_snapshot!(output.normalized());
+        output.assert_success();
+        shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
     /// README example: approval prompt for post-create commands
@@ -2446,6 +2518,9 @@ fi
     fn test_readme_example_approval_prompt(repo: TestRepo) {
         use portable_pty::CommandBuilder;
         use std::io::{Read, Write};
+
+        // Remove origin so worktrunk uses directory name as project identifier
+        repo.run_git(&["remote", "remove", "origin"]);
 
         // Create project config with named post-create commands
         repo.write_project_config(
@@ -2510,11 +2585,14 @@ test = "echo 'Running tests...'"
         let ctrl_d_regex = regex::Regex::new(r"\^D\x08+").unwrap();
         let output = ctrl_d_regex.replace_all(&output, "").to_string();
 
-        // Normalize paths
-        let output = TMPDIR_REGEX.replace_all(&output, "[TMPDIR]").to_string();
-        let output = TMPDIR_PLACEHOLDER_COLLAPSE_REGEX
-            .replace_all(&output, "[TMPDIR]")
-            .to_string();
+        // Normalize paths (local regexes since we're extracting content, not snapshotting)
+        let tmpdir_regex = regex::Regex::new(
+            r#"(?:/private)?/var/folders/[^/]+/[^/]+/T/\.tmp[^\s/'\x1b\)]+|/tmp/\.tmp[^\s/'\x1b\)]+"#,
+        )
+        .unwrap();
+        let output = tmpdir_regex.replace_all(&output, "[TMPDIR]").to_string();
+        let collapse_regex = regex::Regex::new(r"\[TMPDIR](?:/?\[TMPDIR])+").unwrap();
+        let output = collapse_regex.replace_all(&output, "[TMPDIR]").to_string();
 
         assert!(
             output.contains("needs approval"),
@@ -3203,6 +3281,88 @@ echo "SCRIPT_COMPLETED"
              Terminal output:\n{}",
             shell,
             terminal_output
+        );
+    }
+}
+
+// =============================================================================
+// Windows PowerShell Tests
+// =============================================================================
+//
+// All Windows-specific tests are in this module, gated by #[cfg(windows)].
+// This keeps platform-specific tests clearly separated.
+
+#[cfg(windows)]
+mod windows_tests {
+    use super::*;
+    use crate::common::repo;
+    use rstest::rstest;
+
+    /// Test that PowerShell shell integration works for switch --create
+    #[rstest]
+    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+    fn test_powershell_switch_create(repo: TestRepo) {
+        let output = exec_through_wrapper("powershell", &repo, "switch", &["--create", "feature"]);
+
+        assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
+        output.assert_no_directive_leaks();
+
+        assert!(
+            output.combined.contains("Created branch") && output.combined.contains("and worktree"),
+            "PowerShell: Should show success message.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
+    /// Test that PowerShell shell integration handles command failures correctly
+    #[rstest]
+    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+    fn test_powershell_command_failure(mut repo: TestRepo) {
+        // Create a worktree that already exists
+        repo.add_worktree("existing");
+
+        // Try to create it again - should fail
+        let output = exec_through_wrapper("powershell", &repo, "switch", &["--create", "existing"]);
+
+        assert_eq!(
+            output.exit_code, 1,
+            "PowerShell: Command should fail with exit code 1"
+        );
+        output.assert_no_directive_leaks();
+        assert!(
+            output.combined.contains("already exists"),
+            "PowerShell: Error message should mention 'already exists'.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
+    /// Test that PowerShell shell integration works for remove
+    #[rstest]
+    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+    fn test_powershell_remove(mut repo: TestRepo) {
+        // Create a worktree to remove
+        repo.add_worktree("to-remove");
+
+        let output = exec_through_wrapper("powershell", &repo, "remove", &["to-remove"]);
+
+        assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test that PowerShell shell integration works for wt list
+    #[rstest]
+    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
+    fn test_powershell_list(repo: TestRepo) {
+        let output = exec_through_wrapper("powershell", &repo, "list", &[]);
+
+        assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
+        output.assert_no_directive_leaks();
+
+        // Should show the main worktree
+        assert!(
+            output.combined.contains("main"),
+            "PowerShell: Should show main branch.\nOutput:\n{}",
+            output.combined
         );
     }
 }

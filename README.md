@@ -9,7 +9,7 @@
 [![Codecov](https://img.shields.io/codecov/c/github/max-sixty/worktrunk?style=for-the-badge&logo=codecov)](https://codecov.io/gh/max-sixty/worktrunk)
 [![Stars](https://img.shields.io/github/stars/max-sixty/worktrunk?style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/stargazers)
 
-> **January 2026**: Worktrunk was [released](https://x.com/max_sixty/status/2006077845391724739?s=20) over the holidays, and lots of folks seem to be using it. It's built with love (there's no slop!). If social proof is helpful: I also created [PRQL](https://github.com/PRQL/prql) (10k stars) and am a maintainer of [Xarray](https://github.com/pydata/xarray) (4k stars), [Insta](https://github.com/mitsuhiko/insta), & [Numbagg](https://github.com/numbagg/numbagg). Please let me know any frictions at all; I'm intensely focused on Worktrunk's excellence, and the biggest gap is how others experience using it.
+> **January 2026**: Worktrunk was [released](https://x.com/max_sixty/status/2006077845391724739?s=20) over the holidays, and lots of folks seem to be using it. It's built with love (there's no slop!). If social proof is helpful: I also created [PRQL](https://github.com/PRQL/prql) (10k stars) and am a maintainer of [Xarray](https://github.com/pydata/xarray) (4k stars), [Insta](https://github.com/mitsuhiko/insta), & [Numbagg](https://github.com/numbagg/numbagg). Please let me know any frictions at all; I'm intensely focused on making Worktrunk excellent, and the biggest gap is understanding how others experience using it.
 
 Worktrunk is a CLI for git worktree management, designed for running AI agents in parallel.
 
@@ -111,6 +111,20 @@ Shell integration allows commands to change directories.
 cargo install worktrunk && wt config shell install
 ```
 
+<details>
+<summary><strong>Windows</strong></summary>
+
+On Windows, `wt` defaults to Windows Terminal's command. Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
+
+```bash
+winget install max-sixty.worktrunk
+git-wt config shell install
+```
+
+Alternatively, disable Windows Terminal's alias (Settings → Privacy & security → For developers → App Execution Aliases → disable "Windows Terminal") to use `wt` directly.
+
+</details>
+
 ## Next steps
 
 - Learn the core commands: [`wt switch`](https://worktrunk.dev/switch/), [`wt list`](https://worktrunk.dev/list/), [`wt merge`](https://worktrunk.dev/merge/), [`wt remove`](https://worktrunk.dev/remove/)
@@ -132,7 +146,14 @@ cargo install worktrunk && wt config shell install
 ## Contributing
 
 - ⭐ Star the repo
+- Tell a friend about Worktrunk
 - [Open an issue](https://github.com/max-sixty/worktrunk/issues/new?title=&body=%23%23%20Description%0A%0A%3C!--%20Describe%20the%20bug%20or%20feature%20request%20--%3E%0A%0A%23%23%20Context%0A%0A%3C!--%20Any%20relevant%20context%3A%20your%20workflow%2C%20what%20you%20were%20trying%20to%20do%2C%20etc.%20--%3E) — feedback, feature requests, even a small friction or imperfect user message, or [a worktree pain not yet solved](https://github.com/max-sixty/worktrunk/issues/new?title=Worktree%20friction%3A%20&body=%23%23%20The%20friction%0A%0A%3C!--%20What%20worktree-related%20task%20is%20still%20painful%3F%20--%3E%0A%0A%23%23%20Current%20workaround%0A%0A%3C!--%20How%20do%20you%20handle%20this%20today%3F%20--%3E%0A%0A%23%23%20Ideal%20solution%0A%0A%3C!--%20What%20would%20make%20this%20easier%3F%20--%3E)
 - Share: [X](https://twitter.com/intent/tweet?text=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management&url=https%3A%2F%2Fworktrunk.dev) · [Reddit](https://www.reddit.com/submit?url=https%3A%2F%2Fworktrunk.dev&title=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management) · [LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fworktrunk.dev)
 
 > ### 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚
+
+### Star history
+
+<a href="https://star-history.com/#max-sixty/worktrunk&Date">
+  <img src="https://api.star-history.com/svg?repos=max-sixty/worktrunk&type=Date" width="500" alt="Star History Chart">
+</a>

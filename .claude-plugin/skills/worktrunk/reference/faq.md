@@ -86,40 +86,13 @@ If the remote's default branch has changed (e.g., renamed from master to main), 
 
 For full details on the detection mechanism, see `wt config state default-branch --help`.
 
-## On Windows, `wt` conflicts with Windows Terminal
-
-Windows Terminal uses `wt` as its command-line launcher, so running `wt` invokes Terminal instead of Worktrunk.
-
-As an immediate workaround, install as `git-wt`:
-
-```bash
-cargo install worktrunk --features git-wt
-git-wt config shell install
-```
-
-This creates a `git-wt` shell function with directory changing and completions.
-
-`git wt` (as a git subcommand) also works but cannot change directories since git runs subcommands as subprocesses.
-
-We're considering better solutions — a better name, anyone?
-
 ## Does Worktrunk work on Windows?
 
-**Experimental.** Core functionality works, but some features are unavailable.
+Yes. Core commands, shell integration, and tab completion work in both Git Bash and PowerShell. See [installation](https://worktrunk.dev/worktrunk/#install) for setup details, including avoiding the Windows Terminal `wt` conflict.
 
-| Feature | Git Bash | PowerShell |
-|---------|----------|------------|
-| Core commands (`list`, `switch`, `merge`, etc.) | ✅ | ✅ |
-| Shell integration | ✅ | ✅ |
-| Tab completion | ✅ | ✅ |
-| Hooks | ✅ | ❌ (bash syntax) |
-| `wt select` | ❌ | ❌ |
+**Git for Windows required** — Hooks use bash syntax and execute via Git Bash, so [Git for Windows](https://gitforwindows.org/) must be installed even when PowerShell is the interactive shell.
 
-**Git for Windows** is required — it provides Git Bash, which Worktrunk uses for hook execution. [Download here](https://gitforwindows.org/).
-
-**PowerShell** works as the interactive shell for core commands, shell integration, and tab completion. Hooks use bash syntax and run via Git Bash, so Git for Windows must be installed even when PowerShell is the interactive shell.
-
-**`wt select`** uses [skim](https://github.com/skim-rs/skim), which only supports Unix. Use `wt list` and `wt switch <branch>` instead.
+**`wt select` unavailable** — Uses [skim](https://github.com/skim-rs/skim), which doesn't support Windows. Use `wt list` and `wt switch <branch>` instead.
 
 ## Installation fails with C compilation errors
 
@@ -138,9 +111,9 @@ If shell integration isn't working (auto-cd not happening, completions missing, 
 1. Install the [Worktrunk plugin](https://worktrunk.dev/claude-code/) in Claude Code
 2. Ask Claude to debug the Worktrunk shell integration
 
-Claude will run `wt config show`, inspect your shell config files, and identify the issue.
+Claude will run `wt config show`, inspect the shell config files, and identify the issue.
 
-If Claude can't fix it, please [open an issue](https://github.com/max-sixty/worktrunk/issues/new?title=Shell%20setup%20issue&body=%23%23%20Shell%20and%20OS%0A%0A-%20Shell%3A%20%0A-%20OS%3A%20%0A%0A%23%23%20Output%20of%20%60wt%20config%20show%60%0A%0A%60%60%60%0A%0A%60%60%60%0A%0A%23%23%20What%20Claude%20found%20%28if%20available%29%0A%0A) with the output of `wt config show`, your shell (bash/zsh/fish), and OS. (And even if it fixes the problem, feel free to open an issue: non-standard success cases are useful for ensuring Worktrunk is easy to set up for others.)
+If Claude can't fix it, please [open an issue](https://github.com/max-sixty/worktrunk/issues/new?title=Shell%20setup%20issue&body=%23%23%20Shell%20and%20OS%0A%0A-%20Shell%3A%20%0A-%20OS%3A%20%0A%0A%23%23%20Output%20of%20%60wt%20config%20show%60%0A%0A%60%60%60%0A%0A%60%60%60%0A%0A%23%23%20What%20Claude%20found%20%28if%20available%29%0A%0A) with the output of `wt config show`, the shell (bash/zsh/fish), and OS. (And even if it fixes the problem, feel free to open an issue: non-standard success cases are useful for ensuring Worktrunk is easy to set up for others.)
 
 ## What files does Worktrunk create?
 
@@ -175,7 +148,7 @@ Created by `wt config shell install`:
 
 ### 4. Metadata in `.git/` (automatic)
 
-Worktrunk stores small amounts of cache and log data in your repository's `.git/` directory:
+Worktrunk stores small amounts of cache and log data in the repository's `.git/` directory:
 
 | Location | Purpose | Created by |
 |----------|---------|------------|

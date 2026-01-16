@@ -18,7 +18,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt merge - Merge worktree into target branch
+wt merge - Merge current branch into target
 
 Squash & rebase, fast-forward target, remove the worktree.
 
@@ -70,7 +70,8 @@ Global Options:
   -v, --verbose...
           Show debug info (-v), or also write diagnostic report (-vv)
 
-Merge the current branch into the target branch, defaulting to the main branch. Unlike `git merge`, this merges the current branch into a target (rather than a target into the current branch). Similar to clicking "Merge pull request" on GitHub.
+Unlike `git merge`, this merges current into target (not target into current). Similar to clicking "Merge pull request" on GitHub, but locally. Target defaults to the default branch.
+
 <!-- demo: wt-merge.gif 1600x900 -->
 
 ## Examples

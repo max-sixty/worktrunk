@@ -57,6 +57,9 @@ pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
     if project {
         let repo = Repository::current()?;
         let config_path = repo.current_worktree().root()?.join(".config/wt.toml");
+        let user_config_exists = require_user_config_path()
+            .map(|p| p.exists())
+            .unwrap_or(false);
         create_config_file(
             config_path,
             PROJECT_CONFIG_EXAMPLE,
@@ -65,13 +68,21 @@ pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
                 "Edit this file to configure hooks for this repository",
                 "See https://worktrunk.dev/hook/ for hook documentation",
             ],
+            user_config_exists,
+            true, // is_project
         )
     } else {
+        let project_config_exists = Repository::current()
+            .and_then(|repo| repo.current_worktree().root())
+            .map(|root| root.join(".config/wt.toml").exists())
+            .unwrap_or(false);
         create_config_file(
             require_user_config_path()?,
             USER_CONFIG_EXAMPLE,
             "User config",
             &["Edit this file to customize worktree paths and LLM settings"],
+            project_config_exists,
+            false, // is_project
         )
     }
 }
@@ -82,6 +93,8 @@ fn create_config_file(
     content: &str,
     config_type: &str,
     success_hints: &[&str],
+    other_config_exists: bool,
+    is_project: bool,
 ) -> anyhow::Result<()> {
     // Check if file already exists
     if path.exists() {
@@ -89,10 +102,23 @@ fn create_config_file(
             "{config_type} already exists: <bold>{}</>",
             format_path_for_display(&path)
         )))?;
-        output::blank()?;
-        output::print(hint_message(cformat!(
-            "For format reference, run <bright-black>wt config create --help</>; to view, run <bright-black>wt config show</>"
-        )))?;
+
+        // Build hint message based on whether the other config exists
+        let hint = if other_config_exists {
+            // Both configs exist
+            cformat!("To view both user and project configs, run <bright-black>wt config show</>")
+        } else if is_project {
+            // Project config exists, no user config
+            cformat!(
+                "To view, run <bright-black>wt config show</>. To create a user config, run <bright-black>wt config create</>"
+            )
+        } else {
+            // User config exists, no project config
+            cformat!(
+                "To view, run <bright-black>wt config show</>. To create a project config, run <bright-black>wt config create --project</>"
+            )
+        };
+        output::print(hint_message(hint))?;
         return Ok(());
     }
 
@@ -145,8 +171,8 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     show_output.push('\n');
     render_runtime_info(&mut show_output)?;
 
-    // Display through pager
-    if let Err(e) = show_help_in_pager(&show_output) {
+    // Display through pager (config show is always long-form output)
+    if let Err(e) = show_help_in_pager(&show_output, true) {
         log::debug!("Pager invocation failed: {}", e);
         // Fall back to direct output via eprintln (matches help behavior)
         worktrunk::styling::eprintln!("{}", show_output);
@@ -516,7 +542,6 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     });
 
     let mut any_not_configured = false;
-    let mut not_configured_shells: Vec<Shell> = Vec::new();
     let mut has_any_unmatched = false;
 
     // Show configured and not-configured shells (matching `config shell install` format exactly)
@@ -539,14 +564,13 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     .iter()
                     .find(|d| d.path == result.path && !d.matched_lines.is_empty());
 
-                // Build file:line location (clickable in terminals)
+                // Build file:line location (clickable in terminals - use first line only)
                 let location = if let Some(det) = detection {
-                    let line_nums: Vec<_> = det
-                        .matched_lines
-                        .iter()
-                        .map(|d| d.line_number.to_string())
-                        .collect();
-                    format!("{}:{}", path, line_nums.join(","))
+                    if let Some(first_line) = det.matched_lines.first() {
+                        format!("{}:{}", path, first_line.line_number)
+                    } else {
+                        path.to_string()
+                    }
                 } else {
                     path.to_string()
                 };
@@ -608,9 +632,6 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                         )?;
                     } else {
                         any_not_configured = true;
-                        if !not_configured_shells.contains(&shell) {
-                            not_configured_shells.push(shell);
-                        }
                         writeln!(
                             out,
                             "{}",
@@ -650,9 +671,6 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     )?;
                 } else {
                     any_not_configured = true;
-                    if !not_configured_shells.contains(&shell) {
-                        not_configured_shells.push(shell);
-                    }
                     writeln!(
                         out,
                         "{}",
@@ -703,11 +721,9 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         )?;
     }
 
-    // Summary hint - be specific about which shells need configuration
-    if any_not_configured && !not_configured_shells.is_empty() {
+    // Summary hint when shells need configuration
+    if any_not_configured {
         writeln!(out)?;
-        // CLI accepts one shell at a time, so suggest the base command
-        // which auto-detects and configures all available shells
         writeln!(
             out,
             "{}",
@@ -725,13 +741,12 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             has_any_unmatched = true;
             let path = format_path_for_display(&detection.path);
 
-            // Build file:line location (clickable in terminals)
-            let line_nums: Vec<_> = detection
-                .unmatched_candidates
-                .iter()
-                .map(|d| d.line_number.to_string())
-                .collect();
-            let location = format!("{}:{}", path, line_nums.join(","));
+            // Build file:line location (clickable in terminals - use first line only)
+            let location = if let Some(first) = detection.unmatched_candidates.first() {
+                format!("{}:{}", path, first.line_number)
+            } else {
+                path.to_string()
+            };
             writeln!(
                 out,
                 "{}",
@@ -1051,7 +1066,9 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
     match key {
         "default-branch" => {
             let branch_name = repo.default_branch().ok_or_else(|| {
-                anyhow::anyhow!("Cannot determine default branch. Run 'wt config state default-branch set <branch>' to configure.")
+                anyhow::anyhow!(cformat!(
+                    "Cannot determine default branch. To configure, run <bold>wt config state default-branch set BRANCH</>"
+                ))
             })?;
             crate::output::stdout(branch_name)?;
         }
@@ -1100,7 +1117,7 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
             render_log_files(&mut out, &repo)?;
 
             // Display through pager (fall back to stderr if pager unavailable)
-            if show_help_in_pager(&out).is_err() {
+            if show_help_in_pager(&out, true).is_err() {
                 worktrunk::styling::eprintln!("{}", out);
             }
         }
@@ -1586,7 +1603,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     render_log_files(&mut out, repo)?;
 
     // Display through pager (fall back to stderr if pager unavailable)
-    if let Err(e) = show_help_in_pager(&out) {
+    if let Err(e) = show_help_in_pager(&out, true) {
         log::debug!("Pager invocation failed: {}", e);
         // Fall back to direct output via eprintln (matches help behavior)
         worktrunk::styling::eprintln!("{}", out);

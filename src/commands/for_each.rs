@@ -61,7 +61,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
     let command_template = args.join(" ");
 
     // Get repo root for context
-    let repo_root = repo.worktree_base()?;
+    let repo_root = repo.repo_path()?;
 
     for wt in &worktrees {
         let display_name = worktree_display_name(wt, &repo, &config);
@@ -86,7 +86,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
             .collect();
 
         // Expand template with full context (shell-escaped)
-        let command = expand_template(&command_template, &vars, true)
+        let command = expand_template(&command_template, &vars, true, &repo)
             .map_err(|e| anyhow::anyhow!("Template expansion failed: {e}"))?;
 
         // Build JSON context for stdin
@@ -169,6 +169,8 @@ fn run_command_streaming(
     stdin_content: Option<&str>,
 ) -> Result<(), CommandError> {
     let shell = ShellConfig::get();
+
+    log::debug!("$ {} (streaming)", command);
 
     let stdin_mode = if stdin_content.is_some() {
         Stdio::piped()

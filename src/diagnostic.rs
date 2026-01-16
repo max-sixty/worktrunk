@@ -44,11 +44,14 @@
 //!
 use std::path::PathBuf;
 
+use ansi_str::AnsiStr;
 use anyhow::Context;
 use color_print::cformat;
 use minijinja::{Environment, context};
 use worktrunk::git::Repository;
+use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
+use worktrunk::styling::{hint_message, info_message, warning_message};
 
 use crate::cli::version_str;
 use crate::output;
@@ -180,7 +183,7 @@ impl DiagnosticReport {
 
     /// Write the diagnostic report to a file (for -vv flag).
     ///
-    /// Called from `write_vv_diagnostic()` in main.rs when verbose >= 2.
+    /// Called from `write_if_verbose()` when verbose >= 2.
     /// Returns the path if successful, None if write failed.
     pub fn write_diagnostic_file(&self, repo: &Repository) -> Option<PathBuf> {
         self.write_file(repo)
@@ -199,14 +202,75 @@ pub(crate) fn issue_hint() -> String {
     cformat!("To create a diagnostic file, run with <bright-black>-vv</>")
 }
 
+/// Write diagnostic file when -vv is used.
+///
+/// Called at the end of command execution. If verbose level is >= 2, writes
+/// a diagnostic report to `.git/wt-logs/diagnostic.md` for issue filing.
+///
+/// Silently returns if:
+/// - verbose < 2
+/// - Not in a git repository
+///
+/// Warns if diagnostic file write fails.
+pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Option<&str>) {
+    if verbose < 2 {
+        return;
+    }
+
+    // Use Repository::current() which honors the -C flag
+    let Ok(repo) = Repository::current() else {
+        return;
+    };
+
+    // Check if we're actually in a git repo
+    if repo.current_worktree().git_dir().is_err() {
+        return;
+    }
+
+    // Build context based on success/error
+    let context = match error_msg {
+        Some(msg) => format!("Command failed: {msg}"),
+        None => "Command completed successfully".to_string(),
+    };
+
+    // Collect and write diagnostic
+    let report = DiagnosticReport::collect(&repo, command_line, context);
+    match report.write_diagnostic_file(&repo) {
+        Some(path) => {
+            let path_display = format_path_for_display(&path);
+            let _ = output::print(info_message(format!("Diagnostic saved: {path_display}")));
+
+            // Only show gh command if gh is installed
+            if is_gh_installed() {
+                // Escape single quotes for shell: 'it'\''s' -> it's
+                let path_str = path.to_string_lossy().replace('\'', "'\\''");
+                // URL with prefilled body: ## Gist\n\n[Paste URL]\n\n## Description\n\n[Describe the issue]
+                let issue_url = "https://github.com/max-sixty/worktrunk/issues/new?body=%23%23%20Gist%0A%0A%5BPaste%20gist%20URL%5D%0A%0A%23%23%20Description%0A%0A%5BDescribe%20the%20issue%5D";
+                let _ = output::print(hint_message(cformat!(
+                    "To report a bug, create a secret gist with <bright-black>gh gist create --web '{path_str}'</> and reference it from an issue at <bright-black>{issue_url}</>"
+                )));
+            }
+        }
+        None => {
+            let _ = output::print(warning_message("Failed to write diagnostic file"));
+        }
+    }
+}
+
+/// Check if the GitHub CLI (gh) is installed.
+fn is_gh_installed() -> bool {
+    Cmd::new("gh")
+        .arg("--version")
+        .run()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// Strip ANSI escape codes from a string.
 ///
 /// Used to clean terminal-formatted text for markdown output.
 fn strip_ansi_codes(s: &str) -> String {
-    // Match SGR (Select Graphic Rendition) sequences: ESC [ <params> m
-    // This covers colors, bold, dim, etc.
-    let re = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
-    re.replace_all(s, "").into_owned()
+    s.ansi_strip().into_owned()
 }
 
 /// Truncate verbose log to ~50KB if it's too large.

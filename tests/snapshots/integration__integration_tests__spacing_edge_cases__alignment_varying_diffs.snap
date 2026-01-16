@@ -20,6 +20,7 @@ info:
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -29,11 +30,14 @@ success: true
 exit_code: 0
 ----- stdout -----
   [1mBranch[0m          [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m                    [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
-@ main                [2m^[22m                         .                                [2ma1e809f5[0m  [2m1d[0m    [2mInitial commit
-+ feature-large     [36m?[39m [2m–[22m                         ../repo.feature-large            [2ma1e809f5[0m  [2m1d[0m    [2mInitial commit
-+ feature-medium    [36m?[39m [2m–[22m                         ../repo.feature-medium           [2ma1e809f5[0m  [2m1d[0m    [2mInitial commit
-+ feature-small     [36m?[39m [2m–[22m                         ../repo.feature-small            [2ma1e809f5[0m  [2m1d[0m    [2mInitial commit
+@ main                [2m^[22m[2m|[22m                        .                          [2m|[0m     [2m05a4a45d[0m  [2m16h[0m   [2mInitial commit
++ feature-a           [2m↑[22m                 [32m↑1[0m      ../repo.feature-a                [2m1b87d473[0m  [2m16h[0m   [2mAdd feature-a file
++ feature-b           [2m↑[22m                 [32m↑1[0m      ../repo.feature-b                [2mf62940fc[0m  [2m16h[0m   [2mAdd feature-b file
++ feature-c           [2m↑[22m                 [32m↑1[0m      ../repo.feature-c                [2m345c7c93[0m  [2m16h[0m   [2mAdd feature-c file
++ feature-large     [36m?[39m [2m–[22m                         ../repo.feature-large            [2m05a4a45d[0m  [2m16h[0m   [2mInitial commit
++ feature-medium    [36m?[39m [2m–[22m                         ../repo.feature-medium           [2m05a4a45d[0m  [2m16h[0m   [2mInitial commit
++ feature-small     [36m?[39m [2m–[22m                         ../repo.feature-small            [2m05a4a45d[0m  [2m16h[0m   [2mInitial commit
 
-[2m○[22m [2mShowing 4 worktrees, 3 with changes
+[2m○[22m [2mShowing 7 worktrees, 3 with changes, 3 ahead
 
 ----- stderr -----

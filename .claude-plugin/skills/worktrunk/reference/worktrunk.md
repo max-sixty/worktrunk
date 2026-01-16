@@ -91,6 +91,20 @@ Shell integration allows commands to change directories.
 cargo install worktrunk && wt config shell install
 ```
 
+<details>
+<summary><strong>Windows</strong></summary>
+
+On Windows, `wt` defaults to Windows Terminal's command. Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
+
+```bash
+winget install max-sixty.worktrunk
+git-wt config shell install
+```
+
+Alternatively, disable Windows Terminal's alias (Settings → Privacy & security → For developers → App Execution Aliases → disable "Windows Terminal") to use `wt` directly.
+
+</details>
+
 ## Next steps
 
 - Learn the core commands: [`wt switch`](https://worktrunk.dev/switch/), [`wt list`](https://worktrunk.dev/list/), [`wt merge`](https://worktrunk.dev/merge/), [`wt remove`](https://worktrunk.dev/remove/)

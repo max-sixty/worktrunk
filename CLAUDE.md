@@ -104,12 +104,35 @@ When changing:
 - CLI flags or their defaults
 - Error conditions or messages
 
-Ask: "Does `--help` still describe what the code does?" If not, update `src/cli.rs` first.
+Ask: "Does `--help` still describe what the code does?" If not, update `src/cli/mod.rs` first.
 
-After modifying `cli.rs`, sync the doc pages:
+### Auto-generated docs
+
+Documentation has three categories:
+
+1. **Command pages** (config, hook, list, merge, remove, select, step, switch):
+   ```
+   src/cli/mod.rs (PRIMARY SOURCE)
+       ↓ test_command_pages_and_skill_files_are_in_sync
+   docs/content/{command}.md → .claude-plugin/skills/worktrunk/reference/{command}.md
+   ```
+   Edit `src/cli/mod.rs` (`after_long_help` attributes), never the docs directly.
+
+2. **Non-command docs** (claude-code, faq, llm-commits, tips-patterns, worktrunk):
+   ```
+   docs/content/*.md (PRIMARY SOURCE)
+       ↓ test_command_pages_and_skill_files_are_in_sync
+   .claude-plugin/skills/worktrunk/reference/*.md
+   ```
+   Edit the docs file directly. Skill reference is auto-synced.
+
+3. **Skill-only files** (shell-integration.md, troubleshooting.md):
+   Edit `.claude-plugin/skills/worktrunk/reference/` directly — no docs equivalent.
+
+After any doc changes, run tests to sync:
 
 ```bash
-cargo test --test integration test_command_pages_are_in_sync
+cargo test --test integration test_command_pages_and_skill_files_are_in_sync
 ```
 
 ## Data Safety
@@ -219,7 +242,7 @@ The `codecov/patch` CI check enforces coverage on changed lines — respond to f
 ### Running Coverage Locally
 
 ```bash
-task coverage
+task coverage   # includes --features shell-integration-tests
 # Report: target/llvm-cov/html/index.html
 ```
 
@@ -231,14 +254,28 @@ When CI shows a codecov/patch failure, investigate before declaring "ready to me
 
 1. Identify uncovered lines in your changes:
    ```bash
-   task coverage
-   cargo llvm-cov report --show-missing-lines | grep <file>
+   task coverage                                          # run tests, generate coverage
+   cargo llvm-cov report --show-missing-lines | grep <file>   # query the report
    git diff main...HEAD -- path/to/file.rs
    ```
 
 2. For each uncovered function/method you added, either:
    - Write a test that exercises it, or
    - Document why it's intentionally untested (e.g., error paths requiring external system mocks)
+
+### How Coverage Works with Integration Tests
+
+Coverage is collected via `cargo llvm-cov` which instruments the binary. **Subprocess execution IS captured** — when tests spawn `wt` via `assert_cmd_snapshot!`, the instrumented binary writes coverage data to profile files that get merged into the report.
+
+When investigating uncovered lines:
+
+1. Run `task coverage` first to see actual coverage % (~92% is normal)
+2. Use `cargo llvm-cov report --show-missing-lines | grep <file>` to find specific uncovered lines
+3. **Check if tests already exist** for that functionality before writing new ones
+4. Remaining uncovered lines are typically:
+   - Error handling paths requiring mocked git failures
+   - Edge cases in shell integration states (e.g., running as `git wt`)
+   - Test assertion code (only executes when tests fail)
 
 ## Benchmarks
 

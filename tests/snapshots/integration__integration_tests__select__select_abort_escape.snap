@@ -4,7 +4,7 @@ expression: normalized
 ---
 > [QUERY]                                                     │[PREVIEW_HEADER]
     Branch  Status        HEAD±    main↕  Remote⇅  Commit   │Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: tog
-> @ main        ^                                  a1e809f5 │
+> @ main        ^                                  05a4a45d │
                                                             │○ main has no uncommitted changes
                                                             │
                                                             │
