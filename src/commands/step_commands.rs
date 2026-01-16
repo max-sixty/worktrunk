@@ -161,7 +161,8 @@ pub fn handle_squash(
     let commit_count = repo.count_commits(&merge_base, "HEAD")?;
 
     // Check if there are staged changes in addition to commits
-    let has_staged = repo.has_staged_changes()?;
+    let wt = repo.current_worktree();
+    let has_staged = wt.has_staged_changes()?;
 
     // Handle different scenarios
     if commit_count == 0 && !has_staged {
@@ -224,7 +225,7 @@ pub fn handle_squash(
     // Create safety backup before potentially destructive reset if there are working tree changes
     if has_staged {
         let backup_message = format!("{} → {} (squash)", current_branch, target_branch);
-        let sha = repo.create_safety_backup(&backup_message)?;
+        let sha = wt.create_safety_backup(&backup_message)?;
         crate::output::print(hint_message(format!("Backup created @ {sha}")))?;
     }
 
@@ -261,7 +262,7 @@ pub fn handle_squash(
         .context("Failed to reset to merge base")?;
 
     // Check if there are actually any changes to commit
-    if !repo.has_staged_changes()? {
+    if !wt.has_staged_changes()? {
         crate::output::print(info_message(format!(
             "No changes after squashing {commit_count} {commit_text}"
         )))?;

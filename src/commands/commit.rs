@@ -81,9 +81,10 @@ impl<'a> CommitGenerator<'a> {
         stage_mode: StageMode,
     ) -> anyhow::Result<()> {
         let repo = Repository::current()?;
+        let wt = repo.current_worktree();
 
         // Fail early if nothing is staged (avoids confusing LLM prompt with empty diff)
-        if !repo.has_staged_changes()? {
+        if !wt.has_staged_changes()? {
             anyhow::bail!("Nothing to commit");
         }
 
