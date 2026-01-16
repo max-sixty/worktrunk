@@ -75,7 +75,15 @@ if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN
     }
     $env:COMPLETE = "powershell"
     try {
-        & $wtBinForComplete | Out-String | Invoke-Expression
+        # Capture output first, then pipe - avoids "Cannot run a document in the middle of a pipeline"
+        # error that can occur in some PowerShell configurations/terminals
+        $completionScript = & $wtBinForComplete 2>$null
+        if ($completionScript) {
+            $completionScript | Out-String | Invoke-Expression
+        }
+    }
+    catch {
+        # Completion registration is optional - wrapper function still works without it
     }
     finally {
         Remove-Item Env:\COMPLETE -ErrorAction SilentlyContinue
