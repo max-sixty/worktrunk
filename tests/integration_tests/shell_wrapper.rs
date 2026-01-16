@@ -3582,6 +3582,129 @@ mod windows_tests {
         );
     }
 
+    /// Diagnostic: Does explicitly dropping the writer help?
+    /// On Windows ConPTY, we might need to close the writer before reading.
+    #[test]
+    fn test_diag_07_drop_writer_before_read() {
+        use portable_pty::CommandBuilder;
+        use std::io::Read;
+
+        eprintln!("DIAG07: Testing with explicit writer drop before read");
+
+        let pair = crate::common::open_pty();
+
+        let mut cmd = CommandBuilder::new("pwsh");
+        cmd.arg("-NoProfile");
+        cmd.arg("-NonInteractive");
+        cmd.arg("-Command");
+        cmd.arg("Write-Host 'DROP_WRITER_TEST'; exit 0");
+
+        eprintln!("DIAG07: Spawning pwsh...");
+        let mut child = pair.slave.spawn_command(cmd).expect("Failed to spawn");
+        drop(pair.slave);
+
+        // EXPLICITLY take and drop the writer before reading
+        let writer = pair.master.take_writer().unwrap();
+        eprintln!("DIAG07: Dropping writer explicitly...");
+        drop(writer);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut buf = String::new();
+        eprintln!("DIAG07: Reading output...");
+        reader.read_to_string(&mut buf).ok();
+
+        eprintln!("DIAG07: Output: {:?}", buf);
+
+        let status = child.wait().expect("Failed to wait");
+        eprintln!("DIAG07: Exit code: {:?}", status.exit_code());
+
+        assert!(
+            buf.contains("DROP_WRITER_TEST"),
+            "Should work with writer dropped. Got: {}",
+            buf
+        );
+    }
+
+    /// Diagnostic: Does cmd.exe work via PTY? (simpler than PowerShell)
+    #[test]
+    fn test_diag_08_cmd_exe_basic() {
+        use portable_pty::CommandBuilder;
+        use std::io::Read;
+
+        eprintln!("DIAG08: Testing cmd.exe via PTY");
+
+        let pair = crate::common::open_pty();
+
+        let mut cmd = CommandBuilder::new("cmd.exe");
+        cmd.arg("/C");
+        cmd.arg("echo CMD_EXE_WORKS");
+
+        eprintln!("DIAG08: Spawning cmd.exe...");
+        let mut child = pair.slave.spawn_command(cmd).expect("Failed to spawn");
+        drop(pair.slave);
+
+        // Try dropping writer
+        let writer = pair.master.take_writer().unwrap();
+        drop(writer);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut buf = String::new();
+        eprintln!("DIAG08: Reading output...");
+        reader.read_to_string(&mut buf).ok();
+
+        eprintln!("DIAG08: Output: {:?}", buf);
+
+        let status = child.wait().expect("Failed to wait");
+        eprintln!("DIAG08: Exit code: {:?}", status.exit_code());
+
+        assert!(
+            buf.contains("CMD_EXE_WORKS"),
+            "cmd.exe should work. Got: {}",
+            buf
+        );
+    }
+
+    /// Diagnostic: Test wt binary with writer dropped
+    #[test]
+    fn test_diag_09_wt_with_writer_drop() {
+        use portable_pty::CommandBuilder;
+        use std::io::Read;
+
+        eprintln!("DIAG09: Testing wt binary with writer drop");
+
+        let wt_bin = get_cargo_bin("wt");
+        eprintln!("DIAG09: wt binary path: {:?}", wt_bin);
+
+        let pair = crate::common::open_pty();
+
+        let mut cmd = CommandBuilder::new(&wt_bin);
+        cmd.arg("--version");
+
+        eprintln!("DIAG09: Spawning wt --version...");
+        let mut child = pair.slave.spawn_command(cmd).expect("Failed to spawn wt");
+        drop(pair.slave);
+
+        // Drop writer explicitly
+        let writer = pair.master.take_writer().unwrap();
+        drop(writer);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut buf = String::new();
+        eprintln!("DIAG09: Reading output...");
+        reader.read_to_string(&mut buf).ok();
+
+        eprintln!("DIAG09: Output: {:?}", buf);
+
+        let status = child.wait().expect("Failed to wait");
+        eprintln!("DIAG09: Exit code: {:?}", status.exit_code());
+
+        assert!(
+            buf.contains("wt") || buf.contains("worktrunk"),
+            "Should show version. Got: {}",
+            buf
+        );
+    }
+
     // =========================================================================
     // END DIAGNOSTIC TESTS
     // =========================================================================
