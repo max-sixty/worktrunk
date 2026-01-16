@@ -423,10 +423,16 @@ fn exec_in_pty_interactive(
             cmd.arg(script);
         }
         "powershell" | "pwsh" => {
-            // PowerShell uses -NoProfile to skip user profile
+            // PowerShell: write script to temp file and execute via -File
+            // Using -Command with long scripts can cause issues with ConPTY
+            let temp_dir = std::env::temp_dir();
+            let script_path = temp_dir.join(format!("wt_test_{}.ps1", std::process::id()));
+            std::fs::write(&script_path, script).expect("Failed to write temp script");
             cmd.arg("-NoProfile");
-            cmd.arg("-Command");
-            cmd.arg(script);
+            cmd.arg("-ExecutionPolicy");
+            cmd.arg("Bypass");
+            cmd.arg("-File");
+            cmd.arg(script_path.to_string_lossy().to_string());
         }
         _ => {
             // fish and other shells
