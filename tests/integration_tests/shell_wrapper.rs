@@ -3705,6 +3705,141 @@ mod windows_tests {
         );
     }
 
+    /// Diagnostic: Use std::process::Command directly (no PTY) - does this work?
+    #[test]
+    fn test_diag_10_no_pty_cmd_works() {
+        use std::process::Command;
+
+        eprintln!("DIAG10: Testing std::process::Command (no PTY)");
+
+        let output = Command::new("cmd.exe")
+            .args(["/C", "echo NO_PTY_WORKS"])
+            .output()
+            .expect("Failed to run cmd.exe");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("DIAG10: stdout: {:?}", stdout);
+        eprintln!("DIAG10: stderr: {:?}", stderr);
+        eprintln!("DIAG10: exit code: {:?}", output.status.code());
+
+        assert!(
+            stdout.contains("NO_PTY_WORKS"),
+            "std::process::Command should work. Got: {}",
+            stdout
+        );
+    }
+
+    /// Diagnostic: Wait for child first, then read (different order)
+    #[test]
+    fn test_diag_11_wait_then_read() {
+        use portable_pty::CommandBuilder;
+        use std::io::Read;
+
+        eprintln!("DIAG11: Testing wait-then-read pattern");
+
+        let pair = crate::common::open_pty();
+
+        let mut cmd = CommandBuilder::new("cmd.exe");
+        cmd.arg("/C");
+        cmd.arg("echo WAIT_THEN_READ");
+
+        eprintln!("DIAG11: Spawning cmd.exe...");
+        let mut child = pair.slave.spawn_command(cmd).expect("Failed to spawn");
+        drop(pair.slave);
+
+        // Drop writer
+        let writer = pair.master.take_writer().unwrap();
+        drop(writer);
+
+        // Wait for child to exit FIRST
+        eprintln!("DIAG11: Waiting for child to exit...");
+        let status = child.wait().expect("Failed to wait");
+        eprintln!("DIAG11: Child exited with: {:?}", status.exit_code());
+
+        // THEN read output
+        eprintln!("DIAG11: Now reading output...");
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).ok();
+
+        eprintln!("DIAG11: Output: {:?}", buf);
+
+        assert!(
+            buf.contains("WAIT_THEN_READ"),
+            "Wait-then-read should work. Got: {}",
+            buf
+        );
+    }
+
+    /// Diagnostic: Use non-blocking read with timeout
+    #[test]
+    fn test_diag_12_nonblocking_read() {
+        use portable_pty::CommandBuilder;
+        use std::io::Read;
+        use std::time::{Duration, Instant};
+
+        eprintln!("DIAG12: Testing non-blocking read pattern");
+
+        let pair = crate::common::open_pty();
+
+        let mut cmd = CommandBuilder::new("cmd.exe");
+        cmd.arg("/C");
+        cmd.arg("echo NONBLOCK_READ");
+
+        eprintln!("DIAG12: Spawning cmd.exe...");
+        let mut child = pair.slave.spawn_command(cmd).expect("Failed to spawn");
+        drop(pair.slave);
+
+        // Drop writer
+        let writer = pair.master.take_writer().unwrap();
+        drop(writer);
+
+        // Use a thread to read with timeout
+        let reader = pair.master.try_clone_reader().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let read_thread = std::thread::spawn(move || {
+            let mut reader = reader;
+            let mut buf = Vec::new();
+            let mut temp = [0u8; 1024];
+
+            let start = Instant::now();
+            while start.elapsed() < Duration::from_secs(10) {
+                match reader.read(&mut temp) {
+                    Ok(0) => break, // EOF
+                    Ok(n) => buf.extend_from_slice(&temp[..n]),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => break,
+                }
+            }
+            let _ = tx.send(());
+            String::from_utf8_lossy(&buf).to_string()
+        });
+
+        // Wait for read to complete or timeout
+        let output = match rx.recv_timeout(Duration::from_secs(15)) {
+            Ok(()) => read_thread.join().unwrap(),
+            Err(_) => {
+                eprintln!("DIAG12: Read timed out");
+                String::from("<timeout>")
+            }
+        };
+
+        eprintln!("DIAG12: Output: {:?}", output);
+
+        let status = child.wait().expect("Failed to wait");
+        eprintln!("DIAG12: Exit code: {:?}", status.exit_code());
+
+        assert!(
+            output.contains("NONBLOCK_READ"),
+            "Non-blocking read should work. Got: {}",
+            output
+        );
+    }
+
     // =========================================================================
     // END DIAGNOSTIC TESTS
     // =========================================================================
