@@ -506,7 +506,24 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         // Show invocation details to help diagnose
         let invocation = crate::invocation_path();
         let is_git_subcommand = crate::is_git_subcommand();
-        let mut debug_lines = vec![cformat!("Binary invoked as: <bold>{invocation}</>")];
+        let mut debug_lines = vec![cformat!("Invoked as: <bold>{invocation}</>")];
+
+        // Show actual binary path if different from invocation (helps detect wrong wt in PATH)
+        if let Ok(exe_path) = std::env::current_exe() {
+            let exe_display = format_path_for_display(&exe_path);
+            // Only show if meaningfully different (not just ./ prefix differences)
+            let invocation_canonical = std::fs::canonicalize(&invocation).ok();
+            let exe_canonical = std::fs::canonicalize(&exe_path).ok();
+            if invocation_canonical != exe_canonical {
+                debug_lines.push(cformat!("Running from: <bold>{exe_display}</>"));
+            }
+        }
+
+        // Show $SHELL to help diagnose rc file sourcing issues
+        if let Ok(shell_env) = std::env::var("SHELL") {
+            debug_lines.push(cformat!("$SHELL: <bold>{shell_env}</>"));
+        }
+
         if is_git_subcommand {
             debug_lines.push("Git subcommand: yes (GIT_EXEC_PATH set)".to_string());
         }

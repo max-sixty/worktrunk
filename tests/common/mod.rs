@@ -642,6 +642,9 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // Note: env_remove above may cause insta-cmd to capture empty values in snapshots,
     // but correctness (isolating from host WORKTRUNK_* vars) trumps snapshot aesthetics.
     cmd.env("WORKTRUNK_CONFIG_PATH", "/nonexistent/test/config.toml");
+    // Remove $SHELL to avoid platform-dependent diagnostic output (macOS has /bin/zsh,
+    // Linux has /bin/bash). Tests that need SHELL should set it explicitly.
+    cmd.env_remove("SHELL");
     cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("SOURCE_DATE_EPOCH", TEST_EPOCH.to_string());
     // Use wide terminal to prevent wrapping differences across platforms.
@@ -2004,6 +2007,8 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     // Windows: etcetera uses APPDATA for config_dir()
     settings.add_redaction(".env.APPDATA", "[TEST_CONFIG_HOME]");
     settings.add_redaction(".env.PATH", "[PATH]");
+    // Mock commands directory (temp path for mock gh/glab binaries)
+    settings.add_redaction(".env.MOCK_CONFIG_DIR", "[MOCK_CONFIG_DIR]");
 }
 
 /// Create configured insta Settings for snapshot tests

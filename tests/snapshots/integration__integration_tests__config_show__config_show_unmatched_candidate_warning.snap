@@ -18,8 +18,10 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
     RUST_LOG: warn
+    SHELL: ""
     SOURCE_DATE_EPOCH: "1735776000"
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -41,7 +43,7 @@ exit_code: 0
 
 [36mSHELL INTEGRATION[39m
 [33m▲[39m [33mShell integration not active[39m
-[107m [0m Binary invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
+[107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
 
 [2m↳[22m [2mNot configured shell extension & completions for bash[22m
 [2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
