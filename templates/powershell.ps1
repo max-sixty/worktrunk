@@ -5,8 +5,8 @@
 #
 # For full hook compatibility on Windows, install Git for Windows and use bash integration.
 
-# Only initialize if wt is available
-if (Get-Command {{ cmd }} -ErrorAction SilentlyContinue) {
+# Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
+if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
 
     # wt wrapper function - uses temp file for directives
     function {{ cmd }} {
@@ -15,8 +15,13 @@ if (Get-Command {{ cmd }} -ErrorAction SilentlyContinue) {
             [string[]]$Arguments
         )
 
+        # Use WORKTRUNK_BIN if set (for testing dev builds), otherwise find via Get-Command
         # Select-Object -First 1 handles case where multiple binaries match (e.g., wt.exe from Windows Terminal)
-        $wtBin = (Get-Command {{ cmd }} -CommandType Application | Select-Object -First 1).Source
+        if ($env:WORKTRUNK_BIN) {
+            $wtBin = $env:WORKTRUNK_BIN
+        } else {
+            $wtBin = (Get-Command {{ cmd }} -CommandType Application | Select-Object -First 1).Source
+        }
         $directiveFile = [System.IO.Path]::GetTempFileName()
 
         try {
@@ -62,9 +67,15 @@ if (Get-Command {{ cmd }} -ErrorAction SilentlyContinue) {
 
     # Tab completion - generate clap's completer script and eval it
     # This registers Register-ArgumentCompleter with proper handling
+    # Use WORKTRUNK_BIN if set (for testing), otherwise find via Get-Command
+    if ($env:WORKTRUNK_BIN) {
+        $wtBinForComplete = $env:WORKTRUNK_BIN
+    } else {
+        $wtBinForComplete = (Get-Command {{ cmd }} -CommandType Application | Select-Object -First 1).Source
+    }
     $env:COMPLETE = "powershell"
     try {
-        & (Get-Command {{ cmd }} -CommandType Application | Select-Object -First 1) | Out-String | Invoke-Expression
+        & $wtBinForComplete | Out-String | Invoke-Expression
     }
     finally {
         Remove-Item Env:\COMPLETE -ErrorAction SilentlyContinue

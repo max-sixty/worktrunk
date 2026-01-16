@@ -3321,7 +3321,6 @@ mod windows_tests {
 
     /// Test that PowerShell shell integration works for switch --create
     #[rstest]
-    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
     fn test_powershell_switch_create(repo: TestRepo) {
         let output = exec_through_wrapper("powershell", &repo, "switch", &["--create", "feature"]);
 
@@ -3337,7 +3336,6 @@ mod windows_tests {
 
     /// Test that PowerShell shell integration handles command failures correctly
     #[rstest]
-    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
     fn test_powershell_command_failure(mut repo: TestRepo) {
         // Create a worktree that already exists
         repo.add_worktree("existing");
@@ -3359,7 +3357,6 @@ mod windows_tests {
 
     /// Test that PowerShell shell integration works for remove
     #[rstest]
-    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
     fn test_powershell_remove(mut repo: TestRepo) {
         // Create a worktree to remove
         repo.add_worktree("to-remove");
@@ -3372,7 +3369,6 @@ mod windows_tests {
 
     /// Test that PowerShell shell integration works for wt list
     #[rstest]
-    #[ignore = "PowerShell PTY tests timeout in CI - needs investigation"]
     fn test_powershell_list(repo: TestRepo) {
         let output = exec_through_wrapper("powershell", &repo, "list", &[]);
 
