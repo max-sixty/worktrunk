@@ -566,6 +566,35 @@ fn resolve_switch_target(
         if pr_info.is_cross_repository {
             // Fork PR: use owner/branch naming, will need fetch + config
             let local_branch = local_branch_name(&pr_info);
+
+            // Check if branch already exists and is tracking this PR
+            // If so, we can reuse it without re-fetching or re-configuring
+            if let Some(tracks_this_pr) =
+                worktrunk::git::pr_ref::branch_tracks_pr(&repo_root, &local_branch, pr_number)
+            {
+                if tracks_this_pr {
+                    // Branch exists and tracks this PR - just create worktree
+                    crate::output::print(info_message(cformat!(
+                        "Branch <bold>{local_branch}</> already configured for PR #{pr_number}"
+                    )))?;
+                    return Ok(ResolvedTarget {
+                        branch: local_branch,
+                        method: CreationMethod::Regular {
+                            create_branch: false,
+                            base_branch: None,
+                        },
+                    });
+                } else {
+                    // Branch exists but tracks something else
+                    return Err(GitError::BranchTracksDifferentPr {
+                        branch: local_branch,
+                        pr_number,
+                    }
+                    .into());
+                }
+            }
+
+            // Branch doesn't exist - need full fork PR setup
             let remote_url = repo.primary_remote_url().unwrap_or_default();
             let fork_push_url =
                 fork_remote_url(&pr_info.head_owner, &pr_info.head_repo, &remote_url);
@@ -698,8 +727,11 @@ fn check_existing_worktree(
 ///
 /// Checks:
 /// - Path not occupied by another worktree
-/// - For fork PRs, local branch doesn't already exist
+/// - For regular switches (not --create), branch must exist
 /// - Handles --clobber for stale directories
+///
+/// Note: Fork PR branch existence is checked earlier in resolve_switch_target()
+/// where we can also check if it's tracking the correct PR.
 fn validate_worktree_creation(
     repo: &Repository,
     branch: &str,
@@ -707,14 +739,6 @@ fn validate_worktree_creation(
     clobber: bool,
     method: &CreationMethod,
 ) -> anyhow::Result<Option<PathBuf>> {
-    // For fork PRs, check if local branch already exists (would conflict)
-    if matches!(method, CreationMethod::ForkPr { .. }) && repo.local_branch_exists(branch)? {
-        return Err(GitError::BranchAlreadyExists {
-            branch: branch.to_string(),
-        }
-        .into());
-    }
-
     // For regular switches without --create, validate branch exists
     if let CreationMethod::Regular {
         create_branch: false,
@@ -754,6 +778,53 @@ fn validate_worktree_creation(
         }
     );
     compute_clobber_backup(path, branch, clobber, is_create)
+}
+
+/// Set up a local branch for a fork PR.
+///
+/// Creates the branch, configures tracking, and creates the worktree.
+/// Returns an error if any step fails - caller is responsible for cleanup.
+fn setup_fork_pr_branch(
+    repo: &Repository,
+    branch: &str,
+    remote: &str,
+    pr_ref: &str,
+    fork_push_url: &str,
+    worktree_path: &Path,
+    pr_number: u32,
+) -> anyhow::Result<()> {
+    // Create local branch from FETCH_HEAD
+    repo.run_command(&["branch", branch, "FETCH_HEAD"])
+        .with_context(|| {
+            format!(
+                "Failed to create local branch '{}' from PR #{}",
+                branch, pr_number
+            )
+        })?;
+
+    // Configure branch tracking for pull and push
+    let branch_remote_key = format!("branch.{}.remote", branch);
+    let branch_merge_key = format!("branch.{}.merge", branch);
+    let branch_push_remote_key = format!("branch.{}.pushRemote", branch);
+    let merge_ref = format!("refs/{}", pr_ref);
+
+    repo.run_command(&["config", &branch_remote_key, remote])
+        .with_context(|| format!("Failed to configure branch.{}.remote", branch))?;
+    repo.run_command(&["config", &branch_merge_key, &merge_ref])
+        .with_context(|| format!("Failed to configure branch.{}.merge", branch))?;
+    repo.run_command(&["config", &branch_push_remote_key, fork_push_url])
+        .with_context(|| format!("Failed to configure branch.{}.pushRemote", branch))?;
+
+    // Create worktree
+    let worktree_path_str = worktree_path.to_string_lossy();
+    repo.run_command(&["worktree", "add", worktree_path_str.as_ref(), branch])
+        .map_err(|e| GitError::WorktreeCreationFailed {
+            branch: branch.to_string(),
+            base_branch: None,
+            error: e.to_string(),
+        })?;
+
+    Ok(())
 }
 
 /// Validate and plan a switch operation.
@@ -934,36 +1005,24 @@ pub fn execute_switch(
                             format!("Failed to fetch PR #{} from {}", pr_number, remote)
                         })?;
 
-                    // Create local branch from FETCH_HEAD
-                    repo.run_command(&["branch", &branch, "FETCH_HEAD"])
-                        .with_context(|| {
-                            format!(
-                                "Failed to create local branch '{}' from PR #{}",
-                                branch, pr_number
-                            )
-                        })?;
+                    // Execute branch creation and configuration with cleanup on failure.
+                    // If any step after branch creation fails, we must delete the branch
+                    // to avoid leaving orphaned state that blocks future attempts.
+                    let setup_result = setup_fork_pr_branch(
+                        repo,
+                        &branch,
+                        &remote,
+                        &pr_ref,
+                        fork_push_url,
+                        &worktree_path,
+                        *pr_number,
+                    );
 
-                    // Configure branch tracking for pull and push
-                    let branch_remote_key = format!("branch.{}.remote", branch);
-                    let branch_merge_key = format!("branch.{}.merge", branch);
-                    let branch_push_remote_key = format!("branch.{}.pushRemote", branch);
-                    let merge_ref = format!("refs/{}", pr_ref);
-
-                    repo.run_command(&["config", &branch_remote_key, &remote])?;
-                    repo.run_command(&["config", &branch_merge_key, &merge_ref])?;
-                    repo.run_command(&["config", &branch_push_remote_key, fork_push_url])?;
-
-                    // Create worktree
-                    let worktree_path_str = worktree_path.to_string_lossy();
-                    if let Err(e) =
-                        repo.run_command(&["worktree", "add", worktree_path_str.as_ref(), &branch])
-                    {
-                        return Err(GitError::WorktreeCreationFailed {
-                            branch: branch.clone(),
-                            base_branch: None,
-                            error: e.to_string(),
-                        }
-                        .into());
+                    if let Err(e) = setup_result {
+                        // Cleanup: try to delete the branch if it was created
+                        // (ignore errors - branch may not exist if creation failed)
+                        let _ = repo.run_command(&["branch", "-D", &branch]);
+                        return Err(e);
                     }
 
                     crate::output::print(info_message(cformat!(

@@ -288,7 +288,7 @@ wt switch --create temp --no-verify      # Skip hooks
 | `^` | Default branch (`main`/`master`) |
 | `@` | Current branch/worktree |
 | `-` | Previous worktree (like `cd -`) |
-| `pr:<N>` | GitHub PR #N's branch |
+| `pr:{N}` | GitHub PR #N's branch |
 
 ```console
 wt switch -                      # Back to previous
@@ -328,7 +328,7 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
     Switch {
         /// Branch name or shortcut
         ///
-        /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:<N>' (GitHub PR)
+        /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR)
         #[arg(add = crate::completion::worktree_branch_completer())]
         branch: String,
 

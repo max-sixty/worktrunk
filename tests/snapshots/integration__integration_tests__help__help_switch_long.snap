@@ -30,7 +30,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
   [36m<BRANCH>
           Branch name or shortcut
           
-          Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:<N>' (GitHub PR)
+          Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR)
 
   [36m[EXECUTE_ARGS]...
           Additional arguments for --execute command (after --)
@@ -121,7 +121,7 @@ When creating a worktree, worktrunk:
    ^        Default branch (main/master)  
    @        Current branch/worktree       
    -        Previous worktree (like cd -) 
-   pr:<N>   GitHub PR #N's branch         
+   pr:{N}   GitHub PR #N's branch         
 
   [2mwt switch -                      # Back to previous
   [2mwt switch ^                      # Default branch worktree

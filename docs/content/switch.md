@@ -57,7 +57,7 @@ wt switch --create temp --no-verify      # Skip hooks
 | `^` | Default branch (`main`/`master`) |
 | `@` | Current branch/worktree |
 | `-` | Previous worktree (like `cd -`) |
-| `pr:<N>` | GitHub PR #N's branch |
+| `pr:{N}` | GitHub PR #N's branch |
 
 ```bash
 wt switch -                      # Back to previous
@@ -107,7 +107,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Branch name or shortcut
 
           Shortcuts: &#39;^&#39; (default branch), &#39;-&#39; (previous), &#39;@&#39; (current),
-          &#39;pr:&lt;N&gt;&#39; (GitHub PR)
+          &#39;pr:{N}&#39; (GitHub PR)
 
   <span class=c>[EXECUTE_ARGS]...</span>
           Additional arguments for --execute command (after --)

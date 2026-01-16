@@ -4,7 +4,7 @@ info:
   program: wt
   args:
     - switch
-    - "pr:42"
+    - "pr:101"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -18,7 +18,7 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
-    MOCK_CONFIG_DIR: /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp21Mo4b/repo/mock-bin
+    MOCK_CONFIG_DIR: /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpRh8Dpz/repo/mock-bin
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
@@ -28,13 +28,11 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mFetching PR #42 from [1morigin[22m...[39m
-[2m○[22m Push configured to fork: [90mhttps://github.com/contributor/test-repo.git[39m
-[32m✓[39m [32mCreated branch [1mcontributor/feature-fix[22m (tracking [1mPR #42[22m) and worktree @ [1m_REPO_.contributor-feature-fix[22m[39m
-[33m▲[39m [33mCannot change directory — shell integration not installed[39m
-[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
+[36m◎[39m [36mFetching PR #101 from [1morigin[22m...[39m
+[31m✗[39m [31mFailed to parse gh pr view JSON for PR #101. This may indicate a gh version incompatibility or GitHub API change.[39m
+[107m [0m expected ident at line 1 column 2

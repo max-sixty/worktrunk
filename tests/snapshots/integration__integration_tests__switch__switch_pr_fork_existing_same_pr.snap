@@ -18,7 +18,7 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
-    MOCK_CONFIG_DIR: /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp21Mo4b/repo/mock-bin
+    MOCK_CONFIG_DIR: /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpTYfCXg/repo/mock-bin
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
@@ -34,7 +34,7 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mFetching PR #42 from [1morigin[22m...[39m
-[2m○[22m Push configured to fork: [90mhttps://github.com/contributor/test-repo.git[39m
-[32m✓[39m [32mCreated branch [1mcontributor/feature-fix[22m (tracking [1mPR #42[22m) and worktree @ [1m_REPO_.contributor-feature-fix[22m[39m
+[2m○[22m Branch [1mcontributor/feature-fix[22m already configured for PR #42
+[32m✓[39m [32mCreated worktree for [1mcontributor/feature-fix[22m @ [1m_REPO_.contributor-feature-fix[22m[39m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

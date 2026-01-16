@@ -336,7 +336,7 @@ pub fn parse_pr_ref(input: &str) -> Option<u32> {
 /// - The PR doesn't exist
 /// - The JSON response is malformed
 pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Result<PrInfo> {
-    let output = Cmd::new("gh")
+    let output = match Cmd::new("gh")
         .args([
             "pr",
             "view",
@@ -347,21 +347,73 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
         .current_dir(repo_root)
         .env("GH_PROMPT_DISABLED", "1")
         .run()
-        .context("Failed to run gh pr view")?;
+    {
+        Ok(output) => output,
+        Err(e) => {
+            // Check if gh is not installed (OS error for command not found)
+            let error_str = e.to_string();
+            if error_str.contains("No such file")
+                || error_str.contains("not found")
+                || error_str.contains("cannot find")
+            {
+                bail!("GitHub CLI (gh) not installed; install from https://cli.github.com/");
+            }
+            return Err(anyhow::Error::from(e).context("Failed to run gh pr view"));
+        }
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("Could not resolve") || stderr.contains("not found") {
+        let stderr_lower = stderr.to_lowercase();
+
+        // PR not found (various phrasings across gh versions)
+        if stderr_lower.contains("could not resolve")
+            || stderr_lower.contains("not found")
+            || stderr_lower.contains("no pull request")
+        {
             bail!("PR #{} not found", pr_number);
         }
-        if stderr.contains("authentication") || stderr.contains("logged in") {
+
+        // Authentication errors
+        if stderr_lower.contains("authentication")
+            || stderr_lower.contains("logged in")
+            || stderr_lower.contains("auth login")
+            || stderr_lower.contains("not logged")
+        {
             bail!("GitHub CLI not authenticated; run gh auth login");
         }
+
+        // Rate limiting
+        if stderr_lower.contains("rate limit") || stderr_lower.contains("api rate") {
+            bail!("GitHub API rate limit exceeded; wait a few minutes and retry");
+        }
+
+        // Network errors
+        if stderr_lower.contains("network")
+            || stderr_lower.contains("connection")
+            || stderr_lower.contains("timeout")
+        {
+            bail!("Network error connecting to GitHub; check your internet connection");
+        }
+
         bail!("gh pr view failed: {}", stderr.trim());
     }
 
-    let response: GhPrResponse =
-        serde_json::from_slice(&output.stdout).context("Failed to parse gh pr view JSON")?;
+    let response: GhPrResponse = serde_json::from_slice(&output.stdout).with_context(|| {
+        format!(
+            "Failed to parse gh pr view JSON for PR #{}. \
+             This may indicate a gh version incompatibility or GitHub API change.",
+            pr_number
+        )
+    })?;
+
+    // Validate required fields are not empty
+    if response.head_ref_name.is_empty() {
+        bail!(
+            "PR #{} has empty branch name; the PR may be in an invalid state",
+            pr_number
+        );
+    }
 
     Ok(PrInfo {
         number: pr_number,
@@ -395,6 +447,45 @@ pub fn fork_remote_url(owner: &str, repo: &str, remote_url: &str) -> String {
     } else {
         format!("https://github.com/{}/{}.git", owner, repo)
     }
+}
+
+/// Check if a branch is tracking a specific PR.
+///
+/// Returns `Some(true)` if the branch is configured to track `refs/pull/<pr_number>/head`.
+/// Returns `Some(false)` if the branch exists but tracks something else.
+/// Returns `None` if the branch doesn't exist.
+pub fn branch_tracks_pr(repo_root: &std::path::Path, branch: &str, pr_number: u32) -> Option<bool> {
+    use crate::shell_exec::Cmd;
+
+    let config_key = format!("branch.{}.merge", branch);
+    let output = Cmd::new("git")
+        .args(["config", "--get", &config_key])
+        .current_dir(repo_root)
+        .run()
+        .ok()?;
+
+    if !output.status.success() {
+        // Config key doesn't exist - branch might not track anything
+        // Check if branch exists at all
+        let branch_exists = Cmd::new("git")
+            .args([
+                "show-ref",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{}", branch),
+            ])
+            .current_dir(repo_root)
+            .run()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        return if branch_exists { Some(false) } else { None };
+    }
+
+    let merge_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let expected_ref = format!("refs/pull/{}/head", pr_number);
+
+    Some(merge_ref == expected_ref)
 }
 
 #[cfg(test)]
