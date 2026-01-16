@@ -3601,4 +3601,122 @@ mod windows_tests {
             combined
         );
     }
+
+    /// Test that PowerShell merge command works
+    #[rstest]
+    fn test_powershell_merge(mut repo: TestRepo) {
+        // Create a feature branch worktree
+        repo.add_worktree("feature");
+
+        let output = exec_through_wrapper("powershell", &repo, "merge", &["main"]);
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: merge should succeed.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test that PowerShell switch with execute works
+    #[rstest]
+    fn test_powershell_switch_with_execute(repo: TestRepo) {
+        // Use --yes to skip approval prompt
+        let output = exec_through_wrapper(
+            "powershell",
+            &repo,
+            "switch",
+            &[
+                "--create",
+                "test-exec",
+                "--execute",
+                "Write-Host 'executed'",
+                "--yes",
+            ],
+        );
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: switch with execute should succeed.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+
+        assert!(
+            output.combined.contains("executed"),
+            "PowerShell: Execute command output missing.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
+    /// Test PowerShell switch to existing worktree (no --create)
+    #[rstest]
+    fn test_powershell_switch_existing(mut repo: TestRepo) {
+        // First create a worktree
+        repo.add_worktree("existing-feature");
+
+        // Now switch to it without --create
+        let output = exec_through_wrapper("powershell", &repo, "switch", &["existing-feature"]);
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: switch to existing should succeed.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test PowerShell with --format json output
+    #[rstest]
+    fn test_powershell_list_json(repo: TestRepo) {
+        let output =
+            exec_through_wrapper("powershell", &repo, "list", &["--format", "json"]);
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: list --format json should succeed.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+
+        // JSON output should be parseable (contains array brackets)
+        assert!(
+            output.combined.contains('[') && output.combined.contains(']'),
+            "PowerShell: Should output JSON array.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
+    /// Test PowerShell config show command
+    #[rstest]
+    fn test_powershell_config_show(repo: TestRepo) {
+        let output = exec_through_wrapper("powershell", &repo, "config", &["show"]);
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: config show should succeed.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test PowerShell version command
+    #[rstest]
+    fn test_powershell_version(repo: TestRepo) {
+        let output = exec_through_wrapper("powershell", &repo, "--version", &[]);
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: --version should succeed.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+
+        // Should contain version number
+        assert!(
+            output.combined.contains("wt ") || output.combined.contains("worktrunk"),
+            "PowerShell: Should show version info.\nOutput:\n{}",
+            output.combined
+        );
+    }
 }
