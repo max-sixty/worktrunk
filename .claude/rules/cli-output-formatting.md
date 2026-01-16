@@ -91,7 +91,7 @@ let display_path = if will_cd_to_destination {
 ```
 
 These helpers encapsulate the shell integration check internally, so callers
-don't need to check `is_shell_integration_active()` directly
+don't need to check `is_shell_integration_active()` directly.
 
 **Avoid pronouns with cross-message referents:** Hints appear as separate
 messages from errors. Don't use pronouns like "it" that refer to something
