@@ -31,16 +31,14 @@
 // =============================================================================
 
 // Shared imports (both platforms)
-use crate::common::TestRepo;
+use crate::common::{TestRepo, shell::get_shell_binary};
 use insta_cmd::get_cargo_bin;
 use std::process::Command;
 
 // Unix-only imports
 #[cfg(unix)]
 use {
-    crate::common::{
-        add_pty_filters, canonicalize, shell::get_shell_binary, wait_for_file_content,
-    },
+    crate::common::{add_pty_filters, canonicalize, wait_for_file_content},
     insta::assert_snapshot,
     std::{fs, path::PathBuf, sync::LazyLock},
     worktrunk::shell,
