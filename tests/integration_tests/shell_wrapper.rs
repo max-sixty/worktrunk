@@ -3840,6 +3840,87 @@ mod windows_tests {
         );
     }
 
+    /// Diagnostic: Use configure_pty_command() with Windows env vars fix
+    #[test]
+    fn test_diag_13_configure_pty_cmd() {
+        use portable_pty::CommandBuilder;
+        use std::io::{Read, Write};
+
+        eprintln!("DIAG13: Testing with configure_pty_command() (Windows env fix)");
+
+        let pair = crate::common::open_pty();
+
+        let mut cmd = CommandBuilder::new("cmd.exe");
+        cmd.arg("/C");
+        cmd.arg("echo CONFIGURE_PTY_WORKS");
+
+        // Use the fixed configure_pty_command
+        crate::common::configure_pty_command(&mut cmd);
+
+        eprintln!("DIAG13: Spawning cmd.exe with configure_pty_command...");
+        let mut child = pair.slave.spawn_command(cmd).expect("Failed to spawn");
+        drop(pair.slave);
+
+        // Must take and drop writer with some input (even empty write + drop)
+        let mut writer = pair.master.take_writer().unwrap();
+        writer.write_all(b"").unwrap(); // Empty write
+        writer.flush().unwrap();
+        drop(writer);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut buf = String::new();
+        eprintln!("DIAG13: Reading output...");
+        reader.read_to_string(&mut buf).ok();
+
+        eprintln!("DIAG13: Output: {:?}", buf);
+
+        let status = child.wait().expect("Failed to wait");
+        eprintln!("DIAG13: Exit code: {:?}", status.exit_code());
+
+        assert!(
+            buf.contains("CONFIGURE_PTY_WORKS"),
+            "Should work with configure_pty_command. Got: {}",
+            buf
+        );
+    }
+
+    /// Diagnostic: Use exec_in_pty helper (the standard approach)
+    #[test]
+    fn test_diag_14_exec_in_pty_helper() {
+        use crate::common::pty::exec_in_pty;
+        use std::path::PathBuf;
+
+        eprintln!("DIAG14: Testing with exec_in_pty() helper");
+
+        let wt_bin = get_cargo_bin("wt");
+        eprintln!("DIAG14: wt binary: {:?}", wt_bin);
+
+        // Use a temp directory as working dir
+        let tmp = tempfile::tempdir().unwrap();
+
+        let (output, exit_code) = exec_in_pty(
+            wt_bin.to_str().unwrap(),
+            &["--version"],
+            tmp.path(),
+            &[],
+            "", // No input needed
+        );
+
+        eprintln!("DIAG14: Output: {:?}", output);
+        eprintln!("DIAG14: Exit code: {:?}", exit_code);
+
+        assert_eq!(
+            exit_code, 0,
+            "wt --version should succeed. Output: {}",
+            output
+        );
+        assert!(
+            output.contains("wt") || output.contains("worktrunk"),
+            "Should show version. Got: {}",
+            output
+        );
+    }
+
     // =========================================================================
     // END DIAGNOSTIC TESTS
     // =========================================================================
