@@ -271,10 +271,10 @@ url = "http://{{ branch | sanitize }}.{{ repo }}.lvh.me:8080"
 
 **How it works:**
 
-1. `{{ branch | hash_port }}` generates a deterministic port from the branch name — `feature-auth` → `16460`
-2. `lvh.me` is a public domain with wildcard DNS — `*.lvh.me` resolves to `127.0.0.1`
-3. `wt switch --create feature-auth` runs the `post-start` hook, which starts Caddy if needed and registers a route: `feature-auth.myproject` → `localhost:16460`
-4. Visiting `http://feature-auth.myproject.lvh.me:8080`: DNS resolves to `127.0.0.1`, Caddy matches `feature-auth.myproject`, proxies to the dev server on port 16460
+1. `wt switch --create feature-auth` runs the `post-start` hook, starting the dev server on a deterministic port (`{{ branch | hash_port }}` → 16460)
+2. The hook starts Caddy if needed and registers a route using the same port: `feature-auth.myproject` → `localhost:16460`
+3. `lvh.me` is a public domain with wildcard DNS — `*.lvh.me` resolves to `127.0.0.1`
+4. Visiting `http://feature-auth.myproject.lvh.me:8080`: Caddy matches the subdomain and proxies to the dev server
 
 ## Bare repository layout
 
