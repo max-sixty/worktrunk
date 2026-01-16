@@ -138,10 +138,8 @@ fn generate_wrapper(repo: &TestRepo, shell: &str) -> String {
         );
     }
 
-    let wrapper = String::from_utf8(output.stdout)
-        .unwrap_or_else(|_| panic!("wt config shell init {} produced invalid UTF-8", shell));
-
-    wrapper
+    String::from_utf8(output.stdout)
+        .unwrap_or_else(|_| panic!("wt config shell init {} produced invalid UTF-8", shell))
 }
 
 /// Generate shell completions script for the given shell
