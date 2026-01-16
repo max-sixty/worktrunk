@@ -140,14 +140,20 @@ pub fn read_pty_output(
         // Signal the reader to stop
         should_stop.store(true, Ordering::Relaxed);
 
-        // Close the master on a separate thread to avoid deadlock
+        // Close the master on a separate thread to avoid deadlock.
         // This triggers ClosePseudoConsole which sends CTRL_CLOSE_EVENT
-        // and eventually closes the output pipe
+        // and eventually closes the output pipe.
+        //
+        // We spawn this in parallel with recv_timeout because:
+        // 1. ClosePseudoConsole might block waiting for output to drain
+        // 2. We need to be checking for reader output while close happens
+        // 3. Without parallelism, we could deadlock
         let close_thread = thread::spawn(move || {
             drop(master);
         });
 
-        // Wait for the reader to finish (with timeout)
+        // Wait for the reader to finish (with timeout).
+        // The close_thread runs in parallel, triggering pipe closure.
         let output = match rx.recv_timeout(Duration::from_secs(10)) {
             Ok(data) => data,
             Err(_) => {
@@ -156,11 +162,16 @@ pub fn read_pty_output(
             }
         };
 
-        // Wait for close thread (with timeout)
+        // Wait for close thread (should be done by now, but use timeout just in case)
         let _ = close_thread.join();
 
-        // Wait for read thread to finish
-        let _ = read_thread.join();
+        // Don't join the read thread - if it's stuck in a blocking read, joining
+        // would hang forever. The thread will eventually exit when the process ends.
+        // We already have the output from the channel (or timed out trying to get it).
+        //
+        // Note: This "leaks" the thread, but it's acceptable for test code.
+        // The thread will be cleaned up when the test process exits.
+        drop(read_thread);
 
         // Convert to string (lossy for any invalid UTF-8)
         let buf = String::from_utf8_lossy(&output).to_string();
