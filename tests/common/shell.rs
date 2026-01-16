@@ -130,7 +130,8 @@ pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> Strin
         );
     }
 
-    buf
+    // Normalize CRLF to LF (PTYs use CRLF on some platforms)
+    buf.replace("\r\n", "\n")
 }
 
 /// Generate `wt config shell init <shell>` output for the repo.

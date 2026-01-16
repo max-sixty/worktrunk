@@ -31,14 +31,14 @@
 // =============================================================================
 
 // Shared imports (both platforms)
-use crate::common::TestRepo;
+use crate::common::{TestRepo, shell::get_shell_binary};
 use insta_cmd::get_cargo_bin;
 use std::process::Command;
 
 // Unix-only imports
 #[cfg(unix)]
 use {
-    crate::common::{add_pty_filters, add_pty_tmpdir_filters, canonicalize, wait_for_file_content},
+    crate::common::{add_pty_filters, canonicalize, wait_for_file_content},
     insta::assert_snapshot,
     std::{fs, path::PathBuf, sync::LazyLock},
     worktrunk::shell,
@@ -99,28 +99,14 @@ impl ShellOutput {
     }
 }
 
-/// Create insta settings configured for shell wrapper snapshot tests.
+/// Insta settings for shell wrapper tests.
 ///
-/// This sets up filters for:
-/// - PTY-specific artifacts (CRLF, ^D control sequences, ANSI resets)
-/// - Temporary directory paths
-/// - Project root paths (for fixture references)
+/// Inherits snapshot_path and path filters from TestRepo (bound to scope),
+/// then adds PTY-specific filters for cross-platform consistency.
 #[cfg(unix)]
 fn shell_wrapper_settings() -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-
-    // Add common PTY filters (CRLF, ^D, leading ANSI resets)
     add_pty_filters(&mut settings);
-
-    // Add temp directory path filters
-    add_pty_tmpdir_filters(&mut settings, "[TMPDIR]");
-
-    // Normalize project root paths (for fixture references like tests/fixtures/)
-    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        settings.add_filter(&regex::escape(&manifest_dir), "[PROJECT_ROOT]");
-    }
-
     settings
 }
 
@@ -320,11 +306,6 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
     }
 }
 
-/// Normalize line endings (CRLF -> LF)
-fn normalize_newlines(s: &str) -> String {
-    s.replace("\r\n", "\n")
-}
-
 /// Execute a command in a PTY with interactive input support
 ///
 /// This is similar to `exec_in_pty` but allows sending input during execution.
@@ -349,14 +330,6 @@ fn normalize_newlines(s: &str) -> String {
 /// );
 /// // The output will show: "Allow? [y/N] y"
 /// ```
-/// Get the actual shell binary name (handles powershell -> pwsh mapping)
-fn get_shell_binary(shell: &str) -> &str {
-    match shell {
-        "powershell" => "pwsh",
-        _ => shell,
-    }
-}
-
 #[cfg(test)]
 fn exec_in_pty_interactive(
     shell: &str,
@@ -462,7 +435,10 @@ fn exec_in_pty_interactive(
 
     let status = child.wait().unwrap();
 
-    (normalize_newlines(&buf), status.exit_code() as i32)
+    // Normalize CRLF to LF (PTYs use CRLF on some platforms)
+    let normalized = buf.replace("\r\n", "\n");
+
+    (normalized, status.exit_code() as i32)
 }
 
 /// Execute bash in true interactive mode by writing commands to the PTY
@@ -569,7 +545,10 @@ fn exec_bash_truly_interactive(
     // Get the captured output
     let buf = reader_thread.join().unwrap();
 
-    (normalize_newlines(&buf), status.exit_code() as i32)
+    // Normalize CRLF to LF (same as exec_in_pty_interactive)
+    let normalized = buf.replace("\r\n", "\n");
+
+    (normalized, status.exit_code() as i32)
 }
 
 /// Execute a command through a shell wrapper

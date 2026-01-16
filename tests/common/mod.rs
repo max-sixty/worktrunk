@@ -42,6 +42,9 @@ pub mod list_snapshots;
 // Progressive output tests use PTY and are Unix-only for now
 #[cfg(unix)]
 pub mod progressive_output;
+// PTY execution helpers - Unix-only
+#[cfg(unix)]
+pub mod pty;
 // Shell integration tests - cross-platform with PTY support
 #[cfg(feature = "shell-integration-tests")]
 pub mod shell;
@@ -2358,13 +2361,11 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
 /// Add filters for PTY-specific artifacts that vary between platforms.
 ///
 /// This handles:
-/// - CRLF line endings (PTYs use \r\n)
 /// - macOS PTY control sequences (^D followed by backspaces)
 /// - Leading ANSI reset codes that vary between macOS and Linux
+///
+/// Note: CRLF normalization is done eagerly in PTY exec functions, not here.
 pub fn add_pty_filters(settings: &mut insta::Settings) {
-    // PTYs use \r\n line endings, normalize to \n
-    settings.add_filter(r"\r\n", "\n");
-
     // macOS PTYs emit ^D (literal caret-D) followed by backspaces (0x08)
     // when EOF is signaled. Linux PTYs don't. Strip these for consistency.
     settings.add_filter(r"\^D\x08+", "");
@@ -2373,36 +2374,6 @@ pub fn add_pty_filters(settings: &mut insta::Settings) {
     // macOS and Linux PTYs generate ANSI codes slightly differently.
     // This handles lines that start with ESC[0m (reset).
     settings.add_filter(r"(?m)^\x1b\[0m", "");
-}
-
-/// Add filters for temporary directory paths in PTY output.
-///
-/// PTY tests create temp directories that appear in output. These paths vary
-/// per test run and need normalization.
-///
-/// # Arguments
-/// * `settings` - The insta Settings to add filters to
-/// * `placeholder` - The placeholder text to use (e.g., "[TMPDIR]", "_REPO_")
-pub fn add_pty_tmpdir_filters(settings: &mut insta::Settings, placeholder: &str) {
-    // macOS temp paths: /private/var/folders/.../T/.tmpXXX or /var/folders/.../T/.tmpXXX
-    settings.add_filter(
-        r"(?:/private)?/var/folders/[^/]+/[^/]+/T/\.tmp[^\s/'\x1b\)]+",
-        placeholder,
-    );
-
-    // Linux temp paths: /tmp/.tmpXXX
-    settings.add_filter(r"/tmp/\.tmp[^\s/'\x1b\)]+", placeholder);
-
-    // Fish shell temp paths: /tmp/.psubXXX (process substitution)
-    settings.add_filter(r"/tmp/\.psub[^\s/'\x1b\)]+", placeholder);
-
-    // Collapse duplicate placeholders that can appear with nested mktemp paths.
-    // e.g., [TMPDIR]/[TMPDIR]/foo -> [TMPDIR]/foo
-    let collapse_pattern = format!(
-        r"\[{0}](?:/?\[{0}])+",
-        regex::escape(placeholder.trim_matches(|c| c == '[' || c == ']'))
-    );
-    settings.add_filter(&collapse_pattern, placeholder);
 }
 
 /// Add filters for binary paths (target/debug/wt) in PTY output.
