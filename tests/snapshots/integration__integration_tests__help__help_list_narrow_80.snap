@@ -10,6 +10,7 @@ info:
     COLUMNS: "80"
     GIT_EDITOR: ""
     RUST_LOG: warn
+    SHELL: ""
     SOURCE_DATE_EPOCH: "1735776000"
     TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
@@ -148,6 +149,8 @@ symbol is shown (listed in priority order):
                     ⊟      Prunable (directory missing)                         
                     ⊞      Locked worktree                                      
    Default branch   ^      Is the default branch                                
+                    ∅      Orphan branch (no common ancestor with the default   
+                           branch)                                              
                     ✗      Would conflict if merged to the default branch (with 
                            --full, includes uncommitted changes)                
                     _      Same commit as the default branch, clean             
@@ -267,8 +270,8 @@ Query structured data with [2m--format=json[0m:
 
     Field    Type                           Description                         
    ──────── ─────── ─────────────────────────────────────────────────────────── 
-   state    string  "branch_worktree_mismatch", "prunable", "locked" (absent    
-                    when normal)                                                
+   state    string  "no_worktree", "branch_worktree_mismatch", "prunable",      
+                    "locked" (absent when normal)                               
    reason   string  Reason for locked/prunable state                            
    detached boolean HEAD is detached                                            
 
@@ -285,8 +288,8 @@ Query structured data with [2m--format=json[0m:
 
 These values describe relation to the default branch.
 
-[2m"is_main"[0m [2m"would_conflict"[0m [2m"empty"[0m [2m"same_commit"[0m [2m"integrated"[0m [2m"diverged"[0m [2m"ahead"
- [2m"behind"
+[2m"is_main"[0m [2m"orphan"[0m [2m"would_conflict"[0m [2m"empty"[0m [2m"same_commit"[0m [2m"integrated"[0m 
+[2m"diverged"[0m [2m"ahead"[0m [2m"behind"
 
 [32mintegration_reason values
 

@@ -32,7 +32,9 @@ pub const TEMPLATE_VARS: &[&str] = &[
     "remote",
     "remote_url",
     "upstream",
-    "target", // Added by merge/rebase hooks via extra_vars
+    "target",             // Added by merge/rebase hooks via extra_vars
+    "base",               // Added by creation hooks via extra_vars
+    "base_worktree_path", // Added by creation hooks via extra_vars
 ];
 
 /// Deprecated template variable aliases (still valid for backward compatibility).
