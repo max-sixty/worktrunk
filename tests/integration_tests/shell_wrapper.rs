@@ -3399,6 +3399,56 @@ mod windows_tests {
         );
     }
 
+    /// Diagnostic test: Verify basic PowerShell execution works via PTY.
+    #[test]
+    fn test_conpty_powershell_basic() {
+        use std::io::Write;
+
+        let pair = crate::common::open_pty();
+        let shell_binary = get_shell_binary("powershell");
+        let mut cmd = portable_pty::CommandBuilder::new(shell_binary);
+        cmd.env_clear();
+
+        // Set minimal Windows env vars
+        if let Ok(val) = std::env::var("SystemRoot") {
+            cmd.env("SystemRoot", &val);
+        }
+        if let Ok(val) = std::env::var("TEMP") {
+            cmd.env("TEMP", &val);
+        }
+        cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
+
+        cmd.arg("-NoProfile");
+        cmd.arg("-Command");
+        cmd.arg("Write-Host 'POWERSHELL_WORKS'; exit 42");
+
+        let tmp = tempfile::tempdir().unwrap();
+        cmd.cwd(tmp.path());
+
+        crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
+
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+
+        let reader = pair.master.try_clone_reader().unwrap();
+        let writer = pair.master.take_writer().unwrap();
+
+        let (output, exit_code) =
+            crate::common::pty::read_pty_output(reader, writer, pair.master, &mut child);
+
+        let normalized = output.replace("\r\n", "\n");
+
+        eprintln!("PowerShell basic test output: {:?}", normalized);
+        eprintln!("PowerShell basic test exit code: {}", exit_code);
+
+        assert_eq!(exit_code, 42, "Should get exit code from PowerShell");
+        assert!(
+            normalized.contains("POWERSHELL_WORKS"),
+            "Should capture PowerShell output. Got: {}",
+            normalized
+        );
+    }
+
     /// Test that PowerShell shell integration works for switch --create
     #[rstest]
     fn test_powershell_switch_create(repo: TestRepo) {
