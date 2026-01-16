@@ -107,6 +107,13 @@ jobs:
         name: junit-${{ matrix.os }}
         path: target/nextest/default/junit.xml
 
+    - name: 📊 Upload test results to Codecov
+      if: ${{ !cancelled() && github.repository_owner == 'max-sixty' }}
+      uses: codecov/test-results-action@v1
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: target/nextest/default/junit.xml
+
   # Check if Cargo files changed (for conditional jobs below)
   changes:
     runs-on: ubuntu-latest

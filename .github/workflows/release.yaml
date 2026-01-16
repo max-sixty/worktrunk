@@ -343,6 +343,31 @@ jobs:
           git diff --cached --quiet || git commit -m "wt ${{ needs.plan.outputs.tag }}"
           git push
 
+  publish-aur:
+    needs:
+      - plan
+      - host
+    runs-on: ubuntu-latest
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Update PKGBUILD version
+        run: |
+          VERSION="${{ needs.plan.outputs.tag }}"
+          VERSION="${VERSION#v}"
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" .github/aur/PKGBUILD
+          cat .github/aur/PKGBUILD
+      - name: Publish AUR package
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.1
+        with:
+          pkgname: worktrunk-bin
+          pkgbuild: .github/aur/PKGBUILD
+          commit_username: worktrunk-bot
+          commit_email: worktrunk-bot@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: Update to ${{ needs.plan.outputs.tag }}
+          updpkgsums: true
+
   announce:
     needs:
       - plan
@@ -350,10 +375,11 @@ jobs:
       - publish-cargo
       - publish-winget
       - publish-homebrew
+      - publish-aur
     # use "always() && ..." to allow us to wait for all publish jobs while
     # still allowing individual publish jobs to skip themselves (for prereleases).
     # "host" however must run to completion, no skipping allowed!
-    if: ${{ always() && needs.host.result == 'success' && (needs.publish-cargo.result == 'success' || needs.publish-cargo.result == 'skipped') && (needs.publish-winget.result == 'success' || needs.publish-winget.result == 'skipped') && (needs.publish-homebrew.result == 'success' || needs.publish-homebrew.result == 'skipped') }}
+    if: ${{ always() && needs.host.result == 'success' && (needs.publish-cargo.result == 'success' || needs.publish-cargo.result == 'skipped') && (needs.publish-winget.result == 'success' || needs.publish-winget.result == 'skipped') && (needs.publish-homebrew.result == 'success' || needs.publish-homebrew.result == 'skipped') && (needs.publish-aur.result == 'success' || needs.publish-aur.result == 'skipped') }}
     runs-on: "ubuntu-22.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

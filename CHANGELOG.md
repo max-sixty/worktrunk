@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.15.1
+
+### Improved
+
+- **`wt config show` diagnostics**: When shell integration is not active, now shows how the command was invoked, the binary path (if different), and `$SHELL` environment variable. Helps diagnose setup issues. ([#683](https://github.com/max-sixty/worktrunk/pull/683))
+- **Help pager follows git convention**: `-h` never opens a pager, `--help` uses pager when available. Closes [#583](https://github.com/max-sixty/worktrunk/issues/583). ([#651](https://github.com/max-sixty/worktrunk/pull/651), thanks @razor-x)
+- **Verbose mode logging**: `-v` now logs command stdout/stderr and all spawned processes including background hooks, `wt for-each` commands, and shell probes. ([#680](https://github.com/max-sixty/worktrunk/pull/680))
+
+### Documentation
+
+- **FAQ reordered**: Questions now ordered by frequency and importance.
+
+### Internal
+
+- **AUR package**: Worktrunk now published to Arch Linux AUR on each release. ([#585](https://github.com/max-sixty/worktrunk/pull/585), thanks @razor-x)
+- **Codecov Test Analytics**: Integration tests now report to Codecov Test Analytics. ([#682](https://github.com/max-sixty/worktrunk/pull/682))
+
 ## 0.15.0
 
 ### Improved

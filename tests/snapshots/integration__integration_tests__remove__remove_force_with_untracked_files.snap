@@ -19,7 +19,7 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
-    MOCK_CONFIG_DIR: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmppcKJg1/mock-bin
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
