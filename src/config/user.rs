@@ -3,11 +3,39 @@
 //! Personal preferences and per-project approved commands, not checked into git.
 
 use config::{Case, Config, ConfigError, File};
+use fs2::FileExt;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use super::HooksConfig;
+
+/// Acquire an exclusive lock on the config file for read-modify-write operations.
+///
+/// Uses a `.lock` file alongside the config file to coordinate between processes.
+/// The lock is released when the returned guard is dropped.
+fn acquire_config_lock(config_path: &std::path::Path) -> Result<std::fs::File, ConfigError> {
+    let lock_path = config_path.with_extension("toml.lock");
+
+    // Create parent directory if needed
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| ConfigError::Message(format!("Failed to create config directory: {e}")))?;
+    }
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|e| ConfigError::Message(format!("Failed to open lock file: {e}")))?;
+
+    file.lock_exclusive()
+        .map_err(|e| ConfigError::Message(format!("Failed to acquire config lock: {e}")))?;
+
+    Ok(file)
+}
 
 /// Deserialize a Vec<String> that can also accept a single String
 /// This enables setting array config fields via environment variables
@@ -472,8 +500,20 @@ impl WorktrunkConfig {
         command: String,
         config_path: Option<&std::path::Path>,
     ) -> Result<(), ConfigError> {
-        // Reload from disk first to get fresh state (fixes race condition where
-        // concurrent approvals would overwrite each other)
+        // Get the actual config path for locking
+        let path = match config_path {
+            Some(p) => p.to_path_buf(),
+            None => get_config_path().ok_or_else(|| {
+                ConfigError::Message(
+                    "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME".to_string(),
+                )
+            })?,
+        };
+
+        // Acquire exclusive lock to prevent concurrent modifications
+        let _lock = acquire_config_lock(&path)?;
+
+        // Reload from disk to get fresh state (now safe under lock)
         self.reload_projects_from(config_path)?;
 
         if self.is_command_approved(&project, &command) {
@@ -486,6 +526,7 @@ impl WorktrunkConfig {
             .approved_commands
             .push(command);
         self.save_impl(config_path)
+        // Lock released when _lock goes out of scope
     }
 
     /// Reload only the projects section from disk, preserving other in-memory state
@@ -542,7 +583,20 @@ impl WorktrunkConfig {
         command: &str,
         config_path: Option<&std::path::Path>,
     ) -> Result<(), ConfigError> {
-        // Reload from disk first to get fresh state (fixes race condition)
+        // Get the actual config path for locking
+        let path = match config_path {
+            Some(p) => p.to_path_buf(),
+            None => get_config_path().ok_or_else(|| {
+                ConfigError::Message(
+                    "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME".to_string(),
+                )
+            })?,
+        };
+
+        // Acquire exclusive lock to prevent concurrent modifications
+        let _lock = acquire_config_lock(&path)?;
+
+        // Reload from disk to get fresh state (now safe under lock)
         self.reload_projects_from(config_path)?;
 
         if let Some(project_config) = self.projects.get_mut(project) {
@@ -570,7 +624,20 @@ impl WorktrunkConfig {
         project: &str,
         config_path: Option<&std::path::Path>,
     ) -> Result<(), ConfigError> {
-        // Reload from disk first to get fresh state (fixes race condition)
+        // Get the actual config path for locking
+        let path = match config_path {
+            Some(p) => p.to_path_buf(),
+            None => get_config_path().ok_or_else(|| {
+                ConfigError::Message(
+                    "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME".to_string(),
+                )
+            })?,
+        };
+
+        // Acquire exclusive lock to prevent concurrent modifications
+        let _lock = acquire_config_lock(&path)?;
+
+        // Reload from disk to get fresh state (now safe under lock)
         self.reload_projects_from(config_path)?;
 
         if self.projects.remove(project).is_some() {
@@ -589,7 +656,21 @@ impl WorktrunkConfig {
         if self.skip_shell_integration_prompt {
             return Ok(());
         }
-        // Reload from disk first to avoid clobbering concurrent changes
+
+        // Get the actual config path for locking
+        let path = match config_path {
+            Some(p) => p.to_path_buf(),
+            None => get_config_path().ok_or_else(|| {
+                ConfigError::Message(
+                    "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME".to_string(),
+                )
+            })?,
+        };
+
+        // Acquire exclusive lock to prevent concurrent modifications
+        let _lock = acquire_config_lock(&path)?;
+
+        // Reload from disk to get fresh state (now safe under lock)
         self.reload_projects_from(config_path)?;
         self.skip_shell_integration_prompt = true;
         self.save_impl(config_path)
