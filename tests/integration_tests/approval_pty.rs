@@ -73,7 +73,12 @@ fn test_approval_prompt_accept(repo: TestRepo) {
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
-    let (output, exit_code) = exec_wt_in_pty(&repo, &["switch", "--create", "test-approve"], &env_vars, "y\n");
+    let (output, exit_code) = exec_wt_in_pty(
+        &repo,
+        &["switch", "--create", "test-approve"],
+        &env_vars,
+        "y\n",
+    );
 
     assert_eq!(exit_code, 0);
     approval_pty_settings(&repo).bind(|| {
@@ -92,7 +97,12 @@ fn test_approval_prompt_decline(repo: TestRepo) {
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
-    let (output, exit_code) = exec_wt_in_pty(&repo, &["switch", "--create", "test-decline"], &env_vars, "n\n");
+    let (output, exit_code) = exec_wt_in_pty(
+        &repo,
+        &["switch", "--create", "test-decline"],
+        &env_vars,
+        "n\n",
+    );
 
     assert_eq!(exit_code, 0);
     approval_pty_settings(&repo).bind(|| {
@@ -117,7 +127,12 @@ third = "echo 'Third command'"
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
-    let (output, exit_code) = exec_wt_in_pty(&repo, &["switch", "--create", "test-multi"], &env_vars, "y\n");
+    let (output, exit_code) = exec_wt_in_pty(
+        &repo,
+        &["switch", "--create", "test-multi"],
+        &env_vars,
+        "y\n",
+    );
 
     assert_eq!(exit_code, 0);
     approval_pty_settings(&repo).bind(|| {
@@ -164,7 +179,12 @@ fn test_approval_prompt_permission_error(repo: TestRepo) {
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
-    let (output, exit_code) = exec_wt_in_pty(&repo, &["switch", "--create", "test-permission"], &env_vars, "y\n");
+    let (output, exit_code) = exec_wt_in_pty(
+        &repo,
+        &["switch", "--create", "test-permission"],
+        &env_vars,
+        "y\n",
+    );
 
     assert_eq!(
         exit_code, 0,
@@ -204,7 +224,12 @@ test = "echo 'Running tests...'"
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
-    let (output, exit_code) = exec_wt_in_pty(&repo, &["switch", "--create", "test-named"], &env_vars, "y\n");
+    let (output, exit_code) = exec_wt_in_pty(
+        &repo,
+        &["switch", "--create", "test-named"],
+        &env_vars,
+        "y\n",
+    );
 
     assert_eq!(exit_code, 0);
     assert!(
@@ -249,7 +274,12 @@ approved-commands = ["echo 'Second command'"]
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
-    let (output, exit_code) = exec_wt_in_pty(&repo, &["switch", "--create", "test-mixed-accept"], &env_vars, "y\n");
+    let (output, exit_code) = exec_wt_in_pty(
+        &repo,
+        &["switch", "--create", "test-mixed-accept"],
+        &env_vars,
+        "y\n",
+    );
 
     assert_eq!(exit_code, 0);
 
@@ -300,7 +330,12 @@ approved-commands = ["echo 'Second command'"]
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
-    let (output, exit_code) = exec_wt_in_pty(&repo, &["switch", "--create", "test-mixed-decline"], &env_vars, "n\n");
+    let (output, exit_code) = exec_wt_in_pty(
+        &repo,
+        &["switch", "--create", "test-mixed-decline"],
+        &env_vars,
+        "n\n",
+    );
 
     assert_eq!(
         exit_code, 0,

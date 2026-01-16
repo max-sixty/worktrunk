@@ -38,7 +38,9 @@ use std::process::Command;
 // Unix-only imports
 #[cfg(unix)]
 use {
-    crate::common::{add_pty_filters, canonicalize, shell::get_shell_binary, wait_for_file_content},
+    crate::common::{
+        add_pty_filters, canonicalize, shell::get_shell_binary, wait_for_file_content,
+    },
     insta::assert_snapshot,
     std::{fs, path::PathBuf, sync::LazyLock},
     worktrunk::shell,
