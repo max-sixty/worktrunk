@@ -38,7 +38,7 @@ use std::process::Command;
 // Unix-only imports
 #[cfg(unix)]
 use {
-    crate::common::{add_pty_filters, canonicalize, wait_for_file_content},
+    crate::common::{add_pty_filters, canonicalize, shell::get_shell_binary, wait_for_file_content},
     insta::assert_snapshot,
     std::{fs, path::PathBuf, sync::LazyLock},
     worktrunk::shell,
@@ -330,14 +330,6 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
 /// );
 /// // The output will show: "Allow? [y/N] y"
 /// ```
-/// Get the actual shell binary name (handles powershell -> pwsh mapping)
-fn get_shell_binary(shell: &str) -> &str {
-    match shell {
-        "powershell" => "pwsh",
-        _ => shell,
-    }
-}
-
 #[cfg(test)]
 fn exec_in_pty_interactive(
     shell: &str,

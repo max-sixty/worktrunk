@@ -8,64 +8,28 @@
 //! to simulate interactive terminals. The non-PTY tests in `approval_ui.rs` verify the
 //! error case (non-TTY environments).
 
+use crate::common::pty::exec_in_pty;
 use crate::common::{TestRepo, add_pty_binary_path_filters, add_pty_filters, repo};
 use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
-use portable_pty::CommandBuilder;
 use rstest::rstest;
-use std::io::{Read, Write};
-use std::path::Path;
 
-/// Execute a command in a PTY with interactive input
+/// Execute wt in a PTY with interactive input.
 ///
-/// Returns (combined_output, exit_code)
-fn exec_in_pty_with_input(
-    command: &str,
+/// Thin wrapper around `exec_in_pty` that passes the wt binary path.
+fn exec_wt_in_pty(
+    repo: &TestRepo,
     args: &[&str],
-    working_dir: &Path,
     env_vars: &[(String, String)],
     input: &str,
 ) -> (String, i32) {
-    let pair = crate::common::open_pty();
-
-    let mut cmd = CommandBuilder::new(command);
-    for arg in args {
-        cmd.arg(arg);
-    }
-    cmd.cwd(working_dir);
-
-    // Set up isolated environment with coverage passthrough
-    crate::common::configure_pty_command(&mut cmd);
-
-    // Add test-specific environment variables
-    for (key, value) in env_vars {
-        cmd.env(key, value);
-    }
-
-    let mut child = pair.slave.spawn_command(cmd).unwrap();
-    drop(pair.slave); // Close slave in parent
-
-    // Get reader and writer for the PTY master
-    let mut reader = pair.master.try_clone_reader().unwrap();
-    let mut writer = pair.master.take_writer().unwrap();
-
-    // Write input to the PTY (simulating user typing)
-    writer.write_all(input.as_bytes()).unwrap();
-    writer.flush().unwrap();
-    drop(writer); // Close writer so command sees EOF
-
-    // Read all output
-    let mut buf = String::new();
-    reader.read_to_string(&mut buf).unwrap();
-
-    // Wait for child to exit
-    let exit_status = child.wait().unwrap();
-    let exit_code = exit_status.exit_code() as i32;
-
-    // Normalize CRLF to LF (PTYs use CRLF on some platforms)
-    let normalized = buf.replace("\r\n", "\n");
-
-    (normalized, exit_code)
+    exec_in_pty(
+        get_cargo_bin("wt").to_str().unwrap(),
+        args,
+        repo.root_path(),
+        env_vars,
+        input,
+    )
 }
 
 /// Create insta settings for approval PTY tests.
@@ -109,13 +73,7 @@ fn test_approval_prompt_accept(repo: TestRepo) {
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
-    let (output, exit_code) = exec_in_pty_with_input(
-        get_cargo_bin("wt").to_str().unwrap(),
-        &["switch", "--create", "test-approve"],
-        repo.root_path(),
-        &env_vars,
-        "y\n",
-    );
+    let (output, exit_code) = exec_wt_in_pty(&repo, &["switch", "--create", "test-approve"], &env_vars, "y\n");
 
     assert_eq!(exit_code, 0);
     approval_pty_settings(&repo).bind(|| {
@@ -134,13 +92,7 @@ fn test_approval_prompt_decline(repo: TestRepo) {
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
-    let (output, exit_code) = exec_in_pty_with_input(
-        get_cargo_bin("wt").to_str().unwrap(),
-        &["switch", "--create", "test-decline"],
-        repo.root_path(),
-        &env_vars,
-        "n\n",
-    );
+    let (output, exit_code) = exec_wt_in_pty(&repo, &["switch", "--create", "test-decline"], &env_vars, "n\n");
 
     assert_eq!(exit_code, 0);
     approval_pty_settings(&repo).bind(|| {
@@ -165,13 +117,7 @@ third = "echo 'Third command'"
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
-    let (output, exit_code) = exec_in_pty_with_input(
-        get_cargo_bin("wt").to_str().unwrap(),
-        &["switch", "--create", "test-multi"],
-        repo.root_path(),
-        &env_vars,
-        "y\n",
-    );
+    let (output, exit_code) = exec_wt_in_pty(&repo, &["switch", "--create", "test-multi"], &env_vars, "y\n");
 
     assert_eq!(exit_code, 0);
     approval_pty_settings(&repo).bind(|| {
@@ -218,13 +164,7 @@ fn test_approval_prompt_permission_error(repo: TestRepo) {
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
-    let (output, exit_code) = exec_in_pty_with_input(
-        get_cargo_bin("wt").to_str().unwrap(),
-        &["switch", "--create", "test-permission"],
-        repo.root_path(),
-        &env_vars,
-        "y\n",
-    );
+    let (output, exit_code) = exec_wt_in_pty(&repo, &["switch", "--create", "test-permission"], &env_vars, "y\n");
 
     assert_eq!(
         exit_code, 0,
@@ -264,13 +204,7 @@ test = "echo 'Running tests...'"
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
-    let (output, exit_code) = exec_in_pty_with_input(
-        get_cargo_bin("wt").to_str().unwrap(),
-        &["switch", "--create", "test-named"],
-        repo.root_path(),
-        &env_vars,
-        "y\n",
-    );
+    let (output, exit_code) = exec_wt_in_pty(&repo, &["switch", "--create", "test-named"], &env_vars, "y\n");
 
     assert_eq!(exit_code, 0);
     assert!(
@@ -315,13 +249,7 @@ approved-commands = ["echo 'Second command'"]
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
-    let (output, exit_code) = exec_in_pty_with_input(
-        get_cargo_bin("wt").to_str().unwrap(),
-        &["switch", "--create", "test-mixed-accept"],
-        repo.root_path(),
-        &env_vars,
-        "y\n",
-    );
+    let (output, exit_code) = exec_wt_in_pty(&repo, &["switch", "--create", "test-mixed-accept"], &env_vars, "y\n");
 
     assert_eq!(exit_code, 0);
 
@@ -372,13 +300,7 @@ approved-commands = ["echo 'Second command'"]
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
     repo.configure_shell_integration();
     let env_vars = test_env_vars_with_shell(&repo);
-    let (output, exit_code) = exec_in_pty_with_input(
-        get_cargo_bin("wt").to_str().unwrap(),
-        &["switch", "--create", "test-mixed-decline"],
-        repo.root_path(),
-        &env_vars,
-        "n\n",
-    );
+    let (output, exit_code) = exec_wt_in_pty(&repo, &["switch", "--create", "test-mixed-decline"], &env_vars, "n\n");
 
     assert_eq!(
         exit_code, 0,
@@ -431,13 +353,7 @@ fn test_approval_prompt_remove_decline(repo: TestRepo) {
     let env_vars = test_env_vars_with_shell(&repo);
 
     // Decline the approval prompt
-    let (output, exit_code) = exec_in_pty_with_input(
-        get_cargo_bin("wt").to_str().unwrap(),
-        &["remove", "to-remove"],
-        repo.root_path(),
-        &env_vars,
-        "n\n",
-    );
+    let (output, exit_code) = exec_wt_in_pty(&repo, &["remove", "to-remove"], &env_vars, "n\n");
 
     assert_eq!(
         exit_code, 0,

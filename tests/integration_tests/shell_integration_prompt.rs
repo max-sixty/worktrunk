@@ -201,88 +201,27 @@ fn test_switch_no_shell_env_shows_hint(repo: TestRepo) {
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {
     use super::*;
-    use crate::common::{configure_pty_command, open_pty, setup_snapshot_settings};
+    use crate::common::pty::exec_in_pty_with_home;
+    use crate::common::{add_pty_filters, setup_snapshot_settings};
     use insta::assert_snapshot;
     use insta_cmd::get_cargo_bin;
-    use portable_pty::CommandBuilder;
-    use std::io::{Read, Write};
     use std::path::Path;
     use tempfile::TempDir;
 
-    /// Execute a command in a PTY with interactive input
-    fn exec_in_pty_with_input(
-        command: &str,
-        args: &[&str],
-        working_dir: &Path,
-        env_vars: &[(String, String)],
-        home_dir: Option<&Path>,
-        input: &str,
-    ) -> (String, i32) {
-        let pair = open_pty();
+    /// Create insta settings for shell integration prompt PTY tests.
+    ///
+    /// Combines:
+    /// - Standard repo path filters (from setup_snapshot_settings)
+    /// - PTY-specific filters (^D, ANSI resets)
+    /// - Home directory filter (for isolated temp home)
+    fn prompt_pty_settings(repo: &TestRepo, home_dir: &Path) -> insta::Settings {
+        let mut settings = setup_snapshot_settings(repo);
+        add_pty_filters(&mut settings);
 
-        let mut cmd = CommandBuilder::new(command);
-        for arg in args {
-            cmd.arg(arg);
-        }
-        cmd.cwd(working_dir);
+        // Replace temp home directory with [HOME]
+        settings.add_filter(&regex::escape(&home_dir.to_string_lossy()), "[HOME]");
 
-        // Set up isolated environment with coverage passthrough
-        configure_pty_command(&mut cmd);
-
-        // Add test-specific environment variables
-        for (key, value) in env_vars {
-            cmd.env(key, value);
-        }
-
-        // Set HOME to isolated temp directory if provided
-        // (must be after configure_pty_command which sets HOME to real home)
-        if let Some(home) = home_dir {
-            cmd.env("HOME", home.to_string_lossy().to_string());
-            cmd.env(
-                "XDG_CONFIG_HOME",
-                home.join(".config").to_string_lossy().to_string(),
-            );
-        }
-
-        let mut child = pair.slave.spawn_command(cmd).unwrap();
-        drop(pair.slave);
-
-        let mut reader = pair.master.try_clone_reader().unwrap();
-        let mut writer = pair.master.take_writer().unwrap();
-
-        // Write input to the PTY (simulating user typing)
-        writer.write_all(input.as_bytes()).unwrap();
-        writer.flush().unwrap();
-        drop(writer);
-
-        // Read all output
-        let mut buf = String::new();
-        reader.read_to_string(&mut buf).unwrap();
-
-        let exit_status = child.wait().unwrap();
-        let exit_code = exit_status.exit_code() as i32;
-
-        // Normalize CRLF to LF (PTYs use CRLF on some platforms)
-        let normalized = buf.replace("\r\n", "\n");
-
-        (normalized, exit_code)
-    }
-
-    /// Normalize output for snapshot testing
-    fn normalize_output(output: &str, home_dir: &Path) -> String {
-        // Remove platform-specific PTY control sequences
-        let output = regex::Regex::new(r"\^D\x08+")
-            .unwrap()
-            .replace_all(output, "");
-
-        // Remove repository paths
-        let output = regex::Regex::new(r"/[^\s]+\.tmp[^\s/]+")
-            .unwrap()
-            .replace_all(&output, "[REPO]");
-
-        // Remove home directory paths
-        let home_str = home_dir.display().to_string();
-        output.replace(&home_str, "[HOME]")
+        settings
     }
 
     /// Test: Already installed (config line exists) → skip prompt
@@ -310,13 +249,13 @@ mod pty_tests {
         // Set SHELL to bash since we're testing with .bashrc
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
-        let (output, exit_code) = exec_in_pty_with_input(
+        let (output, exit_code) = exec_in_pty_with_home(
             get_cargo_bin("wt").to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
-            Some(temp_home.path()),
             "", // No input needed - should not prompt
+            temp_home.path(),
         );
 
         assert_eq!(exit_code, 0);
@@ -355,29 +294,27 @@ mod pty_tests {
         // Set SHELL to bash since we're testing with .bashrc
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
-        let (output, exit_code) = exec_in_pty_with_input(
+        let (output, exit_code) = exec_in_pty_with_home(
             get_cargo_bin("wt").to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
-            Some(temp_home.path()),
             "n\n", // User declines
+            temp_home.path(),
         );
 
         assert_eq!(exit_code, 0);
 
-        let normalized = normalize_output(&output, temp_home.path());
-
         // Should contain the prompt
         assert!(
-            normalized.contains("Install shell integration"),
-            "Should show prompt: {normalized}"
+            output.contains("Install shell integration"),
+            "Should show prompt: {output}"
         );
 
         // Should have created the worktree
         assert!(
-            normalized.contains("Created branch") && normalized.contains("and worktree"),
-            "Should create worktree: {normalized}"
+            output.contains("Created branch") && output.contains("and worktree"),
+            "Should create worktree: {output}"
         );
 
         // Config should have skip-shell-integration-prompt = true
@@ -394,10 +331,9 @@ mod pty_tests {
             "Should not install when declined: {bashrc_content}"
         );
 
-        // Snapshot the output
-        let settings = setup_snapshot_settings(&repo);
-        settings.bind(|| {
-            assert_snapshot!("prompt_decline", normalized);
+        // Snapshot the output (filters applied via settings)
+        prompt_pty_settings(&repo, temp_home.path()).bind(|| {
+            assert_snapshot!("prompt_decline", &output);
         });
     }
 
@@ -414,29 +350,27 @@ mod pty_tests {
         // Set SHELL to bash since we're testing with .bashrc
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
-        let (output, exit_code) = exec_in_pty_with_input(
+        let (output, exit_code) = exec_in_pty_with_home(
             get_cargo_bin("wt").to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
-            Some(temp_home.path()),
             "y\n", // User accepts
+            temp_home.path(),
         );
 
         assert_eq!(exit_code, 0);
 
-        let normalized = normalize_output(&output, temp_home.path());
-
         // Should contain the prompt
         assert!(
-            normalized.contains("Install shell integration"),
-            "Should show prompt: {normalized}"
+            output.contains("Install shell integration"),
+            "Should show prompt: {output}"
         );
 
         // Should show success message for configuration
         assert!(
-            normalized.contains("Configured") && normalized.contains("bash"),
-            "Should show configured message: {normalized}"
+            output.contains("Configured") && output.contains("bash"),
+            "Should show configured message: {output}"
         );
 
         // Config should NOT have skip-shell-integration-prompt after accept
@@ -454,10 +388,9 @@ mod pty_tests {
             "Should install when accepted: {bashrc_content}"
         );
 
-        // Snapshot the output
-        let settings = setup_snapshot_settings(&repo);
-        settings.bind(|| {
-            assert_snapshot!("prompt_accept", normalized);
+        // Snapshot the output (filters applied via settings)
+        prompt_pty_settings(&repo, temp_home.path()).bind(|| {
+            assert_snapshot!("prompt_accept", &output);
         });
     }
 
@@ -474,35 +407,33 @@ mod pty_tests {
         // Set SHELL to bash since we're testing with .bashrc
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
-        let (output, exit_code) = exec_in_pty_with_input(
+        let (output, exit_code) = exec_in_pty_with_home(
             get_cargo_bin("wt").to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
-            Some(temp_home.path()),
             "?\nn\n", // User requests preview, then declines
+            temp_home.path(),
         );
 
         assert_eq!(exit_code, 0);
 
-        let normalized = normalize_output(&output, temp_home.path());
-
         // Should contain the prompt (shown twice - before and after preview)
         assert!(
-            normalized.contains("Install shell integration"),
-            "Should show prompt: {normalized}"
+            output.contains("Install shell integration"),
+            "Should show prompt: {output}"
         );
 
         // Should show preview content (gutter with config line)
         assert!(
-            normalized.contains("Will add") && normalized.contains("bash"),
-            "Should show preview: {normalized}"
+            output.contains("Will add") && output.contains("bash"),
+            "Should show preview: {output}"
         );
 
         // Should show the config line in preview
         assert!(
-            normalized.contains("eval") && normalized.contains("wt config shell init"),
-            "Should show config line in preview: {normalized}"
+            output.contains("eval") && output.contains("wt config shell init"),
+            "Should show config line in preview: {output}"
         );
 
         // Shell config should NOT have the integration line (user declined)
@@ -512,10 +443,9 @@ mod pty_tests {
             "Should not install when declined after preview: {bashrc_content}"
         );
 
-        // Snapshot the output
-        let settings = setup_snapshot_settings(&repo);
-        settings.bind(|| {
-            assert_snapshot!("prompt_preview_decline", normalized);
+        // Snapshot the output (filters applied via settings)
+        prompt_pty_settings(&repo, temp_home.path()).bind(|| {
+            assert_snapshot!("prompt_preview_decline", &output);
         });
     }
 
@@ -533,23 +463,23 @@ mod pty_tests {
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
         // First switch - decline the prompt
-        let (_, _) = exec_in_pty_with_input(
+        let (_, _) = exec_in_pty_with_home(
             get_cargo_bin("wt").to_str().unwrap(),
             &["switch", "--create", "feature1"],
             repo.root_path(),
             &env_vars,
-            Some(temp_home.path()),
             "n\n",
+            temp_home.path(),
         );
 
         // Second switch - should NOT prompt again
-        let (output, exit_code) = exec_in_pty_with_input(
+        let (output, exit_code) = exec_in_pty_with_home(
             get_cargo_bin("wt").to_str().unwrap(),
             &["switch", "--create", "feature2"],
             repo.root_path(),
             &env_vars,
-            Some(temp_home.path()),
             "", // No input needed
+            temp_home.path(),
         );
 
         assert_eq!(exit_code, 0);

@@ -1532,21 +1532,17 @@ fn test_uninstall_shell_dry_run_multiple(repo: TestRepo, temp_home: TempDir) {
 // PTY-based tests for interactive install preview
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {
-    use crate::common::{
-        TestRepo, add_pty_filters, configure_pty_command, open_pty, repo, temp_home,
-    };
+    use crate::common::pty::exec_cmd_in_pty;
+    use crate::common::{TestRepo, add_pty_filters, configure_pty_command, repo, temp_home};
     use insta::assert_snapshot;
     use insta_cmd::get_cargo_bin;
     use portable_pty::CommandBuilder;
     use rstest::rstest;
     use std::fs;
-    use std::io::{Read, Write};
     use tempfile::TempDir;
 
     /// Execute shell install command in a PTY with interactive input
     fn exec_install_in_pty(temp_home: &TempDir, repo: &TestRepo, input: &str) -> (String, i32) {
-        let pair = open_pty();
-
         let mut cmd = CommandBuilder::new(get_cargo_bin("wt"));
         cmd.arg("-C");
         cmd.arg(repo.root_path());
@@ -1565,27 +1561,7 @@ mod pty_tests {
         // Using MISSING=1 skips the probe while still showing the compinit advisory.
         cmd.env("WORKTRUNK_TEST_COMPINIT_MISSING", "1");
 
-        let mut child = pair.slave.spawn_command(cmd).unwrap();
-        drop(pair.slave);
-
-        let mut reader = pair.master.try_clone_reader().unwrap();
-        let mut writer = pair.master.take_writer().unwrap();
-
-        // Write input to the PTY (simulating user typing)
-        writer.write_all(input.as_bytes()).unwrap();
-        writer.flush().unwrap();
-        drop(writer);
-
-        let mut buf = String::new();
-        reader.read_to_string(&mut buf).unwrap();
-
-        let exit_status = child.wait().unwrap();
-        let exit_code = exit_status.exit_code() as i32;
-
-        // Normalize CRLF to LF (PTYs use CRLF on some platforms)
-        let normalized = buf.replace("\r\n", "\n");
-
-        (normalized, exit_code)
+        exec_cmd_in_pty(cmd, input)
     }
 
     /// Create insta settings for install PTY tests.
