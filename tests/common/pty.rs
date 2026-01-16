@@ -162,15 +162,16 @@ pub fn read_pty_output(
             }
         };
 
-        // Wait for close thread (should be done by now, but use timeout just in case)
-        let _ = close_thread.join();
-
-        // Don't join the read thread - if it's stuck in a blocking read, joining
-        // would hang forever. The thread will eventually exit when the process ends.
-        // We already have the output from the channel (or timed out trying to get it).
+        // Don't join either thread - they may be stuck in blocking operations:
+        // - read_thread may be stuck in read() waiting for data
+        // - close_thread may be stuck in ClosePseudoConsole waiting for reader to drain
         //
-        // Note: This "leaks" the thread, but it's acceptable for test code.
-        // The thread will be cleaned up when the test process exits.
+        // These form a potential deadlock: ClosePseudoConsole waits for reader,
+        // reader waits for ClosePseudoConsole to close the pipe.
+        //
+        // "Leaking" these threads is acceptable for test code - they'll be cleaned
+        // up when the test process exits. We already have the output (or timed out).
+        drop(close_thread);
         drop(read_thread);
 
         // Convert to string (lossy for any invalid UTF-8)
