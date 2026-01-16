@@ -14,8 +14,12 @@ use crate::cli;
 /// Custom help handling for pager support and markdown rendering.
 ///
 /// We intercept help requests to provide:
-/// 1. **Pager support**: Help is shown through the detected pager (git-style precedence)
+/// 1. **Pager support**: Long help (`--help`) shown through pager, short (`-h`) prints directly
 /// 2. **Markdown rendering**: `## Headers` become green, code blocks are dimmed
+///
+/// This follows git's convention:
+/// - `-h` never opens a pager (short help, muscle-memory safe)
+/// - `--help` opens a pager when content doesn't fit (via less -F flag)
 ///
 /// Uses `Error::render()` to get clap's pre-formatted help, which already
 /// respects `-h` (short) vs `--help` (long) distinction.
@@ -26,6 +30,9 @@ pub fn maybe_handle_help_with_pager() -> bool {
     use clap::error::ErrorKind;
 
     let args: Vec<String> = std::env::args().collect();
+
+    // --help uses pager, -h prints directly (git convention)
+    let use_pager = args.iter().any(|a| a == "--help");
 
     // Check for --help-page flag (output full doc page with frontmatter)
     if args.iter().any(|a| a == "--help-page") {
@@ -92,7 +99,8 @@ pub fn maybe_handle_help_with_pager() -> bool {
 
                     // show_help_in_pager checks if stdout or stderr is a TTY.
                     // If neither is a TTY (e.g., `wt --help &>file`), it skips the pager.
-                    if let Err(e) = crate::help_pager::show_help_in_pager(&help) {
+                    // use_pager=false for -h (short help), true for --help (long help)
+                    if let Err(e) = crate::help_pager::show_help_in_pager(&help, use_pager) {
                         log::debug!("Pager invocation failed: {}", e);
                         eprintln!("{}", help);
                     }
