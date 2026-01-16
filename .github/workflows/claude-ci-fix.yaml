@@ -126,7 +126,7 @@ jobs:
 
       - name: 📋 Upload Claude Code session logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: claude-session-logs
           path: ~/.claude/
