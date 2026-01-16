@@ -750,6 +750,8 @@ pub fn detect_zsh_compinit() -> Option<bool> {
     let probe_cmd =
         r#"(( $+functions[compdef] )) && echo __WT_COMPINIT_YES__ || echo __WT_COMPINIT_NO__"#;
 
+    log::debug!("$ zsh -ic '{}' (probe)", probe_cmd);
+
     let mut child = Command::new("zsh")
         .arg("-ic")
         .arg(probe_cmd)

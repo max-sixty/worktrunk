@@ -460,10 +460,6 @@ impl Repository {
             // Normalize carriage returns to newlines for consistent output
             // Git uses \r for progress updates; in non-TTY contexts this causes snapshot instability
             let stderr = stderr.replace('\r', "\n");
-            // Log errors with ! prefix
-            for line in stderr.trim().lines() {
-                log::debug!("  ! {}", line);
-            }
             // Some git commands print errors to stdout (e.g., `commit` with nothing to commit)
             let stdout = String::from_utf8_lossy(&output.stdout);
             let error_msg = [stderr.trim(), stdout.trim()]
@@ -475,12 +471,6 @@ impl Repository {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        if !stdout.is_empty() {
-            // Log output indented
-            for line in stdout.trim().lines() {
-                log::debug!("  {}", line);
-            }
-        }
         Ok(stdout)
     }
 

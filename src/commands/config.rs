@@ -171,8 +171,8 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     show_output.push('\n');
     render_runtime_info(&mut show_output)?;
 
-    // Display through pager
-    if let Err(e) = show_help_in_pager(&show_output) {
+    // Display through pager (config show is always long-form output)
+    if let Err(e) = show_help_in_pager(&show_output, true) {
         log::debug!("Pager invocation failed: {}", e);
         // Fall back to direct output via eprintln (matches help behavior)
         worktrunk::styling::eprintln!("{}", show_output);
@@ -1117,7 +1117,7 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
             render_log_files(&mut out, &repo)?;
 
             // Display through pager (fall back to stderr if pager unavailable)
-            if show_help_in_pager(&out).is_err() {
+            if show_help_in_pager(&out, true).is_err() {
                 worktrunk::styling::eprintln!("{}", out);
             }
         }
@@ -1603,7 +1603,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     render_log_files(&mut out, repo)?;
 
     // Display through pager (fall back to stderr if pager unavailable)
-    if let Err(e) = show_help_in_pager(&out) {
+    if let Err(e) = show_help_in_pager(&out, true) {
         log::debug!("Pager invocation failed: {}", e);
         // Fall back to direct output via eprintln (matches help behavior)
         worktrunk::styling::eprintln!("{}", out);

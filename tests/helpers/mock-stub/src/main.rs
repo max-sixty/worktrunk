@@ -46,6 +46,7 @@ struct Config {
 struct CommandResponse {
     file: Option<String>,
     output: Option<String>,
+    stderr: Option<String>,
     #[serde(default)]
     exit_code: i32,
 }
@@ -93,6 +94,7 @@ fn main() {
     let default_response = CommandResponse {
         file: None,
         output: None,
+        stderr: None,
         exit_code: 1,
     };
     let response = args
@@ -116,6 +118,11 @@ fn main() {
     } else if let Some(output) = &response.output {
         print!("{}", output);
         io::stdout().flush().unwrap();
+    }
+
+    if let Some(stderr_output) = &response.stderr {
+        eprint!("{}", stderr_output);
+        io::stderr().flush().unwrap();
     }
 
     exit(response.exit_code);

@@ -1287,6 +1287,11 @@ impl TestRepo {
         &self.root
     }
 
+    /// Get the path to the bare remote repository, if created.
+    pub fn remote_path(&self) -> Option<&Path> {
+        self.remote.as_deref()
+    }
+
     /// Get the project identifier for test configs.
     ///
     /// Returns the repository directory name. This works because the standard
