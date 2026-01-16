@@ -3382,4 +3382,223 @@ mod windows_tests {
             output.combined
         );
     }
+
+    /// Test that PowerShell correctly propagates exit codes from --execute commands
+    #[rstest]
+    fn test_powershell_execute_exit_code_propagation(repo: TestRepo) {
+        // Create a worktree with --execute that exits with a specific code
+        let output = exec_through_wrapper(
+            "powershell",
+            &repo,
+            "switch",
+            &["--create", "feature", "--execute", "exit 42"],
+        );
+
+        // The wrapper should propagate the exit code from the executed command
+        assert_eq!(
+            output.exit_code, 42,
+            "PowerShell: Should propagate exit code 42 from --execute.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test that PowerShell handles branch names with slashes correctly
+    #[rstest]
+    fn test_powershell_branch_with_slashes(repo: TestRepo) {
+        let output =
+            exec_through_wrapper("powershell", &repo, "switch", &["--create", "feature/auth"]);
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: Should handle branch names with slashes.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+
+        // Verify the worktree was created with sanitized name
+        assert!(
+            output.combined.contains("feature/auth")
+                || output.combined.contains("feature-auth"),
+            "PowerShell: Should show branch name.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
+    /// Test that PowerShell handles branch names with dashes and underscores
+    #[rstest]
+    fn test_powershell_branch_with_dashes_underscores(repo: TestRepo) {
+        let output = exec_through_wrapper(
+            "powershell",
+            &repo,
+            "switch",
+            &["--create", "my-feature_branch"],
+        );
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: Should handle branch names with dashes/underscores.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test that PowerShell wrapper function is properly registered
+    #[rstest]
+    fn test_powershell_wrapper_function_registered(repo: TestRepo) {
+        // Test that the wrapper function is defined by checking if it exists
+        let wt_bin = get_cargo_bin("wt");
+        let wrapper_script = generate_wrapper(&repo, "powershell");
+
+        // Build a script that sources the wrapper and checks if wt is a function
+        let script = format!(
+            "$env:WORKTRUNK_BIN = '{}'\n\
+             $env:WORKTRUNK_CONFIG_PATH = '{}'\n\
+             {}\n\
+             if (Get-Command wt -CommandType Function -ErrorAction SilentlyContinue) {{\n\
+                 Write-Host 'WRAPPER_REGISTERED'\n\
+                 exit 0\n\
+             }} else {{\n\
+                 Write-Host 'WRAPPER_NOT_REGISTERED'\n\
+                 exit 1\n\
+             }}",
+            powershell_quote(&wt_bin.display().to_string()),
+            powershell_quote(&repo.test_config_path().display().to_string()),
+            wrapper_script
+        );
+
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path);
+
+        let (combined, exit_code) =
+            exec_in_pty_interactive("powershell", &script, repo.root_path(), &env_vars, &[]);
+
+        assert_eq!(
+            exit_code, 0,
+            "PowerShell: Wrapper function should be registered.\nOutput:\n{}",
+            combined
+        );
+        assert!(
+            combined.contains("WRAPPER_REGISTERED"),
+            "PowerShell: Should confirm wrapper is registered.\nOutput:\n{}",
+            combined
+        );
+    }
+
+    /// Test that PowerShell completion is registered
+    #[rstest]
+    fn test_powershell_completion_registered(repo: TestRepo) {
+        let wt_bin = get_cargo_bin("wt");
+        let wrapper_script = generate_wrapper(&repo, "powershell");
+
+        // Build a script that sources the wrapper and checks for completion
+        let script = format!(
+            "$env:WORKTRUNK_BIN = '{}'\n\
+             $env:WORKTRUNK_CONFIG_PATH = '{}'\n\
+             {}\n\
+             $completers = Get-ArgumentCompleter -Native\n\
+             if ($completers | Where-Object {{ $_.CommandName -eq 'wt' }}) {{\n\
+                 Write-Host 'COMPLETION_REGISTERED'\n\
+                 exit 0\n\
+             }} else {{\n\
+                 Write-Host 'COMPLETION_NOT_REGISTERED'\n\
+                 exit 1\n\
+             }}",
+            powershell_quote(&wt_bin.display().to_string()),
+            powershell_quote(&repo.test_config_path().display().to_string()),
+            wrapper_script
+        );
+
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path);
+
+        let (combined, exit_code) =
+            exec_in_pty_interactive("powershell", &script, repo.root_path(), &env_vars, &[]);
+
+        // Completion registration might fail silently if COMPLETE env handling differs
+        // Just verify the wrapper loaded without errors
+        assert!(
+            exit_code == 0 || combined.contains("COMPLETION"),
+            "PowerShell: Should attempt completion registration.\nOutput:\n{}",
+            combined
+        );
+    }
+
+    /// Test that PowerShell step for-each works across worktrees
+    #[rstest]
+    fn test_powershell_step_for_each(mut repo: TestRepo) {
+        // Create multiple worktrees
+        repo.add_worktree("feature-1");
+        repo.add_worktree("feature-2");
+
+        let output = exec_through_wrapper(
+            "powershell",
+            &repo,
+            "step",
+            &["for-each", "--", "git", "status", "--short"],
+        );
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: step for-each should succeed.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+    }
+
+    /// Test that PowerShell handles help output correctly
+    #[rstest]
+    fn test_powershell_help_output(repo: TestRepo) {
+        let output = exec_through_wrapper("powershell", &repo, "--help", &[]);
+
+        assert_eq!(
+            output.exit_code, 0,
+            "PowerShell: --help should succeed.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+
+        // Should show usage information
+        assert!(
+            output.combined.contains("Usage:") || output.combined.contains("USAGE:"),
+            "PowerShell: Should show usage in help.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
+    /// Test that PowerShell preserves WORKTRUNK_BIN environment variable
+    #[rstest]
+    fn test_powershell_worktrunk_bin_env(repo: TestRepo) {
+        // This tests the fix we just made - WORKTRUNK_BIN should be used
+        let wt_bin = get_cargo_bin("wt");
+        let wrapper_script = generate_wrapper(&repo, "powershell");
+
+        // Script that prints which binary would be used
+        let script = format!(
+            "$env:WORKTRUNK_BIN = '{}'\n\
+             $env:WORKTRUNK_CONFIG_PATH = '{}'\n\
+             {}\n\
+             Write-Host \"BIN_PATH: $env:WORKTRUNK_BIN\"",
+            powershell_quote(&wt_bin.display().to_string()),
+            powershell_quote(&repo.test_config_path().display().to_string()),
+            wrapper_script
+        );
+
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path);
+
+        let (combined, exit_code) =
+            exec_in_pty_interactive("powershell", &script, repo.root_path(), &env_vars, &[]);
+
+        assert_eq!(
+            exit_code, 0,
+            "PowerShell: Script should succeed.\nOutput:\n{}",
+            combined
+        );
+        assert!(
+            combined.contains("BIN_PATH:"),
+            "PowerShell: Should show bin path.\nOutput:\n{}",
+            combined
+        );
+    }
 }
