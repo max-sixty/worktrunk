@@ -256,7 +256,8 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
         match shell {
             "powershell" | "pwsh" => {
                 // PowerShell argument quoting
-                if arg.contains(' ') || arg.contains(';') || arg.contains('\'') {
+                // Note: -- is special in PowerShell (stop-parsing token), so we must quote it
+                if arg.contains(' ') || arg.contains(';') || arg.contains('\'') || *arg == "--" {
                     script.push_str(&powershell_quote(arg));
                 } else {
                     script.push_str(arg);
@@ -3884,19 +3885,20 @@ mod windows_tests {
         );
     }
 
-    /// Test PowerShell select command to pick from worktrees
+    /// Test PowerShell select command shows appropriate error on Windows
     #[rstest]
-    fn test_powershell_select_basic(mut repo: TestRepo) {
-        // Create some worktrees to select from
-        repo.add_worktree("feature-a");
-        repo.add_worktree("feature-b");
-
-        // List worktrees (select without TUI will list them)
-        let output = exec_through_wrapper("powershell", &repo, "select", &["--list"]);
+    fn test_powershell_select_not_available(repo: TestRepo) {
+        // wt select is not available on Windows (it's a TUI command requiring Unix PTY)
+        let output = exec_through_wrapper("powershell", &repo, "select", &[]);
 
         assert_eq!(
-            output.exit_code, 0,
-            "PowerShell: select --list should succeed.\nOutput:\n{}",
+            output.exit_code, 1,
+            "PowerShell: select should fail on Windows.\nOutput:\n{}",
+            output.combined
+        );
+        assert!(
+            output.combined.contains("not available on Windows"),
+            "PowerShell: select should show 'not available' message.\nOutput:\n{}",
             output.combined
         );
         output.assert_no_directive_leaks();
