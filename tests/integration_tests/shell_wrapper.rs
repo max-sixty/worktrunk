@@ -3450,7 +3450,19 @@ mod windows_tests {
     /// Test that PowerShell shell integration works for switch --create
     #[rstest]
     fn test_powershell_switch_create(repo: TestRepo) {
+        // Debug: print the script being generated
+        let script = build_shell_script("powershell", &repo, "switch", &["--create", "feature"]);
+        eprintln!("=== PowerShell Script Being Executed ===");
+        eprintln!("{}", script);
+        eprintln!("=== End Script ===");
+        eprintln!("Script length: {} bytes", script.len());
+
         let output = exec_through_wrapper("powershell", &repo, "switch", &["--create", "feature"]);
+
+        eprintln!("=== PowerShell Output ===");
+        eprintln!("{:?}", output.combined);
+        eprintln!("Exit code: {}", output.exit_code);
+        eprintln!("=== End Output ===");
 
         assert_eq!(output.exit_code, 0, "PowerShell: Command should succeed");
         output.assert_no_directive_leaks();
