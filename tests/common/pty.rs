@@ -52,7 +52,8 @@ fn read_pty_output(
     #[cfg(unix)]
     {
         let _ = master; // Not needed on Unix
-        let _ = writer; // Not needed on Unix
+        // Drop writer to signal EOF to child's stdin (important for Unix PTYs)
+        drop(writer);
         let mut reader = reader;
         let mut buf = String::new();
         reader.read_to_string(&mut buf).unwrap();
