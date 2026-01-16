@@ -52,56 +52,6 @@ The URL column in `wt list` shows each worktree's dev server:
 
 Ports are deterministic — `fix-auth` always gets port 16460, regardless of which machine or when. The URL dims if the server isn't running.
 
-## Subdomain routing with Caddy
-
-Clean URLs like `http://feature-auth.lvh.me` without port numbers. Useful for cookies, CORS, and matching production URL structure.
-
-**Prerequisites:** [Caddy](https://caddyserver.com/docs/install) (`brew install caddy`)
-
-```toml
-# .config/wt.toml
-[post-start]
-server = "npm run dev -- --port {{ branch | hash_port }}"
-proxy = """
-  pgrep -x caddy >/dev/null || caddy start
-  curl -sf 'http://localhost:2019/config/apps/http/servers/wt' >/dev/null || \
-    curl -sf -X PUT 'http://localhost:2019/config/apps/http/servers/wt' \
-      -H 'Content-Type: application/json' \
-      -d '{"listen":[":8080"],"automatic_https":{"disable":true},"routes":[]}'
-  curl -sf -X DELETE 'http://localhost:2019/id/wt:{{ branch | sanitize }}' || true
-  curl -sf -X PUT 'http://localhost:2019/config/apps/http/servers/wt/routes/0' \
-    -H 'Content-Type: application/json' \
-    -d '{"@id":"wt:{{ branch | sanitize }}","match":[{"host":["{{ branch | sanitize }}.lvh.me"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"127.0.0.1:{{ branch | hash_port }}"}]}]}'
-"""
-
-[list]
-url = "http://{{ branch | sanitize }}.lvh.me:8080"
-```
-
-**How it works:**
-
-1. `lvh.me` is a public domain that resolves all subdomains to `127.0.0.1` (no `/etc/hosts` editing)
-2. Caddy runs on port 8080, routing requests based on subdomain
-3. Each `wt switch` registers a route via Caddy's admin API
-4. Everything is idempotent — safe to run repeatedly
-
-**For port 80** (clean URLs without `:8080`), add port forwarding:
-
-```bash
-# macOS (run once, persists until reboot)
-echo "rdr pass on lo0 proto tcp from any to any port 80 -> 127.0.0.1 port 8080" | sudo pfctl -ef -
-
-# Linux
-sudo iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 8080
-```
-
-Then update `[list]` to omit the port:
-
-```toml
-[list]
-url = "http://{{ branch | sanitize }}.lvh.me"
-```
-
 ## Database per worktree
 
 Each worktree can have its own isolated database. Docker containers get unique names and ports:
@@ -290,6 +240,41 @@ To create a worktree and immediately attach:
 ```bash
 wt switch --create feature -x 'tmux attach -t {{ branch | sanitize }}'
 ```
+
+## Subdomain routing with Caddy
+<!-- Hand-tested 2025-01-15 -->
+
+Clean URLs like `http://feature-auth.myproject.lvh.me` without port numbers. Useful for cookies, CORS, and matching production URL structure.
+
+**Prerequisites:** [Caddy](https://caddyserver.com/docs/install) (`brew install caddy`)
+
+```toml
+# .config/wt.toml
+[post-start]
+server = "npm run dev -- --port {{ branch | hash_port }}"
+proxy = """
+  curl -sf --max-time 0.5 http://localhost:2019/config/ || caddy start
+  curl -sf http://localhost:2019/config/apps/http/servers/wt || \
+    curl -sfX PUT http://localhost:2019/config/apps/http/servers/wt -H 'Content-Type: application/json' \
+      -d '{"listen":[":8080"],"automatic_https":{"disable":true},"routes":[]}'
+  curl -sf -X DELETE http://localhost:2019/id/wt:{{ repo }}:{{ branch | sanitize }} || true
+  curl -sfX PUT http://localhost:2019/config/apps/http/servers/wt/routes/0 -H 'Content-Type: application/json' \
+    -d '{"@id":"wt:{{ repo }}:{{ branch | sanitize }}","match":[{"host":["{{ branch | sanitize }}.{{ repo }}.lvh.me"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"127.0.0.1:{{ branch | hash_port }}"}]}]}'
+"""
+
+[pre-remove]
+proxy = "curl -sf -X DELETE http://localhost:2019/id/wt:{{ repo }}:{{ branch | sanitize }} || true"
+
+[list]
+url = "http://{{ branch | sanitize }}.{{ repo }}.lvh.me:8080"
+```
+
+**How it works:**
+
+1. `{{ branch | hash_port }}` generates a deterministic port from the branch name — `feature-auth` → `16460`
+2. `lvh.me` is a public domain with wildcard DNS — `*.lvh.me` resolves to `127.0.0.1`
+3. `wt switch --create feature-auth` runs the `post-start` hook, which starts Caddy if needed and registers a route: `feature-auth.myproject` → `localhost:16460`
+4. Visiting `http://feature-auth.myproject.lvh.me:8080`: DNS resolves to `127.0.0.1`, Caddy matches `feature-auth.myproject`, proxies to the dev server on port 16460
 
 ## Bare repository layout
 
