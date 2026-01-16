@@ -62,7 +62,10 @@ fn exec_in_pty_with_input(
     let exit_status = child.wait().unwrap();
     let exit_code = exit_status.exit_code() as i32;
 
-    (buf, exit_code)
+    // Normalize CRLF to LF (PTYs use CRLF on some platforms)
+    let normalized = buf.replace("\r\n", "\n");
+
+    (normalized, exit_code)
 }
 
 /// Create insta settings for approval PTY tests.

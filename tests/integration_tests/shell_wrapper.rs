@@ -358,9 +358,7 @@ fn exec_in_pty_interactive(
 
     let status = child.wait().unwrap();
 
-    // Normalize CRLF to LF. While add_pty_filters() has a regex filter for this,
-    // that only applies during snapshot comparison. Normalizing here ensures
-    // consistent data for all downstream processing (assertions, string matching).
+    // Normalize CRLF to LF (PTYs use CRLF on some platforms)
     let normalized = buf.replace("\r\n", "\n");
 
     (normalized, status.exit_code() as i32)

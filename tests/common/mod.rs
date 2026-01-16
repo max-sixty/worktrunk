@@ -2356,13 +2356,11 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
 /// Add filters for PTY-specific artifacts that vary between platforms.
 ///
 /// This handles:
-/// - CRLF line endings (PTYs use \r\n)
 /// - macOS PTY control sequences (^D followed by backspaces)
 /// - Leading ANSI reset codes that vary between macOS and Linux
+///
+/// Note: CRLF normalization is done eagerly in PTY exec functions, not here.
 pub fn add_pty_filters(settings: &mut insta::Settings) {
-    // PTYs use \r\n line endings, normalize to \n
-    settings.add_filter(r"\r\n", "\n");
-
     // macOS PTYs emit ^D (literal caret-D) followed by backspaces (0x08)
     // when EOF is signaled. Linux PTYs don't. Strip these for consistency.
     settings.add_filter(r"\^D\x08+", "");

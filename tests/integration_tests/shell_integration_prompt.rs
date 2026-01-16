@@ -262,7 +262,10 @@ mod pty_tests {
         let exit_status = child.wait().unwrap();
         let exit_code = exit_status.exit_code() as i32;
 
-        (buf, exit_code)
+        // Normalize CRLF to LF (PTYs use CRLF on some platforms)
+        let normalized = buf.replace("\r\n", "\n");
+
+        (normalized, exit_code)
     }
 
     /// Normalize output for snapshot testing
@@ -279,10 +282,7 @@ mod pty_tests {
 
         // Remove home directory paths
         let home_str = home_dir.display().to_string();
-        let output = output.replace(&home_str, "[HOME]");
-
-        // PTYs use \r\n line endings, normalize to \n
-        output.replace("\r\n", "\n")
+        output.replace(&home_str, "[HOME]")
     }
 
     /// Test: Already installed (config line exists) → skip prompt
