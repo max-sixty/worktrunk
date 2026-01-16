@@ -312,7 +312,8 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
             // PowerShell: run script directly, redirect stderr to stdout for the wt call
             // The & { } wrapper was causing output to be lost in ConPTY.
             // Instead, we run the script directly - stderr naturally appears in the PTY.
-            script
+            // Exit with LASTEXITCODE to propagate the wt function's exit code to the calling process.
+            format!("{}\nexit $LASTEXITCODE", script)
         }
         _ => {
             // zsh uses parentheses for subshell grouping
