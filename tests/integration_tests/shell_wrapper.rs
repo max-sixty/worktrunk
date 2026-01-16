@@ -224,17 +224,12 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
             // PowerShell uses $env: for environment variables
             let wt_bin_ps = powershell_quote(&wt_bin.display().to_string());
             let config_path_ps = powershell_quote(&repo.test_config_path().display().to_string());
-            // DEBUG: Trace script execution
-            script.push_str("Write-Host '[DEBUG] Script starting'\n");
-            script.push_str("Write-Host \"[DEBUG] Script working dir: $(Get-Location)\"\n");
-            script.push_str("Write-Host \"[DEBUG] Is git repo: $(Test-Path .git)\"\n");
             script.push_str(&format!("$env:WORKTRUNK_BIN = {}\n", wt_bin_ps));
             script.push_str(&format!(
                 "$env:WORKTRUNK_CONFIG_PATH = {}\n",
                 config_path_ps
             ));
             script.push_str("$env:CLICOLOR_FORCE = '1'\n");
-            script.push_str("Write-Host '[DEBUG] Env vars set'\n");
         }
         _ => {
             // bash
@@ -247,24 +242,13 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
         }
     }
 
-    // Source the wrapper (PowerShell uses . for sourcing inline code via Invoke-Expression)
-    match shell {
-        "powershell" | "pwsh" => {
-            // The wrapper_script is PowerShell code; we include it directly
-            script.push_str("Write-Host '[DEBUG] Loading wrapper'\n");
-            script.push_str(&wrapper_script);
-            script.push_str("\nWrite-Host '[DEBUG] Wrapper loaded'\n");
-        }
-        _ => {
-            script.push_str(&wrapper_script);
-            script.push('\n');
-        }
-    }
+    // Include the shell wrapper code
+    // For PowerShell: The wrapper_script is PowerShell code included inline
+    // For bash/zsh/fish: The wrapper is shell code sourced via eval
+    script.push_str(&wrapper_script);
+    script.push('\n');
 
     // Build the command
-    if shell == "powershell" || shell == "pwsh" {
-        script.push_str("Write-Host '[DEBUG] About to call wt'\n");
-    }
     script.push_str("wt ");
     script.push_str(subcommand);
     for arg in args {
@@ -284,11 +268,6 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
         }
     }
     script.push('\n');
-
-    // Add debug output after wt call for PowerShell
-    if shell == "powershell" || shell == "pwsh" {
-        script.push_str("Write-Host \"[DEBUG] wt returned: $LASTEXITCODE\"\n");
-    }
 
     // Merge stderr to stdout to simulate real terminal behavior
     // In a real terminal, both streams interleave naturally by the OS.

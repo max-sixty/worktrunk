@@ -19,10 +19,6 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
             [string[]]$Arguments
         )
 
-        # DEBUG: Trace function entry
-        Write-Host "[DEBUG wt func] Called with args: $Arguments"
-        Write-Host "[DEBUG wt func] Current dir: $(Get-Location)"
-
         # Use WORKTRUNK_BIN if set (for testing dev builds), otherwise find via Get-Command
         # Select-Object -First 1 handles case where multiple binaries match (e.g., wt.exe from Windows Terminal)
         if ($env:WORKTRUNK_BIN) {
@@ -31,22 +27,16 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
             $wtBin = (Get-Command wt -CommandType Application | Select-Object -First 1).Source
         }
 
-        # DEBUG: Show resolved binary path and check existence
-        Write-Host "[DEBUG wt func] wtBin = $wtBin"
-        Write-Host "[DEBUG wt func] Exists? $(Test-Path $wtBin)"
-
         $directiveFile = [System.IO.Path]::GetTempFileName()
 
         try {
             # Run wt with WORKTRUNK_DIRECTIVE_FILE env var
             # WORKTRUNK_SHELL tells the binary to use PowerShell-compatible escaping
-            # stdout and stderr both go to console normally
+            # Use System.Diagnostics.Process for reliable output capture in ConPTY environments
+            # (including Windows Terminal). The & operator can have issues with output
+            # not appearing in some PTY contexts.
             $env:WORKTRUNK_DIRECTIVE_FILE = $directiveFile
             $env:WORKTRUNK_SHELL = "powershell"
-            Write-Host "[DEBUG wt func] About to execute: $wtBin $Arguments"
-            Write-Host "[DEBUG wt func] Arguments type: $($Arguments.GetType().Name)"
-            Write-Host "[DEBUG wt func] Arguments count: $($Arguments.Count)"
-            # Try running with Start-Process to capture stdout explicitly
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName = $wtBin
             $psi.Arguments = $Arguments -join ' '
@@ -54,18 +44,13 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
             $psi.RedirectStandardOutput = $true
             $psi.RedirectStandardError = $true
             $psi.WorkingDirectory = (Get-Location).Path
-            Write-Host "[DEBUG wt func] ProcessStartInfo: FileName=$($psi.FileName) Args=$($psi.Arguments)"
             $proc = [System.Diagnostics.Process]::Start($psi)
             $stdout = $proc.StandardOutput.ReadToEnd()
             $stderr = $proc.StandardError.ReadToEnd()
             $proc.WaitForExit()
             $exitCode = $proc.ExitCode
-            Write-Host "[DEBUG wt func] Process completed: ExitCode=$exitCode"
-            Write-Host "[DEBUG wt func] Stdout length: $($stdout.Length)"
-            Write-Host "[DEBUG wt func] Stderr length: $($stderr.Length)"
             if ($stdout) { Write-Host $stdout }
             if ($stderr) { Write-Host $stderr }
-            Write-Host "[DEBUG wt func] Binary returned: $exitCode"
         }
         finally {
             Remove-Item Env:\WORKTRUNK_DIRECTIVE_FILE -ErrorAction SilentlyContinue
