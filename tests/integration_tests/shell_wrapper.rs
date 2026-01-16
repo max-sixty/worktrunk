@@ -295,9 +295,10 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
             format!("exec 2>&1\n{}", script)
         }
         "powershell" | "pwsh" => {
-            // PowerShell: use & to run script block with merged output
-            // Wrap the script in a script block and redirect stderr (2) to stdout (1)
-            format!("& {{\n{}\n}} 2>&1", script)
+            // PowerShell: run script directly, redirect stderr to stdout for the wt call
+            // The & { } wrapper was causing output to be lost in ConPTY.
+            // Instead, we run the script directly - stderr naturally appears in the PTY.
+            script
         }
         _ => {
             // zsh uses parentheses for subshell grouping
