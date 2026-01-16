@@ -30,9 +30,67 @@
 //! );
 //! ```
 
-use portable_pty::CommandBuilder;
+use portable_pty::{CommandBuilder, MasterPty};
 use std::io::{Read, Write};
 use std::path::Path;
+
+/// Read output from PTY and wait for child exit.
+///
+/// On Unix, this simply reads to EOF then waits for child.
+/// On Windows ConPTY, the pipe doesn't close properly, so we:
+/// 1. Start reading in a background thread
+/// 2. Wait for child to exit
+/// 3. Drop the master to signal EOF
+/// 4. Join the read thread with timeout
+fn read_pty_output(
+    reader: Box<dyn Read + Send>,
+    master: Box<dyn MasterPty + Send>,
+    child: &mut portable_pty::Child,
+) -> (String, i32) {
+    #[cfg(unix)]
+    {
+        let _ = master; // Not needed on Unix
+        let mut reader = reader;
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).unwrap();
+        let exit_status = child.wait().unwrap();
+        (buf, exit_status.exit_code() as i32)
+    }
+
+    #[cfg(windows)]
+    {
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::Duration;
+
+        let (tx, rx) = mpsc::channel();
+        let read_thread = thread::spawn(move || {
+            let mut reader = reader;
+            let mut buf = String::new();
+            let _ = reader.read_to_string(&mut buf);
+            let _ = tx.send(());
+            buf
+        });
+
+        // Wait for child to exit first
+        let exit_status = child.wait().unwrap();
+        let exit_code = exit_status.exit_code() as i32;
+
+        // Drop the master to close the PTY and signal EOF
+        drop(master);
+
+        // Wait for read to complete (should be quick after master drop)
+        let buf = match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(()) => read_thread.join().unwrap(),
+            Err(_) => {
+                eprintln!("Warning: PTY read timed out after child exit");
+                String::new()
+            }
+        };
+
+        (buf, exit_code)
+    }
+}
 
 /// Execute a command in a PTY with optional interactive input.
 ///
@@ -110,7 +168,7 @@ fn exec_in_pty_impl(
     drop(pair.slave); // Close slave in parent
 
     // Get reader and writer for the PTY master
-    let mut reader = pair.master.try_clone_reader().unwrap();
+    let reader = pair.master.try_clone_reader().unwrap();
     let mut writer = pair.master.take_writer().unwrap();
 
     // Write input to the PTY (simulating user typing)
@@ -120,13 +178,8 @@ fn exec_in_pty_impl(
     }
     drop(writer); // Close writer so command sees EOF
 
-    // Read all output
-    let mut buf = String::new();
-    reader.read_to_string(&mut buf).unwrap();
-
-    // Wait for child to exit
-    let exit_status = child.wait().unwrap();
-    let exit_code = exit_status.exit_code() as i32;
+    // Read output and wait for exit (platform-specific handling)
+    let (buf, exit_code) = read_pty_output(reader, pair.master, &mut child);
 
     // Normalize CRLF to LF (PTYs use CRLF on some platforms)
     let normalized = buf.replace("\r\n", "\n");
@@ -149,7 +202,7 @@ pub fn exec_cmd_in_pty(cmd: CommandBuilder, input: &str) -> (String, i32) {
     let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave);
 
-    let mut reader = pair.master.try_clone_reader().unwrap();
+    let reader = pair.master.try_clone_reader().unwrap();
     let mut writer = pair.master.take_writer().unwrap();
 
     if !input.is_empty() {
@@ -158,11 +211,8 @@ pub fn exec_cmd_in_pty(cmd: CommandBuilder, input: &str) -> (String, i32) {
     }
     drop(writer);
 
-    let mut buf = String::new();
-    reader.read_to_string(&mut buf).unwrap();
-
-    let exit_status = child.wait().unwrap();
-    let exit_code = exit_status.exit_code() as i32;
+    // Read output and wait for exit (platform-specific handling)
+    let (buf, exit_code) = read_pty_output(reader, pair.master, &mut child);
 
     // Normalize CRLF to LF
     let normalized = buf.replace("\r\n", "\n");
@@ -202,7 +252,7 @@ pub fn exec_in_pty_multi_input(
     let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave);
 
-    let mut reader = pair.master.try_clone_reader().unwrap();
+    let reader = pair.master.try_clone_reader().unwrap();
     let mut writer = pair.master.take_writer().unwrap();
 
     // Write all inputs sequentially
@@ -212,11 +262,8 @@ pub fn exec_in_pty_multi_input(
     }
     drop(writer);
 
-    let mut buf = String::new();
-    reader.read_to_string(&mut buf).unwrap();
-
-    let exit_status = child.wait().unwrap();
-    let exit_code = exit_status.exit_code() as i32;
+    // Read output and wait for exit (platform-specific handling)
+    let (buf, exit_code) = read_pty_output(reader, pair.master, &mut child);
 
     // Normalize CRLF to LF
     let normalized = buf.replace("\r\n", "\n");
