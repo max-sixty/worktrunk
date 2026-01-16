@@ -387,6 +387,24 @@ pub struct SwitchBranchInfo {
     pub expected_path: Option<PathBuf>,
 }
 
+/// How the worktree will be created.
+#[derive(Debug)]
+pub enum CreationMethod {
+    /// Use `git worktree add` - handles existing branch, DWIM from remote, or -b for new
+    Regular {
+        /// True if using `-b` to create a new branch (--create flag)
+        create_branch: bool,
+        /// Base branch for creation (resolved, validated to exist)
+        base_branch: Option<String>,
+    },
+    /// Fork PR: fetch from refs/pull/N/head, create branch, configure pushRemote
+    ForkPr {
+        pr_number: u32,
+        fork_push_url: String,
+        pr_url: String,
+    },
+}
+
 /// Validated plan for a switch operation.
 ///
 /// Created by `plan_switch()`, consumed by `execute_switch()`.
@@ -407,31 +425,8 @@ pub enum SwitchPlan {
     Create {
         branch: String,
         worktree_path: PathBuf,
-        /// True if using `-b` to create a new branch (--create flag)
-        create_branch: bool,
-        /// Base branch for creation (resolved, validated to exist)
-        base_branch: Option<String>,
-        /// If path exists and --clobber, this is the backup path to move it to
-        clobber_backup: Option<PathBuf>,
-        /// Branch to record as "previous" for `wt switch -`
-        new_previous: Option<String>,
-    },
-    /// Create worktree from a fork PR (requires fetching from refs/pull/N/head)
-    ///
-    /// Fork PRs can't use the normal Create flow because the branch doesn't
-    /// exist on the primary remote - we must fetch from the special PR ref and configure
-    /// pushRemote to the fork URL.
-    CreateFromForkPr {
-        /// PR number (for messages)
-        pr_number: u32,
-        /// Local branch name (e.g., "contributor/feature")
-        local_branch: String,
-        /// Path for the new worktree
-        worktree_path: PathBuf,
-        /// URL to push to (the fork's repo)
-        fork_push_url: String,
-        /// PR URL for linking
-        pr_url: String,
+        /// How to create the worktree
+        method: CreationMethod,
         /// If path exists and --clobber, this is the backup path to move it to
         clobber_backup: Option<PathBuf>,
         /// Branch to record as "previous" for `wt switch -`
@@ -444,8 +439,7 @@ impl SwitchPlan {
     pub fn worktree_path(&self) -> &Path {
         match self {
             SwitchPlan::Existing { path, .. } => path,
-            SwitchPlan::Create { worktree_path, .. }
-            | SwitchPlan::CreateFromForkPr { worktree_path, .. } => worktree_path,
+            SwitchPlan::Create { worktree_path, .. } => worktree_path,
         }
     }
 
@@ -453,16 +447,12 @@ impl SwitchPlan {
     pub fn branch(&self) -> &str {
         match self {
             SwitchPlan::Existing { branch, .. } | SwitchPlan::Create { branch, .. } => branch,
-            SwitchPlan::CreateFromForkPr { local_branch, .. } => local_branch,
         }
     }
 
     /// Returns true if this plan will create a new worktree.
     pub fn is_create(&self) -> bool {
-        matches!(
-            self,
-            SwitchPlan::Create { .. } | SwitchPlan::CreateFromForkPr { .. }
-        )
+        matches!(self, SwitchPlan::Create { .. })
     }
 }
 
@@ -534,154 +524,107 @@ pub enum RemoveResult {
     },
 }
 
-/// Plan a switch operation from a PR number.
-///
-/// This handles the `pr:<number>` syntax, fetching PR metadata from GitHub
-/// and determining whether it's a same-repo or fork PR.
-fn plan_switch_from_pr(
-    repo: &Repository,
-    pr_number: u32,
-    create: bool,
-    clobber: bool,
-    config: &WorktrunkConfig,
-    new_previous: Option<String>,
-) -> anyhow::Result<SwitchPlan> {
-    use worktrunk::git::pr_ref::{fetch_pr_info, fork_remote_url, local_branch_name};
-
-    // --create is incompatible with pr: syntax
-    if create {
-        return Err(GitError::PrCreateConflict { pr_number }.into());
-    }
-
-    // Show progress for all network operations (gh pr view, and git fetch for forks)
-    let remote = repo.primary_remote()?;
-    crate::output::print(progress_message(cformat!(
-        "Fetching PR #{pr_number} from <bold>{remote}</>..."
-    )))?;
-
-    let repo_root = repo.repo_path()?;
-    let pr_info = fetch_pr_info(pr_number, &repo_root)?;
-
-    // Same-repo PRs: just use the branch name directly
-    if !pr_info.is_cross_repository {
-        // Delegate to normal plan_switch with the resolved branch name
-        // This handles worktree existence checks, path computation, etc.
-        return plan_switch_inner(
-            repo,
-            &pr_info.head_ref_name,
-            false, // create=false - branch already exists
-            None,  // no base
-            clobber,
-            config,
-            new_previous,
-        );
-    }
-
-    // Fork PR: need special handling
-    let local_branch = local_branch_name(&pr_info);
-    let worktree_path = compute_worktree_path(repo, &local_branch, config)?;
-
-    // Check if local branch already exists (would conflict with our creation)
-    if repo.local_branch_exists(&local_branch)? {
-        // If there's already a worktree for it, switch to that
-        if let Some(existing_path) = repo.worktree_for_branch(&local_branch)?
-            && existing_path.exists()
-        {
-            return Ok(SwitchPlan::Existing {
-                path: canonicalize(&existing_path).unwrap_or(existing_path),
-                branch: local_branch,
-                expected_path: worktree_path,
-                new_previous,
-            });
-        }
-        // Branch exists but no worktree - error (user should use the existing branch)
-        return Err(GitError::BranchAlreadyExists {
-            branch: local_branch,
-        }
-        .into());
-    }
-
-    // Check if worktree already exists for this branch (shouldn't happen since branch doesn't exist)
-    if let Some(existing_path) = repo.worktree_for_branch(&local_branch)? {
-        if existing_path.exists() {
-            return Ok(SwitchPlan::Existing {
-                path: canonicalize(&existing_path).unwrap_or(existing_path),
-                branch: local_branch,
-                expected_path: worktree_path,
-                new_previous,
-            });
-        } else {
-            return Err(GitError::WorktreeMissing {
-                branch: local_branch,
-            }
-            .into());
-        }
-    }
-
-    // Check if expected path is occupied by another worktree
-    if let Some((existing_path, occupant)) = repo.worktree_at_path(&worktree_path)? {
-        if !existing_path.exists() {
-            let branch = occupant.unwrap_or_else(|| local_branch.clone());
-            return Err(GitError::WorktreeMissing { branch }.into());
-        }
-        return Err(GitError::WorktreePathOccupied {
-            branch: local_branch,
-            path: worktree_path,
-            occupant,
-        }
-        .into());
-    }
-
-    // Clobber handling (fork PRs are never "create" since the branch exists remotely)
-    let clobber_backup = compute_clobber_backup(&worktree_path, &local_branch, clobber, false)?;
-
-    // Get remote URL to determine push URL protocol (SSH vs HTTPS)
-    let remote_url = repo.primary_remote_url().unwrap_or_default();
-    let fork_push_url = fork_remote_url(&pr_info.head_owner, &pr_info.head_repo, &remote_url);
-
-    Ok(SwitchPlan::CreateFromForkPr {
-        pr_number,
-        local_branch,
-        worktree_path,
-        fork_push_url,
-        pr_url: pr_info.url,
-        clobber_backup,
-        new_previous,
-    })
+/// Result of resolving the switch target.
+struct ResolvedTarget {
+    /// The resolved branch name
+    branch: String,
+    /// How to create the worktree
+    method: CreationMethod,
 }
 
-/// Inner implementation of plan_switch, used both directly and by plan_switch_from_pr.
-fn plan_switch_inner(
+/// Resolve the switch target, handling pr: syntax and --create/--base flags.
+///
+/// This is the first phase of planning: determine what branch we're switching to
+/// and how we'll create the worktree. May involve network calls for PR resolution.
+fn resolve_switch_target(
     repo: &Repository,
     branch: &str,
     create: bool,
     base: Option<&str>,
-    clobber: bool,
-    config: &WorktrunkConfig,
-    new_previous: Option<String>,
-) -> anyhow::Result<SwitchPlan> {
-    // Resolve special branch names ("@" for current, "-" for previous)
+) -> anyhow::Result<ResolvedTarget> {
+    use worktrunk::git::pr_ref::{fetch_pr_info, fork_remote_url, local_branch_name};
+
+    // Handle pr:<number> syntax
+    if let Some(pr_number) = worktrunk::git::pr_ref::parse_pr_ref(branch) {
+        // --create and --base are invalid with pr: syntax
+        if create {
+            return Err(GitError::PrCreateConflict { pr_number }.into());
+        }
+        if base.is_some() {
+            return Err(GitError::PrBaseConflict { pr_number }.into());
+        }
+
+        // Fetch PR info (network call)
+        let remote = repo.primary_remote()?;
+        crate::output::print(progress_message(cformat!(
+            "Fetching PR #{pr_number} from <bold>{remote}</>..."
+        )))?;
+
+        let repo_root = repo.repo_path()?;
+        let pr_info = fetch_pr_info(pr_number, &repo_root)?;
+
+        if pr_info.is_cross_repository {
+            // Fork PR: use owner/branch naming, will need fetch + config
+            let local_branch = local_branch_name(&pr_info);
+            let remote_url = repo.primary_remote_url().unwrap_or_default();
+            let fork_push_url =
+                fork_remote_url(&pr_info.head_owner, &pr_info.head_repo, &remote_url);
+
+            return Ok(ResolvedTarget {
+                branch: local_branch,
+                method: CreationMethod::ForkPr {
+                    pr_number,
+                    fork_push_url,
+                    pr_url: pr_info.url,
+                },
+            });
+        } else {
+            // Same-repo PR: just use the branch name, regular switch
+            return Ok(ResolvedTarget {
+                branch: pr_info.head_ref_name,
+                method: CreationMethod::Regular {
+                    create_branch: false,
+                    base_branch: None,
+                },
+            });
+        }
+    }
+
+    // Regular branch switch
     let resolved_branch = repo
         .resolve_worktree_name(branch)
         .context("Failed to resolve branch name")?;
 
-    // Resolve base if provided
+    // Resolve and validate base
     let resolved_base = if let Some(base_str) = base {
-        Some(repo.resolve_worktree_name(base_str)?)
+        let resolved = repo.resolve_worktree_name(base_str)?;
+        if !create {
+            crate::output::print(warning_message(
+                "--base flag is only used with --create, ignoring",
+            ))?;
+            None
+        } else if !repo.ref_exists(&resolved)? {
+            return Err(GitError::InvalidReference {
+                reference: resolved,
+            }
+            .into());
+        } else {
+            Some(resolved)
+        }
     } else {
         None
     };
 
-    // Check for conflicting conditions
-    if create && repo.local_branch_exists(&resolved_branch)? {
-        return Err(GitError::BranchAlreadyExists {
-            branch: resolved_branch.clone(),
-        }
-        .into());
-    }
-
-    // Warn if --create would shadow a remote branch
+    // Validate --create constraints
     if create {
+        if repo.local_branch_exists(&resolved_branch)? {
+            return Err(GitError::BranchAlreadyExists {
+                branch: resolved_branch,
+            }
+            .into());
+        }
+
+        // Warn if --create would shadow a remote branch
         let remotes = repo.remotes_with_branch(&resolved_branch)?;
         if !remotes.is_empty() {
             let remote_ref = format!("{}/{}", remotes[0], resolved_branch);
@@ -696,101 +639,121 @@ fn plan_switch_inner(
         }
     }
 
-    // Check if base flag was provided without create flag
-    if resolved_base.is_some() && !create {
-        crate::output::print(warning_message(
-            "--base flag is only used with --create, ignoring",
-        ))?;
-    }
-
-    // Compute expected worktree path for this branch
-    let expected_path = compute_worktree_path(repo, &resolved_branch, config)?;
-
-    // Branch-first lookup: check if branch has a worktree anywhere
-    match repo.worktree_for_branch(&resolved_branch)? {
-        Some(existing_path) if existing_path.exists() => {
-            return Ok(SwitchPlan::Existing {
-                path: canonicalize(&existing_path).unwrap_or(existing_path),
-                branch: resolved_branch,
-                expected_path,
-                new_previous,
-            });
-        }
-        Some(_) => {
-            return Err(GitError::WorktreeMissing {
-                branch: resolved_branch.clone(),
-            }
-            .into());
-        }
-        None => {}
-    }
-
-    // No worktree for branch - validate branch exists before proceeding
-    if !create && !repo.branch_exists(&resolved_branch)? {
-        return Err(GitError::InvalidReference {
-            reference: resolved_branch.clone(),
-        }
-        .into());
-    }
-
-    // Check if expected path is occupied by a different branch's worktree
-    if let Some((existing_path, path_branch)) = repo.worktree_at_path(&expected_path)? {
-        if !existing_path.exists() {
-            let branch = path_branch.unwrap_or_else(|| resolved_branch.clone());
-            return Err(GitError::WorktreeMissing { branch }.into());
-        }
-        return Err(GitError::WorktreePathOccupied {
-            branch: resolved_branch.clone(),
-            path: expected_path,
-            occupant: path_branch,
-        }
-        .into());
-    }
-
-    let clobber_backup = compute_clobber_backup(&expected_path, &resolved_branch, clobber, create)?;
-
-    // Check for invalid configured default branch when creating without explicit --base
-    if create
-        && resolved_base.is_none()
-        && let Some(configured) = repo.invalid_default_branch_config()
-    {
-        crate::output::print(warning_message(cformat!(
-            "Configured default branch <bold>{configured}</> does not exist locally"
-        )))?;
-        crate::output::print(hint_message(cformat!(
-            "To reset, run <bright-black>wt config state default-branch clear</>"
-        )))?;
-    }
-
-    // Resolve base ref for creation (accepts any commit-ish: branch, tag, SHA, HEAD)
+    // Compute base branch for creation
     let base_branch = if create {
-        match resolved_base {
-            Some(ref b) => {
-                if !repo.ref_exists(b)? {
-                    return Err(GitError::InvalidReference {
-                        reference: b.clone(),
-                    }
-                    .into());
-                }
-                Some(b.clone())
+        resolved_base.or_else(|| {
+            // Check for invalid configured default branch
+            if let Some(configured) = repo.invalid_default_branch_config() {
+                let _ = crate::output::print(warning_message(cformat!(
+                    "Configured default branch <bold>{configured}</> does not exist locally"
+                )));
+                let _ = crate::output::print(hint_message(cformat!(
+                    "To reset, run <bright-black>wt config state default-branch clear</>"
+                )));
             }
-            None => repo
-                .resolve_target_branch(None)
+            repo.resolve_target_branch(None)
                 .ok()
-                .filter(|b| repo.local_branch_exists(b).unwrap_or(false)),
-        }
+                .filter(|b| repo.local_branch_exists(b).unwrap_or(false))
+        })
     } else {
         None
     };
 
-    Ok(SwitchPlan::Create {
+    Ok(ResolvedTarget {
         branch: resolved_branch,
-        worktree_path: expected_path,
-        create_branch: create,
-        base_branch,
-        clobber_backup,
-        new_previous,
+        method: CreationMethod::Regular {
+            create_branch: create,
+            base_branch,
+        },
     })
+}
+
+/// Check if branch already has a worktree.
+///
+/// Returns `Some(Existing)` if worktree exists and is valid.
+/// Returns error if worktree record exists but directory is missing.
+/// Returns `None` if no worktree exists for this branch.
+fn check_existing_worktree(
+    repo: &Repository,
+    branch: &str,
+    expected_path: &Path,
+    new_previous: Option<String>,
+) -> anyhow::Result<Option<SwitchPlan>> {
+    match repo.worktree_for_branch(branch)? {
+        Some(existing_path) if existing_path.exists() => Ok(Some(SwitchPlan::Existing {
+            path: canonicalize(&existing_path).unwrap_or(existing_path),
+            branch: branch.to_string(),
+            expected_path: expected_path.to_path_buf(),
+            new_previous,
+        })),
+        Some(_) => Err(GitError::WorktreeMissing {
+            branch: branch.to_string(),
+        }
+        .into()),
+        None => Ok(None),
+    }
+}
+
+/// Validate that we can create a worktree at the given path.
+///
+/// Checks:
+/// - Path not occupied by another worktree
+/// - For fork PRs, local branch doesn't already exist
+/// - Handles --clobber for stale directories
+fn validate_worktree_creation(
+    repo: &Repository,
+    branch: &str,
+    path: &Path,
+    clobber: bool,
+    method: &CreationMethod,
+) -> anyhow::Result<Option<PathBuf>> {
+    // For fork PRs, check if local branch already exists (would conflict)
+    if matches!(method, CreationMethod::ForkPr { .. }) && repo.local_branch_exists(branch)? {
+        return Err(GitError::BranchAlreadyExists {
+            branch: branch.to_string(),
+        }
+        .into());
+    }
+
+    // For regular switches without --create, validate branch exists
+    if let CreationMethod::Regular {
+        create_branch: false,
+        ..
+    } = method
+        && !repo.branch_exists(branch)?
+    {
+        return Err(GitError::InvalidReference {
+            reference: branch.to_string(),
+        }
+        .into());
+    }
+
+    // Check if path is occupied by another worktree
+    if let Some((existing_path, occupant)) = repo.worktree_at_path(path)? {
+        if !existing_path.exists() {
+            let occupant_branch = occupant.unwrap_or_else(|| branch.to_string());
+            return Err(GitError::WorktreeMissing {
+                branch: occupant_branch,
+            }
+            .into());
+        }
+        return Err(GitError::WorktreePathOccupied {
+            branch: branch.to_string(),
+            path: path.to_path_buf(),
+            occupant,
+        }
+        .into());
+    }
+
+    // Handle clobber for stale directories
+    let is_create = matches!(
+        method,
+        CreationMethod::Regular {
+            create_branch: true,
+            ..
+        }
+    );
+    compute_clobber_backup(path, branch, clobber, is_create)
 }
 
 /// Validate and plan a switch operation.
@@ -809,23 +772,39 @@ pub fn plan_switch(
     clobber: bool,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<SwitchPlan> {
-    // Get the actual current branch BEFORE switching.
-    // This is what we'll record as "previous" in history for `wt switch -` support.
+    // Record current branch for `wt switch -` support
     let new_previous = repo.current_worktree().branch().ok().flatten();
 
-    // Handle pr:<number> syntax - resolve PR to branch before normal processing
-    if let Some(pr_number) = worktrunk::git::pr_ref::parse_pr_ref(branch) {
-        // Warn if --base is used with pr: syntax (PRs have predetermined branches)
-        if base.is_some() {
-            crate::output::print(warning_message(cformat!(
-                "<bold>--base</> is ignored with <bold>pr:{pr_number}</> (PR branch is predetermined)"
-            )))?;
-        }
-        return plan_switch_from_pr(repo, pr_number, create, clobber, config, new_previous);
+    // Phase 1: Resolve target (handles pr:, validates --create/--base, may do network)
+    let target = resolve_switch_target(repo, branch, create, base)?;
+
+    // Phase 2: Compute expected path
+    let expected_path = compute_worktree_path(repo, &target.branch, config)?;
+
+    // Phase 3: Check if worktree already exists for this branch
+    if let Some(existing) =
+        check_existing_worktree(repo, &target.branch, &expected_path, new_previous.clone())?
+    {
+        return Ok(existing);
     }
 
-    // Delegate to inner implementation
-    plan_switch_inner(repo, branch, create, base, clobber, config, new_previous)
+    // Phase 4: Validate we can create at this path
+    let clobber_backup = validate_worktree_creation(
+        repo,
+        &target.branch,
+        &expected_path,
+        clobber,
+        &target.method,
+    )?;
+
+    // Phase 5: Return the plan
+    Ok(SwitchPlan::Create {
+        branch: target.branch,
+        worktree_path: expected_path,
+        method: target.method,
+        clobber_backup,
+        new_previous,
+    })
 }
 
 /// Execute a validated switch plan.
@@ -881,58 +860,118 @@ pub fn execute_switch(
         SwitchPlan::Create {
             branch,
             worktree_path,
-            create_branch,
-            base_branch,
+            method,
             clobber_backup,
             new_previous,
         } => {
-            // Handle --clobber backup if needed
-            if let Some(backup_path) = clobber_backup {
+            // Handle --clobber backup if needed (shared for all creation methods)
+            if let Some(backup_path) = &clobber_backup {
                 let path_display = worktrunk::path::format_path_for_display(&worktree_path);
-                let backup_display = worktrunk::path::format_path_for_display(&backup_path);
+                let backup_display = worktrunk::path::format_path_for_display(backup_path);
                 crate::output::print(warning_message(cformat!(
                     "Moving <bold>{path_display}</> to <bold>{backup_display}</> (--clobber)"
                 )))?;
 
-                std::fs::rename(&worktree_path, &backup_path).with_context(|| {
+                std::fs::rename(&worktree_path, backup_path).with_context(|| {
                     format!("Failed to move {path_display} to {backup_display}")
                 })?;
             }
 
-            // Check if local branch exists BEFORE git worktree add (for DWIM detection).
-            // Only relevant when not using --create (which explicitly creates the branch).
-            let local_branch_existed =
-                !create_branch && repo.local_branch_exists(&branch).unwrap_or(false);
+            // Execute based on creation method
+            let (created_branch, base_branch, from_remote) = match &method {
+                CreationMethod::Regular {
+                    create_branch,
+                    base_branch,
+                } => {
+                    // Check if local branch exists BEFORE git worktree add (for DWIM detection)
+                    let local_branch_existed =
+                        !create_branch && repo.local_branch_exists(&branch).unwrap_or(false);
 
-            // Build git worktree add command
-            let worktree_path_str = worktree_path.to_string_lossy();
-            let mut args = vec!["worktree", "add", worktree_path_str.as_ref()];
+                    // Build git worktree add command
+                    let worktree_path_str = worktree_path.to_string_lossy();
+                    let mut args = vec!["worktree", "add", worktree_path_str.as_ref()];
 
-            if create_branch {
-                args.push("-b");
-                args.push(&branch);
-                if let Some(ref base) = base_branch {
-                    args.push(base);
+                    if *create_branch {
+                        args.push("-b");
+                        args.push(&branch);
+                        if let Some(base) = base_branch {
+                            args.push(base);
+                        }
+                    } else {
+                        args.push(&branch);
+                    }
+
+                    if let Err(e) = repo.run_command(&args) {
+                        return Err(GitError::WorktreeCreationFailed {
+                            branch: branch.clone(),
+                            base_branch: base_branch.clone(),
+                            error: e.to_string(),
+                        }
+                        .into());
+                    }
+
+                    // Report tracking info only if git's DWIM created the branch from a remote
+                    let from_remote = if !create_branch && !local_branch_existed {
+                        repo.upstream_branch(&branch)?
+                    } else {
+                        None
+                    };
+
+                    (*create_branch, base_branch.clone(), from_remote)
                 }
-            } else {
-                args.push(&branch);
-            }
 
-            // Create worktree
-            if let Err(e) = repo.run_command(&args) {
-                return Err(GitError::WorktreeCreationFailed {
-                    branch: branch.clone(),
-                    base_branch: base_branch.clone(),
-                    error: e.to_string(),
+                CreationMethod::ForkPr {
+                    pr_number,
+                    fork_push_url,
+                    pr_url: _,
+                } => {
+                    let pr_ref = format!("pull/{}/head", pr_number);
+                    let remote = repo.primary_remote()?;
+
+                    // Fetch the PR head (progress already shown during planning)
+                    repo.run_command(&["fetch", &remote, &pr_ref])
+                        .with_context(|| {
+                            format!("Failed to fetch PR #{} from {}", pr_number, remote)
+                        })?;
+
+                    // Create local branch from FETCH_HEAD
+                    repo.run_command(&["branch", &branch, "FETCH_HEAD"])
+                        .with_context(|| {
+                            format!(
+                                "Failed to create local branch '{}' from PR #{}",
+                                branch, pr_number
+                            )
+                        })?;
+
+                    // Configure branch tracking for pull and push
+                    let branch_remote_key = format!("branch.{}.remote", branch);
+                    let branch_merge_key = format!("branch.{}.merge", branch);
+                    let branch_push_remote_key = format!("branch.{}.pushRemote", branch);
+                    let merge_ref = format!("refs/{}", pr_ref);
+
+                    repo.run_command(&["config", &branch_remote_key, &remote])?;
+                    repo.run_command(&["config", &branch_merge_key, &merge_ref])?;
+                    repo.run_command(&["config", &branch_push_remote_key, fork_push_url])?;
+
+                    // Create worktree
+                    let worktree_path_str = worktree_path.to_string_lossy();
+                    if let Err(e) =
+                        repo.run_command(&["worktree", "add", worktree_path_str.as_ref(), &branch])
+                    {
+                        return Err(GitError::WorktreeCreationFailed {
+                            branch: branch.clone(),
+                            base_branch: None,
+                            error: e.to_string(),
+                        }
+                        .into());
+                    }
+
+                    crate::output::print(info_message(cformat!(
+                        "Push configured to fork: <bright-black>{fork_push_url}</>"
+                    )))?;
+
+                    (false, None, Some(format!("PR #{}", pr_number)))
                 }
-                .into());
-            }
-
-            // Report tracking info only if git's DWIM created the branch from a remote
-            let from_remote = if !create_branch && !local_branch_existed {
-                repo.upstream_branch(&branch)?
-            } else {
-                None
             };
 
             // Compute base worktree path for hooks and result
@@ -953,17 +992,28 @@ pub fn execute_switch(
                     force,
                 );
 
-                let extra_vars: Vec<(&str, &str)> = [
-                    base_branch.as_ref().map(|b| ("base", b.as_str())),
-                    base_worktree_path
-                        .as_ref()
-                        .map(|p| ("base_worktree_path", p.as_str())),
-                ]
-                .into_iter()
-                .flatten()
-                .collect();
-
-                ctx.execute_post_create_commands(&extra_vars)?;
+                match &method {
+                    CreationMethod::Regular { base_branch, .. } => {
+                        let extra_vars: Vec<(&str, &str)> = [
+                            base_branch.as_ref().map(|b| ("base", b.as_str())),
+                            base_worktree_path
+                                .as_ref()
+                                .map(|p| ("base_worktree_path", p.as_str())),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .collect();
+                        ctx.execute_post_create_commands(&extra_vars)?;
+                    }
+                    CreationMethod::ForkPr {
+                        pr_number, pr_url, ..
+                    } => {
+                        let pr_num_str = pr_number.to_string();
+                        let extra_vars: Vec<(&str, &str)> =
+                            vec![("pr_number", &pr_num_str), ("pr_url", pr_url)];
+                        ctx.execute_post_create_commands(&extra_vars)?;
+                    }
+                }
             }
 
             // Record successful switch in history
@@ -972,127 +1022,13 @@ pub fn execute_switch(
             Ok((
                 SwitchResult::Created {
                     path: worktree_path,
-                    created_branch: create_branch,
+                    created_branch,
                     base_branch,
                     base_worktree_path,
                     from_remote,
                 },
                 SwitchBranchInfo {
                     branch,
-                    expected_path: None,
-                },
-            ))
-        }
-
-        SwitchPlan::CreateFromForkPr {
-            pr_number,
-            local_branch,
-            worktree_path,
-            fork_push_url,
-            pr_url,
-            clobber_backup,
-            new_previous,
-        } => {
-            // Fork PR checkout flow:
-            // 1. Handle --clobber backup if needed
-            // 2. Fetch refs/pull/N/head from remote
-            // 3. Create local branch from FETCH_HEAD
-            // 4. Configure branch tracking (remote, merge, pushRemote)
-            // 5. Create worktree
-
-            // Handle --clobber backup if needed
-            if let Some(backup_path) = clobber_backup {
-                let path_display = worktrunk::path::format_path_for_display(&worktree_path);
-                let backup_display = worktrunk::path::format_path_for_display(&backup_path);
-                crate::output::print(warning_message(cformat!(
-                    "Moving <bold>{path_display}</> to <bold>{backup_display}</> (--clobber)"
-                )))?;
-
-                std::fs::rename(&worktree_path, &backup_path).with_context(|| {
-                    format!("Failed to move {path_display} to {backup_display}")
-                })?;
-            }
-
-            let pr_ref = format!("pull/{}/head", pr_number);
-            let remote = repo.primary_remote()?;
-
-            // Fetch the PR head from the primary remote
-            // (progress message already shown during planning)
-            repo.run_command(&["fetch", &remote, &pr_ref])
-                .with_context(|| format!("Failed to fetch PR #{} from {}", pr_number, remote))?;
-
-            // Create local branch from FETCH_HEAD
-            repo.run_command(&["branch", &local_branch, "FETCH_HEAD"])
-                .with_context(|| {
-                    format!(
-                        "Failed to create local branch '{}' from PR #{}",
-                        local_branch, pr_number
-                    )
-                })?;
-
-            // Configure branch tracking:
-            // - remote = primary remote (for git pull from PR ref)
-            // - merge = refs/pull/N/head (the PR ref)
-            // - pushRemote = fork URL (for git push to fork)
-            let branch_remote_key = format!("branch.{}.remote", local_branch);
-            let branch_merge_key = format!("branch.{}.merge", local_branch);
-            let branch_push_remote_key = format!("branch.{}.pushRemote", local_branch);
-            let merge_ref = format!("refs/{}", pr_ref);
-
-            repo.run_command(&["config", &branch_remote_key, &remote])?;
-            repo.run_command(&["config", &branch_merge_key, &merge_ref])?;
-            repo.run_command(&["config", &branch_push_remote_key, &fork_push_url])?;
-
-            // Create worktree for the branch
-            let worktree_path_str = worktree_path.to_string_lossy();
-            if let Err(e) =
-                repo.run_command(&["worktree", "add", worktree_path_str.as_ref(), &local_branch])
-            {
-                return Err(GitError::WorktreeCreationFailed {
-                    branch: local_branch.clone(),
-                    base_branch: None,
-                    error: e.to_string(),
-                }
-                .into());
-            }
-
-            // Execute post-create commands
-            if !no_verify {
-                let repo_root = repo.repo_path()?;
-                let ctx = CommandContext::new(
-                    repo,
-                    config,
-                    Some(&local_branch),
-                    &worktree_path,
-                    &repo_root,
-                    force,
-                );
-
-                // PR-specific extra vars
-                let pr_number_str = pr_number.to_string();
-                let extra_vars: Vec<(&str, &str)> =
-                    vec![("pr_number", &pr_number_str), ("pr_url", &pr_url)];
-
-                ctx.execute_post_create_commands(&extra_vars)?;
-            }
-
-            // Record successful switch in history
-            let _ = repo.record_switch_previous(new_previous.as_deref());
-
-            crate::output::print(info_message(cformat!(
-                "Push configured to fork: <bright-black>{fork_push_url}</>"
-            )))?;
-
-            Ok((
-                SwitchResult::Created {
-                    path: worktree_path,
-                    created_branch: false, // We're not creating a new branch conceptually
-                    base_branch: None,
-                    base_worktree_path: None,
-                    from_remote: Some(format!("PR #{}", pr_number)),
-                },
-                SwitchBranchInfo {
-                    branch: local_branch,
                     expected_path: None,
                 },
             ))

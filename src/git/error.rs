@@ -150,6 +150,10 @@ pub enum GitError {
     PrCreateConflict {
         pr_number: u32,
     },
+    /// --base flag used with pr: syntax (conflict - PR base is predetermined)
+    PrBaseConflict {
+        pr_number: u32,
+    },
     Other {
         message: String,
     },
@@ -575,7 +579,18 @@ impl std::fmt::Display for GitError {
                     error_message(cformat!(
                         "Cannot use <bold>--create</> with <bold>pr:{pr_number}</>"
                     )),
-                    hint_message("The PR's branch already exists; remove --create")
+                    hint_message("PRs already have a branch; remove --create")
+                )
+            }
+
+            GitError::PrBaseConflict { pr_number } => {
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!(
+                        "Cannot use <bold>--base</> with <bold>pr:{pr_number}</>"
+                    )),
+                    hint_message("PRs already have a base; remove --base")
                 )
             }
 

@@ -19,7 +19,7 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
-    MOCK_CONFIG_DIR: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpxzqERC/mock-bin
+    MOCK_CONFIG_DIR: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp4ZpO8c/mock-bin
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
@@ -35,4 +35,4 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mCannot use [1m--create[22m with [1mpr:101[22m[39m
-[2m↳[22m [2mThe PR's branch already exists; remove --create[22m
+[2m↳[22m [2mPRs already have a branch; remove --create[22m
