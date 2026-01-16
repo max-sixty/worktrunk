@@ -148,6 +148,19 @@ pub enum GitError {
     WorktreeNotFound {
         branch: String,
     },
+    /// --create flag used with pr: syntax (conflict - PR branch already exists)
+    PrCreateConflict {
+        pr_number: u32,
+    },
+    /// --base flag used with pr: syntax (conflict - PR base is predetermined)
+    PrBaseConflict {
+        pr_number: u32,
+    },
+    /// Branch exists but is tracking a different PR
+    BranchTracksDifferentPr {
+        branch: String,
+        pr_number: u32,
+    },
     Other {
         message: String,
     },
@@ -572,6 +585,41 @@ impl std::fmt::Display for GitError {
                     f,
                     "{}",
                     error_message(cformat!("No worktree found for branch <bold>{branch}</>"))
+                )
+            }
+
+            GitError::PrCreateConflict { pr_number } => {
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!(
+                        "Cannot use <bold>--create</> with <bold>pr:{pr_number}</>"
+                    )),
+                    hint_message("PRs already have a branch; remove --create")
+                )
+            }
+
+            GitError::PrBaseConflict { pr_number } => {
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!(
+                        "Cannot use <bold>--base</> with <bold>pr:{pr_number}</>"
+                    )),
+                    hint_message("PRs already have a base; remove --base")
+                )
+            }
+
+            GitError::BranchTracksDifferentPr { branch, pr_number } => {
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!(
+                        "Branch <bold>{branch}</> exists but is not tracking PR #{pr_number}"
+                    )),
+                    hint_message(cformat!(
+                        "Delete the branch first: <bright-black>git branch -D {branch}</>"
+                    ))
                 )
             }
 

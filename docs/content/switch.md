@@ -25,6 +25,7 @@ wt switch feature-auth           # Switch to worktree
 wt switch -                      # Previous worktree (like cd -)
 wt switch --create new-feature   # Create new branch and worktree
 wt switch --create hotfix --base production
+wt switch pr:123                 # Switch to PR #123's branch
 ```
 
 ## Creating a branch
@@ -56,12 +57,26 @@ wt switch --create temp --no-verify      # Skip hooks
 | `^` | Default branch (`main`/`master`) |
 | `@` | Current branch/worktree |
 | `-` | Previous worktree (like `cd -`) |
+| `pr:{N}` | GitHub PR #N's branch |
 
 ```bash
 wt switch -                      # Back to previous
 wt switch ^                      # Default branch worktree
 wt switch --create fix --base=@  # Branch from current HEAD
+wt switch pr:123                 # PR #123's branch
 ```
+
+## GitHub pull requests (experimental)
+
+The `pr:<number>` syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches `refs/pull/N/head` and configures `pushRemote` to the fork URL.
+
+```bash
+wt switch pr:101                 # Checkout PR #101
+```
+
+Requires `gh` CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:` syntax since the branch already exists.
+
+**Fork PRs:** To push changes, use `git push HEAD:<branch-name>` where `<branch-name>` is the PR's head branch (e.g., `feature-fix`). The local branch is named `<owner>/<branch>` to avoid collisions, so plain `git push` won't work with default settings.
 
 ## When wt switch fails
 
@@ -89,9 +104,10 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>&lt;BRANCH&gt;</span>
-          Branch name
+          Branch name or shortcut
 
-          Shortcuts: &#39;^&#39; (default branch), &#39;-&#39; (previous), &#39;@&#39; (current)
+          Shortcuts: &#39;^&#39; (default branch), &#39;-&#39; (previous), &#39;@&#39; (current),
+          &#39;pr:{N}&#39; (GitHub PR, experimental)
 
   <span class=c>[EXECUTE_ARGS]...</span>
           Additional arguments for --execute command (after --)

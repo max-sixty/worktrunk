@@ -53,6 +53,7 @@ pub struct MockConfig {
 pub struct MockResponse {
     file: Option<String>,
     output: Option<String>,
+    stderr: Option<String>,
     exit_code: i32,
 }
 
@@ -62,15 +63,27 @@ impl MockResponse {
         Self {
             file: Some(path.to_string()),
             output: None,
+            stderr: None,
             exit_code: 0,
         }
     }
 
-    /// Respond with literal output.
+    /// Respond with literal output (stdout).
     pub fn output(text: &str) -> Self {
         Self {
             file: None,
             output: Some(text.to_string()),
+            stderr: None,
+            exit_code: 0,
+        }
+    }
+
+    /// Respond with stderr output.
+    pub fn stderr(text: &str) -> Self {
+        Self {
+            file: None,
+            output: None,
+            stderr: Some(text.to_string()),
             exit_code: 0,
         }
     }
@@ -80,6 +93,7 @@ impl MockResponse {
         Self {
             file: None,
             output: None,
+            stderr: None,
             exit_code: code,
         }
     }
@@ -87,6 +101,12 @@ impl MockResponse {
     /// Set exit code (chainable).
     pub fn with_exit_code(mut self, code: i32) -> Self {
         self.exit_code = code;
+        self
+    }
+
+    /// Add stderr output (chainable).
+    pub fn with_stderr(mut self, text: &str) -> Self {
+        self.stderr = Some(text.to_string());
         self
     }
 
@@ -98,7 +118,12 @@ impl MockResponse {
         if let Some(o) = &self.output {
             obj.insert("output".to_string(), json!(o));
         }
-        if self.exit_code != 0 || (self.file.is_none() && self.output.is_none()) {
+        if let Some(e) = &self.stderr {
+            obj.insert("stderr".to_string(), json!(e));
+        }
+        if self.exit_code != 0
+            || (self.file.is_none() && self.output.is_none() && self.stderr.is_none())
+        {
             obj.insert("exit_code".to_string(), json!(self.exit_code));
         }
         serde_json::Value::Object(obj)
