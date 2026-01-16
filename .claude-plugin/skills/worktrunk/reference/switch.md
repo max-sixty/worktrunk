@@ -52,7 +52,7 @@ wt switch --create fix --base=@  # Branch from current HEAD
 wt switch pr:123                 # PR #123's branch
 ```
 
-## GitHub pull requests
+## GitHub pull requests (experimental)
 
 The `pr:<number>` syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches `refs/pull/N/head` and configures `pushRemote` to the fork URL.
 
@@ -85,7 +85,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Branch name or shortcut
 
           Shortcuts: &#39;^&#39; (default branch), &#39;-&#39; (previous), &#39;@&#39; (current),
-          &#39;pr:{N}&#39; (GitHub PR)
+          &#39;pr:{N}&#39; (GitHub PR, experimental)
 
   <span class=c>[EXECUTE_ARGS]...</span>
           Additional arguments for --execute command (after --)

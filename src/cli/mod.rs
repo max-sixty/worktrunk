@@ -297,7 +297,7 @@ wt switch --create fix --base=@  # Branch from current HEAD
 wt switch pr:123                 # PR #123's branch
 ```
 
-## GitHub pull requests
+## GitHub pull requests (experimental)
 
 The `pr:<number>` syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches `refs/pull/N/head` and configures `pushRemote` to the fork URL.
 
@@ -328,7 +328,7 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
     Switch {
         /// Branch name or shortcut
         ///
-        /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR)
+        /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR, experimental)
         #[arg(add = crate::completion::worktree_branch_completer())]
         branch: String,
 

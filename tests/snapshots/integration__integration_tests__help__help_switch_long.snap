@@ -30,7 +30,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
   [36m<BRANCH>
           Branch name or shortcut
           
-          Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR)
+          Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR, experimental)
 
   [36m[EXECUTE_ARGS]...
           Additional arguments for --execute command (after --)
@@ -128,7 +128,7 @@ When creating a worktree, worktrunk:
   [2mwt switch --create fix --base=@  # Branch from current HEAD
   [2mwt switch pr:123                 # PR #123's branch
 
-[1m[32mGitHub pull requests
+[1m[32mGitHub pull requests (experimental)
 
 The [2mpr:<number>[0m syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches [2mrefs/pull/N/head[0m and configures [2mpushRemote[0m to the fork URL.
 
