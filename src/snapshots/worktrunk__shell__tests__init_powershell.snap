@@ -12,18 +12,6 @@ expression: output
 # Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
 if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
 
-    # Helper function to escape an argument for Windows command line
-    # Windows uses CommandLineToArgvW rules: double-quote arguments with spaces,
-    # escape internal quotes, and handle backslashes before quotes
-    function _wt_escape_arg {
-        param([string]$arg)
-        if ($arg -eq '') { return '""' }
-        if ($arg -notmatch '[ \t"\\]') { return $arg }
-        # Escape backslashes followed by quotes, then escape quotes
-        $escaped = $arg -replace '(\\+)"', '$1$1\"' -replace '"', '\"'
-        return "`"$escaped`""
-    }
-
     # wt wrapper function - uses temp file for directives
     function wt {
         param(
@@ -44,26 +32,10 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
         try {
             # Run wt with WORKTRUNK_DIRECTIVE_FILE env var
             # WORKTRUNK_SHELL tells the binary to use PowerShell-compatible escaping
-            # Use System.Diagnostics.Process for reliable output capture in ConPTY environments
-            # (including Windows Terminal). The & operator can have issues with output
-            # not appearing in some PTY contexts.
             $env:WORKTRUNK_DIRECTIVE_FILE = $directiveFile
             $env:WORKTRUNK_SHELL = "powershell"
-            $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = $wtBin
-            # Properly escape each argument for Windows command line
-            $psi.Arguments = ($Arguments | ForEach-Object { _wt_escape_arg $_ }) -join ' '
-            $psi.UseShellExecute = $false
-            $psi.RedirectStandardOutput = $true
-            $psi.RedirectStandardError = $true
-            $psi.WorkingDirectory = (Get-Location).Path
-            $proc = [System.Diagnostics.Process]::Start($psi)
-            $stdout = $proc.StandardOutput.ReadToEnd()
-            $stderr = $proc.StandardError.ReadToEnd()
-            $proc.WaitForExit()
-            $exitCode = $proc.ExitCode
-            if ($stdout) { Write-Host $stdout }
-            if ($stderr) { Write-Host $stderr }
+            & $wtBin @Arguments
+            $exitCode = $LASTEXITCODE
         }
         finally {
             Remove-Item Env:\WORKTRUNK_DIRECTIVE_FILE -ErrorAction SilentlyContinue
