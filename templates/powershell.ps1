@@ -39,7 +39,13 @@ if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN
             $env:WORKTRUNK_DIRECTIVE_FILE = $directiveFile
             $env:WORKTRUNK_SHELL = "powershell"
             Write-Host "[DEBUG wt func] About to execute: $wtBin $Arguments"
-            & $wtBin @Arguments
+            try {
+                & $wtBin @Arguments 2>&1
+                Write-Host "[DEBUG wt func] Binary executed"
+            }
+            catch {
+                Write-Host "[DEBUG wt func] Exception: $_"
+            }
             $exitCode = $LASTEXITCODE
             Write-Host "[DEBUG wt func] Binary returned: $exitCode"
         }
