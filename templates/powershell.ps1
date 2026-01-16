@@ -40,9 +40,27 @@ if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN
             $env:WORKTRUNK_DIRECTIVE_FILE = $directiveFile
             $env:WORKTRUNK_SHELL = "powershell"
             Write-Host "[DEBUG wt func] About to execute: $wtBin $Arguments"
-            # Run binary directly without capturing - let output go to console
-            & $wtBin @Arguments
-            $exitCode = $LASTEXITCODE
+            Write-Host "[DEBUG wt func] Arguments type: $($Arguments.GetType().Name)"
+            Write-Host "[DEBUG wt func] Arguments count: $($Arguments.Count)"
+            # Try running with Start-Process to capture stdout explicitly
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $wtBin
+            $psi.Arguments = $Arguments -join ' '
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $psi.WorkingDirectory = (Get-Location).Path
+            Write-Host "[DEBUG wt func] ProcessStartInfo: FileName=$($psi.FileName) Args=$($psi.Arguments)"
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            $stdout = $proc.StandardOutput.ReadToEnd()
+            $stderr = $proc.StandardError.ReadToEnd()
+            $proc.WaitForExit()
+            $exitCode = $proc.ExitCode
+            Write-Host "[DEBUG wt func] Process completed: ExitCode=$exitCode"
+            Write-Host "[DEBUG wt func] Stdout length: $($stdout.Length)"
+            Write-Host "[DEBUG wt func] Stderr length: $($stderr.Length)"
+            if ($stdout) { Write-Host $stdout }
+            if ($stderr) { Write-Host $stderr }
             Write-Host "[DEBUG wt func] Binary returned: $exitCode"
         }
         finally {
