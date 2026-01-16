@@ -170,6 +170,8 @@ fn run_command_streaming(
 ) -> Result<(), CommandError> {
     let shell = ShellConfig::get();
 
+    log::debug!("$ {} (streaming)", command);
+
     let stdin_mode = if stdin_content.is_some() {
         Stdio::piped()
     } else {

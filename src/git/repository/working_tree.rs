@@ -64,9 +64,6 @@ impl<'a> WorkingTree<'a> {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stderr = stderr.replace('\r', "\n");
-            for line in stderr.trim().lines() {
-                log::debug!("  ! {}", line);
-            }
             let stdout = String::from_utf8_lossy(&output.stdout);
             let error_msg = [stderr.trim(), stdout.trim()]
                 .into_iter()
@@ -77,11 +74,6 @@ impl<'a> WorkingTree<'a> {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        if !stdout.is_empty() {
-            for line in stdout.trim().lines() {
-                log::debug!("  {}", line);
-            }
-        }
         Ok(stdout)
     }
 

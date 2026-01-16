@@ -66,14 +66,21 @@ pub fn spawn_detached(
         )
     })?;
 
+    log::debug!(
+        "$ {} (detached, logging to {}-{}.log)",
+        command,
+        safe_branch,
+        safe_name
+    );
+
     #[cfg(unix)]
     {
-        spawn_detached_unix(worktree_path, command, log_file, context_json, name)?;
+        spawn_detached_unix(worktree_path, command, log_file, context_json)?;
     }
 
     #[cfg(windows)]
     {
-        spawn_detached_windows(worktree_path, command, log_file, context_json, name)?;
+        spawn_detached_windows(worktree_path, command, log_file, context_json)?;
     }
 
     Ok(log_path)
@@ -85,7 +92,6 @@ fn spawn_detached_unix(
     command: &str,
     log_file: fs::File,
     context_json: Option<&str>,
-    name: &str,
 ) -> anyhow::Result<()> {
     use std::os::unix::process::CommandExt;
 
@@ -106,10 +112,6 @@ fn spawn_detached_unix(
     };
 
     let shell_cmd = format!("{} &", full_command);
-
-    // Log only the operation identifier, not the full command (which may contain context_json
-    // with user data that shouldn't appear in debug logs)
-    log::debug!("spawn_detached: {} in {}", name, worktree_path.display());
 
     // Detachment via process_group(0): puts the spawned shell in its own process group.
     // When the controlling PTY closes, SIGHUP is sent to the foreground process group.
@@ -145,14 +147,9 @@ fn spawn_detached_windows(
     command: &str,
     log_file: fs::File,
     context_json: Option<&str>,
-    name: &str,
 ) -> anyhow::Result<()> {
     use std::os::windows::process::CommandExt;
     use worktrunk::shell_exec::ShellConfig;
-
-    // Log only the operation identifier, not the full command (which may contain context_json
-    // with user data that shouldn't appear in debug logs)
-    log::debug!("spawn_detached: {} in {}", name, worktree_path.display());
 
     // CREATE_NEW_PROCESS_GROUP: Creates new process group (0x00000200)
     // DETACHED_PROCESS: Creates process without console (0x00000008)

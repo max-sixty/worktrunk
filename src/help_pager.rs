@@ -103,6 +103,7 @@ pub(crate) fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
     // Spawn pager with TTY access (interactive, unlike detached diff renderer)
     // Falls back to direct output if pager unavailable (e.g., less not installed)
     let shell = ShellConfig::get();
+    log::debug!("$ {} (pager)", pager_cmd);
     let mut cmd = shell.command(&final_cmd);
     // Prevent subprocesses from writing to the directive file
     cmd.env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR);
