@@ -1460,6 +1460,21 @@ impl TestRepo {
         canonical_path
     }
 
+    /// Creates a worktree at a custom path (for testing nested worktrees).
+    ///
+    /// Unlike `add_worktree`, this places the worktree at the specified path
+    /// rather than using the default sibling layout.
+    pub fn add_worktree_at_path(&mut self, branch: &str, path: &Path) -> PathBuf {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let path_str = path.to_str().unwrap();
+        self.run_git(&["worktree", "add", "-b", branch, path_str]);
+
+        let canonical_path = canonicalize(path).unwrap();
+        self.worktrees
+            .insert(branch.to_string(), canonical_path.clone());
+        canonical_path
+    }
+
     /// Creates a worktree for the main branch (required for merge operations)
     ///
     /// This is a convenience method that creates a worktree for the main branch

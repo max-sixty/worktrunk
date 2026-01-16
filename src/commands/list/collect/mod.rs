@@ -292,15 +292,14 @@ pub fn collect(
         Vec::new()
     };
 
-    // Detect current worktree by checking if repo path is inside any worktree.
-    // This avoids a git command - we just compare canonicalized paths.
-    let repo_path_canonical = canonicalize(repo.discovery_path()).ok();
-    let current_worktree_path = repo_path_canonical.as_ref().and_then(|repo_path| {
-        worktrees.iter().find_map(|wt| {
-            canonicalize(&wt.path)
-                .ok()
-                .filter(|wt_path| repo_path.starts_with(wt_path))
-        })
+    // Detect current worktree using git rev-parse --show-toplevel (via WorkingTree::root).
+    // This correctly handles worktrees placed inside other worktrees (e.g., .worktrees/ layout)
+    // by letting git resolve the actual worktree root rather than using prefix matching.
+    let current_worktree_path = repo.current_worktree().root().ok().and_then(|root| {
+        worktrees
+            .iter()
+            .find(|wt| wt.path == root)
+            .map(|wt| wt.path.clone())
     });
     // Show warning if user configured a default branch that doesn't exist locally
     if let Some(configured) = repo.invalid_default_branch_config() {

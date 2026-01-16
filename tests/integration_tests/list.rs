@@ -2487,3 +2487,55 @@ fn test_list_full_with_nonexistent_default_branch(repo: TestRepo) {
         cmd
     });
 }
+
+/// Tests that the current worktree indicator (@) is correct for nested worktrees.
+///
+/// When worktrees are placed inside other worktrees (e.g., `.worktrees/` layout),
+/// the current detection must use git rev-parse --show-toplevel to correctly identify
+/// which worktree contains the cwd, rather than prefix matching which would match
+/// the parent worktree first.
+///
+/// Regression test for: prefix matching with starts_with would incorrectly match
+/// the main worktree when running from a nested worktree.
+#[rstest]
+fn test_list_nested_worktree_current_indicator(mut repo: TestRepo) {
+    // Create a worktree nested inside the main repo (like .worktrees/ layout)
+    let nested_path = repo.root_path().join(".worktrees").join("feature");
+    let nested_worktree = repo.add_worktree_at_path("feature", &nested_path);
+
+    // Run wt list from inside the nested worktree
+    // The @ indicator should appear on "feature", not on "main"
+    assert_cmd_snapshot!(list_snapshots::command(&repo, &nested_worktree));
+}
+
+/// Tests JSON output for nested worktrees shows is_current on the correct worktree.
+#[rstest]
+fn test_list_nested_worktree_json_is_current(mut repo: TestRepo) {
+    // Create a worktree nested inside the main repo
+    let nested_path = repo.root_path().join(".worktrees").join("feature");
+    let nested_worktree = repo.add_worktree_at_path("feature", &nested_path);
+
+    // Run wt list --format=json from inside the nested worktree
+    let output = repo
+        .wt_command()
+        .current_dir(&nested_worktree)
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+
+    // Find the worktree entries
+    let main_wt = json.iter().find(|w| w["branch"] == "main").unwrap();
+    let feature_wt = json.iter().find(|w| w["branch"] == "feature").unwrap();
+
+    // feature should be current, main should not
+    assert_eq!(
+        feature_wt["is_current"], true,
+        "Nested worktree 'feature' should be marked as current"
+    );
+    assert_eq!(
+        main_wt["is_current"], false,
+        "Parent worktree 'main' should NOT be marked as current"
+    );
+}
