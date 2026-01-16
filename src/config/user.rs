@@ -3,11 +3,39 @@
 //! Personal preferences and per-project approved commands, not checked into git.
 
 use config::{Case, Config, ConfigError, File};
+use fs2::FileExt;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use super::HooksConfig;
+
+/// Acquire an exclusive lock on the config file for read-modify-write operations.
+///
+/// Uses a `.lock` file alongside the config file to coordinate between processes.
+/// The lock is released when the returned guard is dropped.
+fn acquire_config_lock(config_path: &std::path::Path) -> Result<std::fs::File, ConfigError> {
+    let lock_path = config_path.with_extension("toml.lock");
+
+    // Create parent directory if needed
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| ConfigError::Message(format!("Failed to create config directory: {e}")))?;
+    }
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|e| ConfigError::Message(format!("Failed to open lock file: {e}")))?;
+
+    file.lock_exclusive()
+        .map_err(|e| ConfigError::Message(format!("Failed to acquire config lock: {e}")))?;
+
+    Ok(file)
+}
 
 /// Deserialize a Vec<String> that can also accept a single String
 /// This enables setting array config fields via environment variables
@@ -444,6 +472,34 @@ impl WorktrunkConfig {
         expand_template(&self.worktree_path(), &vars, false, repo)
     }
 
+    /// Execute a mutation under an exclusive file lock.
+    ///
+    /// Acquires lock, reloads from disk, calls the mutator, and saves if mutator returns true.
+    fn with_locked_mutation<F>(
+        &mut self,
+        config_path: Option<&std::path::Path>,
+        mutate: F,
+    ) -> Result<(), ConfigError>
+    where
+        F: FnOnce(&mut Self) -> bool,
+    {
+        let path = match config_path {
+            Some(p) => p.to_path_buf(),
+            None => get_config_path().ok_or_else(|| {
+                ConfigError::Message(
+                    "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME".to_string(),
+                )
+            })?,
+        };
+        let _lock = acquire_config_lock(&path)?;
+        self.reload_projects_from(config_path)?;
+
+        if mutate(self) {
+            self.save_impl(config_path)?;
+        }
+        Ok(())
+    }
+
     /// Check if a command is approved for the given project.
     ///
     /// Normalizes both the stored approvals and the incoming command to canonical
@@ -464,7 +520,7 @@ impl WorktrunkConfig {
 
     /// Add an approved command and save to config file.
     ///
-    /// Reloads from disk before modifying to reduce race conditions from concurrent processes.
+    /// Acquires lock, reloads from disk, adds command if not present, and saves.
     /// Pass `None` for default config path, or `Some(path)` for testing.
     pub fn approve_command(
         &mut self,
@@ -472,20 +528,18 @@ impl WorktrunkConfig {
         command: String,
         config_path: Option<&std::path::Path>,
     ) -> Result<(), ConfigError> {
-        // Reload from disk first to get fresh state (fixes race condition where
-        // concurrent approvals would overwrite each other)
-        self.reload_projects_from(config_path)?;
-
-        if self.is_command_approved(&project, &command) {
-            return Ok(());
-        }
-
-        self.projects
-            .entry(project)
-            .or_default()
-            .approved_commands
-            .push(command);
-        self.save_impl(config_path)
+        self.with_locked_mutation(config_path, |config| {
+            if config.is_command_approved(&project, &command) {
+                return false;
+            }
+            config
+                .projects
+                .entry(project)
+                .or_default()
+                .approved_commands
+                .push(command);
+            true
+        })
     }
 
     /// Reload only the projects section from disk, preserving other in-memory state
@@ -534,7 +588,7 @@ impl WorktrunkConfig {
 
     /// Revoke an approved command and save to config file.
     ///
-    /// Reloads from disk before modifying to reduce race conditions from concurrent processes.
+    /// Acquires lock, reloads from disk, removes command if present, and saves.
     /// Pass `None` for default config path, or `Some(path)` for testing.
     pub fn revoke_command(
         &mut self,
@@ -542,57 +596,53 @@ impl WorktrunkConfig {
         command: &str,
         config_path: Option<&std::path::Path>,
     ) -> Result<(), ConfigError> {
-        // Reload from disk first to get fresh state (fixes race condition)
-        self.reload_projects_from(config_path)?;
-
-        if let Some(project_config) = self.projects.get_mut(project) {
+        let project = project.to_string();
+        let command = command.to_string();
+        self.with_locked_mutation(config_path, |config| {
+            let Some(project_config) = config.projects.get_mut(&project) else {
+                return false;
+            };
             let len_before = project_config.approved_commands.len();
-            project_config.approved_commands.retain(|c| c != command);
+            project_config.approved_commands.retain(|c| c != &command);
             let changed = len_before != project_config.approved_commands.len();
 
             if project_config.approved_commands.is_empty() {
-                self.projects.remove(project);
+                config.projects.remove(&project);
             }
-
-            if changed {
-                self.save_impl(config_path)?;
-            }
-        }
-        Ok(())
+            changed
+        })
     }
 
     /// Remove all approvals for a project and save to config file.
     ///
-    /// Reloads from disk before modifying to reduce race conditions from concurrent processes.
+    /// Acquires lock, reloads from disk, removes project if present, and saves.
     /// Pass `None` for default config path, or `Some(path)` for testing.
     pub fn revoke_project(
         &mut self,
         project: &str,
         config_path: Option<&std::path::Path>,
     ) -> Result<(), ConfigError> {
-        // Reload from disk first to get fresh state (fixes race condition)
-        self.reload_projects_from(config_path)?;
-
-        if self.projects.remove(project).is_some() {
-            self.save_impl(config_path)?;
-        }
-        Ok(())
+        let project = project.to_string();
+        self.with_locked_mutation(config_path, |config| {
+            config.projects.remove(&project).is_some()
+        })
     }
 
     /// Set `skip-shell-integration-prompt = true` and save.
     ///
+    /// Acquires lock, reloads from disk, sets flag if not already set, and saves.
     /// Pass `None` for default config path, or `Some(path)` for testing.
     pub fn set_skip_shell_integration_prompt(
         &mut self,
         config_path: Option<&std::path::Path>,
     ) -> Result<(), ConfigError> {
-        if self.skip_shell_integration_prompt {
-            return Ok(());
-        }
-        // Reload from disk first to avoid clobbering concurrent changes
-        self.reload_projects_from(config_path)?;
-        self.skip_shell_integration_prompt = true;
-        self.save_impl(config_path)
+        self.with_locked_mutation(config_path, |config| {
+            if config.skip_shell_integration_prompt {
+                return false;
+            }
+            config.skip_shell_integration_prompt = true;
+            true
+        })
     }
 
     /// Save the current configuration to the default config file location
