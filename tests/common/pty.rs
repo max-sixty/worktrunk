@@ -45,7 +45,7 @@ use std::path::Path;
 fn read_pty_output(
     reader: Box<dyn Read + Send>,
     master: Box<dyn MasterPty + Send>,
-    child: &mut portable_pty::Child,
+    child: &mut Box<dyn portable_pty::Child + Send + Sync>,
 ) -> (String, i32) {
     #[cfg(unix)]
     {
