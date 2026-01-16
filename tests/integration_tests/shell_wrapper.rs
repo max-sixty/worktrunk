@@ -3338,6 +3338,17 @@ mod windows_tests {
     // in normal terminal usage. Only the test harness is affected because cargo
     // test redirects stdout to capture test output.
     //
+    // MANUAL VERIFICATION (2026-01):
+    // The PowerShell wrapper was hand-tested on macOS using PowerShell Core (pwsh):
+    //   - Wrapper function registration works
+    //   - `wt list`, `wt --version` work correctly
+    //   - `wt switch --create` creates worktree, runs hooks, and changes directory
+    //   - Error handling returns correct exit codes
+    //   - `wt remove` works correctly
+    // The wrapper logic is sound; only the CI test harness has the ConPTY issue.
+    //
+    // TODO: Re-enable these tests if a workaround for ConPTY stdout capture is found.
+    //
     // The `test_conpty_*` diagnostic tests still run because they test direct
     // command execution without the shell wrapper.
 
