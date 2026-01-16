@@ -273,6 +273,28 @@ fn test_switch_error_missing_worktree_directory(mut repo: TestRepo) {
     snapshot_switch("switch_error_missing_directory", &repo, &["missing-wt"]);
 }
 
+/// Test error when target path is registered to a worktree whose directory is missing.
+///
+/// Scenario: branch "feature/collision" has a worktree at "repo.feature-collision",
+/// but the directory was deleted. Trying to create "feature-collision" (which maps
+/// to the same path) should error about the missing worktree, not try to overwrite.
+#[rstest]
+fn test_switch_error_path_occupied_by_missing_worktree(mut repo: TestRepo) {
+    // Create a worktree for "feature/collision" -> path "repo.feature-collision"
+    let wt_path = repo.add_worktree("feature/collision");
+
+    // Delete the worktree directory (but leave it registered in git)
+    std::fs::remove_dir_all(&wt_path).unwrap();
+
+    // Try to create "feature-collision" which maps to the same path
+    // Should fail because the path is registered to a missing worktree
+    snapshot_switch(
+        "switch_error_path_occupied_missing",
+        &repo,
+        &["--create", "feature-collision"],
+    );
+}
+
 #[rstest]
 fn test_switch_error_path_occupied(repo: TestRepo) {
     // Calculate where the worktree would be created
