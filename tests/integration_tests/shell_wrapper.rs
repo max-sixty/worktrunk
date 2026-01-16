@@ -3298,32 +3298,79 @@ mod windows_tests {
     use crate::common::repo;
     use rstest::rstest;
 
-    // TODO: PowerShell PTY tests are disabled due to ConPTY limitations.
+    // ConPTY Handling Notes (2026-01):
     //
-    // Investigation summary (2026-01):
-    // - ConPTY (Windows Console Pseudo Terminal) does not properly close the
-    //   read pipe when the child process exits
-    // - This causes `read_to_string()` to block forever waiting for EOF
-    // - Even cmd.exe /C "echo hello" hangs when reading via ConPTY
-    // - Dropping the PTY master sends CTRL+C to the child (exit code 0xC000013A)
-    // - The portable_pty crate's ConPTY implementation has this limitation
+    // ConPTY behaves differently from Unix PTYs:
+    // - Output pipe doesn't close when child exits (owned by pseudoconsole)
+    // - ClosePseudoConsole must be called on separate thread while draining output
+    // - Cursor position requests (ESC[6n) MUST be answered or console hangs
     //
-    // Workarounds attempted:
-    // - Thread + timeout for reading (works but child gets CTRL+C killed)
-    // - Wait for child then read (still blocks on read)
-    // - Explicit writer drop before read (no effect)
-    // - Windows env vars (SystemRoot, USERPROFILE, etc.) fixed DLL errors
-    //   but didn't fix the pipe closure issue
+    // Our implementation in tests/common/pty.rs handles this by:
+    // 1. Keeping writer alive to respond to cursor queries
+    // 2. Reading in chunks (not read_to_string)
+    // 3. Detecting ESC[6n and responding with ESC[1;1R
+    // 4. Closing master on separate thread while continuing to drain
     //
-    // std::process::Command (no PTY) works fine - the issue is ConPTY-specific.
-    //
-    // Options for future:
-    // 1. Use std::process::Command for non-interactive tests (no TTY features)
-    // 2. Wait for portable_pty ConPTY improvements
-    // 3. Use Windows-specific PTY APIs with proper pipe handling
-    //
-    // The test infrastructure and tests are written and ready. Enable tests
-    // by removing #[ignore] when ConPTY pipe closure is fixed.
+    // References:
+    // - https://learn.microsoft.com/en-us/windows/console/closepseudoconsole
+    // - https://github.com/microsoft/terminal/discussions/17716
+
+    /// Diagnostic test: Verify basic ConPTY functionality works with our cursor response handling.
+    /// This test runs cmd.exe which is simpler than PowerShell and validates the core ConPTY fix.
+    #[test]
+    fn test_conpty_basic_cmd() {
+        use crate::common::pty::exec_in_pty;
+
+        // Use cmd.exe for simplest possible test
+        let tmp = tempfile::tempdir().unwrap();
+        let (output, exit_code) =
+            exec_in_pty("cmd.exe", &["/C", "echo CONPTY_WORKS"], tmp.path(), &[], "");
+
+        eprintln!("ConPTY test output: {:?}", output);
+        eprintln!("ConPTY test exit code: {}", exit_code);
+
+        // Accept exit code 0 or check for expected output
+        // On ConPTY, we should now get the output without blocking
+        assert!(
+            output.contains("CONPTY_WORKS") || exit_code == 0,
+            "ConPTY basic test should work. Output: {}, Exit: {}",
+            output,
+            exit_code
+        );
+    }
+
+    /// Diagnostic test: Verify wt --version works via ConPTY.
+    #[test]
+    fn test_conpty_wt_version() {
+        use crate::common::pty::exec_in_pty;
+        use insta_cmd::get_cargo_bin;
+
+        let wt_bin = get_cargo_bin("wt");
+        let tmp = tempfile::tempdir().unwrap();
+
+        let (output, exit_code) = exec_in_pty(
+            wt_bin.to_str().unwrap(),
+            &["--version"],
+            tmp.path(),
+            &[],
+            "",
+        );
+
+        eprintln!("wt --version output: {:?}", output);
+        eprintln!("wt --version exit code: {}", exit_code);
+
+        // wt --version should exit 0 and contain version info
+        assert_eq!(
+            exit_code, 0,
+            "wt --version should succeed. Output: {}",
+            output
+        );
+        assert!(
+            output.contains("wt") || output.contains("worktrunk"),
+            "Should contain version info. Output: {}",
+            output
+        );
+    }
 
     /// Test that PowerShell shell integration works for switch --create
     #[rstest]

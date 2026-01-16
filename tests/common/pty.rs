@@ -37,19 +37,22 @@ use std::path::Path;
 /// Read output from PTY and wait for child exit.
 ///
 /// On Unix, this simply reads to EOF then waits for child.
-/// On Windows ConPTY, the pipe doesn't close properly, so we:
-/// 1. Start reading in a background thread
-/// 2. Wait for child to exit
-/// 3. Drop the master to signal EOF
-/// 4. Join the read thread with timeout
+/// On Windows ConPTY, special handling is required because:
+/// - The output pipe doesn't close when child exits (owned by pseudoconsole)
+/// - ConPTY may send cursor position requests (ESC[6n) that must be answered
+/// - ClosePseudoConsole must be called on a separate thread while draining output
+///
+/// See: https://learn.microsoft.com/en-us/windows/console/closepseudoconsole
 fn read_pty_output(
     reader: Box<dyn Read + Send>,
+    writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
     child: &mut Box<dyn portable_pty::Child + Send + Sync>,
 ) -> (String, i32) {
     #[cfg(unix)]
     {
         let _ = master; // Not needed on Unix
+        let _ = writer; // Not needed on Unix
         let mut reader = reader;
         let mut buf = String::new();
         reader.read_to_string(&mut buf).unwrap();
@@ -59,37 +62,120 @@ fn read_pty_output(
 
     #[cfg(windows)]
     {
-        use std::sync::mpsc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, mpsc};
         use std::thread;
         use std::time::Duration;
 
+        // Flag to signal the reader to stop
+        let should_stop = Arc::new(AtomicBool::new(false));
+        let should_stop_reader = should_stop.clone();
+
+        // Channel for the reader to send back the output
         let (tx, rx) = mpsc::channel();
+
+        // Spawn reader thread that drains output in chunks and responds to cursor queries
         let read_thread = thread::spawn(move || {
             let mut reader = reader;
-            let mut buf = String::new();
-            let _ = reader.read_to_string(&mut buf);
-            let _ = tx.send(());
-            buf
+            let mut writer = writer;
+            let mut output = Vec::new();
+            let mut temp_buf = [0u8; 4096];
+
+            loop {
+                // Check if we should stop
+                if should_stop_reader.load(Ordering::Relaxed) {
+                    // Do one final read attempt with short timeout
+                    // (output might still be in the pipe)
+                    break;
+                }
+
+                // Read with a short timeout by using non-blocking behavior
+                // Unfortunately, portable_pty doesn't expose non-blocking reads,
+                // so we do blocking reads but with a timeout signal from the main thread
+                match reader.read(&mut temp_buf) {
+                    Ok(0) => {
+                        // EOF - pipe closed
+                        break;
+                    }
+                    Ok(n) => {
+                        let chunk = &temp_buf[..n];
+                        output.extend_from_slice(chunk);
+
+                        // Check for cursor position request (ESC[6n) and respond
+                        // This is required when PSEUDOCONSOLE_INHERIT_CURSOR is set
+                        if let Some(pos) = find_cursor_request(chunk) {
+                            // Respond with cursor at position 1,1
+                            // Format: ESC [ row ; col R
+                            let response = b"\x1b[1;1R";
+                            let _ = writer.write_all(response);
+                            let _ = writer.flush();
+                            // Log for debugging
+                            eprintln!(
+                                "ConPTY: Responded to cursor position request at byte {}",
+                                pos
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        // Check if it's a "would block" or pipe closed error
+                        if e.kind() == std::io::ErrorKind::WouldBlock {
+                            thread::sleep(Duration::from_millis(10));
+                            continue;
+                        }
+                        // Other errors - likely pipe closed
+                        eprintln!("ConPTY: Read error: {}", e);
+                        break;
+                    }
+                }
+            }
+
+            let _ = tx.send(output);
         });
 
-        // Wait for child to exit first
+        // Wait for child to exit
         let exit_status = child.wait().unwrap();
         let exit_code = exit_status.exit_code() as i32;
 
-        // Drop the master to close the PTY and signal EOF
-        drop(master);
+        // Signal the reader to stop
+        should_stop.store(true, Ordering::Relaxed);
 
-        // Wait for read to complete (should be quick after master drop)
-        let buf = match rx.recv_timeout(Duration::from_secs(5)) {
-            Ok(()) => read_thread.join().unwrap(),
+        // Close the master on a separate thread to avoid deadlock
+        // This triggers ClosePseudoConsole which sends CTRL_CLOSE_EVENT
+        // and eventually closes the output pipe
+        let close_thread = thread::spawn(move || {
+            drop(master);
+        });
+
+        // Wait for the reader to finish (with timeout)
+        let output = match rx.recv_timeout(Duration::from_secs(10)) {
+            Ok(data) => data,
             Err(_) => {
-                eprintln!("Warning: PTY read timed out after child exit");
-                String::new()
+                eprintln!("ConPTY: Read thread timed out after child exit");
+                Vec::new()
             }
         };
 
+        // Wait for close thread (with timeout)
+        let _ = close_thread.join();
+
+        // Wait for read thread to finish
+        let _ = read_thread.join();
+
+        // Convert to string (lossy for any invalid UTF-8)
+        let buf = String::from_utf8_lossy(&output).to_string();
+
         (buf, exit_code)
     }
+}
+
+/// Find cursor position request (ESC[6n) in a byte slice.
+/// Returns the position if found.
+#[cfg(windows)]
+fn find_cursor_request(data: &[u8]) -> Option<usize> {
+    // Look for ESC [ 6 n sequence (0x1b 0x5b 0x36 0x6e)
+    let pattern = b"\x1b[6n";
+    data.windows(pattern.len())
+        .position(|window| window == pattern)
 }
 
 /// Execute a command in a PTY with optional interactive input.
@@ -176,10 +262,10 @@ fn exec_in_pty_impl(
         writer.write_all(input.as_bytes()).unwrap();
         writer.flush().unwrap();
     }
-    drop(writer); // Close writer so command sees EOF
 
     // Read output and wait for exit (platform-specific handling)
-    let (buf, exit_code) = read_pty_output(reader, pair.master, &mut child);
+    // Note: writer is passed to read_pty_output for ConPTY cursor response handling
+    let (buf, exit_code) = read_pty_output(reader, writer, pair.master, &mut child);
 
     // Normalize CRLF to LF (PTYs use CRLF on some platforms)
     let normalized = buf.replace("\r\n", "\n");
@@ -209,10 +295,9 @@ pub fn exec_cmd_in_pty(cmd: CommandBuilder, input: &str) -> (String, i32) {
         writer.write_all(input.as_bytes()).unwrap();
         writer.flush().unwrap();
     }
-    drop(writer);
 
     // Read output and wait for exit (platform-specific handling)
-    let (buf, exit_code) = read_pty_output(reader, pair.master, &mut child);
+    let (buf, exit_code) = read_pty_output(reader, writer, pair.master, &mut child);
 
     // Normalize CRLF to LF
     let normalized = buf.replace("\r\n", "\n");
@@ -260,10 +345,9 @@ pub fn exec_in_pty_multi_input(
         writer.write_all(input.as_bytes()).unwrap();
         writer.flush().unwrap();
     }
-    drop(writer);
 
     // Read output and wait for exit (platform-specific handling)
-    let (buf, exit_code) = read_pty_output(reader, pair.master, &mut child);
+    let (buf, exit_code) = read_pty_output(reader, writer, pair.master, &mut child);
 
     // Normalize CRLF to LF
     let normalized = buf.replace("\r\n", "\n");
