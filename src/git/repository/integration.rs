@@ -4,6 +4,7 @@
 //! (same commit, ancestor, trees match, etc.).
 
 use super::Repository;
+use crate::git::{IntegrationReason, check_integration, compute_integration_lazy};
 
 impl Repository {
     /// Check if base is an ancestor of head (i.e., would be a fast-forward).
@@ -188,5 +189,40 @@ impl Repository {
     pub(super) fn rev_parse_tree(&self, spec: &str) -> anyhow::Result<String> {
         self.run_command(&["rev-parse", spec])
             .map(|output| output.trim().to_string())
+    }
+
+    /// Check if a branch is integrated into a target.
+    ///
+    /// This is a convenience method that combines [`compute_integration_lazy()`] and
+    /// [`check_integration()`]. The `target` is transformed via [`Self::effective_integration_target()`]
+    /// before checking, which may use an upstream ref if it's ahead of the local target.
+    ///
+    /// Uses lazy evaluation with short-circuit: stops as soon as any check confirms
+    /// integration, avoiding expensive operations like merge simulation when cheaper
+    /// checks succeed.
+    ///
+    /// Returns `(effective_target, reason)` where:
+    /// - `effective_target` is the ref actually checked (may be upstream like "origin/main")
+    /// - `reason` is `Some(reason)` if integrated, `None` if not
+    ///
+    /// # Example
+    /// ```no_run
+    /// use worktrunk::git::Repository;
+    ///
+    /// let repo = Repository::current()?;
+    /// let (effective_target, reason) = repo.integration_reason("feature", "main")?;
+    /// if let Some(r) = reason {
+    ///     println!("Branch integrated into {}: {}", effective_target, r.description());
+    /// }
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn integration_reason(
+        &self,
+        branch: &str,
+        target: &str,
+    ) -> anyhow::Result<(String, Option<IntegrationReason>)> {
+        let effective_target = self.effective_integration_target(target);
+        let signals = compute_integration_lazy(self, branch, &effective_target)?;
+        Ok((effective_target, check_integration(&signals)))
     }
 }

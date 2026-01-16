@@ -184,7 +184,7 @@ impl RepositoryCliExt for Repository {
         // Pre-compute integration reason to avoid race conditions when removing
         // multiple worktrees in background mode.
         let integration_reason = compute_integration_reason(
-            &main_path,
+            self,
             branch_name.as_deref(),
             target_branch.as_deref(),
             deletion_mode,
@@ -330,7 +330,7 @@ impl RepositoryCliExt for Repository {
 /// Note: Integration is computed even for `Keep` mode so we can inform the user
 /// if the flag had an effect (branch was integrated) or not (branch was unmerged).
 fn compute_integration_reason(
-    main_path: &Path,
+    repo: &Repository,
     branch_name: Option<&str>,
     target_branch: Option<&str>,
     deletion_mode: BranchDeletionMode,
@@ -341,15 +341,9 @@ fn compute_integration_reason(
         return None;
     }
     let (branch, target) = branch_name.zip(target_branch)?;
-    // Use main_path for git operations - this is where the user will end up,
-    // and integration checks need to run from a stable location that won't be
-    // removed during the operation.
-    let repo = Repository::at(main_path).ok()?;
-    let effective_target = repo.effective_integration_target(target);
-    // Use lazy computation with short-circuit. On error, return None (informational only).
-    let signals =
-        worktrunk::git::compute_integration_lazy(&repo, branch, &effective_target).ok()?;
-    worktrunk::git::check_integration(&signals)
+    // On error, return None (informational only)
+    let (_, reason) = repo.integration_reason(branch, target).ok()?;
+    reason
 }
 
 /// Warn about untracked files that will be auto-staged.
