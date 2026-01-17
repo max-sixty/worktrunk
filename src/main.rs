@@ -145,6 +145,9 @@ fn main() {
         set_config_path(path);
     }
 
+    // Initialize verbose level for output module
+    output::set_verbose_level(cli.verbose);
+
     // Configure logging based on --verbose flag or RUST_LOG env var
     // When -vv is set, also write logs to .git/wt-logs/verbose.log
     if cli.verbose >= 2 {
