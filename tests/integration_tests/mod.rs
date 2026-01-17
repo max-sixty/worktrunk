@@ -17,7 +17,6 @@ pub mod ci_status;
 pub mod column_alignment_verification;
 pub mod completion;
 pub mod completion_validation;
-pub mod completions_command;
 pub mod config_init;
 pub mod config_show;
 pub mod config_show_theme;

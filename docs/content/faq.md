@@ -97,8 +97,6 @@ Created by `wt config shell install`:
 - **Zsh**: adds line to `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
 - **Fish**: creates `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish`
 
-**Homebrew users:** Completions are installed automatically by Homebrew. You still need `wt config shell install` for directory switching (auto-cd when you run `wt switch`).
-
 **To remove:** `wt config shell uninstall`.
 
 ### 4. Metadata in `.git/` (automatic)

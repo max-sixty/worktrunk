@@ -134,6 +134,19 @@ Detects various forms of the integration pattern regardless of:
 - Prompts for user input"#
     )]
     ShowTheme,
+
+    /// Generate static shell completions for package managers
+    ///
+    /// Outputs static completion scripts for Homebrew and other package managers.
+    /// Only completes commands and flags, not branch names.
+    /// This is predominantly for package managers. Users should run
+    /// `wt config shell install` instead.
+    #[command(hide = true)]
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
 }
 
 #[derive(Subcommand)]

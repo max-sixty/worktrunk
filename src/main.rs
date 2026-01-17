@@ -408,6 +408,7 @@ fn main() {
                     ConfigShellCommand::ShowTheme => {
                         handle_show_theme().map_err(|e| anyhow::anyhow!("{}", e))
                     }
+                    ConfigShellCommand::Completions { shell } => handle_completions(shell),
                 }
             }
             ConfigCommand::Create { project } => handle_config_create(project),
@@ -1119,7 +1120,6 @@ fn main() {
                     stage_mode: stage_final,
                 })
             }),
-        Commands::Completions { shell } => handle_completions(shell),
     };
 
     if let Err(e) = result {
