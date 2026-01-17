@@ -146,8 +146,8 @@ fn main() {
     }
 
     // Configure logging based on --verbose flag or RUST_LOG env var
-    // When --verbose is set, also write logs to .git/wt-logs/verbose.log
-    if cli.verbose >= 1 {
+    // When -vv is set, also write logs to .git/wt-logs/verbose.log
+    if cli.verbose >= 2 {
         verbose_log::init();
     }
 
@@ -155,9 +155,9 @@ fn main() {
     let verbose_level = cli.verbose;
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
 
-    // --verbose takes precedence over RUST_LOG: use Builder::new() to ignore env var
+    // -vv takes precedence over RUST_LOG: use Builder::new() to ignore env var
     // Otherwise, respect RUST_LOG (defaulting to off)
-    let mut builder = if cli.verbose >= 1 {
+    let mut builder = if cli.verbose >= 2 {
         let mut b = env_logger::Builder::new();
         b.filter_level(log::LevelFilter::Debug);
         b
