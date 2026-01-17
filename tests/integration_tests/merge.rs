@@ -2018,26 +2018,3 @@ fn test_step_rebase_accepts_tag(mut repo: TestRepo) {
         Some(&feature_wt)
     ));
 }
-
-/// Test that wt step rebase accepts full refs/tags/X path (Codex review issue #3)
-#[rstest]
-fn test_step_rebase_accepts_full_tag_ref_path(mut repo: TestRepo) {
-    // Create a tag on main
-    repo.run_git(&["tag", "v2.0"]);
-
-    // Advance main
-    fs::write(repo.root_path().join("after-tag.txt"), "content").unwrap();
-    repo.run_git(&["add", "after-tag.txt"]);
-    repo.run_git(&["commit", "-m", "After tag"]);
-
-    // Create feature from current main
-    let feature_wt = repo.add_worktree("feature");
-
-    // Rebase onto the tag using full ref path - should work (commit-ish accepted)
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["rebase", "refs/tags/v2.0"],
-        Some(&feature_wt)
-    ));
-}

@@ -22,14 +22,6 @@ use crate::styling::{
     suggest_command,
 };
 
-/// Type of git ref that was provided when a branch was expected
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RefType {
-    Tag,
-    Remote,
-    Other,
-}
-
 /// Domain errors for git and worktree operations.
 ///
 /// This enum provides structured error data that can be pattern-matched and tested.
@@ -65,11 +57,6 @@ pub enum GitError {
     },
     InvalidReference {
         reference: String,
-    },
-    /// User provided a ref path that's not a branch (tag, remote, stash, etc.)
-    NotABranchRef {
-        reference: String,
-        ref_type: RefType,
     },
 
     // Worktree errors
@@ -252,24 +239,6 @@ impl std::fmt::Display for GitError {
                         "To create a new branch, run <bright-black>{create_cmd}</>; to list branches, run <bright-black>{list_cmd}</>"
                     ))
                 )
-            }
-
-            GitError::NotABranchRef {
-                reference,
-                ref_type,
-            } => {
-                let message = match ref_type {
-                    RefType::Tag => {
-                        cformat!("<bold>{reference}</> is a tag, not a branch")
-                    }
-                    RefType::Remote => {
-                        cformat!("<bold>{reference}</> is a remote ref, not a branch")
-                    }
-                    RefType::Other => {
-                        cformat!("<bold>{reference}</> is not a branch ref")
-                    }
-                };
-                write!(f, "{}", error_message(message))
             }
 
             GitError::NotInWorktree { action } => {
@@ -1295,40 +1264,5 @@ mod tests {
         assert!(display.contains("incomplete"));
         assert!(display.contains("main"));
         // Empty output shouldn't cause issues
-    }
-
-    #[test]
-    fn test_not_a_branch_ref_tag() {
-        let err = GitError::NotABranchRef {
-            reference: "refs/tags/v1.0".into(),
-            ref_type: RefType::Tag,
-        };
-        let display = err.to_string();
-        assert!(display.contains("refs/tags/v1.0"));
-        assert!(display.contains("a tag"));
-        assert!(display.contains("not a branch"));
-    }
-
-    #[test]
-    fn test_not_a_branch_ref_remote() {
-        let err = GitError::NotABranchRef {
-            reference: "refs/remotes/origin/main".into(),
-            ref_type: RefType::Remote,
-        };
-        let display = err.to_string();
-        assert!(display.contains("refs/remotes/origin/main"));
-        assert!(display.contains("a remote ref"));
-        assert!(display.contains("not a branch"));
-    }
-
-    #[test]
-    fn test_not_a_branch_ref_other() {
-        let err = GitError::NotABranchRef {
-            reference: "refs/stash".into(),
-            ref_type: RefType::Other,
-        };
-        let display = err.to_string();
-        assert!(display.contains("refs/stash"));
-        assert!(display.contains("is not a branch ref"));
     }
 }
