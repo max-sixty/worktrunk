@@ -163,7 +163,7 @@ fn has_init_pattern_with_prefix_check(line: &str, cmd: &str) -> bool {
 /// - Valid: start of line, after `$(`, after whitespace, after `command `
 /// - Invalid: after `git ` (would be `git wt`), after `git-` (would be `git-wt`)
 ///
-/// For `git-wt`: must not be preceded by alphanumeric, underscore, or hyphen
+/// For `git-wt`: must not be preceded by alphanumeric (Unicode-aware), underscore, or hyphen
 /// (e.g., `my-git-wt` should NOT match)
 fn is_valid_command_position(line: &str, pos: usize, cmd: &str) -> bool {
     if pos == 0 {
@@ -910,6 +910,14 @@ mod tests {
     #[case::mygit_wt(r#"eval "$(mygit wt config shell init bash)""#)]
     fn test_prefixed_git_space_wt_no_match(#[case] line: &str) {
         assert_not_detects(line, "git-wt", "prefixed 'git wt' should NOT match git-wt");
+    }
+
+    /// Unicode alphanumerics before command should NOT match (is_alphanumeric is Unicode-aware)
+    #[rstest]
+    #[case::greek(r#"eval "$(αgit-wt config shell init bash)""#, "git-wt")]
+    #[case::cyrillic(r#"eval "$(яwt config shell init bash)""#, "wt")]
+    fn test_unicode_alphanumerics_no_match(#[case] line: &str, #[case] cmd: &str) {
+        assert_not_detects(line, cmd, "Unicode alphanumeric before command");
     }
 
     // ==========================================================================
