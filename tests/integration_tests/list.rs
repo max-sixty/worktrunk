@@ -125,7 +125,8 @@ fn test_list_previous_worktree_gutter(mut repo: TestRepo) {
     cmd.args(["switch", "main"]).current_dir(&feature_path);
     cmd.output().unwrap();
 
-    // Now list should show `-` for feature (the previous worktree, target of `wt switch -`)
+    // List shows previous worktree with `+` (same as regular worktrees).
+    // The previous worktree is the target of `wt switch -`.
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 

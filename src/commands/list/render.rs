@@ -352,15 +352,13 @@ impl ColumnLayout {
             ColumnKind::Gutter => {
                 let mut cell = StyledLine::new();
                 let symbol = if let Some(data) = worktree_data {
-                    // Priority: @ (current) > ^ (main) > - (previous) > + (regular)
+                    // Priority: @ (current) > ^ (main) > + (regular, including previous)
                     if data.is_current {
                         "@ " // Current worktree
                     } else if data.is_main {
                         "^ " // Main worktree
-                    } else if data.is_previous {
-                        "- " // Previous worktree (wt switch -)
                     } else {
-                        "+ " // Regular worktree
+                        "+ " // Regular worktree (including previous)
                     }
                 } else {
                     "  " // Branch without worktree (two spaces to match width)
