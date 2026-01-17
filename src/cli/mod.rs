@@ -181,6 +181,18 @@ pub(crate) enum OutputFormat {
     Json,
 }
 
+/// Shell types supported by the completions command.
+///
+/// Maps to clap_complete shell generators for static completion script output.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub(crate) enum CompletionShell {
+    Bash,
+    Fish,
+    Zsh,
+    #[clap(name = "powershell")]
+    PowerShell,
+}
+
 #[derive(Parser)]
 #[command(name = "wt")]
 #[command(about = "Git worktree management for parallel AI agent workflows", long_about = None)]
@@ -1803,5 +1815,36 @@ WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
     Config {
         #[command(subcommand)]
         action: ConfigCommand,
+    },
+
+    /// Generate shell completions for package managers
+    ///
+    /// Outputs static completion scripts to stdout for use by Homebrew and other package managers.
+    /// Unlike `wt config shell init`, this does not modify any files.
+    #[command(
+        hide = true,
+        after_long_help = r#"## Examples
+
+Generate bash completions:
+
+```console
+wt completions bash
+```
+
+For Homebrew formula integration:
+
+```ruby
+generate_completions_from_executable(bin/"wt", "completions", shells: [:bash, :zsh, :fish])
+```
+
+## Note
+
+This command is primarily for package manager integration. For interactive shell
+setup including directory switching, use `wt config shell install` instead.
+"#
+    )]
+    Completions {
+        /// Shell to generate completions for
+        shell: CompletionShell,
     },
 }

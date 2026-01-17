@@ -32,7 +32,7 @@ pub(crate) use configure_shell::{
 };
 pub(crate) use for_each::step_for_each;
 pub(crate) use hook_commands::{add_approvals, clear_approvals, handle_hook_show, run_hook};
-pub(crate) use init::handle_init;
+pub(crate) use init::{handle_completions, handle_init};
 pub(crate) use list::handle_list;
 pub(crate) use merge::{MergeOptions, execute_pre_remove_commands, handle_merge};
 #[cfg(unix)]
