@@ -1683,3 +1683,92 @@ fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
         assert_cmd_snapshot!("switch_pr_empty_branch", cmd);
     });
 }
+
+// Git-compatible ref path tests
+
+/// Test that refs/heads/X resolves to branch X
+#[rstest]
+fn test_switch_refs_heads_prefix(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    // Switch using refs/heads/ prefix from main worktree
+    snapshot_switch("switch_refs_heads_prefix", &repo, &["refs/heads/feature"]);
+}
+
+/// Test that heads/X resolves to branch X (short form)
+#[rstest]
+fn test_switch_heads_prefix(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    snapshot_switch("switch_heads_prefix", &repo, &["heads/feature"]);
+}
+
+/// Test that refs/heads/@ resolves to literal branch "@" (escape hatch)
+#[rstest]
+fn test_switch_refs_heads_at_escape(repo: TestRepo) {
+    // Create a branch literally named "@"
+    repo.run_git(&["branch", "@"]);
+    // refs/heads/@ should try to switch to branch "@", not current branch
+    snapshot_switch("switch_refs_heads_at_escape", &repo, &["refs/heads/@"]);
+}
+
+/// Test that refs/tags/X gives helpful error
+#[rstest]
+fn test_switch_refs_tags_error(repo: TestRepo) {
+    snapshot_switch("switch_refs_tags_error", &repo, &["refs/tags/v1.0"]);
+}
+
+/// Test that refs/remotes/X gives helpful error
+#[rstest]
+fn test_switch_refs_remotes_error(repo: TestRepo) {
+    snapshot_switch(
+        "switch_refs_remotes_error",
+        &repo,
+        &["refs/remotes/origin/main"],
+    );
+}
+
+/// Test that refs/stash gives helpful error
+#[rstest]
+fn test_switch_refs_other_error(repo: TestRepo) {
+    snapshot_switch("switch_refs_other_error", &repo, &["refs/stash"]);
+}
+
+/// Test that refs/heads/ alone (empty branch) gives error
+#[rstest]
+fn test_switch_empty_refs_heads(repo: TestRepo) {
+    snapshot_switch("switch_empty_refs_heads", &repo, &["refs/heads/"]);
+}
+
+/// Test that heads/ alone (empty branch) gives error
+#[rstest]
+fn test_switch_empty_heads(repo: TestRepo) {
+    snapshot_switch("switch_empty_heads", &repo, &["heads/"]);
+}
+
+// === Markup Injection Tests ===
+
+/// Test that branch names with angle brackets don't cause markup injection (Codex review #5)
+///
+/// Git allows angle brackets in branch/tag names. If these are passed to cformat!
+/// without escaping, they could be interpreted as format specifiers.
+#[rstest]
+fn test_switch_angle_brackets_in_branch_name(repo: TestRepo) {
+    // Try to switch to a non-existent branch with angle brackets
+    // The error message should show the literal angle brackets, not interpret them as markup
+    snapshot_switch(
+        "switch_angle_brackets_branch",
+        &repo,
+        &["test<bold>injected</bold>"],
+    );
+}
+
+/// Test that tag refs with angle brackets don't cause markup injection
+#[rstest]
+fn test_switch_angle_brackets_in_tag_ref(repo: TestRepo) {
+    // Try to switch to a tag ref with angle brackets
+    // The error message should show the literal angle brackets, not interpret them as markup
+    snapshot_switch(
+        "switch_angle_brackets_tag",
+        &repo,
+        &["refs/tags/<bold>v1.0</bold>"],
+    );
+}

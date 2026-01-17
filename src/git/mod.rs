@@ -37,6 +37,7 @@ pub use error::{
     GitError,
     // Special-handling error enum (Display produces styled output)
     HookErrorWithHint,
+    RefType,
     WorktrunkError,
     // Error inspection functions
     add_hook_skip_hint,

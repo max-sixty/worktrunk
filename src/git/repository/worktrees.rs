@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use color_print::cformat;
 use normalize_path::NormalizePath;
 
-use super::{GitError, Repository, ResolvedWorktree, WorktreeInfo};
+use super::{GitError, RefType, Repository, ResolvedWorktree, WorktreeInfo};
 
 impl Repository {
     /// List all worktrees for this repository.
@@ -105,23 +105,87 @@ impl Repository {
         Ok(())
     }
 
-    /// Resolve a worktree name, expanding "@" to current, "-" to previous, and "^" to main.
+    /// Resolve a worktree name, expanding special symbols and parsing ref paths.
     ///
     /// # Arguments
     /// * `name` - The worktree name to resolve:
-    ///   - "@" for current HEAD
-    ///   - "-" for previous branch (via worktrunk.history)
-    ///   - "^" for default branch
-    ///   - any other string is returned as-is
+    ///   - `refs/heads/X` or `heads/X` → branch X (git-compatible ref syntax)
+    ///   - `refs/tags/X` → error (tags not supported)
+    ///   - `refs/remotes/X` → error (remote refs not supported)
+    ///   - `@` → current branch
+    ///   - `-` → previous branch (via worktrunk.history)
+    ///   - `^` → default branch
+    ///   - any other string → treated as branch name
     ///
     /// # Returns
-    /// - `Ok(name)` if not a special symbol
-    /// - `Ok(current_branch)` if "@" and on a branch
-    /// - `Ok(previous_branch)` if "-" and worktrunk.history has a previous branch
-    /// - `Ok(default_branch)` if "^"
+    /// - `Ok(branch)` for valid branch references
+    /// - `Err(NotABranchRef)` for non-branch refs (tags, remotes)
     /// - `Err(DetachedHead)` if "@" and in detached HEAD state
     /// - `Err` if "-" but no previous branch in history
     pub fn resolve_worktree_name(&self, name: &str) -> anyhow::Result<String> {
+        // Git-compatible ref path parsing (before special symbols)
+        if let Some(branch) = name.strip_prefix("refs/heads/") {
+            if branch.is_empty() {
+                return Err(GitError::InvalidReference {
+                    reference: name.to_string(),
+                }
+                .into());
+            }
+            return Ok(branch.to_string());
+        }
+        if let Some(branch) = name.strip_prefix("heads/") {
+            if branch.is_empty() {
+                return Err(GitError::InvalidReference {
+                    reference: name.to_string(),
+                }
+                .into());
+            }
+            return Ok(branch.to_string());
+        }
+
+        // Non-branch refs → helpful error
+        if name.starts_with("refs/tags/") {
+            return Err(GitError::NotABranchRef {
+                reference: name.to_string(),
+                ref_type: RefType::Tag,
+            }
+            .into());
+        }
+        if name.starts_with("refs/remotes/") {
+            return Err(GitError::NotABranchRef {
+                reference: name.to_string(),
+                ref_type: RefType::Remote,
+            }
+            .into());
+        }
+        if name.starts_with("refs/") {
+            return Err(GitError::NotABranchRef {
+                reference: name.to_string(),
+                ref_type: RefType::Other,
+            }
+            .into());
+        }
+
+        self.resolve_special_symbols(name)
+    }
+
+    /// Resolve any commit-ish, expanding special symbols but accepting all ref types.
+    ///
+    /// Unlike `resolve_worktree_name` which is branch-only, this accepts tags,
+    /// remotes, and other refs. Use for commands that operate on commits, not branches.
+    ///
+    /// # Arguments
+    /// * `reference` - The reference to resolve:
+    ///   - `@` → current branch (errors if detached HEAD)
+    ///   - `-` → previous branch (via worktrunk.history)
+    ///   - `^` → default branch
+    ///   - any other string → passed through unchanged (branch, tag, remote, SHA)
+    pub fn resolve_commit_ish(&self, reference: &str) -> anyhow::Result<String> {
+        self.resolve_special_symbols(reference)
+    }
+
+    /// Internal: resolve worktrunk's special symbols (@, -, ^).
+    fn resolve_special_symbols(&self, name: &str) -> anyhow::Result<String> {
         match name {
             "@" => self.current_worktree().branch()?.ok_or_else(|| {
                 GitError::DetachedHead {

@@ -31,7 +31,7 @@ use crate::config::ProjectConfig;
 use super::{DefaultBranchName, GitError, LineDiff, WorktreeInfo};
 
 // Re-export types needed by submodules
-pub(super) use super::{BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl};
+pub(super) use super::{BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl, RefType};
 
 // Submodules with impl blocks
 mod branches;

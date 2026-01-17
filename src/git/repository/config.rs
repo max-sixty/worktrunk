@@ -255,8 +255,17 @@ impl Repository {
     ///
     /// Use this for commands that reference a commit (rebase, squash).
     /// Validates before approval prompts to avoid wasting user time.
+    ///
+    /// Unlike `require_target_branch`, this accepts tags, remotes, and SHAs.
     pub fn require_target_ref(&self, target: Option<&str>) -> anyhow::Result<String> {
-        let reference = self.resolve_target_branch(target)?;
+        let reference = match target {
+            Some(t) => self.resolve_commit_ish(t)?,
+            None => self.default_branch().ok_or_else(|| GitError::Other {
+                message: cformat!(
+                    "Cannot determine default branch. Specify target explicitly or run <bold>wt config state default-branch set BRANCH</>"
+                ),
+            })?,
+        };
         if !self.ref_exists(&reference)? {
             return Err(GitError::InvalidReference { reference }.into());
         }
