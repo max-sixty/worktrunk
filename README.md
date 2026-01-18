@@ -103,12 +103,6 @@ A demo with some advanced features:
 brew install max-sixty/worktrunk/wt && wt config shell install
 ```
 
-**Arch Linux:**
-
-```bash
-paru worktrunk-bin
-```
-
 Shell integration allows commands to change directories.
 
 **Cargo:**
@@ -130,6 +124,12 @@ git-wt config shell install
 Alternatively, disable Windows Terminal's alias (Settings → Privacy & security → For developers → App Execution Aliases → disable "Windows Terminal") to use `wt` directly.
 
 </details>
+
+**Arch Linux:**
+
+```bash
+paru worktrunk-bin && wt config shell install
+```
 
 ## Next steps
 
