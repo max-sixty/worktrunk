@@ -598,6 +598,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
             &vars,
             true,
             &test.repo,
+            "test",
         )
         .unwrap();
         assert_eq!(result, "../myrepo.feature-x");
@@ -619,6 +620,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
             &vars,
             false,
             &test.repo,
+            "test",
         )
         .unwrap();
         assert_eq!(result, "myrepo/feature-foo");
@@ -631,6 +633,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
             &vars,
             false,
             &test.repo,
+            "test",
         )
         .unwrap();
         assert_eq!(result, ".worktrees/myrepo/feat-bar");
@@ -649,6 +652,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
             &vars,
             true,
             &test_repo().repo,
+            "test",
         )
         .unwrap();
         assert_eq!(result, "/path/to/repo/target -> /path/to/worktree/target");

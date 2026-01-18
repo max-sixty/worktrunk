@@ -5,6 +5,8 @@ use worktrunk::config::{Command, CommandConfig, WorktrunkConfig, expand_template
 use worktrunk::git::Repository;
 use worktrunk::path::to_posix_path;
 
+use super::hook_filter::HookSource;
+
 #[derive(Debug)]
 pub struct PreparedCommand {
     pub name: Option<String>,
@@ -138,6 +140,7 @@ fn expand_commands(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
     hook_type: HookType,
+    source: HookSource,
 ) -> anyhow::Result<Vec<(Command, String)>> {
     if commands.is_empty() {
         return Ok(Vec::new());
@@ -154,13 +157,18 @@ fn expand_commands(
     let mut result = Vec::new();
 
     for cmd in commands {
-        let expanded_str = expand_template(&cmd.template, &vars, true, ctx.repo).map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to expand command template '{}': {}",
-                cmd.template,
-                e
-            )
-        })?;
+        let template_name = match &cmd.name {
+            Some(name) => format!("{}:{}", source, name),
+            None => format!("{} {} hook", source, hook_type),
+        };
+        let expanded_str = expand_template(&cmd.template, &vars, true, ctx.repo, &template_name)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to expand command template '{}': {}",
+                    cmd.template,
+                    e
+                )
+            })?;
 
         // Build per-command JSON with hook_type and hook_name
         let mut cmd_context = base_context.clone();
@@ -193,13 +201,14 @@ pub fn prepare_commands(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
     hook_type: HookType,
+    source: HookSource,
 ) -> anyhow::Result<Vec<PreparedCommand>> {
     let commands = command_config.commands();
     if commands.is_empty() {
         return Ok(Vec::new());
     }
 
-    let expanded_with_json = expand_commands(commands, ctx, extra_vars, hook_type)?;
+    let expanded_with_json = expand_commands(commands, ctx, extra_vars, hook_type, source)?;
 
     Ok(expanded_with_json
         .into_iter()

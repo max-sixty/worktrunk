@@ -738,6 +738,26 @@ std::fs::read_to_string(&path).context("Failed to read config")?
 
 See `format_error_block()` in `src/git/error.rs`.
 
+## Verbose Output (`-v` and `-vv`)
+
+**`-v` (verbose):** User-facing diagnostic output. Must follow these guidelines.
+Shows template expansions and other details users might need for debugging config.
+
+Format for template expansion:
+```
+○ Expanding name
+ ┃ template → result
+```
+
+- **Info message** for header (`○` symbol, "Expanding" + bold name)
+- **Gutter** for quoted content (template → result)
+- Arrow `→` is dim
+- For multiline: template lines, dim `→` on its own line, result lines
+
+**`-vv` (debug):** Developer-facing logging output. MAY violate these guidelines.
+Uses `log::debug!()` with structured format for deep debugging. Not intended for
+regular users.
+
 ## Table Column Alignment
 
 - **Text columns** (Branch, Path): left-aligned

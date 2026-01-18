@@ -1,7 +1,7 @@
 use crate::common::{
-    TestRepo, configure_directive_file, directive_file, make_snapshot_cmd, repo, repo_with_remote,
-    set_temp_home_env, setup_home_snapshot_settings, setup_snapshot_settings, temp_home,
-    wt_command,
+    TestRepo, configure_directive_file, directive_file, make_snapshot_cmd,
+    make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
+    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -410,7 +410,8 @@ fn test_switch_execute_template_base(repo: TestRepo) {
 
 #[rstest]
 fn test_switch_execute_template_base_without_create(mut repo: TestRepo) {
-    // Test that {{ base }} is empty when switching to existing worktree (no --create)
+    // Test that {{ base }} errors when switching to existing worktree (no --create)
+    // The `base` variable is only available during branch creation
     repo.add_worktree("existing");
     snapshot_switch(
         "switch_execute_template_base_without_create",
@@ -504,6 +505,55 @@ fn test_switch_execute_arg_template_error(repo: TestRepo) {
             "invalid={{ unclosed",
         ],
     );
+}
+
+// Verbose mode tests
+#[rstest]
+fn test_switch_execute_verbose_template_expansion(repo: TestRepo) {
+    // Test that -v shows template expansion details
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd_with_global_flags(
+            &repo,
+            "switch",
+            &[
+                "--create",
+                "verbose-test",
+                "--execute",
+                "echo 'branch={{ branch }}'",
+            ],
+            None,
+            &["-v"],
+        );
+        assert_cmd_snapshot!("switch_execute_verbose_template", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_execute_verbose_multiline_template(repo: TestRepo) {
+    // Test that -v shows multiline template expansion with proper formatting
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        // Multiline template with conditional
+        let multiline_template = r#"{% if branch %}
+echo 'branch={{ branch }}'
+echo 'repo={{ repo }}'
+{% endif %}"#;
+
+        let mut cmd = make_snapshot_cmd_with_global_flags(
+            &repo,
+            "switch",
+            &[
+                "--create",
+                "multiline-test",
+                "--execute",
+                multiline_template,
+            ],
+            None,
+            &["-v"],
+        );
+        assert_cmd_snapshot!("switch_execute_verbose_multiline_template", cmd);
+    });
 }
 
 // --no-verify flag tests

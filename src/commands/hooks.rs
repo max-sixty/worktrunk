@@ -107,7 +107,7 @@ pub fn prepare_hook_commands(
             continue;
         }
 
-        let prepared = prepare_commands(config, ctx, extra_vars, hook_type)?;
+        let prepared = prepare_commands(config, ctx, extra_vars, hook_type, source)?;
         let filtered = filter_by_name(prepared, parsed_filter.as_ref().map(|f| f.name));
         commands.extend(filtered.into_iter().map(|p| SourcedCommand {
             prepared: p,

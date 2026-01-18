@@ -36,6 +36,11 @@ use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 use worktrunk::shell_exec::ShellConfig;
 use worktrunk::styling::{eprintln, stderr};
 
+// Re-export set_verbosity from the library's styling module.
+// This ensures the binary and library share the same global state.
+// Library code (like expansion.rs) accesses verbosity() directly from styling.
+pub use worktrunk::styling::set_verbosity;
+
 /// Global output state, lazily initialized on first access.
 ///
 /// Uses `OnceLock<Mutex<T>>` pattern:
@@ -46,34 +51,6 @@ use worktrunk::styling::{eprintln, stderr};
 /// Lock poisoning (from `.expect()`) is theoretically possible but practically
 /// unreachable - the lock is only held for trivial Option assignments that cannot panic.
 static OUTPUT_STATE: OnceLock<Mutex<OutputState>> = OnceLock::new();
-
-/// Global verbose level, set once from CLI flag at startup.
-static VERBOSE_LEVEL: OnceLock<u8> = OnceLock::new();
-
-/// Set the global verbose level from CLI flag.
-///
-/// Called once from main() after parsing args. If not called, defaults to 0.
-pub fn set_verbose_level(level: u8) {
-    VERBOSE_LEVEL.set(level).ok();
-}
-
-/// Get the verbose level (0 = default, 1 = -v, 2+ = -vv).
-// TODO(verbose-output): Reserved for showing extra details in command output.
-// See commit e13776c "reserve -v for future use".
-#[allow(dead_code)]
-pub fn verbose_level() -> u8 {
-    VERBOSE_LEVEL.get().copied().unwrap_or(0)
-}
-
-/// Check if single -v was passed (show extra details).
-///
-/// Returns true when verbose level is 1 or higher.
-// TODO(verbose-output): Reserved for showing extra details in command output.
-// See commit e13776c "reserve -v for future use".
-#[allow(dead_code)]
-pub fn is_verbose() -> bool {
-    verbose_level() >= 1
-}
 
 #[derive(Default)]
 struct OutputState {

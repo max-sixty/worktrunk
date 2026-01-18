@@ -469,7 +469,7 @@ impl WorktrunkConfig {
         vars.insert("main_worktree", main_worktree);
         vars.insert("repo", main_worktree);
         vars.insert("branch", branch);
-        expand_template(&self.worktree_path(), &vars, false, repo)
+        expand_template(&self.worktree_path(), &vars, false, repo, "worktree-path")
     }
 
     /// Execute a mutation under an exclusive file lock.

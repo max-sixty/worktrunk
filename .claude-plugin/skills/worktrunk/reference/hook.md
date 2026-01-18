@@ -190,10 +190,18 @@ Hooks can use template variables that expand at runtime:
 | `{{ short_commit }}` | Short HEAD commit SHA (7 chars) |
 | `{{ remote }}` | Primary remote name |
 | `{{ remote_url }}` | Remote URL |
-| `{{ upstream }}` | Upstream tracking branch |
+| `{{ upstream }}` | Upstream tracking branch (if set) |
 | `{{ target }}` | Target branch (merge hooks only) |
 | `{{ base }}` | Base branch (creation hooks only) |
 | `{{ base_worktree_path }}` | Base branch worktree (creation hooks only) |
+
+Some variables may not be defined: `upstream` is only set when the branch tracks a remote; `target`, `base`, and `base_worktree_path` are hook-specific. Using an undefined variable directly errors — use conditionals for optional behavior:
+
+```toml
+[post-create]
+# Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature origin/feature)
+sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
+```
 
 ### Worktrunk filters
 

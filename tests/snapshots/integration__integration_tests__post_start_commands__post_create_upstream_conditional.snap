@@ -1,13 +1,12 @@
 ---
-source: tests/integration_tests/switch.rs
+source: tests/integration_tests/post_start_commands.rs
 info:
   program: wt
   args:
     - switch
     - "--create"
-    - error-test
-    - "--execute"
-    - "echo {{ unclosed"
+    - feature
+    - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -32,13 +31,14 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[32m✓[39m [32mCreated branch [1merror-test[22m from [1mmain[22m and worktree @ [1m_REPO_.error-test[22m[39m
+[36m◎[39m [36mRunning post-create project hook @ [1m_REPO_.feature[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'no-upstream'[0m[2m [0m[2m[36m>[0m[2m upstream.txt
+[0m[32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
-[31m✗[39m [31mFailed to expand --execute template: Template syntax error: syntax error: unexpected end of input, expected end of variable block (in --execute command:1)[39m
