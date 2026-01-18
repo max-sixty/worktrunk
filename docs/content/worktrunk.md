@@ -99,7 +99,7 @@ A demo with some advanced features:
 **Homebrew (macOS & Linux):**
 
 ```bash
-brew install max-sixty/worktrunk/wt && wt config shell install
+brew install worktrunk && wt config shell install
 ```
 
 Shell integration allows commands to change directories.

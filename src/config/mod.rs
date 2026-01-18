@@ -29,7 +29,8 @@ pub use commands::{Command, CommandConfig};
 pub use deprecation::check_and_migrate as check_deprecated_vars;
 pub use deprecation::normalize_template_vars;
 pub use expansion::{
-    DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, expand_template, sanitize_branch_name, sanitize_db,
+    DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, expand_template, redact_credentials,
+    sanitize_branch_name, sanitize_db,
 };
 pub use hooks::HooksConfig;
 pub use project::{
