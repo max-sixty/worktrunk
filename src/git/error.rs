@@ -9,14 +9,12 @@
 //! - **`WorktrunkError`** - A minimal enum for semantic errors that need
 //!   special handling (exit codes, silent errors).
 
-use std::borrow::Cow;
 use std::path::PathBuf;
 
 use color_print::{cformat, cwrite};
-use shell_escape::escape;
 
 use super::HookType;
-use crate::path::format_path_for_display;
+use crate::path::{escape_path_for_shell, format_path_for_display};
 use crate::styling::{
     ERROR_SYMBOL, HINT_SYMBOL, error_message, format_with_gutter, hint_message, info_message,
     suggest_command,
@@ -312,9 +310,7 @@ impl std::fmt::Display for GitError {
                         "there's a detached worktree at the expected path <bold>{path_display}</>"
                     )
                 };
-                // Use actual path for command (not display path with ~, which won't expand in single quotes)
-                let path_str = path.to_string_lossy();
-                let path_escaped = escape(Cow::Borrowed(path_str.as_ref()));
+                let path_escaped = escape_path_for_shell(path);
                 let command = format!("cd {path_escaped} && git switch {branch}");
                 write!(
                     f,
@@ -332,8 +328,7 @@ impl std::fmt::Display for GitError {
                 create,
             } => {
                 let path_display = format_path_for_display(path);
-                let path_str = path.to_string_lossy();
-                let path_escaped = escape(Cow::Borrowed(path_str.as_ref()));
+                let path_escaped = escape_path_for_shell(path);
                 let flags: &[&str] = if *create {
                     &["--create", "--clobber"]
                 } else {

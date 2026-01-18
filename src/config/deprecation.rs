@@ -11,10 +11,10 @@
 //! To regenerate a project config migration file, run `wt config state hints clear deprecated-project-config`.
 //! To regenerate a user config migration file, delete the existing `.new` file.
 
+use crate::path::escape_path_for_shell;
 use crate::styling::{eprintln, hint_message, warning_message};
 use color_print::cformat;
 use minijinja::Environment;
-use shell_escape::escape;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::io::Write;
@@ -233,17 +233,14 @@ pub fn check_and_migrate(
                     let _ = repo.mark_hint_shown(HINT_DEPRECATED_PROJECT_CONFIG);
                 }
 
-                // Show just the filename in the message, full paths in the command
+                // Show just the filename in the message, tilde paths when safe in the command
                 let new_filename = new_path
                     .file_name()
                     .map(|n| n.to_string_lossy())
                     .unwrap_or_default();
 
-                // Shell-escape paths for safe copy-paste
-                let new_path_str = new_path.to_string_lossy();
-                let path_str = path.to_string_lossy();
-                let new_path_escaped = escape(Cow::Borrowed(new_path_str.as_ref()));
-                let path_escaped = escape(Cow::Borrowed(path_str.as_ref()));
+                let new_path_escaped = escape_path_for_shell(&new_path);
+                let path_escaped = escape_path_for_shell(path);
                 eprintln!(
                     "{}",
                     hint_message(cformat!(

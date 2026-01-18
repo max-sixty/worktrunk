@@ -1,3 +1,5 @@
+use shell_escape::escape;
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
@@ -102,6 +104,49 @@ pub fn format_path_for_display(path: &Path) -> String {
     path.display().to_string()
 }
 
+/// Check if a string needs shell escaping (contains characters outside the safe set).
+fn needs_shell_escaping(s: &str) -> bool {
+    !matches!(escape(Cow::Borrowed(s)), Cow::Borrowed(_))
+}
+
+/// Escape a path for use in shell commands, preserving tilde expansion.
+///
+/// Uses [`format_path_for_display`] to show `~` for home directory paths, but only
+/// when no shell escaping is needed. Falls back to the original path (quoted) when
+/// escaping is required (to avoid tilde-in-quotes issues).
+///
+/// # Examples (Unix)
+/// - `/Users/alex/repo` → `~/repo` (no escaping needed)
+/// - `/Users/alex/my repo` → `'/Users/alex/my repo'` (needs quoting, use original)
+/// - `/tmp/repo` → `/tmp/repo` (no escaping needed)
+/// - `/tmp/my repo` → `'/tmp/my repo'` (needs quoting)
+pub fn escape_path_for_shell(path: &Path) -> String {
+    let display = format_path_for_display(path);
+
+    if display == "~" {
+        return display;
+    }
+
+    // Handle both Unix (~/) and Windows (~\) path separators
+    let rest = display
+        .strip_prefix("~/")
+        .or_else(|| display.strip_prefix("~\\"));
+
+    if let Some(rest) = rest {
+        // Check if the path part (after ~/ or ~\) needs escaping
+        if !needs_shell_escaping(rest) {
+            return display;
+        }
+    } else if !needs_shell_escaping(&display) {
+        // Non-home path that doesn't need escaping
+        return display;
+    }
+
+    // Escaping needed - use original path (which is absolute for typical callers)
+    let original = path.display().to_string();
+    escape(Cow::Borrowed(&original)).into_owned()
+}
+
 /// Sanitize a string for use as a filename on all platforms.
 ///
 /// Replaces invalid characters and control characters with `-`, trims trailing
@@ -144,7 +189,10 @@ pub fn sanitize_for_filename(value: &str) -> String {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{format_path_for_display, home_dir, sanitize_for_filename, to_posix_path};
+    use super::{
+        escape_path_for_shell, format_path_for_display, home_dir, sanitize_for_filename,
+        to_posix_path,
+    };
 
     #[test]
     fn shortens_path_under_home() {
@@ -272,5 +320,60 @@ mod tests {
     #[test]
     fn test_sanitize_for_filename_handles_empty() {
         assert_eq!(sanitize_for_filename(""), "_empty");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn escape_path_simple_home_path() {
+        let Some(home) = home_dir() else {
+            return;
+        };
+
+        let path = home.join("workspace").join("repo");
+        let escaped = escape_path_for_shell(&path);
+        assert_eq!(escaped, "~/workspace/repo");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn escape_path_home_path_with_spaces() {
+        use shell_escape::escape;
+        use std::borrow::Cow;
+
+        let Some(home) = home_dir() else {
+            return;
+        };
+
+        let path = home.join("my workspace").join("repo");
+        let escaped = escape_path_for_shell(&path);
+        // Falls back to quoted absolute path when escaping needed
+        let abs_path = path.display().to_string();
+        let expected = escape(Cow::Borrowed(&abs_path)).into_owned();
+        assert_eq!(escaped, expected);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn escape_path_non_home_simple() {
+        let path = PathBuf::from("/tmp/repo");
+        let escaped = escape_path_for_shell(&path);
+        assert_eq!(escaped, "/tmp/repo");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn escape_path_non_home_with_spaces() {
+        let path = PathBuf::from("/tmp/my repo");
+        let escaped = escape_path_for_shell(&path);
+        assert_eq!(escaped, "'/tmp/my repo'");
+    }
+
+    #[test]
+    fn escape_path_home_directory_alone() {
+        let Some(home) = home_dir() else {
+            return;
+        };
+        let escaped = escape_path_for_shell(&home);
+        assert_eq!(escaped, "~");
     }
 }
