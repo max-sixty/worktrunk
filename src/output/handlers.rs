@@ -22,7 +22,8 @@ use worktrunk::styling::{
 };
 
 use super::shell_integration::{
-    compute_shell_warning_reason, git_subcommand_warning, shell_integration_hint,
+    compute_shell_warning_reason, explicit_path_hint, git_subcommand_warning,
+    shell_integration_hint, should_show_explicit_path_hint,
 };
 
 /// Format a switch message based on what was created
@@ -254,7 +255,12 @@ fn print_switch_message_if_changed(
         super::print(warning_message(cformat!(
             "Cannot change directory — {reason}"
         )))?;
-        super::print(hint_message(shell_integration_hint()))?;
+        // Show appropriate hint based on invocation mode
+        if should_show_explicit_path_hint() {
+            super::print(hint_message(explicit_path_hint(&dest_branch)))?;
+        } else {
+            super::print(hint_message(shell_integration_hint()))?;
+        }
     }
     Ok(())
 }
@@ -343,10 +349,12 @@ pub fn handle_switch_output(
                 super::print(warning_message(cformat!(
                     "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — {reason}"
                 )))?;
-                // Show git subcommand hint if running as git wt
+                // Show appropriate hint based on invocation mode
                 // (regular shell integration hint is shown by prompt_shell_integration in main.rs)
                 if is_git_subcommand {
                     super::print(hint_message(git_subcommand_warning()))?;
+                } else if should_show_explicit_path_hint() {
+                    super::print(hint_message(explicit_path_hint(branch)))?;
                 }
                 // User won't be there - show path in hook announcements
                 Some(path.clone())
@@ -403,10 +411,12 @@ pub fn handle_switch_output(
                 super::print(warning_message(cformat!(
                     "Cannot change directory — {reason}"
                 )))?;
-                // Show git subcommand hint if running as git wt
+                // Show appropriate hint based on invocation mode
                 // (regular shell integration hint is shown by prompt_shell_integration in main.rs)
                 if is_git_subcommand {
                     super::print(hint_message(git_subcommand_warning()))?;
+                } else if should_show_explicit_path_hint() {
+                    super::print(hint_message(explicit_path_hint(branch)))?;
                 }
                 // User won't be there - show path in hook announcements
                 Some(path.clone())
