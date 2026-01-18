@@ -15,6 +15,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -36,4 +37,3 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mFailed to expand command template 'echo 'Upstream: {{ upstream }}' > upstream.txt': Template render error: undefined value (in project post-create hook:1)[39m
-[2m↳[22m [2mRun with [90m-v[39m to see template expansion[22m

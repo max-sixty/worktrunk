@@ -1160,13 +1160,6 @@ fn main() {
                     // Single-line error without context: inline with emoji
                     let _ = output::print(error_message(&msg));
                 }
-
-                // Add hint for template errors if not already in verbose mode
-                if verbose_level == 0 && msg.contains("template") {
-                    let _ = output::print(hint_message(cformat!(
-                        "Run with <bright-black>-v</> to see template expansion"
-                    )));
-                }
             }
         }
 

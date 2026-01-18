@@ -13,7 +13,7 @@ use minijinja::{Environment, UndefinedBehavior, Value};
 
 use crate::git::Repository;
 use crate::path::to_posix_path;
-use crate::styling::{format_with_gutter, info_message, verbosity};
+use crate::styling::{eprintln, format_with_gutter, info_message, verbosity};
 
 /// Known template variables available in hook commands.
 ///
@@ -238,8 +238,11 @@ pub fn expand_template(
             .unwrap_or_default()
     });
 
+    // Cache verbosity level for consistent behavior within this call
+    let verbose = verbosity();
+
     // -vv: Full debug logging with vars
-    if verbosity() >= 2 {
+    if verbose >= 2 {
         log::debug!("[template:{name}] template={template:?}");
         // Sort keys for deterministic output in tests
         let mut sorted_vars: Vec<_> = vars.iter().collect();
@@ -263,13 +266,13 @@ pub fn expand_template(
         .map_err(|e| format!("Template render error: {}", e))?;
 
     // -vv: Full debug logging with result
-    if verbosity() >= 2 {
+    if verbose >= 2 {
         log::debug!("[template:{name}] result={result:?}");
     }
 
     // -v: Nice styled output showing template expansion
     // Info message for header, gutter for quoted content (template → result)
-    if verbosity() == 1 {
+    if verbose == 1 {
         eprintln!("{}", info_message(cformat!("Expanding <bold>{name}</>")));
         let content = if template.contains('\n') || result.contains('\n') {
             // Multiline: template lines, dim →, result lines
