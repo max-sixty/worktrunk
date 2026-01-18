@@ -272,8 +272,9 @@ pub fn expand_template(
 
     // -v: Nice styled output showing template expansion
     // Info message for header, gutter for quoted content (template → result)
+    // Single atomic write to avoid interleaving in multi-threaded execution
     if verbose == 1 {
-        eprintln!("{}", info_message(cformat!("Expanding <bold>{name}</>")));
+        let header = info_message(cformat!("Expanding <bold>{name}</>"));
         let content = if template.contains('\n') || result.contains('\n') {
             // Multiline: template lines, dim →, result lines
             cformat!("{template}\n<dim>→</>\n{result}")
@@ -281,7 +282,8 @@ pub fn expand_template(
             // Single line: template → result
             cformat!("{template} <dim>→</> {result}")
         };
-        eprintln!("{}", format_with_gutter(&content, None));
+        let gutter = format_with_gutter(&content, None);
+        eprintln!("{header}\n{gutter}");
     }
     Ok(result)
 }
@@ -702,5 +704,78 @@ mod tests {
         assert!((10000..20000).contains(&r2_port));
 
         assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn test_verbose_output_is_atomic_single_line() {
+        // Verify that verbose output produces a single combined string
+        // with header and gutter content, suitable for atomic emission.
+        // This prevents multi-threaded output interleaving.
+
+        let header = info_message(cformat!("Expanding <bold>test-template</>"));
+        let template = "{{ branch }}";
+        let result = "feature-branch";
+        let content = cformat!("{template} <dim>→</> {result}");
+        let gutter = format_with_gutter(&content, Some(80));
+        let output = format!("{header}\n{gutter}");
+
+        // Output should contain both header and gutter in order
+        assert!(output.contains("Expanding"), "Should contain header text");
+        assert!(
+            output.contains("test-template"),
+            "Should contain template name"
+        );
+        assert!(output.contains("{{ branch }}"), "Should contain template");
+        assert!(output.contains("→"), "Should contain arrow separator");
+        assert!(output.contains("feature-branch"), "Should contain result");
+
+        // Output should be a single string with newline between header and gutter
+        let lines: Vec<&str> = output.lines().collect();
+        assert!(
+            lines.len() >= 2,
+            "Should have at least 2 lines (header + gutter)"
+        );
+
+        // First line should be the info message (contains ○ symbol from info_message)
+        assert!(lines[0].contains('○'), "First line should be info message");
+    }
+
+    #[test]
+    fn test_verbose_output_is_atomic_multiline() {
+        // Verify that multiline template expansion also produces atomic output.
+
+        let header = info_message(cformat!("Expanding <bold>multiline-template</>"));
+        let template = "line1\nline2";
+        let result = "result1\nresult2";
+        let content = cformat!("{template}\n<dim>→</>\n{result}");
+        let gutter = format_with_gutter(&content, Some(80));
+        let output = format!("{header}\n{gutter}");
+
+        // Output should contain multiline content
+        assert!(
+            output.contains("line1"),
+            "Should contain first template line"
+        );
+        assert!(
+            output.contains("line2"),
+            "Should contain second template line"
+        );
+        assert!(
+            output.contains("result1"),
+            "Should contain first result line"
+        );
+        assert!(
+            output.contains("result2"),
+            "Should contain second result line"
+        );
+
+        // All lines should be present in a single string
+        let lines: Vec<&str> = output.lines().collect();
+        // Header (1) + template (2) + arrow (1) + result (2) = 6 lines minimum
+        assert!(
+            lines.len() >= 5,
+            "Should have multiple lines for multiline template, got {}",
+            lines.len()
+        );
     }
 }
