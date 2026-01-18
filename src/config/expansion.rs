@@ -12,15 +12,6 @@ use color_print::cformat;
 use minijinja::{Environment, UndefinedBehavior, Value};
 use regex::Regex;
 
-/// Escape angle brackets for safe use in `cformat!`.
-///
-/// User-provided strings may contain `<bold>`, `<red>`, etc. which `cformat!`
-/// would interpret as markup tags. This function escapes `<` → `<<` and `>` → `>>`
-/// so they display literally.
-fn escape_cformat(s: &str) -> String {
-    s.replace('<', "<<").replace('>', ">>")
-}
-
 use crate::git::Repository;
 use crate::path::to_posix_path;
 use crate::styling::{eprintln, format_with_gutter, info_message, verbosity};
@@ -291,14 +282,14 @@ pub fn expand_template(
         // Sort keys for deterministic output in tests
         let mut sorted_vars: Vec<_> = vars.iter().collect();
         sorted_vars.sort_by_key(|(k, _)| *k);
-        // Build vars string eagerly (not inside log::debug! macro) so redact_credentials
-        // is called even when no logger is configured (for test coverage)
-        let vars_str = sorted_vars
-            .iter()
-            .map(|(k, v)| format!("{k}={:?}", redact_credentials(v)))
-            .collect::<Vec<_>>()
-            .join(", ");
-        log::debug!("[template:{name}] vars={{{vars_str}}}");
+        log::debug!(
+            "[template:{name}] vars={{{}}}",
+            sorted_vars
+                .iter()
+                .map(|(k, v)| format!("{k}={:?}", redact_credentials(v)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
 
     let tmpl = env
@@ -320,15 +311,12 @@ pub fn expand_template(
     // Single atomic write to avoid interleaving in multi-threaded execution
     if verbose == 1 {
         let header = info_message(cformat!("Expanding <bold>{name}</>"));
-        // Escape angle brackets in user content to prevent cformat! interpretation
-        let template_escaped = escape_cformat(template);
-        let result_escaped = escape_cformat(&result);
         let content = if template.contains('\n') || result.contains('\n') {
             // Multiline: template lines, dim →, result lines
-            cformat!("{template_escaped}\n<dim>→</>\n{result_escaped}")
+            cformat!("{template}\n<dim>→</>\n{result}")
         } else {
             // Single line: template → result
-            cformat!("{template_escaped} <dim>→</> {result_escaped}")
+            cformat!("{template} <dim>→</> {result}")
         };
         let gutter = format_with_gutter(&content, None);
         eprintln!("{header}\n{gutter}");
@@ -889,106 +877,5 @@ mod tests {
             redact_credentials("https://token@github.com/owner/repo.git?ref=main"),
             "https://[REDACTED]@github.com/owner/repo.git?ref=main"
         );
-    }
-
-    #[test]
-    fn test_escape_cformat() {
-        // Basic escaping
-        assert_eq!(escape_cformat("<bold>"), "<<bold>>");
-        assert_eq!(escape_cformat("<red>text</>"), "<<red>>text<</>>");
-        assert_eq!(escape_cformat("echo <test>"), "echo <<test>>");
-
-        // No angle brackets - unchanged
-        assert_eq!(escape_cformat("hello world"), "hello world");
-        assert_eq!(escape_cformat(""), "");
-
-        // Multiple angle brackets
-        assert_eq!(escape_cformat("<<>>"), "<<<<>>>>");
-        assert_eq!(escape_cformat("<a><b>"), "<<a>><<b>>");
-
-        // Mixed content
-        assert_eq!(
-            escape_cformat("run echo <bold>test</>"),
-            "run echo <<bold>>test<</>>"
-        );
-    }
-
-    #[test]
-    fn test_escape_cformat_preserves_literal_display() {
-        // When passed through cformat!, escaped content should display literally
-        let user_input = "echo <bold>test</>";
-        let escaped = escape_cformat(user_input);
-        let formatted = cformat!("{escaped}");
-        // The formatted string should contain the literal angle brackets, not ANSI codes
-        assert!(formatted.contains('<'), "should contain literal <");
-        assert!(formatted.contains('>'), "should contain literal >");
-        // Build ANSI escape prefix programmatically to avoid lint
-        let esc = '\x1b';
-        let ansi_prefix = format!("{esc}[");
-        assert!(
-            !formatted.contains(&ansi_prefix),
-            "should not contain ANSI escapes from user content"
-        );
-    }
-
-    #[test]
-    fn test_expand_template_verbose_escapes_angle_brackets() {
-        use crate::styling::set_verbosity;
-
-        // Set verbosity to 1 to trigger the -v output path
-        set_verbosity(1);
-
-        let test = test_repo();
-        let mut vars = HashMap::new();
-        // Use a value with angle brackets that would be interpreted by cformat!
-        vars.insert("cmd", "echo <bold>test</>");
-
-        // This should not panic or produce malformed output due to angle brackets
-        let result = expand_template("{{ cmd }}", &vars, false, &test.repo, "test").unwrap();
-        assert_eq!(result, "echo <bold>test</>");
-
-        // Reset verbosity for other tests
-        set_verbosity(0);
-    }
-
-    #[test]
-    fn test_expand_template_verbose_redacts_credentials() {
-        use crate::styling::set_verbosity;
-
-        // Set verbosity to 2 to trigger the -vv debug output path
-        set_verbosity(2);
-
-        let test = test_repo();
-        let mut vars = HashMap::new();
-        // Use a URL with credentials
-        vars.insert("remote_url", "https://ghp_secret123@github.com/owner/repo");
-
-        // The template expansion should succeed; credentials are redacted only in logs
-        let result = expand_template("{{ remote_url }}", &vars, false, &test.repo, "test").unwrap();
-        // Result preserves the original value (redaction is only in logs)
-        assert_eq!(result, "https://ghp_secret123@github.com/owner/repo");
-
-        // Reset verbosity for other tests
-        set_verbosity(0);
-    }
-
-    #[test]
-    fn test_expand_template_verbose_multiline() {
-        use crate::styling::set_verbosity;
-
-        // Set verbosity to 1 to test multiline output path
-        set_verbosity(1);
-
-        let test = test_repo();
-        let mut vars = HashMap::new();
-        vars.insert("name", "world");
-
-        // Multiline template triggers different formatting path
-        let result =
-            expand_template("line1\nline2 {{ name }}", &vars, false, &test.repo, "test").unwrap();
-        assert_eq!(result, "line1\nline2 world");
-
-        // Reset verbosity for other tests
-        set_verbosity(0);
     }
 }

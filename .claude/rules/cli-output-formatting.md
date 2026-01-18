@@ -526,6 +526,10 @@ output::print(hint_message("Run 'wt list' to see worktrees"))?;
 ## Design Principles
 
 - **`cformat!` for styling** — Never manual escape codes (`\x1b[...`)
+- **`cformat!` variables are safe** — Tags like `<bold>` are processed at compile
+  time only. Runtime variable values are NOT interpreted as markup, so user
+  content (branch names, commit messages, paths) can be interpolated directly
+  without escaping. Do NOT escape `<`/`>` in variables — it adds extra chars.
 - **`output::` for printing** — Preferred for consistency; direct `println!`/`eprintln!` acceptable
 - **YAGNI** — Most output needs no styling
 - **Graceful degradation** — Colors auto-adjust (NO_COLOR, TTY detection)
