@@ -136,7 +136,7 @@ The [2mpr:<number>[0m syntax resolves the branch for a GitHub pull request. Fo
 
 Requires [2mgh[0m CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with [2mpr:[0m syntax since the branch already exists.
 
-[1mFork PRs:[0m To push changes, use [2mgit push HEAD:<branch-name>[0m where [2m<branch-name>[0m is the PR's head branch (e.g., [2mfeature-fix[0m). The local branch is named [2m<owner>/<branch>[0m to avoid collisions, so plain [2mgit push[0m won't work with default settings.
+[1mFork PRs:[0m The local branch uses the PR's branch name directly (e.g., [2mfeature-fix[0m), so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
 
 [1m[32mWhen wt switch fails
 
