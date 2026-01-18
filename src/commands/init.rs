@@ -29,6 +29,12 @@ pub fn handle_init(shell: shell::Shell, cmd: String) -> Result<(), String> {
 /// - Modify any files
 /// - Include shell integration (cd-on-switch functionality)
 /// - Register dynamic completions
+///
+/// TODO(completions): We output static completions because that's the package manager
+/// convention, but dynamic completions (one-liner that calls the binary at tab-time)
+/// might be better—users would get branch name completion. See the fish example in
+/// `~/.config/fish/completions/wt.fish` which calls `COMPLETE=fish wt` at runtime.
+/// Other tools like gh/kubectl also call their binaries at runtime.
 pub fn handle_completions(shell: shell::Shell) -> anyhow::Result<()> {
     let mut cmd = Cli::command();
     let cmd_name = crate::binary_name();
