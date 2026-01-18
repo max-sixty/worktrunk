@@ -115,6 +115,16 @@ impl<'a> Branch<'a> {
         }
     }
 
+    /// Unset the upstream tracking branch for this branch.
+    ///
+    /// This removes the tracking relationship, preventing accidental pushes
+    /// to the wrong branch (e.g., when a feature branch was created from origin/main).
+    pub fn unset_upstream(&self) -> anyhow::Result<()> {
+        self.repo
+            .run_command(&["branch", "--unset-upstream", &self.name])?;
+        Ok(())
+    }
+
     /// Get the remote where this branch would be pushed.
     ///
     /// Uses [`@{push}` syntax][1] which resolves through:

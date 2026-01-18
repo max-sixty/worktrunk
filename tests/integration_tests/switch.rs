@@ -106,6 +106,41 @@ fn test_switch_dwim_from_remote(#[from(repo_with_remote)] repo: TestRepo) {
     snapshot_switch("switch_dwim_from_remote", &repo, &["dwim-feature"]);
 }
 
+/// When creating a new branch from a remote tracking branch (e.g., origin/main),
+/// the new branch should NOT track the remote base branch.
+/// This prevents accidental `git push` to the base branch (e.g., pushing to main).
+/// This is the bug fix for GitHub issue #713.
+#[rstest]
+fn test_switch_create_from_remote_base_no_upstream(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a new branch with --base pointing to a remote tracking branch
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "my-feature", "--base=origin/main"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "switch should succeed");
+
+    // Verify the branch was created
+    let branch_output = repo.git_output(&["branch", "--list", "my-feature"]);
+    assert!(
+        branch_output.contains("my-feature"),
+        "branch should be created"
+    );
+
+    // Verify the branch does NOT have an upstream (no tracking)
+    // Using rev-parse to check for upstream - should fail for untracked branches
+    let upstream_check = repo
+        .git_command()
+        .args(["rev-parse", "--abbrev-ref", "my-feature@{upstream}"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !upstream_check.status.success(),
+        "branch should NOT have upstream tracking (to prevent accidental push to origin/main)"
+    );
+}
+
 /// When local branch already exists and tracks a remote, should report
 /// "Created worktree for X" NOT "Created branch X (tracking remote)".
 /// This is the bug fix for GitHub issue #656.

@@ -476,6 +476,19 @@ pub fn execute_switch(
                         .into());
                     }
 
+                    // Safety: unset unsafe upstream when creating a new branch from a remote
+                    // tracking branch. When `git worktree add -b feature origin/main` runs,
+                    // git sets feature to track origin/main. This is dangerous because
+                    // `git push` would push to main instead of the feature branch.
+                    // See: https://github.com/max-sixty/worktrunk/issues/713
+                    if *create_branch
+                        && let Some(base) = base_branch
+                        && repo.is_remote_tracking_branch(base)
+                    {
+                        // Unset the upstream to prevent accidental pushes
+                        branch_handle.unset_upstream()?;
+                    }
+
                     // Report tracking info only if git's DWIM created the branch from a remote
                     let from_remote = if !create_branch && !local_branch_existed {
                         branch_handle.upstream()?

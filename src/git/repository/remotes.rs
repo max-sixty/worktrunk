@@ -162,4 +162,17 @@ impl Repository {
             .and_then(|config| config.list)
             .and_then(|list| list.url)
     }
+
+    /// Check if a ref is a remote tracking branch.
+    ///
+    /// Returns true if the ref exists under `refs/remotes/` (e.g., `origin/main`).
+    /// Returns false for local branches, tags, SHAs, and non-existent refs.
+    pub fn is_remote_tracking_branch(&self, ref_name: &str) -> bool {
+        self.run_command(&[
+            "rev-parse",
+            "--verify",
+            &format!("refs/remotes/{}", ref_name),
+        ])
+        .is_ok()
+    }
 }
