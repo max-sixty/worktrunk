@@ -161,6 +161,11 @@ pub enum GitError {
         branch: String,
         pr_number: u32,
     },
+    /// No remote found for the repository where the PR lives
+    NoRemoteForRepo {
+        owner: String,
+        repo: String,
+    },
     Other {
         message: String,
     },
@@ -619,6 +624,17 @@ impl std::fmt::Display for GitError {
                     )),
                     hint_message(cformat!(
                         "Delete the branch first: <bright-black>git branch -D {branch}</>"
+                    ))
+                )
+            }
+
+            GitError::NoRemoteForRepo { owner, repo } => {
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!("No remote found for <bold>{owner}/{repo}</>")),
+                    hint_message(cformat!(
+                        "Add the remote: <bright-black>git remote add upstream https://github.com/{owner}/{repo}.git</>"
                     ))
                 )
             }

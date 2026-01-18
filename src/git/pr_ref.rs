@@ -29,16 +29,17 @@
 //!   │
 //!   ▼
 //! ┌─────────────────────────────────────────────────────────┐
-//! │ gh pr view 101 --json headRefName,headRepository,       │
-//! │   headRepositoryOwner,isCrossRepository,url             │
+//! │ gh api repos/{owner}/{repo}/pulls/101                   │
+//! │   → head.ref, head.repo, base.repo, html_url            │
 //! └─────────────────────────────────────────────────────────┘
 //!   │
-//!   ├─── isCrossRepository == false ───▶ Same-repo PR
+//!   ├─── base.repo == head.repo ───▶ Same-repo PR
 //!   │     │
 //!   │     └─▶ Branch exists in origin, use directly
 //!   │
-//!   └─── isCrossRepository == true ───▶ Fork PR
+//!   └─── base.repo != head.repo ───▶ Fork PR
 //!         │
+//!         ├─▶ Find remote for base.repo (where PR refs live)
 //!         └─▶ Set up push to fork URL
 //! ```
 //!
@@ -228,12 +229,12 @@
 //! **Diagnostics:** `wt config show` should display the resolved repo so users
 //! understand which repo PR lookups will query.
 //!
-//! ## Required gh Fields
+//! ## GitHub API Fields
 //!
-//! ```bash
-//! gh pr view <number> --json \
-//!   headRefName,headRepository,headRepositoryOwner,isCrossRepository,url
-//! ```
+//! We use `gh api repos/{owner}/{repo}/pulls/<number>` which returns:
+//! - `head.ref`, `head.repo.owner.login`, `head.repo.name` — PR branch info
+//! - `base.repo.owner.login`, `base.repo.name` — target repo (where PR refs live)
+//! - `html_url` — PR web URL
 //!
 //! ## Remote URL Construction
 //!
@@ -292,26 +293,35 @@ pub struct PrInfo {
     pub head_owner: String,
     /// The name of the head repository.
     pub head_repo: String,
+    /// The owner of the base repository (where the PR was opened).
+    pub base_owner: String,
+    /// The name of the base repository.
+    pub base_repo: String,
     /// Whether this is a cross-repository (fork) PR.
     pub is_cross_repository: bool,
     /// The PR's web URL.
     pub url: String,
 }
 
-/// Raw JSON response from `gh pr view`.
+/// Raw JSON response from `gh api repos/{owner}/{repo}/pulls/{number}`.
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GhPrResponse {
-    head_ref_name: String,
-    head_repository: GhRepository,
-    head_repository_owner: GhOwner,
-    is_cross_repository: bool,
-    url: String,
+struct GhApiPrResponse {
+    head: GhPrRef,
+    base: GhPrRef,
+    html_url: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct GhRepository {
+struct GhPrRef {
+    #[serde(rename = "ref")]
+    ref_name: String,
+    repo: GhPrRepo,
+}
+
+#[derive(Debug, Deserialize)]
+struct GhPrRepo {
     name: String,
+    owner: GhOwner,
 }
 
 #[derive(Debug, Deserialize)]
@@ -329,6 +339,9 @@ pub fn parse_pr_ref(input: &str) -> Option<u32> {
 
 /// Fetch PR information from GitHub using the `gh` CLI.
 ///
+/// Uses `gh api` to query the GitHub API directly, which provides
+/// both head and base repository information.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -336,14 +349,11 @@ pub fn parse_pr_ref(input: &str) -> Option<u32> {
 /// - The PR doesn't exist
 /// - The JSON response is malformed
 pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Result<PrInfo> {
+    // Use gh api with {owner}/{repo} placeholders - gh resolves these from repo context
+    let api_path = format!("repos/{{owner}}/{{repo}}/pulls/{}", pr_number);
+
     let output = match Cmd::new("gh")
-        .args([
-            "pr",
-            "view",
-            &pr_number.to_string(),
-            "--json",
-            "headRefName,headRepository,headRepositoryOwner,isCrossRepository,url",
-        ])
+        .args(["api", &api_path])
         .current_dir(repo_root)
         .env("GH_PROMPT_DISABLED", "1")
         .run()
@@ -358,7 +368,7 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
             {
                 bail!("GitHub CLI (gh) not installed; install from https://cli.github.com/");
             }
-            return Err(anyhow::Error::from(e).context("Failed to run gh pr view"));
+            return Err(anyhow::Error::from(e).context("Failed to run gh api"));
         }
     };
 
@@ -366,11 +376,8 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stderr_lower = stderr.to_lowercase();
 
-        // PR not found (various phrasings across gh versions)
-        if stderr_lower.contains("could not resolve")
-            || stderr_lower.contains("not found")
-            || stderr_lower.contains("no pull request")
-        {
+        // PR not found (HTTP 404)
+        if stderr_lower.contains("not found") || stderr_lower.contains("404") {
             bail!("PR #{} not found", pr_number);
         }
 
@@ -379,12 +386,16 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
             || stderr_lower.contains("logged in")
             || stderr_lower.contains("auth login")
             || stderr_lower.contains("not logged")
+            || stderr_lower.contains("401")
         {
             bail!("GitHub CLI not authenticated; run gh auth login");
         }
 
         // Rate limiting
-        if stderr_lower.contains("rate limit") || stderr_lower.contains("api rate") {
+        if stderr_lower.contains("rate limit")
+            || stderr_lower.contains("api rate")
+            || stderr_lower.contains("403")
+        {
             bail!("GitHub API rate limit exceeded; wait a few minutes and retry");
         }
 
@@ -396,32 +407,38 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
             bail!("Network error connecting to GitHub; check your internet connection");
         }
 
-        bail!("gh pr view failed: {}", stderr.trim());
+        bail!("gh api failed: {}", stderr.trim());
     }
 
-    let response: GhPrResponse = serde_json::from_slice(&output.stdout).with_context(|| {
+    let response: GhApiPrResponse = serde_json::from_slice(&output.stdout).with_context(|| {
         format!(
-            "Failed to parse gh pr view JSON for PR #{}. \
-             This may indicate a gh version incompatibility or GitHub API change.",
+            "Failed to parse GitHub API response for PR #{}. \
+             This may indicate a GitHub API change.",
             pr_number
         )
     })?;
 
     // Validate required fields are not empty
-    if response.head_ref_name.is_empty() {
+    if response.head.ref_name.is_empty() {
         bail!(
             "PR #{} has empty branch name; the PR may be in an invalid state",
             pr_number
         );
     }
 
+    // Compute is_cross_repository by comparing base and head repos
+    let is_cross_repository = response.base.repo.owner.login != response.head.repo.owner.login
+        || response.base.repo.name != response.head.repo.name;
+
     Ok(PrInfo {
         number: pr_number,
-        head_ref_name: response.head_ref_name,
-        head_owner: response.head_repository_owner.login,
-        head_repo: response.head_repository.name,
-        is_cross_repository: response.is_cross_repository,
-        url: response.url,
+        head_ref_name: response.head.ref_name,
+        head_owner: response.head.repo.owner.login,
+        head_repo: response.head.repo.name,
+        base_owner: response.base.repo.owner.login,
+        base_repo: response.base.repo.name,
+        is_cross_repository,
+        url: response.html_url,
     })
 }
 
@@ -514,6 +531,8 @@ mod tests {
             head_ref_name: "feature-auth".to_string(),
             head_owner: "owner".to_string(),
             head_repo: "repo".to_string(),
+            base_owner: "owner".to_string(),
+            base_repo: "repo".to_string(),
             is_cross_repository: false,
             url: "https://github.com/owner/repo/pull/101".to_string(),
         };
@@ -527,6 +546,8 @@ mod tests {
             head_ref_name: "feature-auth".to_string(),
             head_owner: "contributor".to_string(),
             head_repo: "repo".to_string(),
+            base_owner: "owner".to_string(),
+            base_repo: "repo".to_string(),
             is_cross_repository: true,
             url: "https://github.com/owner/repo/pull/101".to_string(),
         };

@@ -47,11 +47,8 @@ fn resolve_switch_target(
             return Err(GitError::PrBaseConflict { pr_number }.into());
         }
 
-        // Fetch PR info (network call)
-        let remote = repo.primary_remote()?;
-        crate::output::print(progress_message(cformat!(
-            "Fetching PR #{pr_number} from <bold>{remote}</>..."
-        )))?;
+        // Fetch PR info (network call via gh CLI)
+        crate::output::print(progress_message(cformat!("Fetching PR #{pr_number}...")))?;
 
         let repo_root = repo.repo_path()?;
         let pr_info = fetch_pr_info(pr_number, &repo_root)?;
@@ -98,6 +95,8 @@ fn resolve_switch_target(
                     pr_number,
                     fork_push_url,
                     pr_url: pr_info.url,
+                    base_owner: pr_info.base_owner,
+                    base_repo: pr_info.base_repo,
                 },
             });
         } else {
@@ -488,9 +487,18 @@ pub fn execute_switch(
                     pr_number,
                     fork_push_url,
                     pr_url: _,
+                    base_owner,
+                    base_repo,
                 } => {
                     let pr_ref = format!("pull/{}/head", pr_number);
-                    let remote = repo.primary_remote()?;
+
+                    // Find the remote that points to the base repo (where PR refs live)
+                    let remote = repo
+                        .find_remote_for_repo(base_owner, base_repo)
+                        .ok_or_else(|| GitError::NoRemoteForRepo {
+                            owner: base_owner.clone(),
+                            repo: base_repo.clone(),
+                        })?;
 
                     // Fetch the PR head (progress already shown during planning)
                     repo.run_command(&["fetch", &remote, &pr_ref])

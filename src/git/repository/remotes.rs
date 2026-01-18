@@ -65,6 +65,34 @@ impl Repository {
             .filter(|url| !url.is_empty())
     }
 
+    /// Find a remote that points to a specific owner/repo.
+    ///
+    /// Searches all configured remotes and returns the name of the first one
+    /// whose URL matches the given owner and repo (case-insensitive for owner).
+    ///
+    /// Returns `None` if no matching remote is found.
+    pub fn find_remote_for_repo(&self, owner: &str, repo: &str) -> Option<String> {
+        // Get all remotes with URLs
+        let output = self
+            .run_command(&["config", "--get-regexp", r"remote\..+\.url"])
+            .ok()?;
+
+        for line in output.lines() {
+            // Parse "remote.<name>.url <value>" format
+            if let Some(rest) = line.strip_prefix("remote.")
+                && let Some((name, url)) = rest.split_once(".url ")
+                && let Some(parsed) = GitRemoteUrl::parse(url)
+                // Case-insensitive comparison (GitHub owner/repo names are case-insensitive)
+                && parsed.owner().eq_ignore_ascii_case(owner)
+                && parsed.repo().eq_ignore_ascii_case(repo)
+            {
+                return Some(name.to_string());
+            }
+        }
+
+        None
+    }
+
     /// Get the URL for the primary remote, if configured.
     ///
     /// Result is cached in the repository's shared cache (same for all clones).

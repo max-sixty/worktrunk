@@ -68,6 +68,10 @@ pub enum CreationMethod {
         pr_number: u32,
         fork_push_url: String,
         pr_url: String,
+        /// Owner of the base repository (where the PR was opened)
+        base_owner: String,
+        /// Name of the base repository
+        base_repo: String,
     },
 }
 
