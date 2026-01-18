@@ -36,25 +36,10 @@ use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 use worktrunk::shell_exec::ShellConfig;
 use worktrunk::styling::{eprintln, stderr};
 
-// Re-export verbosity functions from the library's styling module.
+// Re-export set_verbosity from the library's styling module.
 // This ensures the binary and library share the same global state.
 // Library code (like expansion.rs) accesses verbosity() directly from styling.
-pub use worktrunk::styling::{set_verbosity, verbosity};
-
-/// Alias for `set_verbosity` (API compatibility)
-pub fn set_verbose_level(level: u8) {
-    set_verbosity(level);
-}
-
-/// Alias for `verbosity` (API compatibility)
-pub fn verbose_level() -> u8 {
-    verbosity()
-}
-
-/// Check if verbose mode is enabled (-v or higher)
-pub fn is_verbose() -> bool {
-    verbosity() >= 1
-}
+pub use worktrunk::styling::set_verbosity;
 
 /// Global output state, lazily initialized on first access.
 ///

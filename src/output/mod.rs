@@ -34,9 +34,8 @@ pub(crate) mod shell_integration;
 
 // Re-export the public API
 pub(crate) use global::{
-    blank, change_directory, execute, flush, is_shell_integration_active, is_verbose,
-    post_hook_display_path, pre_hook_display_path, print, set_verbose_level, set_verbosity, stdout,
-    terminate_output, verbose_level, verbosity,
+    blank, change_directory, execute, flush, is_shell_integration_active, post_hook_display_path,
+    pre_hook_display_path, print, set_verbosity, stdout, terminate_output,
 };
 // Re-export output handlers
 pub(crate) use handlers::{
