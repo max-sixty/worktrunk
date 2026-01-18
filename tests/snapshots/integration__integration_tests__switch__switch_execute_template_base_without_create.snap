@@ -30,13 +30,12 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
-base=
 
 ----- stderr -----
 [33m▲[39m [33mExecuting [1mecho 'base={{ base }}'[22m @ [1m_REPO_.existing[22m, but shell directory unchanged — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
-[36m◎[39m [36mExecuting (--execute):[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'base='[0m[2m
+[31m✗[39m [31mFailed to expand --execute template: Template render error: undefined value (in --execute command:1)[39m
+[2m↳[22m [2mRun with [90m-v[39m to see template expansion[22m

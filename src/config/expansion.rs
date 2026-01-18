@@ -8,10 +8,12 @@
 //!
 //! See `wt hook --help` for available filters and functions.
 
-use minijinja::{Environment, Value};
+use color_print::cformat;
+use minijinja::{Environment, UndefinedBehavior, Value};
 
 use crate::git::Repository;
 use crate::path::to_posix_path;
+use crate::styling::{format_with_gutter, info_message, verbosity};
 
 /// Known template variables available in hook commands.
 ///
@@ -183,11 +185,14 @@ fn short_hash(s: &str) -> String {
 /// # Functions
 /// - `worktree_path_of_branch(branch)` — Look up the filesystem path of a branch's worktree
 ///   Returns empty string if branch has no worktree.
+///
+/// The `name` parameter appears in error messages to help identify which template failed.
 pub fn expand_template(
     template: &str,
     vars: &HashMap<&str, &str>,
     shell_escape: bool,
     repo: &Repository,
+    name: &str,
 ) -> Result<String, String> {
     use shell_escape::escape;
     use std::borrow::Cow;
@@ -205,6 +210,9 @@ pub fn expand_template(
 
     // Render template with minijinja
     let mut env = Environment::new();
+    // SemiStrict: errors on undefined variable use (printing, iteration) but allows
+    // truthiness checks ({% if var %}). This catches typos while supporting optional vars.
+    env.set_undefined_behavior(UndefinedBehavior::SemiStrict);
     if shell_escape {
         // Preserve trailing newlines in templates (important for multiline shell commands)
         env.set_keep_trailing_newline(true);
@@ -230,12 +238,49 @@ pub fn expand_template(
             .unwrap_or_default()
     });
 
+    // -vv: Full debug logging with vars
+    if verbosity() >= 2 {
+        log::debug!("[template:{name}] template={template:?}");
+        // Sort keys for deterministic output in tests
+        let mut sorted_vars: Vec<_> = vars.iter().collect();
+        sorted_vars.sort_by_key(|(k, _)| *k);
+        log::debug!(
+            "[template:{name}] vars={{{}}}",
+            sorted_vars
+                .iter()
+                .map(|(k, v)| format!("{k}={v:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+
     let tmpl = env
-        .template_from_str(template)
+        .template_from_named_str(name, template)
         .map_err(|e| format!("Template syntax error: {}", e))?;
 
-    tmpl.render(minijinja::Value::from_object(context))
-        .map_err(|e| format!("Template render error: {}", e))
+    let result = tmpl
+        .render(minijinja::Value::from_object(context))
+        .map_err(|e| format!("Template render error: {}", e))?;
+
+    // -vv: Full debug logging with result
+    if verbosity() >= 2 {
+        log::debug!("[template:{name}] result={result:?}");
+    }
+
+    // -v: Nice styled output showing template expansion
+    // Info message for header, gutter for quoted content (template → result)
+    if verbosity() == 1 {
+        eprintln!("{}", info_message(cformat!("Expanding <bold>{name}</>")));
+        let content = if template.contains('\n') || result.contains('\n') {
+            // Multiline: template lines, dim →, result lines
+            cformat!("{template}\n<dim>→</>\n{result}")
+        } else {
+            // Single line: template → result
+            cformat!("{template} <dim>→</> {result}")
+        };
+        eprintln!("{}", format_with_gutter(&content, None));
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -402,27 +447,32 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("name", "world");
         assert_eq!(
-            expand_template("Hello {{ name }}", &vars, false, &test.repo).unwrap(),
+            expand_template("Hello {{ name }}", &vars, false, &test.repo, "test").unwrap(),
             "Hello world"
         );
 
         // Multiple variables
         vars.insert("repo", "myrepo");
         assert_eq!(
-            expand_template("{{ repo }}/{{ name }}", &vars, false, &test.repo).unwrap(),
+            expand_template("{{ repo }}/{{ name }}", &vars, false, &test.repo, "test").unwrap(),
             "myrepo/world"
         );
 
         // Empty/static cases
         let empty: HashMap<&str, &str> = HashMap::new();
-        assert_eq!(expand_template("", &empty, false, &test.repo).unwrap(), "");
         assert_eq!(
-            expand_template("static text", &empty, false, &test.repo).unwrap(),
-            "static text"
+            expand_template("", &empty, false, &test.repo, "test").unwrap(),
+            ""
         );
         assert_eq!(
-            expand_template("no {{ variables }} here", &empty, false, &test.repo).unwrap(),
-            "no  here"
+            expand_template("static text", &empty, false, &test.repo, "test").unwrap(),
+            "static text"
+        );
+        // Undefined variables now error in SemiStrict mode
+        assert!(
+            expand_template("no {{ variables }} here", &empty, false, &test.repo, "test")
+                .unwrap_err()
+                .contains("undefined")
         );
     }
 
@@ -431,18 +481,18 @@ mod tests {
         let test = test_repo();
         let mut vars = HashMap::new();
         vars.insert("path", "my path");
-        let expanded = expand_template("cd {{ path }}", &vars, true, &test.repo).unwrap();
+        let expanded = expand_template("cd {{ path }}", &vars, true, &test.repo, "test").unwrap();
         assert!(expanded.contains("'my path'") || expanded.contains("my\\ path"));
 
         // Command injection prevention
         vars.insert("arg", "test;rm -rf");
-        let expanded = expand_template("echo {{ arg }}", &vars, true, &test.repo).unwrap();
+        let expanded = expand_template("echo {{ arg }}", &vars, true, &test.repo, "test").unwrap();
         assert!(!expanded.contains(";rm") || expanded.contains("'"));
 
         // No escape for literal mode
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch }}", &vars, false, &test.repo).unwrap(),
+            expand_template("{{ branch }}", &vars, false, &test.repo, "test").unwrap(),
             "feature/foo"
         );
     }
@@ -452,11 +502,11 @@ mod tests {
         let test = test_repo();
         let vars = HashMap::new();
         assert!(
-            expand_template("{{ unclosed", &vars, false, &test.repo)
+            expand_template("{{ unclosed", &vars, false, &test.repo, "test")
                 .unwrap_err()
                 .contains("syntax error")
         );
-        assert!(expand_template("{{ 1 + }}", &vars, false, &test.repo).is_err());
+        assert!(expand_template("{{ 1 + }}", &vars, false, &test.repo, "test").is_err());
     }
 
     #[test]
@@ -465,13 +515,27 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("debug", "true");
         assert_eq!(
-            expand_template("{% if debug %}DEBUG{% endif %}", &vars, false, &test.repo).unwrap(),
+            expand_template(
+                "{% if debug %}DEBUG{% endif %}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "DEBUG"
         );
 
         vars.insert("debug", "");
         assert_eq!(
-            expand_template("{% if debug %}DEBUG{% endif %}", &vars, false, &test.repo).unwrap(),
+            expand_template(
+                "{% if debug %}DEBUG{% endif %}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             ""
         );
 
@@ -481,7 +545,8 @@ mod tests {
                 "{{ missing | default('fallback') }}",
                 &empty,
                 false,
-                &test.repo
+                &test.repo,
+                "test",
             )
             .unwrap(),
             "fallback"
@@ -489,7 +554,7 @@ mod tests {
 
         vars.insert("name", "hello");
         assert_eq!(
-            expand_template("{{ name | upper }}", &vars, false, &test.repo).unwrap(),
+            expand_template("{{ name | upper }}", &vars, false, &test.repo, "test").unwrap(),
             "HELLO"
         );
     }
@@ -500,28 +565,28 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch | sanitize }}", &vars, false, &test.repo).unwrap(),
+            expand_template("{{ branch | sanitize }}", &vars, false, &test.repo, "test").unwrap(),
             "feature-foo"
         );
 
         // Backslashes are also sanitized
         vars.insert("branch", "feature\\bar");
         assert_eq!(
-            expand_template("{{ branch | sanitize }}", &vars, false, &test.repo).unwrap(),
+            expand_template("{{ branch | sanitize }}", &vars, false, &test.repo, "test").unwrap(),
             "feature-bar"
         );
 
         // Multiple slashes
         vars.insert("branch", "user/feature/task");
         assert_eq!(
-            expand_template("{{ branch | sanitize }}", &vars, false, &test.repo).unwrap(),
+            expand_template("{{ branch | sanitize }}", &vars, false, &test.repo, "test").unwrap(),
             "user-feature-task"
         );
 
         // Raw branch is unchanged
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch }}", &vars, false, &test.repo).unwrap(),
+            expand_template("{{ branch }}", &vars, false, &test.repo, "test").unwrap(),
             "feature/foo"
         );
     }
@@ -533,26 +598,44 @@ mod tests {
 
         // Basic transformation (with hash suffix)
         vars.insert("branch", "feature/auth-oauth2");
-        let result =
-            expand_template("{{ branch | sanitize_db }}", &vars, false, &test.repo).unwrap();
+        let result = expand_template(
+            "{{ branch | sanitize_db }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert!(result.starts_with("feature_auth_oauth2_"), "got: {result}");
 
         // Leading digit gets underscore prefix
         vars.insert("branch", "123-bug-fix");
-        let result =
-            expand_template("{{ branch | sanitize_db }}", &vars, false, &test.repo).unwrap();
+        let result = expand_template(
+            "{{ branch | sanitize_db }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert!(result.starts_with("_123_bug_fix_"), "got: {result}");
 
         // Uppercase conversion
         vars.insert("branch", "UPPERCASE.Branch");
-        let result =
-            expand_template("{{ branch | sanitize_db }}", &vars, false, &test.repo).unwrap();
+        let result = expand_template(
+            "{{ branch | sanitize_db }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert!(result.starts_with("uppercase_branch_"), "got: {result}");
 
         // Raw branch is unchanged
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch }}", &vars, false, &test.repo).unwrap(),
+            expand_template("{{ branch }}", &vars, false, &test.repo, "test").unwrap(),
             "feature/foo"
         );
     }
@@ -563,7 +646,7 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("cmd", "echo hello");
         assert!(
-            expand_template("{{ cmd }}\n", &vars, true, &test.repo)
+            expand_template("{{ cmd }}\n", &vars, true, &test.repo, "test")
                 .unwrap()
                 .ends_with('\n')
         );
@@ -587,7 +670,8 @@ mod tests {
         vars.insert("repo", "myrepo");
 
         // Filter produces a number in range
-        let result = expand_template("{{ branch | hash_port }}", &vars, false, &test.repo).unwrap();
+        let result =
+            expand_template("{{ branch | hash_port }}", &vars, false, &test.repo, "test").unwrap();
         let port: u16 = result.parse().expect("should be a number");
         assert!((10000..20000).contains(&port));
 
@@ -597,6 +681,7 @@ mod tests {
             &vars,
             false,
             &test.repo,
+            "test",
         )
         .unwrap();
         let r1_port: u16 = r1.parse().expect("should be a number");
@@ -605,6 +690,7 @@ mod tests {
             &vars,
             false,
             &test.repo,
+            "test",
         )
         .unwrap();
         let r2_port: u16 = r2.parse().expect("should be a number");

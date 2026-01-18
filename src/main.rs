@@ -145,9 +145,6 @@ fn main() {
         set_config_path(path);
     }
 
-    // Initialize verbose level for output module
-    output::set_verbose_level(cli.verbose);
-
     // Configure logging based on --verbose flag or RUST_LOG env var
     // When -vv is set, also write logs to .git/wt-logs/verbose.log
     if cli.verbose >= 2 {
@@ -158,7 +155,10 @@ fn main() {
     let verbose_level = cli.verbose;
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
 
-    // -vv takes precedence over RUST_LOG: use Builder::new() to ignore env var
+    // Set global verbosity level for styled verbose output
+    output::set_verbosity(verbose_level);
+
+    // -vv enables debug logging via env_logger; -v uses styled output (not logging)
     // Otherwise, respect RUST_LOG (defaulting to off)
     let mut builder = if cli.verbose >= 2 {
         let mut b = env_logger::Builder::new();
@@ -843,9 +843,10 @@ fn main() {
                         .collect();
 
                     // Expand template variables in command (shell_escape: true for safety)
-                    let expanded_cmd = expand_template(&cmd, &vars, true, &repo).map_err(|e| {
-                        anyhow::anyhow!("Failed to expand --execute template: {}", e)
-                    })?;
+                    let expanded_cmd =
+                        expand_template(&cmd, &vars, true, &repo, "--execute command").map_err(
+                            |e| anyhow::anyhow!("Failed to expand --execute template: {}", e),
+                        )?;
 
                     // Append any trailing args (after --) to the execute command
                     // Each arg is also expanded, then shell-escaped
@@ -855,9 +856,10 @@ fn main() {
                         let expanded_args: Result<Vec<_>, _> = execute_args
                             .iter()
                             .map(|arg| {
-                                expand_template(arg, &vars, false, &repo).map_err(|e| {
-                                    anyhow::anyhow!("Failed to expand argument template: {}", e)
-                                })
+                                expand_template(arg, &vars, false, &repo, "--execute argument")
+                                    .map_err(|e| {
+                                        anyhow::anyhow!("Failed to expand argument template: {}", e)
+                                    })
                             })
                             .collect();
                         let escaped_args: Vec<_> = expanded_args?
@@ -1156,6 +1158,13 @@ fn main() {
                 } else {
                     // Single-line error without context: inline with emoji
                     let _ = output::print(error_message(&msg));
+                }
+
+                // Add hint for template errors if not already in verbose mode
+                if verbose_level == 0 && msg.contains("template") {
+                    let _ = output::print(hint_message(cformat!(
+                        "Run with <bright-black>-v</> to see template expansion"
+                    )));
                 }
             }
         }

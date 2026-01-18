@@ -626,6 +626,7 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
         .collect();
 
     // Use the standard template expansion (shell-escaped)
-    worktrunk::config::expand_template(template, &vars, true, ctx.repo)
+    // Falls back to raw template if expansion fails (e.g., missing optional variable)
+    worktrunk::config::expand_template(template, &vars, true, ctx.repo, "hook preview")
         .unwrap_or_else(|_| template.to_string())
 }
