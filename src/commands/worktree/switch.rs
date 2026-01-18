@@ -57,7 +57,7 @@ fn resolve_switch_target(
         let pr_info = fetch_pr_info(pr_number, &repo_root)?;
 
         if pr_info.is_cross_repository {
-            // Fork PR: use owner/branch naming, will need fetch + config
+            // Fork PR: will need fetch + pushRemote config
             let local_branch = local_branch_name(&pr_info);
 
             // Check if branch already exists and is tracking this PR

@@ -79,9 +79,9 @@
 //! named remote. This means we can set up push tracking without adding remotes:
 //!
 //! ```text
-//! branch.contributor/feature.remote = origin
-//! branch.contributor/feature.merge = refs/pull/101/head
-//! branch.contributor/feature.pushRemote = git@github.com:contributor/repo.git
+//! branch.feature.remote = origin
+//! branch.feature.merge = refs/pull/101/head
+//! branch.feature.pushRemote = git@github.com:contributor/repo.git
 //! ```
 //!
 //! This configuration gives us:
@@ -114,14 +114,12 @@
 //!
 //! ## Local Branch Naming
 //!
-//! To avoid collisions when multiple PRs have the same branch name (common with
-//! branches like `fix`, `update`, etc.), we use a naming scheme:
+//! Both same-repo and fork PRs use `headRefName` directly (e.g., `feature-auth`).
+//! This ensures `git push` works correctly — the local branch name must match
+//! the remote branch name on the fork for `push.default = current` to work.
 //!
-//! - **Same-repo PR**: Use `headRefName` directly (e.g., `feature-auth`)
-//! - **Fork PR**: Use `<owner>/<headRefName>` (e.g., `contributor/feature-auth`)
-//!
-//! The `<owner>/` prefix ensures uniqueness and makes it clear which fork the
-//! branch comes from.
+//! If a local branch with that name already exists and tracks a different PR,
+//! we error with a suggestion to delete it first.
 //!
 //! ## Push Behavior
 //!
@@ -172,10 +170,10 @@
 //!
 //! ## Branch Name Collisions
 //!
-//! If user already has a local branch named `contributor/feature`:
+//! If a local branch with the same name already exists:
 //!
 //! - Check if it tracks the same PR ref → reuse it
-//! - Otherwise → error with suggestion to delete the branch or use a different name
+//! - Otherwise → error with suggestion to delete the branch first
 //!
 //! ## Worktree Already Exists
 //!
@@ -427,14 +425,11 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
 
 /// Generate the local branch name for a PR.
 ///
-/// - Same-repo PRs: use `headRefName` directly
-/// - Fork PRs: use `<owner>/<headRefName>` to avoid collisions
+/// Uses `headRefName` directly for both same-repo and fork PRs. This ensures
+/// the local branch name matches the remote branch name, which is required for
+/// `git push` to work correctly with `push.default = current`.
 pub fn local_branch_name(pr: &PrInfo) -> String {
-    if pr.is_cross_repository {
-        format!("{}/{}", pr.head_owner, pr.head_ref_name)
-    } else {
-        pr.head_ref_name.clone()
-    }
+    pr.head_ref_name.clone()
 }
 
 /// Construct the remote URL for a fork, matching the protocol of the primary remote.
@@ -530,7 +525,8 @@ mod tests {
             is_cross_repository: true,
             url: "https://github.com/owner/repo/pull/101".to_string(),
         };
-        assert_eq!(local_branch_name(&pr), "contributor/feature-auth");
+        // Fork PRs use headRefName directly (no owner prefix) so git push works
+        assert_eq!(local_branch_name(&pr), "feature-auth");
     }
 
     #[test]

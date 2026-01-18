@@ -1431,7 +1431,8 @@ fn test_switch_pr_base_conflict(repo: TestRepo) {
 #[rstest]
 fn test_switch_pr_fork_existing_same_pr(#[from(repo_with_remote)] repo: TestRepo) {
     // First, manually create the branch with correct tracking config
-    let branch_name = "contributor/feature-fix";
+    // Branch name matches headRefName (no owner prefix) so git push works
+    let branch_name = "feature-fix";
     repo.run_git(&["branch", branch_name, "main"]);
     repo.run_git(&[
         "config",
@@ -1466,7 +1467,8 @@ fn test_switch_pr_fork_existing_same_pr(#[from(repo_with_remote)] repo: TestRepo
 #[rstest]
 fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: TestRepo) {
     // Create the branch with tracking config for a DIFFERENT PR
-    let branch_name = "contributor/feature-fix";
+    // Branch name matches headRefName (no owner prefix) so git push works
+    let branch_name = "feature-fix";
     repo.run_git(&["branch", branch_name, "main"]);
     repo.run_git(&[
         "config",
@@ -1501,7 +1503,8 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
 #[rstest]
 fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: TestRepo) {
     // Create the branch without any tracking config
-    let branch_name = "contributor/feature-fix";
+    // Branch name matches headRefName (no owner prefix) so git push works
+    let branch_name = "feature-fix";
     repo.run_git(&["branch", branch_name, "main"]);
     // No config set - branch exists but doesn't track anything
 
