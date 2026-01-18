@@ -4,7 +4,8 @@ info:
   program: wt
   args:
     - switch
-    - ping-pong
+    - "--create"
+    - feature-progress
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -27,6 +28,7 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -34,6 +36,10 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[32m✓[39m [32mCreated worktree for [1mping-pong[22m @ [1m_REPO_.ping-pong[22m[39m
+[36m◎[39m [36mCreating worktree for [1mfeature-progress[22m...[39m
+Preparing worktree (new branch 'feature-progress')
+HEAD is now at 05a4a45 Initial commit
+[32m✓[39m [32mCreated branch [1mfeature-progress[22m from [1mmain[22m and worktree @ [1m_REPO_.feature-progress[22m[39m
+[2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

@@ -61,6 +61,19 @@ fn test_switch_create_new_branch(repo: TestRepo) {
     snapshot_switch("switch_create_new", &repo, &["--create", "feature-x"]);
 }
 
+/// Test that delayed streaming shows progress message when threshold is 0.
+/// This exercises the streaming code path that normally only triggers for slow operations.
+#[rstest]
+fn test_switch_create_shows_progress_when_forced(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature-progress"], None);
+        // Force immediate streaming by setting threshold to 0
+        cmd.env("WT_TEST_DELAYED_STREAM_MS", "0");
+        assert_cmd_snapshot!("switch_create_with_progress", cmd);
+    });
+}
+
 #[rstest]
 fn test_switch_create_existing_branch_error(mut repo: TestRepo) {
     // Create a branch first

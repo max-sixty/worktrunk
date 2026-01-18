@@ -308,14 +308,20 @@ fn setup_fork_pr_branch(
     repo.run_command(&["config", &branch_push_remote_key, fork_push_url])
         .with_context(|| format!("Failed to configure branch.{}.pushRemote", branch))?;
 
-    // Create worktree
+    // Create worktree (delayed streaming: silent if fast, shows progress if slow)
     let worktree_path_str = worktree_path.to_string_lossy();
-    repo.run_command(&["worktree", "add", worktree_path_str.as_ref(), branch])
-        .map_err(|e| GitError::WorktreeCreationFailed {
-            branch: branch.to_string(),
-            base_branch: None,
-            error: e.to_string(),
-        })?;
+    repo.run_command_delayed_stream(
+        &["worktree", "add", worktree_path_str.as_ref(), branch],
+        Repository::SLOW_OPERATION_DELAY_MS,
+        Some(
+            progress_message(cformat!("Creating worktree for <bold>{}</>...", branch)).to_string(),
+        ),
+    )
+    .map_err(|e| GitError::WorktreeCreationFailed {
+        branch: branch.to_string(),
+        base_branch: None,
+        error: e.to_string(),
+    })?;
 
     Ok(())
 }
@@ -465,7 +471,16 @@ pub fn execute_switch(
                         args.push(&branch);
                     }
 
-                    if let Err(e) = repo.run_command(&args) {
+                    // Delayed streaming: silent if fast, shows progress if slow
+                    let progress_msg = Some(
+                        progress_message(cformat!("Creating worktree for <bold>{}</>...", branch))
+                            .to_string(),
+                    );
+                    if let Err(e) = repo.run_command_delayed_stream(
+                        &args,
+                        Repository::SLOW_OPERATION_DELAY_MS,
+                        progress_msg,
+                    ) {
                         return Err(GitError::WorktreeCreationFailed {
                             branch: branch.clone(),
                             base_branch: base_branch.clone(),
