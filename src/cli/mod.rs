@@ -307,7 +307,7 @@ wt switch pr:101                 # Checkout PR #101
 
 Requires `gh` CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:` syntax since the branch already exists.
 
-**Fork PRs:** To push changes, use `git push HEAD:<branch-name>` where `<branch-name>` is the PR's head branch (e.g., `feature-fix`). The local branch is named `<owner>/<branch>` to avoid collisions, so plain `git push` won't work with default settings.
+**Fork PRs:** The local branch uses the PR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
 ## When wt switch fails
 

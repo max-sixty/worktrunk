@@ -161,6 +161,20 @@ pub enum GitError {
         branch: String,
         pr_number: u32,
     },
+    /// No remote found for the repository where the PR lives
+    NoRemoteForRepo {
+        owner: String,
+        repo: String,
+        /// Suggested URL to add as a remote (derived from primary remote's protocol/host)
+        suggested_url: String,
+    },
+    /// GitHub CLI API command failed with unrecognized error
+    GhApiError {
+        /// Short description of what failed
+        message: String,
+        /// Full stderr output for debugging
+        stderr: String,
+    },
     Other {
         message: String,
     },
@@ -611,16 +625,38 @@ impl std::fmt::Display for GitError {
             }
 
             GitError::BranchTracksDifferentPr { branch, pr_number } => {
+                // The PR's branch name conflicts with an existing local branch.
+                // We can't use a different local name because git push requires
+                // the local and remote branch names to match (with push.default=current).
                 write!(
                     f,
                     "{}\n{}",
                     error_message(cformat!(
-                        "Branch <bold>{branch}</> exists but is not tracking PR #{pr_number}"
+                        "Branch <bold>{branch}</> exists but doesn't track PR #{pr_number}"
                     )),
                     hint_message(cformat!(
-                        "Delete the branch first: <bright-black>git branch -D {branch}</>"
+                        "To free the name, run <bright-black>git branch -m {branch} {branch}-old</>"
                     ))
                 )
+            }
+
+            GitError::NoRemoteForRepo {
+                owner,
+                repo,
+                suggested_url,
+            } => {
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!("No remote found for <bold>{owner}/{repo}</>")),
+                    hint_message(cformat!(
+                        "Add the remote: <bright-black>git remote add upstream {suggested_url}</>"
+                    ))
+                )
+            }
+
+            GitError::GhApiError { message, stderr } => {
+                write!(f, "{}", format_error_block(error_message(message), stderr))
             }
 
             GitError::Other { message } => {
@@ -1191,6 +1227,34 @@ mod tests {
         assert!(display.contains("conflicting"));
         // Should still have hint about commit/stash
         assert!(display.contains("Commit or stash"));
+    }
+
+    #[test]
+    fn test_git_error_gh_api_error() {
+        let err = GitError::GhApiError {
+            message: "gh api failed for PR #42".into(),
+            stderr: "error: unexpected response\ncode: 500".into(),
+        };
+        let display = err.to_string();
+        // Verify header and gutter content are present
+        assert!(display.contains("gh api failed"));
+        assert!(display.contains("unexpected response"));
+        assert!(display.contains("500"));
+    }
+
+    #[test]
+    fn test_git_error_no_remote_for_repo() {
+        let err = GitError::NoRemoteForRepo {
+            owner: "upstream-owner".into(),
+            repo: "upstream-repo".into(),
+            suggested_url: "https://github.com/upstream-owner/upstream-repo.git".into(),
+        };
+        let display = err.to_string();
+        // Verify error message and hint
+        assert!(display.contains("No remote found"));
+        assert!(display.contains("upstream-owner/upstream-repo"));
+        assert!(display.contains("git remote add upstream"));
+        assert!(display.contains("https://github.com/upstream-owner/upstream-repo.git"));
     }
 
     #[test]

@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.15.2
+
+### Improved
+
+- **`wt config shell completions <shell>`**: Generate static shell completion scripts for package managers and custom installation. ([#701](https://github.com/max-sixty/worktrunk/pull/701), thanks @chenrui333)
+- **Debug logging threshold**: Now requires `-vv` instead of `-v` for debug logging and diagnostic file generation, freeing `-v` for future use. ([#702](https://github.com/max-sixty/worktrunk/pull/702))
+
+### Fixed
+
+- **Fork PR fetching**: `wt switch pr:N` now works when `origin` points to a fork by fetching PR refs from the upstream remote. Shows actionable error with `git remote add` command if upstream remote is missing. ([#704](https://github.com/max-sixty/worktrunk/pull/704))
+- **Fork PR branch naming**: Fork PR branches now use the original branch name (e.g., `feature-fix`) instead of `owner/feature-fix`, so `git push` works correctly. ([#706](https://github.com/max-sixty/worktrunk/pull/706))
+- **Config race conditions**: File locking prevents corruption when multiple `wt` processes modify config simultaneously. ([#693](https://github.com/max-sixty/worktrunk/pull/693))
+- **Nested worktree detection**: Current worktree indicator (`@`) now shows on the correct worktree when worktrees are nested (e.g., `.worktrees/` layout inside repo). ([#697](https://github.com/max-sixty/worktrunk/pull/697))
+- **Symlink path resolution**: Worktree commands work correctly on systems with symlinks (e.g., macOS `/var` → `/private/var`). ([#696](https://github.com/max-sixty/worktrunk/pull/696))
+- **Pre-remove hook failures**: Shell no longer cd's to main worktree when pre-remove hooks fail, leaving user in their current location. ([#692](https://github.com/max-sixty/worktrunk/pull/692))
+- **PowerShell completion robustness**: Completion registration errors no longer break the shell wrapper function. ([#674](https://github.com/max-sixty/worktrunk/pull/674))
+
+### Documentation
+
+- Added missing `orphan` (`∅`) symbol and `no_worktree` state to JSON output documentation. ([#687](https://github.com/max-sixty/worktrunk/pull/687))
+- Clarified Unicode handling in shell detection. ([#700](https://github.com/max-sixty/worktrunk/pull/700))
+
+### Internal
+
+- Refactored large files into focused modules. ([#688](https://github.com/max-sixty/worktrunk/pull/688))
+- Consolidated integration reason computation into Repository method. ([#689](https://github.com/max-sixty/worktrunk/pull/689))
+- Added verbose level tracking infrastructure for future `-v` output. ([#703](https://github.com/max-sixty/worktrunk/pull/703))
+- PowerShell template uses `WORKTRUNK_BIN` for test isolation. ([#674](https://github.com/max-sixty/worktrunk/pull/674))
+
 ## 0.15.1
 
 ### Improved

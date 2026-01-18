@@ -83,6 +83,11 @@ impl GitRemoteUrl {
         })
     }
 
+    /// The host (e.g., "github.com", "gitlab.example.com").
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
     /// The repository owner or organization (e.g., "owner", "company-org").
     pub fn owner(&self) -> &str {
         &self.owner

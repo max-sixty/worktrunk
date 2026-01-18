@@ -4,7 +4,7 @@ info:
   program: wt
   args:
     - switch
-    - "pr:101"
+    - "pr:42"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -13,6 +13,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -33,5 +34,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mFetching PR #101...[39m
-[31m✗[39m [31mPR #101 has empty branch name; the PR may be in an invalid state[39m
+[36m◎[39m [36mFetching PR #42...[39m
+[31m✗[39m [31mPR #42 source repository was deleted. The fork that this PR was opened from no longer exists, so the branch cannot be checked out.[39m

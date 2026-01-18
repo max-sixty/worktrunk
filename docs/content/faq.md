@@ -95,7 +95,7 @@ Created by `wt config shell install`:
 
 - **Bash**: adds line to `~/.bashrc`
 - **Zsh**: adds line to `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
-- **Fish**: creates `~/.config/fish/conf.d/wt.fish` and `~/.config/fish/completions/wt.fish`
+- **Fish**: creates `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish`
 
 **To remove:** `wt config shell uninstall`.
 

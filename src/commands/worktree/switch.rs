@@ -8,6 +8,7 @@ use anyhow::Context;
 use color_print::cformat;
 use dunce::canonicalize;
 use worktrunk::config::WorktrunkConfig;
+use worktrunk::git::pr_ref::fork_remote_url;
 use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{
     hint_message, info_message, progress_message, suggest_command, warning_message,
@@ -47,17 +48,14 @@ fn resolve_switch_target(
             return Err(GitError::PrBaseConflict { pr_number }.into());
         }
 
-        // Fetch PR info (network call)
-        let remote = repo.primary_remote()?;
-        crate::output::print(progress_message(cformat!(
-            "Fetching PR #{pr_number} from <bold>{remote}</>..."
-        )))?;
+        // Fetch PR info (network call via gh CLI)
+        crate::output::print(progress_message(cformat!("Fetching PR #{pr_number}...")))?;
 
         let repo_root = repo.repo_path()?;
         let pr_info = fetch_pr_info(pr_number, &repo_root)?;
 
         if pr_info.is_cross_repository {
-            // Fork PR: use owner/branch naming, will need fetch + config
+            // Fork PR: will need fetch + pushRemote config (see pr_ref module docs)
             let local_branch = local_branch_name(&pr_info);
 
             // Check if branch already exists and is tracking this PR
@@ -98,6 +96,8 @@ fn resolve_switch_target(
                     pr_number,
                     fork_push_url,
                     pr_url: pr_info.url,
+                    base_owner: pr_info.base_owner,
+                    base_repo: pr_info.base_repo,
                 },
             });
         } else {
@@ -488,9 +488,25 @@ pub fn execute_switch(
                     pr_number,
                     fork_push_url,
                     pr_url: _,
+                    base_owner,
+                    base_repo,
                 } => {
                     let pr_ref = format!("pull/{}/head", pr_number);
-                    let remote = repo.primary_remote()?;
+
+                    // Find the remote that points to the base repo (where PR refs live)
+                    let remote = repo
+                        .find_remote_for_repo(base_owner, base_repo)
+                        .ok_or_else(|| {
+                            // Construct suggested URL using primary remote's protocol/host
+                            let reference_url = repo.primary_remote_url().unwrap_or_default();
+                            let suggested_url =
+                                fork_remote_url(base_owner, base_repo, &reference_url);
+                            GitError::NoRemoteForRepo {
+                                owner: base_owner.clone(),
+                                repo: base_repo.clone(),
+                                suggested_url,
+                            }
+                        })?;
 
                     // Fetch the PR head (progress already shown during planning)
                     repo.run_command(&["fetch", &remote, &pr_ref])

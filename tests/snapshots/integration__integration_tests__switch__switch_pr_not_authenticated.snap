@@ -33,5 +33,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mFetching PR #101 from [1morigin[22m...[39m
+[36m◎[39m [36mFetching PR #101...[39m
 [31m✗[39m [31mGitHub CLI not authenticated; run gh auth login[39m

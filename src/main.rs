@@ -37,7 +37,7 @@ use commands::handle_select;
 use commands::worktree::{SwitchResult, handle_push};
 use commands::{
     MergeOptions, RebaseResult, ResolutionContext, SquashResult, add_approvals, approve_hooks,
-    clear_approvals, execute_switch, handle_config_create, handle_config_show,
+    clear_approvals, execute_switch, handle_completions, handle_config_create, handle_config_show,
     handle_configure_shell, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
     handle_list, handle_merge, handle_rebase, handle_remove, handle_remove_current,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
@@ -411,6 +411,7 @@ fn main() {
                     ConfigShellCommand::ShowTheme => {
                         handle_show_theme().map_err(|e| anyhow::anyhow!("{}", e))
                     }
+                    ConfigShellCommand::Completions { shell } => handle_completions(shell),
                 }
             }
             ConfigCommand::Create { project } => handle_config_create(project),
