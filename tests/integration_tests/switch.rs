@@ -1436,6 +1436,48 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
+/// Test fork PR when origin points to fork (no remote for base repo)
+///
+/// User scenario:
+/// 1. User forked upstream-owner/repo to contributor/repo
+/// 2. User cloned their fork, so origin points to contributor/repo
+/// 3. User tries to checkout PR from upstream-owner/repo
+/// 4. No remote exists for the base repo -> error with hint to add upstream
+#[rstest]
+fn test_switch_pr_fork_no_upstream_remote(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin to point to the FORK (contributor's repo), not the base repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/contributor/test-repo.git",
+    ]);
+
+    // gh api response says base.repo is owner/test-repo (the upstream)
+    // but origin points to contributor/test-repo (the fork)
+    // So find_remote_for_repo("owner", "test-repo") will fail
+    let gh_response = r#"{
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_fork_no_upstream", cmd);
+    });
+}
+
 /// Test error when PR is not found
 #[rstest]
 fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
