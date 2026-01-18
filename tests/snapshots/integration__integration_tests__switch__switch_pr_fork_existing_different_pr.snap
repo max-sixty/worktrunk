@@ -21,6 +21,7 @@ info:
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
     RUST_LOG: warn
+    SHELL: ""
     SOURCE_DATE_EPOCH: "1735776000"
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -33,6 +34,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mFetching PR #42 from [1morigin[22m...[39m
+[36m◎[39m [36mFetching PR #42...[39m
 [31m✗[39m [31mBranch [1mcontributor/feature-fix[22m exists but is not tracking PR #42[39m
 [2m↳[22m [2mDelete the branch first: [90mgit branch -D contributor/feature-fix[39m[22m

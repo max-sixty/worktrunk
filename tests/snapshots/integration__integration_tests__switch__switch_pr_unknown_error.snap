@@ -21,6 +21,7 @@ info:
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
     RUST_LOG: warn
+    SHELL: ""
     SOURCE_DATE_EPOCH: "1735776000"
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -33,5 +34,8 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mFetching PR #101 from [1morigin[22m...[39m
-[31m✗[39m [31mgh pr view failed: something completely unexpected happened[39m
+[36m◎[39m [36mFetching PR #101...[39m
+[31m✗[39m [31mgh api failed for PR #101[39m
+[107m [0m error: unexpected API response
+[107m [0m code: 500
+[107m [0m message: Internal server error

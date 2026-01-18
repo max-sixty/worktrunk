@@ -21,6 +21,7 @@ info:
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
     RUST_LOG: warn
+    SHELL: ""
     SOURCE_DATE_EPOCH: "1735776000"
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
@@ -33,6 +34,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mFetching PR #101 from [1morigin[22m...[39m
-[31m✗[39m [31mFailed to parse gh pr view JSON for PR #101. This may indicate a gh version incompatibility or GitHub API change.[39m
+[36m◎[39m [36mFetching PR #101...[39m
+[31m✗[39m [31mFailed to parse GitHub API response for PR #101. This may indicate a GitHub API change.[39m
 [107m [0m expected ident at line 1 column 2

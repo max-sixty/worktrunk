@@ -165,6 +165,15 @@ pub enum GitError {
     NoRemoteForRepo {
         owner: String,
         repo: String,
+        /// Suggested URL to add as a remote (derived from primary remote's protocol/host)
+        suggested_url: String,
+    },
+    /// GitHub CLI API command failed with unrecognized error
+    GhApiError {
+        /// Short description of what failed
+        message: String,
+        /// Full stderr output for debugging
+        stderr: String,
     },
     Other {
         message: String,
@@ -628,15 +637,23 @@ impl std::fmt::Display for GitError {
                 )
             }
 
-            GitError::NoRemoteForRepo { owner, repo } => {
+            GitError::NoRemoteForRepo {
+                owner,
+                repo,
+                suggested_url,
+            } => {
                 write!(
                     f,
                     "{}\n{}",
                     error_message(cformat!("No remote found for <bold>{owner}/{repo}</>")),
                     hint_message(cformat!(
-                        "Add the remote: <bright-black>git remote add upstream https://github.com/{owner}/{repo}.git</>"
+                        "Add the remote: <bright-black>git remote add upstream {suggested_url}</>"
                     ))
                 )
+            }
+
+            GitError::GhApiError { message, stderr } => {
+                write!(f, "{}", format_error_block(error_message(message), stderr))
             }
 
             GitError::Other { message } => {
@@ -1207,6 +1224,19 @@ mod tests {
         assert!(display.contains("conflicting"));
         // Should still have hint about commit/stash
         assert!(display.contains("Commit or stash"));
+    }
+
+    #[test]
+    fn test_git_error_gh_api_error() {
+        let err = GitError::GhApiError {
+            message: "gh api failed for PR #42".into(),
+            stderr: "error: unexpected response\ncode: 500".into(),
+        };
+        let display = err.to_string();
+        // Verify header and gutter content are present
+        assert!(display.contains("gh api failed"));
+        assert!(display.contains("unexpected response"));
+        assert!(display.contains("500"));
     }
 
     #[test]

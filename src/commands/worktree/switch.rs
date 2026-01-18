@@ -8,6 +8,7 @@ use anyhow::Context;
 use color_print::cformat;
 use dunce::canonicalize;
 use worktrunk::config::WorktrunkConfig;
+use worktrunk::git::pr_ref::fork_remote_url;
 use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{
     hint_message, info_message, progress_message, suggest_command, warning_message,
@@ -495,9 +496,16 @@ pub fn execute_switch(
                     // Find the remote that points to the base repo (where PR refs live)
                     let remote = repo
                         .find_remote_for_repo(base_owner, base_repo)
-                        .ok_or_else(|| GitError::NoRemoteForRepo {
-                            owner: base_owner.clone(),
-                            repo: base_repo.clone(),
+                        .ok_or_else(|| {
+                            // Construct suggested URL using primary remote's protocol/host
+                            let reference_url = repo.primary_remote_url().unwrap_or_default();
+                            let suggested_url =
+                                fork_remote_url(base_owner, base_repo, &reference_url);
+                            GitError::NoRemoteForRepo {
+                                owner: base_owner.clone(),
+                                repo: base_repo.clone(),
+                                suggested_url,
+                            }
                         })?;
 
                     // Fetch the PR head (progress already shown during planning)

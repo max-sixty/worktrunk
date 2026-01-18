@@ -4,7 +4,7 @@ info:
   program: wt
   args:
     - switch
-    - "pr:101"
+    - "pr:42"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -34,5 +34,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mFetching PR #101...[39m
-[31m✗[39m [31mGitHub API rate limit exceeded; wait a few minutes and retry[39m
+[36m◎[39m [36mFetching PR #42...[39m
+[31m✗[39m [31mPR #42 source repository was deleted. The fork that this PR was opened from no longer exists, so the branch cannot be checked out.[39m
