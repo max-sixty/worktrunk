@@ -6,10 +6,11 @@ info:
     - "--version"
   env:
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
-    GIT_EDITOR: ""
+    COLUMNS: "500"
     RUST_LOG: warn
+    SHELL: ""
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---

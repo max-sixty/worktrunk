@@ -625,14 +625,17 @@ impl std::fmt::Display for GitError {
             }
 
             GitError::BranchTracksDifferentPr { branch, pr_number } => {
+                // The PR's branch name conflicts with an existing local branch.
+                // We can't use a different local name because git push requires
+                // the local and remote branch names to match (with push.default=current).
                 write!(
                     f,
                     "{}\n{}",
                     error_message(cformat!(
-                        "Branch <bold>{branch}</> exists but is not tracking PR #{pr_number}"
+                        "Branch <bold>{branch}</> exists but doesn't track PR #{pr_number}"
                     )),
                     hint_message(cformat!(
-                        "Delete the branch first: <bright-black>git branch -D {branch}</>"
+                        "To free the name, run <bright-black>git branch -m {branch} {branch}-old</>"
                     ))
                 )
             }

@@ -653,24 +653,24 @@ fn test_state_get_empty(repo: TestRepo) {
     assert!(output.status.success());
     state_get_settings().bind(|| {
         assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
-    [36mDEFAULT BRANCH[39m
-    [107m [0m main
+        [36mDEFAULT BRANCH[39m
+        [107m [0m main
 
-    [36mPREVIOUS BRANCH[39m
-    [107m [0m (none)
+        [36mPREVIOUS BRANCH[39m
+        [107m [0m (none)
 
-    [36mBRANCH MARKERS[39m
-    [107m [0m (none)
+        [36mBRANCH MARKERS[39m
+        [107m [0m (none)
 
-    [36mCI STATUS CACHE[39m
-    [107m [0m (none)
+        [36mCI STATUS CACHE[39m
+        [107m [0m (none)
 
-    [36mHINTS[39m
-    [107m [0m (none)
+        [36mHINTS[39m
+        [107m [0m (none)
 
-    [36mLOG FILES[39m  @ <PATH>
-    [107m [0m (none)
-    ");
+        [36mLOG FILES[39m  @ <PATH>
+        [107m [0m (none)
+        ");
     });
 }
 
