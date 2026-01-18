@@ -766,8 +766,7 @@ fn main() {
                 // Show success message (temporal locality: immediately after worktree operation)
                 // Returns path to display in hooks when user's shell won't be in the worktree
                 // Also shows worktree-path hint on first --create (before shell integration warning)
-                let hooks_display_path =
-                    handle_switch_output(&result, &branch_info, execute.as_deref())?;
+                let hooks_display_path = handle_switch_output(&result, &branch_info)?;
 
                 // Offer shell integration if not already installed/active
                 // (only shows prompt/hint when shell integration isn't working)
@@ -867,7 +866,7 @@ fn main() {
                             .collect();
                         format!("{} {}", expanded_cmd, escaped_args.join(" "))
                     };
-                    execute_user_command(&full_cmd)?;
+                    execute_user_command(&full_cmd, hooks_display_path.as_deref())?;
                 }
 
                 Ok(())

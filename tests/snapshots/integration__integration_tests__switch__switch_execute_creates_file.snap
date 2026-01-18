@@ -16,6 +16,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -38,7 +39,7 @@ exit_code: 0
 ----- stderr -----
 [32m✓[39m [32mCreated branch [1mfile-test[22m from [1mmain[22m and worktree @ [1m_REPO_.file-test[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
-[33m▲[39m [33mExecuting [1mecho 'test content' > test.txt[22m @ [1m_REPO_.file-test[22m, but shell directory unchanged — shell integration not installed[39m
+[33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
-[36m◎[39m [36mExecuting (--execute):[39m
+[36m◎[39m [36mExecuting (--execute) @ [1m_REPO_.file-test[22m:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'test content'[0m[2m [0m[2m[36m>[0m[2m test.txt
