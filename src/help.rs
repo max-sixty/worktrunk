@@ -244,8 +244,10 @@ fn handle_help_page(args: &[String]) {
         });
 
     let Some(subcommand) = subcommand else {
-        eprintln!("Usage: wt <command> --help-page");
-        eprintln!("Commands with pages: merge, switch, remove, list");
+        eprintln!(
+            "Usage: wt <command> --help-page
+Commands with pages: merge, switch, remove, list"
+        );
         return;
     };
 
