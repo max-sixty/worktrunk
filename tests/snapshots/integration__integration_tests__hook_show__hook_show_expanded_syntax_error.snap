@@ -1,0 +1,45 @@
+---
+source: tests/integration_tests/hook_show.rs
+info:
+  program: wt
+  args:
+    - hook
+    - show
+    - pre-commit
+    - "--expanded"
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    PATH: "[PATH]"
+    RUST_LOG: warn
+    SHELL: ""
+    SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+[36mUSER HOOKS[39m  [TEST_CONFIG]
+[2m↳[22m [2m(none configured)[22m
+
+[36mPROJECT HOOKS[39m  _REPO_/.config/wt.toml
+[36m❯[39m pre-commit [1mbroken[22m: [2m(requires approval)[22m
+[107m [0m [2m# Template error: Template syntax error: syntax error: unexpected end of input, expected end of variable block (in hook preview:1)[0m[2m
+[107m [0m [2m[0m[2m[34mecho[0m[2m {{ branch

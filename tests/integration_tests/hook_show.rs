@@ -289,3 +289,114 @@ approved-commands = ["cargo build", "cargo test", "npm install"]
         assert_cmd_snapshot!(cmd);
     });
 }
+
+/// Test that syntax errors in templates are shown (not swallowed) with --expanded.
+#[rstest]
+fn test_hook_show_expanded_syntax_error(repo: TestRepo, temp_home: TempDir) {
+    // Create user config without hooks
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    // Create project config with broken template syntax (unclosed brace)
+    repo.write_project_config(
+        r#"[pre-commit]
+broken = "echo {{ branch"
+"#,
+    );
+    repo.commit("Add project config with broken template");
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("hook")
+            .arg("show")
+            .arg("pre-commit")
+            .arg("--expanded")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test that undefined variable errors show both template and error with --expanded.
+/// The `base` variable is only defined for post-create hooks, so using it in pre-commit
+/// will trigger an undefined variable error that shows both the error and raw template.
+#[rstest]
+fn test_hook_show_expanded_undefined_var(repo: TestRepo, temp_home: TempDir) {
+    // Create user config without hooks
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    // Create project config with `base` variable (only defined for post-create hooks)
+    // In pre-commit context, this will be undefined and should show error + template
+    repo.write_project_config(
+        r#"[pre-commit]
+optional-var = "echo {{ base }}"
+"#,
+    );
+    repo.commit("Add project config with optional variable");
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("hook")
+            .arg("show")
+            .arg("pre-commit")
+            .arg("--expanded")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test that valid templates expand correctly with --expanded.
+#[rstest]
+fn test_hook_show_expanded_valid_template(repo: TestRepo, temp_home: TempDir) {
+    // Create user config without hooks
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    // Create project config with valid template using defined variables
+    repo.write_project_config(
+        r#"[pre-commit]
+valid = "echo branch={{ branch }} repo={{ repo }}"
+"#,
+    );
+    repo.commit("Add project config with valid template");
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("hook")
+            .arg("show")
+            .arg("pre-commit")
+            .arg("--expanded")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
