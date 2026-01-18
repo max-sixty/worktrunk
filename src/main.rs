@@ -1147,13 +1147,15 @@ fn main() {
                     let _ = output::print(error_message(&msg));
                     let chain_text = chain.join("\n");
                     let _ = output::print(format_with_gutter(&chain_text, None));
-                } else if msg.contains('\n') {
+                } else if msg.contains('\n') || msg.contains('\r') {
                     // Multiline error without context - this shouldn't happen if all
                     // errors have proper context. Catch in debug builds, log in release.
                     debug_assert!(false, "Multiline error without context: {msg}");
                     log::warn!("Multiline error without context: {msg}");
+                    // Normalize line endings for display
+                    let normalized = msg.replace("\r\n", "\n").replace('\r', "\n");
                     let _ = output::print(error_message("Command failed"));
-                    let _ = output::print(format_with_gutter(&msg, None));
+                    let _ = output::print(format_with_gutter(&normalized, None));
                 } else {
                     // Single-line error without context: inline with emoji
                     let _ = output::print(error_message(&msg));
