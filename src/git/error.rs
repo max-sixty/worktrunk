@@ -1240,6 +1240,21 @@ mod tests {
     }
 
     #[test]
+    fn test_git_error_no_remote_for_repo() {
+        let err = GitError::NoRemoteForRepo {
+            owner: "upstream-owner".into(),
+            repo: "upstream-repo".into(),
+            suggested_url: "https://github.com/upstream-owner/upstream-repo.git".into(),
+        };
+        let display = err.to_string();
+        // Verify error message and hint
+        assert!(display.contains("No remote found"));
+        assert!(display.contains("upstream-owner/upstream-repo"));
+        assert!(display.contains("git remote add upstream"));
+        assert!(display.contains("https://github.com/upstream-owner/upstream-repo.git"));
+    }
+
+    #[test]
     fn test_hook_error_with_hint_source() {
         use crate::HookType;
 
