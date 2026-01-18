@@ -322,6 +322,75 @@ fn display_hook_command_failed_with_skip_hint() {
 }
 
 // ============================================================================
+// Multiline error formatting (tests the pattern used in main.rs catchall)
+// ============================================================================
+
+/// Test that multiline errors without context are formatted with header + gutter.
+/// This is the pattern used in main.rs for untyped anyhow errors.
+#[test]
+fn multiline_error_formatting() {
+    use worktrunk::styling::{error_message, format_with_gutter};
+
+    // Simulate what main.rs does for multiline errors without context:
+    // 1. Show "Command failed" header
+    // 2. Show the error content in a gutter
+
+    let multiline_error =
+        "fatal: Unable to read current working directory\nerror: Could not determine cwd";
+
+    let header = error_message("Command failed").to_string();
+    let gutter = format_with_gutter(multiline_error, None);
+
+    // Verify header has error symbol
+    assert!(
+        header.contains("Command failed"),
+        "Header should contain 'Command failed'"
+    );
+
+    // Verify gutter contains both lines
+    assert!(
+        gutter.contains("fatal: Unable to read"),
+        "Gutter should contain first line"
+    );
+    assert!(
+        gutter.contains("Could not determine cwd"),
+        "Gutter should contain second line"
+    );
+
+    // Snapshot the combined output
+    assert_snapshot!(
+        "multiline_error_formatting",
+        format!("{}\n{}", header, gutter)
+    );
+}
+
+/// Test that CRLF and CR line endings are normalized before formatting.
+/// main.rs normalizes: msg.replace("\r\n", "\n").replace('\r', "\n")
+#[test]
+fn multiline_error_crlf_normalization() {
+    use worktrunk::styling::format_with_gutter;
+
+    // Test CRLF (Windows line endings)
+    let crlf_error = "line1\r\nline2\r\nline3";
+    let normalized = crlf_error.replace("\r\n", "\n").replace('\r', "\n");
+    let gutter = format_with_gutter(&normalized, None);
+
+    // All three lines should appear
+    assert!(gutter.contains("line1"), "Should contain line1");
+    assert!(gutter.contains("line2"), "Should contain line2");
+    assert!(gutter.contains("line3"), "Should contain line3");
+
+    // Test CR only (old Mac line endings)
+    let cr_error = "line1\rline2\rline3";
+    let normalized = cr_error.replace("\r\n", "\n").replace('\r', "\n");
+    let gutter = format_with_gutter(&normalized, None);
+
+    assert!(gutter.contains("line1"), "CR: Should contain line1");
+    assert!(gutter.contains("line2"), "CR: Should contain line2");
+    assert!(gutter.contains("line3"), "CR: Should contain line3");
+}
+
+// ============================================================================
 // Integration test: verify error message includes command when git unavailable
 // ============================================================================
 

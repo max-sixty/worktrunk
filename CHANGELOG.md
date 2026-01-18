@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.15.3
+
+### Fixed
+
+- **`--execute` command display**: Shows the expanded command in a gutter with path context instead of showing the raw template before expansion. ([#708](https://github.com/max-sixty/worktrunk/pull/708))
+- **CRLF line endings in error display**: Multiline errors with Windows (`\r\n`) or old Mac (`\r`) line endings now display correctly instead of falling through to single-line handling. ([#707](https://github.com/max-sixty/worktrunk/pull/707))
+
+### Documentation
+
+- **Arch Linux install via AUR**: Added installation instructions and shell integration command. ([#709](https://github.com/max-sixty/worktrunk/pull/709), [#561](https://github.com/max-sixty/worktrunk/pull/561), thanks @razor-x)
+
 ## 0.15.2
 
 ### Improved

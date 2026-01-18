@@ -124,6 +124,12 @@ Alternatively, disable Windows Terminal's alias (Settings → Privacy & security
 
 </details>
 
+**Arch Linux:**
+
+```bash
+paru worktrunk-bin && wt config shell install
+```
+
 ## Next steps
 
 - Learn the core commands: [`wt switch`](@/switch.md), [`wt list`](@/list.md), [`wt merge`](@/merge.md), [`wt remove`](@/remove.md)

@@ -291,7 +291,6 @@ fn print_switch_message_if_changed(
 pub fn handle_switch_output(
     result: &SwitchResult,
     branch_info: &SwitchBranchInfo,
-    execute_command: Option<&str>,
 ) -> anyhow::Result<Option<std::path::PathBuf>> {
     // Set target directory for command execution
     super::change_directory(result.path())?;
@@ -339,18 +338,13 @@ pub fn handle_switch_output(
                 if let Some(warning) = branch_worktree_mismatch_warning {
                     super::print(warning)?;
                 }
-                if let Some(cmd) = execute_command {
-                    // --execute: command runs in target dir, but shell stays put
-                    super::print(warning_message(cformat!(
-                        "Executing <bold>{cmd}</> @ <bold>{path_display}</>, but shell directory unchanged — {reason}"
-                    )))?;
-                } else {
-                    // No --execute: what exists + why cd won't happen
-                    super::print(warning_message(cformat!(
-                        "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — {reason}"
-                    )))?;
-                }
+                // Show what exists + why cd won't happen
+                // (--execute command display is handled by execute_user_command)
+                super::print(warning_message(cformat!(
+                    "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — {reason}"
+                )))?;
                 // Show git subcommand hint if running as git wt
+                // (regular shell integration hint is shown by prompt_shell_integration in main.rs)
                 if is_git_subcommand {
                     super::print(hint_message(git_subcommand_warning()))?;
                 }
@@ -403,18 +397,14 @@ pub fn handle_switch_output(
             }
 
             // Warn if shell won't cd to the new worktree
+            // (--execute command display is handled by execute_user_command)
             if let Some(reason) = shell_warning_reason {
-                if let Some(cmd) = execute_command {
-                    super::print(warning_message(cformat!(
-                        "Executing <bold>{cmd}</> @ <bold>{path_display}</>, but shell directory unchanged — {reason}"
-                    )))?;
-                } else {
-                    // Don't repeat "Created worktree" — success message above already said that
-                    super::print(warning_message(cformat!(
-                        "Cannot change directory — {reason}"
-                    )))?;
-                }
+                // Don't repeat "Created worktree" — success message above already said that
+                super::print(warning_message(cformat!(
+                    "Cannot change directory — {reason}"
+                )))?;
                 // Show git subcommand hint if running as git wt
+                // (regular shell integration hint is shown by prompt_shell_integration in main.rs)
                 if is_git_subcommand {
                     super::print(hint_message(git_subcommand_warning()))?;
                 }
@@ -434,11 +424,22 @@ pub fn handle_switch_output(
 }
 
 /// Execute the --execute command after hooks have run
-pub fn execute_user_command(command: &str) -> anyhow::Result<()> {
+///
+/// `display_path` is shown when the user's shell won't be in the worktree directory
+/// (shell integration not active). This helps users understand where the command runs.
+pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyhow::Result<()> {
     use worktrunk::styling::format_bash_with_gutter;
 
     // Show what command is being executed (section header + gutter content)
-    super::print(progress_message("Executing (--execute):"))?;
+    // Include path when user's shell won't be there (shell integration not active)
+    let header = match display_path {
+        Some(path) => {
+            let path_display = format_path_for_display(path);
+            cformat!("Executing (--execute) @ <bold>{path_display}</>:")
+        }
+        None => "Executing (--execute):".to_string(),
+    };
+    super::print(progress_message(header))?;
     super::print(format_bash_with_gutter(command))?;
 
     super::execute(command)?;

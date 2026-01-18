@@ -1,4 +1,5 @@
 # Maintainer: Maximilian Roos <m@maxroos.com>
+# Maintained at: https://github.com/max-sixty/worktrunk/blob/main/.github/aur/PKGBUILD
 pkgname=worktrunk-bin
 pkgver=0.0.0
 pkgrel=1
@@ -6,10 +7,11 @@ pkgdesc="CLI for git worktree management, designed for running AI agents in para
 arch=('x86_64' 'aarch64')
 url="https://github.com/max-sixty/worktrunk"
 license=('MIT OR Apache-2.0')
+depends=('git')
 provides=('worktrunk')
 conflicts=('worktrunk')
-source_x86_64=("https://github.com/max-sixty/worktrunk/releases/download/v${pkgver}/worktrunk-x86_64-unknown-linux-musl.tar.xz")
-source_aarch64=("https://github.com/max-sixty/worktrunk/releases/download/v${pkgver}/worktrunk-aarch64-unknown-linux-musl.tar.xz")
+source_x86_64=("${pkgname}-${pkgver}.tar.gz::https://github.com/max-sixty/worktrunk/releases/download/v${pkgver}/worktrunk-x86_64-unknown-linux-musl.tar.xz")
+source_aarch64=("${pkgname}-${pkgver}.tar.gz::https://github.com/max-sixty/worktrunk/releases/download/v${pkgver}/worktrunk-aarch64-unknown-linux-musl.tar.xz")
 sha256sums_x86_64=('SKIP')
 sha256sums_aarch64=('SKIP')
 

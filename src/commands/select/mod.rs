@@ -229,7 +229,7 @@ pub fn handle_select(
         execute!(stderr(), crossterm::cursor::MoveTo(0, 0))?;
 
         // Show success message; emit cd directive if shell integration is active
-        handle_switch_output(&result, &branch_info, None)?;
+        handle_switch_output(&result, &branch_info)?;
     }
 
     Ok(())
