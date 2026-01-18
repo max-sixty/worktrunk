@@ -62,16 +62,23 @@
 //!
 //! When `isCrossRepository` is `true`, the branch exists in a fork, not `origin`.
 //!
-//! ## The Problem
+//! ## The Problem: PR Refs Are Read-Only
 //!
-//! GitHub's `refs/pull/<N>/head` refs are **read-only**. You cannot push to them:
+//! GitHub's `refs/pull/<N>/head` refs are **read-only** and cannot be pushed to.
+//! This is explicitly documented by GitHub — the `refs/pull/` namespace is a
+//! "hidden ref" that GitHub manages automatically:
 //!
 //! ```text
 //! $ git push origin HEAD:refs/pull/101/head
-//! error: cannot lock ref 'refs/pull/101/head': unable to resolve reference
+//! ! [remote rejected] HEAD -> refs/pull/101/head (deny updating a hidden ref)
 //! ```
 //!
-//! To update a fork PR, you must push to the **fork's branch**, not the PR ref.
+//! There is no alternative writable ref on the base repo. The only way to update
+//! a fork PR is to push directly to the fork's branch.
+//!
+//! The "Allow edits from maintainers" feature grants push access to the fork's
+//! branch itself — it's a permission change on the fork, not a proxy through
+//! the base repo's refs.
 //!
 //! ## Push Strategy (No Remote Required)
 //!
@@ -114,12 +121,26 @@
 //!
 //! ## Local Branch Naming
 //!
-//! Both same-repo and fork PRs use `headRefName` directly (e.g., `feature-auth`).
-//! This ensures `git push` works correctly — the local branch name must match
-//! the remote branch name on the fork for `push.default = current` to work.
+//! **The local branch name must match the fork's branch name** for `git push`
+//! to work. With `push.default = current` (the common default), git pushes to
+//! a same-named branch on the pushRemote. If the names differ, push fails:
 //!
-//! If a local branch with that name already exists and tracks a different PR,
-//! we error with a suggestion to delete it first.
+//! ```text
+//! # If local branch is "contributor/feature" but fork has "feature":
+//! $ git push
+//! error: src refspec contributor/feature does not match any
+//! ```
+//!
+//! Git has no per-branch configuration for "push to a differently-named branch."
+//! The only options are explicit refspecs (`git push HEAD:feature`) or matching
+//! names. We choose matching names so `git push` "just works."
+//!
+//! - **Same-repo PR**: Use `headRefName` directly (e.g., `feature-auth`)
+//! - **Fork PR**: Use `headRefName` directly (e.g., `feature-auth`)
+//!
+//! This means two fork PRs with the same branch name would conflict. The
+//! `branch_tracks_pr()` check handles this by erroring if a branch exists
+//! but tracks a different PR.
 //!
 //! ## Push Behavior
 //!
@@ -170,10 +191,10 @@
 //!
 //! ## Branch Name Collisions
 //!
-//! If a local branch with the same name already exists:
+//! If user already has a local branch with the same name as the PR's branch:
 //!
 //! - Check if it tracks the same PR ref → reuse it
-//! - Otherwise → error with suggestion to delete the branch first
+//! - Otherwise → error with suggestion to rename their branch first
 //!
 //! ## Worktree Already Exists
 //!
@@ -428,6 +449,8 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
 /// Uses `headRefName` directly for both same-repo and fork PRs. This ensures
 /// the local branch name matches the remote branch name, which is required for
 /// `git push` to work correctly with `push.default = current`.
+///
+/// See module docs for why we can't use a prefixed name like `<owner>/<branch>`.
 pub fn local_branch_name(pr: &PrInfo) -> String {
     pr.head_ref_name.clone()
 }
@@ -517,6 +540,8 @@ mod tests {
 
     #[test]
     fn test_local_branch_name_fork() {
+        // Fork PRs also use headRefName directly (not owner/branch) because
+        // the local branch name must match the fork's branch for git push to work
         let pr = PrInfo {
             number: 101,
             head_ref_name: "feature-auth".to_string(),
@@ -525,7 +550,6 @@ mod tests {
             is_cross_repository: true,
             url: "https://github.com/owner/repo/pull/101".to_string(),
         };
-        // Fork PRs use headRefName directly (no owner prefix) so git push works
         assert_eq!(local_branch_name(&pr), "feature-auth");
     }
 
