@@ -1266,6 +1266,11 @@ fn test_switch_create_no_hint_with_custom_worktree_path(repo: TestRepo) {
 use crate::common::mock_commands::{MockConfig, MockResponse, copy_mock_binary};
 
 /// Helper to set up mock gh for PR tests with custom PR response.
+///
+/// The response should be in `gh api repos/{owner}/{repo}/pulls/{number}` format:
+/// - `head.ref`, `head.repo.owner.login`, `head.repo.name`
+/// - `base.repo.owner.login`, `base.repo.name`
+/// - `html_url`
 fn setup_mock_gh_for_pr(repo: &TestRepo, gh_response: Option<&str>) -> std::path::PathBuf {
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
@@ -1279,7 +1284,7 @@ fn setup_mock_gh_for_pr(repo: &TestRepo, gh_response: Option<&str>) -> std::path
 
         MockConfig::new("gh")
             .version("gh version 2.0.0 (mock)")
-            .command("pr", MockResponse::file("pr_response.json"))
+            .command("api", MockResponse::file("pr_response.json"))
             .command("_default", MockResponse::exit(1))
             .write(&mock_bin);
     }
@@ -1321,18 +1326,23 @@ fn test_switch_pr_create_conflict(repo: TestRepo) {
     });
 }
 
-/// Test same-repo PR checkout (isCrossRepository: false)
+/// Test same-repo PR checkout (base.repo == head.repo)
 #[rstest]
 fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
     // Create a feature branch and push it
     repo.add_worktree("feature-auth");
 
+    // gh api repos/{owner}/{repo}/pulls/{number} format
     let gh_response = r#"{
-        "headRefName": "feature-auth",
-        "headRepository": {"name": "test-repo"},
-        "headRepositoryOwner": {"login": "owner"},
-        "isCrossRepository": false,
-        "url": "https://github.com/owner/test-repo/pull/101"
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
     }"#;
 
     let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
@@ -1345,7 +1355,7 @@ fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
     });
 }
 
-/// Test fork PR checkout (isCrossRepository: true)
+/// Test fork PR checkout (base.repo != head.repo)
 #[rstest]
 fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     // Create a PR ref on the remote that can be fetched
@@ -1371,12 +1381,49 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     // Go back to main
     repo.run_git(&["checkout", "main"]);
 
+    // Get the bare remote's actual URL before we modify origin
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Set origin URL to GitHub-style so find_remote_for_repo() can match owner/test-repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // Configure git to redirect github.com URLs to the local bare remote.
+    // This is necessary because:
+    // 1. origin must have a GitHub URL for find_remote_for_repo() to match owner/repo
+    // 2. But we need git fetch to actually succeed using the local bare remote
+    // Git's url.<base>.insteadOf transparently rewrites the fetch URL.
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // gh api repos/{owner}/{repo}/pulls/{number} format
+    // head.repo is the fork (contributor/test-repo), base.repo is the upstream (owner/test-repo)
     let gh_response = r#"{
-        "headRefName": "feature-fix",
-        "headRepository": {"name": "test-repo"},
-        "headRepositoryOwner": {"login": "contributor"},
-        "isCrossRepository": true,
-        "url": "https://github.com/owner/test-repo/pull/42"
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
     }"#;
 
     let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
@@ -1389,6 +1436,48 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
+/// Test fork PR when origin points to fork (no remote for base repo)
+///
+/// User scenario:
+/// 1. User forked upstream-owner/repo to contributor/repo
+/// 2. User cloned their fork, so origin points to contributor/repo
+/// 3. User tries to checkout PR from upstream-owner/repo
+/// 4. No remote exists for the base repo -> error with hint to add upstream
+#[rstest]
+fn test_switch_pr_fork_no_upstream_remote(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin to point to the FORK (contributor's repo), not the base repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/contributor/test-repo.git",
+    ]);
+
+    // gh api response says base.repo is owner/test-repo (the upstream)
+    // but origin points to contributor/test-repo (the fork)
+    // So find_remote_for_repo("owner", "test-repo") will fail
+    let gh_response = r#"{
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_fork_no_upstream", cmd);
+    });
+}
+
 /// Test error when PR is not found
 #[rstest]
 fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
@@ -1398,13 +1487,12 @@ fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     // Copy mock-stub binary as "gh"
     copy_mock_binary(&mock_bin, "gh");
 
-    // Configure gh to return error for PR not found (errors go to stderr)
+    // Configure gh api to return error for PR not found (errors go to stderr)
     MockConfig::new("gh")
         .version("gh version 2.0.0 (mock)")
         .command(
-            "pr",
-            MockResponse::stderr("Could not resolve to a PullRequest with the number 9999")
-                .with_exit_code(1),
+            "api",
+            MockResponse::stderr("gh api: Not Found (HTTP 404)").with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -1414,6 +1502,33 @@ fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:9999"], None);
         configure_mock_gh_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_not_found", cmd);
+    });
+}
+
+/// Test error when fork was deleted (head.repo is null)
+#[rstest]
+fn test_switch_pr_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    // gh api repos/{owner}/{repo}/pulls/{number} format with null head.repo
+    // This happens when the fork that the PR was opened from has been deleted
+    let gh_response = r#"{
+        "head": {
+            "ref": "feature-fix",
+            "repo": null
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_deleted_fork", cmd);
     });
 }
 
@@ -1445,12 +1560,17 @@ fn test_switch_pr_fork_existing_same_pr(#[from(repo_with_remote)] repo: TestRepo
         "refs/pull/42/head",
     ]);
 
+    // gh api repos/{owner}/{repo}/pulls/{number} format
     let gh_response = r#"{
-        "headRefName": "feature-fix",
-        "headRepository": {"name": "test-repo"},
-        "headRepositoryOwner": {"login": "contributor"},
-        "isCrossRepository": true,
-        "url": "https://github.com/owner/test-repo/pull/42"
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
     }"#;
 
     let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
@@ -1481,12 +1601,17 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
         "refs/pull/99/head", // Different PR!
     ]);
 
+    // gh api repos/{owner}/{repo}/pulls/{number} format
     let gh_response = r#"{
-        "headRefName": "feature-fix",
-        "headRepository": {"name": "test-repo"},
-        "headRepositoryOwner": {"login": "contributor"},
-        "isCrossRepository": true,
-        "url": "https://github.com/owner/test-repo/pull/42"
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
     }"#;
 
     let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
@@ -1508,12 +1633,17 @@ fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
     repo.run_git(&["branch", branch_name, "main"]);
     // No config set - branch exists but doesn't track anything
 
+    // gh api repos/{owner}/{repo}/pulls/{number} format
     let gh_response = r#"{
-        "headRefName": "feature-fix",
-        "headRepository": {"name": "test-repo"},
-        "headRepositoryOwner": {"login": "contributor"},
-        "isCrossRepository": true,
-        "url": "https://github.com/owner/test-repo/pull/42"
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
     }"#;
 
     let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
@@ -1534,11 +1664,11 @@ fn test_switch_pr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "gh");
 
-    // Configure gh to return auth error
+    // Configure gh api to return auth error
     MockConfig::new("gh")
         .version("gh version 2.0.0 (mock)")
         .command(
-            "pr",
+            "api",
             MockResponse::stderr(
                 "To use GitHub CLI in a non-interactive context, please run gh auth login",
             )
@@ -1563,12 +1693,13 @@ fn test_switch_pr_rate_limit(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "gh");
 
-    // Configure gh to return rate limit error
+    // Configure gh api to return rate limit error (HTTP 403)
     MockConfig::new("gh")
         .version("gh version 2.0.0 (mock)")
         .command(
-            "pr",
-            MockResponse::stderr("API rate limit exceeded for user").with_exit_code(1),
+            "api",
+            MockResponse::stderr("gh api: API rate limit exceeded for user (HTTP 403)")
+                .with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -1589,10 +1720,10 @@ fn test_switch_pr_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "gh");
 
-    // Configure gh to return invalid JSON
+    // Configure gh api to return invalid JSON
     MockConfig::new("gh")
         .version("gh version 2.0.0 (mock)")
-        .command("pr", MockResponse::output("not valid json {{{"))
+        .command("api", MockResponse::output("not valid json {{{"))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
@@ -1612,11 +1743,11 @@ fn test_switch_pr_network_error(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "gh");
 
-    // Configure gh to return network error
+    // Configure gh api to return network error
     MockConfig::new("gh")
         .version("gh version 2.0.0 (mock)")
         .command(
-            "pr",
+            "api",
             MockResponse::stderr("connection refused: network is unreachable").with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
@@ -1638,13 +1769,14 @@ fn test_switch_pr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "gh");
 
-    // Configure gh to return an unrecognized error
+    // Configure gh api to return an unrecognized multi-line error
+    // (realistic errors from gh often include context on multiple lines)
+    let error_message = "error: unexpected API response\n\
+                         code: 500\n\
+                         message: Internal server error";
     MockConfig::new("gh")
         .version("gh version 2.0.0 (mock)")
-        .command(
-            "pr",
-            MockResponse::stderr("something completely unexpected happened").with_exit_code(1),
-        )
+        .command("api", MockResponse::stderr(error_message).with_exit_code(1))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
@@ -1664,18 +1796,22 @@ fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "gh");
 
-    // Configure gh to return valid JSON but with empty branch name
+    // Configure gh to return valid JSON but with empty branch name (head.ref is "")
     let gh_response = r#"{
-        "headRefName": "",
-        "headRepository": {"name": "test-repo"},
-        "headRepositoryOwner": {"login": "contributor"},
-        "isCrossRepository": false,
-        "url": "https://github.com/owner/test-repo/pull/101"
+        "head": {
+            "ref": "",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
     }"#;
 
     MockConfig::new("gh")
         .version("gh version 2.0.0 (mock)")
-        .command("pr", MockResponse::output(gh_response))
+        .command("api", MockResponse::output(gh_response))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 

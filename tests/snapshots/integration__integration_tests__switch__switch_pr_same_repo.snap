@@ -33,6 +33,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mFetching PR #101 from [1morigin[22m...[39m
+[36m◎[39m [36mFetching PR #101...[39m
 [33m▲[39m [33mWorktree for [1mfeature-auth[22m @ [1m_REPO_.feature-auth[22m, but cannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
