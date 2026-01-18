@@ -44,10 +44,7 @@ repo=repo
 [107m [0m ../{{ repo }}.{{ branch | sanitize }} [2m→[22m ../repo.multiline-test
 [32m✓[39m [32mCreated branch [1mmultiline-test[22m from [1mmain[22m and worktree @ [1m_REPO_.multiline-test[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
-[33m▲[39m [33mExecuting [1m{% if branch %}
-echo 'branch={{ branch }}'
-echo 'repo={{ repo }}'
-{% endif %}[22m @ [1m_REPO_.multiline-test[22m, but shell directory unchanged — shell integration not installed[39m
+[33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
 [2m○[22m Expanding [1m--execute command[22m
 [107m [0m {% if branch %}
@@ -58,7 +55,7 @@ echo 'repo={{ repo }}'
 [107m [0m 
 [107m [0m echo 'branch=multiline-test'
 [107m [0m echo 'repo=repo'
-[36m◎[39m [36mExecuting (--execute):[39m
+[36m◎[39m [36mExecuting (--execute) @ [1m_REPO_.multiline-test[22m:[39m
 [107m [0m [2m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'branch=multiline-test'[0m[2m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'repo=repo'[0m[2m

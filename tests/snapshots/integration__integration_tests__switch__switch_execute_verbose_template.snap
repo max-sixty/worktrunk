@@ -43,9 +43,9 @@ branch=verbose-test
 [107m [0m ../{{ repo }}.{{ branch | sanitize }} [2m→[22m ../repo.verbose-test
 [32m✓[39m [32mCreated branch [1mverbose-test[22m from [1mmain[22m and worktree @ [1m_REPO_.verbose-test[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
-[33m▲[39m [33mExecuting [1mecho 'branch={{ branch }}'[22m @ [1m_REPO_.verbose-test[22m, but shell directory unchanged — shell integration not installed[39m
+[33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
 [2m○[22m Expanding [1m--execute command[22m
 [107m [0m echo 'branch={{ branch }}' [2m→[22m echo 'branch=verbose-test'
-[36m◎[39m [36mExecuting (--execute):[39m
+[36m◎[39m [36mExecuting (--execute) @ [1m_REPO_.verbose-test[22m:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'branch=verbose-test'[0m[2m
