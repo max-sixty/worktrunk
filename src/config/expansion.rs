@@ -10,6 +10,7 @@
 
 use color_print::cformat;
 use minijinja::{Environment, UndefinedBehavior, Value};
+use regex::Regex;
 
 use crate::git::Repository;
 use crate::path::to_posix_path;
@@ -168,6 +169,39 @@ fn short_hash(s: &str) -> String {
     String::from_utf8(vec![c0, c1, c2]).unwrap()
 }
 
+/// Redact credentials from URLs for safe logging.
+///
+/// URLs with embedded credentials (e.g., `https://token@github.com/...`) have
+/// the credential portion replaced with `[REDACTED]`.
+///
+/// # Examples
+/// ```
+/// use worktrunk::config::redact_credentials;
+///
+/// // URLs with credentials are redacted
+/// assert_eq!(
+///     redact_credentials("https://ghp_token123@github.com/owner/repo"),
+///     "https://[REDACTED]@github.com/owner/repo"
+/// );
+///
+/// // URLs without credentials are unchanged
+/// assert_eq!(
+///     redact_credentials("https://github.com/owner/repo"),
+///     "https://github.com/owner/repo"
+/// );
+///
+/// // Non-URL values pass through unchanged
+/// assert_eq!(redact_credentials("main"), "main");
+/// ```
+pub fn redact_credentials(s: &str) -> String {
+    // Pattern: scheme://credentials@host where credentials don't contain @
+    // This matches URLs like https://token@github.com or https://user:pass@host.com
+    thread_local! {
+        static CREDENTIAL_URL: Regex = Regex::new(r"^([a-z][a-z0-9+.-]*://)([^@/]+)@").unwrap();
+    }
+    CREDENTIAL_URL.with(|re| re.replace(s, "${1}[REDACTED]@").into_owned())
+}
+
 /// Expand a template with variable substitution.
 ///
 /// # Arguments
@@ -242,6 +276,7 @@ pub fn expand_template(
     let verbose = verbosity();
 
     // -vv: Full debug logging with vars
+    // Redact credentials from values to prevent leaking tokens in logs
     if verbose >= 2 {
         log::debug!("[template:{name}] template={template:?}");
         // Sort keys for deterministic output in tests
@@ -251,7 +286,7 @@ pub fn expand_template(
             "[template:{name}] vars={{{}}}",
             sorted_vars
                 .iter()
-                .map(|(k, v)| format!("{k}={v:?}"))
+                .map(|(k, v)| format!("{k}={:?}", redact_credentials(v)))
                 .collect::<Vec<_>>()
                 .join(", ")
         );
@@ -266,8 +301,9 @@ pub fn expand_template(
         .map_err(|e| format!("Template render error: {}", e))?;
 
     // -vv: Full debug logging with result
+    // Redact credentials from result to prevent leaking tokens in logs
     if verbose >= 2 {
-        log::debug!("[template:{name}] result={result:?}");
+        log::debug!("[template:{name}] result={:?}", redact_credentials(&result));
     }
 
     // -v: Nice styled output showing template expansion
@@ -702,5 +738,69 @@ mod tests {
         assert!((10000..20000).contains(&r2_port));
 
         assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn test_redact_credentials_https_token() {
+        // GitHub-style personal access token
+        assert_eq!(
+            redact_credentials("https://ghp_token123@github.com/owner/repo"),
+            "https://[REDACTED]@github.com/owner/repo"
+        );
+        // GitLab-style token
+        assert_eq!(
+            redact_credentials("https://glpat-xxxxxxxxxxxx@gitlab.com/owner/repo.git"),
+            "https://[REDACTED]@gitlab.com/owner/repo.git"
+        );
+    }
+
+    #[test]
+    fn test_redact_credentials_https_user_pass() {
+        // Username:password format
+        assert_eq!(
+            redact_credentials("https://user:password123@github.com/owner/repo"),
+            "https://[REDACTED]@github.com/owner/repo"
+        );
+    }
+
+    #[test]
+    fn test_redact_credentials_no_credentials() {
+        // Normal HTTPS URL without credentials - unchanged
+        assert_eq!(
+            redact_credentials("https://github.com/owner/repo"),
+            "https://github.com/owner/repo"
+        );
+        // SSH URL - unchanged (no credentials in URL format)
+        assert_eq!(
+            redact_credentials("git@github.com:owner/repo.git"),
+            "git@github.com:owner/repo.git"
+        );
+    }
+
+    #[test]
+    fn test_redact_credentials_non_url() {
+        // Non-URL values pass through unchanged
+        assert_eq!(redact_credentials("main"), "main");
+        assert_eq!(redact_credentials("feature/auth"), "feature/auth");
+        assert_eq!(redact_credentials("/path/to/worktree"), "/path/to/worktree");
+        assert_eq!(redact_credentials(""), "");
+    }
+
+    #[test]
+    fn test_redact_credentials_git_protocol() {
+        // git:// protocol with credentials
+        assert_eq!(
+            redact_credentials("git://token@github.com/owner/repo.git"),
+            "git://[REDACTED]@github.com/owner/repo.git"
+        );
+    }
+
+    #[test]
+    fn test_redact_credentials_preserves_path() {
+        // Full URL with path and query should preserve everything after host
+        assert_eq!(
+            redact_credentials("https://token@github.com/owner/repo.git?ref=main"),
+            "https://[REDACTED]@github.com/owner/repo.git?ref=main"
+        );
     }
 }
