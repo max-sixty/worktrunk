@@ -1,10 +1,10 @@
-//! Branch - a borrowed handle for branch-specific git operations.
+//! Branch - a handle for branch-specific git operations.
 
 use super::Repository;
 
-/// A borrowed handle for running git commands on a specific branch.
+/// A handle for running git commands on a specific branch.
 ///
-/// This type borrows a [`Repository`] and holds a branch name.
+/// This type holds a reference to [`Repository`] and a branch name.
 /// All branch-specific operations (like `exists`, `upstream`) are on this type.
 ///
 /// # Examples
@@ -83,13 +83,13 @@ impl<'a> Branch<'a> {
 
         // Parse output: each line is "<remote>/<branch>"
         // Extract the remote name (everything before the last /<branch>)
+        let suffix = format!("/{}", self.name);
         let remotes: Vec<String> = output
             .lines()
             .filter_map(|line| {
                 let line = line.trim();
                 // Strip the branch suffix to get the remote name
-                line.strip_suffix(&format!("/{}", self.name))
-                    .map(String::from)
+                line.strip_suffix(&suffix).map(String::from)
             })
             .collect();
 
@@ -113,5 +113,30 @@ impl<'a> Branch<'a> {
             }
             Err(_) => Ok(None), // No upstream configured
         }
+    }
+
+    /// Get the remote where this branch would be pushed.
+    ///
+    /// Uses [`@{push}` syntax][1] which resolves through:
+    /// 1. `branch.<name>.pushRemote` (branch-specific push remote)
+    /// 2. `remote.pushDefault` (default push remote for all branches)
+    /// 3. `branch.<name>.remote` (tracking remote)
+    ///
+    /// Returns `None` if no push destination is configured.
+    ///
+    /// [1]: https://git-scm.com/docs/gitrevisions#Documentation/gitrevisions.txt-emltbraboranchgtpaboranchgtpush
+    pub fn push_remote(&self) -> Option<String> {
+        let push_ref = self
+            .repo
+            .run_command(&[
+                "rev-parse",
+                "--abbrev-ref",
+                &format!("{}@{{push}}", self.name),
+            ])
+            .ok()?;
+
+        // Returns "origin/branch", extract remote name
+        let remote = push_ref.trim().split('/').next()?;
+        (!remote.is_empty()).then(|| remote.to_string())
     }
 }

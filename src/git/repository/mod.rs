@@ -1,13 +1,15 @@
 //! Repository - git repository operations.
 //!
 //! This module provides the [`Repository`] type for interacting with git repositories,
-//! and [`WorkingTree`] for worktree-specific operations.
+//! [`WorkingTree`] for worktree-specific operations, and [`Branch`] for branch-specific
+//! operations.
 //!
 //! # Module organization
 //!
 //! - `mod.rs` - Core types and construction
 //! - `working_tree.rs` - WorkingTree struct and worktree-specific operations
-//! - `branches.rs` - Branch listing, existence checks, completions
+//! - `branch.rs` - Branch struct and single-branch operations (exists, upstream, remotes)
+//! - `branches.rs` - Multi-branch operations (listing, filtering, completions)
 //! - `worktrees.rs` - Worktree management (list, resolve, remove)
 //! - `remotes.rs` - Remote and URL operations
 //! - `diff.rs` - Diff, history, and commit operations

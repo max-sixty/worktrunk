@@ -139,8 +139,8 @@ fn resolve_switch_target(
 
     // Validate --create constraints
     if create {
-        let branch = repo.branch(&resolved_branch);
-        if branch.exists_locally()? {
+        let branch_handle = repo.branch(&resolved_branch);
+        if branch_handle.exists_locally()? {
             return Err(GitError::BranchAlreadyExists {
                 branch: resolved_branch,
             }
@@ -148,7 +148,7 @@ fn resolve_switch_target(
         }
 
         // Warn if --create would shadow a remote branch
-        let remotes = branch.remotes()?;
+        let remotes = branch_handle.remotes()?;
         if !remotes.is_empty() {
             let remote_ref = format!("{}/{}", remotes[0], resolved_branch);
             crate::output::print(warning_message(cformat!(
