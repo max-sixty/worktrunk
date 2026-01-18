@@ -12,6 +12,15 @@ use color_print::cformat;
 use minijinja::{Environment, UndefinedBehavior, Value};
 use regex::Regex;
 
+/// Escape angle brackets for safe use in `cformat!`.
+///
+/// User-provided strings may contain `<bold>`, `<red>`, etc. which `cformat!`
+/// would interpret as markup tags. This function escapes `<` → `<<` and `>` → `>>`
+/// so they display literally.
+fn escape_cformat(s: &str) -> String {
+    s.replace('<', "<<").replace('>', ">>")
+}
+
 use crate::git::Repository;
 use crate::path::to_posix_path;
 use crate::styling::{eprintln, format_with_gutter, info_message, verbosity};
@@ -311,12 +320,15 @@ pub fn expand_template(
     // Single atomic write to avoid interleaving in multi-threaded execution
     if verbose == 1 {
         let header = info_message(cformat!("Expanding <bold>{name}</>"));
+        // Escape angle brackets in user content to prevent cformat! interpretation
+        let template_escaped = escape_cformat(template);
+        let result_escaped = escape_cformat(&result);
         let content = if template.contains('\n') || result.contains('\n') {
             // Multiline: template lines, dim →, result lines
-            cformat!("{template}\n<dim>→</>\n{result}")
+            cformat!("{template_escaped}\n<dim>→</>\n{result_escaped}")
         } else {
             // Single line: template → result
-            cformat!("{template} <dim>→</> {result}")
+            cformat!("{template_escaped} <dim>→</> {result_escaped}")
         };
         let gutter = format_with_gutter(&content, None);
         eprintln!("{header}\n{gutter}");
@@ -876,6 +888,46 @@ mod tests {
         assert_eq!(
             redact_credentials("https://token@github.com/owner/repo.git?ref=main"),
             "https://[REDACTED]@github.com/owner/repo.git?ref=main"
+        );
+    }
+
+    #[test]
+    fn test_escape_cformat() {
+        // Basic escaping
+        assert_eq!(escape_cformat("<bold>"), "<<bold>>");
+        assert_eq!(escape_cformat("<red>text</>"), "<<red>>text<</>>");
+        assert_eq!(escape_cformat("echo <test>"), "echo <<test>>");
+
+        // No angle brackets - unchanged
+        assert_eq!(escape_cformat("hello world"), "hello world");
+        assert_eq!(escape_cformat(""), "");
+
+        // Multiple angle brackets
+        assert_eq!(escape_cformat("<<>>"), "<<<<>>>>");
+        assert_eq!(escape_cformat("<a><b>"), "<<a>><<b>>");
+
+        // Mixed content
+        assert_eq!(
+            escape_cformat("run echo <bold>test</>"),
+            "run echo <<bold>>test<</>>"
+        );
+    }
+
+    #[test]
+    fn test_escape_cformat_preserves_literal_display() {
+        // When passed through cformat!, escaped content should display literally
+        let user_input = "echo <bold>test</>";
+        let escaped = escape_cformat(user_input);
+        let formatted = cformat!("{escaped}");
+        // The formatted string should contain the literal angle brackets, not ANSI codes
+        assert!(formatted.contains('<'), "should contain literal <");
+        assert!(formatted.contains('>'), "should contain literal >");
+        // Build ANSI escape prefix programmatically to avoid lint
+        let esc = '\x1b';
+        let ansi_prefix = format!("{esc}[");
+        assert!(
+            !formatted.contains(&ansi_prefix),
+            "should not contain ANSI escapes from user content"
         );
     }
 }
