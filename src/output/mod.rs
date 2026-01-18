@@ -33,9 +33,12 @@ pub(crate) mod handlers;
 pub(crate) mod shell_integration;
 
 // Re-export the public API
+// TODO(verbose-output): verbose_level, is_verbose reserved per commit e13776c
+#[allow(unused_imports)]
 pub(crate) use global::{
-    blank, change_directory, execute, flush, is_shell_integration_active, post_hook_display_path,
-    pre_hook_display_path, print, stdout, terminate_output,
+    blank, change_directory, execute, flush, is_shell_integration_active, is_verbose,
+    post_hook_display_path, pre_hook_display_path, print, set_verbose_level, stdout,
+    terminate_output, verbose_level,
 };
 // Re-export output handlers
 pub(crate) use handlers::{

@@ -500,6 +500,65 @@ fn test_concurrent_approve_different_projects() {
     );
 }
 
+/// Test true concurrent access from multiple threads.
+///
+/// Unlike the sequential tests above, this spawns multiple threads that race
+/// to approve commands simultaneously. With file locking, all approvals should
+/// be preserved.
+#[test]
+fn test_truly_concurrent_approve_with_threads() {
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+
+    // Create 10 threads that will all try to approve at the same time
+    let num_threads = 10;
+    let barrier = Arc::new(Barrier::new(num_threads));
+    let config_path = Arc::new(config_path);
+
+    let handles: Vec<_> = (0..num_threads)
+        .map(|i| {
+            let barrier = Arc::clone(&barrier);
+            let config_path = Arc::clone(&config_path);
+
+            thread::spawn(move || {
+                let mut config = WorktrunkConfig::default();
+
+                // Wait for all threads to be ready
+                barrier.wait();
+
+                // All threads try to approve at the same time
+                config
+                    .approve_command(
+                        "github.com/user/repo".to_string(),
+                        format!("command_{i}"),
+                        Some(&config_path),
+                    )
+                    .unwrap();
+            })
+        })
+        .collect();
+
+    // Wait for all threads to complete
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    // Read the final state from disk
+    let toml_content = fs::read_to_string(&*config_path).unwrap();
+
+    // All 10 approvals should be preserved
+    for i in 0..num_threads {
+        assert!(
+            toml_content.contains(&format!("command_{i}")),
+            "command_{i} should be preserved. With file locking, no approvals should be lost.\n\
+             Content:\n{toml_content}"
+        );
+    }
+}
+
 ///
 /// This tests the lower-level `approve_command()` method fails when permissions
 /// are denied. The higher-level `approve_command_batch()` catches this error and
