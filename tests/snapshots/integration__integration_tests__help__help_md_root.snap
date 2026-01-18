@@ -9,6 +9,7 @@ info:
     COLUMNS: "500"
     GIT_EDITOR: ""
     RUST_LOG: warn
+    SHELL: ""
     SOURCE_DATE_EPOCH: "1735776000"
     TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
@@ -46,7 +47,7 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Show debug info (-v), or also write diagnostic report (-vv)
+          Show debug info and write diagnostic report (-vv)
 
 Getting started
 

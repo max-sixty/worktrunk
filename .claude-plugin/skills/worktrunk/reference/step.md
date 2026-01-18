@@ -57,7 +57,7 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Show debug info (-v), or also write diagnostic report (-vv)
+          Show debug info and write diagnostic report (-vv)
 
 ## wt step commit
 
@@ -138,7 +138,7 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Show debug info (-v), or also write diagnostic report (-vv)
+          Show debug info and write diagnostic report (-vv)
 
 ## wt step squash
 
@@ -222,7 +222,7 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Show debug info (-v), or also write diagnostic report (-vv)
+          Show debug info and write diagnostic report (-vv)
 
 ## wt step copy-ignored
 
@@ -343,7 +343,7 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Show debug info (-v), or also write diagnostic report (-vv)
+          Show debug info and write diagnostic report (-vv)
 
 ## wt step for-each
 
@@ -405,4 +405,4 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Show debug info (-v), or also write diagnostic report (-vv)
+          Show debug info and write diagnostic report (-vv)
