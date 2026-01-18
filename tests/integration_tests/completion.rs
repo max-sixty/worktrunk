@@ -1219,3 +1219,61 @@ fn test_complete_excludes_deprecated_args(repo: TestRepo) {
         }
     }
 }
+
+/// Test static shell completions command for package managers.
+///
+/// The `wt config shell completions <shell>` command outputs static completion
+/// scripts suitable for package manager integration (e.g., Homebrew's
+/// `generate_completions_from_executable`).
+#[rstest]
+fn test_static_completions_for_all_shells() {
+    // Test each supported shell produces valid output
+    for shell in ["bash", "fish", "zsh", "powershell"] {
+        let output = wt_command()
+            .args(["config", "shell", "completions", shell])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "{shell}: completions command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.is_empty(),
+            "{shell}: completions output should not be empty"
+        );
+
+        // Each shell should have some indication it's a completion script
+        match shell {
+            "bash" => {
+                assert!(
+                    stdout.contains("complete") || stdout.contains("_wt"),
+                    "{shell}: should contain bash completion markers"
+                );
+            }
+            "fish" => {
+                assert!(
+                    stdout.contains("complete") && stdout.contains("wt"),
+                    "{shell}: should contain fish completion markers"
+                );
+            }
+            "zsh" => {
+                assert!(
+                    stdout.contains("#compdef") || stdout.contains("_wt"),
+                    "{shell}: should contain zsh completion markers"
+                );
+            }
+            "powershell" => {
+                assert!(
+                    stdout.contains("Register-ArgumentCompleter")
+                        || stdout.contains("$scriptBlock"),
+                    "{shell}: should contain PowerShell completion markers"
+                );
+            }
+            _ => {}
+        }
+    }
+}
