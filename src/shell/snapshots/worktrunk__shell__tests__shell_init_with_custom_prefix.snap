@@ -1,5 +1,5 @@
 ---
-source: src/shell.rs
+source: src/shell/mod.rs
 expression: "init.generate().expect(\"Should generate with custom prefix\")"
 ---
 # worktrunk shell integration for bash
