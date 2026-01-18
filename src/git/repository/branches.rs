@@ -1,37 +1,13 @@
 //! Branch-related operations for Repository.
+//!
+//! For single-branch operations, see [`super::Branch`].
+//! This module contains multi-branch operations (listing, filtering, etc.).
 
 use std::collections::HashSet;
 
 use super::{BranchCategory, CompletionBranch, Repository};
 
 impl Repository {
-    /// Check if a local git branch exists.
-    pub fn local_branch_exists(&self, branch: &str) -> anyhow::Result<bool> {
-        Ok(self
-            .run_command(&["rev-parse", "--verify", &format!("refs/heads/{}", branch)])
-            .is_ok())
-    }
-
-    /// Check if a git branch exists (local or remote).
-    pub fn branch_exists(&self, branch: &str) -> anyhow::Result<bool> {
-        // Try local branch first
-        if self.local_branch_exists(branch)? {
-            return Ok(true);
-        }
-
-        // Try remote branch (if remotes exist)
-        let Ok(remote) = self.primary_remote() else {
-            return Ok(false);
-        };
-        Ok(self
-            .run_command(&[
-                "rev-parse",
-                "--verify",
-                &format!("refs/remotes/{}/{}", remote, branch),
-            ])
-            .is_ok())
-    }
-
     /// Check if a git reference exists (branch, tag, commit SHA, HEAD, etc.).
     ///
     /// Accepts any valid commit-ish: branch names, tags, HEAD, commit SHAs,
@@ -46,33 +22,6 @@ impl Repository {
                 &format!("{}^{{commit}}", reference),
             ])
             .is_ok())
-    }
-
-    /// Find which remotes have a branch with the given name.
-    ///
-    /// Returns a list of remote names that have this branch (e.g., `["origin"]`).
-    /// Returns an empty list if no remotes have this branch.
-    pub fn remotes_with_branch(&self, branch: &str) -> anyhow::Result<Vec<String>> {
-        // Get all remote tracking branches matching this name
-        // Format: refs/remotes/<remote>/<branch>
-        let output = self.run_command(&[
-            "for-each-ref",
-            "--format=%(refname:strip=2)",
-            &format!("refs/remotes/*/{}", branch),
-        ])?;
-
-        // Parse output: each line is "<remote>/<branch>"
-        // Extract the remote name (everything before the last /<branch>)
-        let remotes: Vec<String> = output
-            .lines()
-            .filter_map(|line| {
-                let line = line.trim();
-                // Strip the branch suffix to get the remote name
-                line.strip_suffix(&format!("/{}", branch)).map(String::from)
-            })
-            .collect();
-
-        Ok(remotes)
     }
 
     /// Get all branch names (local branches only).
@@ -176,23 +125,6 @@ impl Repository {
             .collect();
 
         Ok(remote_branches)
-    }
-
-    /// Get the upstream tracking branch for the given branch.
-    ///
-    /// Uses [`@{upstream}` syntax][1] to resolve the tracking branch.
-    ///
-    /// [1]: https://git-scm.com/docs/gitrevisions#Documentation/gitrevisions.txt-emltaboranchgtemuaboranchgtupaboranchgtupstream
-    pub fn upstream_branch(&self, branch: &str) -> anyhow::Result<Option<String>> {
-        let result = self.run_command(&["rev-parse", "--abbrev-ref", &format!("{}@{{u}}", branch)]);
-
-        match result {
-            Ok(upstream) => {
-                let trimmed = upstream.trim();
-                Ok((!trimmed.is_empty()).then(|| trimmed.to_string()))
-            }
-            Err(_) => Ok(None), // No upstream configured
-        }
     }
 
     /// Get branches that don't have worktrees (available for switch).

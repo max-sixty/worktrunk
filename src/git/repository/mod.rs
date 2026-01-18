@@ -34,6 +34,7 @@ use super::{DefaultBranchName, GitError, LineDiff, WorktreeInfo};
 pub(super) use super::{BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl};
 
 // Submodules with impl blocks
+mod branch;
 mod branches;
 mod config;
 mod diff;
@@ -42,7 +43,8 @@ mod remotes;
 mod working_tree;
 mod worktrees;
 
-// Re-export WorkingTree
+// Re-export WorkingTree and Branch
+pub use branch::Branch;
 pub use working_tree::WorkingTree;
 pub(super) use working_tree::path_to_logging_context;
 
@@ -258,6 +260,16 @@ impl Repository {
         WorkingTree {
             repo: self,
             path: path.into(),
+        }
+    }
+
+    /// Get a branch handle for branch-specific operations.
+    ///
+    /// Use this when you need to query properties of a specific branch.
+    pub fn branch(&self, name: &str) -> Branch<'_> {
+        Branch {
+            repo: self,
+            name: name.to_string(),
         }
     }
 

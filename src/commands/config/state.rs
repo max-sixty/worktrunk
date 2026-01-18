@@ -211,7 +211,12 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
                 .into());
             }
 
-            let has_upstream = repo.upstream_branch(&branch_name).ok().flatten().is_some();
+            let has_upstream = repo
+                .branch(&branch_name)
+                .upstream()
+                .ok()
+                .flatten()
+                .is_some();
             let ci_status = PrStatus::detect(&repo, &branch_name, &head, has_upstream)
                 .map_or(super::super::list::ci_status::CiStatus::NoCI, |s| {
                     s.ci_status
@@ -246,7 +251,7 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
     match key {
         "default-branch" => {
             // Warn if the branch doesn't exist locally
-            if !repo.local_branch_exists(&value)? {
+            if !repo.branch(&value).exists_locally()? {
                 output::print(warning_message(cformat!(
                     "Branch <bold>{value}</> does not exist locally"
                 )))?;

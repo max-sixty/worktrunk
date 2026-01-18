@@ -555,7 +555,8 @@ impl Task for UpstreamTask {
 
         // Get upstream branch (None is valid - just means no upstream configured)
         let upstream_branch = repo
-            .upstream_branch(branch)
+            .branch(branch)
+            .upstream()
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         let Some(upstream_branch) = upstream_branch else {
             return Ok(TaskResult::Upstream {
@@ -593,7 +594,7 @@ impl Task for CiStatusTask {
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         let repo = &ctx.repo;
         let pr_status = ctx.branch_ref.branch.as_deref().and_then(|branch| {
-            let has_upstream = repo.upstream_branch(branch).ok().flatten().is_some();
+            let has_upstream = repo.branch(branch).upstream().ok().flatten().is_some();
             PrStatus::detect(repo, branch, &ctx.branch_ref.commit_sha, has_upstream)
         });
 

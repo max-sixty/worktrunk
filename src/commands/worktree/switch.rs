@@ -139,7 +139,8 @@ fn resolve_switch_target(
 
     // Validate --create constraints
     if create {
-        if repo.local_branch_exists(&resolved_branch)? {
+        let branch = repo.branch(&resolved_branch);
+        if branch.exists_locally()? {
             return Err(GitError::BranchAlreadyExists {
                 branch: resolved_branch,
             }
@@ -147,7 +148,7 @@ fn resolve_switch_target(
         }
 
         // Warn if --create would shadow a remote branch
-        let remotes = repo.remotes_with_branch(&resolved_branch)?;
+        let remotes = branch.remotes()?;
         if !remotes.is_empty() {
             let remote_ref = format!("{}/{}", remotes[0], resolved_branch);
             crate::output::print(warning_message(cformat!(
@@ -175,7 +176,7 @@ fn resolve_switch_target(
             }
             repo.resolve_target_branch(None)
                 .ok()
-                .filter(|b| repo.local_branch_exists(b).unwrap_or(false))
+                .filter(|b| repo.branch(b).exists_locally().unwrap_or(false))
         })
     } else {
         None
@@ -237,7 +238,7 @@ fn validate_worktree_creation(
         create_branch: false,
         ..
     } = method
-        && !repo.branch_exists(branch)?
+        && !repo.branch(branch).exists()?
     {
         return Err(GitError::InvalidReference {
             reference: branch.to_string(),
@@ -448,8 +449,9 @@ pub fn execute_switch(
                     base_branch,
                 } => {
                     // Check if local branch exists BEFORE git worktree add (for DWIM detection)
+                    let branch_handle = repo.branch(&branch);
                     let local_branch_existed =
-                        !create_branch && repo.local_branch_exists(&branch).unwrap_or(false);
+                        !create_branch && branch_handle.exists_locally().unwrap_or(false);
 
                     // Build git worktree add command
                     let worktree_path_str = worktree_path.to_string_lossy();
@@ -476,7 +478,7 @@ pub fn execute_switch(
 
                     // Report tracking info only if git's DWIM created the branch from a remote
                     let from_remote = if !create_branch && !local_branch_existed {
-                        repo.upstream_branch(&branch)?
+                        branch_handle.upstream()?
                     } else {
                         None
                     };

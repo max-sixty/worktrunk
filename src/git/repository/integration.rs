@@ -176,7 +176,7 @@ impl Repository {
     /// Current behavior: uses only local in diverged state, may miss remote-merged branches.
     pub fn effective_integration_target(&self, local_target: &str) -> String {
         // Get the upstream ref for the local target (e.g., origin/main for main)
-        let upstream = match self.upstream_branch(local_target) {
+        let upstream = match self.branch(local_target).upstream() {
             Ok(Some(upstream)) => upstream,
             _ => return local_target.to_string(),
         };

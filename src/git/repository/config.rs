@@ -152,7 +152,7 @@ impl Repository {
 
                 // If configured, validate it exists locally
                 if let Some(ref branch) = configured {
-                    if self.local_branch_exists(branch).unwrap_or(false) {
+                    if self.branch(branch).exists_locally().unwrap_or(false) {
                         let _ = self.cache.invalid_default_branch.set(None);
                         return Some(branch.clone());
                     }
@@ -245,7 +245,7 @@ impl Repository {
     /// Validates before approval prompts to avoid wasting user time.
     pub fn require_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
         let branch = self.resolve_target_branch(target)?;
-        if !self.branch_exists(&branch)? {
+        if !self.branch(&branch).exists()? {
             return Err(GitError::InvalidReference { reference: branch }.into());
         }
         Ok(branch)

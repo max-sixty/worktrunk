@@ -43,7 +43,7 @@ pub use error::{
     exit_code,
 };
 pub use parse::{parse_porcelain_z, parse_untracked_files};
-pub use repository::{Repository, ResolvedWorktree, WorkingTree, set_base_path};
+pub use repository::{Branch, Repository, ResolvedWorktree, WorkingTree, set_base_path};
 pub(crate) use url::GitRemoteUrl;
 pub use url::{parse_owner_repo, parse_remote_owner};
 /// Why branch content is considered integrated into the target branch.
