@@ -758,6 +758,33 @@ approved-commands = ["sleep 0.1 && echo 'Background task done' > background.txt"
     wait_for_file(output_file.as_path());
 }
 
+/// Test that -v shows verbose per-hook output for background hooks
+#[rstest]
+fn test_post_start_verbose_shows_per_hook_output(repo: TestRepo) {
+    // Create project config with a background command
+    repo.write_project_config(
+        r#"[post-start]
+setup = "echo 'verbose test' > verbose.txt"
+"#,
+    );
+
+    repo.commit("Add background command");
+
+    // Pre-approve the command
+    repo.write_test_config(
+        r#"[projects."../origin"]
+approved-commands = ["echo 'verbose test' > verbose.txt"]
+"#,
+    );
+
+    // With -v, should show detailed per-hook output with command in gutter
+    snapshot_switch(
+        "post_start_verbose_output",
+        &repo,
+        &["-v", "--create", "feature"],
+    );
+}
+
 #[rstest]
 fn test_post_start_multiple_background_commands(repo: TestRepo) {
     // Create project config with multiple background commands (table format)
