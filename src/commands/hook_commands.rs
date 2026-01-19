@@ -324,15 +324,31 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
     let mut config = WorktrunkConfig::load().context("Failed to load config")?;
 
     if global {
-        // Clear all approvals for all projects
-        let project_count = config.projects.len();
+        // Clear all approvals for all projects (preserving other per-project settings)
+        let projects_with_approvals: Vec<String> = config
+            .projects
+            .iter()
+            .filter(|(_, p)| !p.approved_commands.is_empty())
+            .map(|(id, _)| id.clone())
+            .collect();
 
-        if project_count == 0 {
+        if projects_with_approvals.is_empty() {
             crate::output::print(info_message("No approvals to clear"))?;
             return Ok(());
         }
 
-        config.projects.clear();
+        let project_count = projects_with_approvals.len();
+
+        // Clear only approved_commands, preserve other settings
+        for project_id in &projects_with_approvals {
+            if let Some(project_config) = config.projects.get_mut(project_id) {
+                project_config.approved_commands.clear();
+                // Remove project entry only if it has no other settings
+                if project_config.is_empty() {
+                    config.projects.remove(project_id);
+                }
+            }
+        }
         config.save().context("Failed to save config")?;
 
         crate::output::print(success_message(format!(
@@ -344,8 +360,11 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
         let repo = Repository::current()?;
         let project_id = repo.project_identifier()?;
 
-        // Check if project has any approvals
-        let had_approvals = config.projects.contains_key(&project_id);
+        // Check if project has any approvals (not just if it exists)
+        let had_approvals = config
+            .projects
+            .get(&project_id)
+            .is_some_and(|p| !p.approved_commands.is_empty());
 
         if !had_approvals {
             crate::output::print(info_message("No approvals to clear for this project"))?;

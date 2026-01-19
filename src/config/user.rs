@@ -10,6 +10,15 @@ use std::sync::OnceLock;
 
 use super::HooksConfig;
 
+/// Trait for merging configuration structs.
+///
+/// Project-specific config fields override global fields when set.
+/// Fields that are `None` in the override fall back to the base value.
+pub trait Merge {
+    /// Merge with another config, where `other` takes precedence for set fields.
+    fn merge_with(&self, other: &Self) -> Self;
+}
+
 /// Acquire an exclusive lock on the config file for read-modify-write operations.
 ///
 /// Uses a `.lock` file alongside the config file to coordinate between processes.
@@ -247,23 +256,78 @@ impl CommitGenerationConfig {
     }
 }
 
+impl PartialEq for CommitGenerationConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.command == other.command
+            && self.args == other.args
+            && self.template == other.template
+            && self.template_file == other.template_file
+            && self.squash_template == other.squash_template
+            && self.squash_template_file == other.squash_template_file
+    }
+}
+
+impl Merge for CommitGenerationConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        // For template/template_file pairs: if project sets one, it clears the other
+        // This prevents violating mutual exclusivity when global has one and project has the other
+        let (template, template_file) = if other.template.is_some() {
+            (other.template.clone(), None)
+        } else if other.template_file.is_some() {
+            (None, other.template_file.clone())
+        } else {
+            (self.template.clone(), self.template_file.clone())
+        };
+
+        let (squash_template, squash_template_file) = if other.squash_template.is_some() {
+            (other.squash_template.clone(), None)
+        } else if other.squash_template_file.is_some() {
+            (None, other.squash_template_file.clone())
+        } else {
+            (
+                self.squash_template.clone(),
+                self.squash_template_file.clone(),
+            )
+        };
+
+        Self {
+            command: other.command.clone().or_else(|| self.command.clone()),
+            // For args: use other's if non-empty, else self's
+            args: if other.args.is_empty() {
+                self.args.clone()
+            } else {
+                other.args.clone()
+            },
+            template,
+            template_file,
+            squash_template,
+            squash_template_file,
+        }
+    }
+}
+
 /// Per-project user configuration
 ///
 /// Stored in the user's config file under `[projects."project-id"]`.
 /// Contains project-specific settings that are user preferences, not checked into git.
+/// All fields override the corresponding global settings when set.
 ///
 /// # TOML Format
 /// ```toml
 /// [projects."github.com/user/repo"]
 /// worktree-path = ".worktrees/{{ branch | sanitize }}"
 /// approved-commands = ["npm install", "npm test"]
-/// ```
 ///
-/// # Future Extensibility
-/// This structure is designed to accommodate additional per-project settings:
-/// - default-target-branch
-/// - auto-squash preferences
-/// - project-specific hooks
+/// [projects."github.com/user/repo".commit-generation]
+/// command = "llm"
+/// args = ["-m", "gpt-4"]
+///
+/// [projects."github.com/user/repo".list]
+/// full = true
+///
+/// [projects."github.com/user/repo".merge]
+/// squash = false
+/// ```
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct UserProjectConfig {
     /// Worktree path template for this project (overrides global worktree-path)
@@ -281,6 +345,41 @@ pub struct UserProjectConfig {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub approved_commands: Vec<String>,
+
+    /// Per-project commit generation settings (overrides global [commit-generation])
+    #[serde(
+        default,
+        rename = "commit-generation",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub commit_generation: Option<CommitGenerationConfig>,
+
+    /// Per-project list settings (overrides global [list])
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<ListConfig>,
+
+    /// Per-project commit settings (overrides global [commit])
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<CommitConfig>,
+
+    /// Per-project merge settings (overrides global [merge])
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge: Option<MergeConfig>,
+}
+
+impl UserProjectConfig {
+    /// Returns true if all fields are empty/None (no settings configured).
+    ///
+    /// Used to determine if a project entry can be removed from config after
+    /// clearing approvals.
+    pub fn is_empty(&self) -> bool {
+        self.worktree_path.is_none()
+            && self.approved_commands.is_empty()
+            && self.commit_generation.is_none()
+            && self.list.is_none()
+            && self.commit.is_none()
+            && self.merge.is_none()
+    }
 }
 
 /// Configuration for the `wt list` command
@@ -306,6 +405,17 @@ pub struct ListConfig {
     pub timeout_ms: Option<u64>,
 }
 
+impl Merge for ListConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            full: other.full.or(self.full),
+            branches: other.branches.or(self.branches),
+            remotes: other.remotes.or(self.remotes),
+            timeout_ms: other.timeout_ms.or(self.timeout_ms),
+        }
+    }
+}
+
 /// Configuration for the `wt step commit` command
 ///
 /// Also used by `wt merge` for shared settings like `stage`.
@@ -317,10 +427,18 @@ pub struct CommitConfig {
     pub stage: Option<StageMode>,
 }
 
+impl Merge for CommitConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            stage: other.stage.or(self.stage),
+        }
+    }
+}
+
 /// Configuration for the `wt merge` command
 ///
 /// Note: `stage` defaults from `[commit]` section, not here.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct MergeConfig {
     /// Squash commits when merging (default: true)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -343,6 +461,18 @@ pub struct MergeConfig {
     /// Run project hooks (default: true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verify: Option<bool>,
+}
+
+impl Merge for MergeConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            squash: other.squash.or(self.squash),
+            commit: other.commit.or(self.commit),
+            rebase: other.rebase.or(self.rebase),
+            remove: other.remove.or(self.remove),
+            verify: other.verify.or(self.verify),
+        }
+    }
 }
 
 /// Configuration for the `wt select` command
@@ -385,6 +515,75 @@ impl WorktrunkConfig {
             .get(project)
             .and_then(|p| p.worktree_path.clone())
             .unwrap_or_else(|| self.worktree_path())
+    }
+
+    /// Returns the effective commit generation config for a specific project.
+    ///
+    /// Merges project-specific settings with global settings, where project
+    /// settings take precedence for fields that are set.
+    pub fn effective_commit_generation(&self, project: Option<&str>) -> CommitGenerationConfig {
+        let global = &self.commit_generation;
+        match project
+            .and_then(|p| self.projects.get(p))
+            .and_then(|c| c.commit_generation.as_ref())
+        {
+            Some(project_config) => global.merge_with(project_config),
+            None => global.clone(),
+        }
+    }
+
+    /// Returns the effective list config for a specific project.
+    ///
+    /// Merges project-specific settings with global settings, where project
+    /// settings take precedence for fields that are set.
+    pub fn effective_list(&self, project: Option<&str>) -> Option<ListConfig> {
+        let global = self.list.as_ref();
+        let project_config = project
+            .and_then(|p| self.projects.get(p))
+            .and_then(|c| c.list.as_ref());
+
+        match (global, project_config) {
+            (Some(g), Some(p)) => Some(g.merge_with(p)),
+            (None, Some(p)) => Some(p.clone()),
+            (Some(g), None) => Some(g.clone()),
+            (None, None) => None,
+        }
+    }
+
+    /// Returns the effective commit config for a specific project.
+    ///
+    /// Merges project-specific settings with global settings, where project
+    /// settings take precedence for fields that are set.
+    pub fn effective_commit(&self, project: Option<&str>) -> Option<CommitConfig> {
+        let global = self.commit.as_ref();
+        let project_config = project
+            .and_then(|p| self.projects.get(p))
+            .and_then(|c| c.commit.as_ref());
+
+        match (global, project_config) {
+            (Some(g), Some(p)) => Some(g.merge_with(p)),
+            (None, Some(p)) => Some(p.clone()),
+            (Some(g), None) => Some(g.clone()),
+            (None, None) => None,
+        }
+    }
+
+    /// Returns the effective merge config for a specific project.
+    ///
+    /// Merges project-specific settings with global settings, where project
+    /// settings take precedence for fields that are set.
+    pub fn effective_merge(&self, project: Option<&str>) -> Option<MergeConfig> {
+        let global = self.merge.as_ref();
+        let project_config = project
+            .and_then(|p| self.projects.get(p))
+            .and_then(|c| c.merge.as_ref());
+
+        match (global, project_config) {
+            (Some(g), Some(p)) => Some(g.merge_with(p)),
+            (None, Some(p)) => Some(p.clone()),
+            (Some(g), None) => Some(g.clone()),
+            (None, None) => None,
+        }
     }
 
     /// Load configuration from config file and environment variables.
@@ -455,8 +654,9 @@ impl WorktrunkConfig {
             }
         }
 
-        // Validate per-project worktree paths
+        // Validate per-project configs
         for (project, project_config) in &config.projects {
+            // Validate worktree path
             if let Some(ref path) = project_config.worktree_path {
                 if path.is_empty() {
                     return Err(ConfigError::Message(format!(
@@ -466,6 +666,20 @@ impl WorktrunkConfig {
                 if std::path::Path::new(path).is_absolute() {
                     return Err(ConfigError::Message(format!(
                         "projects.{project}.worktree-path must be relative, not absolute"
+                    )));
+                }
+            }
+
+            // Validate commit generation config
+            if let Some(ref cg) = project_config.commit_generation {
+                if cg.template.is_some() && cg.template_file.is_some() {
+                    return Err(ConfigError::Message(format!(
+                        "projects.{project}.commit-generation.template and template-file are mutually exclusive"
+                    )));
+                }
+                if cg.squash_template.is_some() && cg.squash_template_file.is_some() {
+                    return Err(ConfigError::Message(format!(
+                        "projects.{project}.commit-generation.squash-template and squash-template-file are mutually exclusive"
                     )));
                 }
             }
@@ -652,7 +866,8 @@ impl WorktrunkConfig {
             project_config.approved_commands.retain(|c| c != &command);
             let changed = len_before != project_config.approved_commands.len();
 
-            if project_config.approved_commands.is_empty() {
+            // Only remove project entry if it has no other settings
+            if project_config.is_empty() {
                 config.projects.remove(&project);
             }
             changed
@@ -661,7 +876,11 @@ impl WorktrunkConfig {
 
     /// Remove all approvals for a project and save to config file.
     ///
-    /// Acquires lock, reloads from disk, removes project if present, and saves.
+    /// Clears only the approved-commands list, preserving other per-project settings
+    /// like worktree-path, commit-generation, list, commit, and merge configs.
+    /// The project entry is removed only if all settings are empty after clearing.
+    ///
+    /// Acquires lock, reloads from disk, clears approvals, and saves.
     /// Pass `None` for default config path, or `Some(path)` for testing.
     pub fn revoke_project(
         &mut self,
@@ -670,7 +889,18 @@ impl WorktrunkConfig {
     ) -> Result<(), ConfigError> {
         let project = project.to_string();
         self.with_locked_mutation(config_path, |config| {
-            config.projects.remove(&project).is_some()
+            let Some(project_config) = config.projects.get_mut(&project) else {
+                return false;
+            };
+            if project_config.approved_commands.is_empty() {
+                return false; // Nothing to clear
+            }
+            project_config.approved_commands.clear();
+            // Only remove project entry if it has no other settings
+            if project_config.is_empty() {
+                config.projects.remove(&project);
+            }
+            true
         })
     }
 
@@ -723,6 +953,53 @@ impl WorktrunkConfig {
         array.set_trailing("\n");
         array.set_trailing_comma(true);
         array
+    }
+
+    /// Serialize a per-project config section (commit-generation, list, commit, merge).
+    ///
+    /// If the config is Some, serializes it as a nested table. If None, removes the section.
+    /// Used when updating an existing file.
+    fn serialize_project_config_section<T: Serialize>(
+        projects: &mut toml_edit::Table,
+        project_id: &str,
+        section_name: &str,
+        config: Option<&T>,
+    ) {
+        if let Some(cfg) = config {
+            // Serialize to TOML value, then convert to toml_edit Item
+            if let Ok(toml_value) = toml::to_string(cfg)
+                && let Ok(parsed) = toml_value.parse::<toml_edit::DocumentMut>()
+            {
+                let mut table = toml_edit::Table::new();
+                for (k, v) in parsed.iter() {
+                    table[k] = v.clone();
+                }
+                projects[project_id][section_name] = toml_edit::Item::Table(table);
+            }
+        } else if let Some(project_table) = projects[project_id].as_table_mut() {
+            project_table.remove(section_name);
+        }
+    }
+
+    /// Serialize a nested config section into a table.
+    ///
+    /// If the config is Some, serializes it as a nested table. If None, does nothing.
+    /// Used when creating a new file from scratch.
+    fn serialize_nested_config<T: Serialize>(
+        table: &mut toml_edit::Table,
+        section_name: &str,
+        config: Option<&T>,
+    ) {
+        if let Some(cfg) = config
+            && let Ok(toml_value) = toml::to_string(cfg)
+            && let Ok(parsed) = toml_value.parse::<toml_edit::DocumentMut>()
+        {
+            let mut nested = toml_edit::Table::new();
+            for (k, v) in parsed.iter() {
+                nested[k] = v.clone();
+            }
+            table[section_name] = toml_edit::Item::Table(nested);
+        }
     }
 
     /// Save the current configuration to a specific file path
@@ -787,6 +1064,32 @@ impl WorktrunkConfig {
                     let commands =
                         Self::format_multiline_array(project_config.approved_commands.iter());
                     projects[project_id]["approved-commands"] = toml_edit::value(commands);
+
+                    // Per-project nested config sections
+                    Self::serialize_project_config_section(
+                        projects,
+                        project_id,
+                        "commit-generation",
+                        project_config.commit_generation.as_ref(),
+                    );
+                    Self::serialize_project_config_section(
+                        projects,
+                        project_id,
+                        "list",
+                        project_config.list.as_ref(),
+                    );
+                    Self::serialize_project_config_section(
+                        projects,
+                        project_id,
+                        "commit",
+                        project_config.commit.as_ref(),
+                    );
+                    Self::serialize_project_config_section(
+                        projects,
+                        project_id,
+                        "merge",
+                        project_config.merge.as_ref(),
+                    );
                 }
             }
 
@@ -829,6 +1132,25 @@ impl WorktrunkConfig {
                     let commands =
                         Self::format_multiline_array(project_config.approved_commands.iter());
                     table["approved-commands"] = toml_edit::value(commands);
+
+                    // Per-project nested config sections
+                    Self::serialize_nested_config(
+                        &mut table,
+                        "commit-generation",
+                        project_config.commit_generation.as_ref(),
+                    );
+                    Self::serialize_nested_config(&mut table, "list", project_config.list.as_ref());
+                    Self::serialize_nested_config(
+                        &mut table,
+                        "commit",
+                        project_config.commit.as_ref(),
+                    );
+                    Self::serialize_nested_config(
+                        &mut table,
+                        "merge",
+                        project_config.merge.as_ref(),
+                    );
+
                     projects_table[project_id] = toml_edit::Item::Table(table);
                 }
                 doc["projects"] = toml_edit::Item::Table(projects_table);
@@ -1042,6 +1364,7 @@ rename-tab = "echo 'switched'"
         let config = UserProjectConfig {
             worktree_path: Some(".worktrees/{{ branch | sanitize }}".to_string()),
             approved_commands: vec!["npm install".to_string()],
+            ..Default::default()
         };
         let toml = toml::to_string(&config).unwrap();
         assert!(toml.contains("worktree-path"));
@@ -1063,6 +1386,7 @@ rename-tab = "echo 'switched'"
             UserProjectConfig {
                 worktree_path: Some(".worktrees/{{ branch | sanitize }}".to_string()),
                 approved_commands: vec![],
+                ..Default::default()
             },
         );
 
@@ -1084,6 +1408,7 @@ rename-tab = "echo 'switched'"
             UserProjectConfig {
                 worktree_path: None, // No project-specific path
                 approved_commands: vec!["npm install".to_string()],
+                ..Default::default()
             },
         );
 
@@ -1117,6 +1442,7 @@ rename-tab = "echo 'switched'"
             UserProjectConfig {
                 worktree_path: Some(".worktrees/{{ branch | sanitize }}".to_string()),
                 approved_commands: vec![],
+                ..Default::default()
             },
         );
 
@@ -1386,5 +1712,370 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 "#;
         let config: WorktrunkConfig = toml::from_str(content).unwrap();
         assert!(!config.skip_shell_integration_prompt);
+    }
+
+    // =========================================================================
+    // Merge trait tests
+    // =========================================================================
+
+    #[test]
+    fn test_merge_list_config() {
+        let base = ListConfig {
+            full: Some(true),
+            branches: Some(false),
+            remotes: None,
+            timeout_ms: Some(1000),
+        };
+        let override_config = ListConfig {
+            full: None,           // Should fall back to base
+            branches: Some(true), // Should override
+            remotes: Some(true),  // Should override (base was None)
+            timeout_ms: None,     // Should fall back to base
+        };
+
+        let merged = base.merge_with(&override_config);
+        assert_eq!(merged.full, Some(true)); // From base
+        assert_eq!(merged.branches, Some(true)); // From override
+        assert_eq!(merged.remotes, Some(true)); // From override
+        assert_eq!(merged.timeout_ms, Some(1000)); // From base
+    }
+
+    #[test]
+    fn test_merge_commit_config() {
+        let base = CommitConfig {
+            stage: Some(StageMode::All),
+        };
+        let override_config = CommitConfig {
+            stage: Some(StageMode::Tracked),
+        };
+
+        let merged = base.merge_with(&override_config);
+        assert_eq!(merged.stage, Some(StageMode::Tracked));
+    }
+
+    #[test]
+    fn test_merge_merge_config() {
+        let base = MergeConfig {
+            squash: Some(true),
+            commit: Some(true),
+            rebase: Some(true),
+            remove: Some(true),
+            verify: Some(true),
+        };
+        let override_config = MergeConfig {
+            squash: Some(false), // Override
+            commit: None,        // Fall back to base
+            rebase: None,        // Fall back to base
+            remove: Some(false), // Override
+            verify: None,        // Fall back to base
+        };
+
+        let merged = base.merge_with(&override_config);
+        assert_eq!(merged.squash, Some(false));
+        assert_eq!(merged.commit, Some(true));
+        assert_eq!(merged.rebase, Some(true));
+        assert_eq!(merged.remove, Some(false));
+        assert_eq!(merged.verify, Some(true));
+    }
+
+    #[test]
+    fn test_merge_commit_generation_config() {
+        let base = CommitGenerationConfig {
+            command: Some("llm".to_string()),
+            args: vec!["-s".to_string()],
+            template: None,
+            template_file: Some("~/.config/template.txt".to_string()),
+            squash_template: None,
+            squash_template_file: None,
+        };
+        let override_config = CommitGenerationConfig {
+            command: Some("claude".to_string()),  // Override
+            args: vec![],                         // Empty = fall back to base
+            template: Some("custom".to_string()), // Override (was None)
+            template_file: None,                  // Fall back to base
+            squash_template: None,
+            squash_template_file: None,
+        };
+
+        let merged = base.merge_with(&override_config);
+        assert_eq!(merged.command, Some("claude".to_string()));
+        assert_eq!(merged.args, vec!["-s".to_string()]); // Base, since override was empty
+        assert_eq!(merged.template, Some("custom".to_string()));
+        // When project sets template, template_file is cleared to maintain mutual exclusivity
+        assert_eq!(merged.template_file, None);
+    }
+
+    #[test]
+    fn test_commit_generation_merge_mutual_exclusivity() {
+        // Global has template_file, project has template
+        // Merged result should only have template (project wins, clears template_file)
+        let global = CommitGenerationConfig {
+            template_file: Some("~/.config/template.txt".to_string()),
+            ..Default::default()
+        };
+        let project = CommitGenerationConfig {
+            template: Some("inline template".to_string()),
+            ..Default::default()
+        };
+
+        let merged = global.merge_with(&project);
+        assert_eq!(merged.template, Some("inline template".to_string()));
+        assert_eq!(merged.template_file, None); // Cleared because project set template
+
+        // Reverse: global has template, project has template_file
+        let global = CommitGenerationConfig {
+            template: Some("global template".to_string()),
+            ..Default::default()
+        };
+        let project = CommitGenerationConfig {
+            template_file: Some("project-file.txt".to_string()),
+            ..Default::default()
+        };
+
+        let merged = global.merge_with(&project);
+        assert_eq!(merged.template, None); // Cleared because project set template_file
+        assert_eq!(merged.template_file, Some("project-file.txt".to_string()));
+
+        // Neither set in project: inherit both from global
+        let global = CommitGenerationConfig {
+            template: Some("global template".to_string()),
+            ..Default::default()
+        };
+        let project = CommitGenerationConfig::default();
+
+        let merged = global.merge_with(&project);
+        assert_eq!(merged.template, Some("global template".to_string()));
+        assert_eq!(merged.template_file, None);
+    }
+
+    // =========================================================================
+    // Effective config methods tests
+    // =========================================================================
+
+    #[test]
+    fn test_effective_commit_generation_no_project() {
+        let mut config = WorktrunkConfig::default();
+        config.commit_generation.command = Some("global-llm".to_string());
+
+        let effective = config.effective_commit_generation(None);
+        assert_eq!(effective.command, Some("global-llm".to_string()));
+    }
+
+    #[test]
+    fn test_effective_commit_generation_with_project_override() {
+        let mut config = WorktrunkConfig::default();
+        config.commit_generation.command = Some("global-llm".to_string());
+        config.commit_generation.args = vec!["--global".to_string()];
+
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectConfig {
+                commit_generation: Some(CommitGenerationConfig {
+                    command: Some("project-llm".to_string()),
+                    args: vec!["--project".to_string()],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+
+        // With project identifier, should merge project config
+        let effective = config.effective_commit_generation(Some("github.com/user/repo"));
+        assert_eq!(effective.command, Some("project-llm".to_string()));
+        assert_eq!(effective.args, vec!["--project".to_string()]);
+
+        // Without project or unknown project, should use global
+        let effective = config.effective_commit_generation(None);
+        assert_eq!(effective.command, Some("global-llm".to_string()));
+
+        let effective = config.effective_commit_generation(Some("github.com/other/repo"));
+        assert_eq!(effective.command, Some("global-llm".to_string()));
+    }
+
+    #[test]
+    fn test_effective_merge_with_partial_override() {
+        let mut config = WorktrunkConfig {
+            merge: Some(MergeConfig {
+                squash: Some(true),
+                commit: Some(true),
+                rebase: Some(true),
+                remove: Some(true),
+                verify: Some(true),
+            }),
+            ..Default::default()
+        };
+
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectConfig {
+                merge: Some(MergeConfig {
+                    squash: Some(false), // Only override squash
+                    commit: None,
+                    rebase: None,
+                    remove: None,
+                    verify: None,
+                }),
+                ..Default::default()
+            },
+        );
+
+        let effective = config
+            .effective_merge(Some("github.com/user/repo"))
+            .unwrap();
+        assert_eq!(effective.squash, Some(false)); // From project
+        assert_eq!(effective.commit, Some(true)); // From global
+        assert_eq!(effective.rebase, Some(true)); // From global
+    }
+
+    #[test]
+    fn test_effective_list_project_only() {
+        // No global list config, only project config
+        let mut config = WorktrunkConfig::default();
+        assert!(config.list.is_none());
+
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectConfig {
+                list: Some(ListConfig {
+                    full: Some(true),
+                    branches: None,
+                    remotes: None,
+                    timeout_ms: None,
+                }),
+                ..Default::default()
+            },
+        );
+
+        let effective = config.effective_list(Some("github.com/user/repo")).unwrap();
+        assert_eq!(effective.full, Some(true));
+        assert!(effective.branches.is_none());
+
+        // No global, no matching project = None
+        assert!(
+            config
+                .effective_list(Some("github.com/other/repo"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_effective_commit_global_only() {
+        // Only global config, no project config
+        let config = WorktrunkConfig {
+            commit: Some(CommitConfig {
+                stage: Some(StageMode::Tracked),
+            }),
+            ..Default::default()
+        };
+
+        let effective = config
+            .effective_commit(Some("github.com/any/project"))
+            .unwrap();
+        assert_eq!(effective.stage, Some(StageMode::Tracked));
+    }
+
+    // =========================================================================
+    // Per-project config serde tests
+    // =========================================================================
+
+    #[test]
+    fn test_user_project_config_with_nested_configs_serde() {
+        let config = UserProjectConfig {
+            worktree_path: Some(".worktrees/{{ branch }}".to_string()),
+            approved_commands: vec!["npm install".to_string()],
+            commit_generation: Some(CommitGenerationConfig {
+                command: Some("llm".to_string()),
+                args: vec!["-m".to_string(), "gpt-4".to_string()],
+                ..Default::default()
+            }),
+            list: Some(ListConfig {
+                full: Some(true),
+                ..Default::default()
+            }),
+            commit: Some(CommitConfig {
+                stage: Some(StageMode::Tracked),
+            }),
+            merge: Some(MergeConfig {
+                squash: Some(false),
+                ..Default::default()
+            }),
+        };
+
+        let toml = toml::to_string(&config).unwrap();
+        let parsed: UserProjectConfig = toml::from_str(&toml).unwrap();
+
+        assert_eq!(
+            parsed.worktree_path,
+            Some(".worktrees/{{ branch }}".to_string())
+        );
+        assert_eq!(
+            parsed.commit_generation.as_ref().unwrap().command,
+            Some("llm".to_string())
+        );
+        assert_eq!(parsed.list.as_ref().unwrap().full, Some(true));
+        assert_eq!(
+            parsed.commit.as_ref().unwrap().stage,
+            Some(StageMode::Tracked)
+        );
+        assert_eq!(parsed.merge.as_ref().unwrap().squash, Some(false));
+    }
+
+    #[test]
+    fn test_full_config_with_per_project_sections_serde() {
+        let content = r#"
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+[commit-generation]
+command = "llm"
+
+[projects."github.com/user/repo"]
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+approved-commands = ["npm install"]
+
+[projects."github.com/user/repo".commit-generation]
+command = "claude"
+args = ["--model", "opus"]
+
+[projects."github.com/user/repo".list]
+full = true
+
+[projects."github.com/user/repo".merge]
+squash = false
+"#;
+
+        let config: WorktrunkConfig = toml::from_str(content).unwrap();
+
+        // Global config
+        assert_eq!(
+            config.worktree_path,
+            Some("../{{ repo }}.{{ branch | sanitize }}".to_string())
+        );
+        assert_eq!(config.commit_generation.command, Some("llm".to_string()));
+
+        // Project config
+        let project = config.projects.get("github.com/user/repo").unwrap();
+        assert_eq!(
+            project.worktree_path,
+            Some(".worktrees/{{ branch | sanitize }}".to_string())
+        );
+        assert_eq!(
+            project.commit_generation.as_ref().unwrap().command,
+            Some("claude".to_string())
+        );
+        assert_eq!(
+            project.commit_generation.as_ref().unwrap().args,
+            vec!["--model".to_string(), "opus".to_string()]
+        );
+        assert_eq!(project.list.as_ref().unwrap().full, Some(true));
+        assert_eq!(project.merge.as_ref().unwrap().squash, Some(false));
+
+        // Effective config for project
+        let effective_cg = config.effective_commit_generation(Some("github.com/user/repo"));
+        assert_eq!(effective_cg.command, Some("claude".to_string()));
+
+        let effective_merge = config
+            .effective_merge(Some("github.com/user/repo"))
+            .unwrap();
+        assert_eq!(effective_merge.squash, Some(false));
     }
 }

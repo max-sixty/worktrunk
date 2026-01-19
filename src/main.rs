@@ -480,68 +480,54 @@ fn main() {
                 verify,
                 stage,
                 show_prompt,
-            } => WorktrunkConfig::load()
-                .context("Failed to load config")
-                .and_then(|config| {
-                    let stage_final = stage
-                        .or_else(|| config.commit.and_then(|c| c.stage))
-                        .unwrap_or_default();
-                    step_commit(yes, !verify, stage_final, show_prompt)
-                }),
+            } => step_commit(yes, !verify, stage, show_prompt),
             StepCommand::Squash {
                 target,
                 yes,
                 verify,
                 stage,
                 show_prompt,
-            } => WorktrunkConfig::load()
-                .context("Failed to load config")
-                .and_then(|config| {
-                    let stage_final = stage
-                        .or_else(|| config.commit.and_then(|c| c.stage))
-                        .unwrap_or_default();
+            } => {
+                // Handle --show-prompt early: just build and output the prompt
+                if show_prompt {
+                    commands::step_show_squash_prompt(target.as_deref())
+                } else {
+                    (|| {
+                        // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
+                        // Shadow verify: if user declines approval, skip hooks but continue squash
+                        let verify = if verify {
+                            use commands::command_approval::approve_hooks;
+                            use commands::context::CommandEnv;
+                            let env = CommandEnv::for_action("squash")?;
+                            let ctx = env.context(yes);
+                            let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
+                            if !approved {
+                                crate::output::print(info_message(
+                                    "Commands declined, squashing without hooks",
+                                ))?;
+                            }
+                            approved
+                        } else {
+                            false
+                        };
 
-                    // Handle --show-prompt early: just build and output the prompt
-                    if show_prompt {
-                        return commands::step_show_squash_prompt(
-                            target.as_deref(),
-                            &config.commit_generation,
-                        );
-                    }
-
-                    // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
-                    // Shadow verify: if user declines approval, skip hooks but continue squash
-                    let verify = if verify {
-                        use commands::command_approval::approve_hooks;
-                        use commands::context::CommandEnv;
-                        let env = CommandEnv::for_action("squash")?;
-                        let ctx = env.context(yes);
-                        let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
-                        if !approved {
-                            crate::output::print(info_message(
-                                "Commands declined, squashing without hooks",
-                            ))?;
+                        match handle_squash(target.as_deref(), yes, !verify, stage)? {
+                            SquashResult::Squashed | SquashResult::NoNetChanges => {}
+                            SquashResult::NoCommitsAhead(branch) => {
+                                crate::output::print(info_message(format!(
+                                    "Nothing to squash; no commits ahead of {branch}"
+                                )))?;
+                            }
+                            SquashResult::AlreadySingleCommit => {
+                                crate::output::print(info_message(
+                                    "Nothing to squash; already a single commit",
+                                ))?;
+                            }
                         }
-                        approved
-                    } else {
-                        false
-                    };
-
-                    match handle_squash(target.as_deref(), yes, !verify, stage_final)? {
-                        SquashResult::Squashed | SquashResult::NoNetChanges => {}
-                        SquashResult::NoCommitsAhead(branch) => {
-                            crate::output::print(info_message(format!(
-                                "Nothing to squash; no commits ahead of {branch}"
-                            )))?;
-                        }
-                        SquashResult::AlreadySingleCommit => {
-                            crate::output::print(info_message(
-                                "Nothing to squash; already a single commit",
-                            ))?;
-                        }
-                    }
-                    Ok(())
-                }),
+                        Ok(())
+                    })()
+                }
+            }
             StepCommand::Push { target } => handle_push(target.as_deref(), "Pushed to", None),
             StepCommand::Rebase { target } => {
                 handle_rebase(target.as_deref()).and_then(|result| match result {
@@ -629,10 +615,14 @@ fn main() {
             WorktrunkConfig::load()
                 .context("Failed to load config")
                 .and_then(|config| {
-                    // Get config values from [list] config (shared with wt list)
+                    // Get project ID for per-project config lookup
+                    let project_id = Repository::current()
+                        .ok()
+                        .and_then(|r| r.project_identifier().ok());
+
+                    // Get effective list config (merges project-specific with global)
                     let (show_branches_config, show_remotes_config) = config
-                        .list
-                        .as_ref()
+                        .effective_list(project_id.as_deref())
                         .map(|l| (l.branches.unwrap_or(false), l.remotes.unwrap_or(false)))
                         .unwrap_or((false, false));
 
@@ -670,10 +660,14 @@ fn main() {
                 WorktrunkConfig::load()
                     .context("Failed to load config")
                     .and_then(|config| {
-                        // Get config values from global list config
+                        // Get project ID for per-project config lookup
+                        let project_id = Repository::current()
+                            .ok()
+                            .and_then(|r| r.project_identifier().ok());
+
+                        // Get effective list config (merges project-specific with global)
                         let (show_branches_config, show_remotes_config, show_full_config) = config
-                            .list
-                            .as_ref()
+                            .effective_list(project_id.as_deref())
                             .map(|l| {
                                 (
                                     l.branches.unwrap_or(false),
@@ -1087,49 +1081,29 @@ fn main() {
             no_verify,
             yes,
             stage,
-        } => WorktrunkConfig::load()
-            .context("Failed to load config")
-            .and_then(|config| {
-                // Convert paired flags to Option<bool>
-                fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
-                    match (positive, negative) {
-                        (true, _) => Some(true),
-                        (_, true) => Some(false),
-                        _ => None,
-                    }
+        } => {
+            // Convert paired flags to Option<bool>
+            fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
+                match (positive, negative) {
+                    (true, _) => Some(true),
+                    (_, true) => Some(false),
+                    _ => None,
                 }
+            }
 
-                // Get config defaults (positive form: true = do it)
-                let merge_config = config.merge.as_ref();
-                let squash_default = merge_config.and_then(|m| m.squash).unwrap_or(true);
-                let commit_default = merge_config.and_then(|m| m.commit).unwrap_or(true);
-                let rebase_default = merge_config.and_then(|m| m.rebase).unwrap_or(true);
-                let remove_default = merge_config.and_then(|m| m.remove).unwrap_or(true);
-                let verify_default = merge_config.and_then(|m| m.verify).unwrap_or(true);
-
-                // CLI flags override config, config overrides defaults
-                let squash_final = flag_pair(squash, no_squash).unwrap_or(squash_default);
-                let commit_final = flag_pair(commit, no_commit).unwrap_or(commit_default);
-                let rebase_final = flag_pair(rebase, no_rebase).unwrap_or(rebase_default);
-                let remove_final = flag_pair(remove, no_remove).unwrap_or(remove_default);
-                let verify_final = flag_pair(verify, no_verify).unwrap_or(verify_default);
-
-                // Stage defaults from [commit] config section
-                let stage_final = stage
-                    .or_else(|| config.commit.and_then(|c| c.stage))
-                    .unwrap_or_default();
-
-                handle_merge(MergeOptions {
-                    target: target.as_deref(),
-                    squash: squash_final,
-                    commit: commit_final,
-                    rebase: rebase_final,
-                    remove: remove_final,
-                    verify: verify_final,
-                    yes,
-                    stage_mode: stage_final,
-                })
-            }),
+            // Pass CLI flags as options; handle_merge determines effective defaults
+            // using per-project config merged with global config
+            handle_merge(MergeOptions {
+                target: target.as_deref(),
+                squash: flag_pair(squash, no_squash),
+                commit: flag_pair(commit, no_commit),
+                rebase: flag_pair(rebase, no_rebase),
+                remove: flag_pair(remove, no_remove),
+                verify: flag_pair(verify, no_verify),
+                yes,
+                stage,
+            })
+        }
     };
 
     if let Err(e) = result {

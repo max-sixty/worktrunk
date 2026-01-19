@@ -94,4 +94,27 @@ impl CommandEnv {
             .into()
         })
     }
+
+    /// Get the project identifier for per-project config lookup.
+    ///
+    /// Returns None if the repository doesn't have a remote URL that can be parsed.
+    pub fn project_id(&self) -> Option<String> {
+        self.repo.project_identifier().ok()
+    }
+
+    /// Get the effective commit generation config, merging project-specific settings.
+    pub fn effective_commit_generation(&self) -> worktrunk::config::CommitGenerationConfig {
+        self.config
+            .effective_commit_generation(self.project_id().as_deref())
+    }
+
+    /// Get the effective commit config, merging project-specific settings.
+    pub fn effective_commit(&self) -> Option<worktrunk::config::CommitConfig> {
+        self.config.effective_commit(self.project_id().as_deref())
+    }
+
+    /// Get the effective merge config, merging project-specific settings.
+    pub fn effective_merge(&self) -> Option<worktrunk::config::MergeConfig> {
+        self.config.effective_merge(self.project_id().as_deref())
+    }
 }

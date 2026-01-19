@@ -48,6 +48,19 @@ impl<'a> CommandContext<'a> {
     pub fn branch_or_head(&self) -> &str {
         self.branch.unwrap_or("HEAD")
     }
+
+    /// Get the project identifier for per-project config lookup.
+    ///
+    /// Returns None if the repository doesn't have a remote URL that can be parsed.
+    pub fn project_id(&self) -> Option<String> {
+        self.repo.project_identifier().ok()
+    }
+
+    /// Get the effective commit generation config, merging project-specific settings.
+    pub fn effective_commit_generation(&self) -> worktrunk::config::CommitGenerationConfig {
+        self.config
+            .effective_commit_generation(self.project_id().as_deref())
+    }
 }
 
 /// Build hook context as a HashMap for JSON serialization and template expansion.

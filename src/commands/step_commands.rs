@@ -24,24 +24,34 @@ use super::hooks::{HookFailureStrategy, run_hook_with_filter};
 use super::repository_ext::RepositoryCliExt;
 
 /// Handle `wt step commit` command
+///
+/// `stage` is the CLI-provided stage mode. If None, uses the effective config default.
 pub fn step_commit(
     yes: bool,
     no_verify: bool,
-    stage_mode: super::commit::StageMode,
+    stage: Option<super::commit::StageMode>,
     show_prompt: bool,
 ) -> anyhow::Result<()> {
     use super::command_approval::approve_hooks;
 
     // Handle --show-prompt early: just build and output the prompt
     if show_prompt {
+        let repo = worktrunk::git::Repository::current()?;
         let config = WorktrunkConfig::load().context("Failed to load config")?;
-        let prompt = crate::llm::build_commit_prompt(&config.commit_generation)?;
+        let project_id = repo.project_identifier().ok();
+        let effective_config = config.effective_commit_generation(project_id.as_deref());
+        let prompt = crate::llm::build_commit_prompt(&effective_config)?;
         crate::output::stdout(prompt)?;
         return Ok(());
     }
 
     let env = CommandEnv::for_action("commit")?;
     let ctx = env.context(yes);
+
+    // Determine effective stage mode: CLI > project config > global config > default
+    let stage_mode = stage
+        .or_else(|| env.effective_commit().and_then(|c| c.stage))
+        .unwrap_or_default();
 
     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
     // Shadow no_verify: if user declines approval, skip hooks but continue commit
@@ -86,12 +96,12 @@ pub enum SquashResult {
 ///
 /// # Arguments
 /// * `skip_pre_commit` - If true, skip all pre-commit hooks (both user and project)
-/// * `stage_mode` - What to stage before committing (All or Tracked; None not supported for squash)
+/// * `stage` - CLI-provided stage mode. If None, uses the effective config default.
 pub fn handle_squash(
     target: Option<&str>,
     yes: bool,
     skip_pre_commit: bool,
-    stage_mode: super::commit::StageMode,
+    stage: Option<super::commit::StageMode>,
 ) -> anyhow::Result<SquashResult> {
     use super::commit::StageMode;
 
@@ -100,7 +110,13 @@ pub fn handle_squash(
     // Squash requires being on a branch (can't squash in detached HEAD)
     let current_branch = env.require_branch("squash")?.to_string();
     let ctx = env.context(yes);
-    let generator = CommitGenerator::new(&env.config.commit_generation);
+    let effective_config = env.effective_commit_generation();
+    let generator = CommitGenerator::new(&effective_config);
+
+    // Determine effective stage mode: CLI > project config > global config > default
+    let stage_mode = stage
+        .or_else(|| env.effective_commit().and_then(|c| c.stage))
+        .unwrap_or_default();
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
     let target_branch = repo.require_target_ref(target)?;
@@ -250,7 +266,7 @@ pub fn handle_squash(
         &subjects,
         &current_branch,
         repo_name,
-        &env.config.commit_generation,
+        &effective_config,
     )?;
 
     // Display the generated commit message
@@ -290,11 +306,11 @@ pub fn handle_squash(
 /// Handle `wt step squash --show-prompt`
 ///
 /// Builds and outputs the squash prompt without running the LLM or squashing.
-pub fn step_show_squash_prompt(
-    target: Option<&str>,
-    config: &worktrunk::config::CommitGenerationConfig,
-) -> anyhow::Result<()> {
+pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
     let repo = Repository::current()?;
+    let config = WorktrunkConfig::load().context("Failed to load config")?;
+    let project_id = repo.project_identifier().ok();
+    let effective_config = config.effective_commit_generation(project_id.as_deref());
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
     let target_branch = repo.require_target_ref(target)?;
@@ -327,7 +343,7 @@ pub fn step_show_squash_prompt(
         &subjects,
         &current_branch,
         repo_name,
-        config,
+        &effective_config,
     )?;
     crate::output::stdout(prompt)?;
     Ok(())
