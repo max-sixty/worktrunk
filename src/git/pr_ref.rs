@@ -429,7 +429,8 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
         }
 
         // Unknown error - show full output in gutter for debugging
-        return Err(GitError::GhApiError {
+        return Err(GitError::CliApiError {
+            ref_type: super::RefType::Pr,
             message: format!("gh api failed for PR #{}", pr_number),
             stderr: stderr.trim().to_string(),
         }
@@ -520,35 +521,8 @@ pub fn fork_remote_url(owner: &str, repo: &str, reference_url: &str) -> String {
 /// Returns `Some(false)` if the branch exists but tracks something else.
 /// Returns `None` if the branch doesn't exist.
 pub fn branch_tracks_pr(repo_root: &std::path::Path, branch: &str, pr_number: u32) -> Option<bool> {
-    let config_key = format!("branch.{}.merge", branch);
-    let output = Cmd::new("git")
-        .args(["config", "--get", &config_key])
-        .current_dir(repo_root)
-        .run()
-        .ok()?;
-
-    if !output.status.success() {
-        // Config key doesn't exist - branch might not track anything
-        // Check if branch exists at all
-        let branch_exists = Cmd::new("git")
-            .args([
-                "show-ref",
-                "--verify",
-                "--quiet",
-                &format!("refs/heads/{}", branch),
-            ])
-            .current_dir(repo_root)
-            .run()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-
-        return if branch_exists { Some(false) } else { None };
-    }
-
-    let merge_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let expected_ref = format!("refs/pull/{}/head", pr_number);
-
-    Some(merge_ref == expected_ref)
+    super::branch_tracks_ref(repo_root, branch, &expected_ref)
 }
 
 #[cfg(test)]

@@ -43,10 +43,18 @@ fn resolve_switch_target(
     if let Some(pr_number) = worktrunk::git::pr_ref::parse_pr_ref(branch) {
         // --create and --base are invalid with pr: syntax
         if create {
-            return Err(GitError::PrCreateConflict { pr_number }.into());
+            return Err(GitError::RefCreateConflict {
+                ref_type: worktrunk::git::RefType::Pr,
+                number: pr_number,
+            }
+            .into());
         }
         if base.is_some() {
-            return Err(GitError::PrBaseConflict { pr_number }.into());
+            return Err(GitError::RefBaseConflict {
+                ref_type: worktrunk::git::RefType::Pr,
+                number: pr_number,
+            }
+            .into());
         }
 
         // Fetch PR info (network call via gh CLI)
@@ -78,9 +86,10 @@ fn resolve_switch_target(
                     });
                 } else {
                     // Branch exists but tracks something else
-                    return Err(GitError::BranchTracksDifferentPr {
+                    return Err(GitError::BranchTracksDifferentRef {
                         branch: local_branch,
-                        pr_number,
+                        ref_type: worktrunk::git::RefType::Pr,
+                        number: pr_number,
                     }
                     .into());
                 }
@@ -117,10 +126,18 @@ fn resolve_switch_target(
     if let Some(mr_number) = mr_ref::parse_mr_ref(branch) {
         // --create and --base are invalid with mr: syntax
         if create {
-            return Err(GitError::MrCreateConflict { mr_number }.into());
+            return Err(GitError::RefCreateConflict {
+                ref_type: worktrunk::git::RefType::Mr,
+                number: mr_number,
+            }
+            .into());
         }
         if base.is_some() {
-            return Err(GitError::MrBaseConflict { mr_number }.into());
+            return Err(GitError::RefBaseConflict {
+                ref_type: worktrunk::git::RefType::Mr,
+                number: mr_number,
+            }
+            .into());
         }
 
         // Fetch MR info (network call via glab CLI)
@@ -152,9 +169,10 @@ fn resolve_switch_target(
                     });
                 } else {
                     // Branch exists but tracks something else
-                    return Err(GitError::BranchTracksDifferentMr {
+                    return Err(GitError::BranchTracksDifferentRef {
                         branch: local_branch,
-                        mr_number,
+                        ref_type: worktrunk::git::RefType::Mr,
+                        number: mr_number,
                     }
                     .into());
                 }

@@ -38,6 +38,8 @@ pub use error::{
     GitError,
     // Special-handling error enum (Display produces styled output)
     HookErrorWithHint,
+    // Platform-specific reference type (PR vs MR)
+    RefType,
     WorktrunkError,
     // Error inspection functions
     add_hook_skip_hint,
@@ -247,6 +249,54 @@ pub struct CompletionBranch {
 
 // Re-export parsing helpers for internal use
 pub(crate) use parse::DefaultBranchName;
+
+use crate::shell_exec::Cmd;
+
+/// Check if a local branch is tracking a specific remote ref.
+///
+/// Returns `Some(true)` if the branch is configured to track the given ref.
+/// Returns `Some(false)` if the branch exists but tracks something else (or nothing).
+/// Returns `None` if the branch doesn't exist.
+///
+/// Used by PR/MR checkout to detect when a branch name collision exists.
+///
+/// # Arguments
+/// * `repo_root` - Path to run git commands from
+/// * `branch` - Local branch name to check
+/// * `expected_ref` - Full ref path (e.g., `refs/pull/101/head` or `refs/merge-requests/42/head`)
+pub fn branch_tracks_ref(
+    repo_root: &std::path::Path,
+    branch: &str,
+    expected_ref: &str,
+) -> Option<bool> {
+    let config_key = format!("branch.{}.merge", branch);
+    let output = Cmd::new("git")
+        .args(["config", "--get", &config_key])
+        .current_dir(repo_root)
+        .run()
+        .ok()?;
+
+    if !output.status.success() {
+        // Config key doesn't exist - branch might not track anything
+        // Check if branch exists at all
+        let branch_exists = Cmd::new("git")
+            .args([
+                "show-ref",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{}", branch),
+            ])
+            .current_dir(repo_root)
+            .run()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        return if branch_exists { Some(false) } else { None };
+    }
+
+    let merge_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Some(merge_ref == expected_ref)
+}
 
 // Note: HookType and WorktreeInfo are defined in this module and are already public.
 // They're accessible as git::HookType and git::WorktreeInfo without needing re-export.
