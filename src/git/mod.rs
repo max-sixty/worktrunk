@@ -260,6 +260,10 @@ use crate::shell_exec::Cmd;
 ///
 /// Used by PR/MR checkout to detect when a branch name collision exists.
 ///
+/// TODO: This only checks `branch.<name>.merge`, not `branch.<name>.remote`. A branch
+/// could track the right ref but have the wrong remote configured, which matters for
+/// fork PRs/MRs where refs live on the target repo. Consider checking both values.
+///
 /// # Arguments
 /// * `repo_root` - Path to run git commands from
 /// * `branch` - Local branch name to check

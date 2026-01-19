@@ -683,6 +683,12 @@ pub fn execute_switch(
 
                     // Find the remote that points to the target project (where MR refs live).
                     // This handles contributor clones where origin=fork and upstream=target.
+                    //
+                    // TODO: The fallback to primary_remote/origin is silent and can pick the
+                    // wrong remote (e.g., fork instead of target), causing fetch to fail with
+                    // a confusing "ref not found" error. Consider erroring with a targeted hint
+                    // like "add upstream remote for target project" when target_project_url is
+                    // missing or can't be matched to any remote.
                     let remote = target_project_url
                         .as_ref()
                         .and_then(|url| repo.find_remote_by_url(url))

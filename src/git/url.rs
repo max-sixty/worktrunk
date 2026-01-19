@@ -23,6 +23,11 @@ impl GitRemoteUrl {
     /// Parse a git remote URL into structured components.
     ///
     /// Returns `None` for malformed URLs or unsupported formats.
+    ///
+    /// TODO: This assumes exactly `/<owner>/<repo>` structure, which doesn't handle
+    /// GitLab's nested group URLs like `gitlab.com/group/subgroup/repo`. For those,
+    /// we should treat everything before the last path segment as the namespace.
+    /// This can cause `find_remote_by_url` to fail on nested GitLab groups.
     pub fn parse(url: &str) -> Option<Self> {
         let url = url.trim();
 

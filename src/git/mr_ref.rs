@@ -254,6 +254,10 @@ pub fn fetch_mr_info(mr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stderr_lower = stderr.to_lowercase();
 
+        // TODO: Classifying errors by substring matching is brittle across glab versions
+        // and locales. Consider using `glab api` with HTTP status codes for more reliable
+        // error detection, or at minimum test against multiple glab versions.
+
         // MR not found
         if stderr_lower.contains("not found")
             || stderr_lower.contains("404")
