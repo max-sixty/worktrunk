@@ -1037,6 +1037,8 @@ wt step push
 **Blocking**: Command waits for hook to complete before continuing.
 **Fail-fast**: First failure aborts the operation.
 
+Background hooks show a single-line summary by default. Use `-v` to see expanded command details.
+
 ### post-start
 
 Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
