@@ -273,20 +273,8 @@ pub fn fetch_mr_info(mr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
             bail!("GitLab CLI not authenticated; run glab auth login");
         }
 
-        // Rate limiting
-        if stderr_lower.contains("rate limit") || stderr_lower.contains("429") {
-            bail!("GitLab API rate limit exceeded; wait a few minutes and retry");
-        }
-
-        // Network errors
-        if stderr_lower.contains("network")
-            || stderr_lower.contains("connection")
-            || stderr_lower.contains("timeout")
-        {
-            bail!("Network error connecting to GitLab; check your internet connection");
-        }
-
         // Unknown error - show full output in gutter for debugging
+        // (Rate limits, network errors, etc. fall through here with helpful stderr)
         return Err(GitError::GlabApiError {
             message: format!("glab mr view failed for MR !{}", mr_number),
             stderr: stderr.trim().to_string(),

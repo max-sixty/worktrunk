@@ -2218,3 +2218,143 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         assert_cmd_snapshot!("switch_mr_fork", cmd);
     });
 }
+
+/// Test fork MR checkout when branch already exists and tracks the MR
+#[rstest]
+fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create the branch that will track the MR
+    repo.run_git(&["checkout", "-b", "feature-fix"]);
+    fs::write(repo.root_path().join("mr-file.txt"), "MR content").unwrap();
+    repo.run_git(&["add", "mr-file.txt"]);
+    repo.run_git(&["commit", "-m", "MR commit"]);
+
+    // Get the commit SHA and push to remote as refs/merge-requests/42/head
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+
+    repo.run_git(&[
+        "push",
+        "origin",
+        &format!("{}:refs/merge-requests/42/head", sha),
+    ]);
+
+    // Configure branch to track the MR ref (as our code would set it up)
+    repo.run_git(&["config", "branch.feature-fix.remote", "origin"]);
+    repo.run_git(&[
+        "config",
+        "branch.feature-fix.merge",
+        "refs/merge-requests/42/head",
+    ]);
+
+    // Go back to main
+    repo.run_git(&["checkout", "main"]);
+
+    // Set origin URL to GitLab-style
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    // Fork MR response
+    let glab_response = r#"{
+        "source_branch": "feature-fix",
+        "source_project_id": 456,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42",
+        "source_project": {
+            "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
+            "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
+        },
+        "target_project": {
+            "ssh_url_to_repo": "git@gitlab.com:owner/test-repo.git",
+            "http_url_to_repo": "https://gitlab.com/owner/test-repo.git"
+        }
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_fork_existing_branch_tracks_mr", cmd);
+    });
+}
+
+/// Test fork MR checkout when branch exists but tracks something else
+#[rstest]
+fn test_switch_mr_fork_existing_branch_tracks_different(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create the branch that tracks a different ref
+    repo.run_git(&["checkout", "-b", "feature-fix"]);
+    fs::write(repo.root_path().join("mr-file.txt"), "MR content").unwrap();
+    repo.run_git(&["add", "mr-file.txt"]);
+    repo.run_git(&["commit", "-m", "MR commit"]);
+
+    // Configure branch to track a different MR
+    repo.run_git(&["config", "branch.feature-fix.remote", "origin"]);
+    repo.run_git(&[
+        "config",
+        "branch.feature-fix.merge",
+        "refs/merge-requests/99/head", // Different MR number
+    ]);
+
+    // Go back to main
+    repo.run_git(&["checkout", "main"]);
+
+    // Set origin URL to GitLab-style
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    // Fork MR response for MR 42, but branch tracks MR 99
+    let glab_response = r#"{
+        "source_branch": "feature-fix",
+        "source_project_id": 456,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42",
+        "source_project": {
+            "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
+            "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
+        },
+        "target_project": {
+            "ssh_url_to_repo": "git@gitlab.com:owner/test-repo.git",
+            "http_url_to_repo": "https://gitlab.com/owner/test-repo.git"
+        }
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_fork_existing_branch_tracks_different", cmd);
+    });
+}
