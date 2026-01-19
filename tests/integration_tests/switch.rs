@@ -1427,8 +1427,39 @@ fn test_switch_pr_create_conflict(repo: TestRepo) {
 /// Test same-repo PR checkout (base.repo == head.repo)
 #[rstest]
 fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
-    // Create a feature branch and push it
+    // Create a feature branch and push it to the remote
     repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    // Get the bare remote's actual URL before we modify origin
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Set origin URL to GitHub-style so find_remote_for_repo() can match owner/test-repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // Configure git to redirect github.com URLs to the local bare remote.
+    // This is necessary because:
+    // 1. origin must have a GitHub URL for find_remote_for_repo() to match owner/repo
+    // 2. But we need git fetch to actually succeed using the local bare remote
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
 
     // gh api repos/{owner}/{repo}/pulls/{number} format
     let gh_response = r#"{
@@ -1450,6 +1481,47 @@ fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
         configure_mock_gh_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_same_repo", cmd);
+    });
+}
+
+/// Test same-repo PR when origin points to a different repo (no remote for PR's repo)
+///
+/// User scenario:
+/// 1. User has origin pointing to their fork (contributor/test-repo)
+/// 2. PR #101 is a same-repo PR on the upstream (owner/test-repo)
+/// 3. No remote exists for owner/test-repo -> error with hint to add upstream
+#[rstest]
+fn test_switch_pr_same_repo_no_remote(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin to point to a DIFFERENT repo than where the PR is
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/contributor/test-repo.git",
+    ]);
+
+    // gh api response says base.repo and head.repo are both owner/test-repo (same-repo PR)
+    // but origin points to contributor/test-repo (different repo)
+    // So find_remote_for_repo("owner", "test-repo") will fail
+    let gh_response = r#"{
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_same_repo_no_remote", cmd);
     });
 }
 

@@ -111,7 +111,30 @@ fn resolve_switch_target(
                 },
             });
         } else {
-            // Same-repo PR: just use the branch name, regular switch
+            // Same-repo PR: fetch the branch to ensure remote refs are up-to-date.
+            // The branch exists on GitHub (per the API), but local refs may be stale.
+            // Use find_remote_for_repo (not primary_remote) because the PR's repo might
+            // be on a different remote (e.g., upstream vs origin in fork workflows).
+            let remote = repo
+                .find_remote_for_repo(&pr_info.base_owner, &pr_info.base_repo)
+                .ok_or_else(|| {
+                    // Use PR's URL as reference - it has the correct host (github.com or enterprise)
+                    let suggested_url =
+                        fork_remote_url(&pr_info.base_owner, &pr_info.base_repo, &pr_info.url);
+                    GitError::NoRemoteForRepo {
+                        owner: pr_info.base_owner.clone(),
+                        repo: pr_info.base_repo.clone(),
+                        suggested_url,
+                    }
+                })?;
+            let branch = &pr_info.head_ref_name;
+
+            let msg = cformat!("Fetching <bold>{branch}</> from {remote}...");
+            crate::output::print(progress_message(msg))?;
+
+            repo.run_command(&["fetch", &remote, branch])
+                .with_context(|| format!("Failed to fetch branch '{}' from {}", branch, remote))?;
+
             return Ok(ResolvedTarget {
                 branch: pr_info.head_ref_name,
                 method: CreationMethod::Regular {
