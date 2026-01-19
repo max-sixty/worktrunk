@@ -69,8 +69,11 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
         let cmd = cli::build_command();
         if let Some(suggestion) = cli::suggest_nested_subcommand(&cmd, unknown.to_string().as_str())
         {
-            eprint!("{}", err.render().ansi());
-            ceprintln!("\n  <yellow>tip:</>  did you mean <cyan,bold>{suggestion}</cyan,bold>?");
+            ceprintln!(
+                "{}
+  <yellow>tip:</>  did you mean <cyan,bold>{suggestion}</cyan,bold>?",
+                err.render().ansi()
+            );
             process::exit(2);
         }
     }
@@ -82,12 +85,15 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
     let is_switch_missing_arg = err.kind() == ErrorKind::MissingRequiredArgument
         && (err_str.contains("wt switch") || err_str.contains("wt.exe switch"));
     if is_switch_missing_arg {
-        eprint!("{}", err.render().ansi());
-        eprintln!();
-        ceprintln!("<green,bold>Quick switches:</>");
-        ceprintln!("  <cyan,bold>wt switch ^</>    default branch's worktree");
-        ceprintln!("  <cyan,bold>wt switch -</>    previous worktree");
-        ceprintln!("  <cyan,bold>wt select</>      interactive picker");
+        ceprintln!(
+            "{}
+
+<green,bold>Quick switches:</>
+  <cyan,bold>wt switch ^</>    # default branch's worktree
+  <cyan,bold>wt switch -</>    # previous worktree
+  <cyan,bold>wt select</>      # interactive picker",
+            err.render().ansi()
+        );
         process::exit(2);
     }
 
