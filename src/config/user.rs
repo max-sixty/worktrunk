@@ -19,6 +19,21 @@ pub trait Merge {
     fn merge_with(&self, other: &Self) -> Self;
 }
 
+/// Merge optional global and project configs, returning the effective config.
+///
+/// - Both set: merge (project takes precedence for set fields)
+/// - Only project set: clone project
+/// - Only global set: clone global
+/// - Neither set: None
+fn merge_optional<T: Merge + Clone>(global: Option<&T>, project: Option<&T>) -> Option<T> {
+    match (global, project) {
+        (Some(g), Some(p)) => Some(g.merge_with(p)),
+        (None, Some(p)) => Some(p.clone()),
+        (Some(g), None) => Some(g.clone()),
+        (None, None) => None,
+    }
+}
+
 /// Acquire an exclusive lock on the config file for read-modify-write operations.
 ///
 /// Uses a `.lock` file alongside the config file to coordinate between processes.
@@ -537,17 +552,10 @@ impl WorktrunkConfig {
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
     pub fn effective_list(&self, project: Option<&str>) -> Option<ListConfig> {
-        let global = self.list.as_ref();
         let project_config = project
             .and_then(|p| self.projects.get(p))
             .and_then(|c| c.list.as_ref());
-
-        match (global, project_config) {
-            (Some(g), Some(p)) => Some(g.merge_with(p)),
-            (None, Some(p)) => Some(p.clone()),
-            (Some(g), None) => Some(g.clone()),
-            (None, None) => None,
-        }
+        merge_optional(self.list.as_ref(), project_config)
     }
 
     /// Returns the effective commit config for a specific project.
@@ -555,17 +563,10 @@ impl WorktrunkConfig {
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
     pub fn effective_commit(&self, project: Option<&str>) -> Option<CommitConfig> {
-        let global = self.commit.as_ref();
         let project_config = project
             .and_then(|p| self.projects.get(p))
             .and_then(|c| c.commit.as_ref());
-
-        match (global, project_config) {
-            (Some(g), Some(p)) => Some(g.merge_with(p)),
-            (None, Some(p)) => Some(p.clone()),
-            (Some(g), None) => Some(g.clone()),
-            (None, None) => None,
-        }
+        merge_optional(self.commit.as_ref(), project_config)
     }
 
     /// Returns the effective merge config for a specific project.
@@ -573,17 +574,10 @@ impl WorktrunkConfig {
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
     pub fn effective_merge(&self, project: Option<&str>) -> Option<MergeConfig> {
-        let global = self.merge.as_ref();
         let project_config = project
             .and_then(|p| self.projects.get(p))
             .and_then(|c| c.merge.as_ref());
-
-        match (global, project_config) {
-            (Some(g), Some(p)) => Some(g.merge_with(p)),
-            (None, Some(p)) => Some(p.clone()),
-            (Some(g), None) => Some(g.clone()),
-            (None, None) => None,
-        }
+        merge_optional(self.merge.as_ref(), project_config)
     }
 
     /// Load configuration from config file and environment variables.
