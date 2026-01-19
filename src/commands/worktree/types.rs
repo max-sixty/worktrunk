@@ -73,6 +73,12 @@ pub enum CreationMethod {
         /// Name of the base repository
         base_repo: String,
     },
+    /// Fork MR: fetch from refs/merge-requests/N/head, create branch, configure pushRemote
+    ForkMr {
+        mr_number: u32,
+        fork_push_url: String,
+        mr_url: String,
+    },
 }
 
 /// Validated plan for a switch operation.

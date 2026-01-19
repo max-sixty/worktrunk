@@ -220,13 +220,8 @@
 //!
 //! # Platform Support
 //!
-//! This feature is GitHub-specific. GitLab has similar concepts:
-//!
-//! - `glab mr view <number>` with `source_branch` field
-//! - Different permission model (no exact "maintainer edits" equivalent)
-//!
-//! Future work could add `mr:<number>` syntax for GitLab, following the same
-//! patterns but using `glab` CLI.
+//! This feature is GitHub-specific. For GitLab merge requests, use the
+//! `mr:<number>` syntax (see `mr_ref` module).
 //!
 //! # Implementation Notes
 //!

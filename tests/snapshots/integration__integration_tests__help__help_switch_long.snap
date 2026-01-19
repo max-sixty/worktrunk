@@ -31,7 +31,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
   [36m<BRANCH>
           Branch name or shortcut
           
-          Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR, experimental)
+          Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)
 
   [36m[EXECUTE_ARGS]...
           Additional arguments for --execute command (after --)
@@ -127,11 +127,13 @@ When creating a worktree, worktrunk:
    @        Current branch/worktree       
    -        Previous worktree (like cd -) 
    pr:{N}   GitHub PR #N's branch         
+   mr:{N}   GitLab MR !N's branch         
 
   [2mwt switch -                      # Back to previous
   [2mwt switch ^                      # Default branch worktree
   [2mwt switch --create fix --base=@  # Branch from current HEAD
   [2mwt switch pr:123                 # PR #123's branch
+  [2mwt switch mr:101                 # MR !101's branch
 
 [1m[32mGitHub pull requests (experimental)
 
@@ -142,6 +144,16 @@ The [2mpr:<number>[0m syntax resolves the branch for a GitHub pull request. Fo
 Requires [2mgh[0m CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with [2mpr:[0m syntax since the branch already exists.
 
 [1mFork PRs:[0m The local branch uses the PR's branch name directly (e.g., [2mfeature-fix[0m), so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
+
+[1m[32mGitLab merge requests (experimental)
+
+The [2mmr:<number>[0m syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches [2mrefs/merge-requests/N/head[0m and configures [2mpushRemote[0m to the fork URL.
+
+  [2mwt switch mr:101                 # Checkout MR !101
+
+Requires [2mglab[0m CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with [2mmr:[0m syntax since the branch already exists.
+
+[1mFork MRs:[0m The local branch uses the MR's branch name directly, so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
 
 [1m[32mWhen wt switch fails
 

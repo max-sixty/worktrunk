@@ -175,6 +175,26 @@ pub enum GitError {
         /// Full stderr output for debugging
         stderr: String,
     },
+    /// --create flag used with mr: syntax (conflict - MR branch already exists)
+    MrCreateConflict {
+        mr_number: u32,
+    },
+    /// --base flag used with mr: syntax (conflict - MR base is predetermined)
+    MrBaseConflict {
+        mr_number: u32,
+    },
+    /// Branch exists but is tracking a different MR
+    BranchTracksDifferentMr {
+        branch: String,
+        mr_number: u32,
+    },
+    /// GitLab CLI API command failed with unrecognized error
+    GlabApiError {
+        /// Short description of what failed
+        message: String,
+        /// Full stderr output for debugging
+        stderr: String,
+    },
     Other {
         message: String,
     },
@@ -656,6 +676,48 @@ impl std::fmt::Display for GitError {
             }
 
             GitError::GhApiError { message, stderr } => {
+                write!(f, "{}", format_error_block(error_message(message), stderr))
+            }
+
+            GitError::MrCreateConflict { mr_number } => {
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!(
+                        "Cannot use <bold>--create</> with <bold>mr:{mr_number}</>"
+                    )),
+                    hint_message("MRs already have a branch; remove --create")
+                )
+            }
+
+            GitError::MrBaseConflict { mr_number } => {
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!(
+                        "Cannot use <bold>--base</> with <bold>mr:{mr_number}</>"
+                    )),
+                    hint_message("MRs already have a base; remove --base")
+                )
+            }
+
+            GitError::BranchTracksDifferentMr { branch, mr_number } => {
+                // The MR's branch name conflicts with an existing local branch.
+                // We can't use a different local name because git push requires
+                // the local and remote branch names to match (with push.default=current).
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!(
+                        "Branch <bold>{branch}</> exists but doesn't track MR !{mr_number}"
+                    )),
+                    hint_message(cformat!(
+                        "To free the name, run <bright-black>git branch -m {branch} {branch}-old</>"
+                    ))
+                )
+            }
+
+            GitError::GlabApiError { message, stderr } => {
                 write!(f, "{}", format_error_block(error_message(message), stderr))
             }
 

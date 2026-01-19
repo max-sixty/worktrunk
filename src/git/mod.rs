@@ -5,6 +5,7 @@ use std::path::PathBuf;
 // Submodules
 mod diff;
 mod error;
+pub mod mr_ref;
 mod parse;
 pub mod pr_ref;
 mod repository;

@@ -293,12 +293,14 @@ wt switch --create temp --no-verify      # Skip hooks
 | `@` | Current branch/worktree |
 | `-` | Previous worktree (like `cd -`) |
 | `pr:{N}` | GitHub PR #N's branch |
+| `mr:{N}` | GitLab MR !N's branch |
 
 ```console
 wt switch -                      # Back to previous
 wt switch ^                      # Default branch worktree
 wt switch --create fix --base=@  # Branch from current HEAD
 wt switch pr:123                 # PR #123's branch
+wt switch mr:101                 # MR !101's branch
 ```
 
 ## GitHub pull requests (experimental)
@@ -312,6 +314,18 @@ wt switch pr:101                 # Checkout PR #101
 Requires `gh` CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:` syntax since the branch already exists.
 
 **Fork PRs:** The local branch uses the PR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
+
+## GitLab merge requests (experimental)
+
+The `mr:<number>` syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches `refs/merge-requests/N/head` and configures `pushRemote` to the fork URL.
+
+```console
+wt switch mr:101                 # Checkout MR !101
+```
+
+Requires `glab` CLI to be installed and authenticated. The `--create` flag cannot be used with `mr:` syntax since the branch already exists.
+
+**Fork MRs:** The local branch uses the MR's branch name directly, so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
 ## When wt switch fails
 
@@ -332,7 +346,7 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
     Switch {
         /// Branch name or shortcut
         ///
-        /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR, experimental)
+        /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)
         #[arg(add = crate::completion::worktree_branch_completer())]
         branch: String,
 

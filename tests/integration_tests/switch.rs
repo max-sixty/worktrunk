@@ -1920,3 +1920,213 @@ fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
         assert_cmd_snapshot!("switch_pr_empty_branch", cmd);
     });
 }
+
+// ============================================================================
+// MR Syntax Tests (mr:<number>) - GitLab
+// ============================================================================
+
+/// Helper to set up mock glab for MR tests with custom MR response.
+///
+/// The response should be in `glab mr view <number> --output json` format:
+/// - `source_branch`, `source_project_id`, `target_project_id`
+/// - `web_url`
+fn setup_mock_glab_for_mr(repo: &TestRepo, glab_response: Option<&str>) -> std::path::PathBuf {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    // Copy mock-stub binary as "glab"
+    copy_mock_binary(&mock_bin, "glab");
+
+    // Write MR response file if provided
+    if let Some(response) = glab_response {
+        fs::write(mock_bin.join("mr_response.json"), response).unwrap();
+
+        MockConfig::new("glab")
+            .version("glab version 1.40.0 (mock)")
+            .command("mr", MockResponse::file("mr_response.json"))
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+    }
+
+    mock_bin
+}
+
+/// Configure command environment for mock glab.
+fn configure_mock_glab_env(cmd: &mut std::process::Command, mock_bin: &Path) {
+    // Tell mock-stub where to find config files
+    cmd.env("MOCK_CONFIG_DIR", mock_bin);
+
+    // Build PATH with mock binary first
+    let (path_var_name, current_path) = std::env::vars_os()
+        .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))
+        .map(|(k, v)| (k.to_string_lossy().into_owned(), Some(v)))
+        .unwrap_or(("PATH".to_string(), None));
+
+    let mut paths: Vec<std::path::PathBuf> = current_path
+        .as_deref()
+        .map(|p| std::env::split_paths(p).collect())
+        .unwrap_or_default();
+    paths.insert(0, mock_bin.to_path_buf());
+    let new_path = std::env::join_paths(&paths)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+
+    cmd.env(path_var_name, new_path);
+}
+
+/// Test that --create flag conflicts with mr: syntax
+#[rstest]
+fn test_switch_mr_create_conflict(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "mr:101"], None);
+        assert_cmd_snapshot!("switch_mr_create_conflict", cmd);
+    });
+}
+
+/// Test that --base flag conflicts with mr: syntax
+#[rstest]
+fn test_switch_mr_base_conflict(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--base", "main", "mr:101"], None);
+        assert_cmd_snapshot!("switch_mr_base_conflict", cmd);
+    });
+}
+
+/// Test same-repo MR checkout (source_project_id == target_project_id)
+#[rstest]
+fn test_switch_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
+    // Create a feature branch and push it
+    repo.add_worktree("feature-auth");
+
+    // glab mr view <number> --output json format
+    let glab_response = r#"{
+        "source_branch": "feature-auth",
+        "source_project_id": 123,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/101"
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_same_repo", cmd);
+    });
+}
+
+/// Test error when MR is not found
+#[rstest]
+fn test_switch_mr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    // Copy mock-stub binary as "glab"
+    copy_mock_binary(&mock_bin, "glab");
+
+    // Configure glab mr to return error for MR not found
+    MockConfig::new("glab")
+        .version("glab version 1.40.0 (mock)")
+        .command(
+            "mr",
+            MockResponse::stderr(
+                "GET https://gitlab.com/api/v4/projects/123/merge_requests/9999: 404 Not Found",
+            )
+            .with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:9999"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_not_found", cmd);
+    });
+}
+
+/// Test mr: when glab is not authenticated
+#[rstest]
+fn test_switch_mr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "glab");
+
+    // Configure glab mr to return auth error
+    MockConfig::new("glab")
+        .version("glab version 1.40.0 (mock)")
+        .command(
+            "mr",
+            MockResponse::stderr(
+                "glab: To use GitLab CLI in a non-interactive context, please run `glab auth login`",
+            )
+            .with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_not_authenticated", cmd);
+    });
+}
+
+/// Test mr: when glab returns invalid JSON
+#[rstest]
+fn test_switch_mr_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "glab");
+
+    // Configure glab mr to return invalid JSON
+    MockConfig::new("glab")
+        .version("glab version 1.40.0 (mock)")
+        .command("mr", MockResponse::output("not valid json {{{"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_invalid_json", cmd);
+    });
+}
+
+/// Test mr: when MR has empty branch name
+#[rstest]
+fn test_switch_mr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "glab");
+
+    // Configure glab to return valid JSON but with empty branch name
+    let glab_response = r#"{
+        "source_branch": "",
+        "source_project_id": 456,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/101"
+    }"#;
+
+    MockConfig::new("glab")
+        .version("glab version 1.40.0 (mock)")
+        .command("mr", MockResponse::output(glab_response))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_empty_branch", cmd);
+    });
+}
