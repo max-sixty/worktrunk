@@ -145,35 +145,17 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#
   [2m# ### Per-project settings
   [2m#
-  [2m# Per-project user settings, keyed by project identifier (e.g., `github.com/user/repo`).
-  [2m# All settings override the corresponding global settings when set. Settings not specified
-  [2m# fall back to the global value.
+  [2m# Per-project settings are keyed by project identifier (e.g., `github.com/user/repo`).
+  [2m# These contain approved hook commands plus optional overrides of global settings.
   [2m#
   [2m# [projects."github.com/user/repo"]
-  [2m# # Override worktree-path for this project (uses global template if not set)
-  [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"
-  [2m# # Commands approved for project hooks (auto-populated when approving hooks)
+  [2m# # Approved hook commands (auto-populated when approving on first run)
   [2m# approved-commands = ["npm ci", "npm test"]
   [2m#
-  [2m# # Per-project commit generation settings
-  [2m# [projects."github.com/user/repo".commit-generation]
-  [2m# command = "llm"
-  [2m# args = ["-m", "gpt-4"]
-  [2m# template = "Generate a commit message for: {{ git_diff }}"
-  [2m#
-  [2m# # Per-project list settings
-  [2m# [projects."github.com/user/repo".list]
-  [2m# full = true
-  [2m# branches = true
-  [2m#
-  [2m# # Per-project commit settings
-  [2m# [projects."github.com/user/repo".commit]
-  [2m# stage = "tracked"
-  [2m#
-  [2m# # Per-project merge settings
-  [2m# [projects."github.com/user/repo".merge]
-  [2m# squash = false
-  [2m# rebase = true
+  [2m# # Optional overrides (omit to use global settings)
+  [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"
+  [2m# list.full = true
+  [2m# merge.squash = false
   [2m#
   [2m# For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see `wt hook` docs (https://worktrunk.dev/hook/).
   [2m#

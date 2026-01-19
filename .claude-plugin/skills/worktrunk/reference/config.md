@@ -149,36 +149,18 @@ Pager behavior for `wt select` diff previews.
 
 ### Per-project settings
 
-Per-project user settings, keyed by project identifier (e.g., `github.com/user/repo`).
-All settings override the corresponding global settings when set. Settings not specified
-fall back to the global value.
+Per-project settings are keyed by project identifier (e.g., `github.com/user/repo`).
+These contain approved hook commands plus optional overrides of global settings.
 
 ```toml
 [projects."github.com/user/repo"]
-# Override worktree-path for this project (uses global template if not set)
-worktree-path = ".worktrees/{{ branch | sanitize }}"
-# Commands approved for project hooks (auto-populated when approving hooks)
+# Approved hook commands (auto-populated when approving on first run)
 approved-commands = ["npm ci", "npm test"]
 
-# Per-project commit generation settings
-[projects."github.com/user/repo".commit-generation]
-command = "llm"
-args = ["-m", "gpt-4"]
-template = "Generate a commit message for: {{ git_diff }}"
-
-# Per-project list settings
-[projects."github.com/user/repo".list]
-full = true
-branches = true
-
-# Per-project commit settings
-[projects."github.com/user/repo".commit]
-stage = "tracked"
-
-# Per-project merge settings
-[projects."github.com/user/repo".merge]
-squash = false
-rebase = true
+# Optional overrides (omit to use global settings)
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+list.full = true
+merge.squash = false
 ```
 
 For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see [`wt hook` docs](https://worktrunk.dev/hook/).

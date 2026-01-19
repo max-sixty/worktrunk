@@ -172,35 +172,17 @@ Pager behavior for [2mwt select[0m diff previews.
 
 [32mPer-project settings
 
-Per-project user settings, keyed by project identifier (e.g., [2mgithub.com/user/repo[0m).
-All settings override the corresponding global settings when set. Settings not specified
-fall back to the global value.
+Per-project settings are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m).
+These contain approved hook commands plus optional overrides of global settings.
 
   [2m[projects."github.com/user/repo"]
-  [2m# Override worktree-path for this project (uses global template if not set)
-  [2mworktree-path = ".worktrees/{{ branch | sanitize }}"
-  [2m# Commands approved for project hooks (auto-populated when approving hooks)
+  [2m# Approved hook commands (auto-populated when approving on first run)
   [2mapproved-commands = ["npm ci", "npm test"]
   [2m
-  [2m# Per-project commit generation settings
-  [2m[projects."github.com/user/repo".commit-generation]
-  [2mcommand = "llm"
-  [2margs = ["-m", "gpt-4"]
-  [2mtemplate = "Generate a commit message for: {{ git_diff }}"
-  [2m
-  [2m# Per-project list settings
-  [2m[projects."github.com/user/repo".list]
-  [2mfull = true
-  [2mbranches = true
-  [2m
-  [2m# Per-project commit settings
-  [2m[projects."github.com/user/repo".commit]
-  [2mstage = "tracked"
-  [2m
-  [2m# Per-project merge settings
-  [2m[projects."github.com/user/repo".merge]
-  [2msquash = false
-  [2mrebase = true
+  [2m# Optional overrides (omit to use global settings)
+  [2mworktree-path = ".worktrees/{{ branch | sanitize }}"
+  [2mlist.full = true
+  [2mmerge.squash = false
 
 For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at [2m<repo>/.config/wt.toml[0m. Run [2mwt config create --project[0m to create one, or see [2mwt hook[0m docs.
 
