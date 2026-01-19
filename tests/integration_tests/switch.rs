@@ -1,7 +1,7 @@
 use crate::common::{
-    TestRepo, configure_directive_file, directive_file, make_snapshot_cmd, repo, repo_with_remote,
-    set_temp_home_env, setup_home_snapshot_settings, setup_snapshot_settings, temp_home,
-    wt_command,
+    TestRepo, configure_directive_file, directive_file, make_snapshot_cmd,
+    make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
+    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -61,6 +61,19 @@ fn test_switch_create_new_branch(repo: TestRepo) {
     snapshot_switch("switch_create_new", &repo, &["--create", "feature-x"]);
 }
 
+/// Test that delayed streaming shows progress message when threshold is 0.
+/// This exercises the streaming code path that normally only triggers for slow operations.
+#[rstest]
+fn test_switch_create_shows_progress_when_forced(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature-progress"], None);
+        // Force immediate streaming by setting threshold to 0
+        cmd.env("WT_TEST_DELAYED_STREAM_MS", "0");
+        assert_cmd_snapshot!("switch_create_with_progress", cmd);
+    });
+}
+
 #[rstest]
 fn test_switch_create_existing_branch_error(mut repo: TestRepo) {
     // Create a branch first
@@ -104,6 +117,41 @@ fn test_switch_dwim_from_remote(#[from(repo_with_remote)] repo: TestRepo) {
     // Now we have origin/dwim-feature but no local dwim-feature
     // DWIM should create local branch from remote
     snapshot_switch("switch_dwim_from_remote", &repo, &["dwim-feature"]);
+}
+
+/// When creating a new branch from a remote tracking branch (e.g., origin/main),
+/// the new branch should NOT track the remote base branch.
+/// This prevents accidental `git push` to the base branch (e.g., pushing to main).
+/// This is the bug fix for GitHub issue #713.
+#[rstest]
+fn test_switch_create_from_remote_base_no_upstream(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a new branch with --base pointing to a remote tracking branch
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "my-feature", "--base=origin/main"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "switch should succeed");
+
+    // Verify the branch was created
+    let branch_output = repo.git_output(&["branch", "--list", "my-feature"]);
+    assert!(
+        branch_output.contains("my-feature"),
+        "branch should be created"
+    );
+
+    // Verify the branch does NOT have an upstream (no tracking)
+    // Using rev-parse to check for upstream - should fail for untracked branches
+    let upstream_check = repo
+        .git_command()
+        .args(["rev-parse", "--abbrev-ref", "my-feature@{upstream}"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !upstream_check.status.success(),
+        "branch should NOT have upstream tracking (to prevent accidental push to origin/main)"
+    );
 }
 
 /// When local branch already exists and tracks a remote, should report
@@ -410,7 +458,8 @@ fn test_switch_execute_template_base(repo: TestRepo) {
 
 #[rstest]
 fn test_switch_execute_template_base_without_create(mut repo: TestRepo) {
-    // Test that {{ base }} is empty when switching to existing worktree (no --create)
+    // Test that {{ base }} errors when switching to existing worktree (no --create)
+    // The `base` variable is only available during branch creation
     repo.add_worktree("existing");
     snapshot_switch(
         "switch_execute_template_base_without_create",
@@ -504,6 +553,55 @@ fn test_switch_execute_arg_template_error(repo: TestRepo) {
             "invalid={{ unclosed",
         ],
     );
+}
+
+// Verbose mode tests
+#[rstest]
+fn test_switch_execute_verbose_template_expansion(repo: TestRepo) {
+    // Test that -v shows template expansion details
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd_with_global_flags(
+            &repo,
+            "switch",
+            &[
+                "--create",
+                "verbose-test",
+                "--execute",
+                "echo 'branch={{ branch }}'",
+            ],
+            None,
+            &["-v"],
+        );
+        assert_cmd_snapshot!("switch_execute_verbose_template", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_execute_verbose_multiline_template(repo: TestRepo) {
+    // Test that -v shows multiline template expansion with proper formatting
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        // Multiline template with conditional
+        let multiline_template = r#"{% if branch %}
+echo 'branch={{ branch }}'
+echo 'repo={{ repo }}'
+{% endif %}"#;
+
+        let mut cmd = make_snapshot_cmd_with_global_flags(
+            &repo,
+            "switch",
+            &[
+                "--create",
+                "multiline-test",
+                "--execute",
+                multiline_template,
+            ],
+            None,
+            &["-v"],
+        );
+        assert_cmd_snapshot!("switch_execute_verbose_multiline_template", cmd);
+    });
 }
 
 // --no-verify flag tests

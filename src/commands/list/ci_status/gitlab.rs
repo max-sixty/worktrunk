@@ -4,11 +4,10 @@
 
 use serde::Deserialize;
 use worktrunk::git::Repository;
-use worktrunk::shell_exec::Cmd;
 
 use super::{
     CiSource, CiStatus, MAX_PRS_TO_FETCH, PrStatus, is_retriable_error, non_interactive_cmd,
-    parse_json, tool_available,
+    parse_json,
 };
 
 /// Get the GitLab project ID for a repository.
@@ -16,14 +15,8 @@ use super::{
 /// Used for client-side filtering of MRs by source project.
 /// This is the GitLab equivalent of `get_origin_owner` for GitHub.
 ///
-/// Returns None if glab is not available or not configured for this repo.
-///
-/// # Performance Note
-///
-/// This function is called during GitLab detection regardless of whether
-/// the repo is actually GitLab-hosted. If glab is installed but the repo
-/// is GitHub, this adds an unnecessary CLI call. A future optimization
-/// could check the remote URL first and skip for non-GitLab remotes.
+/// Returns None if glab is not configured for this repo (e.g., non-GitLab
+/// remote, auth issues).
 fn get_gitlab_project_id(repo: &Repository) -> Option<u64> {
     let repo_root = repo.current_worktree().root().ok()?;
 
@@ -63,10 +56,6 @@ fn get_gitlab_project_id(repo: &Repository) -> Option<u64> {
 /// 2. Fetch all open MRs with matching branch name (up to 20)
 /// 3. Filter client-side by comparing `source_project_id` to our project ID
 pub(super) fn detect_gitlab(repo: &Repository, branch: &str, local_head: &str) -> Option<PrStatus> {
-    if !tool_available("glab", &["--version"]) {
-        return None;
-    }
-
     let repo_root = repo.current_worktree().root().ok()?;
 
     // Get current project ID for filtering
@@ -77,7 +66,7 @@ pub(super) fn detect_gitlab(repo: &Repository, branch: &str, local_head: &str) -
 
     // Fetch MRs with matching source branch.
     // We filter client-side by source_project_id (numeric project ID comparison).
-    let output = match Cmd::new("glab")
+    let output = match non_interactive_cmd("glab")
         .args([
             "mr",
             "list",
@@ -163,12 +152,8 @@ pub(super) fn detect_gitlab(repo: &Repository, branch: &str, local_head: &str) -
 
 /// Detect GitLab pipeline status for a branch (when no MR exists).
 pub(super) fn detect_gitlab_pipeline(branch: &str, local_head: &str) -> Option<PrStatus> {
-    if !tool_available("glab", &["--version"]) {
-        return None;
-    }
-
     // Get most recent pipeline for the branch using JSON output
-    let output = match Cmd::new("glab")
+    let output = match non_interactive_cmd("glab")
         .args(["ci", "list", "--per-page", "1", "--output", "json"])
         .env("BRANCH", branch) // glab ci list uses BRANCH env var
         .run()

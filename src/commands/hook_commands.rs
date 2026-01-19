@@ -262,7 +262,6 @@ pub fn run_hook(
 /// Handle `wt hook approvals add` command - approve all commands in the project
 pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     use super::command_approval::approve_command_batch;
-    use worktrunk::config::WorktrunkConfig;
 
     let repo = Repository::current()?;
     let project_id = repo.project_identifier()?;
@@ -322,8 +321,6 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
 
 /// Handle `wt hook approvals clear` command - clear approved commands
 pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
-    use worktrunk::config::WorktrunkConfig;
-
     let mut config = WorktrunkConfig::load().context("Failed to load config")?;
 
     if global {
@@ -626,6 +623,7 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
         .collect();
 
     // Use the standard template expansion (shell-escaped)
-    worktrunk::config::expand_template(template, &vars, true, ctx.repo)
-        .unwrap_or_else(|_| template.to_string())
+    // On any error, show both the template and error message
+    worktrunk::config::expand_template(template, &vars, true, ctx.repo, "hook preview")
+        .unwrap_or_else(|err| format!("# Template error: {}\n{}", err, template))
 }

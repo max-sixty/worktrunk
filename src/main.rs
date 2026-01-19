@@ -69,8 +69,11 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
         let cmd = cli::build_command();
         if let Some(suggestion) = cli::suggest_nested_subcommand(&cmd, unknown.to_string().as_str())
         {
-            eprint!("{}", err.render().ansi());
-            ceprintln!("\n  <yellow>tip:</>  did you mean <cyan,bold>{suggestion}</cyan,bold>?");
+            ceprintln!(
+                "{}
+  <yellow>tip:</>  did you mean <cyan,bold>{suggestion}</cyan,bold>?",
+                err.render().ansi()
+            );
             process::exit(2);
         }
     }
@@ -82,12 +85,15 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
     let is_switch_missing_arg = err.kind() == ErrorKind::MissingRequiredArgument
         && (err_str.contains("wt switch") || err_str.contains("wt.exe switch"));
     if is_switch_missing_arg {
-        eprint!("{}", err.render().ansi());
-        eprintln!();
-        ceprintln!("<green,bold>Quick switches:</>");
-        ceprintln!("  <cyan,bold>wt switch ^</>    default branch's worktree");
-        ceprintln!("  <cyan,bold>wt switch -</>    previous worktree");
-        ceprintln!("  <cyan,bold>wt select</>      interactive picker");
+        ceprintln!(
+            "{}
+
+<green,bold>Quick switches:</>
+  <cyan,bold>wt switch ^</>    # default branch's worktree
+  <cyan,bold>wt switch -</>    # previous worktree
+  <cyan,bold>wt select</>      # interactive picker",
+            err.render().ansi()
+        );
         process::exit(2);
     }
 
@@ -145,9 +151,6 @@ fn main() {
         set_config_path(path);
     }
 
-    // Initialize verbose level for output module
-    output::set_verbose_level(cli.verbose);
-
     // Configure logging based on --verbose flag or RUST_LOG env var
     // When -vv is set, also write logs to .git/wt-logs/verbose.log
     if cli.verbose >= 2 {
@@ -158,7 +161,10 @@ fn main() {
     let verbose_level = cli.verbose;
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
 
-    // -vv takes precedence over RUST_LOG: use Builder::new() to ignore env var
+    // Set global verbosity level for styled verbose output
+    output::set_verbosity(verbose_level);
+
+    // -vv enables debug logging via env_logger; -v uses styled output (not logging)
     // Otherwise, respect RUST_LOG (defaulting to off)
     let mut builder = if cli.verbose >= 2 {
         let mut b = env_logger::Builder::new();
@@ -843,9 +849,10 @@ fn main() {
                         .collect();
 
                     // Expand template variables in command (shell_escape: true for safety)
-                    let expanded_cmd = expand_template(&cmd, &vars, true, &repo).map_err(|e| {
-                        anyhow::anyhow!("Failed to expand --execute template: {}", e)
-                    })?;
+                    let expanded_cmd =
+                        expand_template(&cmd, &vars, true, &repo, "--execute command").map_err(
+                            |e| anyhow::anyhow!("Failed to expand --execute template: {}", e),
+                        )?;
 
                     // Append any trailing args (after --) to the execute command
                     // Each arg is also expanded, then shell-escaped
@@ -855,9 +862,10 @@ fn main() {
                         let expanded_args: Result<Vec<_>, _> = execute_args
                             .iter()
                             .map(|arg| {
-                                expand_template(arg, &vars, false, &repo).map_err(|e| {
-                                    anyhow::anyhow!("Failed to expand argument template: {}", e)
-                                })
+                                expand_template(arg, &vars, false, &repo, "--execute argument")
+                                    .map_err(|e| {
+                                        anyhow::anyhow!("Failed to expand argument template: {}", e)
+                                    })
                             })
                             .collect();
                         let escaped_args: Vec<_> = expanded_args?

@@ -525,8 +525,6 @@ pub fn fork_remote_url(owner: &str, repo: &str, reference_url: &str) -> String {
 /// Returns `Some(false)` if the branch exists but tracks something else.
 /// Returns `None` if the branch doesn't exist.
 pub fn branch_tracks_pr(repo_root: &std::path::Path, branch: &str, pr_number: u32) -> Option<bool> {
-    use crate::shell_exec::Cmd;
-
     let config_key = format!("branch.{}.merge", branch);
     let output = Cmd::new("git")
         .args(["config", "--get", &config_key])

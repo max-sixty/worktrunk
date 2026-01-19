@@ -285,7 +285,7 @@ Query structured data with [2m--format=json[0m:
 
 [32mmain_state values
 
-These values describe relation to the default branch.
+These values describe the relation to the default branch.
 
 [2m"is_main"[0m [2m"orphan"[0m [2m"would_conflict"[0m [2m"empty"[0m [2m"same_commit"[0m [2m"integrated"[0m 
 [2m"diverged"[0m [2m"ahead"[0m [2m"behind"

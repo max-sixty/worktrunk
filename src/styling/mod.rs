@@ -36,6 +36,32 @@ pub use hyperlink::{Stream, hyperlink_stdout, supports_hyperlinks};
 pub use line::{StyledLine, StyledString, truncate_visible};
 pub use suggest::suggest_command;
 
+// ============================================================================
+// Verbosity
+// ============================================================================
+
+use std::sync::atomic::{AtomicU8, Ordering};
+
+/// Global verbosity level, set at startup.
+/// 0 = normal, 1 = verbose (-v), 2+ = debug (-vv)
+static VERBOSITY: AtomicU8 = AtomicU8::new(0);
+
+/// Set the global verbosity level.
+///
+/// Call this once at startup after parsing CLI arguments.
+pub fn set_verbosity(level: u8) {
+    VERBOSITY.store(level, Ordering::Relaxed);
+}
+
+/// Get the current verbosity level.
+///
+/// - 0: normal (no verbose output)
+/// - 1: verbose (`-v`) - nice styled output for templates, etc.
+/// - 2+: debug (`-vv`) - full debug logging
+pub fn verbosity() -> u8 {
+    VERBOSITY.load(Ordering::Relaxed)
+}
+
 /// Get terminal width, or `usize::MAX` if detection fails.
 ///
 /// Prefers direct terminal size detection over COLUMNS environment variable,

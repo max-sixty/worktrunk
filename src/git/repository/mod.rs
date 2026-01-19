@@ -1,13 +1,15 @@
 //! Repository - git repository operations.
 //!
 //! This module provides the [`Repository`] type for interacting with git repositories,
-//! and [`WorkingTree`] for worktree-specific operations.
+//! [`WorkingTree`] for worktree-specific operations, and [`Branch`] for branch-specific
+//! operations.
 //!
 //! # Module organization
 //!
 //! - `mod.rs` - Core types and construction
 //! - `working_tree.rs` - WorkingTree struct and worktree-specific operations
-//! - `branches.rs` - Branch listing, existence checks, completions
+//! - `branch.rs` - Branch struct and single-branch operations (exists, upstream, remotes)
+//! - `branches.rs` - Multi-branch operations (listing, filtering, completions)
 //! - `worktrees.rs` - Worktree management (list, resolve, remove)
 //! - `remotes.rs` - Remote and URL operations
 //! - `diff.rs` - Diff, history, and commit operations
@@ -34,6 +36,7 @@ use super::{DefaultBranchName, GitError, LineDiff, WorktreeInfo};
 pub(super) use super::{BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl};
 
 // Submodules with impl blocks
+mod branch;
 mod branches;
 mod config;
 mod diff;
@@ -42,7 +45,8 @@ mod remotes;
 mod working_tree;
 mod worktrees;
 
-// Re-export WorkingTree
+// Re-export WorkingTree and Branch
+pub use branch::Branch;
 pub use working_tree::WorkingTree;
 pub(super) use working_tree::path_to_logging_context;
 
@@ -258,6 +262,16 @@ impl Repository {
         WorkingTree {
             repo: self,
             path: path.into(),
+        }
+    }
+
+    /// Get a branch handle for branch-specific operations.
+    ///
+    /// Use this when you need to query properties of a specific branch.
+    pub fn branch(&self, name: &str) -> Branch<'_> {
+        Branch {
+            repo: self,
+            name: name.to_string(),
         }
     }
 
@@ -489,6 +503,142 @@ impl Repository {
     /// ```
     pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {
         Ok(self.run_command_output(args)?.status.success())
+    }
+
+    /// Delay before showing progress output for slow operations.
+    /// See .claude/rules/cli-output-formatting.md: "Progress messages apply only to slow operations (>400ms)"
+    pub const SLOW_OPERATION_DELAY_MS: u64 = 400;
+
+    /// Run a git command with delayed output streaming.
+    ///
+    /// Buffers output initially, then streams if the command takes longer than
+    /// `delay_ms`. This provides a quiet experience for fast operations while
+    /// still showing progress for slow ones (like `worktree add` on large repos).
+    ///
+    /// If `progress_message` is provided, it will be printed to stderr when
+    /// streaming starts (i.e., when the delay threshold is exceeded).
+    ///
+    /// All output (both stdout and stderr from the child) is sent to stderr
+    /// to keep stdout clean for commands like `wt switch`.
+    pub fn run_command_delayed_stream(
+        &self,
+        args: &[&str],
+        delay_ms: u64,
+        progress_message: Option<String>,
+    ) -> anyhow::Result<()> {
+        use std::io::{BufRead, BufReader, Write};
+        use std::process::Stdio;
+        use std::sync::Mutex;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        // Allow tests to override delay threshold (e.g., 0 to force immediate streaming)
+        let delay_ms = std::env::var("WT_TEST_DELAYED_STREAM_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(delay_ms);
+
+        let cmd_str = format!("git {}", args.join(" "));
+        log::debug!(
+            "$ {} [{}] (delayed stream, {}ms)",
+            cmd_str,
+            self.logging_context(),
+            delay_ms
+        );
+
+        let mut child = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&self.discovery_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
+            .spawn()
+            .with_context(|| format!("Failed to spawn: {}", cmd_str))?;
+
+        let stdout = child.stdout.take().expect("stdout was piped");
+        let stderr = child.stderr.take().expect("stderr was piped");
+
+        // Shared state: when true, output streams directly; when false, buffers
+        let streaming = Arc::new(AtomicBool::new(false));
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+
+        // Reader threads for stdout and stderr (both go to stderr)
+        let stdout_handle = {
+            let streaming = streaming.clone();
+            let buffer = buffer.clone();
+            thread::spawn(move || {
+                let reader = BufReader::new(stdout);
+                for line in reader.lines().map_while(Result::ok) {
+                    if streaming.load(Ordering::Relaxed) {
+                        let _ = writeln!(std::io::stderr(), "{}", line);
+                        let _ = std::io::stderr().flush();
+                    } else {
+                        buffer.lock().unwrap().push(line);
+                    }
+                }
+            })
+        };
+
+        let stderr_handle = {
+            let streaming = streaming.clone();
+            let buffer = buffer.clone();
+            thread::spawn(move || {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines().map_while(Result::ok) {
+                    if streaming.load(Ordering::Relaxed) {
+                        let _ = writeln!(std::io::stderr(), "{}", line);
+                        let _ = std::io::stderr().flush();
+                    } else {
+                        buffer.lock().unwrap().push(line);
+                    }
+                }
+            })
+        };
+
+        let start = Instant::now();
+        let delay = Duration::from_millis(delay_ms);
+
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let _ = stdout_handle.join();
+                    let _ = stderr_handle.join();
+
+                    if status.success() {
+                        return Ok(());
+                    }
+                    // Failed - return buffered output as error
+                    let lines = buffer.lock().unwrap();
+                    let exit_info = status
+                        .code()
+                        .map(|c| format!("exit code {c}"))
+                        .unwrap_or_else(|| "killed by signal".to_string());
+                    if lines.is_empty() {
+                        bail!("{cmd_str} failed ({exit_info})");
+                    } else {
+                        bail!("{}\n({cmd_str} failed, {exit_info})", lines.join("\n"));
+                    }
+                }
+                Ok(None) => {
+                    // Still running - check if we should switch to streaming
+                    if !streaming.load(Ordering::Relaxed) && start.elapsed() >= delay {
+                        streaming.store(true, Ordering::Relaxed);
+
+                        if let Some(ref msg) = progress_message {
+                            let _ = writeln!(std::io::stderr(), "{}", msg);
+                        }
+                        for line in buffer.lock().unwrap().drain(..) {
+                            let _ = writeln!(std::io::stderr(), "{}", line);
+                        }
+                        let _ = std::io::stderr().flush();
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => bail!("Failed to wait for command: {}", e),
+            }
+        }
     }
 
     /// Run a git command and return the raw Output (for inspecting exit codes).

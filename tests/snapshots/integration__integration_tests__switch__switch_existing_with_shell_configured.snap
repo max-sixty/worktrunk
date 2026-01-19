@@ -13,6 +13,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -34,3 +35,4 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mWorktree for [1mshell-configured[22m @ [1m_REPO_.shell-configured[22m, but cannot change directory — ran [1m[PROJECT_ROOT]/target/debug/wt[22m; shell integration wraps [1mwt[22m[39m
+[2m↳[22m [2mTo change directory, run [90mwt switch shell-configured[39m[22m

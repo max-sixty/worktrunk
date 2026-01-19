@@ -36,7 +36,7 @@ fn resolve_switch_target(
     create: bool,
     base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
-    use worktrunk::git::pr_ref::{fetch_pr_info, fork_remote_url, local_branch_name};
+    use worktrunk::git::pr_ref::{fetch_pr_info, local_branch_name};
 
     // Handle pr:<number> syntax
     if let Some(pr_number) = worktrunk::git::pr_ref::parse_pr_ref(branch) {
@@ -139,7 +139,8 @@ fn resolve_switch_target(
 
     // Validate --create constraints
     if create {
-        if repo.local_branch_exists(&resolved_branch)? {
+        let branch_handle = repo.branch(&resolved_branch);
+        if branch_handle.exists_locally()? {
             return Err(GitError::BranchAlreadyExists {
                 branch: resolved_branch,
             }
@@ -147,7 +148,7 @@ fn resolve_switch_target(
         }
 
         // Warn if --create would shadow a remote branch
-        let remotes = repo.remotes_with_branch(&resolved_branch)?;
+        let remotes = branch_handle.remotes()?;
         if !remotes.is_empty() {
             let remote_ref = format!("{}/{}", remotes[0], resolved_branch);
             crate::output::print(warning_message(cformat!(
@@ -175,7 +176,7 @@ fn resolve_switch_target(
             }
             repo.resolve_target_branch(None)
                 .ok()
-                .filter(|b| repo.local_branch_exists(b).unwrap_or(false))
+                .filter(|b| repo.branch(b).exists_locally().unwrap_or(false))
         })
     } else {
         None
@@ -237,7 +238,7 @@ fn validate_worktree_creation(
         create_branch: false,
         ..
     } = method
-        && !repo.branch_exists(branch)?
+        && !repo.branch(branch).exists()?
     {
         return Err(GitError::InvalidReference {
             reference: branch.to_string(),
@@ -308,14 +309,20 @@ fn setup_fork_pr_branch(
     repo.run_command(&["config", &branch_push_remote_key, fork_push_url])
         .with_context(|| format!("Failed to configure branch.{}.pushRemote", branch))?;
 
-    // Create worktree
+    // Create worktree (delayed streaming: silent if fast, shows progress if slow)
     let worktree_path_str = worktree_path.to_string_lossy();
-    repo.run_command(&["worktree", "add", worktree_path_str.as_ref(), branch])
-        .map_err(|e| GitError::WorktreeCreationFailed {
-            branch: branch.to_string(),
-            base_branch: None,
-            error: e.to_string(),
-        })?;
+    repo.run_command_delayed_stream(
+        &["worktree", "add", worktree_path_str.as_ref(), branch],
+        Repository::SLOW_OPERATION_DELAY_MS,
+        Some(
+            progress_message(cformat!("Creating worktree for <bold>{}</>...", branch)).to_string(),
+        ),
+    )
+    .map_err(|e| GitError::WorktreeCreationFailed {
+        branch: branch.to_string(),
+        base_branch: None,
+        error: e.to_string(),
+    })?;
 
     Ok(())
 }
@@ -448,8 +455,9 @@ pub fn execute_switch(
                     base_branch,
                 } => {
                     // Check if local branch exists BEFORE git worktree add (for DWIM detection)
+                    let branch_handle = repo.branch(&branch);
                     let local_branch_existed =
-                        !create_branch && repo.local_branch_exists(&branch).unwrap_or(false);
+                        !create_branch && branch_handle.exists_locally().unwrap_or(false);
 
                     // Build git worktree add command
                     let worktree_path_str = worktree_path.to_string_lossy();
@@ -465,7 +473,16 @@ pub fn execute_switch(
                         args.push(&branch);
                     }
 
-                    if let Err(e) = repo.run_command(&args) {
+                    // Delayed streaming: silent if fast, shows progress if slow
+                    let progress_msg = Some(
+                        progress_message(cformat!("Creating worktree for <bold>{}</>...", branch))
+                            .to_string(),
+                    );
+                    if let Err(e) = repo.run_command_delayed_stream(
+                        &args,
+                        Repository::SLOW_OPERATION_DELAY_MS,
+                        progress_msg,
+                    ) {
                         return Err(GitError::WorktreeCreationFailed {
                             branch: branch.clone(),
                             base_branch: base_branch.clone(),
@@ -474,9 +491,22 @@ pub fn execute_switch(
                         .into());
                     }
 
+                    // Safety: unset unsafe upstream when creating a new branch from a remote
+                    // tracking branch. When `git worktree add -b feature origin/main` runs,
+                    // git sets feature to track origin/main. This is dangerous because
+                    // `git push` would push to main instead of the feature branch.
+                    // See: https://github.com/max-sixty/worktrunk/issues/713
+                    if *create_branch
+                        && let Some(base) = base_branch
+                        && repo.is_remote_tracking_branch(base)
+                    {
+                        // Unset the upstream to prevent accidental pushes
+                        branch_handle.unset_upstream()?;
+                    }
+
                     // Report tracking info only if git's DWIM created the branch from a remote
                     let from_remote = if !create_branch && !local_branch_existed {
-                        repo.upstream_branch(&branch)?
+                        branch_handle.upstream()?
                     } else {
                         None
                     };

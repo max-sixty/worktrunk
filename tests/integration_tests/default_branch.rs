@@ -120,10 +120,10 @@ fn test_branch_exists_with_custom_remote(mut repo: TestRepo) {
     let git_repo = Repository::at(repo.root_path()).unwrap();
 
     // Should find the branch on the custom remote
-    assert!(git_repo.branch_exists("main").unwrap());
+    assert!(git_repo.branch("main").exists().unwrap());
 
     // Should not find non-existent branch
-    assert!(!git_repo.branch_exists("nonexistent").unwrap());
+    assert!(!git_repo.branch("nonexistent").exists().unwrap());
 }
 
 #[rstest]

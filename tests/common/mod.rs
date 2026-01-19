@@ -657,6 +657,10 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("RUST_LOG", "warn");
     // Skip URL health checks to avoid flaky tests from random local processes
     cmd.env("WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK", "1");
+    // Disable delayed streaming for deterministic output across platforms.
+    // Without this, slow Windows CI triggers progress messages that don't appear on faster systems.
+    // Tests that need streaming (e.g., test_switch_create_shows_progress_when_forced) can override.
+    cmd.env("WT_TEST_DELAYED_STREAM_MS", "999999");
 
     // Pass through LLVM coverage profiling environment for subprocess coverage collection.
     // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record

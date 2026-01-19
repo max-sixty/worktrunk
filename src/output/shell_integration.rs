@@ -10,7 +10,7 @@
 //! |-----------|---------|------|
 //! | Not installed | `Worktree for X @ path, but cannot change directory — shell integration not installed` | `To enable automatic cd, run wt config shell install` |
 //! | Needs restart | `Worktree for X @ path, but cannot change directory — shell requires restart` | `Restart shell to activate shell integration` |
-//! | Explicit path | `Worktree for X @ path, but cannot change directory — ran ./wt; shell integration wraps wt` | (none) |
+//! | Explicit path | `Worktree for X @ path, but cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch X` |
 //! | Git subcommand | `Worktree for X @ path, but cannot change directory — ran git wt; running through git prevents cd` | `Use git-wt directly (via shell function) for automatic cd` |
 //!
 //! ## Switch to New Worktree (`wt switch --create X`)
@@ -21,6 +21,7 @@
 //! |-----------|---------|---------|------|
 //! | Shell active | `Created new worktree for X from base @ path` | (none) | (none) |
 //! | Not installed | `Created new worktree for X from base @ path` | `Cannot change directory — shell integration not installed` | `To enable automatic cd, run wt config shell install` |
+//! | Explicit path | `Created new worktree for X from base @ path` | `Cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch X` |
 //! | Git subcommand | `Created new worktree for X from base @ path` | `Cannot change directory — ran git wt; running through git prevents cd` | `Use git-wt directly (via shell function) for automatic cd` |
 //!
 //! ## After Merge/Remove (switching to main worktree)
@@ -29,6 +30,7 @@
 //! |-----------|---------|------|
 //! | Shell active | (info) `Switched to worktree for main @ path` | (none) |
 //! | Git subcommand | `Cannot change directory — ran git wt; running through git prevents cd` | `Use git-wt directly (via shell function) for automatic cd` |
+//! | Explicit path | `Cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch main` |
 //! | Other | `Cannot change directory — {reason}` | `To enable automatic cd, run wt config shell install` |
 //!
 //! ## Prompt Decision Flow
@@ -91,6 +93,23 @@ pub(crate) fn git_subcommand_warning() -> String {
     cformat!(
         "For automatic cd, invoke directly (with the <bright-black>-</>): <bright-black>git-wt</>"
     )
+}
+
+/// Hint when shell integration IS configured but user ran an explicit path.
+/// Suggests using the shell-wrapped command for automatic cd.
+pub(crate) fn explicit_path_hint(branch: &str) -> String {
+    let wraps = crate::binary_name();
+    cformat!("To change directory, run <bright-black>{wraps} switch {branch}</>")
+}
+
+/// Check if we should show the explicit path hint.
+/// True when: explicit path invocation AND shell integration IS configured.
+pub(crate) fn should_show_explicit_path_hint() -> bool {
+    crate::was_invoked_with_explicit_path()
+        && Shell::is_integration_configured(&crate::binary_name())
+            .ok()
+            .flatten()
+            .is_some()
 }
 
 /// Compute the shell warning reason for display in messages.
@@ -487,5 +506,14 @@ mod tests {
         // Shell integration configured + NOT explicit path -> "shell requires restart"
         let reason = compute_shell_warning_reason_inner(true, false, "wt", "wt");
         assert_eq!(reason, "shell requires restart");
+    }
+
+    #[test]
+    fn test_explicit_path_hint_format() {
+        // Verify hint contains the branch name and "switch" command
+        let hint = explicit_path_hint("feature-branch");
+        assert!(hint.contains("switch"));
+        assert!(hint.contains("feature-branch"));
+        assert!(hint.contains("To change directory"));
     }
 }

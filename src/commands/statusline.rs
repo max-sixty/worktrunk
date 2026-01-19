@@ -316,7 +316,6 @@ fn get_git_status_segments(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     #[test]
     fn test_format_directory_fish_style() {

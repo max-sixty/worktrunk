@@ -263,6 +263,10 @@ wt switch pr:123                 # Switch to PR #123's branch
 
 The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist.
 
+**Upstream tracking:** Branches created with `--create` have no upstream tracking configured. This prevents accidental pushes to the wrong branch — for example, `--base origin/main` would otherwise make `git push` target `main`. Use `git push -u origin <branch>` to set up tracking when you're ready.
+
+Without `--create`, switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local branch tracking the remote — this is the standard git behavior and is preserved.
+
 ## Creating worktrees
 
 If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one, running [hooks](@/hook.md).
@@ -606,7 +610,7 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 
 ### main_state values
 
-These values describe relation to the default branch.
+These values describe the relation to the default branch.
 
 `"is_main"` `"orphan"` `"would_conflict"` `"empty"` `"same_commit"` `"integrated"` `"diverged"` `"ahead"` `"behind"`
 
@@ -1022,8 +1026,8 @@ wt step push
 
 | Hook | When | Blocking | Fail-fast |
 |------|------|----------|-----------|
-| `post-create` | After worktree created | Yes | No |
 | `post-start` | After worktree created | No (background) | No |
+| `post-create` | After worktree created | Yes | No |
 | `post-switch` | After every switch | No (background) | No |
 | `pre-commit` | Before commit during merge | Yes | Yes |
 | `pre-merge` | Before merging to target | Yes | Yes |
@@ -1033,23 +1037,24 @@ wt step push
 **Blocking**: Command waits for hook to complete before continuing.
 **Fail-fast**: First failure aborts the operation.
 
-### post-create
-
-Copying caches, installing dependencies, generating environment files.
-
-```toml
-[post-create]
-copy = "wt step copy-ignored"
-install = "npm ci"
-```
-
 ### post-start
 
-Dev servers, long builds, file watchers. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
+Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
 
 ```toml
 [post-start]
+copy = "wt step copy-ignored"
 server = "npm run dev -- --port {{ branch | hash_port }}"
+```
+
+### post-create
+
+Tasks that must complete before `post-start` hooks or `--execute` run: dependency installation, environment file generation.
+
+```toml
+[post-create]
+install = "npm ci"
+env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
 ```
 
 ### post-switch
@@ -1204,10 +1209,18 @@ Hooks can use template variables that expand at runtime:
 | `{{ short_commit }}` | Short HEAD commit SHA (7 chars) |
 | `{{ remote }}` | Primary remote name |
 | `{{ remote_url }}` | Remote URL |
-| `{{ upstream }}` | Upstream tracking branch |
+| `{{ upstream }}` | Upstream tracking branch (if set) |
 | `{{ target }}` | Target branch (merge hooks only) |
 | `{{ base }}` | Base branch (creation hooks only) |
 | `{{ base_worktree_path }}` | Base branch worktree (creation hooks only) |
+
+Some variables may not be defined: `upstream` is only set when the branch tracks a remote; `target`, `base`, and `base_worktree_path` are hook-specific. Using an undefined variable directly errors — use conditionals for optional behavior:
+
+```toml
+[post-create]
+# Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature origin/feature)
+sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
+```
 
 ### Worktrunk filters
 
@@ -1282,14 +1295,14 @@ The `--var KEY=VALUE` flag overrides built-in template variables — useful for 
 
 ## Designing effective hooks
 
-### post-create vs post-start
+### post-start vs post-create
 
 Both run when creating a worktree. The difference:
 
 | Hook | Execution | Best for |
 |------|-----------|----------|
-| `post-create` | Blocks until complete | Tasks the developer needs before working (dependency install) |
 | `post-start` | Background, parallel | Long-running tasks that don't block worktree creation |
+| `post-create` | Blocks until complete | Tasks the developer needs before working (dependency install) |
 
 Many tasks work well in `post-start` — they'll likely be ready by the time they're needed, especially when the fallback is recompiling. If unsure, prefer `post-start` for faster worktree creation.
 
@@ -1300,9 +1313,11 @@ Background processes spawned by `post-start` outlive the worktree — pair them 
 Git worktrees share the repository but not untracked files. [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) copies gitignored files between worktrees:
 
 ```toml
-[post-create]
+[post-start]
 copy = "wt step copy-ignored"
 ```
+
+Use `post-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
 ### Dev servers
 
