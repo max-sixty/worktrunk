@@ -9,6 +9,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_EDITOR: ""
     RUST_LOG: warn
     SHELL: ""
     SOURCE_DATE_EPOCH: "1735776000"
@@ -40,7 +41,7 @@ Usage: [1m[36mwt config show[0m [36m[OPTIONS]
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
-          Show debug info and write diagnostic report (-vv)
+          Verbose output (-v: hooks, templates; -vv: debug report)
 
 Shows location and contents of user config ([2m~/.config/worktrunk/config.toml[0m)
 and project config ([2m.config/wt.toml[0m).

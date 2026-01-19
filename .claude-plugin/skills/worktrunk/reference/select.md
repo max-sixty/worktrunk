@@ -72,4 +72,4 @@ Usage: <b><span class=c>wt select</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Show debug info and write diagnostic report (-vv)
+          Verbose output (-v: hooks, templates; -vv: debug report)

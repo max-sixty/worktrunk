@@ -9,6 +9,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_EDITOR: ""
     RUST_LOG: warn
     SHELL: ""
     SOURCE_DATE_EPOCH: "1735776000"
@@ -47,7 +48,7 @@ Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
-          Show debug info and write diagnostic report (-vv)
+          Verbose output (-v: hooks, templates; -vv: debug report)
 
 State is stored in [2m.git/[0m (config entries and log files), separate from configuration files.
 Use [2mwt config show[0m to view file-based configuration.

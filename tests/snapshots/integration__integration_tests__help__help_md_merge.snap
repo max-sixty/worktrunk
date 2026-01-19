@@ -8,6 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_EDITOR: ""
     RUST_LOG: warn
     SHELL: ""
     SOURCE_DATE_EPOCH: "1735776000"
@@ -68,7 +69,7 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Show debug info and write diagnostic report (-vv)
+          Verbose output (-v: hooks, templates; -vv: debug report)
 
 Unlike `git merge`, this merges current into target (not target into current). Similar to clicking "Merge pull request" on GitHub, but locally. Target defaults to the default branch.
 

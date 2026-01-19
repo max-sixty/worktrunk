@@ -225,7 +225,7 @@ pub(crate) struct Cli {
     )]
     pub config: Option<std::path::PathBuf>,
 
-    /// Show debug info and write diagnostic report (-vv)
+    /// Verbose output (-v: hooks, templates; -vv: debug report)
     #[arg(
         long,
         short = 'v',

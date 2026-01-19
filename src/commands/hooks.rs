@@ -6,7 +6,7 @@ use worktrunk::config::CommandConfig;
 use worktrunk::git::WorktrunkError;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    error_message, format_bash_with_gutter, progress_message, warning_message,
+    error_message, format_bash_with_gutter, progress_message, verbosity, warning_message,
 };
 
 use super::command_executor::{CommandContext, PreparedCommand, prepare_commands};
@@ -24,6 +24,14 @@ pub struct SourcedCommand {
 }
 
 impl SourcedCommand {
+    /// Short name for summary display: "user:name" or just "user" if unnamed.
+    fn summary_name(&self) -> String {
+        match &self.prepared.name {
+            Some(n) => format!("{}:{}", self.source, n),
+            None => self.source.to_string(),
+        }
+    }
+
     /// Announce this command before execution.
     ///
     /// Format: "Running pre-merge user:foo:" for named, "Running post-create user hook:" for unnamed
@@ -139,6 +147,9 @@ fn filter_by_name(
 ///
 /// Used for post-start and post-switch hooks during normal worktree operations.
 /// Commands are spawned and immediately detached - we don't wait for them.
+///
+/// By default, shows a single-line summary of all hooks being run.
+/// With `-v`, shows verbose per-hook output with command details.
 pub fn spawn_hook_commands_background(
     ctx: &CommandContext,
     commands: Vec<SourcedCommand>,
@@ -148,13 +159,39 @@ pub fn spawn_hook_commands_background(
         return Ok(());
     }
 
+    let verbose = verbosity();
+
+    if verbose == 0 {
+        // Single-line summary: "Running post-start @ path: user:bg, project"
+        let names: Vec<String> = commands
+            .iter()
+            .map(|c| cformat!("<bold>{}</>", c.summary_name()))
+            .collect();
+        // All commands in a batch share the same display_path (set by prepare_hook_commands)
+        let display_path = commands.first().and_then(|c| c.display_path.as_ref());
+
+        let message = match display_path {
+            Some(path) => {
+                let path_display = format_path_for_display(path);
+                cformat!(
+                    "Running {hook_type} hooks @ <bold>{path_display}</>: {}",
+                    names.join(", ")
+                )
+            }
+            None => format!("Running {hook_type} hooks: {}", names.join(", ")),
+        };
+        crate::output::print(progress_message(message))?;
+    }
+
     let operation_prefix = hook_type.to_string();
 
     // Track index for unnamed commands to prevent log collisions
     let mut unnamed_index = 0usize;
 
-    for cmd in commands {
-        cmd.announce()?;
+    for cmd in &commands {
+        if verbose >= 1 {
+            cmd.announce()?;
+        }
 
         let name = match &cmd.prepared.name {
             Some(n) => n.clone(),
