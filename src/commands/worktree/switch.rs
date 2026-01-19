@@ -36,7 +36,7 @@ fn resolve_switch_target(
     create: bool,
     base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
-    use worktrunk::git::pr_ref::{fetch_pr_info, fork_remote_url, local_branch_name};
+    use worktrunk::git::pr_ref::{fetch_pr_info, local_branch_name};
 
     // Handle pr:<number> syntax
     if let Some(pr_number) = worktrunk::git::pr_ref::parse_pr_ref(branch) {

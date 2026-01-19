@@ -996,8 +996,6 @@ pub fn execute_command_in_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-    use worktrunk::git::IntegrationReason;
 
     #[test]
     fn test_format_switch_message() {

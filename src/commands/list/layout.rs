@@ -195,7 +195,6 @@ const COMMIT_HASH_WIDTH: usize = 8;
 /// columns to be allocated at low priority (base_priority + EMPTY_PENALTY) for
 /// visual consistency on wide terminals.
 fn fit_header(header: &str, data_width: usize) -> usize {
-    use unicode_width::UnicodeWidthStr;
     data_width.max(header.width())
 }
 
@@ -892,8 +891,6 @@ pub fn calculate_layout_with_width(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::list::columns::ColumnKind;
-    use std::path::PathBuf;
     use worktrunk::git::LineDiff;
 
     #[test]

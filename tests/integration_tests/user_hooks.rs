@@ -1359,3 +1359,40 @@ test = "echo '{{ main_worktree }}' > alias_output.txt"
         "Deprecated alias should be overridden, got: {contents}"
     );
 }
+
+// ============================================================================
+// Hook Order Preservation Tests (Issue #737)
+// ============================================================================
+
+/// Test that user hooks execute in TOML insertion order, not alphabetical
+/// See: https://github.com/max-sixty/worktrunk/issues/737
+#[rstest]
+fn test_user_hooks_preserve_toml_order(repo: TestRepo) {
+    // Write user config with hooks in specific order (NOT alphabetical: vscode, claude, copy, submodule)
+    // If order were alphabetical, it would be: claude, copy, submodule, vscode
+    repo.write_test_config(
+        r#"[post-create]
+vscode = "echo '1' >> hook_order.txt"
+claude = "echo '2' >> hook_order.txt"
+copy = "echo '3' >> hook_order.txt"
+submodule = "echo '4' >> hook_order.txt"
+"#,
+    );
+
+    snapshot_switch("user_hooks_preserve_order", &repo, &["--create", "feature"]);
+
+    // Verify execution order by reading the output file
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let order_file = worktree_path.join("hook_order.txt");
+    assert!(order_file.exists(), "hook_order.txt should be created");
+
+    let contents = fs::read_to_string(&order_file).unwrap();
+    let lines: Vec<&str> = contents.lines().collect();
+
+    // Hooks should execute in TOML order: 1, 2, 3, 4
+    assert_eq!(
+        lines,
+        vec!["1", "2", "3", "4"],
+        "Hooks should execute in TOML insertion order (vscode, claude, copy, submodule)"
+    );
+}

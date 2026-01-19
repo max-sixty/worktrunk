@@ -140,12 +140,9 @@ pub enum CiStatus {
     Error,
 }
 
-/// Source of CI status
+/// Source of CI status (PR/MR vs branch workflow)
 ///
-/// Visual distinction: Currently both PR and branch CI use ● (filled circle).
-/// The internal distinction (CiSource::PullRequest vs CiSource::Branch) is preserved
-/// for potential future visual differentiation. We tried ◒ (half circle) for branch CI
-/// but it renders narrower than ● in many terminal fonts, causing misalignment.
+/// Serialized to JSON as "pr" or "branch" for programmatic consumers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[strum(serialize_all = "kebab-case")]
 pub enum CiSource {
@@ -201,18 +198,13 @@ impl PrStatus {
 
     /// Get the indicator symbol for this status
     ///
-    /// - Error: ⚠ (overrides source indicator)
-    /// - PullRequest: ● (filled circle)
-    /// - Branch: ● (filled circle) — same as PR for now, see CiSource doc comment
+    /// - Error: ⚠ (warning indicator)
+    /// - All others: ● (filled circle)
     pub fn indicator(&self) -> &'static str {
-        match self.ci_status {
-            CiStatus::Error => "⚠",
-            _ => match self.source {
-                CiSource::PullRequest => "●",
-                // Using same indicator as PR for now due to font rendering issues.
-                // See CiSource doc comment for details.
-                CiSource::Branch => "●",
-            },
+        if matches!(self.ci_status, CiStatus::Error) {
+            "⚠"
+        } else {
+            "●"
         }
     }
 
@@ -371,6 +363,9 @@ impl PrStatus {
         local_head: &str,
         has_upstream: bool,
     ) -> Option<Self> {
+        if !tool_available("glab", &["--version"]) {
+            return None;
+        }
         if let Some(status) = gitlab::detect_gitlab(repo, branch, local_head) {
             return Some(status);
         }

@@ -418,6 +418,9 @@ impl WorktrunkConfig {
                 .convert_case(Case::Kebab),
         );
 
+        // The config crate's `preserve_order` feature ensures TOML insertion order
+        // is preserved (uses IndexMap instead of HashMap internally).
+        // See: https://github.com/max-sixty/worktrunk/issues/737
         let config: Self = builder.build()?.try_deserialize()?;
 
         // Validate worktree path (only if explicitly set - default is always valid)

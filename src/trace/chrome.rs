@@ -162,7 +162,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::trace::{TraceEntry, TraceResult};
+    use crate::trace::TraceResult;
 
     fn make_command_entry(
         command: &str,

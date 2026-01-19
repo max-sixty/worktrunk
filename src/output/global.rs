@@ -228,12 +228,9 @@ fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result
 /// Execute a command in the given directory (non-Unix: spawn and wait)
 #[cfg(not(unix))]
 fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result<()> {
+    use std::process::Stdio;
     use worktrunk::git::WorktrunkError;
     use worktrunk::shell_exec::Cmd;
-
-    // On non-Unix platforms, fall back to spawn-and-wait.
-    // This uses the shell abstraction (Git Bash if available).
-    use std::process::Stdio;
     let mut cmd = Cmd::shell(&command).stdin(Stdio::inherit());
     if let Some(dir) = target_dir {
         cmd = cmd.current_dir(dir);
@@ -363,7 +360,6 @@ pub fn post_hook_display_path(destination: &std::path::Path) -> Option<&std::pat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_compute_hooks_display_path_same_location() {

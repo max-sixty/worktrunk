@@ -16,8 +16,8 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 
 | Hook | When | Blocking | Fail-fast |
 |------|------|----------|-----------|
-| `post-create` | After worktree created | Yes | No |
 | `post-start` | After worktree created | No (background) | No |
+| `post-create` | After worktree created | Yes | No |
 | `post-switch` | After every switch | No (background) | No |
 | `pre-commit` | Before commit during merge | Yes | Yes |
 | `pre-merge` | Before merging to target | Yes | Yes |
@@ -27,23 +27,24 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 **Blocking**: Command waits for hook to complete before continuing.
 **Fail-fast**: First failure aborts the operation.
 
-### post-create
-
-Copying caches, installing dependencies, generating environment files.
-
-```toml
-[post-create]
-copy = "wt step copy-ignored"
-install = "npm ci"
-```
-
 ### post-start
 
-Dev servers, long builds, file watchers. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
+Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
 
 ```toml
 [post-start]
+copy = "wt step copy-ignored"
 server = "npm run dev -- --port {{ branch | hash_port }}"
+```
+
+### post-create
+
+Tasks that must complete before `post-start` hooks or `--execute` run: dependency installation, environment file generation.
+
+```toml
+[post-create]
+install = "npm ci"
+env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
 ```
 
 ### post-switch
@@ -284,14 +285,14 @@ The `--var KEY=VALUE` flag overrides built-in template variables — useful for 
 
 ## Designing effective hooks
 
-### post-create vs post-start
+### post-start vs post-create
 
 Both run when creating a worktree. The difference:
 
 | Hook | Execution | Best for |
 |------|-----------|----------|
-| `post-create` | Blocks until complete | Tasks the developer needs before working (dependency install) |
 | `post-start` | Background, parallel | Long-running tasks that don't block worktree creation |
+| `post-create` | Blocks until complete | Tasks the developer needs before working (dependency install) |
 
 Many tasks work well in `post-start` — they'll likely be ready by the time they're needed, especially when the fallback is recompiling. If unsure, prefer `post-start` for faster worktree creation.
 
@@ -302,9 +303,11 @@ Background processes spawned by `post-start` outlive the worktree — pair them 
 Git worktrees share the repository but not untracked files. [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) copies gitignored files between worktrees:
 
 ```toml
-[post-create]
+[post-start]
 copy = "wt step copy-ignored"
 ```
+
+Use `post-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
 ### Dev servers
 
