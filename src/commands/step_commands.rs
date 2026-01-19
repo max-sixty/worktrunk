@@ -630,15 +630,11 @@ fn list_ignored_entries(
 /// ## Why not use atomic directory cloning on macOS?
 ///
 /// macOS/APFS supports `clonefile()` on directories, which clones an entire tree
-/// atomically. However, Apple's documentation explicitly discourages this:
+/// atomically. However, Apple explicitly discourages this in the man page:
 ///
-/// > "Directories can be cloned just as easily as regular files. However, when
-/// > cloning a directory hierarchy [...] the kernel must create a separate inode
-/// > for each item in the tree (even though no data is being duplicated). For
-/// > large hierarchies, this can require significant disk I/O, which defeats the
-/// > purpose of cloning a file rather than simply copying it."
-/// > — Apple Developer Documentation: Cloning Files and Directories
-/// > <https://developer.apple.com/documentation/foundation/file_system/cloning_files_and_directories>
+/// > "Cloning directories with these functions is strongly discouraged.
+/// > Use copyfile(3) to clone directories instead."
+/// > — clonefile(2) man page
 ///
 /// In practice, atomic `clonefile()` on a Rust `target/` directory (~236K files)
 /// saturates disk I/O at ~45K ops/sec, blocking interactive processes like shell
