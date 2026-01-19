@@ -344,7 +344,7 @@ fn complete_branches(
             let help = match branch.category {
                 BranchCategory::Worktree => format!("+ {}", time_str),
                 BranchCategory::Local => format!("/ {}", time_str),
-                BranchCategory::Remote(remote) => format!("⇣ {} {}", time_str, remote),
+                BranchCategory::Remote(remotes) => format!("⇣ {} {}", time_str, remotes.join(", ")),
             };
             CompletionCandidate::new(branch.name).help(Some(help.into()))
         })

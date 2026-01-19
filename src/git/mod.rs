@@ -229,8 +229,8 @@ pub enum BranchCategory {
     Worktree,
     /// Local branch without worktree
     Local,
-    /// Remote-only branch (includes remote name)
-    Remote(String),
+    /// Remote-only branch (includes remote names — multiple if same branch on multiple remotes)
+    Remote(Vec<String>),
 }
 
 /// Branch information for shell completions

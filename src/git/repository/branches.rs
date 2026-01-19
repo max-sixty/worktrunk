@@ -151,7 +151,8 @@ impl Repository {
     /// then remote-only branches. Each category is sorted by recency.
     ///
     /// Searches all remotes (matching git's checkout behavior). If the same branch
-    /// exists on multiple remotes, returns the most recently committed version.
+    /// exists on multiple remotes, all remote names are included in the result so
+    /// completions can show that the branch is ambiguous.
     ///
     /// For remote branches, returns the local name (e.g., "fix" not "origin/fix")
     /// since `git worktree add path fix` auto-creates a tracking branch.
@@ -192,34 +193,52 @@ impl Repository {
             "refs/remotes/",
         ])?;
 
-        // Track seen branch names to deduplicate (same branch on multiple remotes)
-        let mut seen_branches: HashSet<String> = HashSet::new();
-        let remote_branches: Vec<(String, String, i64)> = remote_output
-            .lines()
-            .filter_map(|line| {
-                // Format: "<remote>/<branch>\t<timestamp>"
-                let (full_name, timestamp_str) = line.split_once('\t')?;
+        // Group by branch name, collecting all remotes that have each branch.
+        // Uses HashMap for grouping, then sorts by timestamp to preserve recency order.
+        use std::collections::HashMap;
+        let mut branch_remotes: HashMap<String, (Vec<String>, i64)> = HashMap::new();
 
-                // Parse <remote>/<branch> - find first slash to split
-                let (remote_name, local_name) = full_name.split_once('/')?;
+        for line in remote_output.lines() {
+            // Format: "<remote>/<branch>\t<timestamp>"
+            let Some((full_name, timestamp_str)) = line.split_once('\t') else {
+                continue;
+            };
 
-                // Skip <remote>/HEAD
-                if local_name == "HEAD" {
-                    return None;
-                }
-                // Skip if local branch exists (user should use local)
-                if local_branch_names.contains(local_name) {
-                    return None;
-                }
-                // Skip if already seen (same branch on another remote)
-                if !seen_branches.insert(local_name.to_string()) {
-                    return None;
-                }
+            // Parse <remote>/<branch> - find first slash to split
+            let Some((remote_name, local_name)) = full_name.split_once('/') else {
+                continue;
+            };
 
-                let timestamp = timestamp_str.parse().unwrap_or(0);
-                Some((local_name.to_string(), remote_name.to_string(), timestamp))
+            // Skip <remote>/HEAD
+            if local_name == "HEAD" {
+                continue;
+            }
+            // Skip if local branch exists (user should use local)
+            if local_branch_names.contains(local_name) {
+                continue;
+            }
+
+            let timestamp = timestamp_str.parse().unwrap_or(0);
+
+            // Add remote to this branch's list, keeping the most recent timestamp
+            branch_remotes
+                .entry(local_name.to_string())
+                .and_modify(|(remotes, existing_ts)| {
+                    remotes.push(remote_name.to_string());
+                    *existing_ts = (*existing_ts).max(timestamp);
+                })
+                .or_insert_with(|| (vec![remote_name.to_string()], timestamp));
+        }
+
+        // Convert to vec and sort by timestamp (descending = most recent first)
+        let mut remote_branches: Vec<(String, Vec<String>, i64)> = branch_remotes
+            .into_iter()
+            .map(|(name, (mut remotes, timestamp))| {
+                remotes.sort(); // Deterministic remote ordering within each branch
+                (name, remotes, timestamp)
             })
             .collect();
+        remote_branches.sort_by(|a, b| b.2.cmp(&a.2));
 
         // Build result: worktrees first, then local, then remote
         let mut result = Vec::new();
@@ -247,11 +266,11 @@ impl Repository {
         }
 
         // Remote-only branches
-        for (local_name, remote_name, timestamp) in remote_branches {
+        for (local_name, remotes, timestamp) in remote_branches {
             result.push(CompletionBranch {
                 name: local_name,
                 timestamp,
-                category: BranchCategory::Remote(remote_name),
+                category: BranchCategory::Remote(remotes),
             });
         }
 
