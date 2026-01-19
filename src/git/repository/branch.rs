@@ -48,24 +48,16 @@ impl<'a> Branch<'a> {
     }
 
     /// Check if this branch exists (local or remote).
+    ///
+    /// Checks all remotes, matching git's default behavior for `git checkout`.
     pub fn exists(&self) -> anyhow::Result<bool> {
         // Try local branch first
         if self.exists_locally()? {
             return Ok(true);
         }
 
-        // Try remote branch (if remotes exist)
-        let Ok(remote) = self.repo.primary_remote() else {
-            return Ok(false);
-        };
-        Ok(self
-            .repo
-            .run_command(&[
-                "rev-parse",
-                "--verify",
-                &format!("refs/remotes/{}/{}", remote, self.name),
-            ])
-            .is_ok())
+        // Check if any remote has this branch
+        Ok(!self.remotes()?.is_empty())
     }
 
     /// Find which remotes have this branch.

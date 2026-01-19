@@ -150,6 +150,9 @@ impl Repository {
     /// Returns branches in completion order: worktrees first, then local branches,
     /// then remote-only branches. Each category is sorted by recency.
     ///
+    /// Searches all remotes (matching git's checkout behavior). If the same branch
+    /// exists on multiple remotes, returns the most recently committed version.
+    ///
     /// For remote branches, returns the local name (e.g., "fix" not "origin/fix")
     /// since `git worktree add path fix` auto-creates a tracking branch.
     pub fn branches_for_completion(&self) -> anyhow::Result<Vec<CompletionBranch>> {
@@ -171,59 +174,52 @@ impl Repository {
         let local_branches: Vec<(String, i64)> = local_output
             .lines()
             .filter_map(|line| {
-                let parts: Vec<&str> = line.split('\t').collect();
-                if parts.len() == 2 {
-                    let timestamp = parts[1].parse().unwrap_or(0);
-                    Some((parts[0].to_string(), timestamp))
-                } else {
-                    None
-                }
+                let (name, timestamp_str) = line.split_once('\t')?;
+                let timestamp = timestamp_str.parse().unwrap_or(0);
+                Some((name.to_string(), timestamp))
             })
             .collect();
 
         let local_branch_names: HashSet<String> =
             local_branches.iter().map(|(n, _)| n.clone()).collect();
 
-        // Get remote branches with timestamps (if remotes exist)
-        let remote_branches: Vec<(String, String, i64)> = if let Ok(remote) = self.primary_remote()
-        {
-            let remote_ref_path = format!("refs/remotes/{}/", remote);
-            let remote_prefix = format!("{}/", remote);
+        // Get remote branches with timestamps from all remotes
+        // Matches git's behavior: searches all remotes for branch names
+        let remote_output = self.run_command(&[
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:lstrip=2)\t%(committerdate:unix)",
+            "refs/remotes/",
+        ])?;
 
-            let remote_output = self.run_command(&[
-                "for-each-ref",
-                "--sort=-committerdate",
-                "--format=%(refname:lstrip=2)\t%(committerdate:unix)",
-                &remote_ref_path,
-            ])?;
+        // Track seen branch names to deduplicate (same branch on multiple remotes)
+        let mut seen_branches: HashSet<String> = HashSet::new();
+        let remote_branches: Vec<(String, String, i64)> = remote_output
+            .lines()
+            .filter_map(|line| {
+                // Format: "<remote>/<branch>\t<timestamp>"
+                let (full_name, timestamp_str) = line.split_once('\t')?;
 
-            let remote_head = format!("{}/HEAD", remote);
-            remote_output
-                .lines()
-                .filter_map(|line| {
-                    let parts: Vec<&str> = line.split('\t').collect();
-                    if parts.len() == 2 {
-                        let full_name = parts[0];
-                        // Skip <remote>/HEAD
-                        if full_name == remote_head {
-                            return None;
-                        }
-                        // Strip remote prefix to get local name
-                        let local_name = full_name.strip_prefix(&remote_prefix)?;
-                        // Skip if local branch exists (user should use local)
-                        if local_branch_names.contains(local_name) {
-                            return None;
-                        }
-                        let timestamp = parts[1].parse().unwrap_or(0);
-                        Some((local_name.to_string(), remote.to_string(), timestamp))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+                // Parse <remote>/<branch> - find first slash to split
+                let (remote_name, local_name) = full_name.split_once('/')?;
+
+                // Skip <remote>/HEAD
+                if local_name == "HEAD" {
+                    return None;
+                }
+                // Skip if local branch exists (user should use local)
+                if local_branch_names.contains(local_name) {
+                    return None;
+                }
+                // Skip if already seen (same branch on another remote)
+                if !seen_branches.insert(local_name.to_string()) {
+                    return None;
+                }
+
+                let timestamp = timestamp_str.parse().unwrap_or(0);
+                Some((local_name.to_string(), remote_name.to_string(), timestamp))
+            })
+            .collect();
 
         // Build result: worktrees first, then local, then remote
         let mut result = Vec::new();
