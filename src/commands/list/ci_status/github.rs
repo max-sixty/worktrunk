@@ -10,21 +10,22 @@ use super::{
     parse_json,
 };
 
-/// Get the owner of the origin remote (for GitHub fork detection).
-///
-/// Used for client-side filtering of PRs by source repository.
-/// See [`parse_remote_owner`] for details on why this is necessary.
-fn get_origin_owner(repo: &Repository) -> Option<String> {
-    let url = repo.primary_remote_url()?;
-    parse_remote_owner(&url)
-}
+use super::platform::detect_platform_from_url;
 
-/// Get the owner and repo name from the primary remote.
+/// Get the owner and repo name from a GitHub remote.
 ///
 /// Used for GitHub API calls that require `repos/{owner}/{repo}/...` paths.
-fn get_owner_repo(repo: &Repository) -> Option<(String, String)> {
-    let url = repo.primary_remote_url()?;
+/// Searches all remotes for a GitHub URL (API calls are repo-wide, not branch-specific).
+fn get_github_owner_repo(repo: &Repository) -> Option<(String, String)> {
+    let url = find_any_github_remote_url(repo)?;
     parse_owner_repo(&url)
+}
+
+/// Find any GitHub remote URL from all configured remotes.
+fn find_any_github_remote_url(repo: &Repository) -> Option<String> {
+    repo.find_remote_url_where(|url| {
+        detect_platform_from_url(url) == Some(super::platform::CiPlatform::GitHub)
+    })
 }
 
 /// Detect GitHub PR CI status for a branch.
@@ -38,7 +39,7 @@ fn get_owner_repo(repo: &Repository) -> Option<(String, String)> {
 /// Since `gh pr list --head` doesn't support `owner:branch` format, we:
 /// 1. Fetch all open PRs with matching branch name (up to 20)
 /// 2. Include `headRepositoryOwner` in the JSON output
-/// 3. Filter client-side by comparing `headRepositoryOwner.login` to our origin owner
+/// 3. Filter client-side by comparing `headRepositoryOwner.login` to the branch's push remote owner
 ///
 /// This correctly handles:
 /// - Fork workflows (PRs from your fork to upstream)
@@ -47,10 +48,17 @@ fn get_owner_repo(repo: &Repository) -> Option<(String, String)> {
 pub(super) fn detect_github(repo: &Repository, branch: &str, local_head: &str) -> Option<PrStatus> {
     let repo_root = repo.current_worktree().root().ok()?;
 
-    // Get origin owner for filtering (see parse_remote_owner docs for why)
-    let origin_owner = get_origin_owner(repo);
-    if origin_owner.is_none() {
-        log::debug!("Could not determine origin owner for {}", branch);
+    // Get the owner of the branch's push remote for filtering PRs by source repository.
+    // Falls back to any GitHub remote if the branch has no GitHub push remote configured.
+    let branch_github_url = repo
+        .branch(branch)
+        .github_push_url()
+        .or_else(|| find_any_github_remote_url(repo));
+    let branch_owner = branch_github_url
+        .as_ref()
+        .and_then(|url| parse_remote_owner(url));
+    if branch_owner.is_none() {
+        log::debug!("Could not determine GitHub owner for branch {}", branch);
     }
 
     // Use `gh pr list --head` instead of `gh pr view` to handle numeric branch names correctly.
@@ -96,7 +104,7 @@ pub(super) fn detect_github(repo: &Repository, branch: &str, local_head: &str) -
     // Filter to PRs from our origin (case-insensitive comparison for GitHub usernames).
     // If headRepositoryOwner is missing (older GH CLI, Enterprise, or permissions),
     // treat it as a potential match to avoid false negatives.
-    let pr_info = if let Some(ref owner) = origin_owner {
+    let pr_info = if let Some(ref owner) = branch_owner {
         let matched = pr_list.iter().find(|pr| {
             pr.head_repository_owner
                 .as_ref()
@@ -151,7 +159,7 @@ pub(super) fn detect_github(repo: &Repository, branch: &str, local_head: &str) -
 /// status across multiple workflows (e.g., `ci` and `publish-docs`).
 pub(super) fn detect_github_commit_checks(repo: &Repository, local_head: &str) -> Option<PrStatus> {
     let repo_root = repo.current_worktree().root().ok()?;
-    let (owner, repo_name) = get_owner_repo(repo)?;
+    let (owner, repo_name) = get_github_owner_repo(repo)?;
 
     // Use GitHub's check-runs API to get all checks for this commit
     let output = match non_interactive_cmd("gh")

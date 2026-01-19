@@ -104,6 +104,52 @@ impl Repository {
         self.find_remote_for_repo(parsed.owner(), parsed.repo())
     }
 
+    /// Get all configured remote URLs.
+    ///
+    /// Returns a list of (remote_name, url) pairs for all remotes with URLs.
+    /// Useful for searching across remotes when the specific remote is unknown.
+    pub fn all_remote_urls(&self) -> Vec<(String, String)> {
+        let output = match self.run_command(&["config", "--get-regexp", r"remote\..+\.url"]) {
+            Ok(output) => output,
+            Err(_) => return Vec::new(),
+        };
+
+        output
+            .lines()
+            .filter_map(|line| {
+                // Parse "remote.<name>.url <value>" format
+                let rest = line.strip_prefix("remote.")?;
+                let (name, url) = rest.split_once(".url ")?;
+                Some((name.to_string(), url.to_string()))
+            })
+            .collect()
+    }
+
+    /// Find the first remote URL matching a predicate.
+    ///
+    /// Searches all configured remotes and returns the URL of the first one
+    /// where the predicate returns true.
+    pub fn find_remote_url_where<F>(&self, predicate: F) -> Option<String>
+    where
+        F: Fn(&str) -> bool,
+    {
+        self.all_remote_urls()
+            .into_iter()
+            .find(|(_, url)| predicate(url))
+            .map(|(_, url)| url)
+    }
+
+    /// Get the URL of the first configured remote.
+    ///
+    /// Useful as a fallback to infer protocol preference (SSH vs HTTPS)
+    /// when a specific remote is not found.
+    pub fn first_remote_url(&self) -> Option<String> {
+        self.all_remote_urls()
+            .into_iter()
+            .next()
+            .map(|(_, url)| url)
+    }
+
     /// Get the URL for the primary remote, if configured.
     ///
     /// Result is cached in the repository's shared cache (same for all clones).

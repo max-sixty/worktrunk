@@ -141,4 +141,30 @@ impl<'a> Branch<'a> {
         let remote = push_ref.trim().split('/').next()?;
         (!remote.is_empty()).then(|| remote.to_string())
     }
+
+    /// Get the URL of the remote where this branch would be pushed.
+    ///
+    /// Combines [`push_remote()`](Self::push_remote) with remote URL lookup.
+    /// Returns `None` if no push remote is configured or the remote has no URL.
+    pub fn push_remote_url(&self) -> Option<String> {
+        let remote = self.push_remote()?;
+        self.repo.remote_url(&remote)
+    }
+
+    /// Get the GitHub URL for this branch's push remote, if it's a GitHub URL.
+    ///
+    /// Returns the push remote URL if configured and pointing to GitHub,
+    /// otherwise returns `None`. Use [`Repository::find_remote_url_where`] as
+    /// a fallback to search all remotes.
+    pub fn github_push_url(&self) -> Option<String> {
+        use crate::git::GitRemoteUrl;
+        let url = self.push_remote_url()?;
+        let parsed = GitRemoteUrl::parse(&url)?;
+        // Check if it's a GitHub URL (host contains "github")
+        if parsed.host().to_ascii_lowercase().contains("github") {
+            Some(url)
+        } else {
+            None
+        }
+    }
 }

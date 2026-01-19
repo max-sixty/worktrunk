@@ -96,9 +96,15 @@ fn resolve_switch_target(
             }
 
             // Branch doesn't exist - need full fork PR setup
-            let remote_url = repo.primary_remote_url().unwrap_or_default();
+            // Use the base repo's remote URL to infer protocol preference (SSH vs HTTPS).
+            // If the user cloned the base repo via SSH, the fork URL should also use SSH.
+            let reference_url = repo
+                .find_remote_for_repo(&pr_info.base_owner, &pr_info.base_repo)
+                .and_then(|remote| repo.remote_url(&remote))
+                .or_else(|| repo.first_remote_url())
+                .unwrap_or_default();
             let fork_push_url =
-                fork_remote_url(&pr_info.head_owner, &pr_info.head_repo, &remote_url);
+                fork_remote_url(&pr_info.head_owner, &pr_info.head_repo, &reference_url);
 
             return Ok(ResolvedTarget {
                 branch: local_branch,
@@ -179,16 +185,31 @@ fn resolve_switch_target(
             }
 
             // Branch doesn't exist - need full fork MR setup
-            let remote_url = repo.primary_remote_url().unwrap_or_default();
+            // Find a remote matching the target project (try both SSH and HTTP URLs)
+            let target_remote = mr_info
+                .target_project_ssh_url
+                .as_ref()
+                .and_then(|url| repo.find_remote_by_url(url))
+                .or_else(|| {
+                    mr_info
+                        .target_project_http_url
+                        .as_ref()
+                        .and_then(|url| repo.find_remote_by_url(url))
+                });
+            // Use the matched remote's URL to infer protocol preference (SSH vs HTTPS)
+            let reference_url = target_remote
+                .and_then(|remote| repo.remote_url(&remote))
+                .or_else(|| repo.first_remote_url())
+                .unwrap_or_default();
             let fork_push_url =
-                mr_ref::fork_remote_url(&mr_info, &remote_url).ok_or_else(|| {
+                mr_ref::fork_remote_url(&mr_info, &reference_url).ok_or_else(|| {
                     anyhow::anyhow!(
                         "MR !{} is from a fork but glab didn't provide source project URL; \
                      upgrade glab or checkout the fork branch manually",
                         mr_number
                     )
                 })?;
-            let target_project_url = mr_ref::target_remote_url(&mr_info, &remote_url);
+            let target_project_url = mr_ref::target_remote_url(&mr_info, &reference_url);
 
             return Ok(ResolvedTarget {
                 branch: local_branch,
@@ -628,8 +649,8 @@ pub fn execute_switch(
                     let remote = repo
                         .find_remote_for_repo(base_owner, base_repo)
                         .ok_or_else(|| {
-                            // Construct suggested URL using primary remote's protocol/host
-                            let reference_url = repo.primary_remote_url().unwrap_or_default();
+                            // Construct suggested URL using first remote's protocol preference
+                            let reference_url = repo.first_remote_url().unwrap_or_default();
                             let suggested_url =
                                 fork_remote_url(base_owner, base_repo, &reference_url);
                             GitError::NoRemoteForRepo {
@@ -683,17 +704,24 @@ pub fn execute_switch(
 
                     // Find the remote that points to the target project (where MR refs live).
                     // This handles contributor clones where origin=fork and upstream=target.
-                    //
-                    // TODO: The fallback to primary_remote/origin is silent and can pick the
-                    // wrong remote (e.g., fork instead of target), causing fetch to fail with
-                    // a confusing "ref not found" error. Consider erroring with a targeted hint
-                    // like "add upstream remote for target project" when target_project_url is
-                    // missing or can't be matched to any remote.
-                    let remote = target_project_url
-                        .as_ref()
-                        .and_then(|url| repo.find_remote_by_url(url))
-                        .or_else(|| repo.primary_remote().ok())
-                        .unwrap_or_else(|| "origin".to_string());
+                    let remote = match &target_project_url {
+                        Some(url) => repo.find_remote_by_url(url).ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "No remote found for target project; \
+                                 add a remote pointing to {} (e.g., `git remote add upstream {}`)",
+                                url,
+                                url
+                            )
+                        })?,
+                        None => {
+                            // glab didn't provide target project URL (older version)
+                            anyhow::bail!(
+                                "MR !{} is from a fork but glab didn't provide target project URL; \
+                                 upgrade glab or checkout the fork branch manually",
+                                mr_number
+                            );
+                        }
+                    };
 
                     // Fetch the MR head (progress already shown during planning)
                     repo.run_command(&["fetch", &remote, &mr_ref])
