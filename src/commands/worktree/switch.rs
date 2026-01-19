@@ -170,6 +170,7 @@ fn resolve_switch_target(
                         mr_number
                     )
                 })?;
+            let target_project_url = mr_ref::target_remote_url(&mr_info, &remote_url);
 
             return Ok(ResolvedTarget {
                 branch: local_branch,
@@ -177,6 +178,7 @@ fn resolve_switch_target(
                     mr_number,
                     fork_push_url,
                     mr_url: mr_info.url,
+                    target_project_url,
                 },
             });
         } else {
@@ -353,87 +355,34 @@ fn validate_worktree_creation(
     compute_clobber_backup(path, branch, clobber, is_create)
 }
 
-/// Set up a local branch for a fork PR.
+/// Set up a local branch for a fork PR or MR.
 ///
-/// Creates the branch, configures tracking, and creates the worktree.
-/// Returns an error if any step fails - caller is responsible for cleanup.
-fn setup_fork_pr_branch(
+/// Creates the branch from FETCH_HEAD, configures tracking (remote, merge ref,
+/// pushRemote), and creates the worktree. Returns an error if any step fails -
+/// caller is responsible for cleanup.
+///
+/// # Arguments
+///
+/// * `remote_ref` - The ref to track (e.g., "pull/123/head" or "merge-requests/101/head")
+/// * `label` - Human-readable label for error messages (e.g., "PR #123" or "MR !101")
+fn setup_fork_branch(
     repo: &Repository,
     branch: &str,
     remote: &str,
-    pr_ref: &str,
+    remote_ref: &str,
     fork_push_url: &str,
     worktree_path: &Path,
-    pr_number: u32,
+    label: &str,
 ) -> anyhow::Result<()> {
     // Create local branch from FETCH_HEAD
     repo.run_command(&["branch", branch, "FETCH_HEAD"])
-        .with_context(|| {
-            format!(
-                "Failed to create local branch '{}' from PR #{}",
-                branch, pr_number
-            )
-        })?;
+        .with_context(|| format!("Failed to create local branch '{}' from {}", branch, label))?;
 
     // Configure branch tracking for pull and push
     let branch_remote_key = format!("branch.{}.remote", branch);
     let branch_merge_key = format!("branch.{}.merge", branch);
     let branch_push_remote_key = format!("branch.{}.pushRemote", branch);
-    let merge_ref = format!("refs/{}", pr_ref);
-
-    repo.run_command(&["config", &branch_remote_key, remote])
-        .with_context(|| format!("Failed to configure branch.{}.remote", branch))?;
-    repo.run_command(&["config", &branch_merge_key, &merge_ref])
-        .with_context(|| format!("Failed to configure branch.{}.merge", branch))?;
-    repo.run_command(&["config", &branch_push_remote_key, fork_push_url])
-        .with_context(|| format!("Failed to configure branch.{}.pushRemote", branch))?;
-
-    // Create worktree (delayed streaming: silent if fast, shows progress if slow)
-    let worktree_path_str = worktree_path.to_string_lossy();
-    repo.run_command_delayed_stream(
-        &["worktree", "add", worktree_path_str.as_ref(), branch],
-        Repository::SLOW_OPERATION_DELAY_MS,
-        Some(
-            progress_message(cformat!("Creating worktree for <bold>{}</>...", branch)).to_string(),
-        ),
-    )
-    .map_err(|e| GitError::WorktreeCreationFailed {
-        branch: branch.to_string(),
-        base_branch: None,
-        error: e.to_string(),
-    })?;
-
-    Ok(())
-}
-
-/// Set up a local branch for a fork MR.
-///
-/// Creates the branch, configures tracking, and creates the worktree.
-/// Returns an error if any step fails - caller is responsible for cleanup.
-fn setup_fork_mr_branch(
-    repo: &Repository,
-    branch: &str,
-    remote: &str,
-    mr_ref: &str,
-    fork_push_url: &str,
-    worktree_path: &Path,
-    mr_number: u32,
-) -> anyhow::Result<()> {
-    // Create local branch from FETCH_HEAD
-    repo.run_command(&["branch", branch, "FETCH_HEAD"])
-        .with_context(|| {
-            format!(
-                "Failed to create local branch '{}' from MR !{}",
-                branch, mr_number
-            )
-        })?;
-
-    // Configure branch tracking for pull and push
-    // GitLab MR refs are at refs/merge-requests/<N>/head
-    let branch_remote_key = format!("branch.{}.remote", branch);
-    let branch_merge_key = format!("branch.{}.merge", branch);
-    let branch_push_remote_key = format!("branch.{}.pushRemote", branch);
-    let merge_ref = format!("refs/{}", mr_ref);
+    let merge_ref = format!("refs/{}", remote_ref);
 
     repo.run_command(&["config", &branch_remote_key, remote])
         .with_context(|| format!("Failed to configure branch.{}.remote", branch))?;
@@ -680,14 +629,14 @@ pub fn execute_switch(
                     // Execute branch creation and configuration with cleanup on failure.
                     // If any step after branch creation fails, we must delete the branch
                     // to avoid leaving orphaned state that blocks future attempts.
-                    let setup_result = setup_fork_pr_branch(
+                    let setup_result = setup_fork_branch(
                         repo,
                         &branch,
                         &remote,
                         &pr_ref,
                         fork_push_url,
                         &worktree_path,
-                        *pr_number,
+                        &format!("PR #{}", pr_number),
                     );
 
                     if let Err(e) = setup_result {
@@ -708,13 +657,17 @@ pub fn execute_switch(
                     mr_number,
                     fork_push_url,
                     mr_url: _,
+                    target_project_url,
                 } => {
                     let mr_ref = format!("merge-requests/{}/head", mr_number);
 
-                    // For GitLab, use the primary remote (which should point to the target project)
-                    let remote = repo
-                        .primary_remote()
-                        .unwrap_or_else(|_| "origin".to_string());
+                    // Find the remote that points to the target project (where MR refs live).
+                    // This handles contributor clones where origin=fork and upstream=target.
+                    let remote = target_project_url
+                        .as_ref()
+                        .and_then(|url| repo.find_remote_by_url(url))
+                        .or_else(|| repo.primary_remote().ok())
+                        .unwrap_or_else(|| "origin".to_string());
 
                     // Fetch the MR head (progress already shown during planning)
                     repo.run_command(&["fetch", &remote, &mr_ref])
@@ -725,14 +678,14 @@ pub fn execute_switch(
                     // Execute branch creation and configuration with cleanup on failure.
                     // If any step after branch creation fails, we must delete the branch
                     // to avoid leaving orphaned state that blocks future attempts.
-                    let setup_result = setup_fork_mr_branch(
+                    let setup_result = setup_fork_branch(
                         repo,
                         &branch,
                         &remote,
                         &mr_ref,
                         fork_push_url,
                         &worktree_path,
-                        *mr_number,
+                        &format!("MR !{}", mr_number),
                     );
 
                     if let Err(e) = setup_result {

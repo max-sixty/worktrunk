@@ -93,6 +93,17 @@ impl Repository {
         None
     }
 
+    /// Find a remote that points to the same project as the given URL.
+    ///
+    /// Parses the URL to extract owner/repo, then searches configured remotes.
+    /// Useful for GitLab MRs where glab provides URLs directly.
+    ///
+    /// Returns `None` if the URL can't be parsed or no matching remote is found.
+    pub fn find_remote_by_url(&self, target_url: &str) -> Option<String> {
+        let parsed = GitRemoteUrl::parse(target_url)?;
+        self.find_remote_for_repo(parsed.owner(), parsed.repo())
+    }
+
     /// Get the URL for the primary remote, if configured.
     ///
     /// Result is cached in the repository's shared cache (same for all clones).

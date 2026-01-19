@@ -158,6 +158,8 @@
 //! GitLab uses the `allow_collaboration` flag to indicate if fork maintainers
 //! can push to the MR branch.
 
+use std::io::ErrorKind;
+
 use anyhow::{Context, bail};
 use serde::Deserialize;
 
@@ -179,6 +181,10 @@ pub struct MrInfo {
     pub source_project_ssh_url: Option<String>,
     /// The source project's HTTP URL (for fork push).
     pub source_project_http_url: Option<String>,
+    /// The target project's SSH URL (for finding the correct remote).
+    pub target_project_ssh_url: Option<String>,
+    /// The target project's HTTP URL (for finding the correct remote).
+    pub target_project_http_url: Option<String>,
     /// Whether this is a cross-project (fork) MR.
     pub is_cross_project: bool,
     /// The MR's web URL.
@@ -195,6 +201,9 @@ struct GlabMrResponse {
     /// Source project info (for getting fork URL)
     #[serde(default)]
     source_project: Option<GlabProject>,
+    /// Target project info (for finding the correct remote)
+    #[serde(default)]
+    target_project: Option<GlabProject>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -232,11 +241,7 @@ pub fn fetch_mr_info(mr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
         Ok(output) => output,
         Err(e) => {
             // Check if glab is not installed (OS error for command not found)
-            let error_str = e.to_string();
-            if error_str.contains("No such file")
-                || error_str.contains("not found")
-                || error_str.contains("cannot find")
-            {
+            if e.kind() == ErrorKind::NotFound {
                 bail!(
                     "GitLab CLI (glab) not installed; install from https://gitlab.com/gitlab-org/cli"
                 );
@@ -320,6 +325,14 @@ pub fn fetch_mr_info(mr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
             .source_project
             .as_ref()
             .and_then(|p| p.http_url_to_repo.clone()),
+        target_project_ssh_url: response
+            .target_project
+            .as_ref()
+            .and_then(|p| p.ssh_url_to_repo.clone()),
+        target_project_http_url: response
+            .target_project
+            .as_ref()
+            .and_then(|p| p.http_url_to_repo.clone()),
         is_cross_project,
         url: response.web_url,
     })
@@ -352,6 +365,27 @@ pub fn fork_remote_url(mr: &MrInfo, reference_url: &str) -> Option<String> {
         mr.source_project_http_url
             .clone()
             .or_else(|| mr.source_project_ssh_url.clone())
+    }
+}
+
+/// Get the target project URL (where MR refs live).
+///
+/// For fork MRs, we need to fetch from the target project's MR refs. GitLab
+/// provides both SSH and HTTP URLs; we return whichever is available (preferring
+/// the one matching the reference URL protocol).
+///
+/// Returns `None` if glab didn't provide target project URLs (older versions).
+pub fn target_remote_url(mr: &MrInfo, reference_url: &str) -> Option<String> {
+    let use_ssh = reference_url.starts_with("git@") || reference_url.contains("ssh://");
+
+    if use_ssh {
+        mr.target_project_ssh_url
+            .clone()
+            .or_else(|| mr.target_project_http_url.clone())
+    } else {
+        mr.target_project_http_url
+            .clone()
+            .or_else(|| mr.target_project_ssh_url.clone())
     }
 }
 
@@ -421,6 +455,8 @@ mod tests {
             target_project_id: 123,
             source_project_ssh_url: None,
             source_project_http_url: None,
+            target_project_ssh_url: None,
+            target_project_http_url: None,
             is_cross_project: false,
             url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
         };
@@ -438,6 +474,8 @@ mod tests {
             target_project_id: 123,
             source_project_ssh_url: Some("git@gitlab.com:contributor/repo.git".to_string()),
             source_project_http_url: Some("https://gitlab.com/contributor/repo.git".to_string()),
+            target_project_ssh_url: Some("git@gitlab.com:owner/repo.git".to_string()),
+            target_project_http_url: Some("https://gitlab.com/owner/repo.git".to_string()),
             is_cross_project: true,
             url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
         };
@@ -453,6 +491,8 @@ mod tests {
             target_project_id: 123,
             source_project_ssh_url: Some("git@gitlab.com:contributor/repo.git".to_string()),
             source_project_http_url: Some("https://gitlab.com/contributor/repo.git".to_string()),
+            target_project_ssh_url: Some("git@gitlab.com:owner/repo.git".to_string()),
+            target_project_http_url: Some("https://gitlab.com/owner/repo.git".to_string()),
             is_cross_project: true,
             url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
         };
@@ -471,6 +511,8 @@ mod tests {
             target_project_id: 123,
             source_project_ssh_url: Some("git@gitlab.com:contributor/repo.git".to_string()),
             source_project_http_url: Some("https://gitlab.com/contributor/repo.git".to_string()),
+            target_project_ssh_url: Some("git@gitlab.com:owner/repo.git".to_string()),
+            target_project_http_url: Some("https://gitlab.com/owner/repo.git".to_string()),
             is_cross_project: true,
             url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
         };
@@ -493,6 +535,8 @@ mod tests {
             target_project_id: 123,
             source_project_ssh_url: Some("git@gitlab.com:contributor/repo.git".to_string()),
             source_project_http_url: None,
+            target_project_ssh_url: Some("git@gitlab.com:owner/repo.git".to_string()),
+            target_project_http_url: None,
             is_cross_project: true,
             url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
         };
@@ -500,5 +544,45 @@ mod tests {
         // HTTPS reference but only SSH available → falls back to SSH
         let url = fork_remote_url(&mr, "https://gitlab.com/owner/repo.git");
         assert_eq!(url, Some("git@gitlab.com:contributor/repo.git".to_string()));
+    }
+
+    #[test]
+    fn test_target_remote_url_ssh() {
+        let mr = MrInfo {
+            number: 101,
+            source_branch: "feature".to_string(),
+            source_project_id: 456,
+            target_project_id: 123,
+            source_project_ssh_url: Some("git@gitlab.com:contributor/repo.git".to_string()),
+            source_project_http_url: Some("https://gitlab.com/contributor/repo.git".to_string()),
+            target_project_ssh_url: Some("git@gitlab.com:owner/repo.git".to_string()),
+            target_project_http_url: Some("https://gitlab.com/owner/repo.git".to_string()),
+            is_cross_project: true,
+            url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
+        };
+
+        // SSH reference → SSH target URL
+        let url = target_remote_url(&mr, "git@gitlab.com:owner/repo.git");
+        assert_eq!(url, Some("git@gitlab.com:owner/repo.git".to_string()));
+    }
+
+    #[test]
+    fn test_target_remote_url_https() {
+        let mr = MrInfo {
+            number: 101,
+            source_branch: "feature".to_string(),
+            source_project_id: 456,
+            target_project_id: 123,
+            source_project_ssh_url: Some("git@gitlab.com:contributor/repo.git".to_string()),
+            source_project_http_url: Some("https://gitlab.com/contributor/repo.git".to_string()),
+            target_project_ssh_url: Some("git@gitlab.com:owner/repo.git".to_string()),
+            target_project_http_url: Some("https://gitlab.com/owner/repo.git".to_string()),
+            is_cross_project: true,
+            url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
+        };
+
+        // HTTPS reference → HTTPS target URL
+        let url = target_remote_url(&mr, "https://gitlab.com/owner/repo.git");
+        assert_eq!(url, Some("https://gitlab.com/owner/repo.git".to_string()));
     }
 }

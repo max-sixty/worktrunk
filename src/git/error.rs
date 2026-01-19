@@ -648,6 +648,9 @@ impl std::fmt::Display for GitError {
                 // The PR's branch name conflicts with an existing local branch.
                 // We can't use a different local name because git push requires
                 // the local and remote branch names to match (with push.default=current).
+                let escaped = escape(Cow::Borrowed(branch.as_str()));
+                let old_name = format!("{branch}-old");
+                let escaped_old = escape(Cow::Borrowed(&old_name));
                 write!(
                     f,
                     "{}\n{}",
@@ -655,7 +658,7 @@ impl std::fmt::Display for GitError {
                         "Branch <bold>{branch}</> exists but doesn't track PR #{pr_number}"
                     )),
                     hint_message(cformat!(
-                        "To free the name, run <bright-black>git branch -m {branch} {branch}-old</>"
+                        "To free the name, run <bright-black>git branch -m -- {escaped} {escaped_old}</>"
                     ))
                 )
             }
@@ -705,6 +708,9 @@ impl std::fmt::Display for GitError {
                 // The MR's branch name conflicts with an existing local branch.
                 // We can't use a different local name because git push requires
                 // the local and remote branch names to match (with push.default=current).
+                let escaped = escape(Cow::Borrowed(branch.as_str()));
+                let old_name = format!("{branch}-old");
+                let escaped_old = escape(Cow::Borrowed(&old_name));
                 write!(
                     f,
                     "{}\n{}",
@@ -712,7 +718,7 @@ impl std::fmt::Display for GitError {
                         "Branch <bold>{branch}</> exists but doesn't track MR !{mr_number}"
                     )),
                     hint_message(cformat!(
-                        "To free the name, run <bright-black>git branch -m {branch} {branch}-old</>"
+                        "To free the name, run <bright-black>git branch -m -- {escaped} {escaped_old}</>"
                     ))
                 )
             }

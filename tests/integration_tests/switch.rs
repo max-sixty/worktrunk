@@ -2130,3 +2130,91 @@ fn test_switch_mr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
         assert_cmd_snapshot!("switch_mr_empty_branch", cmd);
     });
 }
+
+/// Test fork MR checkout (source_project_id != target_project_id)
+#[rstest]
+fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a MR ref on the remote that can be fetched
+    // First, create a commit that represents the MR head
+    repo.run_git(&["checkout", "-b", "mr-source"]);
+    fs::write(repo.root_path().join("mr-file.txt"), "MR content").unwrap();
+    repo.run_git(&["add", "mr-file.txt"]);
+    repo.run_git(&["commit", "-m", "MR commit"]);
+
+    // Get the commit SHA and push to remote as refs/merge-requests/42/head
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+
+    // Push the ref to the bare remote
+    repo.run_git(&[
+        "push",
+        "origin",
+        &format!("{}:refs/merge-requests/42/head", sha),
+    ]);
+
+    // Go back to main
+    repo.run_git(&["checkout", "main"]);
+
+    // Get the bare remote's actual URL before we modify origin
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Set origin URL to GitLab-style so find_remote_by_url() can match
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    // Configure git to redirect gitlab.com URLs to the local bare remote.
+    // This is necessary because:
+    // 1. origin must have a GitLab URL for find_remote_by_url() to match target project
+    // 2. But we need git fetch to actually succeed using the local bare remote
+    // Git's url.<base>.insteadOf transparently rewrites the fetch URL.
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    // glab mr view <number> --output json format
+    // source_project is the fork (contributor/test-repo), target_project is the upstream (owner/test-repo)
+    let glab_response = r#"{
+        "source_branch": "feature-fix",
+        "source_project_id": 456,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42",
+        "source_project": {
+            "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
+            "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
+        },
+        "target_project": {
+            "ssh_url_to_repo": "git@gitlab.com:owner/test-repo.git",
+            "http_url_to_repo": "https://gitlab.com/owner/test-repo.git"
+        }
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_fork", cmd);
+    });
+}

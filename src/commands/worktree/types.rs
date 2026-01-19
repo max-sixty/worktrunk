@@ -78,6 +78,8 @@ pub enum CreationMethod {
         mr_number: u32,
         fork_push_url: String,
         mr_url: String,
+        /// Target project URL (for finding the correct remote to fetch MR refs from)
+        target_project_url: Option<String>,
     },
 }
 
