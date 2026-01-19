@@ -234,7 +234,7 @@ Add to the project config:
 
 ```toml
 # .config/wt.toml
-[post-create]
+[post-start]
 copy = "wt step copy-ignored"
 ```
 
@@ -278,7 +278,7 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 
 Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
 
-If the files are needed before any commands run in the worktree, put `wt step copy-ignored` in the `post-create` hook. Otherwise use the `post-start` hook so the copy runs in the background.
+Use the `post-start` hook so the copy runs in the background. Use `post-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
 ### Language-specific notes
 
@@ -312,9 +312,9 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
 wt step copy-ignored - Copy gitignored files to another worktree
 
 Copies gitignored files to another worktree. By default copies all gitignored
-files; use <b>.worktreeinclude</b> to limit what gets copied. Useful in post-create
-hooks to sync local config files (<b>.env</b>, IDE settings) to new worktrees. Skips
-symlinks and existing files.
+files; use <b>.worktreeinclude</b> to limit what gets copied. Useful in hooks to copy
+build caches and dependencies to new worktrees. Skips symlinks and existing
+files.
 
 Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]</span>
 

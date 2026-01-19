@@ -20,13 +20,14 @@ wsc feature -- 'Fix GH #322'          # Runs `claude 'Fix GH #322'`
 
 ## Eliminate cold starts
 
-Use [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) in a `post-create` hook to copy gitignored files (caches, dependencies, `.env`) between worktrees:
+Use [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) to copy gitignored files (caches, dependencies, `.env`) between worktrees:
 
 ```toml
-[post-create]
+[post-start]
 copy = "wt step copy-ignored"
-install = "npm ci"
 ```
+
+Use `post-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
 All gitignored files are copied by default. To limit what gets copied, create `.worktreeinclude` with patterns — files must be both gitignored and listed. See [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) for details.
 
