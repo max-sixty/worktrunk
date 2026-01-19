@@ -52,6 +52,10 @@ fn snapshot_switch_impl(
         if let Some(shell_path) = shell {
             cmd.env("SHELL", shell_path);
         }
+        // Disable delayed streaming to ensure deterministic output across platforms.
+        // Without this, slow Windows CI triggers progress messages that don't appear on faster systems.
+        // The test_switch_create_shows_progress_when_forced test explicitly sets this to 0 to test the streaming path.
+        cmd.env("WT_TEST_DELAYED_STREAM_MS", "999999");
         assert_cmd_snapshot!(test_name, cmd);
     });
 }
@@ -573,6 +577,8 @@ fn test_switch_execute_verbose_template_expansion(repo: TestRepo) {
             None,
             &["-v"],
         );
+        // Disable delayed streaming to ensure deterministic output across platforms.
+        cmd.env("WT_TEST_DELAYED_STREAM_MS", "999999");
         assert_cmd_snapshot!("switch_execute_verbose_template", cmd);
     });
 }
@@ -600,6 +606,8 @@ echo 'repo={{ repo }}'
             None,
             &["-v"],
         );
+        // Disable delayed streaming to ensure deterministic output across platforms.
+        cmd.env("WT_TEST_DELAYED_STREAM_MS", "999999");
         assert_cmd_snapshot!("switch_execute_verbose_multiline_template", cmd);
     });
 }

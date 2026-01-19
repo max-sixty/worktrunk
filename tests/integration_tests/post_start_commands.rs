@@ -28,6 +28,9 @@ fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(repo, "switch", args, None);
         set_temp_home_env(&mut cmd, temp_home.path());
+        // Disable delayed streaming to ensure deterministic output across platforms.
+        // Without this, slow Windows CI triggers progress messages that don't appear on faster systems.
+        cmd.env("WT_TEST_DELAYED_STREAM_MS", "999999");
         assert_cmd_snapshot!(test_name, cmd);
     });
 }
@@ -233,6 +236,9 @@ approved-commands = [
             &["-v"],
         );
         set_temp_home_env(&mut cmd, temp_home.path());
+        // Disable delayed streaming to ensure deterministic output across platforms.
+        // Without this, slow Windows CI triggers progress messages that don't appear on faster systems.
+        cmd.env("WT_TEST_DELAYED_STREAM_MS", "999999");
         assert_cmd_snapshot!("post_create_verbose_template_expansion", cmd);
     });
 }
