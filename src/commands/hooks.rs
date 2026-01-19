@@ -162,7 +162,7 @@ pub fn spawn_hook_commands_background(
     let verbose = verbosity();
 
     if verbose == 0 {
-        // Single-line summary: "Running post-start @ path: user:bg, project"
+        // Single-line summary: "Running post-start hooks @ path: user:bg, project"
         let names: Vec<String> = commands
             .iter()
             .map(|c| cformat!("<bold>{}</>", c.summary_name()))
