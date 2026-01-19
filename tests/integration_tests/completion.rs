@@ -1277,3 +1277,42 @@ fn test_static_completions_for_all_shells() {
         }
     }
 }
+
+#[rstest]
+fn test_complete_switch_shows_all_remotes_for_ambiguous_branch(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Set up two remotes: origin and upstream
+    repo.setup_remote("main");
+    repo.setup_custom_remote("upstream", "main");
+
+    // Create a branch locally and push to both remotes
+    repo.run_git(&["checkout", "-b", "shared-feature"]);
+    repo.commit_with_message("Add shared feature");
+    repo.run_git(&["push", "origin", "shared-feature"]);
+    repo.run_git(&["push", "upstream", "shared-feature"]);
+
+    // Delete local branch so it only exists on remotes
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["branch", "-D", "shared-feature"]);
+
+    // Test completion with fish shell to see help text (bash doesn't show descriptions)
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", ""], "fish")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // The branch should appear with both remotes listed
+    // Format: "shared-feature\t⇣ <time> origin, upstream" (sorted alphabetically)
+    assert!(
+        stdout.contains("shared-feature"),
+        "Should show shared-feature branch: {stdout}"
+    );
+    // Check that both remotes are shown (order is alphabetical: origin, upstream)
+    assert!(
+        stdout.contains("origin") && stdout.contains("upstream"),
+        "Should show both remotes for ambiguous branch: {stdout}"
+    );
+}
