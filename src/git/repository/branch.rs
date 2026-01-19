@@ -154,8 +154,7 @@ impl<'a> Branch<'a> {
     /// Get the GitHub URL for this branch's push remote, if it's a GitHub URL.
     ///
     /// Returns the push remote URL if configured and pointing to GitHub,
-    /// otherwise returns `None`. Use [`Repository::find_remote_url_where`] as
-    /// a fallback to search all remotes.
+    /// otherwise returns `None`.
     pub fn github_push_url(&self) -> Option<String> {
         use crate::git::GitRemoteUrl;
         let url = self.push_remote_url()?;

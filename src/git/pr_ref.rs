@@ -298,7 +298,6 @@
 use anyhow::{Context, bail};
 use serde::Deserialize;
 
-use super::GitRemoteUrl;
 use super::error::GitError;
 use crate::shell_exec::Cmd;
 
@@ -498,17 +497,36 @@ pub fn local_branch_name(pr: &PrInfo) -> String {
     pr.head_ref_name.clone()
 }
 
-/// Construct the remote URL for a fork, matching the protocol and host of the reference URL.
+/// Get the git protocol configured in `gh` (GitHub CLI).
 ///
-/// If reference uses SSH (`git@host:`), returns SSH URL.
-/// If reference uses HTTPS (`https://host/`), returns HTTPS URL.
-/// Falls back to `github.com` if the reference URL cannot be parsed.
-pub fn fork_remote_url(owner: &str, repo: &str, reference_url: &str) -> String {
-    let host = GitRemoteUrl::parse(reference_url)
-        .map(|u| u.host().to_string())
-        .unwrap_or_else(|| "github.com".to_string());
+/// Returns "https" or "ssh" based on `gh config get git_protocol`.
+/// Defaults to "https" if the command fails or returns unexpected output.
+pub fn get_git_protocol() -> String {
+    Cmd::new("gh")
+        .args(["config", "get", "git_protocol"])
+        .run()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|p| p == "ssh" || p == "https")
+        .unwrap_or_else(|| "https".to_string())
+}
 
-    if reference_url.starts_with("git@") || reference_url.contains("ssh://") {
+/// Construct the remote URL for a fork repository.
+///
+/// Uses `gh config get git_protocol` to determine SSH vs HTTPS preference.
+/// Extracts the host from `pr_url` (the PR's web URL) to support GitHub Enterprise.
+/// Falls back to `github.com` if the PR URL cannot be parsed.
+pub fn fork_remote_url(owner: &str, repo: &str, pr_url: &str) -> String {
+    // Extract host from PR URL (e.g., "https://github.com/owner/repo/pull/123")
+    let host = pr_url
+        .strip_prefix("https://")
+        .or_else(|| pr_url.strip_prefix("http://"))
+        .and_then(|s| s.split('/').next())
+        .unwrap_or("github.com");
+
+    let protocol = get_git_protocol();
+    if protocol == "ssh" {
         format!("git@{}:{}/{}.git", host, owner, repo)
     } else {
         format!("https://{}/{}/{}.git", host, owner, repo)
@@ -577,34 +595,46 @@ mod tests {
     }
 
     #[test]
-    fn test_fork_remote_url_ssh() {
-        let url = fork_remote_url("contributor", "repo", "git@github.com:owner/repo.git");
-        assert_eq!(url, "git@github.com:contributor/repo.git");
-    }
-
-    #[test]
-    fn test_fork_remote_url_https() {
-        let url = fork_remote_url("contributor", "repo", "https://github.com/owner/repo.git");
-        assert_eq!(url, "https://github.com/contributor/repo.git");
-    }
-
-    #[test]
-    fn test_fork_remote_url_github_enterprise_ssh() {
+    fn test_fork_remote_url_github_com() {
+        // PR URL on github.com
         let url = fork_remote_url(
             "contributor",
             "repo",
-            "git@github.example.com:owner/repo.git",
+            "https://github.com/owner/repo/pull/123",
         );
-        assert_eq!(url, "git@github.example.com:contributor/repo.git");
+        // Protocol depends on `gh config get git_protocol`, but host should be github.com
+        assert!(
+            url == "git@github.com:contributor/repo.git"
+                || url == "https://github.com/contributor/repo.git"
+        );
+        assert!(url.contains("github.com"));
+        assert!(url.contains("contributor/repo"));
     }
 
     #[test]
-    fn test_fork_remote_url_github_enterprise_https() {
+    fn test_fork_remote_url_github_enterprise() {
+        // PR URL on GitHub Enterprise
         let url = fork_remote_url(
             "contributor",
             "repo",
-            "https://github.example.com/owner/repo.git",
+            "https://github.example.com/owner/repo/pull/456",
         );
-        assert_eq!(url, "https://github.example.com/contributor/repo.git");
+        // Protocol depends on `gh config get git_protocol`, but host should be github.example.com
+        assert!(
+            url == "git@github.example.com:contributor/repo.git"
+                || url == "https://github.example.com/contributor/repo.git"
+        );
+        assert!(url.contains("github.example.com"));
+        assert!(url.contains("contributor/repo"));
+    }
+
+    #[test]
+    fn test_fork_remote_url_fallback_host() {
+        // Invalid PR URL falls back to github.com
+        let url = fork_remote_url("contributor", "repo", "not-a-valid-url");
+        assert!(
+            url == "git@github.com:contributor/repo.git"
+                || url == "https://github.com/contributor/repo.git"
+        );
     }
 }

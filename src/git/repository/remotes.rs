@@ -139,17 +139,6 @@ impl Repository {
             .map(|(_, url)| url)
     }
 
-    /// Get the URL of the first configured remote.
-    ///
-    /// Useful as a fallback to infer protocol preference (SSH vs HTTPS)
-    /// when a specific remote is not found.
-    pub fn first_remote_url(&self) -> Option<String> {
-        self.all_remote_urls()
-            .into_iter()
-            .next()
-            .map(|(_, url)| url)
-    }
-
     /// Get the URL for the primary remote, if configured.
     ///
     /// Result is cached in the repository's shared cache (same for all clones).

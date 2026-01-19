@@ -340,15 +340,30 @@ pub fn local_branch_name(mr: &MrInfo) -> String {
     mr.source_branch.clone()
 }
 
-/// Get the fork remote URL for pushing, matching the protocol of the reference URL.
+/// Get the git protocol configured in `glab` (GitLab CLI).
+///
+/// Returns "https" or "ssh" based on `glab config get git_protocol`.
+/// Defaults to "https" if the command fails or returns unexpected output.
+pub fn get_git_protocol() -> String {
+    Cmd::new("glab")
+        .args(["config", "get", "git_protocol"])
+        .run()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|p| p == "ssh" || p == "https")
+        .unwrap_or_else(|| "https".to_string())
+}
+
+/// Get the fork remote URL for pushing.
 ///
 /// For fork MRs, we need the source project's URL. GitLab provides both SSH and
-/// HTTP URLs; we choose based on the primary remote's protocol.
+/// HTTP URLs; we choose based on `glab config get git_protocol`.
 ///
-/// Falls back to HTTP URL if SSH is not available, or returns `None` if neither
-/// is available (shouldn't happen for valid MRs).
-pub fn fork_remote_url(mr: &MrInfo, reference_url: &str) -> Option<String> {
-    let use_ssh = reference_url.starts_with("git@") || reference_url.contains("ssh://");
+/// Falls back to the other protocol if the preferred one is not available.
+/// Returns `None` if neither URL is available (shouldn't happen for valid MRs).
+pub fn fork_remote_url(mr: &MrInfo) -> Option<String> {
+    let use_ssh = get_git_protocol() == "ssh";
 
     if use_ssh {
         mr.source_project_ssh_url
@@ -364,12 +379,11 @@ pub fn fork_remote_url(mr: &MrInfo, reference_url: &str) -> Option<String> {
 /// Get the target project URL (where MR refs live).
 ///
 /// For fork MRs, we need to fetch from the target project's MR refs. GitLab
-/// provides both SSH and HTTP URLs; we return whichever is available (preferring
-/// the one matching the reference URL protocol).
+/// provides both SSH and HTTP URLs; we choose based on `glab config get git_protocol`.
 ///
 /// Returns `None` if glab didn't provide target project URLs (older versions).
-pub fn target_remote_url(mr: &MrInfo, reference_url: &str) -> Option<String> {
-    let use_ssh = reference_url.starts_with("git@") || reference_url.contains("ssh://");
+pub fn target_remote_url(mr: &MrInfo) -> Option<String> {
+    let use_ssh = get_git_protocol() == "ssh";
 
     if use_ssh {
         mr.target_project_ssh_url
@@ -449,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fork_remote_url_ssh() {
+    fn test_fork_remote_url_with_both_urls() {
         let mr = MrInfo {
             number: 101,
             source_branch: "feature".to_string(),
@@ -463,37 +477,18 @@ mod tests {
             url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
         };
 
-        // SSH reference → SSH fork URL
-        let url = fork_remote_url(&mr, "git@gitlab.com:owner/repo.git");
-        assert_eq!(url, Some("git@gitlab.com:contributor/repo.git".to_string()));
-    }
-
-    #[test]
-    fn test_fork_remote_url_https() {
-        let mr = MrInfo {
-            number: 101,
-            source_branch: "feature".to_string(),
-            source_project_id: 456,
-            target_project_id: 123,
-            source_project_ssh_url: Some("git@gitlab.com:contributor/repo.git".to_string()),
-            source_project_http_url: Some("https://gitlab.com/contributor/repo.git".to_string()),
-            target_project_ssh_url: Some("git@gitlab.com:owner/repo.git".to_string()),
-            target_project_http_url: Some("https://gitlab.com/owner/repo.git".to_string()),
-            is_cross_project: true,
-            url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
-        };
-
-        // HTTPS reference → HTTPS fork URL
-        let url = fork_remote_url(&mr, "https://gitlab.com/owner/repo.git");
-        assert_eq!(
-            url,
-            Some("https://gitlab.com/contributor/repo.git".to_string())
+        // When both URLs are available, returns one based on glab config
+        let url = fork_remote_url(&mr);
+        assert!(url.is_some());
+        let url = url.unwrap();
+        assert!(
+            url == "git@gitlab.com:contributor/repo.git"
+                || url == "https://gitlab.com/contributor/repo.git"
         );
     }
 
     #[test]
-    fn test_fork_remote_url_fallback() {
-        // Only SSH URL available
+    fn test_fork_remote_url_ssh_only() {
         let mr = MrInfo {
             number: 101,
             source_branch: "feature".to_string(),
@@ -507,33 +502,56 @@ mod tests {
             url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
         };
 
-        // HTTPS reference but only SSH available → falls back to SSH
-        let url = fork_remote_url(&mr, "https://gitlab.com/owner/repo.git");
+        // When only SSH is available, returns SSH regardless of config
+        let url = fork_remote_url(&mr);
         assert_eq!(url, Some("git@gitlab.com:contributor/repo.git".to_string()));
     }
 
     #[test]
-    fn test_target_remote_url_ssh() {
+    fn test_fork_remote_url_https_only() {
         let mr = MrInfo {
             number: 101,
             source_branch: "feature".to_string(),
             source_project_id: 456,
             target_project_id: 123,
-            source_project_ssh_url: Some("git@gitlab.com:contributor/repo.git".to_string()),
+            source_project_ssh_url: None,
             source_project_http_url: Some("https://gitlab.com/contributor/repo.git".to_string()),
-            target_project_ssh_url: Some("git@gitlab.com:owner/repo.git".to_string()),
+            target_project_ssh_url: None,
             target_project_http_url: Some("https://gitlab.com/owner/repo.git".to_string()),
             is_cross_project: true,
             url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
         };
 
-        // SSH reference → SSH target URL
-        let url = target_remote_url(&mr, "git@gitlab.com:owner/repo.git");
-        assert_eq!(url, Some("git@gitlab.com:owner/repo.git".to_string()));
+        // When only HTTPS is available, returns HTTPS regardless of config
+        let url = fork_remote_url(&mr);
+        assert_eq!(
+            url,
+            Some("https://gitlab.com/contributor/repo.git".to_string())
+        );
     }
 
     #[test]
-    fn test_target_remote_url_https() {
+    fn test_fork_remote_url_none() {
+        let mr = MrInfo {
+            number: 101,
+            source_branch: "feature".to_string(),
+            source_project_id: 456,
+            target_project_id: 123,
+            source_project_ssh_url: None,
+            source_project_http_url: None,
+            target_project_ssh_url: None,
+            target_project_http_url: None,
+            is_cross_project: true,
+            url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
+        };
+
+        // When no source URLs are available, returns None
+        let url = fork_remote_url(&mr);
+        assert_eq!(url, None);
+    }
+
+    #[test]
+    fn test_target_remote_url_with_both_urls() {
         let mr = MrInfo {
             number: 101,
             source_branch: "feature".to_string(),
@@ -547,8 +565,32 @@ mod tests {
             url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
         };
 
-        // HTTPS reference → HTTPS target URL
-        let url = target_remote_url(&mr, "https://gitlab.com/owner/repo.git");
-        assert_eq!(url, Some("https://gitlab.com/owner/repo.git".to_string()));
+        // When both URLs are available, returns one based on glab config
+        let url = target_remote_url(&mr);
+        assert!(url.is_some());
+        let url = url.unwrap();
+        assert!(
+            url == "git@gitlab.com:owner/repo.git" || url == "https://gitlab.com/owner/repo.git"
+        );
+    }
+
+    #[test]
+    fn test_target_remote_url_none() {
+        let mr = MrInfo {
+            number: 101,
+            source_branch: "feature".to_string(),
+            source_project_id: 456,
+            target_project_id: 123,
+            source_project_ssh_url: Some("git@gitlab.com:contributor/repo.git".to_string()),
+            source_project_http_url: Some("https://gitlab.com/contributor/repo.git".to_string()),
+            target_project_ssh_url: None,
+            target_project_http_url: None,
+            is_cross_project: true,
+            url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
+        };
+
+        // When no target URLs are available, returns None
+        let url = target_remote_url(&mr);
+        assert_eq!(url, None);
     }
 }

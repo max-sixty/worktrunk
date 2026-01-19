@@ -96,15 +96,9 @@ fn resolve_switch_target(
             }
 
             // Branch doesn't exist - need full fork PR setup
-            // Use the base repo's remote URL to infer protocol preference (SSH vs HTTPS).
-            // If the user cloned the base repo via SSH, the fork URL should also use SSH.
-            let reference_url = repo
-                .find_remote_for_repo(&pr_info.base_owner, &pr_info.base_repo)
-                .and_then(|remote| repo.remote_url(&remote))
-                .or_else(|| repo.first_remote_url())
-                .unwrap_or_default();
+            // Use `gh config get git_protocol` to determine SSH vs HTTPS preference.
             let fork_push_url =
-                fork_remote_url(&pr_info.head_owner, &pr_info.head_repo, &reference_url);
+                fork_remote_url(&pr_info.head_owner, &pr_info.head_repo, &pr_info.url);
 
             return Ok(ResolvedTarget {
                 branch: local_branch,
@@ -208,31 +202,15 @@ fn resolve_switch_target(
             }
 
             // Branch doesn't exist - need full fork MR setup
-            // Find a remote matching the target project (try both SSH and HTTP URLs)
-            let target_remote = mr_info
-                .target_project_ssh_url
-                .as_ref()
-                .and_then(|url| repo.find_remote_by_url(url))
-                .or_else(|| {
-                    mr_info
-                        .target_project_http_url
-                        .as_ref()
-                        .and_then(|url| repo.find_remote_by_url(url))
-                });
-            // Use the matched remote's URL to infer protocol preference (SSH vs HTTPS)
-            let reference_url = target_remote
-                .and_then(|remote| repo.remote_url(&remote))
-                .or_else(|| repo.first_remote_url())
-                .unwrap_or_default();
-            let fork_push_url =
-                mr_ref::fork_remote_url(&mr_info, &reference_url).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "MR !{} is from a fork but glab didn't provide source project URL; \
+            // Use `glab config get git_protocol` to determine SSH vs HTTPS preference.
+            let fork_push_url = mr_ref::fork_remote_url(&mr_info).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "MR !{} is from a fork but glab didn't provide source project URL; \
                      upgrade glab or checkout the fork branch manually",
-                        mr_number
-                    )
-                })?;
-            let target_project_url = mr_ref::target_remote_url(&mr_info, &reference_url);
+                    mr_number
+                )
+            })?;
+            let target_project_url = mr_ref::target_remote_url(&mr_info);
 
             return Ok(ResolvedTarget {
                 branch: local_branch,
@@ -662,7 +640,7 @@ pub fn execute_switch(
                 CreationMethod::ForkPr {
                     pr_number,
                     fork_push_url,
-                    pr_url: _,
+                    pr_url,
                     base_owner,
                     base_repo,
                 } => {
@@ -672,10 +650,8 @@ pub fn execute_switch(
                     let remote = repo
                         .find_remote_for_repo(base_owner, base_repo)
                         .ok_or_else(|| {
-                            // Construct suggested URL using first remote's protocol preference
-                            let reference_url = repo.first_remote_url().unwrap_or_default();
-                            let suggested_url =
-                                fork_remote_url(base_owner, base_repo, &reference_url);
+                            // Construct suggested URL using gh's configured protocol
+                            let suggested_url = fork_remote_url(base_owner, base_repo, pr_url);
                             GitError::NoRemoteForRepo {
                                 owner: base_owner.clone(),
                                 repo: base_repo.clone(),
