@@ -386,6 +386,11 @@ impl WorktrunkConfig {
             )?
             .set_default("commit-generation.args", defaults.commit_generation.args)?;
 
+        // Parse hooks directly from TOML to preserve insertion order.
+        // The config crate uses HashMap internally which loses TOML ordering.
+        // See: https://github.com/max-sixty/worktrunk/issues/737
+        let mut direct_hooks: Option<HooksConfig> = None;
+
         // Add config file if it exists
         if let Some(config_path) = get_config_path()
             && config_path.exists()
@@ -401,6 +406,10 @@ impl WorktrunkConfig {
                     "User config",
                     None,
                 );
+
+                if let Ok(parsed) = toml::from_str::<WorktrunkConfig>(&content) {
+                    direct_hooks = Some(parsed.hooks);
+                }
             }
 
             builder = builder.add_source(File::from(config_path.clone()));
@@ -418,7 +427,14 @@ impl WorktrunkConfig {
                 .convert_case(Case::Kebab),
         );
 
-        let config: Self = builder.build()?.try_deserialize()?;
+        let mut config: Self = builder.build()?.try_deserialize()?;
+
+        // Replace hooks with directly-parsed version to preserve TOML insertion order.
+        // Note: This means env var overrides for hooks are not supported (by design -
+        // hooks are complex TOML tables, not simple values suited to env var config).
+        if let Some(hooks) = direct_hooks {
+            config.hooks = hooks;
+        }
 
         // Validate worktree path (only if explicitly set - default is always valid)
         if let Some(ref path) = config.worktree_path {
