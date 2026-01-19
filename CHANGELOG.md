@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.15.4
+
+### Improved
+
+- **Git progress for slow worktree creation**: When `git worktree add` takes more than 400ms (common on large repos), worktrunk now shows a progress message and streams git's output instead of going silent. ([#725](https://github.com/max-sixty/worktrunk/pull/725))
+- **Verbose template expansion output**: `-v` now shows template expansion details: the template, expanded command, and any undefined variables with SemiStrict fallback behavior. ([#712](https://github.com/max-sixty/worktrunk/pull/712))
+- **Shell integration hint for explicit path invocation**: When running wt via explicit path (e.g., `./target/debug/wt`) with shell integration configured, the warning now suggests running `wt switch <branch>` to use the shell-wrapped command. ([#721](https://github.com/max-sixty/worktrunk/pull/721))
+
+### Fixed
+
+- **Unsafe upstream when creating branch from remote base**: `wt switch --create feature --base=origin/main` no longer sets up tracking to origin/main, preventing accidental pushes to the base branch. Fixes [#713](https://github.com/max-sixty/worktrunk/issues/713). (thanks @kfirba)
+- **Credential redaction in debug logs**: URLs with embedded credentials (e.g., `https://token@github.com/...`) are now redacted in `-vv` debug output. ([#718](https://github.com/max-sixty/worktrunk/pull/718))
+- **Hook preview shows template on expansion failure**: `wt hook show --expanded` now displays both the error message and original template when expansion fails, instead of hiding the template. ([#722](https://github.com/max-sixty/worktrunk/pull/722))
+
+### Documentation
+
+- **Homebrew install uses core tap**: Install command updated from `max-sixty/worktrunk/wt` to `worktrunk`. ([#716](https://github.com/max-sixty/worktrunk/pull/716), thanks @chenrui333)
+- **Hook docs reordered**: post-start (background) is now the recommended default, with post-create for blocking dependencies. ([#733](https://github.com/max-sixty/worktrunk/pull/733))
+
+### Internal
+
+- Simplified GitHub/GitLab CI status detection. ([#730](https://github.com/max-sixty/worktrunk/pull/730))
+- Previous worktree gutter changed from `-` to `+` for visual consistency. ([#699](https://github.com/max-sixty/worktrunk/pull/699))
+
 ## 0.15.3
 
 ### Fixed

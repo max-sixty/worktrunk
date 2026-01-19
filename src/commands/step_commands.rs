@@ -343,8 +343,6 @@ pub enum RebaseResult {
 
 /// Handle shared rebase workflow (used by `wt step rebase` and `wt merge`)
 pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
-    use super::repository_ext::RepositoryCliExt;
-
     let repo = Repository::current()?;
 
     // Get and validate target ref (any commit-ish for rebase)

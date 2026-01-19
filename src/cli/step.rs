@@ -155,8 +155,8 @@ wt step squash --show-prompt | less
     ///
     /// Copies gitignored files to another worktree. By default copies all
     /// gitignored files; use `.worktreeinclude` to limit what gets copied.
-    /// Useful in post-create hooks to sync local config files (`.env`, IDE
-    /// settings) to new worktrees. Skips symlinks and existing files.
+    /// Useful in hooks to copy build caches and dependencies to new worktrees.
+    /// Skips symlinks and existing files.
     #[command(
         after_long_help = r#"Git worktrees share the repository but not untracked files. This command copies gitignored files to another worktree, eliminating cold starts.
 
@@ -166,7 +166,7 @@ Add to the project config:
 
 ```toml
 # .config/wt.toml
-[post-create]
+[post-start]
 copy = "wt step copy-ignored"
 ```
 
@@ -210,7 +210,7 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 
 Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
 
-If the files are needed before any commands run in the worktree, put `wt step copy-ignored` in the `post-create` hook. Otherwise use the `post-start` hook so the copy runs in the background.
+Use the `post-start` hook so the copy runs in the background. Use `post-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
 ## Language-specific notes
 

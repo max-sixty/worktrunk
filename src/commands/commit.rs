@@ -214,7 +214,6 @@ impl CommitOptions<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use worktrunk::config::CommitGenerationConfig;
 
     #[test]
     fn test_format_message_for_display_single_line() {

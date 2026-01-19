@@ -153,8 +153,7 @@ fn compute_less_flags(user_less: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::compute_less_flags;
-    use crate::pager::parse_pager_value;
+    use super::{compute_less_flags, parse_pager_value};
 
     #[test]
     fn test_validate_excludes_cat() {

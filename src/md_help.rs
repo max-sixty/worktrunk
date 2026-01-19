@@ -318,7 +318,7 @@ fn render_inline_formatting(line: &str) -> String {
 
 /// Add colors to status symbols in help text (matching wt list output colors)
 fn colorize_status_symbols(text: &str) -> String {
-    use anstyle::{AnsiColor, Color as AnsiStyleColor, Style};
+    use anstyle::Color as AnsiStyleColor;
 
     // Define semantic styles matching src/commands/list/model.rs StatusSymbols::styled_symbols
     let error = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Red)));
