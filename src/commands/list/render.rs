@@ -524,7 +524,7 @@ mod tests {
     use super::*;
     use crate::commands::list::layout::DiffDisplayConfig;
     use ansi_str::AnsiStr;
-    use worktrunk::styling::{ADDITION, DELETION, StyledLine};
+    use worktrunk::styling::{ADDITION, DELETION};
 
     fn format_diff_like_column(
         positive: usize,

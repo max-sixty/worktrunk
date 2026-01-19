@@ -124,9 +124,6 @@ fn is_worktrunk_managed_content(content: &str, cmd: &str) -> bool {
 ///
 /// Returns the paths of files that were cleaned up.
 fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<PathBuf> {
-    use worktrunk::path::format_path_for_display;
-    use worktrunk::styling::warning_message;
-
     let mut cleaned = Vec::new();
 
     // Clean up if fish was part of the install (regardless of whether it already existed)
@@ -719,8 +716,6 @@ pub fn prompt_for_install(
     cmd: &str,
     prompt_text: &str,
 ) -> Result<bool, String> {
-    use std::io::Write;
-
     // Flush before interactive prompt
     crate::output::flush().map_err(|e| e.to_string())?;
 
@@ -759,7 +754,6 @@ pub fn prompt_for_install(
 /// Prompt user for yes/no confirmation (simple [y/N] prompt)
 fn prompt_yes_no() -> Result<bool, String> {
     use anstyle::Style;
-    use std::io::Write;
     use worktrunk::styling::eprint;
 
     let bold = Style::new().bold();
