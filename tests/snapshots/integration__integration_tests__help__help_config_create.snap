@@ -16,6 +16,7 @@ info:
     TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "999999"
 ---
 success: true
 exit_code: 0
@@ -142,11 +143,14 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# # Example:
   [2m# # pager = "delta --paging=never"
   [2m#
-  [2m# ### Approved commands
+  [2m# ### Per-project settings
   [2m#
-  [2m# Commands approved for project hooks. Auto-populated when approving hooks on first run, or via `wt hook approvals add`.
+  [2m# Per-project user settings, keyed by project identifier (e.g., `github.com/user/repo`).
   [2m#
   [2m# [projects."github.com/user/repo"]
+  [2m# # Override worktree-path for this project (uses global template if not set)
+  [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"
+  [2m# # Commands approved for project hooks (auto-populated when approving hooks)
   [2m# approved-commands = ["npm ci", "npm test"]
   [2m#
   [2m# For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see `wt hook` docs (https://worktrunk.dev/hook/).

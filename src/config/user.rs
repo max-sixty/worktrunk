@@ -255,6 +255,7 @@ impl CommitGenerationConfig {
 /// # TOML Format
 /// ```toml
 /// [projects."github.com/user/repo"]
+/// worktree-path = ".worktrees/{{ branch | sanitize }}"
 /// approved-commands = ["npm install", "npm test"]
 /// ```
 ///
@@ -265,6 +266,14 @@ impl CommitGenerationConfig {
 /// - project-specific hooks
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct UserProjectConfig {
+    /// Worktree path template for this project (overrides global worktree-path)
+    #[serde(
+        rename = "worktree-path",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub worktree_path: Option<String>,
+
     /// Commands that have been approved for automatic execution in this project
     #[serde(
         default,
@@ -367,6 +376,17 @@ impl WorktrunkConfig {
         self.worktree_path.is_some()
     }
 
+    /// Returns the worktree path template for a specific project.
+    ///
+    /// Checks project-specific config first, falls back to global worktree-path,
+    /// and finally to the default template if neither is set.
+    pub fn worktree_path_for_project(&self, project: &str) -> String {
+        self.projects
+            .get(project)
+            .and_then(|p| p.worktree_path.clone())
+            .unwrap_or_else(|| self.worktree_path())
+    }
+
     /// Load configuration from config file and environment variables.
     ///
     /// Configuration is loaded in the following order (later sources override earlier ones):
@@ -435,6 +455,22 @@ impl WorktrunkConfig {
             }
         }
 
+        // Validate per-project worktree paths
+        for (project, project_config) in &config.projects {
+            if let Some(ref path) = project_config.worktree_path {
+                if path.is_empty() {
+                    return Err(ConfigError::Message(format!(
+                        "projects.{project}.worktree-path cannot be empty"
+                    )));
+                }
+                if std::path::Path::new(path).is_absolute() {
+                    return Err(ConfigError::Message(format!(
+                        "projects.{project}.worktree-path must be relative, not absolute"
+                    )));
+                }
+            }
+        }
+
         // Validate commit generation config
         if config.commit_generation.template.is_some()
             && config.commit_generation.template_file.is_some()
@@ -461,18 +497,25 @@ impl WorktrunkConfig {
     /// * `main_worktree` - Main worktree directory name (replaces {{ main_worktree }} in template)
     /// * `branch` - Branch name (replaces {{ branch }} in template; use `{{ branch | sanitize }}` for paths)
     /// * `repo` - Repository for template function access
+    /// * `project` - Optional project identifier (e.g., "github.com/user/repo") to look up
+    ///   project-specific worktree-path template
     pub fn format_path(
         &self,
         main_worktree: &str,
         branch: &str,
         repo: &crate::git::Repository,
+        project: Option<&str>,
     ) -> Result<String, String> {
         use std::collections::HashMap;
+        let template = match project {
+            Some(p) => self.worktree_path_for_project(p),
+            None => self.worktree_path(),
+        };
         let mut vars = HashMap::new();
         vars.insert("main_worktree", main_worktree);
         vars.insert("repo", main_worktree);
         vars.insert("branch", branch);
-        expand_template(&self.worktree_path(), &vars, false, repo, "worktree-path")
+        expand_template(&template, &vars, false, repo, "worktree-path")
     }
 
     /// Execute a mutation under an exclusive file lock.
@@ -732,6 +775,15 @@ impl WorktrunkConfig {
                     if !projects.contains_key(project_id) {
                         projects[project_id] = toml_edit::Item::Table(toml_edit::Table::new());
                     }
+
+                    // worktree-path (only if set)
+                    if let Some(ref path) = project_config.worktree_path {
+                        projects[project_id]["worktree-path"] = toml_edit::value(path);
+                    } else if let Some(table) = projects[project_id].as_table_mut() {
+                        table.remove("worktree-path");
+                    }
+
+                    // approved-commands
                     let commands =
                         Self::format_multiline_array(project_config.approved_commands.iter());
                     projects[project_id]["approved-commands"] = toml_edit::value(commands);
@@ -767,6 +819,13 @@ impl WorktrunkConfig {
                 projects_table.set_implicit(true); // Don't emit [projects] header
                 for (project_id, project_config) in &self.projects {
                     let mut table = toml_edit::Table::new();
+
+                    // worktree-path (only if set)
+                    if let Some(ref path) = project_config.worktree_path {
+                        table["worktree-path"] = toml_edit::value(path);
+                    }
+
+                    // approved-commands
                     let commands =
                         Self::format_multiline_array(project_config.approved_commands.iter());
                     table["approved-commands"] = toml_edit::value(commands);
@@ -974,7 +1033,109 @@ rename-tab = "echo 'switched'"
     #[test]
     fn test_user_project_config_default() {
         let config = UserProjectConfig::default();
+        assert!(config.worktree_path.is_none());
         assert!(config.approved_commands.is_empty());
+    }
+
+    #[test]
+    fn test_user_project_config_with_worktree_path_serde() {
+        let config = UserProjectConfig {
+            worktree_path: Some(".worktrees/{{ branch | sanitize }}".to_string()),
+            approved_commands: vec!["npm install".to_string()],
+        };
+        let toml = toml::to_string(&config).unwrap();
+        assert!(toml.contains("worktree-path"));
+        assert!(toml.contains(".worktrees/{{ branch | sanitize }}"));
+
+        let parsed: UserProjectConfig = toml::from_str(&toml).unwrap();
+        assert_eq!(
+            parsed.worktree_path,
+            Some(".worktrees/{{ branch | sanitize }}".to_string())
+        );
+        assert_eq!(parsed.approved_commands, vec!["npm install".to_string()]);
+    }
+
+    #[test]
+    fn test_worktree_path_for_project_uses_project_specific() {
+        let mut config = WorktrunkConfig::default();
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectConfig {
+                worktree_path: Some(".worktrees/{{ branch | sanitize }}".to_string()),
+                approved_commands: vec![],
+            },
+        );
+
+        // Project-specific path should be used
+        assert_eq!(
+            config.worktree_path_for_project("github.com/user/repo"),
+            ".worktrees/{{ branch | sanitize }}"
+        );
+    }
+
+    #[test]
+    fn test_worktree_path_for_project_falls_back_to_global() {
+        let mut config = WorktrunkConfig {
+            worktree_path: Some("../{{ repo }}-{{ branch | sanitize }}".to_string()),
+            ..Default::default()
+        };
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectConfig {
+                worktree_path: None, // No project-specific path
+                approved_commands: vec!["npm install".to_string()],
+            },
+        );
+
+        // Should fall back to global worktree-path
+        assert_eq!(
+            config.worktree_path_for_project("github.com/user/repo"),
+            "../{{ repo }}-{{ branch | sanitize }}"
+        );
+    }
+
+    #[test]
+    fn test_worktree_path_for_project_falls_back_to_default() {
+        let config = WorktrunkConfig::default();
+
+        // Unknown project should fall back to default template
+        assert_eq!(
+            config.worktree_path_for_project("github.com/unknown/project"),
+            "../{{ repo }}.{{ branch | sanitize }}"
+        );
+    }
+
+    #[test]
+    fn test_format_path_with_project_override() {
+        let test = test_repo();
+        let mut config = WorktrunkConfig {
+            worktree_path: Some("../{{ repo }}.{{ branch | sanitize }}".to_string()),
+            ..Default::default()
+        };
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectConfig {
+                worktree_path: Some(".worktrees/{{ branch | sanitize }}".to_string()),
+                approved_commands: vec![],
+            },
+        );
+
+        // With project identifier, should use project-specific template
+        let path = config
+            .format_path(
+                "myrepo",
+                "feature/branch",
+                &test.repo,
+                Some("github.com/user/repo"),
+            )
+            .unwrap();
+        assert_eq!(path, ".worktrees/feature-branch");
+
+        // Without project identifier, should use global template
+        let path = config
+            .format_path("myrepo", "feature/branch", &test.repo, None)
+            .unwrap();
+        assert_eq!(path, "../myrepo.feature-branch");
     }
 
     #[test]
@@ -1029,6 +1190,7 @@ rename-tab = "echo 'switched'"
             "github.com/user/repo".to_string(),
             UserProjectConfig {
                 approved_commands: vec!["npm install".to_string(), "npm test".to_string()],
+                ..Default::default()
             },
         );
         assert!(config.is_command_approved("github.com/user/repo", "npm install"));
@@ -1047,6 +1209,7 @@ rename-tab = "echo 'switched'"
                 approved_commands: vec![
                     "ln -sf {{ repo_root }}/node_modules".to_string(), // old var
                 ],
+                ..Default::default()
             },
         );
 
@@ -1073,6 +1236,7 @@ rename-tab = "echo 'switched'"
                 approved_commands: vec![
                     "cd {{ worktree_path }} && npm install".to_string(), // new var
                 ],
+                ..Default::default()
             },
         );
 
@@ -1092,6 +1256,7 @@ rename-tab = "echo 'switched'"
                 approved_commands: vec![
                     "ln -sf {{ repo_root }}/modules {{ worktree }}/modules".to_string(),
                 ],
+                ..Default::default()
             },
         );
 
@@ -1113,7 +1278,7 @@ rename-tab = "echo 'switched'"
         let test = test_repo();
         let config = WorktrunkConfig::default();
         let path = config
-            .format_path("myrepo", "feature/branch", &test.repo)
+            .format_path("myrepo", "feature/branch", &test.repo, None)
             .unwrap();
         assert_eq!(path, "../myrepo.feature-branch");
     }
@@ -1125,7 +1290,9 @@ rename-tab = "echo 'switched'"
             worktree_path: Some(".worktrees/{{ branch }}".to_string()),
             ..Default::default()
         };
-        let path = config.format_path("myrepo", "feature", &test.repo).unwrap();
+        let path = config
+            .format_path("myrepo", "feature", &test.repo, None)
+            .unwrap();
         assert_eq!(path, ".worktrees/feature");
     }
 

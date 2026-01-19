@@ -1597,12 +1597,15 @@ Pager behavior for `wt select` diff previews.
 # pager = "delta --paging=never"
 ```
 
-### Approved commands
+### Per-project settings
 
-Commands approved for project hooks. Auto-populated when approving hooks on first run, or via `wt hook approvals add`.
+Per-project user settings, keyed by project identifier (e.g., `github.com/user/repo`).
 
 ```toml
 [projects."github.com/user/repo"]
+# Override worktree-path for this project (uses global template if not set)
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+# Commands approved for project hooks (auto-populated when approving hooks)
 approved-commands = ["npm ci", "npm test"]
 ```
 

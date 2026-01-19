@@ -15,6 +15,7 @@ info:
     TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "999999"
 ---
 success: true
 exit_code: 0
@@ -169,11 +170,14 @@ Pager behavior for [2mwt select[0m diff previews.
   [2m# Example:
   [2m# pager = "delta --paging=never"
 
-[32mApproved commands
+[32mPer-project settings
 
-Commands approved for project hooks. Auto-populated when approving hooks on first run, or via [2mwt hook approvals add[0m.
+Per-project user settings, keyed by project identifier (e.g., [2mgithub.com/user/repo[0m).
 
   [2m[projects."github.com/user/repo"]
+  [2m# Override worktree-path for this project (uses global template if not set)
+  [2mworktree-path = ".worktrees/{{ branch | sanitize }}"
+  [2m# Commands approved for project hooks (auto-populated when approving hooks)
   [2mapproved-commands = ["npm ci", "npm test"]
 
 For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at [2m<repo>/.config/wt.toml[0m. Run [2mwt config create --project[0m to create one, or see [2mwt hook[0m docs.
