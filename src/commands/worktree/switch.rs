@@ -393,7 +393,8 @@ fn setup_fork_branch(
     label: &str,
 ) -> anyhow::Result<()> {
     // Create local branch from FETCH_HEAD
-    repo.run_command(&["branch", branch, "FETCH_HEAD"])
+    // Use -- to prevent branch names starting with - from being interpreted as flags
+    repo.run_command(&["branch", "--", branch, "FETCH_HEAD"])
         .with_context(|| format!("Failed to create local branch '{}' from {}", branch, label))?;
 
     // Configure branch tracking for pull and push
@@ -660,7 +661,8 @@ pub fn execute_switch(
                     if let Err(e) = setup_result {
                         // Cleanup: try to delete the branch if it was created
                         // (ignore errors - branch may not exist if creation failed)
-                        let _ = repo.run_command(&["branch", "-D", &branch]);
+                        // Use -- to prevent branch names starting with - from being interpreted as flags
+                        let _ = repo.run_command(&["branch", "-D", "--", &branch]);
                         return Err(e);
                     }
 
@@ -709,7 +711,8 @@ pub fn execute_switch(
                     if let Err(e) = setup_result {
                         // Cleanup: try to delete the branch if it was created
                         // (ignore errors - branch may not exist if creation failed)
-                        let _ = repo.run_command(&["branch", "-D", &branch]);
+                        // Use -- to prevent branch names starting with - from being interpreted as flags
+                        let _ = repo.run_command(&["branch", "-D", "--", &branch]);
                         return Err(e);
                     }
 
