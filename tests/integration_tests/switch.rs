@@ -2358,3 +2358,71 @@ fn test_switch_mr_fork_existing_branch_tracks_different(#[from(repo_with_remote)
         assert_cmd_snapshot!("switch_mr_fork_existing_branch_tracks_different", cmd);
     });
 }
+
+/// Test fork MR checkout when branch exists but has no tracking config
+#[rstest]
+fn test_switch_mr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create the branch without any tracking config
+    repo.run_git(&["branch", "feature-fix", "main"]);
+    // No config set - branch exists but doesn't track anything
+
+    // Set origin URL to GitLab-style
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    // Fork MR response
+    let glab_response = r#"{
+        "source_branch": "feature-fix",
+        "source_project_id": 456,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42",
+        "source_project": {
+            "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
+            "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
+        },
+        "target_project": {
+            "ssh_url_to_repo": "git@gitlab.com:owner/test-repo.git",
+            "http_url_to_repo": "https://gitlab.com/owner/test-repo.git"
+        }
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_fork_existing_no_tracking", cmd);
+    });
+}
+
+/// Test mr: with unknown glab error (falls through to general error handler)
+#[rstest]
+fn test_switch_mr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "glab");
+
+    // Configure glab mr to return an unknown error
+    MockConfig::new("glab")
+        .version("glab version 1.40.0 (mock)")
+        .command(
+            "mr",
+            MockResponse::stderr("glab: unexpected internal error: something went wrong")
+                .with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_unknown_error", cmd);
+    });
+}
