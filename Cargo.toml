@@ -125,7 +125,7 @@ nix = { version = "0.30", default-features = false, features = ["process", "sign
 signal-hook = "0.4"
 
 [build-dependencies]
-vergen-gitcl = { version = "1.0.8", features = ["build"] }
+vergen-gitcl = { version = "9.1.0", features = ["build"] }
 
 [dev-dependencies]
 insta = { version = "1.46.1", features = ["yaml", "redactions", "filters"] }
