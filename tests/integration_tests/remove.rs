@@ -4,6 +4,7 @@ use crate::common::{
     setup_temp_snapshot_settings, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
+use path_slash::PathExt as _;
 use rstest::rstest;
 use std::time::Duration; // For absence checks (SLEEP_FOR_ABSENCE_CHECK pattern)
 
@@ -1165,7 +1166,7 @@ fn test_pre_remove_hook_runs_in_background_mode(mut repo: TestRepo) {
     // Create project config with hook that creates a file
     repo.write_project_config(&format!(
         r#"pre-remove = "echo 'hook ran' > {}""#,
-        marker_file.to_string_lossy().replace('\\', "/")
+        marker_file.to_slash_lossy()
     ));
     repo.commit("Add config");
 
@@ -1176,7 +1177,7 @@ fn test_pre_remove_hook_runs_in_background_mode(mut repo: TestRepo) {
 [projects."../origin"]
 approved-commands = ["echo 'hook ran' > {}"]
 "#,
-        marker_file.to_string_lossy().replace('\\', "/")
+        marker_file.to_slash_lossy()
     ));
 
     // Create a worktree to remove
@@ -1289,7 +1290,7 @@ fn test_pre_remove_hook_not_for_branch_only(repo: TestRepo) {
     // Create project config with hook
     repo.write_project_config(&format!(
         r#"pre-remove = "echo 'hook ran' > {}""#,
-        marker_file.to_string_lossy().replace('\\', "/")
+        marker_file.to_slash_lossy()
     ));
     repo.commit("Add config");
 
@@ -1300,7 +1301,7 @@ fn test_pre_remove_hook_not_for_branch_only(repo: TestRepo) {
 [projects."../origin"]
 approved-commands = ["echo 'hook ran' > {}"]
 "#,
-        marker_file.to_string_lossy().replace('\\', "/")
+        marker_file.to_slash_lossy()
     ));
 
     // Create a branch without a worktree
@@ -1334,7 +1335,7 @@ fn test_pre_remove_hook_skipped_with_no_verify(mut repo: TestRepo) {
     // Create project config with hook that creates a file
     repo.write_project_config(&format!(
         r#"pre-remove = "echo 'hook ran' > {}""#,
-        marker_file.to_string_lossy().replace('\\', "/")
+        marker_file.to_slash_lossy()
     ));
     repo.commit("Add config");
 
@@ -1345,7 +1346,7 @@ fn test_pre_remove_hook_skipped_with_no_verify(mut repo: TestRepo) {
 [projects."../origin"]
 approved-commands = ["echo 'hook ran' > {}"]
 "#,
-        marker_file.to_string_lossy().replace('\\', "/")
+        marker_file.to_slash_lossy()
     ));
 
     // Create a worktree to remove
@@ -1389,7 +1390,7 @@ fn test_pre_remove_hook_runs_for_detached_head(mut repo: TestRepo) {
     // Use short filename to avoid terminal line-wrapping differences between platforms
     // (macOS temp paths are ~60 chars vs Linux ~20 chars, affecting wrap points)
     let marker_file = repo.root_path().join("m.txt");
-    let marker_path = marker_file.to_string_lossy().replace('\\', "/");
+    let marker_path = marker_file.to_slash_lossy();
 
     // Create project config with pre-remove hook that creates a marker file
     repo.write_project_config(&format!(r#"pre-remove = "touch {marker_path}""#,));
@@ -1432,7 +1433,7 @@ fn test_pre_remove_hook_runs_for_detached_head_background(mut repo: TestRepo) {
     let marker_file = repo.root_path().join("detached-bg-hook-marker.txt");
 
     // Create project config with pre-remove hook that creates a marker file
-    let marker_path = marker_file.to_string_lossy().replace('\\', "/");
+    let marker_path = marker_file.to_slash_lossy();
     repo.write_project_config(&format!(r#"pre-remove = "touch {marker_path}""#,));
     repo.commit("Add config");
 
@@ -1478,7 +1479,7 @@ approved-commands = ["touch {marker_path}"]
 fn test_pre_remove_hook_branch_expansion_detached_head(mut repo: TestRepo) {
     // Create a file where the hook will write the branch template expansion
     let branch_file = repo.root_path().join("branch-expansion.txt");
-    let branch_path = branch_file.to_string_lossy().replace('\\', "/");
+    let branch_path = branch_file.to_slash_lossy();
 
     // Create project config with hook that writes {{ branch }} to file
     repo.write_project_config(&format!(
