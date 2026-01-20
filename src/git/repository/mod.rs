@@ -65,6 +65,10 @@ pub(super) use working_tree::path_to_logging_context;
 #[derive(Debug, Default)]
 pub(super) struct RepoCache {
     // ========== Repo-wide values (same for all worktrees) ==========
+    /// Whether this is a bare repository
+    pub(super) is_bare: OnceCell<bool>,
+    /// Repository root path (main worktree for normal repos, bare directory for bare repos)
+    pub(super) repo_path: OnceCell<PathBuf>,
     /// Default branch (main, master, etc.)
     pub(super) default_branch: OnceCell<Option<String>>,
     /// Invalid default branch config (user configured a branch that doesn't exist).
@@ -164,11 +168,6 @@ pub struct Repository {
     discovery_path: PathBuf,
     /// The shared .git directory, computed at construction time.
     git_common_dir: PathBuf,
-    /// Whether this is a bare repository, computed at construction time.
-    is_bare: bool,
-    /// Repository root path, computed at construction time.
-    /// For normal repos: parent of git_common_dir. For bare repos: git_common_dir itself.
-    repo_path: PathBuf,
     /// Cached data for this repository. Shared across clones via Arc.
     pub(super) cache: Arc<RepoCache>,
 }
@@ -199,23 +198,11 @@ impl Repository {
     /// use [`Repository::worktree_at()`] instead.
     pub fn at(path: impl Into<PathBuf>) -> anyhow::Result<Self> {
         let discovery_path = path.into();
-        let (git_common_dir, is_bare) = Self::resolve_repo_info(&discovery_path)?;
-
-        // Compute repo_path from git_common_dir and is_bare
-        let repo_path = if is_bare {
-            git_common_dir.clone()
-        } else {
-            git_common_dir
-                .parent()
-                .context("Git directory has no parent")?
-                .to_path_buf()
-        };
+        let git_common_dir = Self::resolve_git_common_dir(&discovery_path)?;
 
         Ok(Self {
             discovery_path,
             git_common_dir,
-            is_bare,
-            repo_path,
             cache: Arc::new(RepoCache::default()),
         })
     }
@@ -230,48 +217,28 @@ impl Repository {
         Arc::ptr_eq(&self.cache, &other.cache)
     }
 
-    /// Resolve git common directory and bare status.
-    ///
-    /// Note: We need two git calls because `--is-bare-repository` returns false when
-    /// run from a worktree of a bare repo. We first get git_common_dir, then check
-    /// is_bare from there.
-    fn resolve_repo_info(discovery_path: &Path) -> anyhow::Result<(PathBuf, bool)> {
-        // First, get the git common directory
+    /// Resolve the git common directory for a path.
+    fn resolve_git_common_dir(discovery_path: &Path) -> anyhow::Result<PathBuf> {
         let output = Cmd::new("git")
             .args(["rev-parse", "--git-common-dir"])
             .current_dir(discovery_path)
             .context(path_to_logging_context(discovery_path))
             .run()
-            .context("Failed to execute: git rev-parse")?;
+            .context("Failed to execute: git rev-parse --git-common-dir")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             bail!("{}", stderr.trim());
         }
 
-        let git_common_dir_raw = String::from_utf8_lossy(&output.stdout);
-        let git_common_dir_path = PathBuf::from(git_common_dir_raw.trim());
-        let git_common_dir = if git_common_dir_path.is_relative() {
-            canonicalize(discovery_path.join(&git_common_dir_path))
-                .context("Failed to resolve git common directory")?
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let path = PathBuf::from(stdout.trim());
+        if path.is_relative() {
+            canonicalize(discovery_path.join(&path))
+                .context("Failed to resolve git common directory")
         } else {
-            git_common_dir_path
-        };
-
-        // Now check is_bare from the git_common_dir itself, not the discovery path.
-        // This is important for worktrees of bare repos: running from the worktree
-        // returns false, but running from the bare repo returns true.
-        let output = Cmd::new("git")
-            .args(["rev-parse", "--is-bare-repository"])
-            .current_dir(&git_common_dir)
-            .context(path_to_logging_context(&git_common_dir))
-            .run()
-            .context("Failed to check if repository is bare")?;
-
-        let is_bare =
-            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true";
-
-        Ok((git_common_dir, is_bare))
+            Ok(path)
+        }
     }
 
     /// Get the path this repository was discovered from.
@@ -355,9 +322,18 @@ impl Repository {
     /// This is the base for template expansion (`{{ repo }}`, `{{ repo_path }}`).
     /// NOT necessarily where established files live — use `primary_worktree()` for that.
     ///
-    /// Computed at construction time from `git rev-parse --git-common-dir`.
+    /// Result is cached in the repository's shared cache (same for all clones).
     pub fn repo_path(&self) -> &Path {
-        &self.repo_path
+        self.cache.repo_path.get_or_init(|| {
+            if self.is_bare() {
+                self.git_common_dir.clone()
+            } else {
+                self.git_common_dir
+                    .parent()
+                    .expect("Git directory has no parent")
+                    .to_path_buf()
+            }
+        })
     }
 
     /// Check if this is a bare repository (no working tree).
@@ -365,9 +341,22 @@ impl Repository {
     /// Bare repositories have no main worktree — all worktrees are linked
     /// worktrees at templated paths, including the default branch.
     ///
-    /// Computed at construction time from `git rev-parse --is-bare-repository`.
+    /// Result is cached in the repository's shared cache (same for all clones).
+    /// Runs `git rev-parse --is-bare-repository` from git_common_dir to correctly
+    /// detect bare repos even when called from a linked worktree.
     pub fn is_bare(&self) -> bool {
-        self.is_bare
+        *self.cache.is_bare.get_or_init(|| {
+            // Run from git_common_dir, not discovery_path. This is important for
+            // worktrees of bare repos: running from the worktree returns false,
+            // but running from the bare repo returns true.
+            let output = Cmd::new("git")
+                .args(["rev-parse", "--is-bare-repository"])
+                .current_dir(&self.git_common_dir)
+                .context(path_to_logging_context(&self.git_common_dir))
+                .run()
+                .expect("git rev-parse failed on valid repo");
+            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
+        })
     }
 
     /// Check if git's builtin fsmonitor daemon is enabled.
@@ -521,13 +510,14 @@ impl Repository {
 
     /// Delay before showing progress output for slow operations.
     /// See .claude/rules/cli-output-formatting.md: "Progress messages apply only to slow operations (>400ms)"
-    pub const SLOW_OPERATION_DELAY_MS: u64 = 400;
+    pub const SLOW_OPERATION_DELAY_MS: i64 = 400;
 
     /// Run a git command with delayed output streaming.
     ///
     /// Buffers output initially, then streams if the command takes longer than
     /// `delay_ms`. This provides a quiet experience for fast operations while
     /// still showing progress for slow ones (like `worktree add` on large repos).
+    /// Pass `-1` to never switch to streaming (always buffer).
     ///
     /// If `progress_message` is provided, it will be printed to stderr when
     /// streaming starts (i.e., when the delay threshold is exceeded).
@@ -537,7 +527,7 @@ impl Repository {
     pub fn run_command_delayed_stream(
         &self,
         args: &[&str],
-        delay_ms: u64,
+        delay_ms: i64,
         progress_message: Option<String>,
     ) -> anyhow::Result<()> {
         use std::io::{BufRead, BufReader, Write};
@@ -547,7 +537,7 @@ impl Repository {
         use std::thread;
         use std::time::{Duration, Instant};
 
-        // Allow tests to override delay threshold (e.g., 0 to force immediate streaming)
+        // Allow tests to override delay threshold (-1 to disable, 0 for immediate)
         let delay_ms = std::env::var("WT_TEST_DELAYED_STREAM_MS")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -612,7 +602,6 @@ impl Repository {
         };
 
         let start = Instant::now();
-        let delay = Duration::from_millis(delay_ms);
 
         loop {
             match child.try_wait() {
@@ -636,8 +625,11 @@ impl Repository {
                     }
                 }
                 Ok(None) => {
-                    // Still running - check if we should switch to streaming
-                    if !streaming.load(Ordering::Relaxed) && start.elapsed() >= delay {
+                    // Still running - check if we should switch to streaming (skip if delay_ms < 0)
+                    if delay_ms >= 0
+                        && !streaming.load(Ordering::Relaxed)
+                        && start.elapsed() >= Duration::from_millis(delay_ms as u64)
+                    {
                         streaming.store(true, Ordering::Relaxed);
 
                         if let Some(ref msg) = progress_message {
