@@ -528,10 +528,20 @@ fn use_ssh_protocol() -> bool {
 /// Uses `gh config get git_protocol` to determine SSH vs HTTPS preference.
 pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
     if use_ssh_protocol() {
-        format!("git@{}:{}/{}.git", host, owner, repo)
+        fork_remote_url_ssh(host, owner, repo)
     } else {
-        format!("https://{}/{}/{}.git", host, owner, repo)
+        fork_remote_url_https(host, owner, repo)
     }
+}
+
+/// Construct an SSH-format remote URL.
+fn fork_remote_url_ssh(host: &str, owner: &str, repo: &str) -> String {
+    format!("git@{}:{}/{}.git", host, owner, repo)
+}
+
+/// Construct an HTTPS-format remote URL.
+fn fork_remote_url_https(host: &str, owner: &str, repo: &str) -> String {
+    format!("https://{}/{}/{}.git", host, owner, repo)
 }
 
 /// Check if a branch is tracking a specific PR.
@@ -610,6 +620,29 @@ mod tests {
         assert!(
             url == "git@github.example.com:contributor/repo.git"
                 || url == "https://github.example.com/contributor/repo.git"
+        );
+    }
+
+    #[test]
+    fn test_fork_remote_url_formats() {
+        // Test SSH format explicitly
+        assert_eq!(
+            fork_remote_url_ssh("github.com", "contributor", "repo"),
+            "git@github.com:contributor/repo.git"
+        );
+        assert_eq!(
+            fork_remote_url_ssh("github.example.com", "org", "project"),
+            "git@github.example.com:org/project.git"
+        );
+
+        // Test HTTPS format explicitly
+        assert_eq!(
+            fork_remote_url_https("github.com", "contributor", "repo"),
+            "https://github.com/contributor/repo.git"
+        );
+        assert_eq!(
+            fork_remote_url_https("github.example.com", "org", "project"),
+            "https://github.example.com/org/project.git"
         );
     }
 }
