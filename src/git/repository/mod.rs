@@ -18,7 +18,7 @@
 
 use crate::shell_exec::Cmd;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
@@ -118,8 +118,11 @@ pub enum ResolvedWorktree {
     },
 }
 
-/// Global base path for repository operations, set by -C flag
+/// Global base path for repository operations, set by -C flag.
 static BASE_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Default base path when -C flag is not provided.
+static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."));
 
 /// Initialize the global base path for repository operations.
 ///
@@ -131,10 +134,7 @@ pub fn set_base_path(path: PathBuf) {
 
 /// Get the base path for repository operations.
 fn base_path() -> &'static PathBuf {
-    static DEFAULT: OnceLock<PathBuf> = OnceLock::new();
-    BASE_PATH
-        .get()
-        .unwrap_or_else(|| DEFAULT.get_or_init(|| PathBuf::from(".")))
+    BASE_PATH.get().unwrap_or(&DEFAULT_BASE_PATH)
 }
 
 /// Repository state for git operations.

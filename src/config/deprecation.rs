@@ -19,11 +19,12 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 /// Tracks which config paths have already shown deprecation warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
-static WARNED_PATHS: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+static WARNED_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// Hint name for project config deprecation warnings
 const HINT_DEPRECATED_PROJECT_CONFIG: &str = "deprecated-project-config";
@@ -179,11 +180,10 @@ pub fn check_and_migrate(
     let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     {
         let mut guard = WARNED_PATHS.lock().unwrap();
-        let warned = guard.get_or_insert_with(HashSet::new);
-        if warned.contains(&canonical_path) {
+        if guard.contains(&canonical_path) {
             return Ok(true); // Already warned, skip
         }
-        warned.insert(canonical_path.clone());
+        guard.insert(canonical_path.clone());
     }
 
     // Build the .new path: "config.toml" -> "config.toml.new"
