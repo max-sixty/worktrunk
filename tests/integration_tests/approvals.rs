@@ -3,7 +3,7 @@
 use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 
 /// Helper to snapshot add-approvals command
 fn snapshot_add_approvals(test_name: &str, repo: &TestRepo, args: &[&str]) {
@@ -69,7 +69,7 @@ fn test_clear_approvals_with_approvals(repo: TestRepo) {
     repo.commit("Add config");
 
     // Manually approve the command by writing to test config
-    let mut config = WorktrunkConfig::default();
+    let mut config = UserConfig::default();
     config
         .approve_command(
             project_id,
@@ -97,7 +97,7 @@ fn test_clear_approvals_global_with_approvals(repo: TestRepo) {
     repo.commit("Add config");
 
     // Manually approve the command
-    let mut config = WorktrunkConfig::default();
+    let mut config = UserConfig::default();
     config
         .approve_command(
             project_id,
@@ -124,7 +124,7 @@ fn test_clear_approvals_after_clear(repo: TestRepo) {
     repo.commit("Add config");
 
     // Manually approve the command
-    let mut config = WorktrunkConfig::default();
+    let mut config = UserConfig::default();
     config
         .approve_command(
             project_id.clone(),
@@ -158,7 +158,7 @@ lint = "echo 'third'"
 
     // Manually approve all commands
     let project_id = format!("{}/origin", repo.root_path().display());
-    let mut config = WorktrunkConfig::default();
+    let mut config = UserConfig::default();
     config
         .approve_command(
             project_id.clone(),
@@ -197,7 +197,7 @@ fn test_add_approvals_all_already_approved(repo: TestRepo) {
     repo.commit("Add config");
 
     // Manually approve the command
-    let mut config = WorktrunkConfig::default();
+    let mut config = UserConfig::default();
     config
         .approve_command(
             project_id,

@@ -212,7 +212,7 @@ pub fn collect(
     skip_tasks: &std::collections::HashSet<TaskKind>,
     show_progress: bool,
     render_table: bool,
-    config: &worktrunk::config::WorktrunkConfig,
+    config: &worktrunk::config::UserConfig,
     command_timeout: Option<std::time::Duration>,
     skip_expensive_for_stale: bool,
 ) -> anyhow::Result<Option<super::model::ListData>> {

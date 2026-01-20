@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use worktrunk::HookType;
-use worktrunk::config::{Command, CommandConfig, WorktrunkConfig, expand_template};
+use worktrunk::config::{Command, CommandConfig, UserConfig, expand_template};
 use worktrunk::git::Repository;
 use worktrunk::path::to_posix_path;
 
@@ -17,7 +17,7 @@ pub struct PreparedCommand {
 #[derive(Clone, Copy, Debug)]
 pub struct CommandContext<'a> {
     pub repo: &'a Repository,
-    pub config: &'a WorktrunkConfig,
+    pub config: &'a UserConfig,
     /// Current branch name, if on a branch (None in detached HEAD state).
     pub branch: Option<&'a str>,
     pub worktree_path: &'a Path,
@@ -28,7 +28,7 @@ pub struct CommandContext<'a> {
 impl<'a> CommandContext<'a> {
     pub fn new(
         repo: &'a Repository,
-        config: &'a WorktrunkConfig,
+        config: &'a UserConfig,
         branch: Option<&'a str>,
         worktree_path: &'a Path,
         repo_root: &'a Path,

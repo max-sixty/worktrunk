@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use color_print::cformat;
 use normalize_path::NormalizePath;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::{GitError, Repository, ResolvedWorktree};
 
 use super::types::ResolutionContext;
@@ -27,7 +27,7 @@ use super::types::ResolutionContext;
 pub fn resolve_worktree_arg(
     repo: &Repository,
     name: &str,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
     context: ResolutionContext,
 ) -> anyhow::Result<ResolvedWorktree> {
     // Special symbols - delegate to Repository for consistent error handling
@@ -76,7 +76,7 @@ pub fn resolve_worktree_arg(
 pub fn compute_worktree_path(
     repo: &Repository,
     branch: &str,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
 ) -> anyhow::Result<PathBuf> {
     let repo_root = repo.repo_path()?;
     let default_branch = repo.default_branch().unwrap_or_default();
@@ -116,7 +116,7 @@ pub fn compute_worktree_path(
 pub fn is_worktree_at_expected_path(
     wt: &worktrunk::git::WorktreeInfo,
     repo: &Repository,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
 ) -> bool {
     match &wt.branch {
         Some(branch) => compute_worktree_path(repo, branch, config)
@@ -144,7 +144,7 @@ pub fn get_path_mismatch(
     repo: &Repository,
     branch: &str,
     actual_path: &std::path::Path,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
 ) -> Option<PathBuf> {
     compute_worktree_path(repo, branch, config)
         .ok()
@@ -163,7 +163,7 @@ pub fn get_path_mismatch(
 pub fn worktree_display_name(
     wt: &worktrunk::git::WorktreeInfo,
     repo: &Repository,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
 ) -> String {
     let dir_name = wt.dir_name();
 
