@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::Context;
 use color_print::cformat;
 use dunce::canonicalize;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::pr_ref::fork_remote_url;
 use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{
@@ -111,7 +111,30 @@ fn resolve_switch_target(
                 },
             });
         } else {
-            // Same-repo PR: just use the branch name, regular switch
+            // Same-repo PR: fetch the branch to ensure remote refs are up-to-date.
+            // The branch exists on GitHub (per the API), but local refs may be stale.
+            // Use find_remote_for_repo (not primary_remote) because the PR's repo might
+            // be on a different remote (e.g., upstream vs origin in fork workflows).
+            let remote = repo
+                .find_remote_for_repo(&pr_info.base_owner, &pr_info.base_repo)
+                .ok_or_else(|| {
+                    // Use PR's URL as reference - it has the correct host (github.com or enterprise)
+                    let suggested_url =
+                        fork_remote_url(&pr_info.base_owner, &pr_info.base_repo, &pr_info.url);
+                    GitError::NoRemoteForRepo {
+                        owner: pr_info.base_owner.clone(),
+                        repo: pr_info.base_repo.clone(),
+                        suggested_url,
+                    }
+                })?;
+            let branch = &pr_info.head_ref_name;
+
+            let msg = cformat!("Fetching <bold>{branch}</> from {remote}...");
+            crate::output::print(progress_message(msg))?;
+
+            repo.run_command(&["fetch", &remote, branch])
+                .with_context(|| format!("Failed to fetch branch '{}' from {}", branch, remote))?;
+
             return Ok(ResolvedTarget {
                 branch: pr_info.head_ref_name,
                 method: CreationMethod::Regular {
@@ -442,7 +465,7 @@ pub fn plan_switch(
     create: bool,
     base: Option<&str>,
     clobber: bool,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
 ) -> anyhow::Result<SwitchPlan> {
     // Record current branch for `wt switch -` support
     let new_previous = repo.current_worktree().branch().ok().flatten();
@@ -487,7 +510,7 @@ pub fn plan_switch(
 pub fn execute_switch(
     repo: &Repository,
     plan: SwitchPlan,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
     force: bool,
     no_verify: bool,
 ) -> anyhow::Result<(SwitchResult, SwitchBranchInfo)> {

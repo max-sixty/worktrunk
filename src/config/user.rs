@@ -177,7 +177,7 @@ pub enum StageMode {
 /// Environment variables can override config file settings using `WORKTRUNK_` prefix with
 /// `__` separator for nested fields (e.g., `WORKTRUNK_COMMIT_GENERATION__COMMAND`).
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct WorktrunkConfig {
+pub struct UserConfig {
     #[serde(
         rename = "worktree-path",
         default,
@@ -508,7 +508,7 @@ fn default_worktree_path() -> String {
     "../{{ repo }}.{{ branch | sanitize }}".to_string()
 }
 
-impl WorktrunkConfig {
+impl UserConfig {
     /// Returns the worktree path template, falling back to the default if not set.
     pub fn worktree_path(&self) -> String {
         self.worktree_path
@@ -826,7 +826,7 @@ impl WorktrunkConfig {
             ))
         })?;
 
-        let disk_config: WorktrunkConfig = toml::from_str(&content).map_err(|e| {
+        let disk_config: UserConfig = toml::from_str(&content).map_err(|e| {
             ConfigError::Message(format!(
                 "Failed to parse config file {}: {}",
                 path.display(),
@@ -1195,8 +1195,8 @@ pub fn get_config_path() -> Option<PathBuf> {
 /// Returns a list of unrecognized top-level keys that will be silently ignored.
 /// Uses serde deserialization with flatten to automatically detect unknown fields.
 pub fn find_unknown_keys(contents: &str) -> Vec<String> {
-    // Deserialize into WorktrunkConfig - unknown fields are captured in the `unknown` map
-    let Ok(config) = toml::from_str::<WorktrunkConfig>(contents) else {
+    // Deserialize into UserConfig - unknown fields are captured in the `unknown` map
+    let Ok(config) = toml::from_str::<UserConfig>(contents) else {
         return vec![];
     };
 
@@ -1374,7 +1374,7 @@ rename-tab = "echo 'switched'"
 
     #[test]
     fn test_worktree_path_for_project_uses_project_specific() {
-        let mut config = WorktrunkConfig::default();
+        let mut config = UserConfig::default();
         config.projects.insert(
             "github.com/user/repo".to_string(),
             UserProjectConfig {
@@ -1393,7 +1393,7 @@ rename-tab = "echo 'switched'"
 
     #[test]
     fn test_worktree_path_for_project_falls_back_to_global() {
-        let mut config = WorktrunkConfig {
+        let mut config = UserConfig {
             worktree_path: Some("../{{ repo }}-{{ branch | sanitize }}".to_string()),
             ..Default::default()
         };
@@ -1415,7 +1415,7 @@ rename-tab = "echo 'switched'"
 
     #[test]
     fn test_worktree_path_for_project_falls_back_to_default() {
-        let config = WorktrunkConfig::default();
+        let config = UserConfig::default();
 
         // Unknown project should fall back to default template
         assert_eq!(
@@ -1427,7 +1427,7 @@ rename-tab = "echo 'switched'"
     #[test]
     fn test_format_path_with_project_override() {
         let test = test_repo();
-        let mut config = WorktrunkConfig {
+        let mut config = UserConfig {
             worktree_path: Some("../{{ repo }}.{{ branch | sanitize }}".to_string()),
             ..Default::default()
         };
@@ -1482,7 +1482,7 @@ rename-tab = "echo 'switched'"
 
     #[test]
     fn test_worktrunk_config_default() {
-        let config = WorktrunkConfig::default();
+        let config = UserConfig::default();
         // worktree_path is None by default, but the getter returns the default
         assert!(config.worktree_path.is_none());
         assert_eq!(
@@ -1499,13 +1499,13 @@ rename-tab = "echo 'switched'"
 
     #[test]
     fn test_worktrunk_config_is_command_approved_empty() {
-        let config = WorktrunkConfig::default();
+        let config = UserConfig::default();
         assert!(!config.is_command_approved("some/project", "npm install"));
     }
 
     #[test]
     fn test_worktrunk_config_is_command_approved_with_commands() {
-        let mut config = WorktrunkConfig::default();
+        let mut config = UserConfig::default();
         config.projects.insert(
             "github.com/user/repo".to_string(),
             UserProjectConfig {
@@ -1522,7 +1522,7 @@ rename-tab = "echo 'switched'"
     #[test]
     fn test_is_command_approved_normalizes_deprecated_vars() {
         // Approval saved with deprecated variable should match command with new variable
-        let mut config = WorktrunkConfig::default();
+        let mut config = UserConfig::default();
         config.projects.insert(
             "github.com/user/repo".to_string(),
             UserProjectConfig {
@@ -1549,7 +1549,7 @@ rename-tab = "echo 'switched'"
     #[test]
     fn test_is_command_approved_normalizes_new_approval_matches_old_command() {
         // Approval saved with new variable should match command with deprecated variable
-        let mut config = WorktrunkConfig::default();
+        let mut config = UserConfig::default();
         config.projects.insert(
             "github.com/user/repo".to_string(),
             UserProjectConfig {
@@ -1569,7 +1569,7 @@ rename-tab = "echo 'switched'"
 
     #[test]
     fn test_is_command_approved_normalizes_multiple_vars() {
-        let mut config = WorktrunkConfig::default();
+        let mut config = UserConfig::default();
         config.projects.insert(
             "github.com/user/repo".to_string(),
             UserProjectConfig {
@@ -1596,7 +1596,7 @@ rename-tab = "echo 'switched'"
     #[test]
     fn test_worktrunk_config_format_path() {
         let test = test_repo();
-        let config = WorktrunkConfig::default();
+        let config = UserConfig::default();
         let path = config
             .format_path("myrepo", "feature/branch", &test.repo, None)
             .unwrap();
@@ -1606,7 +1606,7 @@ rename-tab = "echo 'switched'"
     #[test]
     fn test_worktrunk_config_format_path_custom_template() {
         let test = test_repo();
-        let config = WorktrunkConfig {
+        let config = UserConfig {
             worktree_path: Some(".worktrees/{{ branch }}".to_string()),
             ..Default::default()
         };
@@ -1662,29 +1662,29 @@ rename-tab = "echo 'switched'"
 
     #[test]
     fn test_skip_shell_integration_prompt_default_false() {
-        let config = WorktrunkConfig::default();
+        let config = UserConfig::default();
         assert!(!config.skip_shell_integration_prompt);
     }
 
     #[test]
     fn test_skip_shell_integration_prompt_serde_roundtrip() {
         // Test serialization when true
-        let config = WorktrunkConfig {
+        let config = UserConfig {
             skip_shell_integration_prompt: true,
-            ..WorktrunkConfig::default()
+            ..UserConfig::default()
         };
         let toml = toml::to_string(&config).unwrap();
         assert!(toml.contains("skip-shell-integration-prompt = true"));
 
         // Test deserialization
-        let parsed: WorktrunkConfig = toml::from_str(&toml).unwrap();
+        let parsed: UserConfig = toml::from_str(&toml).unwrap();
         assert!(parsed.skip_shell_integration_prompt);
     }
 
     #[test]
     fn test_skip_shell_integration_prompt_skipped_when_false() {
         // When false, the field should not appear in serialized output
-        let config = WorktrunkConfig::default();
+        let config = UserConfig::default();
         let toml = toml::to_string(&config).unwrap();
         assert!(!toml.contains("skip-shell-integration-prompt"));
     }
@@ -1695,7 +1695,7 @@ rename-tab = "echo 'switched'"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 skip-shell-integration-prompt = true
 "#;
-        let config: WorktrunkConfig = toml::from_str(content).unwrap();
+        let config: UserConfig = toml::from_str(content).unwrap();
         assert!(config.skip_shell_integration_prompt);
     }
 
@@ -1704,7 +1704,7 @@ skip-shell-integration-prompt = true
         let content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 "#;
-        let config: WorktrunkConfig = toml::from_str(content).unwrap();
+        let config: UserConfig = toml::from_str(content).unwrap();
         assert!(!config.skip_shell_integration_prompt);
     }
 
@@ -1848,7 +1848,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
     #[test]
     fn test_effective_commit_generation_no_project() {
-        let mut config = WorktrunkConfig::default();
+        let mut config = UserConfig::default();
         config.commit_generation.command = Some("global-llm".to_string());
 
         let effective = config.commit_generation(None);
@@ -1857,7 +1857,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
     #[test]
     fn test_effective_commit_generation_with_project_override() {
-        let mut config = WorktrunkConfig::default();
+        let mut config = UserConfig::default();
         config.commit_generation.command = Some("global-llm".to_string());
         config.commit_generation.args = vec!["--global".to_string()];
 
@@ -1888,7 +1888,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
     #[test]
     fn test_effective_merge_with_partial_override() {
-        let mut config = WorktrunkConfig {
+        let mut config = UserConfig {
             merge: Some(MergeConfig {
                 squash: Some(true),
                 commit: Some(true),
@@ -1922,7 +1922,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     #[test]
     fn test_effective_list_project_only() {
         // No global list config, only project config
-        let mut config = WorktrunkConfig::default();
+        let mut config = UserConfig::default();
         assert!(config.list.is_none());
 
         config.projects.insert(
@@ -1949,7 +1949,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     #[test]
     fn test_effective_commit_global_only() {
         // Only global config, no project config
-        let config = WorktrunkConfig {
+        let config = UserConfig {
             commit: Some(CommitConfig {
                 stage: Some(StageMode::Tracked),
             }),
@@ -2029,7 +2029,7 @@ full = true
 squash = false
 "#;
 
-        let config: WorktrunkConfig = toml::from_str(content).unwrap();
+        let config: UserConfig = toml::from_str(content).unwrap();
 
         // Global config
         assert_eq!(

@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::shell::extract_filename_from_path;
 
 use crate::pager::{git_config_pager, parse_pager_value};
@@ -34,7 +34,7 @@ pub(super) fn get_diff_pager() -> Option<&'static String> {
         .get_or_init(|| {
             // Check user config first for explicit pager override
             // When set, use exactly as specified (no auto-detection)
-            if let Ok(config) = WorktrunkConfig::load()
+            if let Ok(config) = UserConfig::load()
                 && let Some(select_config) = config.select
                 && let Some(pager) = select_config.pager
                 && !pager.trim().is_empty()
@@ -78,7 +78,7 @@ pub(super) fn pager_needs_paging_disabled(pager_cmd: &str) -> bool {
 
 /// Check if user has explicitly configured a select-specific pager.
 pub(super) fn has_explicit_pager_config() -> bool {
-    WorktrunkConfig::load()
+    UserConfig::load()
         .ok()
         .and_then(|config| config.select)
         .and_then(|select| select.pager)

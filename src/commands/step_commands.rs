@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 use worktrunk::styling::{
     format_with_gutter, hint_message, info_message, progress_message, success_message,
@@ -37,10 +37,10 @@ pub fn step_commit(
     // Handle --show-prompt early: just build and output the prompt
     if show_prompt {
         let repo = worktrunk::git::Repository::current()?;
-        let config = WorktrunkConfig::load().context("Failed to load config")?;
+        let config = UserConfig::load().context("Failed to load config")?;
         let project_id = repo.project_identifier().ok();
-        let effective_config = config.commit_generation(project_id.as_deref());
-        let prompt = crate::llm::build_commit_prompt(&effective_config)?;
+        let commit_config = config.commit_generation(project_id.as_deref());
+        let prompt = crate::llm::build_commit_prompt(&commit_config)?;
         crate::output::stdout(prompt)?;
         return Ok(());
     }
@@ -308,7 +308,7 @@ pub fn handle_squash(
 /// Builds and outputs the squash prompt without running the LLM or squashing.
 pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
     let repo = Repository::current()?;
-    let config = WorktrunkConfig::load().context("Failed to load config")?;
+    let config = UserConfig::load().context("Failed to load config")?;
     let project_id = repo.project_identifier().ok();
     let effective_config = config.commit_generation(project_id.as_deref());
 

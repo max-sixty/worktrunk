@@ -30,12 +30,11 @@ info:
     WT_TEST_DELAYED_STREAM_MS: "999999"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
 [36m◎[39m [36mFetching PR #101...[39m
-[36m◎[39m [36mFetching [1mfeature-auth[22m from origin...[39m
-[33m▲[39m [33mWorktree for [1mfeature-auth[22m @ [1m_REPO_.feature-auth[22m, but cannot change directory — shell integration not installed[39m
-[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
+[31m✗[39m [31mNo remote found for [1mowner/test-repo[22m[39m
+[2m↳[22m [2mAdd the remote: [90mgit remote add upstream https://github.com/owner/test-repo.git[39m[22m

@@ -10,7 +10,7 @@ use crate::commands::command_executor::CommandContext;
 use crate::commands::execute_pre_remove_commands;
 use crate::commands::process::{build_remove_command, spawn_detached};
 use crate::commands::worktree::{BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult};
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::GitError;
 use worktrunk::git::IntegrationReason;
 use worktrunk::git::Repository;
@@ -392,7 +392,7 @@ pub fn handle_switch_output(
             // Show worktree-path config hint on first --create in this repo,
             // unless user already has a custom worktree-path config
             if *created_branch && let Ok(repo) = worktrunk::git::Repository::current() {
-                let has_custom_config = WorktrunkConfig::load()
+                let has_custom_config = UserConfig::load()
                     .map(|c| c.has_custom_worktree_path())
                     .unwrap_or(false);
                 if !has_custom_config && !repo.has_shown_hint("worktree-path") {
@@ -552,7 +552,7 @@ fn spawn_post_switch_after_remove(
     if !verify || !changed_directory {
         return Ok(());
     }
-    let Ok(config) = WorktrunkConfig::load() else {
+    let Ok(config) = UserConfig::load() else {
         return Ok(());
     };
     // Use main_path for discovery since we're called after the original worktree
@@ -781,7 +781,7 @@ fn handle_removed_worktree_output(
     // Non-zero exit aborts removal (FailFast strategy).
     // If hooks fail, we don't want the shell to cd to main_path.
     // For detached HEAD, {{ branch }} expands to "HEAD" in templates
-    if verify && let Ok(config) = WorktrunkConfig::load() {
+    if verify && let Ok(config) = UserConfig::load() {
         let ctx = CommandContext::new(
             &repo,
             &config,

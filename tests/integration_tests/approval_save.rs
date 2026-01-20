@@ -1,7 +1,7 @@
 use insta::assert_snapshot;
 use std::fs;
 use tempfile::TempDir;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 
 ///
 /// This test uses `approve_command()` to ensure it never writes to the user's config
@@ -11,7 +11,7 @@ fn test_approval_saves_to_disk() {
     let config_path = temp_dir.path().join("worktrunk").join("config.toml");
 
     // Create config and save to temp directory ONLY
-    let mut config = WorktrunkConfig::default();
+    let mut config = UserConfig::default();
 
     // Add an approval to the explicit path
     config
@@ -50,7 +50,7 @@ fn test_duplicate_approvals_not_saved_twice() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("config.toml");
 
-    let mut config = WorktrunkConfig::default();
+    let mut config = UserConfig::default();
 
     // Add same approval twice
     config
@@ -100,7 +100,7 @@ fn test_multiple_project_approvals() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("config.toml");
 
-    let mut config = WorktrunkConfig::default();
+    let mut config = UserConfig::default();
 
     // Add approvals for different projects
     config
@@ -173,7 +173,7 @@ fn test_isolated_config_safety() {
     };
 
     // Create isolated config and make changes
-    let mut config = WorktrunkConfig::default();
+    let mut config = UserConfig::default();
     config
         .approve_command(
             "github.com/safety-test/repo".to_string(),
@@ -209,7 +209,7 @@ fn test_yes_flag_does_not_save_approval() {
     let config_path = temp_dir.path().join("config.toml");
 
     // Start with empty config
-    let initial_config = WorktrunkConfig::default();
+    let initial_config = UserConfig::default();
     initial_config.save_to(&config_path).unwrap();
 
     // When using --yes, the approval is NOT saved to config
@@ -234,7 +234,7 @@ fn test_approval_saves_to_new_config_file() {
     assert!(!config_path.exists());
 
     // Create a config and save
-    let mut config = WorktrunkConfig::default();
+    let mut config = UserConfig::default();
     config
         .approve_command(
             "github.com/test/nested".to_string(),
@@ -284,9 +284,9 @@ args = ["-s"]
     fs::write(&config_path, initial_content).unwrap();
 
     // Load the config manually by deserializing from TOML
-    // (bypasses WorktrunkConfig::load() which requires WORKTRUNK_CONFIG_PATH)
+    // (bypasses UserConfig::load() which requires WORKTRUNK_CONFIG_PATH)
     let toml_str = fs::read_to_string(&config_path).unwrap();
-    let mut config: WorktrunkConfig = toml::from_str(&toml_str).unwrap();
+    let mut config: UserConfig = toml::from_str(&toml_str).unwrap();
 
     // Add an approval and save back to the same file
     config
@@ -331,10 +331,10 @@ fn test_concurrent_approve_preserves_all_approvals() {
     let config_path = temp_dir.path().join("config.toml");
 
     // Process A: Start with empty config, approve "npm install"
-    let mut config_a = WorktrunkConfig::default();
+    let mut config_a = UserConfig::default();
 
     // Process B: Start with empty config (simulating a separate process that loaded before A saved)
-    let mut config_b = WorktrunkConfig::default();
+    let mut config_b = UserConfig::default();
 
     // Process A approves and saves "npm install"
     config_a
@@ -388,7 +388,7 @@ fn test_concurrent_revoke_preserves_all_changes() {
     let config_path = temp_dir.path().join("config.toml");
 
     // Setup: config file has two commands approved
-    let mut setup_config = WorktrunkConfig::default();
+    let mut setup_config = UserConfig::default();
     setup_config
         .approve_command(
             "github.com/user/repo".to_string(),
@@ -410,7 +410,7 @@ fn test_concurrent_revoke_preserves_all_changes() {
     assert!(toml_content.contains("npm test"));
 
     // Process A: loads config (has ["npm install", "npm test"])
-    let mut config_a = WorktrunkConfig::default();
+    let mut config_a = UserConfig::default();
     config_a
         .projects
         .entry("github.com/user/repo".to_string())
@@ -418,7 +418,7 @@ fn test_concurrent_revoke_preserves_all_changes() {
         .approved_commands = vec!["npm install".to_string(), "npm test".to_string()];
 
     // Process B: loads config (has ["npm install", "npm test"])
-    let mut config_b = WorktrunkConfig::default();
+    let mut config_b = UserConfig::default();
     config_b
         .projects
         .entry("github.com/user/repo".to_string())
@@ -456,10 +456,10 @@ fn test_concurrent_approve_different_projects() {
     let config_path = temp_dir.path().join("config.toml");
 
     // Process A: empty config
-    let mut config_a = WorktrunkConfig::default();
+    let mut config_a = UserConfig::default();
 
     // Process B: empty config (loaded before A saved)
-    let mut config_b = WorktrunkConfig::default();
+    let mut config_b = UserConfig::default();
 
     // Process A approves for project1
     config_a
@@ -524,7 +524,7 @@ fn test_truly_concurrent_approve_with_threads() {
             let config_path = Arc::clone(&config_path);
 
             thread::spawn(move || {
-                let mut config = WorktrunkConfig::default();
+                let mut config = UserConfig::default();
 
                 // Wait for all threads to be ready
                 barrier.wait();
@@ -581,7 +581,7 @@ fn test_permission_error_prevents_save() {
     // Create the directory and initial config file
     let config_dir = config_path.parent().unwrap();
     fs::create_dir_all(config_dir).unwrap();
-    let initial_config = WorktrunkConfig::default();
+    let initial_config = UserConfig::default();
     initial_config.save_to(&config_path).unwrap();
 
     // Make the directory read-only (prevents writing new files)
@@ -607,7 +607,7 @@ fn test_permission_error_prevents_save() {
     }
 
     // Try to save a new approval - this should fail
-    let mut config = WorktrunkConfig::default();
+    let mut config = UserConfig::default();
     let result = config.approve_command(
         "github.com/test/readonly".to_string(),
         "test command".to_string(),
@@ -642,7 +642,7 @@ fn test_skip_shell_integration_prompt_saves_to_disk() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("worktrunk").join("config.toml");
 
-    let mut config = WorktrunkConfig::default();
+    let mut config = UserConfig::default();
     config
         .set_skip_shell_integration_prompt(Some(&config_path))
         .unwrap();
@@ -669,7 +669,7 @@ fn test_skip_shell_integration_prompt_idempotent() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("config.toml");
 
-    let mut config = WorktrunkConfig::default();
+    let mut config = UserConfig::default();
 
     // Call twice - should not error
     config
@@ -730,7 +730,7 @@ command = "llm"
 
     // Load config and add an approval through the symlink path
     let toml_str = fs::read_to_string(&symlink_path).unwrap();
-    let mut config: WorktrunkConfig = toml::from_str(&toml_str).unwrap();
+    let mut config: UserConfig = toml::from_str(&toml_str).unwrap();
 
     config
         .approve_command(
