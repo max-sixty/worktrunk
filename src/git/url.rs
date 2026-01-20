@@ -168,6 +168,7 @@ mod tests {
     #[test]
     fn test_https_urls() {
         let url = GitRemoteUrl::parse("https://github.com/owner/repo.git").unwrap();
+        assert_eq!(url.host(), "github.com");
         assert_eq!(url.owner(), "owner");
         assert_eq!(url.repo(), "repo");
         assert_eq!(url.project_identifier(), "github.com/owner/repo");
