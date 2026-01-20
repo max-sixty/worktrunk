@@ -9,14 +9,13 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     RUST_LOG: warn
     SHELL: ""
     SOURCE_DATE_EPOCH: "1735776000"
     TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "999999"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
 ---
 success: true
 exit_code: 0
@@ -143,19 +142,12 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# # Example:
   [2m# # pager = "delta --paging=never"
   [2m#
-  [2m# ### Per-project settings
+  [2m# ### Approved commands
   [2m#
-  [2m# Per-project settings are keyed by project identifier (e.g., `github.com/user/repo`).
-  [2m# These contain approved hook commands plus optional overrides of global settings.
+  [2m# Commands approved for project hooks. Auto-populated when approving hooks on first run, or via `wt hook approvals add`.
   [2m#
   [2m# [projects."github.com/user/repo"]
-  [2m# # Approved hook commands (auto-populated when approving on first run)
   [2m# approved-commands = ["npm ci", "npm test"]
-  [2m#
-  [2m# # Optional overrides (omit to use global settings)
-  [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"
-  [2m# list.full = true
-  [2m# merge.squash = false
   [2m#
   [2m# For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see `wt hook` docs (https://worktrunk.dev/hook/).
   [2m#

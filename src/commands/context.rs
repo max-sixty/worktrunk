@@ -21,7 +21,6 @@ pub struct CommandEnv {
     pub branch: Option<String>,
     pub config: UserConfig,
     pub worktree_path: PathBuf,
-    pub repo_root: PathBuf,
 }
 
 impl CommandEnv {
@@ -34,16 +33,12 @@ impl CommandEnv {
         let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
         let branch = repo.require_current_branch(action)?;
         let config = UserConfig::load().context("Failed to load config")?;
-        let repo_root = repo
-            .repo_path()
-            .context("Failed to determine repository root")?;
 
         Ok(Self {
             repo,
             branch: Some(branch),
             config,
             worktree_path,
-            repo_root,
         })
     }
 
@@ -60,16 +55,12 @@ impl CommandEnv {
             .branch()
             .context("Failed to determine current branch")?;
         let config = UserConfig::load().context("Failed to load config")?;
-        let repo_root = repo
-            .repo_path()
-            .context("Failed to determine repository root")?;
 
         Ok(Self {
             repo,
             branch,
             config,
             worktree_path,
-            repo_root,
         })
     }
 
@@ -80,7 +71,6 @@ impl CommandEnv {
             &self.config,
             self.branch.as_deref(),
             &self.worktree_path,
-            &self.repo_root,
             yes,
         )
     }

@@ -721,13 +721,11 @@ fn main() {
                 // This ensures approval happens once at the command entry point
                 // If user declines, skip hooks but continue with worktree operation
                 let approved = if verify {
-                    let repo_root = repo.repo_path().context("Failed to switch worktree")?;
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
                         Some(plan.branch()),
                         plan.worktree_path(),
-                        &repo_root,
                         yes,
                     );
                     // Approve different hooks based on whether we're creating or switching
@@ -803,13 +801,11 @@ fn main() {
                 // - post-start: runs only when creating a NEW worktree
                 if !skip_hooks {
                     let repo = Repository::current()?;
-                    let repo_root = repo.repo_path().context("Failed to switch worktree")?;
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
                         Some(&branch_info.branch),
                         result.path(),
-                        &repo_root,
                         yes,
                     );
 
@@ -827,13 +823,11 @@ fn main() {
                 if let Some(cmd) = execute {
                     // Build template context for expansion (includes base vars when creating)
                     let repo = Repository::current()?;
-                    let repo_root = repo.repo_path().context("Failed to get repo root")?;
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
                         Some(&branch_info.branch),
                         result.path(),
-                        &repo_root,
                         yes,
                     );
                     let template_vars = build_hook_context(&ctx, &extra_vars);

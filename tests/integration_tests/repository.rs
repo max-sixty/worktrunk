@@ -294,8 +294,9 @@ fn test_project_identifier_no_remote_fallback() {
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let id = repository.project_identifier().unwrap();
-    // Should be the repo directory name
-    assert_eq!(id, "repo");
+    // Should be the full canonical path (security: avoids collisions across unrelated repos)
+    let expected = dunce::canonicalize(repo.root_path()).unwrap();
+    assert_eq!(id, expected.to_str().unwrap());
 }
 
 // =============================================================================

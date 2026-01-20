@@ -660,7 +660,7 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // Disable delayed streaming for deterministic output across platforms.
     // Without this, slow Windows CI triggers progress messages that don't appear on faster systems.
     // Tests that need streaming (e.g., test_switch_create_shows_progress_when_forced) can override.
-    cmd.env("WT_TEST_DELAYED_STREAM_MS", "999999");
+    cmd.env("WT_TEST_DELAYED_STREAM_MS", "-1");
 
     // Pass through LLVM coverage profiling environment for subprocess coverage collection.
     // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record
@@ -1301,17 +1301,20 @@ impl TestRepo {
 
     /// Get the project identifier for test configs.
     ///
-    /// Returns the repository directory name. This works because the standard
+    /// Returns the full canonical path of the repository. This works because the standard
     /// fixture uses a local path remote (`../origin_git`) which doesn't parse
-    /// as a proper git URL, causing worktrunk to fall back to the directory name.
+    /// as a proper git URL, causing worktrunk to fall back to the full canonical path.
     ///
     /// Use this when writing test configs with `[projects."<id>"]` sections.
+    /// Backslashes are escaped for use in TOML string literals (Windows paths).
     pub fn project_id(&self) -> String {
-        self.root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("repo")
-            .to_string()
+        let path = dunce::canonicalize(&self.root)
+            .unwrap_or_else(|_| self.root.clone())
+            .to_str()
+            .unwrap_or("")
+            .to_string();
+        // Escape backslashes for TOML string literals (Windows paths)
+        path.replace('\\', "\\\\")
     }
 
     /// Get the path to the isolated test config file
