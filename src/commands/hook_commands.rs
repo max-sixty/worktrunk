@@ -616,7 +616,10 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
         }
         _ => Vec::new(),
     };
-    let template_ctx = build_hook_context(ctx, &extra_vars);
+    let template_ctx = match build_hook_context(ctx, &extra_vars) {
+        Ok(ctx) => ctx,
+        Err(err) => return format!("# Context error: {}\n{}", err, template),
+    };
     let vars: std::collections::HashMap<&str, &str> = template_ctx
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))

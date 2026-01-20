@@ -761,15 +761,7 @@ pub fn execute_switch(
 
             // Execute post-create commands
             if !no_verify {
-                let repo_root = repo.repo_path()?;
-                let ctx = CommandContext::new(
-                    repo,
-                    config,
-                    Some(&branch),
-                    &worktree_path,
-                    &repo_root,
-                    force,
-                );
+                let ctx = CommandContext::new(repo, config, Some(&branch), &worktree_path, force);
 
                 match &method {
                     CreationMethod::Regular { base_branch, .. } => {

@@ -559,13 +559,11 @@ fn spawn_post_switch_after_remove(
     // is removed (cwd may no longer exist).
     let repo = Repository::at(main_path)?;
     let dest_branch = repo.worktree_at(main_path).branch()?;
-    let repo_root = repo.repo_path()?;
     let ctx = CommandContext::new(
         &repo,
         &config,
         dest_branch.as_deref(),
         main_path,
-        &repo_root,
         false, // force=false for CommandContext
     );
     // No base context for remove-triggered switch (we're returning to main, not creating)
@@ -787,7 +785,6 @@ fn handle_removed_worktree_output(
             &config,
             branch_name,
             worktree_path,
-            main_path,
             false, // force=false for CommandContext (not approval-related)
         );
         // Show path when removing a different worktree (user is elsewhere)

@@ -21,7 +21,6 @@ pub struct CommandContext<'a> {
     /// Current branch name, if on a branch (None in detached HEAD state).
     pub branch: Option<&'a str>,
     pub worktree_path: &'a Path,
-    pub repo_root: &'a Path,
     pub yes: bool,
 }
 
@@ -31,7 +30,6 @@ impl<'a> CommandContext<'a> {
         config: &'a WorktrunkConfig,
         branch: Option<&'a str>,
         worktree_path: &'a Path,
-        repo_root: &'a Path,
         yes: bool,
     ) -> Self {
         Self {
@@ -39,7 +37,6 @@ impl<'a> CommandContext<'a> {
             config,
             branch,
             worktree_path,
-            repo_root,
             yes,
         }
     }
@@ -57,8 +54,8 @@ impl<'a> CommandContext<'a> {
 pub fn build_hook_context(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
-) -> HashMap<String, String> {
-    let repo_root = ctx.repo_root;
+) -> anyhow::Result<HashMap<String, String>> {
+    let repo_root = ctx.repo.repo_path()?;
     let repo_name = repo_root
         .file_name()
         .and_then(|n| n.to_str())
@@ -128,7 +125,7 @@ pub fn build_hook_context(
         map.insert((*k).into(), (*v).into());
     }
 
-    map
+    Ok(map)
 }
 
 /// Expand commands from a CommandConfig without approval
@@ -146,7 +143,7 @@ fn expand_commands(
         return Ok(Vec::new());
     }
 
-    let base_context = build_hook_context(ctx, extra_vars);
+    let base_context = build_hook_context(ctx, extra_vars)?;
 
     // Convert to &str references for expand_template
     let vars: HashMap<&str, &str> = base_context
