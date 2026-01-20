@@ -128,7 +128,7 @@ fn test_hook_show_approval_status(repo: TestRepo, temp_home: TempDir) {
         format!(
             r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
-[projects."{project_id_str}"]
+[projects.'{project_id_str}']
 approved-commands = ["cargo build"]
 "#
         ),
@@ -280,7 +280,7 @@ fn test_hook_clear_with_approvals(repo: TestRepo, temp_home: TempDir) {
         format!(
             r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
-[projects."{project_id_str}"]
+[projects.'{project_id_str}']
 approved-commands = ["cargo build", "cargo test", "npm install"]
 "#
         ),

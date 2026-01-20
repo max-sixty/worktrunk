@@ -139,6 +139,7 @@ regex = "1.12"
 vt100 = "0.16"
 ansi-to-html = "0.2.2"
 wt-perf = { path = "tests/helpers/wt-perf" }
+path-slash = "0.2.1"
 
 [[bench]]
 name = "completion"

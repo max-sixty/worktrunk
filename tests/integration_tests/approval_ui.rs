@@ -90,7 +90,7 @@ third = "echo 'Third command'"
 
     // Pre-approve the second command
     repo.write_test_config(&format!(
-        r#"[projects."{}"]
+        r#"[projects.'{}']
 approved-commands = ["echo 'Second command'"]
 "#,
         repo.project_id()
@@ -142,7 +142,7 @@ fn test_already_approved_commands_skip_prompt(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(&format!(
-        r#"[projects."{}"]
+        r#"[projects.'{}']
 approved-commands = ["echo 'approved' > output.txt"]
 "#,
         repo.project_id()
@@ -174,7 +174,7 @@ third = "echo 'Third command'"
     fs::write(
         repo.test_config_path(),
         format!(
-            r#"[projects."{}"]
+            r#"[projects.'{}']
 approved-commands = ["echo 'Second command'"]
 "#,
             repo.project_id()
