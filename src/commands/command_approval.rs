@@ -167,7 +167,7 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
 /// # Example
 ///
 /// ```ignore
-/// let ctx = CommandContext::new(&repo, &config, &branch, &worktree_path, &repo_root, yes);
+/// let ctx = CommandContext::new(&repo, &config, &branch, &worktree_path, yes);
 /// let approved = approve_hooks(&ctx, &[HookType::PostCreate, HookType::PostStart])?;
 /// ```
 pub fn approve_hooks(

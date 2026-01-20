@@ -65,8 +65,6 @@ pub(super) use working_tree::path_to_logging_context;
 #[derive(Debug, Default)]
 pub(super) struct RepoCache {
     // ========== Repo-wide values (same for all worktrees) ==========
-    /// Whether this is a bare repository
-    pub(super) is_bare: OnceCell<bool>,
     /// Default branch (main, master, etc.)
     pub(super) default_branch: OnceCell<Option<String>>,
     /// Invalid default branch config (user configured a branch that doesn't exist).
@@ -80,8 +78,6 @@ pub(super) struct RepoCache {
     pub(super) primary_remote_url: OnceCell<Option<String>>,
     /// Project identifier derived from remote URL
     pub(super) project_identifier: OnceCell<String>,
-    /// Repository root path (main worktree for normal repos, bare directory for bare repos)
-    pub(super) repo_path: OnceCell<PathBuf>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
@@ -168,6 +164,11 @@ pub struct Repository {
     discovery_path: PathBuf,
     /// The shared .git directory, computed at construction time.
     git_common_dir: PathBuf,
+    /// Whether this is a bare repository, computed at construction time.
+    is_bare: bool,
+    /// Repository root path, computed at construction time.
+    /// For normal repos: parent of git_common_dir. For bare repos: git_common_dir itself.
+    repo_path: PathBuf,
     /// Cached data for this repository. Shared across clones via Arc.
     pub(super) cache: Arc<RepoCache>,
 }
@@ -198,10 +199,23 @@ impl Repository {
     /// use [`Repository::worktree_at()`] instead.
     pub fn at(path: impl Into<PathBuf>) -> anyhow::Result<Self> {
         let discovery_path = path.into();
-        let git_common_dir = Self::resolve_git_common_dir(&discovery_path)?;
+        let (git_common_dir, is_bare) = Self::resolve_repo_info(&discovery_path)?;
+
+        // Compute repo_path from git_common_dir and is_bare
+        let repo_path = if is_bare {
+            git_common_dir.clone()
+        } else {
+            git_common_dir
+                .parent()
+                .context("Git directory has no parent")?
+                .to_path_buf()
+        };
+
         Ok(Self {
             discovery_path,
             git_common_dir,
+            is_bare,
+            repo_path,
             cache: Arc::new(RepoCache::default()),
         })
     }
@@ -216,28 +230,48 @@ impl Repository {
         Arc::ptr_eq(&self.cache, &other.cache)
     }
 
-    /// Resolve the git common directory for a path.
-    fn resolve_git_common_dir(discovery_path: &Path) -> anyhow::Result<PathBuf> {
+    /// Resolve git common directory and bare status.
+    ///
+    /// Note: We need two git calls because `--is-bare-repository` returns false when
+    /// run from a worktree of a bare repo. We first get git_common_dir, then check
+    /// is_bare from there.
+    fn resolve_repo_info(discovery_path: &Path) -> anyhow::Result<(PathBuf, bool)> {
+        // First, get the git common directory
         let output = Cmd::new("git")
             .args(["rev-parse", "--git-common-dir"])
             .current_dir(discovery_path)
             .context(path_to_logging_context(discovery_path))
             .run()
-            .context("Failed to execute: git rev-parse --git-common-dir")?;
+            .context("Failed to execute: git rev-parse")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             bail!("{}", stderr.trim());
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let path = PathBuf::from(stdout.trim());
-        if path.is_relative() {
-            canonicalize(discovery_path.join(&path))
-                .context("Failed to resolve git common directory")
+        let git_common_dir_raw = String::from_utf8_lossy(&output.stdout);
+        let git_common_dir_path = PathBuf::from(git_common_dir_raw.trim());
+        let git_common_dir = if git_common_dir_path.is_relative() {
+            canonicalize(discovery_path.join(&git_common_dir_path))
+                .context("Failed to resolve git common directory")?
         } else {
-            Ok(path)
-        }
+            git_common_dir_path
+        };
+
+        // Now check is_bare from the git_common_dir itself, not the discovery path.
+        // This is important for worktrees of bare repos: running from the worktree
+        // returns false, but running from the bare repo returns true.
+        let output = Cmd::new("git")
+            .args(["rev-parse", "--is-bare-repository"])
+            .current_dir(&git_common_dir)
+            .context(path_to_logging_context(&git_common_dir))
+            .run()
+            .context("Failed to check if repository is bare")?;
+
+        let is_bare =
+            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true";
+
+        Ok((git_common_dir, is_bare))
     }
 
     /// Get the path this repository was discovered from.
@@ -321,39 +355,19 @@ impl Repository {
     /// This is the base for template expansion (`{{ repo }}`, `{{ repo_path }}`).
     /// NOT necessarily where established files live — use `primary_worktree()` for that.
     ///
-    /// Result is cached in the repository's shared cache (same for all clones).
-    pub fn repo_path(&self) -> anyhow::Result<PathBuf> {
-        self.cache
-            .repo_path
-            .get_or_try_init(|| {
-                let git_common_dir =
-                    canonicalize(self.git_common_dir()).context("Failed to canonicalize path")?;
-
-                if self.is_bare()? {
-                    Ok(git_common_dir)
-                } else {
-                    Ok(git_common_dir
-                        .parent()
-                        .context("Git directory has no parent")?
-                        .to_path_buf())
-                }
-            })
-            .cloned()
+    /// Computed at construction time from `git rev-parse --git-common-dir`.
+    pub fn repo_path(&self) -> &Path {
+        &self.repo_path
     }
 
     /// Check if this is a bare repository (no working tree).
     ///
     /// Bare repositories have no main worktree — all worktrees are linked
     /// worktrees at templated paths, including the default branch.
-    /// Result is cached in the repository's shared cache (same for all clones).
-    pub fn is_bare(&self) -> anyhow::Result<bool> {
-        self.cache
-            .is_bare
-            .get_or_try_init(|| {
-                let output = self.run_command(&["config", "--bool", "core.bare"])?;
-                Ok(output.trim() == "true")
-            })
-            .copied()
+    ///
+    /// Computed at construction time from `git rev-parse --is-bare-repository`.
+    pub fn is_bare(&self) -> bool {
+        self.is_bare
     }
 
     /// Check if git's builtin fsmonitor daemon is enabled.

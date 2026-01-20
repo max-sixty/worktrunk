@@ -38,7 +38,7 @@ pub(super) fn batch_fetch_stats(
     let stdin_data = hashes.iter().map(|h| format!("{h}\n")).collect::<String>();
     let Ok(output) = Cmd::new("git")
         .args(["diff-tree", "--numstat", "-r", "--root", "--stdin"])
-        .current_dir(repo.repo_path().unwrap_or_else(|_| ".".into()))
+        .current_dir(repo.repo_path())
         .stdin_bytes(stdin_data)
         .run()
     else {
