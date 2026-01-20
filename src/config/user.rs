@@ -635,9 +635,14 @@ impl UserConfig {
         // is preserved (uses IndexMap instead of HashMap internally).
         // See: https://github.com/max-sixty/worktrunk/issues/737
         let config: Self = builder.build()?.try_deserialize()?;
+        config.validate()?;
+        Ok(config)
+    }
 
+    /// Validate configuration values.
+    fn validate(&self) -> Result<(), ConfigError> {
         // Validate worktree path (only if explicitly set - default is always valid)
-        if let Some(ref path) = config.worktree_path {
+        if let Some(ref path) = self.worktree_path {
             if path.is_empty() {
                 return Err(ConfigError::Message("worktree-path cannot be empty".into()));
             }
@@ -649,7 +654,7 @@ impl UserConfig {
         }
 
         // Validate per-project configs
-        for (project, project_config) in &config.projects {
+        for (project, project_config) in &self.projects {
             // Validate worktree path
             if let Some(ref path) = project_config.worktree_path {
                 if path.is_empty() {
@@ -680,22 +685,31 @@ impl UserConfig {
         }
 
         // Validate commit generation config
-        if config.commit_generation.template.is_some()
-            && config.commit_generation.template_file.is_some()
+        if self.commit_generation.template.is_some()
+            && self.commit_generation.template_file.is_some()
         {
             return Err(ConfigError::Message(
                 "commit-generation.template and commit-generation.template-file are mutually exclusive".into(),
             ));
         }
 
-        if config.commit_generation.squash_template.is_some()
-            && config.commit_generation.squash_template_file.is_some()
+        if self.commit_generation.squash_template.is_some()
+            && self.commit_generation.squash_template_file.is_some()
         {
             return Err(ConfigError::Message(
                 "commit-generation.squash-template and commit-generation.squash-template-file are mutually exclusive".into(),
             ));
         }
 
+        Ok(())
+    }
+
+    /// Load configuration from a TOML string for testing.
+    #[cfg(test)]
+    fn load_from_str(content: &str) -> Result<Self, ConfigError> {
+        let config: Self =
+            toml::from_str(content).map_err(|e| ConfigError::Message(e.to_string()))?;
+        config.validate()?;
         Ok(config)
     }
 
@@ -2061,5 +2075,101 @@ squash = false
 
         let effective_merge = config.merge(Some("github.com/user/repo")).unwrap();
         assert_eq!(effective_merge.squash, Some(false));
+    }
+
+    // Validation tests
+
+    #[test]
+    fn test_validation_empty_worktree_path() {
+        let content = r#"worktree-path = """#;
+        let result = UserConfig::load_from_str(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("worktree-path cannot be empty"), "{err}");
+    }
+
+    #[test]
+    fn test_validation_absolute_worktree_path() {
+        let content = r#"worktree-path = "/absolute/path""#;
+        let result = UserConfig::load_from_str(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("must be relative"), "{err}");
+    }
+
+    #[test]
+    fn test_validation_project_empty_worktree_path() {
+        let content = r#"
+[projects."github.com/user/repo"]
+worktree-path = ""
+"#;
+        let result = UserConfig::load_from_str(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("worktree-path cannot be empty"), "{err}");
+    }
+
+    #[test]
+    fn test_validation_project_absolute_worktree_path() {
+        let content = r#"
+[projects."github.com/user/repo"]
+worktree-path = "/absolute/path"
+"#;
+        let result = UserConfig::load_from_str(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("must be relative"), "{err}");
+    }
+
+    #[test]
+    fn test_validation_template_mutual_exclusivity() {
+        let content = r#"
+[commit-generation]
+template = "inline template"
+template-file = "path/to/file"
+"#;
+        let result = UserConfig::load_from_str(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("mutually exclusive"), "{err}");
+    }
+
+    #[test]
+    fn test_validation_squash_template_mutual_exclusivity() {
+        let content = r#"
+[commit-generation]
+squash-template = "inline template"
+squash-template-file = "path/to/file"
+"#;
+        let result = UserConfig::load_from_str(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("mutually exclusive"), "{err}");
+    }
+
+    #[test]
+    fn test_validation_project_template_mutual_exclusivity() {
+        let content = r#"
+[projects."github.com/user/repo".commit-generation]
+template = "inline template"
+template-file = "path/to/file"
+"#;
+        let result = UserConfig::load_from_str(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("mutually exclusive"), "{err}");
+    }
+
+    #[test]
+    fn test_validation_project_squash_template_mutual_exclusivity() {
+        let content = r#"
+[projects."github.com/user/repo".commit-generation]
+squash-template = "inline template"
+squash-template-file = "path/to/file"
+"#;
+        let result = UserConfig::load_from_str(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("mutually exclusive"), "{err}");
     }
 }
