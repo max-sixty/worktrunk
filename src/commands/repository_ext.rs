@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::worktree::{BranchDeletionMode, RemoveResult, get_path_mismatch};
 use anyhow::Context;
 use color_print::cformat;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::{
     GitError, IntegrationReason, Repository, parse_porcelain_z, parse_untracked_files,
 };
@@ -39,7 +39,7 @@ pub trait RepositoryCliExt {
         target: RemoveTarget,
         deletion_mode: BranchDeletionMode,
         force_worktree: bool,
-        config: &WorktrunkConfig,
+        config: &UserConfig,
     ) -> anyhow::Result<RemoveResult>;
 
     /// Prepare the target worktree for push by auto-stashing non-overlapping changes when safe.
@@ -74,7 +74,7 @@ impl RepositoryCliExt for Repository {
         target: RemoveTarget,
         deletion_mode: BranchDeletionMode,
         force_worktree: bool,
-        config: &WorktrunkConfig,
+        config: &UserConfig,
     ) -> anyhow::Result<RemoveResult> {
         let current_path = self.current_worktree().root()?.to_path_buf();
         let worktrees = self.list_worktrees()?;

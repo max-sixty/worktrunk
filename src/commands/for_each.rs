@@ -26,7 +26,7 @@ use std::io::Write;
 use std::process::Stdio;
 
 use color_print::cformat;
-use worktrunk::config::{WorktrunkConfig, expand_template};
+use worktrunk::config::{UserConfig, expand_template};
 use worktrunk::git::Repository;
 use worktrunk::git::WorktrunkError;
 use worktrunk::shell_exec::ShellConfig;
@@ -52,7 +52,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
         .into_iter()
         .filter(|wt| !wt.is_prunable())
         .collect();
-    let config = WorktrunkConfig::load()?;
+    let config = UserConfig::load()?;
 
     let mut failed: Vec<String> = Vec::new();
     let total = worktrees.len();

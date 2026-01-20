@@ -2,7 +2,7 @@ use anyhow::Context;
 use clap::FromArgMatches;
 use color_print::cformat;
 use std::process;
-use worktrunk::config::{WorktrunkConfig, expand_template, set_config_path};
+use worktrunk::config::{UserConfig, expand_template, set_config_path};
 use worktrunk::git::{Repository, exit_code, set_base_path};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::extract_filename_from_path;
@@ -480,7 +480,7 @@ fn main() {
                 verify,
                 stage,
                 show_prompt,
-            } => WorktrunkConfig::load()
+            } => UserConfig::load()
                 .context("Failed to load config")
                 .and_then(|config| {
                     let stage_final = stage
@@ -494,7 +494,7 @@ fn main() {
                 verify,
                 stage,
                 show_prompt,
-            } => WorktrunkConfig::load()
+            } => UserConfig::load()
                 .context("Failed to load config")
                 .and_then(|config| {
                     let stage_final = stage
@@ -626,7 +626,7 @@ fn main() {
         },
         #[cfg(unix)]
         Commands::Select { branches, remotes } => {
-            WorktrunkConfig::load()
+            UserConfig::load()
                 .context("Failed to load config")
                 .and_then(|config| {
                     // Get config values from [list] config (shared with wt list)
@@ -667,7 +667,7 @@ fn main() {
                 use commands::list::progressive::RenderMode;
 
                 // Load config and merge with CLI flags (CLI flags take precedence)
-                WorktrunkConfig::load()
+                UserConfig::load()
                     .context("Failed to load config")
                     .and_then(|config| {
                         // Get config values from global list config
@@ -715,7 +715,7 @@ fn main() {
             yes,
             clobber,
             verify,
-        } => WorktrunkConfig::load()
+        } => UserConfig::load()
             .context("Failed to load config")
             .and_then(|mut config| {
                 let repo = Repository::current().context("Failed to switch worktree")?;
@@ -888,7 +888,7 @@ fn main() {
             verify,
             yes,
             force,
-        } => WorktrunkConfig::load()
+        } => UserConfig::load()
             .context("Failed to load config")
             .and_then(|config| {
                 // Handle deprecated --no-background flag
@@ -1087,7 +1087,7 @@ fn main() {
             no_verify,
             yes,
             stage,
-        } => WorktrunkConfig::load()
+        } => UserConfig::load()
             .context("Failed to load config")
             .and_then(|config| {
                 // Convert paired flags to Option<bool>

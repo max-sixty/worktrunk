@@ -1,6 +1,6 @@
 //! Worktree remove operations.
 
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 
 use super::types::{BranchDeletionMode, RemoveResult};
@@ -12,7 +12,7 @@ pub fn handle_remove(
     no_delete_branch: bool,
     force_delete: bool,
     force_worktree: bool,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
 ) -> anyhow::Result<RemoveResult> {
     let repo = Repository::current()?;
 
@@ -33,7 +33,7 @@ pub fn handle_remove_current(
     no_delete_branch: bool,
     force_delete: bool,
     force_worktree: bool,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
 ) -> anyhow::Result<RemoveResult> {
     let repo = Repository::current()?;
 

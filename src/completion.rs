@@ -8,7 +8,7 @@ use clap_complete::env::CompleteEnv;
 
 use crate::cli;
 use crate::display::format_relative_time_short;
-use worktrunk::config::{ProjectConfig, WorktrunkConfig};
+use worktrunk::config::{ProjectConfig, UserConfig};
 use worktrunk::git::{BranchCategory, HookType, Repository};
 
 /// Deprecated args that should never appear in completions.
@@ -260,7 +260,7 @@ fn complete_hook_commands() -> Vec<CompletionCandidate> {
         };
 
     // Load user config and add user hook names
-    if let Ok(user_config) = WorktrunkConfig::load()
+    if let Ok(user_config) = UserConfig::load()
         && let Some(config) = user_config.hooks.get(hook_type)
     {
         add_named_commands(&mut candidates, config);

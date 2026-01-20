@@ -60,7 +60,7 @@
 
 use color_print::cformat;
 
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{Shell, extract_filename_from_path};
 use worktrunk::styling::hint_message;
@@ -342,7 +342,7 @@ pub fn print_shell_install_result(
 ///
 /// Returns `Ok(true)` if installed, `Ok(false)` otherwise.
 pub fn prompt_shell_integration(
-    config: &mut WorktrunkConfig,
+    config: &mut UserConfig,
     binary_name: &str,
     skip_prompt: bool,
 ) -> anyhow::Result<bool> {
