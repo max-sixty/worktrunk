@@ -1823,20 +1823,51 @@ impl TestRepo {
 
     /// Setup mock `glab` that returns configurable MR/CI data for GitLab
     ///
-    /// Use this for testing GitLab CI status parsing code. The mock returns JSON data
-    /// for `glab mr list` and `glab repo view` commands.
+    /// Use this for testing GitLab CI status parsing code. The mock handles the
+    /// two-step MR resolution process:
+    /// - `glab mr list` returns basic MR info (iid, sha, conflicts, etc.)
+    /// - `glab mr view <iid>` returns full MR info including head_pipeline
     ///
     /// # Arguments
-    /// * `mr_json` - JSON string to return for `glab mr list --output json`
+    /// * `mr_json` - JSON string for MR data. Should include an `iid` field and
+    ///   optionally `head_pipeline`. This data is used for both `mr list` and
+    ///   `mr view` responses.
     /// * `project_id` - Optional project ID to return from `glab repo view`
+    ///
+    /// # Note
+    /// The mock automatically handles the compound command matching:
+    /// - "mr list" → returns MR list data
+    /// - "mr view" → returns same data (works because glab mr view returns same fields)
     pub fn setup_mock_glab_with_ci_data(&mut self, mr_json: &str, project_id: Option<u64>) {
         use crate::common::mock_commands::{MockConfig, MockResponse};
 
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
-        // Write JSON data file
-        std::fs::write(mock_bin.join("mr_data.json"), mr_json).unwrap();
+        // Parse the MR JSON to create separate list and view responses
+        // mr list needs: iid (for two-step lookup), sha, has_conflicts, detailed_merge_status, source_project_id, web_url
+        // mr view needs: sha, has_conflicts, detailed_merge_status, head_pipeline, pipeline, web_url
+        //
+        // Since we provide the same JSON for both, we need to ensure iid is present.
+        // The actual glab mr list doesn't return head_pipeline, but our mock can return
+        // it harmlessly - the code will ignore it and do a second lookup.
+
+        // Write JSON data files - same data for list (array) and view (single object)
+        std::fs::write(mock_bin.join("mr_list_data.json"), mr_json).unwrap();
+
+        // For mr view, extract the first element if it's an array, otherwise use as-is
+        let mr_view_json = if mr_json.trim().starts_with('[') {
+            // Parse as array and extract first element
+            let parsed: serde_json::Value = serde_json::from_str(mr_json).unwrap_or_default();
+            if let Some(first) = parsed.as_array().and_then(|arr| arr.first()) {
+                serde_json::to_string(first).unwrap_or_else(|_| mr_json.to_string())
+            } else {
+                "{}".to_string()
+            }
+        } else {
+            mr_json.to_string()
+        };
+        std::fs::write(mock_bin.join("mr_view_data.json"), &mr_view_json).unwrap();
 
         // Build project ID response
         let project_id_response = match project_id {
@@ -1844,11 +1875,13 @@ impl TestRepo {
             None => r#"{"error": "not found"}"#.to_string(),
         };
 
-        // Configure glab mock
+        // Configure glab mock with compound command matching
+        // "mr list" and "mr view" are matched before "mr" (see mock-stub)
         MockConfig::new("glab")
             .version("glab version 1.0.0 (mock)")
             .command("auth", MockResponse::exit(0))
-            .command("mr", MockResponse::file("mr_data.json"))
+            .command("mr list", MockResponse::file("mr_list_data.json"))
+            .command("mr view", MockResponse::file("mr_view_data.json"))
             .command("repo", MockResponse::output(&project_id_response))
             .command("ci", MockResponse::output("[]"))
             .write(&mock_bin);

@@ -17,10 +17,13 @@
 //! }
 //! ```
 //!
-//! Command matching:
-//! - `gh --version` → outputs version string
-//! - `gh auth ...` → matches "auth" command
-//! - `gh pr list ...` → matches "pr" command
+//! Command matching (in priority order):
+//! 1. `gh --version` → outputs version string
+//! 2. Compound: `gh mr list ...` → matches "mr list" (space-separated)
+//! 3. Single: `gh mr ...` → matches "mr" (first arg only)
+//! 4. `_default` → fallback if no match
+//!
+//! This allows different responses for `glab mr list` vs `glab mr view`.
 //!
 //! Response types:
 //! - `file`: read and output contents of specified file (relative to config dir)
@@ -90,16 +93,28 @@ fn main() {
         exit(0);
     }
 
-    // Match first argument against commands, fall back to _default
+    // Match against commands with priority: compound > single > _default
+    // Compound: "mr list" matches before "mr"
     let default_response = CommandResponse {
         file: None,
         output: None,
         stderr: None,
         exit_code: 1,
     };
-    let response = args
-        .first()
-        .and_then(|cmd| config.commands.get(cmd))
+
+    // Try compound match first (e.g., "mr list", "mr view")
+    let compound_key = if args.len() >= 2 {
+        Some(format!("{} {}", args[0], args[1]))
+    } else {
+        None
+    };
+
+    let response = compound_key
+        .as_ref()
+        .and_then(|key| config.commands.get(key))
+        // Fall back to single-arg match
+        .or_else(|| args.first().and_then(|cmd| config.commands.get(cmd)))
+        // Fall back to _default
         .or_else(|| config.commands.get("_default"))
         .unwrap_or(&default_response);
 
