@@ -646,7 +646,7 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // Linux has /bin/bash). Tests that need SHELL should set it explicitly.
     cmd.env_remove("SHELL");
     cmd.env("CLICOLOR_FORCE", "1");
-    cmd.env("SOURCE_DATE_EPOCH", TEST_EPOCH.to_string());
+    cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
     // Use wide terminal to prevent wrapping differences across platforms.
     // macOS temp paths (~80 chars) are much longer than Linux (~10 chars),
     // so error messages containing paths need room to avoid platform-specific line breaks.
@@ -694,7 +694,7 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
     cmd.env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z");
     cmd.env("LC_ALL", "C");
     cmd.env("LANG", "C");
-    cmd.env("SOURCE_DATE_EPOCH", TEST_EPOCH.to_string());
+    cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
     cmd.env("GIT_TERMINAL_PROMPT", "0");
 }
 
@@ -1093,7 +1093,7 @@ impl TestRepo {
             ),
             ("LC_ALL".to_string(), "C".to_string()),
             ("LANG".to_string(), "C".to_string()),
-            ("SOURCE_DATE_EPOCH".to_string(), TEST_EPOCH.to_string()),
+            ("WT_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
             (
                 "WORKTRUNK_CONFIG_PATH".to_string(),
                 self.test_config_path().display().to_string(),
@@ -1378,7 +1378,7 @@ impl TestRepo {
             .unwrap();
     }
 
-    /// Create a commit with a specific age relative to SOURCE_DATE_EPOCH
+    /// Create a commit with a specific age relative to TEST_EPOCH
     ///
     /// This allows creating commits that display specific relative ages
     /// in the Age column (e.g., "10m", "1h", "1d").
@@ -2810,7 +2810,7 @@ mod tests {
     fn test_unix_to_iso8601() {
         // 2025-01-01T00:00:00Z
         assert_eq!(unix_to_iso8601(1735689600), "2025-01-01T00:00:00Z");
-        // 2025-01-02T00:00:00Z (SOURCE_DATE_EPOCH)
+        // 2025-01-02T00:00:00Z (TEST_EPOCH)
         assert_eq!(unix_to_iso8601(1735776000), "2025-01-02T00:00:00Z");
         // 2024-12-31T00:00:00Z (one day before 2025-01-01)
         assert_eq!(unix_to_iso8601(1735603200), "2024-12-31T00:00:00Z");

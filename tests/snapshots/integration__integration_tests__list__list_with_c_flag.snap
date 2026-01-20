@@ -4,18 +4,19 @@ info:
   program: wt
   args:
     - "-C"
-    - /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp4KVPTd/repo
+    - /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpMgGbDu/repo
     - list
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_EDITOR: ""
     RUST_LOG: warn
     SHELL: ""
-    SOURCE_DATE_EPOCH: "1735776000"
     TERM: alacritty
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
 ---
 success: true
 exit_code: 0

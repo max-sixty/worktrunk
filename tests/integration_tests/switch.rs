@@ -1148,7 +1148,7 @@ fn test_switch_clobber_backs_up_stale_directory(repo: TestRepo) {
     assert!(expected_path.exists());
     assert!(expected_path.is_dir());
 
-    // Verify the backup was created (SOURCE_DATE_EPOCH=1735776000 -> 2025-01-02 00:00:00 UTC)
+    // Verify the backup was created (TEST_EPOCH=1735776000 -> 2025-01-02 00:00:00 UTC)
     let backup_path = repo.root_path().parent().unwrap().join(format!(
         "{}.clobber-dir-test.bak.20250102-000000",
         repo_name
@@ -1192,7 +1192,7 @@ fn test_switch_clobber_backs_up_stale_file(repo: TestRepo) {
     // Verify the worktree was created (should be a directory now)
     assert!(expected_path.is_dir());
 
-    // Verify the backup was created (SOURCE_DATE_EPOCH=1735776000 -> 2025-01-02 00:00:00 UTC)
+    // Verify the backup was created (TEST_EPOCH=1735776000 -> 2025-01-02 00:00:00 UTC)
     let backup_path = repo.root_path().parent().unwrap().join(format!(
         "{}.clobber-file-test.bak.20250102-000000",
         repo_name
@@ -1223,7 +1223,7 @@ fn test_switch_clobber_error_backup_exists(repo: TestRepo) {
     std::fs::create_dir_all(&expected_path).unwrap();
 
     // Also create the backup path that would be generated
-    // SOURCE_DATE_EPOCH=1735776000 -> 2025-01-02 00:00:00 UTC
+    // TEST_EPOCH=1735776000 -> 2025-01-02 00:00:00 UTC
     let backup_path = repo.root_path().parent().unwrap().join(format!(
         "{}.clobber-backup-exists.bak.20250102-000000",
         repo_name
