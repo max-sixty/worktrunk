@@ -77,13 +77,6 @@ pub fn run_hook(
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    // Helper to get user hook config
-    macro_rules! user_hook {
-        ($field:ident) => {
-            ctx.config.hooks.$field.as_ref()
-        };
-    }
-
     /// Helper to require at least one hook is configured (for standalone `wt hook` command)
     fn require_hooks(
         user: Option<&CommandConfig>,
@@ -102,7 +95,7 @@ pub fn run_hook(
     // Execute the hook based on type
     match hook_type {
         HookType::PostCreate => {
-            let user_config = user_hook!(post_create);
+            let user_config = ctx.config.hooks.post_create.as_ref();
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_create.as_ref());
@@ -120,7 +113,7 @@ pub fn run_hook(
             )
         }
         HookType::PostStart => {
-            let user_config = user_hook!(post_start);
+            let user_config = ctx.config.hooks.post_start.as_ref();
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_start.as_ref());
@@ -159,7 +152,7 @@ pub fn run_hook(
             }
         }
         HookType::PostSwitch => {
-            let user_config = user_hook!(post_switch);
+            let user_config = ctx.config.hooks.post_switch.as_ref();
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_switch.as_ref());
@@ -198,7 +191,7 @@ pub fn run_hook(
             }
         }
         HookType::PreCommit => {
-            let user_config = user_hook!(pre_commit);
+            let user_config = ctx.config.hooks.pre_commit.as_ref();
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.pre_commit.as_ref());
