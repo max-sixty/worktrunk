@@ -90,7 +90,7 @@ archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/nu
 
 ### post-remove
 
-Cleanup tasks after worktree removal, stopping dev servers, removing containers, notifying external systems. Runs in the main worktree after removal. Output logged to `.git/wt-logs/{branch}-{source}-post-remove-{name}.log`.
+Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. Template variables (`{{ branch }}`, `{{ worktree_path }}`, `{{ worktree_name }}`) reference the removed worktree, so cleanup scripts can use them to identify resources to clean up. Output logged to `.git/wt-logs/{branch}-{source}-post-remove-{name}.log`.
 
 ```toml
 [post-remove]
@@ -98,7 +98,7 @@ kill-server = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || tr
 remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
 ```
 
-During `wt merge`, hooks run in this order: pre-commit → pre-merge → pre-remove → post-merge → post-remove. See [`wt merge`](https://worktrunk.dev/merge/#pipeline) for the complete pipeline.
+During `wt merge`, hooks run in this order: pre-commit → pre-merge → pre-remove → post-remove → post-merge. See [`wt merge`](https://worktrunk.dev/merge/#pipeline) for the complete pipeline.
 
 ## Security
 

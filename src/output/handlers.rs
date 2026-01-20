@@ -540,12 +540,16 @@ fn handle_branch_only_output(
     Ok(())
 }
 
-/// Spawn post-remove hooks in the main worktree after removal.
+/// Spawn post-remove hooks after worktree removal.
 ///
-/// Runs after the worktree is removed, with the removed branch as context.
+/// Runs after the worktree is removed. Template variables reflect the removed
+/// worktree (branch, worktree_path, worktree_name), but commands execute from
+/// `run_from_path` since the removed worktree no longer exists.
+///
 /// Only runs if `verify` is true (hooks approved).
 fn spawn_post_remove_hooks(
-    main_path: &std::path::Path,
+    run_from_path: &std::path::Path,
+    removed_worktree_path: &std::path::Path,
     removed_branch: &str,
     verify: bool,
 ) -> anyhow::Result<()> {
@@ -555,17 +559,22 @@ fn spawn_post_remove_hooks(
     let Ok(config) = UserConfig::load() else {
         return Ok(());
     };
-    // Use main_path for discovery since the original worktree is removed
-    let repo = Repository::at(main_path)?;
-    // Context is the main worktree, but pass removed_branch for template expansion
+    // Use run_from_path for discovery since the original worktree is removed
+    let repo = Repository::at(run_from_path)?;
+    // Context uses run_from_path for execution, but we pass removed worktree
+    // info as extra_vars so template variables reflect the removed worktree
     let ctx = CommandContext::new(
         &repo,
         &config,
         Some(removed_branch),
-        main_path,
-        false, // force=false for CommandContext
+        run_from_path,
+        false, // yes=false for CommandContext
     );
-    ctx.spawn_post_remove_commands(removed_branch, super::post_hook_display_path(main_path))
+    ctx.spawn_post_remove_commands(
+        removed_branch,
+        removed_worktree_path,
+        super::post_hook_display_path(run_from_path),
+    )
 }
 
 /// Spawn post-switch hooks in the destination worktree after a directory change.
@@ -592,7 +601,7 @@ fn spawn_post_switch_after_remove(
         &config,
         dest_branch.as_deref(),
         main_path,
-        false, // force=false for CommandContext
+        false, // yes=false for CommandContext
     );
     // No base context for remove-triggered switch (we're returning to main, not creating)
     ctx.spawn_post_switch_commands(&[], super::post_hook_display_path(main_path))
@@ -813,7 +822,7 @@ fn handle_removed_worktree_output(
             &config,
             branch_name,
             worktree_path,
-            false, // force=false for CommandContext (not approval-related)
+            false, // yes=false for CommandContext (not approval-related)
         );
         // Show path when removing a different worktree (user is elsewhere)
         let display_path = if changed_directory {
@@ -867,7 +876,7 @@ fn handle_removed_worktree_output(
             ))?;
         }
         // Post-remove hooks for detached HEAD use "HEAD" as the branch identifier
-        spawn_post_remove_hooks(main_path, "HEAD", verify)?;
+        spawn_post_remove_hooks(main_path, worktree_path, "HEAD", verify)?;
         spawn_post_switch_after_remove(main_path, verify, changed_directory)?;
         super::flush()?;
         return Ok(());
@@ -908,7 +917,7 @@ fn handle_removed_worktree_output(
             None,
         )?;
 
-        spawn_post_remove_hooks(main_path, branch_name, verify)?;
+        spawn_post_remove_hooks(main_path, worktree_path, branch_name, verify)?;
         spawn_post_switch_after_remove(main_path, verify, changed_directory)?;
         super::flush()?;
         Ok(())
@@ -953,7 +962,7 @@ fn handle_removed_worktree_output(
         display_info.print_hints(branch_name, deletion_mode, pre_computed_integration)?;
         print_switch_message_if_changed(changed_directory, main_path)?;
 
-        spawn_post_remove_hooks(main_path, branch_name, verify)?;
+        spawn_post_remove_hooks(main_path, worktree_path, branch_name, verify)?;
         spawn_post_switch_after_remove(main_path, verify, changed_directory)?;
         super::flush()?;
         Ok(())

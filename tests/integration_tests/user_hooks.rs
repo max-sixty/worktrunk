@@ -609,6 +609,63 @@ cleanup = "echo 'USER_POST_REMOVE_RAN' > ../user_postremove_marker.txt"
     );
 }
 
+/// Verify that post-remove hook template variables reference the removed worktree,
+/// not the worktree where the hook executes from.
+#[rstest]
+fn test_user_post_remove_template_vars_reference_removed_worktree(mut repo: TestRepo) {
+    // Create a worktree to remove
+    let feature_wt_path = repo.add_worktree("feature");
+
+    // Write user config that captures template variables to a file
+    // Hook writes to parent dir (temp dir) since the worktree itself is removed
+    repo.write_test_config(
+        r#"[post-remove]
+capture = "echo 'branch={{ branch }} worktree_path={{ worktree_path }} worktree_name={{ worktree_name }}' > ../postremove_vars.txt"
+"#,
+    );
+
+    // Run from main worktree, remove the feature worktree
+    repo.wt_command()
+        .args(["remove", "feature", "--force-delete", "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // Wait for background hook to complete
+    let vars_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("postremove_vars.txt");
+    crate::common::wait_for_file(&vars_file);
+
+    let content = std::fs::read_to_string(&vars_file).unwrap();
+
+    // Verify branch is the removed branch
+    assert!(
+        content.contains("branch=feature"),
+        "branch should be the removed branch 'feature', got: {content}"
+    );
+
+    // Verify worktree_path is the removed worktree's path (not the main worktree)
+    let feature_wt_path_str = feature_wt_path.to_string_lossy();
+    assert!(
+        content.contains(&format!("worktree_path={feature_wt_path_str}")),
+        "worktree_path should be the removed worktree's path '{feature_wt_path_str}', got: {content}"
+    );
+
+    // Verify worktree_name is the removed worktree's directory name
+    let feature_wt_name = feature_wt_path
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    assert!(
+        content.contains(&format!("worktree_name={feature_wt_name}")),
+        "worktree_name should be the removed worktree's name '{feature_wt_name}', got: {content}"
+    );
+}
+
 #[rstest]
 fn test_user_post_remove_skipped_with_no_verify(mut repo: TestRepo) {
     // Create a worktree to remove
