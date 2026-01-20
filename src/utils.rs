@@ -29,7 +29,7 @@ pub fn now_iso8601() -> String {
 /// Note: We use `WT_TEST_EPOCH` rather than `SOURCE_DATE_EPOCH` because the
 /// latter is a build-time standard for reproducible builds, commonly set by
 /// NixOS/direnv in development shells. Using it at runtime causes incorrect
-/// age display. See: https://github.com/max-sixty/worktrunk/issues/763
+/// age display. See: <https://github.com/max-sixty/worktrunk/issues/763>
 ///
 /// All code that needs timestamps for display or storage should use this
 /// function rather than `SystemTime::now()` directly.
