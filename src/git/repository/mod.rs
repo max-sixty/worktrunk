@@ -314,44 +314,60 @@ impl Repository {
         self.git_common_dir().join("wt-logs")
     }
 
-    /// The repository root path.
+    /// The repository root path (the main worktree directory).
     ///
-    /// For normal repositories: the main worktree directory (parent of .git).
-    /// For bare repositories: the bare repository directory itself.
+    /// - Normal repositories: the main worktree directory (parent of .git)
+    /// - Bare repositories: the bare repository directory itself
+    /// - Submodules: the submodule's worktree (e.g., `/parent/sub`, not `/parent/.git/modules/sub`)
     ///
     /// This is the base for template expansion (`{{ repo }}`, `{{ repo_path }}`).
     /// NOT necessarily where established files live — use `primary_worktree()` for that.
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
+    ///
+    /// # Why we run from `git_common_dir`
+    ///
+    /// We need to return the *main* worktree regardless of which worktree we were discovered
+    /// from. For linked worktrees, `git_common_dir` is the stable reference that's shared
+    /// across all worktrees (e.g., `/myapp/.git` whether you're in `/myapp` or `/myapp.feature`).
+    ///
+    /// # Why the try-fallback approach
+    ///
+    /// `--show-toplevel` behavior depends on whether git has explicit worktree metadata:
+    ///
+    /// | git_common_dir location    | Has `core.worktree`? | `--show-toplevel` works? |
+    /// |----------------------------|----------------------|--------------------------|
+    /// | Normal `.git`              | No (implicit)        | No — "not a work tree"   |
+    /// | Submodule `.git/modules/X` | Yes (explicit)       | Yes — reads config       |
+    ///
+    /// Normal repos don't need `core.worktree` because the worktree is implicitly `parent(.git)`.
+    /// Submodules need it because their git data lives in the parent's `.git/modules/`.
+    ///
+    /// So we try `--show-toplevel` first (handles submodules), fall back to `parent()` (handles
+    /// normal repos). This avoids fragile path-based detection of submodules.
     pub fn repo_path(&self) -> &Path {
         self.cache.repo_path.get_or_init(|| {
+            // Bare repos have no worktree — the git directory IS the repo
             if self.is_bare() {
-                self.git_common_dir.clone()
-            } else {
-                // Check if this is a submodule (git_common_dir is in parent's .git/modules/)
-                let is_submodule = self
-                    .git_common_dir
-                    .to_string_lossy()
-                    .contains(".git/modules/");
-
-                if is_submodule {
-                    // For submodules, use --show-toplevel to get the submodule's working directory
-                    // (parent of git_common_dir would incorrectly return parent/.git/modules)
-                    let output = Cmd::new("git")
-                        .args(["rev-parse", "--show-toplevel"])
-                        .current_dir(&self.git_common_dir)
-                        .run()
-                        .expect("git rev-parse --show-toplevel failed on valid repo");
-                    PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())
-                } else {
-                    // For normal repos, use parent of git_common_dir to get the main worktree
-                    // (--show-toplevel would return linked worktree path if called from one)
-                    self.git_common_dir
-                        .parent()
-                        .expect("Git directory has no parent")
-                        .to_path_buf()
-                }
+                return self.git_common_dir.clone();
             }
+
+            // Submodules: --show-toplevel succeeds (git has explicit core.worktree config)
+            if let Ok(out) = Cmd::new("git")
+                .args(["rev-parse", "--show-toplevel"])
+                .current_dir(&self.git_common_dir)
+                .context(path_to_logging_context(&self.git_common_dir))
+                .run()
+                && out.status.success()
+            {
+                return PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+            }
+
+            // Normal repos: --show-toplevel fails from inside .git, use implicit relationship
+            self.git_common_dir
+                .parent()
+                .expect("Git directory has no parent")
+                .to_path_buf()
         })
     }
 

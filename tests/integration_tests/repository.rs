@@ -511,8 +511,8 @@ fn test_integration_functions_handle_remote_refs() {
 ///
 /// Previously, `repo_path()` derived the path from `git_common_dir.parent()`, which
 /// fails for submodules where git data is stored in `parent/.git/modules/sub`.
-/// The fix uses `git rev-parse --show-toplevel` which correctly returns the
-/// submodule's working directory.
+/// The fix tries `git rev-parse --show-toplevel` first (works for submodules),
+/// falling back to parent of git_common_dir for normal repos.
 #[test]
 fn test_repo_path_in_submodule() {
     use tempfile::TempDir;
