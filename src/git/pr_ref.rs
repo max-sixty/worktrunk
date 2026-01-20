@@ -482,7 +482,8 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
         .strip_prefix("https://")
         .or_else(|| response.html_url.strip_prefix("http://"))
         .and_then(|s| s.split('/').next())
-        .unwrap_or("github.com")
+        .filter(|h| !h.is_empty())
+        .with_context(|| format!("Failed to parse host from PR URL: {}", response.html_url))?
         .to_string();
 
     Ok(PrInfo {
