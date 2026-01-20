@@ -2090,7 +2090,12 @@ squash = false
 
     #[test]
     fn test_validation_absolute_worktree_path() {
-        let content = r#"worktree-path = "/absolute/path""#;
+        // Use platform-appropriate absolute path
+        let content = if cfg!(windows) {
+            r#"worktree-path = "C:\\absolute\\path""#
+        } else {
+            r#"worktree-path = "/absolute/path""#
+        };
         let result = UserConfig::load_from_str(content);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -2111,10 +2116,18 @@ worktree-path = ""
 
     #[test]
     fn test_validation_project_absolute_worktree_path() {
-        let content = r#"
+        // Use platform-appropriate absolute path
+        let content = if cfg!(windows) {
+            r#"
+[projects."github.com/user/repo"]
+worktree-path = "C:\\absolute\\path"
+"#
+        } else {
+            r#"
 [projects."github.com/user/repo"]
 worktree-path = "/absolute/path"
-"#;
+"#
+        };
         let result = UserConfig::load_from_str(content);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
