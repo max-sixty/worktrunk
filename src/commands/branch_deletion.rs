@@ -20,14 +20,14 @@ pub enum BranchDeletionOutcome {
 pub struct BranchDeletionResult {
     pub outcome: BranchDeletionOutcome,
     /// The target that was actually checked against (may be upstream if ahead of local)
-    pub effective_target: String,
+    pub integration_target: String,
 }
 
 /// Attempt to delete a branch if it's integrated or force_delete is set.
 ///
 /// Returns `BranchDeletionResult` with:
 /// - `outcome`: Whether/why deletion occurred
-/// - `effective_target`: The ref checked against (may be upstream if ahead of local)
+/// - `integration_target`: The ref checked against (may be upstream if ahead of local)
 pub fn delete_branch_if_safe(
     repo: &Repository,
     branch_name: &str,
@@ -51,7 +51,7 @@ pub fn delete_branch_if_safe(
 
     Ok(BranchDeletionResult {
         outcome,
-        effective_target,
+        integration_target: effective_target,
     })
 }
 
