@@ -10,7 +10,7 @@ use worktrunk::git::LineDiff;
 
 use super::super::ci_status::PrStatus;
 use super::super::model::{
-    AheadBehind, BranchDiffTotals, CommitDetails, GitOperationState, ListItem, UpstreamStatus,
+    ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, ListItem, UpstreamStatus,
     WorkingTreeStatus,
 };
 
@@ -129,7 +129,7 @@ pub(crate) enum TaskResult {
     /// Git operation in progress (rebase/merge)
     GitOperation {
         item_idx: usize,
-        git_operation: GitOperationState,
+        git_operation: ActiveGitOperation,
     },
     /// User-defined status from git config
     UserMarker {

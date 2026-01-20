@@ -67,7 +67,7 @@ pub(super) fn apply_default(
             status_contexts[idx].has_working_tree_conflicts = None;
         }
         TaskKind::GitOperation => {
-            // Already defaults to GitOperationState::None in WorktreeData
+            // Already defaults to ActiveGitOperation::None in WorktreeData
         }
         TaskKind::UserMarker => {
             // Already defaults to None

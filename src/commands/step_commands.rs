@@ -119,7 +119,7 @@ pub fn handle_squash(
         .unwrap_or_default();
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
-    let target_branch = repo.require_target_ref(target)?;
+    let integration_target = repo.require_target_ref(target)?;
 
     // Auto-stage changes before running pre-commit hooks so both beta and merge paths behave identically
     match stage_mode {
@@ -152,7 +152,7 @@ pub fn handle_squash(
 
     // Run pre-commit hooks (user first, then project)
     if !skip_pre_commit {
-        let extra_vars = [("target", target_branch.as_str())];
+        let extra_vars = [("target", integration_target.as_str())];
         run_hook_with_filter(
             &ctx,
             ctx.config.hooks.pre_commit.as_ref(),
@@ -170,7 +170,7 @@ pub fn handle_squash(
 
     // Get merge base with target branch (required for squash)
     let merge_base = repo
-        .merge_base("HEAD", &target_branch)?
+        .merge_base("HEAD", &integration_target)?
         .context("Cannot squash: no common ancestor with target branch")?;
 
     // Count commits since merge base
@@ -183,7 +183,7 @@ pub fn handle_squash(
     // Handle different scenarios
     if commit_count == 0 && !has_staged {
         // No commits and no staged changes - nothing to squash
-        return Ok(SquashResult::NoCommitsAhead(target_branch));
+        return Ok(SquashResult::NoCommitsAhead(integration_target));
     }
 
     if commit_count == 0 && has_staged {
@@ -240,7 +240,7 @@ pub fn handle_squash(
 
     // Create safety backup before potentially destructive reset if there are working tree changes
     if has_staged {
-        let backup_message = format!("{} → {} (squash)", current_branch, target_branch);
+        let backup_message = format!("{} → {} (squash)", current_branch, integration_target);
         let sha = wt.create_safety_backup(&backup_message)?;
         crate::output::print(hint_message(format!("Backup created @ {sha}")))?;
     }
@@ -261,7 +261,7 @@ pub fn handle_squash(
         .unwrap_or("repo");
 
     let commit_message = crate::llm::generate_squash_message(
-        &target_branch,
+        &integration_target,
         &merge_base,
         &subjects,
         &current_branch,
@@ -313,7 +313,7 @@ pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
     let effective_config = config.commit_generation(project_id.as_deref());
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
-    let target_branch = repo.require_target_ref(target)?;
+    let integration_target = repo.require_target_ref(target)?;
 
     // Get current branch
     let wt = repo.current_worktree();
@@ -321,7 +321,7 @@ pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
 
     // Get merge base with target branch (required for generating squash message)
     let merge_base = repo
-        .merge_base("HEAD", &target_branch)?
+        .merge_base("HEAD", &integration_target)?
         .context("Cannot generate squash message: no common ancestor with target branch")?;
 
     // Get commit subjects for the squash message
@@ -336,7 +336,7 @@ pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
         .unwrap_or("repo");
 
     let prompt = crate::llm::build_squash_prompt(
-        &target_branch,
+        &integration_target,
         &merge_base,
         &subjects,
         &current_branch,
@@ -360,16 +360,16 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     let repo = Repository::current()?;
 
     // Get and validate target ref (any commit-ish for rebase)
-    let target_branch = repo.require_target_ref(target)?;
+    let integration_target = repo.require_target_ref(target)?;
 
     // Check if already up-to-date (linear extension of target, no merge commits)
-    if repo.is_rebased_onto(&target_branch)? {
-        return Ok(RebaseResult::UpToDate(target_branch));
+    if repo.is_rebased_onto(&integration_target)? {
+        return Ok(RebaseResult::UpToDate(integration_target));
     }
 
     // Check if this is a fast-forward or true rebase
     let merge_base = repo
-        .merge_base("HEAD", &target_branch)?
+        .merge_base("HEAD", &integration_target)?
         .context("Cannot rebase: no common ancestor with target branch")?;
     let head_sha = repo.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
     let is_fast_forward = merge_base == head_sha;
@@ -377,11 +377,11 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     // Only show progress for true rebases (fast-forwards are instant)
     if !is_fast_forward {
         crate::output::print(progress_message(cformat!(
-            "Rebasing onto <bold>{target_branch}</>..."
+            "Rebasing onto <bold>{integration_target}</>..."
         )))?;
     }
 
-    let rebase_result = repo.run_command(&["rebase", &target_branch]);
+    let rebase_result = repo.run_command(&["rebase", &integration_target]);
 
     // If rebase failed, check if it's due to conflicts
     if let Err(e) = rebase_result {
@@ -391,14 +391,18 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
             // Extract git's stderr output from the error
             let git_output = e.to_string();
             return Err(worktrunk::git::GitError::RebaseConflict {
-                target_branch: target_branch.clone(),
+                target_branch: integration_target.clone(),
                 git_output,
             }
             .into());
         }
         // Not a rebase conflict, return original error
         return Err(worktrunk::git::GitError::Other {
-            message: cformat!("Failed to rebase onto <bold>{}</>: {}", target_branch, e),
+            message: cformat!(
+                "Failed to rebase onto <bold>{}</>: {}",
+                integration_target,
+                e
+            ),
         }
         .into());
     }
@@ -407,7 +411,7 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     if let Some(state) = repo.worktree_state()? {
         let _ = state; // used for diagnostics
         return Err(worktrunk::git::GitError::RebaseConflict {
-            target_branch: target_branch.clone(),
+            target_branch: integration_target.clone(),
             git_output: String::new(),
         }
         .into());
@@ -416,11 +420,11 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     // Success
     if is_fast_forward {
         crate::output::print(success_message(cformat!(
-            "Fast-forwarded to <bold>{target_branch}</>"
+            "Fast-forwarded to <bold>{integration_target}</>"
         )))?;
     } else {
         crate::output::print(success_message(cformat!(
-            "Rebased onto <bold>{target_branch}</>"
+            "Rebased onto <bold>{integration_target}</>"
         )))?;
     }
 

@@ -527,7 +527,7 @@ fn handle_branch_only_output(
         let flag_note = get_flag_note(
             deletion_mode,
             &deletion.outcome,
-            Some(&deletion.effective_target),
+            Some(&deletion.integration_target),
         );
         let flag_text = &flag_note.text;
         let flag_after = flag_note.after_green();
@@ -582,8 +582,8 @@ fn spawn_post_switch_after_remove(
 struct RemovalDisplayInfo {
     /// The deletion outcome (NotDeleted, ForceDeleted, or Integrated)
     outcome: BranchDeletionOutcome,
-    /// The effective target branch used for integration check
-    effective_target: Option<String>,
+    /// The target branch used for integration check (may be upstream if ahead of local)
+    integration_target: Option<String>,
     /// Whether the branch was integrated (used for hints when branch is kept)
     branch_was_integrated: bool,
     /// Whether to show the "unmerged, run -D" hint (foreground only, based on actual deletion)
@@ -603,7 +603,7 @@ impl RemovalDisplayInfo {
         target_branch: Option<&str>,
         force_worktree: bool,
     ) -> Self {
-        let (outcome, effective_target) = if deletion_mode.should_keep() {
+        let (outcome, integration_target) = if deletion_mode.should_keep() {
             (
                 BranchDeletionOutcome::NotDeleted,
                 target_branch.map(String::from),
@@ -623,7 +623,7 @@ impl RemovalDisplayInfo {
 
         Self {
             outcome,
-            effective_target,
+            integration_target,
             branch_was_integrated: pre_computed_integration.is_some(),
             show_unmerged_hint: false, // Background mode never shows this hint
             force_worktree,
@@ -641,13 +641,13 @@ impl RemovalDisplayInfo {
     ) -> anyhow::Result<Self> {
         let branch_was_integrated = pre_computed_integration.is_some();
 
-        let (outcome, effective_target, show_unmerged_hint) = if !deletion_mode.should_keep() {
+        let (outcome, integration_target, show_unmerged_hint) = if !deletion_mode.should_keep() {
             let check_target = target_branch.unwrap_or("HEAD");
             let result =
                 delete_branch_if_safe(repo, branch_name, check_target, deletion_mode.is_force());
             let (deletion, needs_hint) = handle_branch_deletion_result(result, branch_name, true)?;
-            // Only use effective_target for display if we had a real target (not "HEAD" fallback)
-            let display_target = target_branch.map(|_| deletion.effective_target);
+            // Only use integration_target for display if we had a real target (not "HEAD" fallback)
+            let display_target = target_branch.map(|_| deletion.integration_target);
             (deletion.outcome, display_target, needs_hint)
         } else {
             (
@@ -659,7 +659,7 @@ impl RemovalDisplayInfo {
 
         Ok(Self {
             outcome,
-            effective_target,
+            integration_target,
             branch_was_integrated,
             show_unmerged_hint,
             force_worktree,
@@ -683,7 +683,7 @@ impl RemovalDisplayInfo {
                 BranchDeletionMode::Keep
             },
             &self.outcome,
-            self.effective_target.as_deref(),
+            self.integration_target.as_deref(),
         );
         let force_text = if self.force_worktree {
             " (--force)"
@@ -732,7 +732,7 @@ impl RemovalDisplayInfo {
         if deletion_mode.should_keep() && self.branch_was_integrated {
             // User kept an integrated branch - show integration info
             let reason = pre_computed_integration.as_ref().unwrap();
-            let target = self.effective_target.as_deref().unwrap_or("target");
+            let target = self.integration_target.as_deref().unwrap_or("target");
             let desc = reason.description();
             let symbol = reason.symbol();
             super::print(hint_message(cformat!(
