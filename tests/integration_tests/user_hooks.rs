@@ -659,6 +659,57 @@ marker = "echo 'SHOULD_NOT_RUN' > ../no_verify_postremove.txt"
 // not easily testable without complex timing manipulation and matches the existing
 // pattern in spawn_post_switch_after_remove (line 584).
 
+#[rstest]
+fn test_standalone_hook_post_remove_invalid_template(repo: TestRepo) {
+    // Write project config with invalid template syntax (unclosed braces)
+    repo.write_project_config(r#"post-remove = "echo {{ invalid""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-remove", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "wt hook post-remove should fail with invalid template"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Failed to expand command template"),
+        "Error should mention template expansion failure, got: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_standalone_hook_post_remove_name_filter_no_match(repo: TestRepo) {
+    // Write project config with a named hook
+    repo.write_project_config(
+        r#"[post-remove]
+cleanup = "echo cleanup"
+"#,
+    );
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    // Use a name filter that doesn't match any configured hook
+    cmd.args(["hook", "post-remove", "nonexistent", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "wt hook post-remove should fail when name filter doesn't match"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No hook named") || stderr.contains("nonexistent"),
+        "Error should mention the unmatched filter, got: {stderr}"
+    );
+}
+
 // ============================================================================
 // User Pre-Commit Hook Tests
 // ============================================================================
