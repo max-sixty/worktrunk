@@ -710,6 +710,48 @@ marker = "echo 'SHOULD_NOT_RUN' > ../no_verify_postremove.txt"
     );
 }
 
+/// Verify that post-remove hooks run during `wt merge` (which removes the worktree).
+/// This tests the main production use case for post-remove hooks.
+#[rstest]
+fn test_user_post_remove_hook_runs_during_merge(mut repo: TestRepo) {
+    // Create feature worktree with a commit
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
+
+    // Write user config with post-remove hook
+    // Hook writes to temp dir (parent of repo) since worktree is removed
+    repo.write_test_config(
+        r#"[post-remove]
+cleanup = "echo 'POST_REMOVE_DURING_MERGE' > ../merge_postremove_marker.txt"
+"#,
+    );
+
+    // Run merge from feature worktree - this should trigger post-remove hooks
+    repo.wt_command()
+        .args(["merge", "main", "--yes"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    // Wait for background hook to complete
+    let marker_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("merge_postremove_marker.txt");
+    crate::common::wait_for_file(&marker_file);
+
+    assert!(
+        marker_file.exists(),
+        "Post-remove hook should run during wt merge"
+    );
+    let contents = fs::read_to_string(&marker_file).unwrap();
+    assert!(
+        contents.contains("POST_REMOVE_DURING_MERGE"),
+        "Marker file should contain expected content"
+    );
+}
+
 // Note: The `return Ok(())` path in spawn_post_remove_hooks when UserConfig::load()
 // fails (handlers.rs line 556) is defensive code for an extremely rare race condition
 // where config becomes invalid between command startup and hook execution. This is
