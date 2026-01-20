@@ -116,9 +116,8 @@ fn test_hook_show_approval_status(repo: TestRepo, temp_home: TempDir) {
     // Remove origin so project_identifier uses full canonical path
     repo.run_git(&["remote", "remove", "origin"]);
 
-    // Get the canonical path for the project identifier
-    let project_id = dunce::canonicalize(repo.root_path()).unwrap();
-    let project_id_str = project_id.to_str().unwrap();
+    // Get the canonical path for the project identifier (escaped for TOML)
+    let project_id_str = repo.project_id();
 
     // Create user config at XDG path with one approved command
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -269,9 +268,8 @@ fn test_hook_clear_with_approvals(repo: TestRepo, temp_home: TempDir) {
     // Remove origin so project_identifier uses full canonical path
     repo.run_git(&["remote", "remove", "origin"]);
 
-    // Get the canonical path for the project identifier
-    let project_id = dunce::canonicalize(repo.root_path()).unwrap();
-    let project_id_str = project_id.to_str().unwrap();
+    // Get the canonical path for the project identifier (escaped for TOML)
+    let project_id_str = repo.project_id();
 
     // Create user config with approved commands for this project
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");

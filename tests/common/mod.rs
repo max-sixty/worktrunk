@@ -1306,12 +1306,15 @@ impl TestRepo {
     /// as a proper git URL, causing worktrunk to fall back to the full canonical path.
     ///
     /// Use this when writing test configs with `[projects."<id>"]` sections.
+    /// Backslashes are escaped for use in TOML string literals (Windows paths).
     pub fn project_id(&self) -> String {
-        dunce::canonicalize(&self.root)
+        let path = dunce::canonicalize(&self.root)
             .unwrap_or_else(|_| self.root.clone())
             .to_str()
             .unwrap_or("")
-            .to_string()
+            .to_string();
+        // Escape backslashes for TOML string literals (Windows paths)
+        path.replace('\\', "\\\\")
     }
 
     /// Get the path to the isolated test config file
