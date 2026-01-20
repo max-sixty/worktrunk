@@ -836,7 +836,7 @@ fn main() {
                         result.path(),
                         yes,
                     );
-                    let template_vars = build_hook_context(&ctx, &extra_vars)?;
+                    let template_vars = build_hook_context(&ctx, &extra_vars);
                     let vars: std::collections::HashMap<&str, &str> = template_vars
                         .iter()
                         .map(|(k, v)| (k.as_str(), v.as_str()))

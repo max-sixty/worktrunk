@@ -67,7 +67,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
         // Build full hook context for this worktree
         // Pass wt.branch directly (not the display string) so detached HEAD maps to None -> "HEAD"
         let ctx = CommandContext::new(&repo, &config, wt.branch.as_deref(), &wt.path, false);
-        let context_map = build_hook_context(&ctx, &[])?;
+        let context_map = build_hook_context(&ctx, &[]);
 
         // Convert to &str references for expand_template
         let vars: HashMap<&str, &str> = context_map

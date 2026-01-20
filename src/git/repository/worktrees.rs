@@ -64,13 +64,13 @@ impl Repository {
     ///
     /// For template var `{{ primary_worktree_path }}`.
     pub fn primary_worktree(&self) -> anyhow::Result<Option<PathBuf>> {
-        if self.is_bare()? {
+        if self.is_bare() {
             let Some(branch) = self.default_branch() else {
                 return Ok(None);
             };
             self.worktree_for_branch(&branch)
         } else {
-            Ok(Some(self.repo_path()?))
+            Ok(Some(self.repo_path().to_path_buf()))
         }
     }
 
@@ -226,6 +226,6 @@ impl Repository {
         }
 
         // No worktrees - fall back to repo base (bare repo case)
-        self.repo_path()
+        Ok(self.repo_path().to_path_buf())
     }
 }
