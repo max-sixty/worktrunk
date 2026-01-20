@@ -214,8 +214,7 @@ impl PrStatus {
     /// Used for environments that don't support OSC 8 hyperlinks (e.g., Claude Code).
     pub fn format_indicator(&self, include_link: bool) -> String {
         let indicator = self.indicator();
-        if include_link && self.url.is_some() {
-            let url = self.url.as_ref().unwrap();
+        if let (true, Some(url)) = (include_link, &self.url) {
             let style = self.style().underline();
             format!(
                 "{}{}{}{}{}",

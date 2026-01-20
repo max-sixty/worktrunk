@@ -256,9 +256,12 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
         }
     }
 
-    // Test commit generation
+    // Test commit generation - use effective config for current project
     let config = UserConfig::load()?;
-    let commit_config = &config.commit_generation;
+    let project_id = Repository::current()
+        .ok()
+        .and_then(|r| r.project_identifier().ok());
+    let commit_config = config.commit_generation(project_id.as_deref());
 
     if !commit_config.is_configured() {
         writeln!(out, "{}", hint_message("Commit generation not configured"))?;
@@ -275,7 +278,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
         }
     );
 
-    match test_commit_generation(commit_config) {
+    match test_commit_generation(&commit_config) {
         Ok(message) => {
             writeln!(
                 out,

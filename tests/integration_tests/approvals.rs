@@ -215,7 +215,8 @@ fn test_add_approvals_project_config_no_commands(repo: TestRepo) {
     // Create project config with only non-hook settings
     repo.write_project_config(
         r#"# Project config without any hook sections
-worktree-path = "../project.{{ branch }}"
+[list]
+url = "http://localhost:8080"
 "#,
     );
     repo.commit("Add config without hooks");

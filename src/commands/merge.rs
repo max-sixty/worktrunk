@@ -17,15 +17,24 @@ use super::worktree::{
 };
 
 /// Options for the merge command
+///
+/// All boolean fields are optional CLI overrides. If None, the effective config
+/// (project-specific merged with global) is used. If that's also None, defaults apply.
 pub struct MergeOptions<'a> {
     pub target: Option<&'a str>,
-    pub squash: bool,
-    pub commit: bool,
-    pub rebase: bool,
-    pub remove: bool,
-    pub verify: bool,
+    /// CLI override for squash. None = use effective config default.
+    pub squash: Option<bool>,
+    /// CLI override for commit. None = use effective config default.
+    pub commit: Option<bool>,
+    /// CLI override for rebase. None = use effective config default.
+    pub rebase: Option<bool>,
+    /// CLI override for remove. None = use effective config default.
+    pub remove: Option<bool>,
+    /// CLI override for verify. None = use effective config default.
+    pub verify: Option<bool>,
     pub yes: bool,
-    pub stage_mode: super::commit::StageMode,
+    /// CLI override for stage mode. None = use effective config default.
+    pub stage: Option<super::commit::StageMode>,
 }
 
 /// Collect all commands that will be executed during merge.
@@ -69,13 +78,13 @@ fn collect_merge_commands(
 pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let MergeOptions {
         target,
-        squash,
-        commit,
-        rebase,
-        remove,
-        verify,
+        squash: squash_opt,
+        commit: commit_opt,
+        rebase: rebase_opt,
+        remove: remove_opt,
+        verify: verify_opt,
         yes,
-        stage_mode,
+        stage,
     } = opts;
 
     let env = CommandEnv::for_action("merge")?;
@@ -83,6 +92,31 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let config = &env.config;
     // Merge requires being on a branch (can't merge from detached HEAD)
     let current_branch = env.require_branch("merge")?.to_string();
+
+    // Get effective merge config (project-specific merged with global)
+    let merge_config = env.merge();
+
+    // Determine final values: CLI > project config > global config > default (true)
+    let squash = squash_opt
+        .or_else(|| merge_config.as_ref().and_then(|m| m.squash))
+        .unwrap_or(true);
+    let commit = commit_opt
+        .or_else(|| merge_config.as_ref().and_then(|m| m.commit))
+        .unwrap_or(true);
+    let rebase = rebase_opt
+        .or_else(|| merge_config.as_ref().and_then(|m| m.rebase))
+        .unwrap_or(true);
+    let remove = remove_opt
+        .or_else(|| merge_config.as_ref().and_then(|m| m.remove))
+        .unwrap_or(true);
+    let verify = verify_opt
+        .or_else(|| merge_config.as_ref().and_then(|m| m.verify))
+        .unwrap_or(true);
+
+    // Stage mode: CLI > project commit config > global commit config > default
+    let stage_mode = stage
+        .or_else(|| env.commit().and_then(|c| c.stage))
+        .unwrap_or_default();
 
     // Cache current worktree for multiple queries
     let current_wt = repo.current_worktree();
@@ -153,7 +187,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
                 Some(&target_branch),
                 yes,
                 !verify, // skip_pre_commit when !verify
-                stage_mode
+                Some(stage_mode)
             )?,
             super::step_commands::SquashResult::Squashed
         )

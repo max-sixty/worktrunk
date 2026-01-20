@@ -199,7 +199,7 @@ fn test_remove_nonexistent_worktree(repo: TestRepo) {
 
 ///
 /// Regression test for bug where `wt remove npm` would show "Cannot create worktree for npm"
-/// when the expected path was occupied. The fix uses `ResolutionContext::Remove` which skips
+/// when the expected path was occupied. The fix uses `OperationMode::Remove` which skips
 /// the path occupation check entirely, correctly treating this as a branch-only removal.
 ///
 /// Setup:

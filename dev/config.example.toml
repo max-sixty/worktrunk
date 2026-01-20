@@ -93,12 +93,20 @@
 # # Example:
 # # pager = "delta --paging=never"
 #
-# ### Approved commands
+# ### Per-project settings (Experimental)
 #
-# Commands approved for project hooks. Auto-populated when approving hooks on first run, or via `wt hook approvals add`.
+# Per-project settings are keyed by project identifier (e.g., `github.com/user/repo`).
+# These contain approved hook commands plus optional overrides of global settings.
+# Setting overrides (worktree-path, list, commit, merge) are new; approved-commands is stable.
 #
 # [projects."github.com/user/repo"]
+# # Approved hook commands (auto-populated when approving on first run)
 # approved-commands = ["npm ci", "npm test"]
+#
+# # Optional overrides (omit to use global settings)
+# worktree-path = ".worktrees/{{ branch | sanitize }}"
+# list.full = true
+# merge.squash = false
 #
 # For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see `wt hook` docs (https://worktrunk.dev/hook/).
 #

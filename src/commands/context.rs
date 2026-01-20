@@ -84,4 +84,27 @@ impl CommandEnv {
             .into()
         })
     }
+
+    /// Get the project identifier for per-project config lookup.
+    ///
+    /// Uses the remote URL if available, otherwise the canonical repository path.
+    /// Returns None only if the path is not valid UTF-8.
+    pub fn project_id(&self) -> Option<String> {
+        self.repo.project_identifier().ok()
+    }
+
+    /// Get the commit generation config, merging project-specific settings.
+    pub fn commit_generation(&self) -> worktrunk::config::CommitGenerationConfig {
+        self.config.commit_generation(self.project_id().as_deref())
+    }
+
+    /// Get the commit config, merging project-specific settings.
+    pub fn commit(&self) -> Option<worktrunk::config::CommitConfig> {
+        self.config.commit(self.project_id().as_deref())
+    }
+
+    /// Get the merge config, merging project-specific settings.
+    pub fn merge(&self) -> Option<worktrunk::config::MergeConfig> {
+        self.config.merge(self.project_id().as_deref())
+    }
 }
