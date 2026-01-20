@@ -476,6 +476,7 @@ pub fn handle_remove_output(
             integration_reason,
             force_worktree,
             expected_path,
+            removed_commit,
         } => handle_removed_worktree_output(
             main_path,
             worktree_path,
@@ -486,6 +487,7 @@ pub fn handle_remove_output(
             *integration_reason,
             *force_worktree,
             expected_path.as_ref(),
+            removed_commit.as_deref(),
             background,
             verify,
         ),
@@ -543,7 +545,7 @@ fn handle_branch_only_output(
 /// Spawn post-remove hooks after worktree removal.
 ///
 /// Runs after the worktree is removed. Template variables reflect the removed
-/// worktree (branch, worktree_path, worktree_name), but commands execute from
+/// worktree (branch, worktree_path, worktree_name, commit), but commands execute from
 /// `run_from_path` since the removed worktree no longer exists.
 ///
 /// Only runs if `verify` is true (hooks approved).
@@ -551,6 +553,7 @@ fn spawn_post_remove_hooks(
     run_from_path: &std::path::Path,
     removed_worktree_path: &std::path::Path,
     removed_branch: &str,
+    removed_commit: Option<&str>,
     verify: bool,
 ) -> anyhow::Result<()> {
     if !verify {
@@ -573,6 +576,7 @@ fn spawn_post_remove_hooks(
     ctx.spawn_post_remove_commands(
         removed_branch,
         removed_worktree_path,
+        removed_commit,
         super::post_hook_display_path(run_from_path),
     )
 }
@@ -805,6 +809,7 @@ fn handle_removed_worktree_output(
     pre_computed_integration: Option<IntegrationReason>,
     force_worktree: bool,
     expected_path: Option<&PathBuf>,
+    removed_commit: Option<&str>,
     background: bool,
     verify: bool,
 ) -> anyhow::Result<()> {
@@ -876,7 +881,7 @@ fn handle_removed_worktree_output(
             ))?;
         }
         // Post-remove hooks for detached HEAD use "HEAD" as the branch identifier
-        spawn_post_remove_hooks(main_path, worktree_path, "HEAD", verify)?;
+        spawn_post_remove_hooks(main_path, worktree_path, "HEAD", removed_commit, verify)?;
         spawn_post_switch_after_remove(main_path, verify, changed_directory)?;
         super::flush()?;
         return Ok(());
@@ -917,7 +922,13 @@ fn handle_removed_worktree_output(
             None,
         )?;
 
-        spawn_post_remove_hooks(main_path, worktree_path, branch_name, verify)?;
+        spawn_post_remove_hooks(
+            main_path,
+            worktree_path,
+            branch_name,
+            removed_commit,
+            verify,
+        )?;
         spawn_post_switch_after_remove(main_path, verify, changed_directory)?;
         super::flush()?;
         Ok(())
@@ -962,7 +973,13 @@ fn handle_removed_worktree_output(
         display_info.print_hints(branch_name, deletion_mode, pre_computed_integration)?;
         print_switch_message_if_changed(changed_directory, main_path)?;
 
-        spawn_post_remove_hooks(main_path, worktree_path, branch_name, verify)?;
+        spawn_post_remove_hooks(
+            main_path,
+            worktree_path,
+            branch_name,
+            removed_commit,
+            verify,
+        )?;
         spawn_post_switch_after_remove(main_path, verify, changed_directory)?;
         super::flush()?;
         Ok(())

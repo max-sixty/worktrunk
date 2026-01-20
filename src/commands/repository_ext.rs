@@ -197,6 +197,13 @@ impl RepositoryCliExt for Repository {
             .as_ref()
             .and_then(|branch| get_path_mismatch(self, branch, &worktree_path, config));
 
+        // Capture commit SHA before removal for post-remove hook template variables.
+        // This ensures {{ commit }} references the removed worktree's state.
+        let removed_commit = target_wt
+            .run_command(&["rev-parse", "HEAD"])
+            .ok()
+            .map(|s| s.trim().to_string());
+
         Ok(RemoveResult::RemovedWorktree {
             main_path,
             worktree_path,
@@ -207,6 +214,7 @@ impl RepositoryCliExt for Repository {
             integration_reason,
             force_worktree,
             expected_path,
+            removed_commit,
         })
     }
 

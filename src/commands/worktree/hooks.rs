@@ -100,11 +100,13 @@ impl<'a> CommandContext<'a> {
     ///
     /// `removed_branch`: The branch that was removed (for `{{ branch }}`).
     /// `removed_worktree_path`: The removed worktree's path (for `{{ worktree_path }}`, etc.).
+    /// `removed_commit`: The commit SHA of the removed worktree's HEAD (for `{{ commit }}`).
     /// `display_path`: When `Some`, shows the path in hook announcements.
     pub fn spawn_post_remove_commands(
         &self,
         removed_branch: &str,
         removed_worktree_path: &Path,
+        removed_commit: Option<&str>,
         display_path: Option<&Path>,
     ) -> anyhow::Result<()> {
         let project_config = self.repo.load_project_config()?;
@@ -118,6 +120,23 @@ impl<'a> CommandContext<'a> {
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
 
+        // Build extra_vars with all removed worktree context.
+        // Commit is captured before removal to ensure it reflects the removed worktree's state.
+        let commit = removed_commit.unwrap_or("");
+        let short_commit = if commit.len() >= 7 {
+            &commit[..7]
+        } else {
+            commit
+        };
+        let extra_vars: Vec<(&str, &str)> = vec![
+            ("branch", removed_branch),
+            ("worktree_path", &worktree_path_str),
+            ("worktree", &worktree_path_str), // deprecated alias
+            ("worktree_name", worktree_name),
+            ("commit", commit),
+            ("short_commit", short_commit),
+        ];
+
         let commands = prepare_hook_commands(
             self,
             self.config.hooks.post_remove.as_ref(),
@@ -125,12 +144,7 @@ impl<'a> CommandContext<'a> {
                 .as_ref()
                 .and_then(|c| c.hooks.post_remove.as_ref()),
             HookType::PostRemove,
-            &[
-                ("branch", removed_branch),
-                ("worktree_path", &worktree_path_str),
-                ("worktree", &worktree_path_str), // deprecated alias
-                ("worktree_name", worktree_name),
-            ],
+            &extra_vars,
             None,
             display_path,
         )?;

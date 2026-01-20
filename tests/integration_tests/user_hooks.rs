@@ -613,14 +613,26 @@ cleanup = "echo 'USER_POST_REMOVE_RAN' > ../user_postremove_marker.txt"
 /// not the worktree where the hook executes from.
 #[rstest]
 fn test_user_post_remove_template_vars_reference_removed_worktree(mut repo: TestRepo) {
-    // Create a worktree to remove
-    let feature_wt_path = repo.add_worktree("feature");
+    // Create a worktree with a unique commit to verify commit capture
+    let feature_wt_path =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
+
+    // Get the commit SHA of the feature worktree BEFORE removal
+    let feature_commit = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&feature_wt_path)
+        .output()
+        .unwrap();
+    let feature_commit = String::from_utf8_lossy(&feature_commit.stdout);
+    let feature_commit = feature_commit.trim();
+    let feature_short_commit = &feature_commit[..7];
 
     // Write user config that captures template variables to a file
     // Hook writes to parent dir (temp dir) since the worktree itself is removed
     repo.write_test_config(
         r#"[post-remove]
-capture = "echo 'branch={{ branch }} worktree_path={{ worktree_path }} worktree_name={{ worktree_name }}' > ../postremove_vars.txt"
+capture = "echo 'branch={{ branch }} worktree_path={{ worktree_path }} worktree_name={{ worktree_name }} commit={{ commit }} short_commit={{ short_commit }}' > ../postremove_vars.txt"
 "#,
     );
 
@@ -663,6 +675,18 @@ capture = "echo 'branch={{ branch }} worktree_path={{ worktree_path }} worktree_
     assert!(
         content.contains(&format!("worktree_name={feature_wt_name}")),
         "worktree_name should be the removed worktree's name '{feature_wt_name}', got: {content}"
+    );
+
+    // Verify commit is the removed worktree's commit (not main worktree's commit)
+    assert!(
+        content.contains(&format!("commit={feature_commit}")),
+        "commit should be the removed worktree's commit '{feature_commit}', got: {content}"
+    );
+
+    // Verify short_commit is the first 7 chars of the removed worktree's commit
+    assert!(
+        content.contains(&format!("short_commit={feature_short_commit}")),
+        "short_commit should be '{feature_short_commit}', got: {content}"
     );
 }
 
