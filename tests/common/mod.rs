@@ -1855,19 +1855,28 @@ impl TestRepo {
         // Write JSON data files - same data for list (array) and view (single object)
         std::fs::write(mock_bin.join("mr_list_data.json"), mr_json).unwrap();
 
-        // For mr view, extract the first element if it's an array, otherwise use as-is
-        let mr_view_json = if mr_json.trim().starts_with('[') {
-            // Parse as array and extract first element
-            let parsed: serde_json::Value = serde_json::from_str(mr_json).unwrap_or_default();
-            if let Some(first) = parsed.as_array().and_then(|arr| arr.first()) {
-                serde_json::to_string(first).unwrap_or_else(|_| mr_json.to_string())
-            } else {
-                "{}".to_string()
+        // For mr view, create separate files for each MR by iid
+        // This allows triple-matching "mr view <iid>" to return the correct MR
+        let mut mock_config = MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("mr list", MockResponse::file("mr_list_data.json"));
+
+        // Parse MR array and create iid-specific view commands
+        // Triple match: "mr view 1" matches before "mr view" (see mock-stub)
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(mr_json)
+            && let Some(arr) = parsed.as_array()
+        {
+            for mr in arr {
+                if let Some(iid) = mr.get("iid").and_then(|v| v.as_u64()) {
+                    let filename = format!("mr_view_{}.json", iid);
+                    let json = serde_json::to_string(mr).unwrap_or_default();
+                    std::fs::write(mock_bin.join(&filename), json).unwrap();
+                    mock_config = mock_config
+                        .command(&format!("mr view {}", iid), MockResponse::file(&filename));
+                }
             }
-        } else {
-            mr_json.to_string()
-        };
-        std::fs::write(mock_bin.join("mr_view_data.json"), &mr_view_json).unwrap();
+        }
 
         // Build project ID response
         let project_id_response = match project_id {
@@ -1876,12 +1885,8 @@ impl TestRepo {
         };
 
         // Configure glab mock with compound command matching
-        // "mr list" and "mr view" are matched before "mr" (see mock-stub)
-        MockConfig::new("glab")
-            .version("glab version 1.0.0 (mock)")
-            .command("auth", MockResponse::exit(0))
-            .command("mr list", MockResponse::file("mr_list_data.json"))
-            .command("mr view", MockResponse::file("mr_view_data.json"))
+        // "mr view <iid>" is matched before "mr view" (see mock-stub triple matching)
+        mock_config
             .command("repo", MockResponse::output(&project_id_response))
             .command("ci", MockResponse::output("[]"))
             .write(&mock_bin);

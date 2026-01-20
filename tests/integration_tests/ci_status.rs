@@ -532,19 +532,9 @@ fn test_list_full_with_gitlab_filters_by_project_id(mut repo: TestRepo) {
     let head_sha = get_branch_sha(&repo, "feature");
 
     // Multiple MRs - only one from our project (should filter to project 99999)
-    // Note: Our MR (iid=1) is listed first so the mock's `mr view` returns correct data.
-    // Real glab respects the iid argument, but our mock just returns the first element.
+    // The "other" MR is listed first to prove filtering works (not just taking first element)
     let mr_json = format!(
         r#"[
-        {{
-            "iid": 1,
-            "sha": "{}",
-            "has_conflicts": false,
-            "detailed_merge_status": null,
-            "head_pipeline": {{"status": "success"}},
-            "source_project_id": 99999,
-            "web_url": "https://gitlab.com/my-group/my-project/-/merge_requests/1"
-        }},
         {{
             "iid": 99,
             "sha": "wrong_sha",
@@ -553,6 +543,15 @@ fn test_list_full_with_gitlab_filters_by_project_id(mut repo: TestRepo) {
             "head_pipeline": {{"status": "failed"}},
             "source_project_id": 11111,
             "web_url": "https://gitlab.com/other-group/other-project/-/merge_requests/99"
+        }},
+        {{
+            "iid": 1,
+            "sha": "{}",
+            "has_conflicts": false,
+            "detailed_merge_status": null,
+            "head_pipeline": {{"status": "success"}},
+            "source_project_id": 99999,
+            "web_url": "https://gitlab.com/my-group/my-project/-/merge_requests/1"
         }}
     ]"#,
         head_sha
