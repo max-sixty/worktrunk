@@ -48,7 +48,8 @@ impl<'a> CommandContext<'a> {
 
     /// Get the project identifier for per-project config lookup.
     ///
-    /// Returns None if the repository doesn't have a remote URL that can be parsed.
+    /// Uses the remote URL if available, otherwise the canonical repository path.
+    /// Returns None only if the path is not valid UTF-8.
     pub fn project_id(&self) -> Option<String> {
         self.repo.project_identifier().ok()
     }
