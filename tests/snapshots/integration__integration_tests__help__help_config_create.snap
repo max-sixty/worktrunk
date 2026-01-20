@@ -143,10 +143,11 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# # Example:
   [2m# # pager = "delta --paging=never"
   [2m#
-  [2m# ### Per-project settings
+  [2m# ### Per-project settings (Experimental)
   [2m#
   [2m# Per-project settings are keyed by project identifier (e.g., `github.com/user/repo`).
   [2m# These contain approved hook commands plus optional overrides of global settings.
+  [2m# Setting overrides (worktree-path, list, commit, merge) are new; approved-commands is stable.
   [2m#
   [2m# [projects."github.com/user/repo"]
   [2m# # Approved hook commands (auto-populated when approving on first run)

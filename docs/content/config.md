@@ -155,10 +155,11 @@ Pager behavior for `wt select` diff previews.
 # pager = "delta --paging=never"
 ```
 
-### Per-project settings
+### Per-project settings (Experimental)
 
 Per-project settings are keyed by project identifier (e.g., `github.com/user/repo`).
 These contain approved hook commands plus optional overrides of global settings.
+Setting overrides (worktree-path, list, commit, merge) are new; approved-commands is stable.
 
 ```toml
 [projects."github.com/user/repo"]

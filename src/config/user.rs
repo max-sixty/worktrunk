@@ -229,7 +229,7 @@ pub struct UserConfig {
 }
 
 /// Configuration for commit message generation
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct CommitGenerationConfig {
     /// Command to invoke for generating commit messages (e.g., "llm", "claude")
     #[serde(default)]
@@ -268,17 +268,6 @@ impl CommitGenerationConfig {
             .as_ref()
             .map(|s| !s.trim().is_empty())
             .unwrap_or(false)
-    }
-}
-
-impl PartialEq for CommitGenerationConfig {
-    fn eq(&self, other: &Self) -> bool {
-        self.command == other.command
-            && self.args == other.args
-            && self.template == other.template
-            && self.template_file == other.template_file
-            && self.squash_template == other.squash_template
-            && self.squash_template_file == other.squash_template_file
     }
 }
 

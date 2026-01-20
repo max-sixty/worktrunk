@@ -170,10 +170,11 @@ Pager behavior for [2mwt select[0m diff previews.
   [2m# Example:
   [2m# pager = "delta --paging=never"
 
-[32mPer-project settings
+[32mPer-project settings (Experimental)
 
 Per-project settings are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m).
 These contain approved hook commands plus optional overrides of global settings.
+Setting overrides (worktree-path, list, commit, merge) are new; approved-commands is stable.
 
   [2m[projects."github.com/user/repo"]
   [2m# Approved hook commands (auto-populated when approving on first run)
