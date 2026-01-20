@@ -70,9 +70,8 @@ fn test_hook_show_no_hooks(repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-#[rstest]
-fn test_hook_show_filter_by_type(repo: TestRepo, temp_home: TempDir) {
-    // Create user config without hooks
+/// Helper to set up a repo with all hook types configured for filter tests
+fn setup_all_hook_types(repo: &TestRepo, temp_home: &TempDir) {
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
@@ -82,7 +81,6 @@ fn test_hook_show_filter_by_type(repo: TestRepo, temp_home: TempDir) {
     )
     .unwrap();
 
-    // Create project config with multiple hook types
     repo.write_project_config(
         r#"[post-start]
 deps = "npm install"
@@ -93,9 +91,20 @@ test = "cargo test"
 
 [post-merge]
 deploy = "scripts/deploy.sh"
+
+[pre-remove]
+cleanup = "echo cleanup"
+
+[post-remove]
+notify = "echo removed"
 "#,
     );
     repo.commit("Add project config");
+}
+
+#[rstest]
+fn test_hook_show_filter_by_type(repo: TestRepo, temp_home: TempDir) {
+    setup_all_hook_types(&repo, &temp_home);
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -104,6 +113,60 @@ deploy = "scripts/deploy.sh"
         cmd.arg("hook")
             .arg("show")
             .arg("pre-merge")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_hook_show_filter_post_merge(repo: TestRepo, temp_home: TempDir) {
+    setup_all_hook_types(&repo, &temp_home);
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("hook")
+            .arg("show")
+            .arg("post-merge")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_hook_show_filter_pre_remove(repo: TestRepo, temp_home: TempDir) {
+    setup_all_hook_types(&repo, &temp_home);
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("hook")
+            .arg("show")
+            .arg("pre-remove")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_hook_show_filter_post_remove(repo: TestRepo, temp_home: TempDir) {
+    setup_all_hook_types(&repo, &temp_home);
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("hook")
+            .arg("show")
+            .arg("post-remove")
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
 

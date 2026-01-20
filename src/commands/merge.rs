@@ -64,6 +64,7 @@ fn collect_merge_commands(
         hooks.push(HookType::PostMerge);
         if will_remove {
             hooks.push(HookType::PreRemove);
+            hooks.push(HookType::PostRemove);
             hooks.push(HookType::PostSwitch);
         }
     }
@@ -249,6 +250,11 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         let (_, integration_reason) = repo.integration_reason(&current_branch, &target_branch)?;
         // Compute expected_path for path mismatch detection
         let expected_path = get_path_mismatch(repo, &current_branch, &worktree_root, config);
+        // Capture commit SHA before removal for post-remove hook template variables
+        let removed_commit = current_wt
+            .run_command(&["rev-parse", "HEAD"])
+            .ok()
+            .map(|s| s.trim().to_string());
         let remove_result = RemoveResult::RemovedWorktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
@@ -261,6 +267,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             // commit, removal will fail and user can run `wt remove --force`
             force_worktree: false,
             expected_path,
+            removed_commit,
         };
         // Run hooks during merge removal (pass through verify flag)
         // Approval was handled at the gate (collect_merge_commands)

@@ -196,6 +196,10 @@ pub enum RemoveResult {
         /// Expected path based on config template. `Some` when actual path differs
         /// from expected (path mismatch), `None` when path matches template.
         expected_path: Option<PathBuf>,
+        /// Commit SHA of the removed worktree's HEAD, captured before removal.
+        /// Used for post-remove hook template variables so they reference the
+        /// removed worktree's state, not the execution context.
+        removed_commit: Option<String>,
     },
     /// Branch exists but has no worktree - attempt branch deletion only.
     ///
@@ -329,6 +333,7 @@ mod tests {
             integration_reason: Some(worktrunk::git::IntegrationReason::SameCommit),
             force_worktree: false,
             expected_path: None,
+            removed_commit: Some("abc1234567890".to_string()),
         };
         match result {
             RemoveResult::RemovedWorktree {
@@ -341,6 +346,7 @@ mod tests {
                 integration_reason,
                 force_worktree,
                 expected_path,
+                removed_commit,
             } => {
                 assert_eq!(main_path.to_str().unwrap(), "/main");
                 assert_eq!(worktree_path.to_str().unwrap(), "/worktree");
@@ -352,6 +358,7 @@ mod tests {
                 assert!(integration_reason.is_some());
                 assert!(!force_worktree);
                 assert!(expected_path.is_none());
+                assert_eq!(removed_commit.as_deref(), Some("abc1234567890"));
             }
             _ => panic!("Expected RemovedWorktree variant"),
         }
@@ -412,6 +419,7 @@ mod tests {
             integration_reason: None, // Force delete skips integration check
             force_worktree: true,
             expected_path: None,
+            removed_commit: None, // Detached HEAD may not have meaningful commit
         };
         match result {
             RemoveResult::RemovedWorktree {
