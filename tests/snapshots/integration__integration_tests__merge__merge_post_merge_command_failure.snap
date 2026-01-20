@@ -28,7 +28,7 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "999999"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: false
@@ -36,7 +36,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mMerging [1mfeature[22m to [1mmain[22m...[39m
 [36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no commit/squash/rebase needed)[39m
 [107m [0m * [33m[HASH][m Add feature file
 [107m [0m  feature.txt | 1 [32m+[m

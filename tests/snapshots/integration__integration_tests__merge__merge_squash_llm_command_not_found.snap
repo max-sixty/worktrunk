@@ -28,7 +28,7 @@ info:
     WORKTRUNK_COMMIT_GENERATION__COMMAND: nonexistent-llm-command
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "999999"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: false
@@ -36,7 +36,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mMerging [1mfeature[22m to [1mmain[22m...[39m
 [36m◎[39m [36mSquashing 2 commits into a single commit [90m(2 files, [32m+2[39m[39m[90m)[39m...[39m
 [36m◎[39m [36mGenerating squash commit message...[39m
 [31m✗[39m [31mCommit generation command failed[39m

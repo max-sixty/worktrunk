@@ -27,7 +27,7 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "999999"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -35,7 +35,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mMerging [1mfeature[22m to [1mmain[22m...[39m
 [36m◎[39m [36mSquashing 3 commits into a single commit...[39m
 [36m◎[39m [36mGenerating squash commit message...[39m
 [2m↳[22m [2mUsing fallback commit message. For LLM setup guide, run [90mwt config --help[39m[22m

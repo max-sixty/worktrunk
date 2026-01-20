@@ -3,7 +3,7 @@ use std::path::Path;
 use worktrunk::HookType;
 use worktrunk::config::ProjectConfig;
 use worktrunk::git::Repository;
-use worktrunk::styling::{info_message, progress_message};
+use worktrunk::styling::info_message;
 
 use super::command_approval::approve_command_batch;
 use super::command_executor::CommandContext;
@@ -85,13 +85,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Cache current worktree for multiple queries
     let current_wt = repo.current_worktree();
 
-    // Get and validate target branch early so we can show progress
     let target_branch = repo.require_target_branch(target)?;
-
-    // Show progress now that we know what we're merging
-    crate::output::print(progress_message(color_print::cformat!(
-        "Merging <bold>{current_branch}</> to <bold>{target_branch}</>..."
-    )))?;
 
     // Validate --no-commit: requires clean working tree
     if !commit && current_wt.is_dirty()? {
