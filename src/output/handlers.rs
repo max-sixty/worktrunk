@@ -540,6 +540,34 @@ fn handle_branch_only_output(
     Ok(())
 }
 
+/// Spawn post-remove hooks in the main worktree after removal.
+///
+/// Runs after the worktree is removed, with the removed branch as context.
+/// Only runs if `verify` is true (hooks approved).
+fn spawn_post_remove_hooks(
+    main_path: &std::path::Path,
+    removed_branch: &str,
+    verify: bool,
+) -> anyhow::Result<()> {
+    if !verify {
+        return Ok(());
+    }
+    let Ok(config) = UserConfig::load() else {
+        return Ok(());
+    };
+    // Use main_path for discovery since the original worktree is removed
+    let repo = Repository::at(main_path)?;
+    // Context is the main worktree, but pass removed_branch for template expansion
+    let ctx = CommandContext::new(
+        &repo,
+        &config,
+        Some(removed_branch),
+        main_path,
+        false, // force=false for CommandContext
+    );
+    ctx.spawn_post_remove_commands(removed_branch, super::post_hook_display_path(main_path))
+}
+
 /// Spawn post-switch hooks in the destination worktree after a directory change.
 ///
 /// Called when removing a worktree causes a cd to the main worktree.
@@ -838,6 +866,8 @@ fn handle_removed_worktree_output(
                 "Removed worktree (detached HEAD, no branch to delete)",
             ))?;
         }
+        // Post-remove hooks for detached HEAD use "HEAD" as the branch identifier
+        spawn_post_remove_hooks(main_path, "HEAD", verify)?;
         spawn_post_switch_after_remove(main_path, verify, changed_directory)?;
         super::flush()?;
         return Ok(());
@@ -878,6 +908,7 @@ fn handle_removed_worktree_output(
             None,
         )?;
 
+        spawn_post_remove_hooks(main_path, branch_name, verify)?;
         spawn_post_switch_after_remove(main_path, verify, changed_directory)?;
         super::flush()?;
         Ok(())
@@ -922,6 +953,7 @@ fn handle_removed_worktree_output(
         display_info.print_hints(branch_name, deletion_mode, pre_computed_integration)?;
         print_switch_message_if_changed(changed_directory, main_path)?;
 
+        spawn_post_remove_hooks(main_path, branch_name, verify)?;
         spawn_post_switch_after_remove(main_path, verify, changed_directory)?;
         super::flush()?;
         Ok(())

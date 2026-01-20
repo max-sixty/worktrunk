@@ -58,6 +58,14 @@ pub struct HooksConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub pre_remove: Option<CommandConfig>,
+
+    /// Commands to execute after worktree removal (background)
+    #[serde(
+        default,
+        rename = "post-remove",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub post_remove: Option<CommandConfig>,
 }
 
 impl HooksConfig {
@@ -70,6 +78,7 @@ impl HooksConfig {
             HookType::PreMerge => self.pre_merge.as_ref(),
             HookType::PostMerge => self.post_merge.as_ref(),
             HookType::PreRemove => self.pre_remove.as_ref(),
+            HookType::PostRemove => self.post_remove.as_ref(),
         }
     }
 }

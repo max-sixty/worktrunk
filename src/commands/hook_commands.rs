@@ -256,6 +256,45 @@ pub fn run_hook(
                 &custom_vars_refs,
             )
         }
+        HookType::PostRemove => {
+            let user_config = user_hook!(post_remove);
+            let project_config = project_config
+                .as_ref()
+                .and_then(|c| c.hooks.post_remove.as_ref());
+            require_hooks(user_config, project_config, hook_type)?;
+
+            // Default to background (matching normal behavior during remove)
+            // Use --foreground to run in foreground for debugging
+            if !foreground.unwrap_or(false) {
+                let commands = prepare_hook_commands(
+                    &ctx,
+                    user_config,
+                    project_config,
+                    hook_type,
+                    &custom_vars_refs,
+                    name_filter,
+                    None,
+                )?;
+                check_name_filter_matched(
+                    name_filter,
+                    commands.len(),
+                    user_config,
+                    project_config,
+                )?;
+                spawn_hook_commands_background(&ctx, commands, hook_type)
+            } else {
+                run_hook_with_filter(
+                    &ctx,
+                    user_config,
+                    project_config,
+                    hook_type,
+                    &custom_vars_refs,
+                    HookFailureStrategy::Warn,
+                    name_filter,
+                    crate::output::pre_hook_display_path(ctx.worktree_path),
+                )
+            }
+        }
     }
 }
 
@@ -390,6 +429,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
         "pre-merge" => HookType::PreMerge,
         "post-merge" => HookType::PostMerge,
         "pre-remove" => HookType::PreRemove,
+        "post-remove" => HookType::PostRemove,
         _ => unreachable!("clap validates hook type"),
     });
 
@@ -460,6 +500,7 @@ fn render_user_hooks(
         (HookType::PreMerge, &config.hooks.pre_merge),
         (HookType::PostMerge, &config.hooks.post_merge),
         (HookType::PreRemove, &config.hooks.pre_remove),
+        (HookType::PostRemove, &config.hooks.post_remove),
     ];
 
     let mut has_any = false;
@@ -520,6 +561,7 @@ fn render_project_hooks(
         (HookType::PreMerge, &config.hooks.pre_merge),
         (HookType::PostMerge, &config.hooks.post_merge),
         (HookType::PreRemove, &config.hooks.pre_remove),
+        (HookType::PostRemove, &config.hooks.post_remove),
     ];
 
     let mut has_any = false;

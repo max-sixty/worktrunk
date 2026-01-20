@@ -1047,6 +1047,7 @@ wt step push
 | `pre-merge` | Before merging to target | Yes | Yes |
 | `post-merge` | After successful merge | Yes | No |
 | `pre-remove` | Before worktree removed | Yes | Yes |
+| `post-remove` | After worktree removed | No (background) | No |
 
 **Blocking**: Command waits for hook to complete before continuing.
 **Fail-fast**: First failure aborts the operation.
@@ -1112,14 +1113,24 @@ post-merge = "cargo install --path ."
 
 ### pre-remove
 
-Cleanup tasks, saving state, notifying external systems.
+Cleanup tasks before worktree is deleted, saving state, notifying external systems. Runs in the worktree being removed.
 
 ```toml
 [pre-remove]
-cleanup = "rm -rf /tmp/cache/{{ branch }}"
+save-state = "git stash push -m 'auto-stash before remove'"
 ```
 
-During `wt merge`, hooks run in this order: pre-commit → pre-merge → pre-remove → post-merge. See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
+### post-remove
+
+Cleanup tasks after worktree removal, stopping dev servers, removing containers, notifying external systems. Runs in the main worktree after removal. Output logged to `.git/wt-logs/{branch}-{source}-post-remove-{name}.log`.
+
+```toml
+[post-remove]
+kill-server = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
+remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
+```
+
+During `wt merge`, hooks run in this order: pre-commit → pre-merge → pre-remove → post-merge → post-remove. See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
 
 ## Security
 
@@ -1322,7 +1333,7 @@ Both run when creating a worktree. The difference:
 
 Many tasks work well in `post-start` — they'll likely be ready by the time they're needed, especially when the fallback is recompiling. If unsure, prefer `post-start` for faster worktree creation.
 
-Background processes spawned by `post-start` outlive the worktree — pair them with `pre-remove` hooks to clean up. See [Dev servers](#dev-servers) and [Databases](#databases) for examples.
+Background processes spawned by `post-start` outlive the worktree — pair them with `post-remove` hooks to clean up. See [Dev servers](#dev-servers) and [Databases](#databases) for examples.
 
 ### Copying untracked files
 
@@ -1343,7 +1354,7 @@ Run a dev server per worktree on a deterministic port using `hash_port`:
 [post-start]
 server = "npm run dev -- --port {{ branch | hash_port }}"
 
-[pre-remove]
+[post-remove]
 server = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
 ```
 
@@ -1376,7 +1387,7 @@ docker run -d --rm \
   postgres:16
 """
 
-[pre-remove]
+[post-remove]
 db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
 ```
 

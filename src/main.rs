@@ -619,6 +619,18 @@ fn main() {
             HookCommand::PreRemove { name, yes, vars } => {
                 run_hook(HookType::PreRemove, yes, None, name.as_deref(), &vars)
             }
+            HookCommand::PostRemove {
+                name,
+                yes,
+                foreground,
+                vars,
+            } => run_hook(
+                HookType::PostRemove,
+                yes,
+                Some(foreground),
+                name.as_deref(),
+                &vars,
+            ),
             HookCommand::Approvals { action } => match action {
                 ApprovalsCommand::Add { all } => add_approvals(all),
                 ApprovalsCommand::Clear { global } => clear_approvals(global),
@@ -909,8 +921,14 @@ fn main() {
                     use commands::context::CommandEnv;
                     let env = CommandEnv::for_action_branchless()?;
                     let ctx = env.context(yes);
-                    let approved =
-                        approve_hooks(&ctx, &[HookType::PreRemove, HookType::PostSwitch])?;
+                    let approved = approve_hooks(
+                        &ctx,
+                        &[
+                            HookType::PreRemove,
+                            HookType::PostRemove,
+                            HookType::PostSwitch,
+                        ],
+                    )?;
                     if !approved {
                         crate::output::print(info_message(
                             "Commands declined, continuing removal",

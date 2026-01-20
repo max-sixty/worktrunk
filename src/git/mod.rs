@@ -326,6 +326,7 @@ pub enum HookType {
     PreMerge,
     PostMerge,
     PreRemove,
+    PostRemove,
 }
 
 /// Reference to a branch for parallel task execution.

@@ -88,4 +88,34 @@ impl<'a> CommandContext<'a> {
 
         spawn_hook_commands_background(self, commands, HookType::PostSwitch)
     }
+
+    /// Spawn post-remove commands in parallel as background processes (non-blocking)
+    ///
+    /// Runs after worktree removal. The context is the main worktree (where the user
+    /// ends up after removal), but `branch` refers to the removed branch.
+    ///
+    /// `removed_branch`: The branch that was removed (for template expansion).
+    /// `display_path`: When `Some`, shows the path in hook announcements. Pass this when
+    /// the user's shell won't be in the worktree (shell integration not active).
+    pub fn spawn_post_remove_commands(
+        &self,
+        removed_branch: &str,
+        display_path: Option<&std::path::Path>,
+    ) -> anyhow::Result<()> {
+        let project_config = self.repo.load_project_config()?;
+
+        let commands = prepare_hook_commands(
+            self,
+            self.config.hooks.post_remove.as_ref(),
+            project_config
+                .as_ref()
+                .and_then(|c| c.hooks.post_remove.as_ref()),
+            HookType::PostRemove,
+            &[("branch", removed_branch)],
+            None,
+            display_path,
+        )?;
+
+        spawn_hook_commands_background(self, commands, HookType::PostRemove)
+    }
 }

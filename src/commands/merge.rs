@@ -55,6 +55,7 @@ fn collect_merge_commands(
         hooks.push(HookType::PostMerge);
         if will_remove {
             hooks.push(HookType::PreRemove);
+            hooks.push(HookType::PostRemove);
             hooks.push(HookType::PostSwitch);
         }
     }

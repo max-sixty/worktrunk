@@ -573,6 +573,87 @@ block = "exit 1"
 }
 
 // ============================================================================
+// User Post-Remove Hook Tests
+// ============================================================================
+
+#[rstest]
+fn test_user_post_remove_hook_executes(mut repo: TestRepo) {
+    // Create a worktree to remove
+    let _feature_wt = repo.add_worktree("feature");
+
+    // Write user config with post-remove hook
+    // Hook writes to parent dir (temp dir) since the worktree itself is removed
+    repo.write_test_config(
+        r#"[post-remove]
+cleanup = "echo 'USER_POST_REMOVE_RAN' > ../user_postremove_marker.txt"
+"#,
+    );
+
+    snapshot_remove(
+        "user_post_remove_executes",
+        &repo,
+        &["feature", "--force-delete"],
+        Some(repo.root_path()),
+    );
+
+    // Wait for background hook to complete
+    let marker_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("user_postremove_marker.txt");
+    crate::common::wait_for_file(&marker_file);
+    assert!(
+        marker_file.exists(),
+        "User post-remove hook should have run"
+    );
+}
+
+#[rstest]
+fn test_user_post_remove_skipped_with_no_verify(mut repo: TestRepo) {
+    // Create a worktree to remove
+    let feature_wt = repo.add_worktree("feature");
+
+    // Write user config with post-remove hook that creates a marker
+    repo.write_test_config(
+        r#"[post-remove]
+marker = "echo 'SHOULD_NOT_RUN' > ../no_verify_postremove.txt"
+"#,
+    );
+
+    snapshot_remove(
+        "user_post_remove_no_verify",
+        &repo,
+        &["feature", "--force-delete", "--no-verify"],
+        Some(repo.root_path()),
+    );
+
+    // Worktree should be removed
+    let timeout = Duration::from_secs(5);
+    let poll_interval = Duration::from_millis(50);
+    let start = std::time::Instant::now();
+    while feature_wt.exists() && start.elapsed() < timeout {
+        thread::sleep(poll_interval);
+    }
+    assert!(
+        !feature_wt.exists(),
+        "Worktree should be removed with --no-verify"
+    );
+
+    // Post-remove hook should NOT have run
+    let marker_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("no_verify_postremove.txt");
+    thread::sleep(Duration::from_millis(500)); // Wait to ensure hook would have run if enabled
+    assert!(
+        !marker_file.exists(),
+        "Post-remove hook should be skipped when --no-verify is used"
+    );
+}
+
+// ============================================================================
 // User Pre-Commit Hook Tests
 // ============================================================================
 
@@ -906,6 +987,52 @@ fn test_standalone_hook_pre_remove(repo: TestRepo) {
     assert!(marker.exists(), "pre-remove hook should have run");
     let content = fs::read_to_string(&marker).unwrap();
     assert!(content.contains("STANDALONE_PRE_REMOVE"));
+}
+
+#[rstest]
+fn test_standalone_hook_post_remove(repo: TestRepo) {
+    // Write project config with post-remove hook
+    repo.write_project_config(r#"post-remove = "echo 'STANDALONE_POST_REMOVE' > hook_ran.txt""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-remove", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt hook post-remove should succeed (spawns in background)"
+    );
+
+    // Wait for background hook to complete
+    let marker = repo.root_path().join("hook_ran.txt");
+    crate::common::wait_for_file(&marker);
+    let content = fs::read_to_string(&marker).unwrap();
+    assert!(content.contains("STANDALONE_POST_REMOVE"));
+}
+
+#[rstest]
+fn test_standalone_hook_post_remove_foreground(repo: TestRepo) {
+    // Write project config with post-remove hook
+    repo.write_project_config(r#"post-remove = "echo 'FOREGROUND_POST_REMOVE' > hook_ran.txt""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-remove", "--yes", "--foreground"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt hook post-remove --foreground should succeed"
+    );
+
+    // Hook runs in foreground, so marker should exist immediately
+    let marker = repo.root_path().join("hook_ran.txt");
+    assert!(marker.exists(), "post-remove hook should have run");
+    let content = fs::read_to_string(&marker).unwrap();
+    assert!(content.contains("FOREGROUND_POST_REMOVE"));
 }
 
 #[rstest]
