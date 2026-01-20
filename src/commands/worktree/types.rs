@@ -197,10 +197,15 @@ pub enum RemoveResult {
         /// from expected (path mismatch), `None` when path matches template.
         expected_path: Option<PathBuf>,
     },
-    /// Branch exists but has no worktree - attempt branch deletion only
+    /// Branch exists but has no worktree - attempt branch deletion only.
+    ///
+    /// `pruned` indicates whether the worktree was pruned (directory was missing).
+    /// When true, shows an info message instead of a warning.
     BranchOnly {
         branch_name: String,
         deletion_mode: BranchDeletionMode,
+        /// True if the worktree was pruned before returning this result.
+        pruned: bool,
     },
 }
 
@@ -357,15 +362,39 @@ mod tests {
         let result = RemoveResult::BranchOnly {
             branch_name: "stale-branch".to_string(),
             deletion_mode: BranchDeletionMode::Keep,
+            pruned: false,
         };
         match result {
             RemoveResult::BranchOnly {
                 branch_name,
                 deletion_mode,
+                pruned,
             } => {
                 assert_eq!(branch_name, "stale-branch");
                 assert!(deletion_mode.should_keep());
                 assert!(!deletion_mode.is_force());
+                assert!(!pruned);
+            }
+            _ => panic!("Expected BranchOnly variant"),
+        }
+    }
+
+    #[test]
+    fn test_remove_result_branch_only_pruned() {
+        let result = RemoveResult::BranchOnly {
+            branch_name: "pruned-branch".to_string(),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            pruned: true,
+        };
+        match result {
+            RemoveResult::BranchOnly {
+                branch_name,
+                deletion_mode,
+                pruned,
+            } => {
+                assert_eq!(branch_name, "pruned-branch");
+                assert!(!deletion_mode.should_keep());
+                assert!(pruned);
             }
             _ => panic!("Expected BranchOnly variant"),
         }

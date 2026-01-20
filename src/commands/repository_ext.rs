@@ -91,10 +91,13 @@ impl RepositoryCliExt for Repository {
                 {
                     Some(wt) => {
                         if !wt.path.exists() {
-                            return Err(GitError::WorktreeMissing {
-                                branch: branch.into(),
-                            }
-                            .into());
+                            // Directory missing - prune and continue
+                            self.prune_worktrees()?;
+                            return Ok(RemoveResult::BranchOnly {
+                                branch_name: branch.to_string(),
+                                deletion_mode,
+                                pruned: true,
+                            });
                         }
                         if wt.locked.is_some() {
                             return Err(GitError::WorktreeLocked {
@@ -114,6 +117,7 @@ impl RepositoryCliExt for Repository {
                             return Ok(RemoveResult::BranchOnly {
                                 branch_name: branch.to_string(),
                                 deletion_mode,
+                                pruned: false,
                             });
                         }
                         // Check if branch exists on a remote

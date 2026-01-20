@@ -492,7 +492,8 @@ pub fn handle_remove_output(
         RemoveResult::BranchOnly {
             branch_name,
             deletion_mode,
-        } => handle_branch_only_output(branch_name, *deletion_mode),
+            pruned,
+        } => handle_branch_only_output(branch_name, *deletion_mode, *pruned),
     }
 }
 
@@ -500,11 +501,20 @@ pub fn handle_remove_output(
 fn handle_branch_only_output(
     branch_name: &str,
     deletion_mode: BranchDeletionMode,
+    pruned: bool,
 ) -> anyhow::Result<()> {
-    // Warn that no worktree was found (user asked to remove it)
-    super::print(warning_message(cformat!(
-        "No worktree found for branch <bold>{branch_name}</>"
-    )))?;
+    // Different message depending on whether we pruned a stale worktree
+    if pruned {
+        // Worktree was pruned - informational, not a warning
+        super::print(info_message(cformat!(
+            "Worktree directory missing for <bold>{branch_name}</>; pruned"
+        )))?;
+    } else {
+        // No worktree at all - warn since user asked to remove something that doesn't exist
+        super::print(warning_message(cformat!(
+            "No worktree found for branch <bold>{branch_name}</>"
+        )))?;
+    }
 
     // Attempt branch deletion (unless --no-delete-branch was specified)
     if deletion_mode.should_keep() {

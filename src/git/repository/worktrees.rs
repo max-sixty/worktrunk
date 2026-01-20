@@ -92,6 +92,16 @@ impl Repository {
             .map(|wt| (wt.path.clone(), wt.branch.clone())))
     }
 
+    /// Prune worktree entries whose directories no longer exist.
+    ///
+    /// Git tracks worktrees in `.git/worktrees/`. If a worktree directory is deleted
+    /// externally (e.g., `rm -rf`), this method runs `git worktree prune` to clean
+    /// up the entries.
+    pub fn prune_worktrees(&self) -> anyhow::Result<()> {
+        self.run_command(&["worktree", "prune"])?;
+        Ok(())
+    }
+
     /// Remove a worktree at the specified path.
     ///
     /// When `force` is true, passes `--force` to `git worktree remove`,
