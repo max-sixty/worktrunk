@@ -653,6 +653,12 @@ marker = "echo 'SHOULD_NOT_RUN' > ../no_verify_postremove.txt"
     );
 }
 
+// Note: The `return Ok(())` path in spawn_post_remove_hooks when UserConfig::load()
+// fails (handlers.rs line 556) is defensive code for an extremely rare race condition
+// where config becomes invalid between command startup and hook execution. This is
+// not easily testable without complex timing manipulation and matches the existing
+// pattern in spawn_post_switch_after_remove (line 584).
+
 // ============================================================================
 // User Pre-Commit Hook Tests
 // ============================================================================
