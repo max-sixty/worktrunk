@@ -67,8 +67,7 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
         && let Some(unknown) = err.get(clap::error::ContextKind::InvalidSubcommand)
     {
         let cmd = cli::build_command();
-        if let Some(suggestion) = cli::suggest_nested_subcommand(&cmd, &unknown.to_string())
-        {
+        if let Some(suggestion) = cli::suggest_nested_subcommand(&cmd, &unknown.to_string()) {
             ceprintln!(
                 "{}
   <yellow>tip:</>  did you mean <cyan,bold>{suggestion}</cyan,bold>?",
