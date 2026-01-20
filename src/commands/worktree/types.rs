@@ -68,6 +68,8 @@ pub enum CreationMethod {
         pr_number: u32,
         fork_push_url: String,
         pr_url: String,
+        /// GitHub host (e.g., "github.com", "github.enterprise.com")
+        host: String,
         /// Owner of the base repository (where the PR was opened)
         base_owner: String,
         /// Name of the base repository

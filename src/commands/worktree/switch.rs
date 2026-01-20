@@ -96,9 +96,8 @@ fn resolve_switch_target(
             }
 
             // Branch doesn't exist - need full fork PR setup
-            // Use `gh config get git_protocol` to determine SSH vs HTTPS preference.
             let fork_push_url =
-                fork_remote_url(&pr_info.head_owner, &pr_info.head_repo, &pr_info.url);
+                fork_remote_url(&pr_info.host, &pr_info.head_owner, &pr_info.head_repo);
 
             return Ok(ResolvedTarget {
                 branch: local_branch,
@@ -106,6 +105,7 @@ fn resolve_switch_target(
                     pr_number,
                     fork_push_url,
                     pr_url: pr_info.url,
+                    host: pr_info.host,
                     base_owner: pr_info.base_owner,
                     base_repo: pr_info.base_repo,
                 },
@@ -118,9 +118,8 @@ fn resolve_switch_target(
             let remote = repo
                 .find_remote_for_repo(&pr_info.base_owner, &pr_info.base_repo)
                 .ok_or_else(|| {
-                    // Use PR's URL as reference - it has the correct host (github.com or enterprise)
                     let suggested_url =
-                        fork_remote_url(&pr_info.base_owner, &pr_info.base_repo, &pr_info.url);
+                        fork_remote_url(&pr_info.host, &pr_info.base_owner, &pr_info.base_repo);
                     GitError::NoRemoteForRepo {
                         owner: pr_info.base_owner.clone(),
                         repo: pr_info.base_repo.clone(),
@@ -640,7 +639,8 @@ pub fn execute_switch(
                 CreationMethod::ForkPr {
                     pr_number,
                     fork_push_url,
-                    pr_url,
+                    pr_url: _,
+                    host,
                     base_owner,
                     base_repo,
                 } => {
@@ -650,8 +650,7 @@ pub fn execute_switch(
                     let remote = repo
                         .find_remote_for_repo(base_owner, base_repo)
                         .ok_or_else(|| {
-                            // Construct suggested URL using gh's configured protocol
-                            let suggested_url = fork_remote_url(base_owner, base_repo, pr_url);
+                            let suggested_url = fork_remote_url(host, base_owner, base_repo);
                             GitError::NoRemoteForRepo {
                                 owner: base_owner.clone(),
                                 repo: base_repo.clone(),
