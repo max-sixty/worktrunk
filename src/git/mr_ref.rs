@@ -481,10 +481,11 @@ mod tests {
         let url = fork_remote_url(&mr);
         assert!(url.is_some());
         let url = url.unwrap();
-        assert!(
-            url == "git@gitlab.com:contributor/repo.git"
-                || url == "https://gitlab.com/contributor/repo.git"
-        );
+        let valid_urls = [
+            "git@gitlab.com:contributor/repo.git",
+            "https://gitlab.com/contributor/repo.git",
+        ];
+        assert!(valid_urls.contains(&url.as_str()), "unexpected URL: {url}");
     }
 
     #[test]
@@ -569,9 +570,11 @@ mod tests {
         let url = target_remote_url(&mr);
         assert!(url.is_some());
         let url = url.unwrap();
-        assert!(
-            url == "git@gitlab.com:owner/repo.git" || url == "https://gitlab.com/owner/repo.git"
-        );
+        let valid_urls = [
+            "git@gitlab.com:owner/repo.git",
+            "https://gitlab.com/owner/repo.git",
+        ];
+        assert!(valid_urls.contains(&url.as_str()), "unexpected URL: {url}");
     }
 
     #[test]

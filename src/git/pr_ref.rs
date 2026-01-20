@@ -611,16 +611,18 @@ mod tests {
     fn test_fork_remote_url() {
         // Protocol depends on `gh config get git_protocol`
         let url = fork_remote_url("github.com", "contributor", "repo");
-        assert!(
-            url == "git@github.com:contributor/repo.git"
-                || url == "https://github.com/contributor/repo.git"
-        );
+        let valid_urls = [
+            "git@github.com:contributor/repo.git",
+            "https://github.com/contributor/repo.git",
+        ];
+        assert!(valid_urls.contains(&url.as_str()), "unexpected URL: {url}");
 
         let url = fork_remote_url("github.example.com", "contributor", "repo");
-        assert!(
-            url == "git@github.example.com:contributor/repo.git"
-                || url == "https://github.example.com/contributor/repo.git"
-        );
+        let valid_urls = [
+            "git@github.example.com:contributor/repo.git",
+            "https://github.example.com/contributor/repo.git",
+        ];
+        assert!(valid_urls.contains(&url.as_str()), "unexpected URL: {url}");
     }
 
     #[test]
