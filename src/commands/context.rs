@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Context;
 use once_cell::sync::OnceCell;
@@ -22,12 +22,8 @@ pub struct CommandEnv {
     /// Current branch name, if on a branch (None in detached HEAD state).
     pub branch: Option<String>,
     pub worktree_path: PathBuf,
-    // Lazy-loaded fields: defer filesystem/config reads until needed.
-    // Note: repo_path() is cached in Repository, but we store a copy here for two reasons:
-    // 1. repo_path() returns owned PathBuf; we need somewhere to hold it to return &Path
-    // 2. repo_path() calls canonicalize() which can block on slow filesystems
+    // Lazy-loaded: defer config reads until needed.
     config: OnceCell<UserConfig>,
-    repo_root: OnceCell<PathBuf>,
 }
 
 impl CommandEnv {
@@ -48,7 +44,6 @@ impl CommandEnv {
             branch: Some(branch),
             worktree_path,
             config: OnceCell::new(),
-            repo_root: OnceCell::new(),
         })
     }
 
@@ -70,7 +65,6 @@ impl CommandEnv {
             branch,
             worktree_path,
             config: OnceCell::new(),
-            repo_root: OnceCell::new(),
         })
     }
 
@@ -80,23 +74,15 @@ impl CommandEnv {
             .get_or_try_init(|| UserConfig::load().context("Failed to load config"))
     }
 
-    /// Get repo root path, loading lazily on first access.
-    pub fn repo_root(&self) -> anyhow::Result<&Path> {
-        self.repo_root
-            .get_or_try_init(|| self.repo.repo_path())
-            .map(PathBuf::as_path)
-    }
-
     /// Build a `CommandContext` tied to this environment.
     ///
-    /// Loads config and repo_root if not already loaded.
+    /// Loads config if not already loaded.
     pub fn context(&self, yes: bool) -> anyhow::Result<CommandContext<'_>> {
         Ok(CommandContext::new(
             &self.repo,
             self.config()?,
             self.branch.as_deref(),
             &self.worktree_path,
-            self.repo_root()?,
             yes,
         ))
     }

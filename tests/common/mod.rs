@@ -1301,17 +1301,20 @@ impl TestRepo {
 
     /// Get the project identifier for test configs.
     ///
-    /// Returns the repository directory name. This works because the standard
+    /// Returns the full canonical path of the repository. This works because the standard
     /// fixture uses a local path remote (`../origin_git`) which doesn't parse
-    /// as a proper git URL, causing worktrunk to fall back to the directory name.
+    /// as a proper git URL, causing worktrunk to fall back to the full canonical path.
     ///
     /// Use this when writing test configs with `[projects."<id>"]` sections.
+    /// Backslashes are escaped for use in TOML string literals (Windows paths).
     pub fn project_id(&self) -> String {
-        self.root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("repo")
-            .to_string()
+        let path = dunce::canonicalize(&self.root)
+            .unwrap_or_else(|_| self.root.clone())
+            .to_str()
+            .unwrap_or("")
+            .to_string();
+        // Escape backslashes for TOML string literals (Windows paths)
+        path.replace('\\', "\\\\")
     }
 
     /// Get the path to the isolated test config file

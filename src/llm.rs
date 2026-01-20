@@ -490,14 +490,10 @@ pub(crate) fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Re
     // Prepare diff (may filter if too large)
     let prepared = prepare_diff(diff_output, diff_stat);
 
-    // Get current branch
-    let current_branch = repo
-        .current_worktree()
-        .branch()?
-        .unwrap_or_else(|| "HEAD".to_string());
-
-    // Get repo name from directory
-    let repo_root = repo.current_worktree().root()?;
+    // Get current branch and repo root
+    let wt = repo.current_worktree();
+    let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
+    let repo_root = wt.root()?;
     let repo_name = repo_root
         .file_name()
         .and_then(|n| n.to_str())

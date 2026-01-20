@@ -121,7 +121,7 @@ impl Repository {
     /// Get a project identifier for approval tracking.
     ///
     /// Uses the git remote URL if available (e.g., "github.com/user/repo"),
-    /// otherwise falls back to the repository directory name.
+    /// otherwise falls back to the full canonical path of the repository.
     ///
     /// This identifier is used to track which commands have been approved
     /// for execution in this project.
@@ -150,14 +150,16 @@ impl Repository {
                     return Ok(url.to_string());
                 }
 
-                // Fall back to repository name (use worktree base for consistency across all worktrees)
-                let repo_root = self.repo_path()?;
-                let repo_name = repo_root
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .context("Repository directory has no valid name")?;
+                // Fall back to full canonical path (use worktree base for consistency across all worktrees)
+                // Full path avoids collisions across unrelated repos with the same directory name
+                let repo_root = self.repo_path();
+                let canonical =
+                    dunce::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
+                let path_str = canonical
+                    .to_str()
+                    .context("Repository path is not valid UTF-8")?;
 
-                Ok(repo_name.to_string())
+                Ok(path_str.to_string())
             })
             .cloned()
     }
