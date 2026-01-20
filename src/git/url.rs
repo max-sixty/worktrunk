@@ -761,8 +761,7 @@ mod tests {
         // Attack: Use a subdomain that looks like a different host
 
         // gitlab.com.evil.com/owner/repo vs gitlab.com/owner/repo
-        let evil_host =
-            GitRemoteUrl::parse("https://gitlab.com.evil.com/owner/repo.git").unwrap();
+        let evil_host = GitRemoteUrl::parse("https://gitlab.com.evil.com/owner/repo.git").unwrap();
         let real_host = GitRemoteUrl::parse("https://gitlab.com/owner/repo.git").unwrap();
 
         assert_ne!(
@@ -797,8 +796,7 @@ mod tests {
     fn test_adversarial_git_suffix_manipulation() {
         // Attack: Use .git.git or other suffix manipulations
 
-        let double_git =
-            GitRemoteUrl::parse("https://gitlab.com/owner/repo.git.git").unwrap();
+        let double_git = GitRemoteUrl::parse("https://gitlab.com/owner/repo.git.git").unwrap();
         let single_git = GitRemoteUrl::parse("https://gitlab.com/owner/repo.git").unwrap();
         let no_git = GitRemoteUrl::parse("https://gitlab.com/owner/repo").unwrap();
 
@@ -808,10 +806,7 @@ mod tests {
         assert_eq!(no_git.repo(), "repo");
 
         // single_git and no_git should match (same repo)
-        assert_eq!(
-            single_git.project_identifier(),
-            no_git.project_identifier()
-        );
+        assert_eq!(single_git.project_identifier(), no_git.project_identifier());
 
         // double_git is actually a different repo (named "repo.git")
         assert_ne!(
@@ -837,9 +832,7 @@ mod tests {
         // This means ssh://git@victim.com@attacker.com/owner/repo.git
         // produces host = "attacker.com", not "victim.com"!
 
-        let malicious = GitRemoteUrl::parse(
-            "ssh://git@legitimate.com@attacker.com/owner/repo.git",
-        );
+        let malicious = GitRemoteUrl::parse("ssh://git@legitimate.com@attacker.com/owner/repo.git");
 
         if let Some(parsed) = malicious {
             // The parser extracts host from AFTER the last @
@@ -863,8 +856,7 @@ mod tests {
         // What if @ appears in the path (namespace)?
         // ssh://git@host.com/org@company/repo.git
 
-        let url_with_at_in_path =
-            GitRemoteUrl::parse("ssh://git@host.com/org@company/repo.git");
+        let url_with_at_in_path = GitRemoteUrl::parse("ssh://git@host.com/org@company/repo.git");
 
         if let Some(parsed) = url_with_at_in_path {
             // After stripping user, we have: "host.com/org@company/repo.git"
@@ -881,10 +873,7 @@ mod tests {
     fn test_adversarial_empty_user_ssh() {
         // ssh://user@/owner/repo.git - empty host after user@
         let empty_host = GitRemoteUrl::parse("ssh://user@/owner/repo.git");
-        assert!(
-            empty_host.is_none(),
-            "Empty host should be rejected"
-        );
+        assert!(empty_host.is_none(), "Empty host should be rejected");
 
         // ssh://@host.com/owner/repo.git - empty user
         let empty_user = GitRemoteUrl::parse("ssh://@host.com/owner/repo.git");
@@ -899,8 +888,7 @@ mod tests {
         // Attack: Use empty segments to shift parsing
         // gitlab.com/a//b/repo (double slash)
 
-        let with_double_slash =
-            GitRemoteUrl::parse("https://gitlab.com/a//b/repo.git").unwrap();
+        let with_double_slash = GitRemoteUrl::parse("https://gitlab.com/a//b/repo.git").unwrap();
         let normal = GitRemoteUrl::parse("https://gitlab.com/a/b/repo.git").unwrap();
 
         // Empty segments are filtered out, so these produce the same identifier
@@ -935,10 +923,7 @@ mod tests {
                 );
             } else if parsed.owner() == "owner" {
                 // "." was normalized away - same identifier (both point to same repo)
-                assert_eq!(
-                    parsed.project_identifier(),
-                    normal.project_identifier()
-                );
+                assert_eq!(parsed.project_identifier(), normal.project_identifier());
             }
         }
     }
@@ -968,8 +953,7 @@ mod tests {
         let normal = GitRemoteUrl::parse("https://gitlab.com/owner/repo.git").unwrap();
 
         // Using Greek omicron (\u{03BF}) instead of ASCII 'o'
-        let with_greek_o =
-            GitRemoteUrl::parse("https://gitlab.com/\u{03BF}wner/repo.git").unwrap();
+        let with_greek_o = GitRemoteUrl::parse("https://gitlab.com/\u{03BF}wner/repo.git").unwrap();
 
         assert_ne!(
             normal.project_identifier(),
@@ -1011,10 +995,10 @@ mod tests {
             "https://gitlab.com/a/b/c/repo.git",
             "https://gitlab.com/a-b/repo.git",
             "https://gitlab.com/a/b-repo.git",
-            "https://gitlab.com/A/repo.git",          // case difference
-            "https://gitlab.com/a/Repo.git",          // case difference
-            "https://github.com/a/repo.git",          // different host
-            "https://gitlab.example.com/a/repo.git",  // different host
+            "https://gitlab.com/A/repo.git", // case difference
+            "https://gitlab.com/a/Repo.git", // case difference
+            "https://github.com/a/repo.git", // different host
+            "https://gitlab.example.com/a/repo.git", // different host
         ];
 
         let identifiers: Vec<String> = urls
