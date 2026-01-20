@@ -28,6 +28,7 @@ mod user;
 pub use commands::{Command, CommandConfig};
 pub use deprecation::check_and_migrate as check_deprecated_vars;
 pub use deprecation::normalize_template_vars;
+pub use deprecation::warn_unknown_fields;
 pub use expansion::{
     DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, expand_template, redact_credentials,
     sanitize_branch_name, sanitize_db,

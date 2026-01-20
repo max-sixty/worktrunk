@@ -187,7 +187,8 @@ fn test_hook_show_project_config_no_hooks(repo: TestRepo, temp_home: TempDir) {
     // Create project config without any hook sections
     repo.write_project_config(
         r#"# Project config with no hooks
-worktree-path = "../project.{{ branch }}"
+[list]
+url = "http://localhost:8080"
 "#,
     );
     repo.commit("Add project config without hooks");
