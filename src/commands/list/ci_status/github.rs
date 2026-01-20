@@ -3,21 +3,35 @@
 //! Detects CI status from GitHub PRs and workflow runs using the `gh` CLI.
 
 use serde::Deserialize;
-use worktrunk::git::{Repository, parse_owner_repo, parse_remote_owner};
+use worktrunk::git::{GitRemoteUrl, Repository, parse_remote_owner};
 
 use super::{
     CiSource, CiStatus, MAX_PRS_TO_FETCH, PrStatus, is_retriable_error, non_interactive_cmd,
     parse_json,
 };
 
+/// Find any GitHub remote URL from all configured remotes.
+///
+/// Used as a fallback when a branch has no push remote configured.
+fn find_any_github_remote_url(repo: &Repository) -> Option<String> {
+    for (_, url) in repo.all_remote_urls() {
+        if let Some(parsed) = GitRemoteUrl::parse(&url)
+            && parsed.is_github()
+        {
+            return Some(url);
+        }
+    }
+    None
+}
+
 /// Get the owner and repo name from any GitHub remote.
 ///
 /// Used for GitHub API calls that require `repos/{owner}/{repo}/...` paths.
 /// Searches all remotes for a GitHub URL (API calls are repo-wide, not branch-specific).
 fn get_github_owner_repo(repo: &Repository) -> Option<(String, String)> {
-    // Search all remotes for a GitHub URL
-    let url = repo.find_remote_url_where(|url| url.to_ascii_lowercase().contains("github"))?;
-    parse_owner_repo(&url)
+    let url = find_any_github_remote_url(repo)?;
+    let parsed = GitRemoteUrl::parse(&url)?;
+    Some((parsed.owner().to_string(), parsed.repo().to_string()))
 }
 
 /// Detect GitHub PR CI status for a branch.
@@ -42,13 +56,21 @@ pub(super) fn detect_github(repo: &Repository, branch: &str, local_head: &str) -
 
     // Get the owner of the branch's push remote for filtering PRs by source repository.
     // Uses @{push} which resolves through pushRemote → remote.pushDefault → tracking remote.
+    // Falls back to any GitHub remote, then any remote (for platform override scenarios).
     let branch_owner = repo
         .branch(branch)
         .github_push_url()
+        .or_else(|| find_any_github_remote_url(repo))
+        .or_else(|| {
+            // Final fallback: any remote (for platform override with non-GitHub remotes)
+            repo.all_remote_urls()
+                .into_iter()
+                .find_map(|(_, url)| GitRemoteUrl::parse(&url).map(|_| url))
+        })
         .and_then(|url| parse_remote_owner(&url));
     if branch_owner.is_none() {
         log::debug!(
-            "Branch {} has no GitHub push remote; skipping PR-based CI detection",
+            "Branch {} has no remote configured; skipping PR-based CI detection",
             branch
         );
         return None;

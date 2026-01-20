@@ -159,11 +159,6 @@ impl<'a> Branch<'a> {
         use crate::git::GitRemoteUrl;
         let url = self.push_remote_url()?;
         let parsed = GitRemoteUrl::parse(&url)?;
-        // Check if it's a GitHub URL (host contains "github")
-        if parsed.host().to_ascii_lowercase().contains("github") {
-            Some(url)
-        } else {
-            None
-        }
+        parsed.is_github().then_some(url)
     }
 }

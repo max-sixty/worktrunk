@@ -125,20 +125,6 @@ impl Repository {
             .collect()
     }
 
-    /// Find the first remote URL matching a predicate.
-    ///
-    /// Searches all configured remotes and returns the URL of the first one
-    /// where the predicate returns true.
-    pub fn find_remote_url_where<F>(&self, predicate: F) -> Option<String>
-    where
-        F: Fn(&str) -> bool,
-    {
-        self.all_remote_urls()
-            .into_iter()
-            .find(|(_, url)| predicate(url))
-            .map(|(_, url)| url)
-    }
-
     /// Get the URL for the primary remote, if configured.
     ///
     /// Result is cached in the repository's shared cache (same for all clones).

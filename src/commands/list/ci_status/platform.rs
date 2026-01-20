@@ -3,7 +3,7 @@
 //! Determines whether a repository uses GitHub or GitLab based on
 //! project config override or remote URL detection.
 
-use worktrunk::git::Repository;
+use worktrunk::git::{GitRemoteUrl, Repository};
 
 /// CI platform detected from project config override or remote URL.
 ///
@@ -17,12 +17,14 @@ pub enum CiPlatform {
     GitLab,
 }
 
-/// Detect the CI platform from a remote URL by searching for "github" or "gitlab".
+/// Detect the CI platform from a remote URL.
+///
+/// Uses [`GitRemoteUrl`] to parse the URL and check the host for "github" or "gitlab".
 pub fn detect_platform_from_url(url: &str) -> Option<CiPlatform> {
-    let url_lower = url.to_ascii_lowercase();
-    if url_lower.contains("github") {
+    let parsed = GitRemoteUrl::parse(url)?;
+    if parsed.is_github() {
         Some(CiPlatform::GitHub)
-    } else if url_lower.contains("gitlab") {
+    } else if parsed.is_gitlab() {
         Some(CiPlatform::GitLab)
     } else {
         None
