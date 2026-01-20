@@ -146,25 +146,24 @@ pub(super) fn detect_gitlab(repo: &Repository, branch: &str, local_head: &str) -
     // This requires a second glab call because mr list doesn't include head_pipeline.
     let mr_info = fetch_mr_details(mr_entry.iid, &repo_root);
 
-    // Determine CI status using priority: conflicts > running > failed > passed > no_ci
+    // Determine CI status using priority: conflicts > running > pipeline status > no_ci
     // Use mr_entry for basic info (available from list), mr_info for pipeline status
+    //
+    // Note: "ci_must_pass" is a policy constraint ("CI must pass to merge"), NOT a failure
+    // indicator. We let it fall through to the actual pipeline status.
     let ci_status = if mr_entry.has_conflicts
         || mr_entry.detailed_merge_status.as_deref() == Some("conflict")
     {
         CiStatus::Conflicts
     } else if mr_entry.detailed_merge_status.as_deref() == Some("ci_still_running") {
         CiStatus::Running
-    } else if mr_entry.detailed_merge_status.as_deref() == Some("ci_must_pass") {
-        CiStatus::Failed
     } else if let Some(ref info) = mr_info {
         info.ci_status()
     } else {
-        // Couldn't fetch MR details, fall back to NoCI
-        log::debug!(
-            "Could not fetch MR details for !{}, treating as NoCI",
-            mr_entry.iid
-        );
-        CiStatus::NoCI
+        // Found MR but couldn't fetch details - treat as error so it surfaces
+        // (not NoCI, which would imply no MR exists)
+        log::debug!("Could not fetch MR details for !{}", mr_entry.iid);
+        return Some(PrStatus::error());
     };
 
     let is_stale = mr_entry.sha != local_head;
@@ -205,6 +204,12 @@ pub(super) fn detect_gitlab_pipeline(branch: &str, local_head: &str) -> Option<P
     };
 
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Return error status for retriable failures (rate limit, network) so they
+        // surface as warnings instead of being cached as "no CI"
+        if is_retriable_error(&stderr) {
+            return Some(PrStatus::error());
+        }
         return None;
     }
 
@@ -301,10 +306,17 @@ pub(super) struct GitLabPipeline {
 
 fn parse_gitlab_status(status: Option<&str>) -> CiStatus {
     match status {
+        // "manual" = pipeline waiting for user to trigger a manual job (not failed)
         Some(
-            "running" | "pending" | "preparing" | "waiting_for_resource" | "created" | "scheduled",
+            "running"
+            | "pending"
+            | "preparing"
+            | "waiting_for_resource"
+            | "created"
+            | "scheduled"
+            | "manual",
         ) => CiStatus::Running,
-        Some("failed" | "canceled" | "manual") => CiStatus::Failed,
+        Some("failed" | "canceled") => CiStatus::Failed,
         Some("success") => CiStatus::Passed,
         Some("skipped") | None => CiStatus::NoCI,
         _ => CiStatus::NoCI,
@@ -323,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_parse_gitlab_status() {
-        // Running states
+        // Running states (includes "manual" - waiting for user to trigger)
         for status in [
             "running",
             "pending",
@@ -331,6 +343,7 @@ mod tests {
             "waiting_for_resource",
             "created",
             "scheduled",
+            "manual",
         ] {
             assert_eq!(
                 parse_gitlab_status(Some(status)),
@@ -340,7 +353,7 @@ mod tests {
         }
 
         // Failed states
-        for status in ["failed", "canceled", "manual"] {
+        for status in ["failed", "canceled"] {
             assert_eq!(
                 parse_gitlab_status(Some(status)),
                 CiStatus::Failed,
