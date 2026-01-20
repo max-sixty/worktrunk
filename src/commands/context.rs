@@ -1,6 +1,6 @@
 use anyhow::Context;
 use std::path::PathBuf;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 
 use super::command_executor::CommandContext;
@@ -19,7 +19,7 @@ pub struct CommandEnv {
     pub repo: Repository,
     /// Current branch name, if on a branch (None in detached HEAD state).
     pub branch: Option<String>,
-    pub config: WorktrunkConfig,
+    pub config: UserConfig,
     pub worktree_path: PathBuf,
 }
 
@@ -32,7 +32,7 @@ impl CommandEnv {
         let repo = Repository::current()?;
         let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
         let branch = repo.require_current_branch(action)?;
-        let config = WorktrunkConfig::load().context("Failed to load config")?;
+        let config = UserConfig::load().context("Failed to load config")?;
 
         Ok(Self {
             repo,
@@ -54,7 +54,7 @@ impl CommandEnv {
             .current_worktree()
             .branch()
             .context("Failed to determine current branch")?;
-        let config = WorktrunkConfig::load().context("Failed to load config")?;
+        let config = UserConfig::load().context("Failed to load config")?;
 
         Ok(Self {
             repo,

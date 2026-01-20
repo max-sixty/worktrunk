@@ -22,7 +22,7 @@ use super::project_config::{HookCommand, collect_commands_for_hooks};
 use crate::output;
 use anyhow::Context;
 use color_print::cformat;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::{GitError, HookType};
 use worktrunk::styling::{
     INFO_SYMBOL, PROMPT_SYMBOL, WARNING_SYMBOL, eprint, format_bash_with_gutter, hint_message,
@@ -41,7 +41,7 @@ use worktrunk::styling::{
 pub fn approve_command_batch(
     commands: &[HookCommand],
     project_id: &str,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
     yes: bool,
     commands_already_filtered: bool,
 ) -> anyhow::Result<bool> {
@@ -69,7 +69,7 @@ pub fn approve_command_batch(
 
     // Only save approvals when interactively approved, not when using --yes
     if !yes {
-        let mut fresh_config = WorktrunkConfig::load().context("Failed to reload config")?;
+        let mut fresh_config = UserConfig::load().context("Failed to reload config")?;
 
         let project_entry = fresh_config
             .projects

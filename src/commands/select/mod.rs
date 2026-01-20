@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use skim::prelude::*;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 
 use super::list::collect;
@@ -24,7 +24,7 @@ use preview::{PreviewLayout, PreviewState};
 pub fn handle_select(
     show_branches: bool,
     show_remotes: bool,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
 ) -> anyhow::Result<()> {
     use std::io::IsTerminal;
 
@@ -214,7 +214,7 @@ pub fn handle_select(
         let identifier = selected.output().to_string();
 
         // Load config
-        let config = WorktrunkConfig::load().context("Failed to load config")?;
+        let config = UserConfig::load().context("Failed to load config")?;
         let repo = Repository::current().context("Failed to switch worktree")?;
 
         // Switch to the selected worktree (no creation, no approval prompts)

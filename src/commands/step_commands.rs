@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 use worktrunk::styling::{
     format_with_gutter, hint_message, info_message, progress_message, success_message,
@@ -34,7 +34,7 @@ pub fn step_commit(
 
     // Handle --show-prompt early: just build and output the prompt
     if show_prompt {
-        let config = WorktrunkConfig::load().context("Failed to load config")?;
+        let config = UserConfig::load().context("Failed to load config")?;
         let prompt = crate::llm::build_commit_prompt(&config.commit_generation)?;
         crate::output::stdout(prompt)?;
         return Ok(());

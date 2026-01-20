@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::Context;
 use color_print::cformat;
 use dunce::canonicalize;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::pr_ref::fork_remote_url;
 use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{
@@ -465,7 +465,7 @@ pub fn plan_switch(
     create: bool,
     base: Option<&str>,
     clobber: bool,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
 ) -> anyhow::Result<SwitchPlan> {
     // Record current branch for `wt switch -` support
     let new_previous = repo.current_worktree().branch().ok().flatten();
@@ -510,7 +510,7 @@ pub fn plan_switch(
 pub fn execute_switch(
     repo: &Repository,
     plan: SwitchPlan,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
     force: bool,
     no_verify: bool,
 ) -> anyhow::Result<(SwitchResult, SwitchBranchInfo)> {

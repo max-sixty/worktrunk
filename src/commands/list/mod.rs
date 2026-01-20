@@ -147,7 +147,7 @@ pub fn handle_list(
     show_remotes: bool,
     show_full: bool,
     render_mode: RenderMode,
-    config: &worktrunk::config::WorktrunkConfig,
+    config: &worktrunk::config::UserConfig,
 ) -> anyhow::Result<()> {
     use collect::TaskKind;
 
