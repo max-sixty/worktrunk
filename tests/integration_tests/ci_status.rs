@@ -18,6 +18,27 @@ fn get_branch_sha(repo: &TestRepo, branch: &str) -> String {
     repo.git_output(&["rev-parse", branch])
 }
 
+/// Set up tracking for all branches so @{push} resolves correctly.
+///
+/// @{push} requires both tracking config AND the remote-tracking ref to exist.
+/// This is normally done by fetch/push, but in tests we create refs manually.
+fn setup_tracking_for_all_branches(repo: &TestRepo, remote: &str) {
+    for branch in ["feature", "feature-a", "feature-b", "feature-c", "main"] {
+        repo.run_git(&["config", &format!("branch.{}.remote", branch), remote]);
+        repo.run_git(&[
+            "config",
+            &format!("branch.{}.merge", branch),
+            &format!("refs/heads/{}", branch),
+        ]);
+        // Create the remote-tracking ref
+        repo.run_git(&[
+            "update-ref",
+            &format!("refs/remotes/{}/{}", remote, branch),
+            branch,
+        ]);
+    }
+}
+
 /// Helper to run a CI status test with the given mock data
 fn run_ci_status_test(repo: &mut TestRepo, snapshot_name: &str, pr_json: &str, run_json: &str) {
     repo.setup_mock_gh_with_ci_data(pr_json, run_json);
@@ -40,6 +61,7 @@ fn setup_github_repo_with_feature(repo: &mut TestRepo) -> String {
         "https://github.com/test-owner/test-repo.git",
     ]);
     repo.add_worktree("feature");
+    setup_tracking_for_all_branches(repo, "origin");
     get_branch_sha(repo, "feature")
 }
 
@@ -226,6 +248,7 @@ fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
         "https://github.com/my-org/test-repo.git",
     ]);
     repo.add_worktree("feature");
+    setup_tracking_for_all_branches(&repo, "origin");
     let head_sha = get_branch_sha(&repo, "feature");
 
     // Multiple PRs - only one from our org (should filter to my-org's PR)
@@ -254,12 +277,21 @@ fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
 
 #[rstest]
 fn test_list_full_with_platform_override_github(mut repo: TestRepo) {
-    // Set a non-GitHub remote (bitbucket) - platform won't be auto-detected
+    // Set a non-GitHub remote (bitbucket) as origin - platform won't be auto-detected
     repo.run_git(&[
         "remote",
         "set-url",
         "origin",
         "https://bitbucket.org/test-owner/test-repo.git",
+    ]);
+
+    // Add a GitHub remote for PR detection (platform override needs a GitHub remote
+    // to determine which repo's PRs to check)
+    repo.run_git(&[
+        "remote",
+        "add",
+        "github",
+        "https://github.com/test-owner/test-repo.git",
     ]);
 
     // Set platform override in project config
@@ -270,8 +302,9 @@ platform = "github"
 "#,
     );
 
-    // Create a feature branch
+    // Create a feature branch with tracking to the github remote
     repo.add_worktree("feature");
+    setup_tracking_for_all_branches(&repo, "github");
 
     // Get actual commit SHA
     let head_sha = get_branch_sha(&repo, "feature");
@@ -344,8 +377,9 @@ platform = "invalid_platform"
 "#,
     );
 
-    // Create a feature branch
+    // Create a feature branch with tracking
     repo.add_worktree("feature");
+    setup_tracking_for_all_branches(&repo, "origin");
     let head_sha = get_branch_sha(&repo, "feature");
 
     // Setup mock gh - platform should fall back to GitHub via URL detection
@@ -405,6 +439,7 @@ fn setup_gitlab_repo_with_feature(repo: &mut TestRepo) -> String {
         "https://gitlab.com/test-group/test-project.git",
     ]);
     repo.add_worktree("feature");
+    setup_tracking_for_all_branches(repo, "origin");
     get_branch_sha(repo, "feature")
 }
 
@@ -490,6 +525,7 @@ fn test_list_full_with_gitlab_filters_by_project_id(mut repo: TestRepo) {
         "https://gitlab.com/my-group/my-project.git",
     ]);
     repo.add_worktree("feature");
+    setup_tracking_for_all_branches(&repo, "origin");
     let head_sha = get_branch_sha(&repo, "feature");
 
     // Multiple MRs - only one from our project (should filter to project 99999)
