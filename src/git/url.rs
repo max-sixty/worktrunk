@@ -832,55 +832,66 @@ mod tests {
         // This means ssh://git@victim.com@attacker.com/owner/repo.git
         // produces host = "attacker.com", not "victim.com"!
 
-        let malicious = GitRemoteUrl::parse("ssh://git@legitimate.com@attacker.com/owner/repo.git");
+        // The URL parses successfully - last @ wins for user/host separation
+        let parsed =
+            GitRemoteUrl::parse("ssh://git@legitimate.com@attacker.com/owner/repo.git").unwrap();
 
-        if let Some(parsed) = malicious {
-            // The parser extracts host from AFTER the last @
-            // So the host is "attacker.com", not "legitimate.com"
-            // This is actually CORRECT behavior - the URL is malformed
-            // and we parse it consistently (last @ wins)
-            assert_eq!(
-                parsed.host(),
-                "attacker.com",
-                "SSH URLs with multiple @ signs: last @ determines host"
-            );
+        // The parser extracts host from AFTER the last @
+        // So the host is "attacker.com", not "legitimate.com"
+        // This is consistent behavior - the URL is malformed but parseable
+        assert_eq!(
+            parsed.host(),
+            "attacker.com",
+            "SSH URLs with multiple @ signs: last @ determines host"
+        );
 
-            // The identifier correctly reflects attacker.com
-            assert!(parsed.project_identifier().starts_with("attacker.com/"));
-        }
-        // If None (rejected), that's also safe
+        // The identifier correctly reflects attacker.com
+        assert!(parsed.project_identifier().starts_with("attacker.com/"));
     }
 
     #[test]
     fn test_adversarial_ssh_at_in_path() {
         // What if @ appears in the path (namespace)?
         // ssh://git@host.com/org@company/repo.git
+        //
+        // The parser uses split('@').next_back() which takes everything after
+        // the LAST @. So "git@host.com/org@company/repo.git" splits as:
+        // ["git", "host.com/org", "company/repo.git"]
+        // next_back() returns "company/repo.git"
+        // split_once('/') gives host="company", path="repo.git"
+        // split_namespace_repo("repo.git") has only 1 segment, returns None
+        //
+        // This URL is rejected - @ in namespace breaks ssh:// parsing
 
-        let url_with_at_in_path = GitRemoteUrl::parse("ssh://git@host.com/org@company/repo.git");
+        assert!(
+            GitRemoteUrl::parse("ssh://git@host.com/org@company/repo.git").is_none(),
+            "SSH URLs with @ in path after host are rejected (ambiguous parsing)"
+        );
 
-        if let Some(parsed) = url_with_at_in_path {
-            // After stripping user, we have: "host.com/org@company/repo.git"
-            // split_once('/') gives host="host.com", path="org@company/repo.git"
-            // This should work correctly
-            assert_eq!(parsed.host(), "host.com");
-            assert_eq!(parsed.owner(), "org@company");
-            assert_eq!(parsed.repo(), "repo");
-        }
-        // If None, the URL was rejected which is acceptable
+        // However, https:// handles @ in namespace correctly (no user@ prefix)
+        let https_with_at = GitRemoteUrl::parse("https://host.com/org@company/repo.git").unwrap();
+        assert_eq!(https_with_at.owner(), "org@company");
+        assert_eq!(https_with_at.repo(), "repo");
     }
 
     #[test]
     fn test_adversarial_empty_user_ssh() {
         // ssh://user@/owner/repo.git - empty host after user@
-        let empty_host = GitRemoteUrl::parse("ssh://user@/owner/repo.git");
-        assert!(empty_host.is_none(), "Empty host should be rejected");
+        // After split('@').next_back(): "/owner/repo.git"
+        // split_once('/'): host="", path="owner/repo.git"
+        // Empty host is rejected
+        assert!(
+            GitRemoteUrl::parse("ssh://user@/owner/repo.git").is_none(),
+            "Empty host should be rejected"
+        );
 
-        // ssh://@host.com/owner/repo.git - empty user
-        let empty_user = GitRemoteUrl::parse("ssh://@host.com/owner/repo.git");
-        // This should work - the @ is just removed, leaving "host.com/..."
-        if let Some(parsed) = empty_user {
-            assert_eq!(parsed.host(), "host.com");
-        }
+        // ssh://@host.com/owner/repo.git - empty user (@ with nothing before it)
+        // After split('@').next_back(): "host.com/owner/repo.git"
+        // This parses correctly - the empty user is effectively ignored
+        let parsed = GitRemoteUrl::parse("ssh://@host.com/owner/repo.git").unwrap();
+        assert_eq!(parsed.host(), "host.com");
+        assert_eq!(parsed.owner(), "owner");
+        assert_eq!(parsed.repo(), "repo");
     }
 
     #[test]
@@ -907,43 +918,48 @@ mod tests {
     fn test_adversarial_dot_segments() {
         // Attack: Use . or .. segments to manipulate path
         // gitlab.com/owner/./repo vs gitlab.com/owner/repo
+        //
+        // The parser treats "." as a literal path segment (no special handling).
+        // This is safe because it produces a DIFFERENT identifier.
 
-        let with_dot = GitRemoteUrl::parse("https://gitlab.com/owner/./repo.git");
+        let with_dot = GitRemoteUrl::parse("https://gitlab.com/owner/./repo.git").unwrap();
         let normal = GitRemoteUrl::parse("https://gitlab.com/owner/repo.git").unwrap();
 
-        if let Some(parsed) = with_dot {
-            // Currently, "." becomes a path segment (not special-cased)
-            // Check: does the parser treat "." literally or normalize it?
-            if parsed.owner() == "owner/." {
-                // "." is preserved as literal segment - different identifier
-                assert_ne!(
-                    parsed.project_identifier(),
-                    normal.project_identifier(),
-                    "Literal . segment should not collide"
-                );
-            } else if parsed.owner() == "owner" {
-                // "." was normalized away - same identifier (both point to same repo)
-                assert_eq!(parsed.project_identifier(), normal.project_identifier());
-            }
-        }
+        // "." is preserved as literal segment - different identifier, no collision
+        assert_eq!(with_dot.owner(), "owner/.");
+        assert_eq!(with_dot.repo(), "repo");
+        assert_ne!(
+            with_dot.project_identifier(),
+            normal.project_identifier(),
+            "Literal . segment produces different identifier (no collision)"
+        );
     }
 
     #[test]
     fn test_adversarial_parent_traversal() {
         // Attack: Use .. to escape namespace
         // gitlab.com/owner/../victim/repo -> should NOT resolve to gitlab.com/victim/repo
+        //
+        // The parser treats ".." as a literal path segment (no directory traversal).
+        // This is SAFE because it produces a different identifier than the "escaped" path.
 
-        let with_dotdot = GitRemoteUrl::parse("https://gitlab.com/owner/../victim/repo.git");
+        let with_dotdot =
+            GitRemoteUrl::parse("https://gitlab.com/owner/../victim/repo.git").unwrap();
+        let victim = GitRemoteUrl::parse("https://gitlab.com/victim/repo.git").unwrap();
 
-        if let Some(parsed) = with_dotdot {
-            // ".." should be treated literally, not as parent directory
-            // The identifier should contain ".."
-            assert!(
-                parsed.project_identifier().contains(".."),
-                "Parent traversal (..) must be treated literally"
-            );
-        }
-        // If None, parse rejected it, which is safe
+        // ".." is treated literally, not as parent directory
+        assert_eq!(with_dotdot.owner(), "owner/../victim");
+        assert!(
+            with_dotdot.project_identifier().contains(".."),
+            "Parent traversal (..) must be treated literally"
+        );
+
+        // No collision with the "target" path
+        assert_ne!(
+            with_dotdot.project_identifier(),
+            victim.project_identifier(),
+            "Path traversal attack must not collide with target"
+        );
     }
 
     #[test]
@@ -969,20 +985,23 @@ mod tests {
         //
         // Note: GitLab does NOT allow "/" in repo names.
         // But test parser behavior with URL-encoded content.
+        //
+        // The parser treats %2F literally (doesn't decode it).
+        // This is the SAFE behavior - no collision possible.
 
-        let url_with_encoded_slash =
-            GitRemoteUrl::parse("https://gitlab.com/attacker/evil%2Frepo.git");
+        let parsed = GitRemoteUrl::parse("https://gitlab.com/attacker/evil%2Frepo.git").unwrap();
 
-        // The parser treats %2F literally (doesn't decode it)
-        // This is CORRECT behavior for security
-        if let Some(parsed) = url_with_encoded_slash {
-            // The %2F stays in the repo name, so no collision
-            assert!(
-                parsed.repo().contains("%2F") || parsed.owner().contains("%2F"),
-                "URL-encoded slash must remain encoded"
-            );
-        }
-        // If None, URL was rejected, which is safe
+        // The %2F stays in the repo name, so no collision with nested paths
+        assert_eq!(parsed.owner(), "attacker");
+        assert_eq!(parsed.repo(), "evil%2Frepo");
+
+        // No collision with what the attacker might want to target
+        let target = GitRemoteUrl::parse("https://gitlab.com/attacker/evil/repo.git").unwrap();
+        assert_ne!(
+            parsed.project_identifier(),
+            target.project_identifier(),
+            "URL-encoded slash must not collide with actual nested path"
+        );
     }
 
     #[test]
