@@ -103,7 +103,8 @@ pub fn approve_command_batch(
 fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> anyhow::Result<bool> {
     use std::io::{self, IsTerminal, Write};
 
-    let project_name = project_id.split('/').next_back().unwrap_or(project_id);
+    // Extract just the directory name for display (handles both Unix '/' and Windows '\')
+    let project_name = project_id.rsplit(['/', '\\']).next().unwrap_or(project_id);
     let count = commands.len();
     let plural = if count == 1 { "" } else { "s" };
 
