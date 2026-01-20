@@ -191,7 +191,7 @@ pub struct UserConfig {
     /// Per-project configuration (approved commands, etc.)
     /// Uses BTreeMap for deterministic serialization order and better diff readability
     #[serde(default)]
-    pub projects: std::collections::BTreeMap<String, UserProjectConfig>,
+    pub projects: std::collections::BTreeMap<String, UserProjectOverrides>,
 
     /// Configuration for the `wt list` command
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -310,11 +310,11 @@ impl Merge for CommitGenerationConfig {
     }
 }
 
-/// Per-project user configuration
+/// Per-project overrides in the user's config file
 ///
-/// Stored in the user's config file under `[projects."project-id"]`.
-/// Contains project-specific settings that are user preferences, not checked into git.
-/// All fields override the corresponding global settings when set.
+/// Stored under `[projects."project-id"]` in the user's config.
+/// These are user preferences (not checked into git) that override
+/// the corresponding global settings when set.
 ///
 /// # TOML Format
 /// ```toml
@@ -333,7 +333,7 @@ impl Merge for CommitGenerationConfig {
 /// squash = false
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
-pub struct UserProjectConfig {
+pub struct UserProjectOverrides {
     /// Worktree path template for this project (overrides global worktree-path)
     #[serde(
         rename = "worktree-path",
@@ -371,7 +371,7 @@ pub struct UserProjectConfig {
     pub merge: Option<MergeConfig>,
 }
 
-impl UserProjectConfig {
+impl UserProjectOverrides {
     /// Returns true if all fields are empty/None (no settings configured).
     ///
     /// Used to determine if a project entry can be removed from config after
@@ -1359,14 +1359,14 @@ rename-tab = "echo 'switched'"
 
     #[test]
     fn test_user_project_config_default() {
-        let config = UserProjectConfig::default();
+        let config = UserProjectOverrides::default();
         assert!(config.worktree_path.is_none());
         assert!(config.approved_commands.is_empty());
     }
 
     #[test]
     fn test_user_project_config_with_worktree_path_serde() {
-        let config = UserProjectConfig {
+        let config = UserProjectOverrides {
             worktree_path: Some(".worktrees/{{ branch | sanitize }}".to_string()),
             approved_commands: vec!["npm install".to_string()],
             ..Default::default()
@@ -1375,7 +1375,7 @@ rename-tab = "echo 'switched'"
         assert!(toml.contains("worktree-path"));
         assert!(toml.contains(".worktrees/{{ branch | sanitize }}"));
 
-        let parsed: UserProjectConfig = toml::from_str(&toml).unwrap();
+        let parsed: UserProjectOverrides = toml::from_str(&toml).unwrap();
         assert_eq!(
             parsed.worktree_path,
             Some(".worktrees/{{ branch | sanitize }}".to_string())
@@ -1388,7 +1388,7 @@ rename-tab = "echo 'switched'"
         let mut config = UserConfig::default();
         config.projects.insert(
             "github.com/user/repo".to_string(),
-            UserProjectConfig {
+            UserProjectOverrides {
                 worktree_path: Some(".worktrees/{{ branch | sanitize }}".to_string()),
                 approved_commands: vec![],
                 ..Default::default()
@@ -1410,7 +1410,7 @@ rename-tab = "echo 'switched'"
         };
         config.projects.insert(
             "github.com/user/repo".to_string(),
-            UserProjectConfig {
+            UserProjectOverrides {
                 worktree_path: None, // No project-specific path
                 approved_commands: vec!["npm install".to_string()],
                 ..Default::default()
@@ -1444,7 +1444,7 @@ rename-tab = "echo 'switched'"
         };
         config.projects.insert(
             "github.com/user/repo".to_string(),
-            UserProjectConfig {
+            UserProjectOverrides {
                 worktree_path: Some(".worktrees/{{ branch | sanitize }}".to_string()),
                 approved_commands: vec![],
                 ..Default::default()
@@ -1519,7 +1519,7 @@ rename-tab = "echo 'switched'"
         let mut config = UserConfig::default();
         config.projects.insert(
             "github.com/user/repo".to_string(),
-            UserProjectConfig {
+            UserProjectOverrides {
                 approved_commands: vec!["npm install".to_string(), "npm test".to_string()],
                 ..Default::default()
             },
@@ -1536,7 +1536,7 @@ rename-tab = "echo 'switched'"
         let mut config = UserConfig::default();
         config.projects.insert(
             "github.com/user/repo".to_string(),
-            UserProjectConfig {
+            UserProjectOverrides {
                 approved_commands: vec![
                     "ln -sf {{ repo_root }}/node_modules".to_string(), // old var
                 ],
@@ -1563,7 +1563,7 @@ rename-tab = "echo 'switched'"
         let mut config = UserConfig::default();
         config.projects.insert(
             "github.com/user/repo".to_string(),
-            UserProjectConfig {
+            UserProjectOverrides {
                 approved_commands: vec![
                     "cd {{ worktree_path }} && npm install".to_string(), // new var
                 ],
@@ -1583,7 +1583,7 @@ rename-tab = "echo 'switched'"
         let mut config = UserConfig::default();
         config.projects.insert(
             "github.com/user/repo".to_string(),
-            UserProjectConfig {
+            UserProjectOverrides {
                 approved_commands: vec![
                     "ln -sf {{ repo_root }}/modules {{ worktree }}/modules".to_string(),
                 ],
@@ -1874,7 +1874,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
         config.projects.insert(
             "github.com/user/repo".to_string(),
-            UserProjectConfig {
+            UserProjectOverrides {
                 commit_generation: Some(CommitGenerationConfig {
                     command: Some("project-llm".to_string()),
                     args: vec!["--project".to_string()],
@@ -1912,7 +1912,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
         config.projects.insert(
             "github.com/user/repo".to_string(),
-            UserProjectConfig {
+            UserProjectOverrides {
                 merge: Some(MergeConfig {
                     squash: Some(false), // Only override squash
                     commit: None,
@@ -1938,7 +1938,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
         config.projects.insert(
             "github.com/user/repo".to_string(),
-            UserProjectConfig {
+            UserProjectOverrides {
                 list: Some(ListConfig {
                     full: Some(true),
                     branches: None,
@@ -1977,7 +1977,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
     #[test]
     fn test_user_project_config_with_nested_configs_serde() {
-        let config = UserProjectConfig {
+        let config = UserProjectOverrides {
             worktree_path: Some(".worktrees/{{ branch }}".to_string()),
             approved_commands: vec!["npm install".to_string()],
             commit_generation: Some(CommitGenerationConfig {
@@ -1999,7 +1999,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
         };
 
         let toml = toml::to_string(&config).unwrap();
-        let parsed: UserProjectConfig = toml::from_str(&toml).unwrap();
+        let parsed: UserProjectOverrides = toml::from_str(&toml).unwrap();
 
         assert_eq!(
             parsed.worktree_path,

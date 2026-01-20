@@ -138,7 +138,7 @@ impl Repository {
             }),
             "-" => {
                 // Read from worktrunk.history (recorded by wt switch operations)
-                self.get_switch_previous().ok_or_else(|| {
+                self.switch_previous().ok_or_else(|| {
                     GitError::Other {
                         message: cformat!(
                             "No previous branch found in history. Run <bright-black>wt list</> to see available worktrees."

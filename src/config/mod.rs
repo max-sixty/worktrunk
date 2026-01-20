@@ -40,7 +40,7 @@ pub use project::{
 };
 pub use user::{
     CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, StageMode, UserConfig,
-    UserProjectConfig, find_unknown_keys as find_unknown_user_keys, get_config_path,
+    UserProjectOverrides, find_unknown_keys as find_unknown_user_keys, get_config_path,
     set_config_path,
 };
 
@@ -389,15 +389,15 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
     #[test]
     fn test_user_project_config_equality() {
-        let config1 = UserProjectConfig {
+        let config1 = UserProjectOverrides {
             approved_commands: vec!["npm install".to_string()],
             ..Default::default()
         };
-        let config2 = UserProjectConfig {
+        let config2 = UserProjectOverrides {
             approved_commands: vec!["npm install".to_string()],
             ..Default::default()
         };
-        let config3 = UserProjectConfig {
+        let config3 = UserProjectOverrides {
             approved_commands: vec!["npm test".to_string()],
             ..Default::default()
         };
@@ -410,7 +410,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let mut config = UserConfig::default();
         config.projects.insert(
             "github.com/user/repo".to_string(),
-            UserProjectConfig {
+            UserProjectOverrides {
                 approved_commands: vec!["npm install".to_string()],
                 ..Default::default()
             },
