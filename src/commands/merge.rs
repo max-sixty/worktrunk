@@ -3,7 +3,7 @@ use std::path::Path;
 use worktrunk::HookType;
 use worktrunk::config::ProjectConfig;
 use worktrunk::git::Repository;
-use worktrunk::styling::info_message;
+use worktrunk::styling::{info_message, progress_message};
 
 use super::command_approval::approve_command_batch;
 use super::command_executor::CommandContext;
@@ -79,9 +79,16 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
 
     let env = CommandEnv::for_action("merge")?;
     let repo = &env.repo;
-    let config = &env.config;
     // Merge requires being on a branch (can't merge from detached HEAD)
     let current_branch = env.require_branch("merge")?.to_string();
+
+    // Get and validate target branch early so we can show progress
+    let target_branch = repo.require_target_branch(target)?;
+
+    // Show progress now that we know what we're merging
+    crate::output::print(progress_message(color_print::cformat!(
+        "Merging <bold>{current_branch}</> to <bold>{target_branch}</>..."
+    )))?;
 
     // Validate --no-commit: requires clean working tree
     if !commit && repo.current_worktree().is_dirty()? {
@@ -95,9 +102,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
 
     // --no-commit implies --no-squash
     let squash_enabled = squash && commit;
-
-    // Get and validate target branch (must be a branch since we're updating it)
-    let target_branch = repo.require_target_branch(target)?;
     // Worktree for target is optional: if present we use it for safety checks and as destination.
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
 
@@ -111,7 +115,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         collect_merge_commands(repo, commit, verify, remove_effective)?;
 
     // Approve all commands in a single batch (shows templates, not expanded values)
-    let approved = approve_command_batch(&all_commands, &project_id, config, yes, false)?;
+    let approved = approve_command_batch(&all_commands, &project_id, env.config()?, yes, false)?;
 
     // If commands were declined, skip hooks but continue with merge
     // Shadow verify to gate all subsequent hook execution on approval
@@ -127,7 +131,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         if squash_enabled {
             false // Squash path handles staging and committing
         } else {
-            let ctx = env.context(yes);
+            let ctx = env.context(yes)?;
             let mut options = CommitOptions::new(&ctx);
             options.target_branch = Some(&target_branch);
             options.no_verify = !verify;
@@ -178,7 +182,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Run pre-merge checks unless --no-verify was specified
     // Do this after commit/squash/rebase to validate the final state that will be pushed
     if verify {
-        let ctx = env.context(yes);
+        let ctx = env.context(yes)?;
         let project_config = repo.load_project_config()?.unwrap_or_default();
         run_pre_merge_commands(&project_config, &ctx, &target_branch, None, &[])?;
     }
@@ -215,7 +219,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         // After a successful merge, get integration reason
         let (_, integration_reason) = repo.integration_reason(&current_branch, &target_branch)?;
         // Compute expected_path for path mismatch detection
-        let expected_path = get_path_mismatch(repo, &current_branch, &worktree_root, config);
+        let expected_path = get_path_mismatch(repo, &current_branch, &worktree_root, env.config()?);
         let remove_result = RemoveResult::RemovedWorktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
@@ -250,10 +254,10 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         // This runs after cleanup so the context is clear to the user
         let ctx = CommandContext::new(
             repo,
-            config,
+            env.config()?,
             Some(&current_branch),
             &destination_path,
-            &destination_path,
+            env.repo_root()?,
             yes,
         );
         // Show path when user's shell won't be in the destination directory where hooks run.

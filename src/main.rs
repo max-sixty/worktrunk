@@ -515,7 +515,7 @@ fn main() {
                         use commands::command_approval::approve_hooks;
                         use commands::context::CommandEnv;
                         let env = CommandEnv::for_action("squash")?;
-                        let ctx = env.context(yes);
+                        let ctx = env.context(yes)?;
                         let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
                         if !approved {
                             crate::output::print(info_message(
@@ -914,7 +914,7 @@ fn main() {
                 let approve_remove = |yes: bool| -> anyhow::Result<bool> {
                     use commands::context::CommandEnv;
                     let env = CommandEnv::for_action_branchless()?;
-                    let ctx = env.context(yes);
+                    let ctx = env.context(yes)?;
                     let approved =
                         approve_hooks(&ctx, &[HookType::PreRemove, HookType::PostSwitch])?;
                     if !approved {

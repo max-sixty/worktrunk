@@ -41,7 +41,7 @@ pub fn step_commit(
     }
 
     let env = CommandEnv::for_action("commit")?;
-    let ctx = env.context(yes);
+    let ctx = env.context(yes)?;
 
     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
     // Shadow no_verify: if user declines approval, skip hooks but continue commit
@@ -99,8 +99,8 @@ pub fn handle_squash(
     let repo = &env.repo;
     // Squash requires being on a branch (can't squash in detached HEAD)
     let current_branch = env.require_branch("squash")?.to_string();
-    let ctx = env.context(yes);
-    let generator = CommitGenerator::new(&env.config.commit_generation);
+    let ctx = env.context(yes)?;
+    let generator = CommitGenerator::new(&env.config()?.commit_generation);
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
     let target_branch = repo.require_target_ref(target)?;
@@ -250,7 +250,7 @@ pub fn handle_squash(
         &subjects,
         &current_branch,
         repo_name,
-        &env.config.commit_generation,
+        &env.config()?.commit_generation,
     )?;
 
     // Display the generated commit message

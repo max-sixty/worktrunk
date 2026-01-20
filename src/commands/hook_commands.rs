@@ -57,7 +57,7 @@ pub fn run_hook(
     // Derive context from current environment (branch-optional for CI compatibility)
     let env = CommandEnv::for_action_branchless()?;
     let repo = &env.repo;
-    let ctx = env.context(yes);
+    let ctx = env.context(yes)?;
 
     // Load project config (optional - user hooks can run without project config)
     let project_config = repo.load_project_config()?;
@@ -401,7 +401,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
     } else {
         None
     };
-    let ctx = env.as_ref().map(|e| e.context(false));
+    let ctx = env.as_ref().map(|e| e.context(false)).transpose()?;
 
     let mut output = String::new();
 

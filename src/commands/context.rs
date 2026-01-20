@@ -1,5 +1,7 @@
+use std::path::{Path, PathBuf};
+
 use anyhow::Context;
-use std::path::PathBuf;
+use once_cell::sync::OnceCell;
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 
@@ -7,8 +9,8 @@ use super::command_executor::CommandContext;
 
 /// Shared execution context for command handlers that operate on the current worktree.
 ///
-/// Centralizes the common "repo + branch + config + cwd" setup so individual handlers
-/// can focus on their core logic while sharing consistent error messaging.
+/// Centralizes the common "repo + branch + cwd" setup so individual handlers can focus on
+/// their core logic. Config and repo_root are loaded lazily on first access.
 ///
 /// This helper is used for commands that explicitly act on "where the user is standing"
 /// (e.g., `beta` and `merge`) and therefore need all of these pieces together. Commands that
@@ -19,13 +21,20 @@ pub struct CommandEnv {
     pub repo: Repository,
     /// Current branch name, if on a branch (None in detached HEAD state).
     pub branch: Option<String>,
-    pub config: UserConfig,
     pub worktree_path: PathBuf,
-    pub repo_root: PathBuf,
+    // Lazy-loaded fields: defer filesystem/config reads until needed.
+    // Note: repo_path() is cached in Repository, but we store a copy here for two reasons:
+    // 1. repo_path() returns owned PathBuf; we need somewhere to hold it to return &Path
+    // 2. repo_path() calls canonicalize() which can block on slow filesystems
+    config: OnceCell<UserConfig>,
+    repo_root: OnceCell<PathBuf>,
 }
 
 impl CommandEnv {
     /// Load the command environment for a specific action.
+    ///
+    /// Only loads the essentials (repo, branch, worktree_path). Config and repo_root
+    /// are deferred until first access via `.config()` or `.context()`.
     ///
     /// `action` describes what command is running (e.g., "merge", "squash").
     /// Used in error messages when the environment can't be loaded.
@@ -33,17 +42,13 @@ impl CommandEnv {
         let repo = Repository::current()?;
         let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
         let branch = repo.require_current_branch(action)?;
-        let config = UserConfig::load().context("Failed to load config")?;
-        let repo_root = repo
-            .repo_path()
-            .context("Failed to determine repository root")?;
 
         Ok(Self {
             repo,
             branch: Some(branch),
-            config,
             worktree_path,
-            repo_root,
+            config: OnceCell::new(),
+            repo_root: OnceCell::new(),
         })
     }
 
@@ -59,30 +64,41 @@ impl CommandEnv {
             .current_worktree()
             .branch()
             .context("Failed to determine current branch")?;
-        let config = UserConfig::load().context("Failed to load config")?;
-        let repo_root = repo
-            .repo_path()
-            .context("Failed to determine repository root")?;
 
         Ok(Self {
             repo,
             branch,
-            config,
             worktree_path,
-            repo_root,
+            config: OnceCell::new(),
+            repo_root: OnceCell::new(),
         })
     }
 
+    /// Get config, loading lazily on first access.
+    pub fn config(&self) -> anyhow::Result<&UserConfig> {
+        self.config
+            .get_or_try_init(|| UserConfig::load().context("Failed to load config"))
+    }
+
+    /// Get repo root path, loading lazily on first access.
+    pub fn repo_root(&self) -> anyhow::Result<&Path> {
+        self.repo_root
+            .get_or_try_init(|| self.repo.repo_path())
+            .map(PathBuf::as_path)
+    }
+
     /// Build a `CommandContext` tied to this environment.
-    pub fn context(&self, yes: bool) -> CommandContext<'_> {
-        CommandContext::new(
+    ///
+    /// Loads config and repo_root if not already loaded.
+    pub fn context(&self, yes: bool) -> anyhow::Result<CommandContext<'_>> {
+        Ok(CommandContext::new(
             &self.repo,
-            &self.config,
+            self.config()?,
             self.branch.as_deref(),
             &self.worktree_path,
-            &self.repo_root,
+            self.repo_root()?,
             yes,
-        )
+        ))
     }
 
     /// Get branch name, returning error if in detached HEAD state.
