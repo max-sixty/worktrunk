@@ -93,7 +93,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let current_branch = env.require_branch("merge")?.to_string();
 
     // Get effective merge config (project-specific merged with global)
-    let merge_config = env.effective_merge();
+    let merge_config = env.merge();
 
     // Determine final values: CLI > project config > global config > default (true)
     let squash = squash_opt
@@ -114,7 +114,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
 
     // Stage mode: CLI > project commit config > global commit config > default
     let stage_mode = stage
-        .or_else(|| env.effective_commit().and_then(|c| c.stage))
+        .or_else(|| env.commit().and_then(|c| c.stage))
         .unwrap_or_default();
 
     // Validate --no-commit: requires clean working tree

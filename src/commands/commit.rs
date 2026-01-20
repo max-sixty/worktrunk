@@ -206,7 +206,7 @@ impl CommitOptions<'_> {
             }
         }
 
-        let effective_config = self.ctx.effective_commit_generation();
+        let effective_config = self.ctx.commit_generation();
         CommitGenerator::new(&effective_config)
             .commit_staged_changes(self.show_no_squash_note, self.stage_mode)
     }

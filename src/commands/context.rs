@@ -102,19 +102,18 @@ impl CommandEnv {
         self.repo.project_identifier().ok()
     }
 
-    /// Get the effective commit generation config, merging project-specific settings.
-    pub fn effective_commit_generation(&self) -> worktrunk::config::CommitGenerationConfig {
-        self.config
-            .effective_commit_generation(self.project_id().as_deref())
+    /// Get the commit generation config, merging project-specific settings.
+    pub fn commit_generation(&self) -> worktrunk::config::CommitGenerationConfig {
+        self.config.commit_generation(self.project_id().as_deref())
     }
 
-    /// Get the effective commit config, merging project-specific settings.
-    pub fn effective_commit(&self) -> Option<worktrunk::config::CommitConfig> {
-        self.config.effective_commit(self.project_id().as_deref())
+    /// Get the commit config, merging project-specific settings.
+    pub fn commit(&self) -> Option<worktrunk::config::CommitConfig> {
+        self.config.commit(self.project_id().as_deref())
     }
 
-    /// Get the effective merge config, merging project-specific settings.
-    pub fn effective_merge(&self) -> Option<worktrunk::config::MergeConfig> {
-        self.config.effective_merge(self.project_id().as_deref())
+    /// Get the merge config, merging project-specific settings.
+    pub fn merge(&self) -> Option<worktrunk::config::MergeConfig> {
+        self.config.merge(self.project_id().as_deref())
     }
 }

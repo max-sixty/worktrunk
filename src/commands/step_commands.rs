@@ -39,7 +39,7 @@ pub fn step_commit(
         let repo = worktrunk::git::Repository::current()?;
         let config = WorktrunkConfig::load().context("Failed to load config")?;
         let project_id = repo.project_identifier().ok();
-        let effective_config = config.effective_commit_generation(project_id.as_deref());
+        let effective_config = config.commit_generation(project_id.as_deref());
         let prompt = crate::llm::build_commit_prompt(&effective_config)?;
         crate::output::stdout(prompt)?;
         return Ok(());
@@ -50,7 +50,7 @@ pub fn step_commit(
 
     // Determine effective stage mode: CLI > project config > global config > default
     let stage_mode = stage
-        .or_else(|| env.effective_commit().and_then(|c| c.stage))
+        .or_else(|| env.commit().and_then(|c| c.stage))
         .unwrap_or_default();
 
     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
@@ -110,12 +110,12 @@ pub fn handle_squash(
     // Squash requires being on a branch (can't squash in detached HEAD)
     let current_branch = env.require_branch("squash")?.to_string();
     let ctx = env.context(yes);
-    let effective_config = env.effective_commit_generation();
+    let effective_config = env.commit_generation();
     let generator = CommitGenerator::new(&effective_config);
 
     // Determine effective stage mode: CLI > project config > global config > default
     let stage_mode = stage
-        .or_else(|| env.effective_commit().and_then(|c| c.stage))
+        .or_else(|| env.commit().and_then(|c| c.stage))
         .unwrap_or_default();
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
@@ -310,7 +310,7 @@ pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let config = WorktrunkConfig::load().context("Failed to load config")?;
     let project_id = repo.project_identifier().ok();
-    let effective_config = config.effective_commit_generation(project_id.as_deref());
+    let effective_config = config.commit_generation(project_id.as_deref());
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
     let target_branch = repo.require_target_ref(target)?;

@@ -56,10 +56,9 @@ impl<'a> CommandContext<'a> {
         self.repo.project_identifier().ok()
     }
 
-    /// Get the effective commit generation config, merging project-specific settings.
-    pub fn effective_commit_generation(&self) -> worktrunk::config::CommitGenerationConfig {
-        self.config
-            .effective_commit_generation(self.project_id().as_deref())
+    /// Get the commit generation config, merging project-specific settings.
+    pub fn commit_generation(&self) -> worktrunk::config::CommitGenerationConfig {
+        self.config.commit_generation(self.project_id().as_deref())
     }
 }
 

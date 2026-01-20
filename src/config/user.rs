@@ -532,11 +532,11 @@ impl WorktrunkConfig {
             .unwrap_or_else(|| self.worktree_path())
     }
 
-    /// Returns the effective commit generation config for a specific project.
+    /// Returns the commit generation config for a specific project.
     ///
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
-    pub fn effective_commit_generation(&self, project: Option<&str>) -> CommitGenerationConfig {
+    pub fn commit_generation(&self, project: Option<&str>) -> CommitGenerationConfig {
         let global = &self.commit_generation;
         match project
             .and_then(|p| self.projects.get(p))
@@ -547,33 +547,33 @@ impl WorktrunkConfig {
         }
     }
 
-    /// Returns the effective list config for a specific project.
+    /// Returns the list config for a specific project.
     ///
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
-    pub fn effective_list(&self, project: Option<&str>) -> Option<ListConfig> {
+    pub fn list(&self, project: Option<&str>) -> Option<ListConfig> {
         let project_config = project
             .and_then(|p| self.projects.get(p))
             .and_then(|c| c.list.as_ref());
         merge_optional(self.list.as_ref(), project_config)
     }
 
-    /// Returns the effective commit config for a specific project.
+    /// Returns the commit config for a specific project.
     ///
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
-    pub fn effective_commit(&self, project: Option<&str>) -> Option<CommitConfig> {
+    pub fn commit(&self, project: Option<&str>) -> Option<CommitConfig> {
         let project_config = project
             .and_then(|p| self.projects.get(p))
             .and_then(|c| c.commit.as_ref());
         merge_optional(self.commit.as_ref(), project_config)
     }
 
-    /// Returns the effective merge config for a specific project.
+    /// Returns the merge config for a specific project.
     ///
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
-    pub fn effective_merge(&self, project: Option<&str>) -> Option<MergeConfig> {
+    pub fn merge(&self, project: Option<&str>) -> Option<MergeConfig> {
         let project_config = project
             .and_then(|p| self.projects.get(p))
             .and_then(|c| c.merge.as_ref());
@@ -1851,7 +1851,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
         let mut config = WorktrunkConfig::default();
         config.commit_generation.command = Some("global-llm".to_string());
 
-        let effective = config.effective_commit_generation(None);
+        let effective = config.commit_generation(None);
         assert_eq!(effective.command, Some("global-llm".to_string()));
     }
 
@@ -1874,15 +1874,15 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
         );
 
         // With project identifier, should merge project config
-        let effective = config.effective_commit_generation(Some("github.com/user/repo"));
+        let effective = config.commit_generation(Some("github.com/user/repo"));
         assert_eq!(effective.command, Some("project-llm".to_string()));
         assert_eq!(effective.args, vec!["--project".to_string()]);
 
         // Without project or unknown project, should use global
-        let effective = config.effective_commit_generation(None);
+        let effective = config.commit_generation(None);
         assert_eq!(effective.command, Some("global-llm".to_string()));
 
-        let effective = config.effective_commit_generation(Some("github.com/other/repo"));
+        let effective = config.commit_generation(Some("github.com/other/repo"));
         assert_eq!(effective.command, Some("global-llm".to_string()));
     }
 
@@ -1913,9 +1913,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
             },
         );
 
-        let effective = config
-            .effective_merge(Some("github.com/user/repo"))
-            .unwrap();
+        let effective = config.merge(Some("github.com/user/repo")).unwrap();
         assert_eq!(effective.squash, Some(false)); // From project
         assert_eq!(effective.commit, Some(true)); // From global
         assert_eq!(effective.rebase, Some(true)); // From global
@@ -1940,16 +1938,12 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
             },
         );
 
-        let effective = config.effective_list(Some("github.com/user/repo")).unwrap();
+        let effective = config.list(Some("github.com/user/repo")).unwrap();
         assert_eq!(effective.full, Some(true));
         assert!(effective.branches.is_none());
 
         // No global, no matching project = None
-        assert!(
-            config
-                .effective_list(Some("github.com/other/repo"))
-                .is_none()
-        );
+        assert!(config.list(Some("github.com/other/repo")).is_none());
     }
 
     #[test]
@@ -1962,9 +1956,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
             ..Default::default()
         };
 
-        let effective = config
-            .effective_commit(Some("github.com/any/project"))
-            .unwrap();
+        let effective = config.commit(Some("github.com/any/project")).unwrap();
         assert_eq!(effective.stage, Some(StageMode::Tracked));
     }
 
@@ -2064,12 +2056,10 @@ squash = false
         assert_eq!(project.merge.as_ref().unwrap().squash, Some(false));
 
         // Effective config for project
-        let effective_cg = config.effective_commit_generation(Some("github.com/user/repo"));
+        let effective_cg = config.commit_generation(Some("github.com/user/repo"));
         assert_eq!(effective_cg.command, Some("claude".to_string()));
 
-        let effective_merge = config
-            .effective_merge(Some("github.com/user/repo"))
-            .unwrap();
+        let effective_merge = config.merge(Some("github.com/user/repo")).unwrap();
         assert_eq!(effective_merge.squash, Some(false));
     }
 }

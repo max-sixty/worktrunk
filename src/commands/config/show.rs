@@ -261,7 +261,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     let project_id = Repository::current()
         .ok()
         .and_then(|r| r.project_identifier().ok());
-    let commit_config = config.effective_commit_generation(project_id.as_deref());
+    let commit_config = config.commit_generation(project_id.as_deref());
 
     if !commit_config.is_configured() {
         writeln!(out, "{}", hint_message("Commit generation not configured"))?;

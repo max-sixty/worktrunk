@@ -622,7 +622,7 @@ fn main() {
 
                     // Get effective list config (merges project-specific with global)
                     let (show_branches_config, show_remotes_config) = config
-                        .effective_list(project_id.as_deref())
+                        .list(project_id.as_deref())
                         .map(|l| (l.branches.unwrap_or(false), l.remotes.unwrap_or(false)))
                         .unwrap_or((false, false));
 
@@ -667,7 +667,7 @@ fn main() {
 
                         // Get effective list config (merges project-specific with global)
                         let (show_branches_config, show_remotes_config, show_full_config) = config
-                            .effective_list(project_id.as_deref())
+                            .list(project_id.as_deref())
                             .map(|l| {
                                 (
                                     l.branches.unwrap_or(false),
