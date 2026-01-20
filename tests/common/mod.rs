@@ -1899,6 +1899,76 @@ impl TestRepo {
         self.mock_bin_path = Some(mock_bin);
     }
 
+    /// Setup mock glab where mr list succeeds but mr view fails.
+    ///
+    /// Use this to test the error path when `glab mr view` fails after finding an MR.
+    /// The mock returns the MR from mr list but exits with error for mr view.
+    pub fn setup_mock_glab_with_failing_mr_view(&mut self, mr_json: &str, project_id: Option<u64>) {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        std::fs::write(mock_bin.join("mr_list_data.json"), mr_json).unwrap();
+
+        let project_id_response = match project_id {
+            Some(id) => format!(r#"{{"id": {}}}"#, id),
+            None => r#"{"error": "not found"}"#.to_string(),
+        };
+
+        // glab mock: mr list succeeds, but NO mr view commands registered
+        // (falls back to exit code 1)
+        MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("mr list", MockResponse::file("mr_list_data.json"))
+            // No "mr view" commands - will fall back to default exit code 1
+            .command("repo", MockResponse::output(&project_id_response))
+            .command("ci", MockResponse::output("[]"))
+            .write(&mock_bin);
+
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Set up mock glab that returns a rate limit error on `ci list`.
+    ///
+    /// Used to test the `is_retriable_error` path in `detect_gitlab_pipeline`.
+    /// MR list returns empty (no MRs), so the code falls through to pipeline detection
+    /// which then hits the rate limit error.
+    pub fn setup_mock_glab_with_ci_rate_limit(&mut self, project_id: Option<u64>) {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        let project_id_response = match project_id {
+            Some(id) => format!(r#"{{"id": {}}}"#, id),
+            None => r#"{"error": "not found"}"#.to_string(),
+        };
+
+        // glab mock: mr list returns empty (no MRs), ci list fails with rate limit
+        MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("mr list", MockResponse::output("[]")) // No MRs - triggers ci list fallback
+            .command("repo", MockResponse::output(&project_id_response))
+            .command(
+                "ci",
+                MockResponse::stderr("API rate limit exceeded").with_exit_code(1),
+            )
+            .write(&mock_bin);
+
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
     /// Configure a command to use mock gh/glab commands
     ///
     /// Must call `setup_mock_gh()` first. Prepends the mock bin directory to PATH

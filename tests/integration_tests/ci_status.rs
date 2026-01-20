@@ -618,3 +618,55 @@ fn test_list_full_with_url_based_pushremote(mut repo: TestRepo) {
 
     run_ci_status_test(&mut repo, "url_based_pushremote", &pr_json, "[]");
 }
+
+// =============================================================================
+// GitLab error path tests
+// =============================================================================
+
+/// Test that when `glab mr view` fails after finding an MR, we show error status (not NoCI).
+#[rstest]
+fn test_list_full_with_gitlab_mr_view_failure(mut repo: TestRepo) {
+    let head_sha = setup_gitlab_repo_with_feature(&mut repo);
+
+    // Set up mock where mr list succeeds but mr view fails
+    let mr_list_json = format!(
+        r#"[{{
+        "iid": 1,
+        "sha": "{}",
+        "has_conflicts": false,
+        "detailed_merge_status": null,
+        "source_project_id": 12345,
+        "web_url": "https://gitlab.com/test/repo/-/merge_requests/1"
+    }}]"#,
+        head_sha
+    );
+
+    repo.setup_mock_glab_with_failing_mr_view(&mr_list_json, Some(12345));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("gitlab_mr_view_failure", cmd);
+    });
+}
+
+/// Test that rate limit errors in `glab ci list` show error status (not NoCI).
+///
+/// This exercises the `is_retriable_error` check in `detect_gitlab_pipeline`,
+/// which is the fallback path when no MR exists for a branch.
+#[rstest]
+fn test_list_full_with_gitlab_ci_rate_limit(mut repo: TestRepo) {
+    setup_gitlab_repo_with_feature(&mut repo);
+
+    // Mock returns empty MR list (no MRs), so we fall through to ci list,
+    // which returns a rate limit error
+    repo.setup_mock_glab_with_ci_rate_limit(Some(12345));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("gitlab_ci_rate_limit", cmd);
+    });
+}
