@@ -369,15 +369,15 @@ pub struct UserProjectConfig {
     )]
     pub commit_generation: Option<CommitGenerationConfig>,
 
-    /// Per-project list settings (overrides global [list])
+    /// Per-project list settings (overrides global `[list]`)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub list: Option<ListConfig>,
 
-    /// Per-project commit settings (overrides global [commit])
+    /// Per-project commit settings (overrides global `[commit]`)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<CommitConfig>,
 
-    /// Per-project merge settings (overrides global [merge])
+    /// Per-project merge settings (overrides global `[merge]`)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge: Option<MergeConfig>,
 }
