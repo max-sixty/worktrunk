@@ -521,13 +521,14 @@ impl Repository {
 
     /// Delay before showing progress output for slow operations.
     /// See .claude/rules/cli-output-formatting.md: "Progress messages apply only to slow operations (>400ms)"
-    pub const SLOW_OPERATION_DELAY_MS: u64 = 400;
+    pub const SLOW_OPERATION_DELAY_MS: i64 = 400;
 
     /// Run a git command with delayed output streaming.
     ///
     /// Buffers output initially, then streams if the command takes longer than
     /// `delay_ms`. This provides a quiet experience for fast operations while
     /// still showing progress for slow ones (like `worktree add` on large repos).
+    /// Pass `-1` to never switch to streaming (always buffer).
     ///
     /// If `progress_message` is provided, it will be printed to stderr when
     /// streaming starts (i.e., when the delay threshold is exceeded).
@@ -537,7 +538,7 @@ impl Repository {
     pub fn run_command_delayed_stream(
         &self,
         args: &[&str],
-        delay_ms: u64,
+        delay_ms: i64,
         progress_message: Option<String>,
     ) -> anyhow::Result<()> {
         use std::io::{BufRead, BufReader, Write};
@@ -547,7 +548,7 @@ impl Repository {
         use std::thread;
         use std::time::{Duration, Instant};
 
-        // Allow tests to override delay threshold (e.g., 0 to force immediate streaming)
+        // Allow tests to override delay threshold (-1 to disable, 0 for immediate)
         let delay_ms = std::env::var("WT_TEST_DELAYED_STREAM_MS")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -612,7 +613,6 @@ impl Repository {
         };
 
         let start = Instant::now();
-        let delay = Duration::from_millis(delay_ms);
 
         loop {
             match child.try_wait() {
@@ -636,8 +636,11 @@ impl Repository {
                     }
                 }
                 Ok(None) => {
-                    // Still running - check if we should switch to streaming
-                    if !streaming.load(Ordering::Relaxed) && start.elapsed() >= delay {
+                    // Still running - check if we should switch to streaming (skip if delay_ms < 0)
+                    if delay_ms >= 0
+                        && !streaming.load(Ordering::Relaxed)
+                        && start.elapsed() >= Duration::from_millis(delay_ms as u64)
+                    {
                         streaming.store(true, Ordering::Relaxed);
 
                         if let Some(ref msg) = progress_message {
