@@ -113,8 +113,12 @@ deploy = "scripts/deploy.sh"
 
 #[rstest]
 fn test_hook_show_approval_status(repo: TestRepo, temp_home: TempDir) {
-    // Remove origin so project_identifier is "repo" (directory name)
+    // Remove origin so project_identifier uses full canonical path
     repo.run_git(&["remote", "remove", "origin"]);
+
+    // Get the canonical path for the project identifier
+    let project_id = dunce::canonicalize(repo.root_path()).unwrap();
+    let project_id_str = project_id.to_str().unwrap();
 
     // Create user config at XDG path with one approved command
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -122,11 +126,13 @@ fn test_hook_show_approval_status(repo: TestRepo, temp_home: TempDir) {
     let config_path = global_config_dir.join("config.toml");
     fs::write(
         &config_path,
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+        format!(
+            r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
-[projects."repo"]
+[projects."{project_id_str}"]
 approved-commands = ["cargo build"]
-"#,
+"#
+        ),
     )
     .unwrap();
 
@@ -230,7 +236,7 @@ lint = "pre-commit run"
 /// Test `wt hook clear` when no approvals exist for the project.
 #[rstest]
 fn test_hook_clear_no_approvals(repo: TestRepo, temp_home: TempDir) {
-    // Remove origin so project_identifier is "repo" (directory name)
+    // Remove origin so project_identifier uses full canonical path
     repo.run_git(&["remote", "remove", "origin"]);
 
     // Create user config without any project approvals
@@ -260,8 +266,12 @@ fn test_hook_clear_no_approvals(repo: TestRepo, temp_home: TempDir) {
 /// Test `wt hook clear` when project has approvals to clear.
 #[rstest]
 fn test_hook_clear_with_approvals(repo: TestRepo, temp_home: TempDir) {
-    // Remove origin so project_identifier is "repo" (directory name)
+    // Remove origin so project_identifier uses full canonical path
     repo.run_git(&["remote", "remove", "origin"]);
+
+    // Get the canonical path for the project identifier
+    let project_id = dunce::canonicalize(repo.root_path()).unwrap();
+    let project_id_str = project_id.to_str().unwrap();
 
     // Create user config with approved commands for this project
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -269,11 +279,13 @@ fn test_hook_clear_with_approvals(repo: TestRepo, temp_home: TempDir) {
     let config_path = global_config_dir.join("config.toml");
     fs::write(
         &config_path,
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+        format!(
+            r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
-[projects."repo"]
+[projects."{project_id_str}"]
 approved-commands = ["cargo build", "cargo test", "npm install"]
-"#,
+"#
+        ),
     )
     .unwrap();
 
