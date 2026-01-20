@@ -42,7 +42,7 @@ pub(crate) use step_commands::{
     step_show_squash_prompt,
 };
 pub(crate) use worktree::{
-    ResolutionContext, execute_switch, handle_remove, handle_remove_current,
+    OperationMode, execute_switch, handle_remove, handle_remove_current,
     is_worktree_at_expected_path, plan_switch, resolve_worktree_arg, worktree_display_name,
 };
 

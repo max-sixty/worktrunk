@@ -204,9 +204,9 @@ pub enum RemoveResult {
     },
 }
 
-/// Context for worktree resolution - determines which checks are performed.
+/// Operation mode for worktree resolution - determines which checks are performed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResolutionContext {
+pub enum OperationMode {
     /// Creating or switching to a worktree - path occupation is an error
     /// because we need to create a worktree at the expected path.
     CreateOrSwitch,

@@ -36,7 +36,7 @@ use commands::command_executor::{CommandContext, build_hook_context};
 use commands::handle_select;
 use commands::worktree::{SwitchResult, handle_push};
 use commands::{
-    MergeOptions, RebaseResult, ResolutionContext, SquashResult, add_approvals, approve_hooks,
+    MergeOptions, OperationMode, RebaseResult, SquashResult, add_approvals, approve_hooks,
     clear_approvals, execute_switch, handle_completions, handle_config_create, handle_config_show,
     handle_configure_shell, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
     handle_list, handle_merge, handle_rebase, handle_remove, handle_remove_current,
@@ -963,7 +963,7 @@ fn main() {
                             &repo,
                             branch_name,
                             &config,
-                            ResolutionContext::Remove,
+                            OperationMode::Remove,
                         ) {
                             Ok(r) => r,
                             Err(e) => {
