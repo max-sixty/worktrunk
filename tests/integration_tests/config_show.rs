@@ -708,7 +708,7 @@ post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     )
     .unwrap();
 
-    // Use `wt list` which loads config through WorktrunkConfig::load() and triggers deprecation check
+    // Use `wt list` which loads config through UserConfig::load() and triggers deprecation check
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();

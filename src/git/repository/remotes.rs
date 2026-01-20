@@ -152,9 +152,9 @@ impl Repository {
 
                 // Fall back to full canonical path (use worktree base for consistency across all worktrees)
                 // Full path avoids collisions across unrelated repos with the same directory name
-                let repo_root = self.repo_path()?;
+                let repo_root = self.repo_path();
                 let canonical =
-                    dunce::canonicalize(&repo_root).unwrap_or_else(|_| repo_root.clone());
+                    dunce::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
                 let path_str = canonical
                     .to_str()
                     .context("Repository path is not valid UTF-8")?;

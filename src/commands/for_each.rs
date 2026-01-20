@@ -26,7 +26,7 @@ use std::io::Write;
 use std::process::Stdio;
 
 use color_print::cformat;
-use worktrunk::config::{WorktrunkConfig, expand_template};
+use worktrunk::config::{UserConfig, expand_template};
 use worktrunk::git::Repository;
 use worktrunk::git::WorktrunkError;
 use worktrunk::shell_exec::ShellConfig;
@@ -52,7 +52,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
         .into_iter()
         .filter(|wt| !wt.is_prunable())
         .collect();
-    let config = WorktrunkConfig::load()?;
+    let config = UserConfig::load()?;
 
     let mut failed: Vec<String> = Vec::new();
     let total = worktrees.len();
@@ -60,23 +60,13 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
     // Join args into a template string (will be expanded per-worktree)
     let command_template = args.join(" ");
 
-    // Get repo root for context
-    let repo_root = repo.repo_path()?;
-
     for wt in &worktrees {
         let display_name = worktree_display_name(wt, &repo, &config);
         output::print(progress_message(format!("Running in {display_name}...")))?;
 
         // Build full hook context for this worktree
         // Pass wt.branch directly (not the display string) so detached HEAD maps to None -> "HEAD"
-        let ctx = CommandContext::new(
-            &repo,
-            &config,
-            wt.branch.as_deref(),
-            &wt.path,
-            &repo_root,
-            false,
-        );
+        let ctx = CommandContext::new(&repo, &config, wt.branch.as_deref(), &wt.path, false);
         let context_map = build_hook_context(&ctx, &[]);
 
         // Convert to &str references for expand_template

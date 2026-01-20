@@ -11,7 +11,7 @@ use color_print::cformat;
 use std::fmt::Write as _;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
-use worktrunk::config::{CommandConfig, ProjectConfig, WorktrunkConfig};
+use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig};
 use worktrunk::git::{GitError, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
@@ -265,7 +265,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
 
     let repo = Repository::current()?;
     let project_id = repo.project_identifier()?;
-    let config = WorktrunkConfig::load().context("Failed to load config")?;
+    let config = UserConfig::load().context("Failed to load config")?;
 
     // Load project config (error if missing - this command requires it)
     let config_path = repo
@@ -321,7 +321,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
 
 /// Handle `wt hook approvals clear` command - clear approved commands
 pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
-    let mut config = WorktrunkConfig::load().context("Failed to load config")?;
+    let mut config = UserConfig::load().context("Failed to load config")?;
 
     if global {
         // Clear all approvals for all projects
@@ -377,7 +377,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
     use crate::help_pager::show_help_in_pager;
 
     let repo = Repository::current()?;
-    let config = WorktrunkConfig::load().context("Failed to load user config")?;
+    let config = UserConfig::load().context("Failed to load user config")?;
     let project_config = repo.load_project_config()?;
     let project_id = repo.project_identifier().ok();
 
@@ -431,7 +431,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
 /// Render user hooks section
 fn render_user_hooks(
     out: &mut String,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
@@ -489,7 +489,7 @@ fn render_project_hooks(
     out: &mut String,
     repo: &Repository,
     project_config: Option<&ProjectConfig>,
-    user_config: &WorktrunkConfig,
+    user_config: &UserConfig,
     project_id: Option<&str>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
@@ -550,7 +550,7 @@ fn render_hook_commands(
     hook_type: HookType,
     config: &CommandConfig,
     // For project hooks: (user_config, project_id) to check approval status
-    approval_context: Option<(&WorktrunkConfig, Option<&str>)>,
+    approval_context: Option<(&UserConfig, Option<&str>)>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
     let commands = config.commands();

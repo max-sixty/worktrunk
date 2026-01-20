@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::Context;
 use color_print::cformat;
 use dunce::canonicalize;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::pr_ref::fork_remote_url;
 use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{
@@ -60,8 +60,8 @@ fn resolve_switch_target(
         // Fetch PR info (network call via gh CLI)
         crate::output::print(progress_message(cformat!("Fetching PR #{pr_number}...")))?;
 
-        let repo_root = repo.repo_path()?;
-        let pr_info = fetch_pr_info(pr_number, &repo_root)?;
+        let repo_root = repo.repo_path();
+        let pr_info = fetch_pr_info(pr_number, repo_root)?;
 
         if pr_info.is_cross_repository {
             // Fork PR: will need fetch + pushRemote config (see pr_ref module docs)
@@ -70,7 +70,7 @@ fn resolve_switch_target(
             // Check if branch already exists and is tracking this PR
             // If so, we can reuse it without re-fetching or re-configuring
             if let Some(tracks_this_pr) =
-                worktrunk::git::pr_ref::branch_tracks_pr(&repo_root, &local_branch, pr_number)
+                worktrunk::git::pr_ref::branch_tracks_pr(repo_root, &local_branch, pr_number)
             {
                 if tracks_this_pr {
                     // Branch exists and tracks this PR - just create worktree
@@ -166,8 +166,8 @@ fn resolve_switch_target(
         // Fetch MR info (network call via glab CLI)
         crate::output::print(progress_message(cformat!("Fetching MR !{mr_number}...")))?;
 
-        let repo_root = repo.repo_path()?;
-        let mr_info = mr_ref::fetch_mr_info(mr_number, &repo_root)?;
+        let repo_root = repo.repo_path();
+        let mr_info = mr_ref::fetch_mr_info(mr_number, repo_root)?;
 
         if mr_info.is_cross_project {
             // Fork MR: will need fetch + pushRemote config (see mr_ref module docs)
@@ -176,7 +176,7 @@ fn resolve_switch_target(
             // Check if branch already exists and is tracking this MR
             // If so, we can reuse it without re-fetching or re-configuring
             if let Some(tracks_this_mr) =
-                mr_ref::branch_tracks_mr(&repo_root, &local_branch, mr_number)
+                mr_ref::branch_tracks_mr(repo_root, &local_branch, mr_number)
             {
                 if tracks_this_mr {
                     // Branch exists and tracks this MR - just create worktree
@@ -465,7 +465,7 @@ pub fn plan_switch(
     create: bool,
     base: Option<&str>,
     clobber: bool,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
 ) -> anyhow::Result<SwitchPlan> {
     // Record current branch for `wt switch -` support
     let new_previous = repo.current_worktree().branch().ok().flatten();
@@ -510,7 +510,7 @@ pub fn plan_switch(
 pub fn execute_switch(
     repo: &Repository,
     plan: SwitchPlan,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
     force: bool,
     no_verify: bool,
 ) -> anyhow::Result<(SwitchResult, SwitchBranchInfo)> {
@@ -761,15 +761,7 @@ pub fn execute_switch(
 
             // Execute post-create commands
             if !no_verify {
-                let repo_root = repo.repo_path()?;
-                let ctx = CommandContext::new(
-                    repo,
-                    config,
-                    Some(&branch),
-                    &worktree_path,
-                    &repo_root,
-                    force,
-                );
+                let ctx = CommandContext::new(repo, config, Some(&branch), &worktree_path, force);
 
                 match &method {
                     CreationMethod::Regular { base_branch, .. } => {
