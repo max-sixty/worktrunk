@@ -558,3 +558,57 @@ fn test_list_full_with_gitlab_filters_by_project_id(mut repo: TestRepo) {
         Some(99999),
     );
 }
+
+// =============================================================================
+// URL-based pushremote tests (gh pr checkout scenario)
+// =============================================================================
+
+/// Test that CI status works when pushremote is a URL instead of a remote name.
+///
+/// This simulates the `gh pr checkout` scenario where git sets:
+/// - branch.<name>.pushremote = https://github.com/fork-owner/repo.git (a URL)
+/// - branch.<name>.merge = refs/pull/123/head (a PR ref)
+///
+/// Git's @{push} syntax fails with URLs, so we fall back to reading the config directly.
+#[rstest]
+fn test_list_full_with_url_based_pushremote(mut repo: TestRepo) {
+    // Set origin URL (the upstream repo where PRs are opened)
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/upstream-owner/test-repo.git",
+    ]);
+    repo.add_worktree("feature");
+    let head_sha = get_branch_sha(&repo, "feature");
+
+    // Simulate `gh pr checkout` behavior:
+    // - Sets pushremote to the fork URL (not a remote name)
+    // - Sets merge to a PR ref (not a normal branch ref)
+    repo.run_git(&[
+        "config",
+        "branch.feature.pushremote",
+        "https://github.com/fork-owner/test-repo.git", // URL, not remote name
+    ]);
+    repo.run_git(&[
+        "config",
+        "branch.feature.merge",
+        "refs/pull/123/head", // PR ref, not branch ref
+    ]);
+
+    // The PR comes from the fork owner (matches pushremote URL)
+    let pr_json = format!(
+        r#"[{{
+        "headRefOid": "{}",
+        "mergeStateStatus": "CLEAN",
+        "statusCheckRollup": [
+            {{"status": "COMPLETED", "conclusion": "SUCCESS"}}
+        ],
+        "url": "https://github.com/upstream-owner/test-repo/pull/123",
+        "headRepositoryOwner": {{"login": "fork-owner"}}
+    }}]"#,
+        head_sha
+    );
+
+    run_ci_status_test(&mut repo, "url_based_pushremote", &pr_json, "[]");
+}

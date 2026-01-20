@@ -144,11 +144,30 @@ impl<'a> Branch<'a> {
 
     /// Get the URL of the remote where this branch would be pushed.
     ///
-    /// Combines [`push_remote()`](Self::push_remote) with remote URL lookup.
+    /// Uses `%(push:remotename)` which returns either a remote name or URL directly
+    /// (`gh pr checkout` sets pushremote to a URL rather than a remote name).
     /// Returns `None` if no push remote is configured or the remote has no URL.
     pub fn push_remote_url(&self) -> Option<String> {
-        let remote = self.push_remote()?;
-        self.repo.remote_url(&remote)
+        // %(push:remotename) returns either a remote name or URL directly
+        // Unlike @{push}, this doesn't fail when pushremote is a URL
+        let push_remote = self
+            .repo
+            .run_command(&[
+                "for-each-ref",
+                "--format=%(push:remotename)",
+                &format!("refs/heads/{}", self.name),
+            ])
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())?;
+
+        // If it's already a URL, return it directly
+        if push_remote.contains("://") || push_remote.starts_with("git@") {
+            Some(push_remote)
+        } else {
+            // It's a remote name, look up its URL
+            self.repo.remote_url(&push_remote)
+        }
     }
 
     /// Get the GitHub URL for this branch's push remote, if it's a GitHub URL.
