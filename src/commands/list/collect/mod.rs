@@ -52,7 +52,7 @@
 //! Skeleton render
 //! ├─ is_builtin_fsmonitor_enabled()             (5ms, sequential - gate)
 //! ├─ rayon::scope(
-//! │    ├─ get_switch_previous()                 (5ms)
+//! │    ├─ switch_previous()                     (5ms)
 //! │    ├─ integration_target()                  (10ms)
 //! │    ├─ start_fsmonitor_daemon × N worktrees  (6ms each, all parallel)
 //! │  )                                          // ~10ms total (max of all spawns)
@@ -528,7 +528,7 @@ pub fn collect(
     rayon::scope(|s| {
         // Previous branch lookup (for gutter symbol)
         s.spawn(|_| {
-            let _ = previous_branch_cell.set(repo.get_switch_previous());
+            let _ = previous_branch_cell.set(repo.switch_previous());
         });
 
         // Integration target (upstream if ahead of local, else local)

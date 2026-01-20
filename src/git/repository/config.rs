@@ -25,7 +25,7 @@ impl Repository {
     /// Read a user-defined marker from `worktrunk.state.<branch>.marker` in git config.
     ///
     /// Markers are stored as JSON: `{"marker": "text", "set_at": unix_timestamp}`.
-    pub fn branch_keyed_marker(&self, branch: &str) -> Option<String> {
+    pub fn branch_marker(&self, branch: &str) -> Option<String> {
         #[derive(serde::Deserialize)]
         struct MarkerValue {
             marker: Option<String>,
@@ -44,13 +44,13 @@ impl Repository {
 
     /// Read user-defined branch-keyed marker.
     pub fn user_marker(&self, branch: Option<&str>) -> Option<String> {
-        branch.and_then(|branch| self.branch_keyed_marker(branch))
+        branch.and_then(|branch| self.branch_marker(branch))
     }
 
-    /// Record the previous branch in worktrunk.history for `wt switch -` support.
+    /// Set the previous branch in worktrunk.history for `wt switch -` support.
     ///
     /// Stores the branch we're switching FROM, so `wt switch -` can return to it.
-    pub fn record_switch_previous(&self, previous: Option<&str>) -> anyhow::Result<()> {
+    pub fn set_switch_previous(&self, previous: Option<&str>) -> anyhow::Result<()> {
         if let Some(prev) = previous {
             self.run_command(&["config", "worktrunk.history", prev])?;
         }
@@ -61,7 +61,7 @@ impl Repository {
     /// Get the previous branch from worktrunk.history for `wt switch -`.
     ///
     /// Returns the branch we came from, enabling ping-pong switching.
-    pub fn get_switch_previous(&self) -> Option<String> {
+    pub fn switch_previous(&self) -> Option<String> {
         self.run_command(&["config", "--get", "worktrunk.history"])
             .ok()
             .map(|s| s.trim().to_string())

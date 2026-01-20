@@ -519,7 +519,7 @@ pub fn execute_switch(
             expected_path,
             new_previous,
         } => {
-            let _ = repo.record_switch_previous(new_previous.as_deref());
+            let _ = repo.set_switch_previous(new_previous.as_deref());
 
             let current_dir = std::env::current_dir()
                 .ok()
@@ -799,7 +799,7 @@ pub fn execute_switch(
             }
 
             // Record successful switch in history
-            let _ = repo.record_switch_previous(new_previous.as_deref());
+            let _ = repo.set_switch_previous(new_previous.as_deref());
 
             Ok((
                 SwitchResult::Created {

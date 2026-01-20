@@ -178,7 +178,7 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
             })?;
             output::stdout(branch_name)?;
         }
-        "previous-branch" => match repo.get_switch_previous() {
+        "previous-branch" => match repo.switch_previous() {
             Some(prev) => output::stdout(prev)?,
             None => output::stdout("")?,
         },
@@ -187,7 +187,7 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
                 Some(b) => b,
                 None => repo.require_current_branch("get marker for current branch")?,
             };
-            match repo.branch_keyed_marker(&branch_name) {
+            match repo.branch_marker(&branch_name) {
                 Some(marker) => output::stdout(marker)?,
                 None => output::stdout("")?,
             }
@@ -262,7 +262,7 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
             )))?;
         }
         "previous-branch" => {
-            repo.record_switch_previous(Some(&value))?;
+            repo.set_switch_previous(Some(&value))?;
             output::print(success_message(cformat!(
                 "Set previous branch to <bold>{value}</>"
             )))?;
@@ -489,7 +489,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
     let default_branch = repo.default_branch();
 
     // Get previous branch
-    let previous_branch = repo.get_switch_previous();
+    let previous_branch = repo.switch_previous();
 
     // Get markers
     let markers: Vec<serde_json::Value> = get_all_markers(repo)
@@ -598,7 +598,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
 
     // Show previous branch (for `wt switch -`)
     writeln!(out, "{}", format_heading("PREVIOUS BRANCH", None))?;
-    match repo.get_switch_previous() {
+    match repo.switch_previous() {
         Some(prev) => writeln!(out, "{}", format_with_gutter(&prev, None))?,
         None => writeln!(out, "{}", format_with_gutter("(none)", None))?,
     }
