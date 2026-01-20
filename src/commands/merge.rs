@@ -83,8 +83,11 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Merge requires being on a branch (can't merge from detached HEAD)
     let current_branch = env.require_branch("merge")?.to_string();
 
+    // Cache current worktree for multiple queries
+    let current_wt = repo.current_worktree();
+
     // Validate --no-commit: requires clean working tree
-    if !commit && repo.current_worktree().is_dirty()? {
+    if !commit && current_wt.is_dirty()? {
         return Err(worktrunk::git::GitError::UncommittedChanges {
             action: Some("merge with --no-commit".into()),
             branch: Some(current_branch.clone()),
@@ -102,7 +105,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
 
     // When current == target or we're in the main worktree, disable remove (can't remove it)
-    let in_main = !repo.current_worktree().is_linked().unwrap_or(false);
+    let in_main = !current_wt.is_linked().unwrap_or(false);
     let on_target = current_branch == target_branch;
     let remove_effective = remove && !on_target && !in_main;
 
@@ -123,7 +126,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     };
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
-    let committed = if commit && repo.current_worktree().is_dirty()? {
+    let committed = if commit && current_wt.is_dirty()? {
         if squash_enabled {
             false // Squash path handles staging and committing
         } else {
@@ -204,14 +207,10 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     if remove_effective {
         // STEP 1: Check for uncommitted changes before attempting cleanup
         // This prevents showing "Cleaning up worktree..." before failing
-        repo.current_worktree().ensure_clean(
-            "remove worktree after merge",
-            Some(&current_branch),
-            false,
-        )?;
+        current_wt.ensure_clean("remove worktree after merge", Some(&current_branch), false)?;
 
         // STEP 2: Remove worktree via shared remove output handler so final message matches wt remove
-        let worktree_root = repo.current_worktree().root()?.to_path_buf();
+        let worktree_root = current_wt.root()?.to_path_buf();
         // After a successful merge, get integration reason
         let (_, integration_reason) = repo.integration_reason(&current_branch, &target_branch)?;
         // Compute expected_path for path mismatch detection

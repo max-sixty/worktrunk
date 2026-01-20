@@ -238,7 +238,7 @@ pub fn handle_squash(
     generator.emit_hint_if_needed()?;
 
     // Get current branch and repo name for template variables
-    let repo_root = repo.current_worktree().root()?;
+    let repo_root = wt.root()?;
     let repo_name = repo_root
         .file_name()
         .and_then(|n| n.to_str())
@@ -300,10 +300,8 @@ pub fn step_show_squash_prompt(
     let target_branch = repo.require_target_ref(target)?;
 
     // Get current branch
-    let current_branch = repo
-        .current_worktree()
-        .branch()?
-        .unwrap_or_else(|| "HEAD".to_string());
+    let wt = repo.current_worktree();
+    let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
 
     // Get merge base with target branch (required for generating squash message)
     let merge_base = repo
@@ -315,7 +313,7 @@ pub fn step_show_squash_prompt(
     let subjects = repo.commit_subjects(&range)?;
 
     // Get repo name from directory
-    let repo_root = repo.current_worktree().root()?;
+    let repo_root = wt.root()?;
     let repo_name = repo_root
         .file_name()
         .and_then(|n| n.to_str())
