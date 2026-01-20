@@ -659,19 +659,25 @@ capture = "echo 'branch={{ branch }} worktree_path={{ worktree_path }} worktree_
         "branch should be the removed branch 'feature', got: {content}"
     );
 
-    // Verify worktree_path is the removed worktree's path (not the main worktree)
-    let feature_wt_path_str = feature_wt_path.to_string_lossy();
-    assert!(
-        content.contains(&format!("worktree_path={feature_wt_path_str}")),
-        "worktree_path should be the removed worktree's path '{feature_wt_path_str}', got: {content}"
-    );
-
-    // Verify worktree_name is the removed worktree's directory name
+    // Extract worktree name for cross-platform comparison.
+    // Hooks run in Git Bash on Windows, which converts paths to MSYS2 format
+    // (/c/Users/... instead of C:\Users\... or C:/Users/...). Instead of trying
+    // to match exact path formats, verify the path ends with the worktree name.
     let feature_wt_name = feature_wt_path
         .file_name()
         .unwrap()
         .to_string_lossy()
         .to_string();
+
+    // Verify worktree_path is the removed worktree's path (not the main worktree)
+    // The worktree_path in hook output should end with the worktree directory name
+    assert!(
+        content.contains(&format!("/{feature_wt_name} "))
+            || content.contains(&format!("\\{feature_wt_name} ")),
+        "worktree_path should end with the removed worktree's name '{feature_wt_name}', got: {content}"
+    );
+
+    // Verify worktree_name is the removed worktree's directory name
     assert!(
         content.contains(&format!("worktree_name={feature_wt_name}")),
         "worktree_name should be the removed worktree's name '{feature_wt_name}', got: {content}"
