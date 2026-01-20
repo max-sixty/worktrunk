@@ -1113,11 +1113,11 @@ post-merge = "cargo install --path ."
 
 ### pre-remove
 
-Cleanup tasks before worktree is deleted, saving state, notifying external systems. Runs in the worktree being removed.
+Cleanup tasks before worktree is deleted, saving test artifacts, backing up state. Runs in the worktree being removed, with access to worktree files.
 
 ```toml
 [pre-remove]
-save-state = "git stash push -m 'auto-stash before remove'"
+archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/null || true"
 ```
 
 ### post-remove

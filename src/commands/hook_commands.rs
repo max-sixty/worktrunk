@@ -250,7 +250,7 @@ pub fn run_hook(
             )
         }
         HookType::PostRemove => {
-            let user_config = user_hook!(post_remove);
+            let user_config = ctx.config.hooks.post_remove.as_ref();
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_remove.as_ref());
