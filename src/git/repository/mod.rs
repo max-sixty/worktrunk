@@ -328,10 +328,29 @@ impl Repository {
             if self.is_bare() {
                 self.git_common_dir.clone()
             } else {
-                self.git_common_dir
-                    .parent()
-                    .expect("Git directory has no parent")
-                    .to_path_buf()
+                // Check if this is a submodule (git_common_dir is in parent's .git/modules/)
+                let is_submodule = self
+                    .git_common_dir
+                    .to_string_lossy()
+                    .contains(".git/modules/");
+
+                if is_submodule {
+                    // For submodules, use --show-toplevel to get the submodule's working directory
+                    // (parent of git_common_dir would incorrectly return parent/.git/modules)
+                    let output = Cmd::new("git")
+                        .args(["rev-parse", "--show-toplevel"])
+                        .current_dir(&self.git_common_dir)
+                        .run()
+                        .expect("git rev-parse --show-toplevel failed on valid repo");
+                    PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())
+                } else {
+                    // For normal repos, use parent of git_common_dir to get the main worktree
+                    // (--show-toplevel would return linked worktree path if called from one)
+                    self.git_common_dir
+                        .parent()
+                        .expect("Git directory has no parent")
+                        .to_path_buf()
+                }
             }
         })
     }
