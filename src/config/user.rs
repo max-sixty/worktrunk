@@ -589,20 +589,27 @@ impl UserConfig {
             .set_default("commit-generation.args", defaults.commit_generation.args)?;
 
         // Add config file if it exists
-        if let Some(config_path) = get_config_path()
+        let config_path = get_config_path();
+        if let Some(config_path) = config_path.as_ref()
             && config_path.exists()
         {
             // Check for deprecated template variables and create migration file if needed
             // User config always gets migration file (it's global, not worktree-specific)
             // Pass None for repo since user config is global and not tied to any repository
-            if let Ok(content) = std::fs::read_to_string(&config_path) {
+            if let Ok(content) = std::fs::read_to_string(config_path) {
                 let _ = super::deprecation::check_and_migrate(
-                    &config_path,
+                    config_path,
                     &content,
                     true,
                     "User config",
                     None,
                 );
+
+                // Warn about unknown fields in the config file
+                // (must check file content directly, not config.unknown, because
+                // config.unknown includes env vars which shouldn't trigger warnings)
+                let unknown_keys = find_unknown_keys(&content);
+                super::deprecation::warn_unknown_fields(config_path, &unknown_keys, "User config");
             }
 
             builder = builder.add_source(File::from(config_path.clone()));
@@ -625,6 +632,7 @@ impl UserConfig {
         // See: https://github.com/max-sixty/worktrunk/issues/737
         let config: Self = builder.build()?.try_deserialize()?;
         config.validate()?;
+
         Ok(config)
     }
 

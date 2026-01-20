@@ -149,6 +149,12 @@ impl ProjectConfig {
             repo_for_hints,
         );
 
+        // Warn about unknown fields (only in main worktree where it's actionable)
+        if is_main_worktree {
+            let unknown_keys = find_unknown_keys(&contents);
+            super::deprecation::warn_unknown_fields(&config_path, &unknown_keys, "Project config");
+        }
+
         let config: ProjectConfig = toml::from_str(&contents)
             .map_err(|e| ConfigError::Message(format!("Failed to parse TOML: {}", e)))?;
 

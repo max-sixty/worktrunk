@@ -23,7 +23,12 @@ use std::sync::{LazyLock, Mutex};
 
 /// Tracks which config paths have already shown deprecation warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
-static WARNED_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
+static WARNED_DEPRECATED_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Tracks which config paths have already shown unknown field warnings this process.
+/// Prevents repeated warnings when config is loaded multiple times.
+static WARNED_UNKNOWN_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// Hint name for project config deprecation warnings
@@ -179,7 +184,7 @@ pub fn check_and_migrate(
     // Deduplicate warnings per path per process
     let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     {
-        let mut guard = WARNED_PATHS.lock().unwrap();
+        let mut guard = WARNED_DEPRECATED_PATHS.lock().unwrap();
         if guard.contains(&canonical_path) {
             return Ok(true); // Already warned, skip
         }
@@ -271,6 +276,50 @@ pub fn check_and_migrate(
     std::io::stderr().flush().ok();
 
     Ok(true)
+}
+
+/// Warn about unknown fields in config file
+///
+/// Emits a warning for each unknown field, deduplicated per path per process.
+/// Unlike deprecated vars, there's no migration file — the warning just repeats
+/// until the user removes or fixes the unknown field.
+///
+/// The `label` is used in the warning message (e.g., "User config" or "Project config").
+pub fn warn_unknown_fields(path: &Path, unknown_keys: &[String], label: &str) {
+    if unknown_keys.is_empty() {
+        return;
+    }
+
+    // Deduplicate warnings per path per process
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    {
+        let mut guard = WARNED_UNKNOWN_PATHS.lock().unwrap();
+        if guard.contains(&canonical_path) {
+            return; // Already warned, skip
+        }
+        guard.insert(canonical_path);
+    }
+
+    // Build inline list of unknown keys
+    let keys_display: Vec<String> = unknown_keys
+        .iter()
+        .map(|k| cformat!("<bold>{}</>", k))
+        .collect();
+
+    let warning = format!(
+        "{} has unknown {}: {} (will be ignored)",
+        label,
+        if unknown_keys.len() == 1 {
+            "field"
+        } else {
+            "fields"
+        },
+        keys_display.join(", ")
+    );
+    eprintln!("{}", warning_message(warning));
+
+    // Flush stderr to ensure output appears before any subsequent messages
+    std::io::stderr().flush().ok();
 }
 
 #[cfg(test)]
