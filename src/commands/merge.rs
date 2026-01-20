@@ -251,8 +251,13 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     if verify {
         // Execute post-merge commands in the destination worktree
         // This runs after cleanup so the context is clear to the user
-        let ctx =
-            CommandContext::new(repo, env.config()?, Some(&current_branch), &destination_path, yes);
+        let ctx = CommandContext::new(
+            repo,
+            env.config()?,
+            Some(&current_branch),
+            &destination_path,
+            yes,
+        );
         // Show path when user's shell won't be in the destination directory where hooks run.
         let display_path = if remove_effective && !in_main && !on_target {
             // Worktree removed, user will cd to destination
