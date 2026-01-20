@@ -98,7 +98,7 @@ archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/nu
 
 ### post-remove
 
-Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. Template variables (`{{ branch }}`, `{{ worktree_path }}`, `{{ worktree_name }}`) reference the removed worktree, so cleanup scripts can use them to identify resources to clean up. Output logged to `.git/wt-logs/{branch}-{source}-post-remove-{name}.log`.
+Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. All template variables reference the removed worktree, so cleanup scripts can identify resources to clean up. Output logged to `.git/wt-logs/{branch}-{source}-post-remove-{name}.log`.
 
 ```toml
 [post-remove]
