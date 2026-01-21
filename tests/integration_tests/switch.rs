@@ -2726,7 +2726,7 @@ fn test_switch_mr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
 ///
 /// Creates a temporary directory with a symlink to git, excluding gh/glab.
 /// Returns the path to use as PATH.
-fn setup_minimal_bin_without_cli(repo: &TestRepo) -> std::path::PathBuf {
+fn setup_minimal_bin_without_cli(repo: &TestRepo) -> Option<std::path::PathBuf> {
     let minimal_bin = repo.root_path().join("minimal-bin");
     fs::create_dir_all(&minimal_bin).unwrap();
 
@@ -2734,12 +2734,20 @@ fn setup_minimal_bin_without_cli(repo: &TestRepo) -> std::path::PathBuf {
     let git_path = which::which("git").expect("git must be installed to run tests");
 
     // Symlink git into our minimal bin directory
+    // On Windows, symlinks require Developer Mode or admin privileges
     #[cfg(unix)]
-    std::os::unix::fs::symlink(&git_path, minimal_bin.join("git")).unwrap();
+    {
+        std::os::unix::fs::symlink(&git_path, minimal_bin.join("git")).unwrap();
+        Some(minimal_bin)
+    }
     #[cfg(windows)]
-    std::os::windows::fs::symlink_file(&git_path, minimal_bin.join("git.exe")).unwrap();
-
-    minimal_bin
+    {
+        // Try to create symlink, skip test if it fails (requires special privileges)
+        match std::os::windows::fs::symlink_file(&git_path, minimal_bin.join("git.exe")) {
+            Ok(_) => Some(minimal_bin),
+            Err(_) => None, // Symlinks not available, skip test
+        }
+    }
 }
 
 /// Configure PATH to exclude gh/glab, keeping only git.
@@ -2752,7 +2760,11 @@ fn configure_cli_not_installed_env(cmd: &mut std::process::Command, minimal_bin:
 /// Test pr: when gh CLI is not installed
 #[rstest]
 fn test_switch_pr_gh_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
-    let minimal_bin = setup_minimal_bin_without_cli(&repo);
+    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
+        // Symlinks not available (Windows without Developer Mode)
+        eprintln!("Skipping test: symlinks not available on this system");
+        return;
+    };
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -2765,7 +2777,11 @@ fn test_switch_pr_gh_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test mr: when glab CLI is not installed
 #[rstest]
 fn test_switch_mr_glab_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
-    let minimal_bin = setup_minimal_bin_without_cli(&repo);
+    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
+        // Symlinks not available (Windows without Developer Mode)
+        eprintln!("Skipping test: symlinks not available on this system");
+        return;
+    };
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
