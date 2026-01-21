@@ -1931,3 +1931,71 @@ fn test_remove_worktree_with_special_path_chars(mut repo: TestRepo) {
         "Worktree should be removed"
     );
 }
+
+/// Test that background removal falls back to legacy git worktree remove
+/// when the instant rename fails.
+///
+/// This tests the fallback path: when std::fs::rename() fails (e.g., cross-filesystem,
+/// permissions, or in this case a blocking file), we fall back to the legacy
+/// `git worktree remove` command which handles cleanup properly.
+#[rstest]
+fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
+    // Create a worktree
+    let worktree_path = repo.add_worktree("feature-fallback");
+
+    // Calculate the expected staged path that the rename would use.
+    // The path is: <worktree>.wt-removing-<TEST_EPOCH>
+    // Since WT_TEST_EPOCH is set by the test harness, the timestamp is deterministic.
+    let staged_path = worktree_path.with_file_name(format!(
+        "{}.wt-removing-{}",
+        worktree_path.file_name().unwrap().to_string_lossy(),
+        crate::common::TEST_EPOCH
+    ));
+
+    // Create a regular file at the staged path to block the rename.
+    // On POSIX systems, you cannot rename a directory to an existing file.
+    std::fs::write(&staged_path, "blocking file").unwrap();
+
+    // Verify worktree exists before removal
+    assert!(
+        worktree_path.exists(),
+        "Worktree should exist before removal"
+    );
+
+    // Remove in background mode - should fall back to legacy removal
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-fallback"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed even when instant rename fails: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Wait for background process to complete
+    // Legacy path has a 1-second sleep before `git worktree remove`, so wait longer
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    // Worktree should be gone (cleaned up by legacy git worktree remove)
+    assert!(
+        !worktree_path.exists(),
+        "Worktree should be removed by fallback path"
+    );
+
+    // Branch should also be deleted (merged at same commit as main)
+    let branches = repo
+        .git_command()
+        .args(["branch", "--list", "feature-fallback"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&branches.stdout).trim().is_empty(),
+        "Branch should be deleted by fallback removal"
+    );
+
+    // Clean up the blocking file
+    let _ = std::fs::remove_file(&staged_path);
+}

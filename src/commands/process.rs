@@ -4,9 +4,10 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::process::Command;
 use std::process::Stdio;
-use std::time::UNIX_EPOCH;
+
 use worktrunk::git::Repository;
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
+use worktrunk::utils::get_now;
 
 /// Get the separator needed before closing brace in POSIX shell command grouping.
 /// Returns empty string if command already ends with newline or semicolon.
@@ -221,10 +222,7 @@ fn spawn_detached_windows(
 ///
 /// Format: `<path>.wt-removing-<timestamp>`
 pub fn generate_removing_path(worktree_path: &Path) -> PathBuf {
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let timestamp = get_now();
     let name = worktree_path
         .file_name()
         .map(|n| n.to_string_lossy())
