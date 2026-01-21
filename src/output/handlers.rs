@@ -54,7 +54,7 @@ fn execute_instant_removal_or_fallback(
         Ok(()) => {
             // Fast path succeeded - prune git metadata synchronously.
             // If prune fails, log and continue - the staged directory will still be deleted,
-            // and the next git operation will auto-prune stale entries.
+            // and stale metadata is harmless (cleaned up by git gc or our next worktree operation).
             if let Err(e) = repo.prune_worktrees() {
                 log::debug!("Failed to prune worktrees after rename: {}", e);
             }
