@@ -1,164 +1,25 @@
-//! MR reference resolution (`mr:<number>` syntax).
+//! GitLab MR reference resolution (`mr:<number>` syntax).
 //!
-//! This module resolves MR numbers to branches, enabling `wt switch mr:101` to
-//! check out the branch associated with a merge request.
+//! This module resolves MR numbers to branches for `wt switch mr:42`.
+//! For shared documentation on PR/MR resolution, see the `remote_ref` module.
 //!
-//! # Syntax
-//!
-//! The `mr:<number>` prefix is unambiguous because colons are invalid in git
-//! branch names (git rejects them as "not a valid branch name").
-//!
-//! ```text
-//! wt switch mr:101          # Switch to branch for MR !101
-//! wt switch mr:101 --yes    # Skip approval prompts
-//! ```
-//!
-//! **Invalid usage:**
-//!
-//! ```text
-//! wt switch --create mr:101   # Error: MR branch already exists
-//! ```
-//!
-//! The `--create` flag is incompatible with `mr:` because the branch must
-//! already exist (it's the MR's source branch).
-//!
-//! # Resolution Flow
-//!
-//! ```text
-//! mr:101
-//!   │
-//!   ▼
-//! ┌─────────────────────────────────────────────────────────┐
-//! │ glab mr view 101 --output json                          │
-//! │   → source_branch, source_project_id, target_project_id │
-//! └─────────────────────────────────────────────────────────┘
-//!   │
-//!   ├─── source_project_id == target_project_id ───▶ Same-repo MR
-//!   │     │
-//!   │     └─▶ Branch exists in primary remote, use directly
-//!   │
-//!   └─── source_project_id != target_project_id ───▶ Fork MR
-//!         │
-//!         ├─▶ Find remote for target project (where MR refs live)
-//!         └─▶ Set up push to fork URL (from source project)
-//! ```
-//!
-//! Push permissions are not checked upfront — if the user lacks permission
-//! (doesn't own fork, maintainer edits disabled), push will fail with a clear
-//! error. This avoids complex permission detection logic.
-//!
-//! # Same-Repo MRs
-//!
-//! When `source_project_id == target_project_id`, the MR's branch exists in
-//! the primary remote:
-//!
-//! 1. Resolve `source_branch` (e.g., `"feature-auth"`)
-//! 2. Check if worktree exists for that branch → switch to it
-//! 3. Otherwise, create worktree for the branch (DWIM from remote)
-//! 4. Pushing works normally: `git push`
-//!
-//! This is equivalent to `wt switch feature-auth` — the `mr:` syntax is just
-//! a convenience for looking up the branch name.
-//!
-//! # Fork MRs
-//!
-//! When `source_project_id != target_project_id`, the branch exists in a fork,
-//! not the target project.
-//!
-//! ## The Problem: MR Refs Are Read-Only
-//!
-//! GitLab's `refs/merge-requests/<N>/head` refs are **read-only** and cannot be
-//! pushed to. Similar to GitHub, the only way to update a fork MR is to push
-//! directly to the fork's branch.
-//!
-//! ## Push Strategy (No Remote Required)
-//!
-//! Git's `branch.<name>.pushRemote` config accepts a URL directly, not just a
-//! named remote. This means we can set up push tracking without adding remotes:
-//!
-//! ```text
-//! branch.contributor/feature.remote = origin
-//! branch.contributor/feature.merge = refs/merge-requests/101/head
-//! branch.contributor/feature.pushRemote = git@gitlab.com:contributor/repo.git
-//! ```
-//!
-//! This configuration gives us:
-//! - `git pull` fetches from the target repo's MR ref (stays up to date with MR)
-//! - `git push` pushes to the fork URL (updates the MR)
-//! - No stray remotes cluttering `git remote -v`
-//!
-//! ## Checkout Flow (Fork MRs)
-//!
-//! ```text
-//! 1. Get MR metadata from glab mr view
-//!      │
-//!      ▼
-//! 2. Find remote for target project (where MR refs live)
-//!    e.g., origin → gitlab.com/group/project
-//!      │
-//!      ▼
-//! 3. Fetch MR head from that remote
-//!    git fetch origin merge-requests/101/head
-//!      │
-//!      ▼
-//! 4. Create local branch from FETCH_HEAD
-//!    git branch <local-branch> FETCH_HEAD
-//!      │
-//!      ▼
-//! 5. Configure branch tracking
-//!    git config branch.<local-branch>.remote origin
-//!    git config branch.<local-branch>.merge refs/merge-requests/101/head
-//!    git config branch.<local-branch>.pushRemote <fork-url>
-//!      │
-//!      ▼
-//! 6. Create worktree for the branch
-//! ```
-//!
-//! ## Local Branch Naming
-//!
-//! **The local branch name must match the fork's branch name** for `git push`
-//! to work. With `push.default = current` (the common default), git pushes to
-//! a same-named branch on the pushRemote. If the names differ, push fails.
-//!
-//! # Error Handling
-//!
-//! ## MR Not Found
-//!
-//! ```text
-//! ✗ MR !101 not found
-//! ```
-//!
-//! ## glab Not Authenticated
-//!
-//! ```text
-//! ✗ GitLab CLI not authenticated
-//! ↳ Run glab auth login to authenticate
-//! ```
-//!
-//! ## glab Not Installed
-//!
-//! ```text
-//! ✗ GitLab CLI (glab) required for mr: syntax
-//! ↳ Install from https://gitlab.com/gitlab-org/cli
-//! ```
-//!
-//! ## --create Conflict
-//!
-//! ```text
-//! ✗ Cannot use --create with mr: syntax
-//! ↳ The MR's branch already exists; remove --create
-//! ```
-//!
-//! # Platform Notes
-//!
-//! This feature is GitLab-specific. For GitHub PRs, use `pr:<number>` syntax
-//! (see `pr_ref` module).
+//! # GitLab-Specific Notes
 //!
 //! GitLab's permission model differs from GitHub's "maintainer edits" feature.
 //! GitLab uses the `allow_collaboration` flag to indicate if fork maintainers
 //! can push to the MR branch.
+//!
+//! ## API Fields
+//!
+//! We use `glab mr view <number> --output json` which returns:
+//! - `source_branch` — MR branch name
+//! - `source_project_id`, `target_project_id` — for fork detection
+//! - `source_project.ssh_url_to_repo`, `http_url_to_repo` — fork URLs
+//! - `target_project.ssh_url_to_repo`, `http_url_to_repo` — target URLs
+//! - `web_url` — MR web URL
 
 use std::io::ErrorKind;
+use std::path::Path;
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
@@ -423,7 +284,7 @@ pub fn target_remote_url(mr: &MrInfo) -> Option<String> {
 /// Returns `Some(true)` if the branch is configured to track `refs/merge-requests/<mr_number>/head`.
 /// Returns `Some(false)` if the branch exists but tracks something else.
 /// Returns `None` if the branch doesn't exist.
-pub fn branch_tracks_mr(repo_root: &std::path::Path, branch: &str, mr_number: u32) -> Option<bool> {
+pub fn branch_tracks_mr(repo_root: &Path, branch: &str, mr_number: u32) -> Option<bool> {
     let expected_ref = format!("refs/merge-requests/{}/head", mr_number);
     super::branch_tracks_ref(repo_root, branch, &expected_ref)
 }

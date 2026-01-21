@@ -1,229 +1,9 @@
-//! PR reference resolution (`pr:<number>` syntax).
+//! GitHub PR reference resolution (`pr:<number>` syntax).
 //!
-//! This module resolves PR numbers to branches, enabling `wt switch pr:101` to
-//! check out the branch associated with a pull request.
+//! This module resolves PR numbers to branches for `wt switch pr:101`.
+//! For shared documentation on PR/MR resolution, see the `remote_ref` module.
 //!
-//! # Syntax
-//!
-//! The `pr:<number>` prefix is unambiguous because colons are invalid in git
-//! branch names (git rejects them as "not a valid branch name").
-//!
-//! ```text
-//! wt switch pr:101          # Switch to branch for PR #101
-//! wt switch pr:101 --yes    # Skip approval prompts
-//! ```
-//!
-//! **Invalid usage:**
-//!
-//! ```text
-//! wt switch --create pr:101   # Error: PR branch already exists
-//! ```
-//!
-//! The `--create` flag is incompatible with `pr:` because the branch must
-//! already exist (it's the PR's head branch).
-//!
-//! # Resolution Flow
-//!
-//! ```text
-//! pr:101
-//!   │
-//!   ▼
-//! ┌─────────────────────────────────────────────────────────┐
-//! │ gh api repos/{owner}/{repo}/pulls/101                   │
-//! │   → head.ref, head.repo, base.repo, html_url            │
-//! └─────────────────────────────────────────────────────────┘
-//!   │
-//!   ├─── base.repo == head.repo ───▶ Same-repo PR
-//!   │     │
-//!   │     └─▶ Branch exists in primary remote, use directly
-//!   │
-//!   └─── base.repo != head.repo ───▶ Fork PR
-//!         │
-//!         ├─▶ Find remote for base.repo (where PR refs live)
-//!         └─▶ Set up push to fork URL
-//! ```
-//!
-//! Push permissions are not checked upfront — if the user lacks permission
-//! (doesn't own fork, maintainer edits disabled), push will fail with a clear
-//! error. This avoids complex permission detection logic.
-//!
-//! # Same-Repo PRs
-//!
-//! When `base.repo == head.repo`, the PR's branch exists in the primary remote:
-//!
-//! 1. Resolve `head.ref` (e.g., `"feature-auth"`)
-//! 2. Check if worktree exists for that branch → switch to it
-//! 3. Otherwise, create worktree for the branch (DWIM from remote)
-//! 4. Pushing works normally: `git push`
-//!
-//! This is equivalent to `wt switch feature-auth` — the `pr:` syntax is just
-//! a convenience for looking up the branch name.
-//!
-//! # Fork PRs
-//!
-//! When `base.repo != head.repo`, the branch exists in a fork, not the base repo.
-//!
-//! ## The Problem: PR Refs Are Read-Only
-//!
-//! GitHub's `refs/pull/<N>/head` refs are **read-only** and cannot be pushed to.
-//! This is explicitly documented by GitHub — the `refs/pull/` namespace is a
-//! "hidden ref" that GitHub manages automatically:
-//!
-//! ```text
-//! $ git push origin HEAD:refs/pull/101/head
-//! ! [remote rejected] HEAD -> refs/pull/101/head (deny updating a hidden ref)
-//! ```
-//!
-//! There is no alternative writable ref on the base repo. The only way to update
-//! a fork PR is to push directly to the fork's branch.
-//!
-//! The "Allow edits from maintainers" feature grants push access to the fork's
-//! branch itself — it's a permission change on the fork, not a proxy through
-//! the base repo's refs.
-//!
-//! ## Push Strategy (No Remote Required)
-//!
-//! Git's `branch.<name>.pushRemote` config accepts a URL directly, not just a
-//! named remote. This means we can set up push tracking without adding remotes:
-//!
-//! ```text
-//! branch.contributor/feature.remote = upstream
-//! branch.contributor/feature.merge = refs/pull/101/head
-//! branch.contributor/feature.pushRemote = git@github.com:contributor/repo.git
-//! ```
-//!
-//! This configuration gives us:
-//! - `git pull` fetches from the base repo's PR ref (stays up to date with PR)
-//! - `git push` pushes to the fork URL (updates the PR)
-//! - No stray remotes cluttering `git remote -v`
-//!
-//! ## Checkout Flow (Fork PRs)
-//!
-//! ```text
-//! 1. Get PR metadata from gh api
-//!      │
-//!      ▼
-//! 2. Find remote for base repo (where PR refs live)
-//!    e.g., upstream → github.com/owner/repo
-//!      │
-//!      ▼
-//! 3. Fetch PR head from that remote
-//!    git fetch upstream pull/101/head
-//!      │
-//!      ▼
-//! 4. Create local branch from FETCH_HEAD
-//!    git branch <local-branch> FETCH_HEAD
-//!      │
-//!      ▼
-//! 5. Configure branch tracking
-//!    git config branch.<local-branch>.remote upstream
-//!    git config branch.<local-branch>.merge refs/pull/101/head
-//!    git config branch.<local-branch>.pushRemote <fork-url>
-//!      │
-//!      ▼
-//! 6. Create worktree for the branch
-//! ```
-//!
-//! ## Local Branch Naming
-//!
-//! **The local branch name must match the fork's branch name** for `git push`
-//! to work. With `push.default = current` (the common default), git pushes to
-//! a same-named branch on the pushRemote. If the names differ, push fails:
-//!
-//! ```text
-//! # If local branch is "contributor/feature" but fork has "feature":
-//! $ git push
-//! error: src refspec contributor/feature does not match any
-//! ```
-//!
-//! Git has no per-branch configuration for "push to a differently-named branch."
-//! The only options are explicit refspecs (`git push HEAD:feature`) or matching
-//! names. We choose matching names so `git push` "just works."
-//!
-//! - **Same-repo PR**: Use `headRefName` directly (e.g., `feature-auth`)
-//! - **Fork PR**: Use `headRefName` directly (e.g., `feature-auth`)
-//!
-//! This means two fork PRs with the same branch name would conflict. The
-//! `branch_tracks_pr()` check handles this by erroring if a branch exists
-//! but tracks a different PR.
-//!
-//! ## Push Behavior
-//!
-//! After checkout, `git push` sends to the fork URL:
-//!
-//! ```text
-//! $ git push
-//! # Pushes to git@github.com:contributor/repo.git
-//! # PR automatically updates on GitHub
-//! ```
-//!
-//! No named remote is added — the URL is used directly via `pushRemote`.
-//!
-//! # Error Handling
-//!
-//! ## PR Not Found
-//!
-//! ```text
-//! ✗ PR #101 not found
-//! ↳ Run gh repo set-default --view to check which repo is being queried
-//! ```
-//!
-//! This often happens when the primary remote points to a fork but `gh` hasn't
-//! been configured to look at the upstream repo. Fix with `gh repo set-default`.
-//!
-//! ## gh Not Authenticated
-//!
-//! ```text
-//! ✗ GitHub CLI not authenticated
-//! ↳ Run gh auth login to authenticate
-//! ```
-//!
-//! ## gh Not Installed
-//!
-//! ```text
-//! ✗ GitHub CLI (gh) required for pr: syntax
-//! ↳ Install from https://cli.github.com/
-//! ```
-//!
-//! ## --create Conflict
-//!
-//! ```text
-//! ✗ Cannot use --create with pr: syntax
-//! ↳ The PR's branch already exists; remove --create
-//! ```
-//!
-//! # Edge Cases
-//!
-//! ## Branch Name Collisions
-//!
-//! If user already has a local branch with the same name as the PR's branch:
-//!
-//! - Check if it tracks the same PR ref → reuse it
-//! - Otherwise → error with suggestion to rename their branch first
-//!
-//! ## Worktree Already Exists
-//!
-//! If worktree already exists for the resolved branch:
-//!
-//! - Switch to it (normal `wt switch` behavior)
-//! - Don't re-fetch or re-configure
-//!
-//! ## Draft PRs
-//!
-//! Draft PRs are checkable like regular PRs. The `isDraft` field could be
-//! shown in output but doesn't affect behavior.
-//!
-//! ## Renamed Branches
-//!
-//! If the PR's head branch was renamed after PR creation, `headRefName`
-//! reflects the current name. We always use the current name.
-//!
-//! # Platform Support
-//!
-//! This feature is GitHub-specific. For GitLab merge requests, use the
-//! `mr:<number>` syntax (see `mr_ref` module).
-//!
-//! # Implementation Notes
+//! # GitHub-Specific Notes
 //!
 //! ## Repository Resolution
 //!
@@ -234,66 +14,20 @@
 //! The `gh` CLI handles this via `gh repo set-default`:
 //!
 //! ```text
-//! # Stores in git config: remote.origin.gh-resolved = base
-//! gh repo set-default owner/upstream-repo
-//!
-//! # View current setting
-//! gh repo set-default --view
+//! gh repo set-default owner/upstream-repo  # Stores: remote.origin.gh-resolved = base
+//! gh repo set-default --view               # View current setting
 //! ```
 //!
-//! If `gh-resolved` is not set, `gh` may prompt interactively or use heuristics
-//! (checking if the repo is a fork and using its parent).
+//! If `gh-resolved` is not set, `gh` may prompt interactively or use heuristics.
 //!
-//! **Diagnostics:** `wt config show` should display the resolved repo so users
-//! understand which repo PR lookups will query.
-//!
-//! ## GitHub API Fields
+//! ## API Fields
 //!
 //! We use `gh api repos/{owner}/{repo}/pulls/<number>` which returns:
 //! - `head.ref`, `head.repo.owner.login`, `head.repo.name` — PR branch info
 //! - `base.repo.owner.login`, `base.repo.name` — target repo (where PR refs live)
 //! - `html_url` — PR web URL
-//!
-//! ## Remote URL Construction
-//!
-//! For SSH remotes:
-//! ```text
-//! git@github.com:<owner>/<repo>.git
-//! ```
-//!
-//! For HTTPS remotes:
-//! ```text
-//! https://github.com/<owner>/<repo>.git
-//! ```
-//!
-//! We match the protocol of the existing primary remote to be consistent
-//! with the user's authentication setup.
-//!
-//! ## Caching
-//!
-//! PR metadata is not cached — we always fetch fresh to ensure we have
-//! current state (PR might have been closed, branch might have been pushed).
-//!
-//! # Testing Strategy
-//!
-//! ## Unit Tests
-//!
-//! - PR number parsing from `pr:<number>` syntax
-//! - Local branch name generation
-//! - URL construction matching primary remote protocol
-//!
-//! ## Integration Tests (with mock gh)
-//!
-//! - Same-repo PR checkout
-//! - Fork PR checkout
-//! - Existing worktree reuse
-//! - Error cases: PR not found, gh not authenticated
-//!
-//! ## Manual Testing
-//!
-//! - Fork PR push/pull cycle
-//! - Interaction with `wt merge`
-//! - Multiple fork PRs with same branch name
+
+use std::path::Path;
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
@@ -571,7 +305,7 @@ fn fork_remote_url_https(host: &str, owner: &str, repo: &str) -> String {
 /// Returns `Some(true)` if the branch is configured to track `refs/pull/<pr_number>/head`.
 /// Returns `Some(false)` if the branch exists but tracks something else.
 /// Returns `None` if the branch doesn't exist.
-pub fn branch_tracks_pr(repo_root: &std::path::Path, branch: &str, pr_number: u32) -> Option<bool> {
+pub fn branch_tracks_pr(repo_root: &Path, branch: &str, pr_number: u32) -> Option<bool> {
     let expected_ref = format!("refs/pull/{}/head", pr_number);
     super::branch_tracks_ref(repo_root, branch, &expected_ref)
 }

@@ -4,6 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
+use worktrunk::git::RefType;
+
 /// Flags indicating which merge operations occurred
 #[derive(Debug, Clone, Copy)]
 pub struct MergeOperations {
@@ -69,25 +71,22 @@ pub enum CreationMethod {
         /// Base branch for creation (resolved, validated to exist)
         base_branch: Option<String>,
     },
-    /// Fork PR: fetch from refs/pull/N/head, create branch, configure pushRemote
-    ForkPr {
-        pr_number: u32,
+    /// Fork PR/MR: fetch from refs/pull/N/head or refs/merge-requests/N/head,
+    /// create branch, configure pushRemote.
+    ///
+    /// The remote is resolved during planning (before approval prompts) to ensure
+    /// early failure if no matching remote exists.
+    ForkRef {
+        /// The reference type (PR or MR).
+        ref_type: RefType,
+        /// The PR/MR number.
+        number: u32,
+        /// URL to push to (the fork's URL).
         fork_push_url: String,
-        pr_url: String,
-        /// GitHub host (e.g., "github.com", "github.enterprise.com")
-        host: String,
-        /// Owner of the base repository (where the PR was opened)
-        base_owner: String,
-        /// Name of the base repository
-        base_repo: String,
-    },
-    /// Fork MR: fetch from refs/merge-requests/N/head, create branch, configure pushRemote
-    ForkMr {
-        mr_number: u32,
-        fork_push_url: String,
-        mr_url: String,
-        /// Target project URL (for finding the correct remote to fetch MR refs from)
-        target_project_url: Option<String>,
+        /// Web URL for the PR/MR.
+        ref_url: String,
+        /// Resolved remote name where PR/MR refs live (e.g., "origin", "upstream").
+        remote: String,
     },
 }
 
