@@ -1742,3 +1742,192 @@ fn test_remove_pruned_worktree_keep_branch(mut repo: TestRepo) {
         "Branch should still exist"
     );
 }
+
+// ============================================================================
+// Instant Removal Tests (move-then-delete optimization)
+// ============================================================================
+
+/// Background removal should make the original worktree path unavailable immediately.
+///
+/// This tests the move-then-delete optimization: the worktree directory is renamed
+/// to a staging path synchronously, so the original path is gone before wt returns.
+/// The actual deletion (rm -rf) happens in the background.
+#[rstest]
+fn test_remove_background_path_gone_immediately(mut repo: TestRepo) {
+    // Create a worktree
+    let worktree_path = repo.add_worktree("feature-instant");
+
+    // Verify the worktree exists
+    assert!(worktree_path.exists(), "Worktree should exist initially");
+
+    // Remove in background mode (default) - NOT using snapshot since we need to check state after
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-instant"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The original worktree path should be gone IMMEDIATELY (before background rm completes)
+    // This is the key behavior of the move-then-delete optimization
+    assert!(
+        !worktree_path.exists(),
+        "Worktree path should be gone immediately after wt remove returns"
+    );
+
+    // Note: The staging directory (.wt-removing-*) might already be deleted by the
+    // background process, or it might still exist. Both are valid outcomes.
+    // The key assertion above is that the original path is gone immediately.
+}
+
+/// Background removal should prune git worktree metadata synchronously.
+///
+/// After removal, `git worktree list` should NOT show the removed worktree,
+/// even before the background rm -rf completes.
+#[rstest]
+fn test_remove_background_git_metadata_pruned(mut repo: TestRepo) {
+    // Create a worktree
+    let _worktree_path = repo.add_worktree("feature-prune-test");
+
+    // Verify git knows about the worktree
+    let list_before = repo
+        .git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&list_before.stdout).contains("feature-prune-test"),
+        "Git should list the worktree before removal"
+    );
+
+    // Remove in background mode
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-prune-test"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Git worktree metadata should be pruned IMMEDIATELY
+    let list_after = repo
+        .git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&list_after.stdout).contains("feature-prune-test"),
+        "Git should NOT list the worktree after removal (metadata should be pruned)"
+    );
+}
+
+/// Background removal should delete the branch when it's merged.
+///
+/// This verifies that branch deletion works correctly with the instant removal path
+/// (the branch is deleted in the background after the worktree is renamed).
+#[rstest]
+fn test_remove_background_deletes_merged_branch(mut repo: TestRepo) {
+    // Create a worktree with the branch already merged to main (same commit)
+    let _worktree_path = repo.add_worktree("feature-merged");
+
+    // Verify branch exists before removal
+    let branches_before = repo
+        .git_command()
+        .args(["branch", "--list", "feature-merged"])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&branches_before.stdout)
+            .trim()
+            .is_empty(),
+        "Branch should exist before removal"
+    );
+
+    // Remove in background mode (default)
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-merged"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Wait for background process to complete branch deletion
+    // The branch deletion happens in the background command after rm -rf
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Branch should be deleted (it was merged - same commit as main)
+    let branches_after = repo
+        .git_command()
+        .args(["branch", "--list", "feature-merged"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&branches_after.stdout)
+            .trim()
+            .is_empty(),
+        "Merged branch should be deleted by background removal"
+    );
+}
+
+/// Test that worktree paths containing special characters are handled correctly.
+///
+/// This tests that the `rm -rf -- <path>` command correctly handles paths
+/// that might be misinterpreted as options.
+#[rstest]
+fn test_remove_worktree_with_special_path_chars(mut repo: TestRepo) {
+    // Create a worktree with special characters in the branch name
+    // (which becomes part of the path)
+    let _worktree_path = repo.add_worktree("feature--double-dash");
+
+    // Verify worktree exists
+    let list_before = repo
+        .git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&list_before.stdout).contains("feature--double-dash"),
+        "Worktree should exist before removal"
+    );
+
+    // Remove the worktree
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature--double-dash"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed for path with special chars: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Wait for background process
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Worktree and branch should be gone
+    let list_after = repo
+        .git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&list_after.stdout).contains("feature--double-dash"),
+        "Worktree should be removed"
+    );
+}
