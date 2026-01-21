@@ -1,7 +1,8 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
-expression: output.normalized()
+expression: "&output.combined"
 ---
+
 [36m◎[39m [36mRunning in [1mmain[22m...[39m
 Branch: main
 [36m◎[39m [36mRunning in [1mfeature-a[22m...[39m
