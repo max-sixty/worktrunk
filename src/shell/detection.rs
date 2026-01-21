@@ -62,7 +62,7 @@ use super::paths::{home_dir_required, powershell_profile_paths};
 /// # Usage
 ///
 /// Used by:
-/// - `is_integration_configured()` - detect "configured but not restarted" state
+/// - `Shell::is_shell_configured()` - detect "configured but not restarted" state
 /// - `uninstall` - identify lines to remove from shell config
 /// - `wt config show` - display shell integration status
 ///

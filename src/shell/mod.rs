@@ -96,22 +96,43 @@ impl Shell {
         }
     }
 
-    /// Check if shell integration is configured for the given command name.
+    /// Check if this shell has integration configured.
     ///
-    /// Returns the path to the first config file with integration if found.
-    /// This helps detect the "configured but not restarted shell" state.
-    ///
-    /// The `cmd` parameter specifies the command name to look for (e.g., "wt" or "git-wt").
-    /// This ensures we only consider integration "configured" if it uses the same binary
-    /// we're running as - prevents confusion when users have multiple installs.
-    pub fn is_integration_configured(
-        cmd: &str,
-    ) -> Result<Option<std::path::PathBuf>, std::io::Error> {
-        let results = scan_for_detection_details(cmd)?;
-        Ok(results
-            .into_iter()
-            .find(|r| !r.matched_lines.is_empty())
-            .map(|r| r.path))
+    /// Used for accurate warning messages that need to know about the user's
+    /// current shell specifically (e.g., "shell requires restart" vs "not installed").
+    pub fn is_shell_configured(&self, cmd: &str) -> Result<bool, std::io::Error> {
+        let config_paths = self.config_paths(cmd)?;
+
+        // For fish, also check legacy conf.d location
+        let mut paths_to_check = config_paths;
+        if matches!(self, Shell::Fish)
+            && let Ok(legacy) = Shell::legacy_fish_conf_d_path(cmd)
+        {
+            paths_to_check.push(legacy);
+        }
+
+        for path in paths_to_check {
+            if !path.exists() {
+                continue;
+            }
+            if Self::file_has_integration(&path, cmd)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Check if a file contains shell integration lines for the given command.
+    fn file_has_integration(path: &std::path::Path, cmd: &str) -> Result<bool, std::io::Error> {
+        use std::io::{BufRead, BufReader};
+
+        let file = std::fs::File::open(path)?;
+        for line in BufReader::new(file).lines() {
+            if is_shell_integration_line(&line?, cmd) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 

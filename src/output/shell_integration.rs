@@ -62,7 +62,7 @@ use color_print::cformat;
 
 use worktrunk::config::UserConfig;
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell::{Shell, extract_filename_from_path};
+use worktrunk::shell::{Shell, current_shell, extract_filename_from_path};
 use worktrunk::styling::hint_message;
 
 /// Shell integration install hint message.
@@ -103,24 +103,27 @@ pub(crate) fn explicit_path_hint(branch: &str) -> String {
 }
 
 /// Check if we should show the explicit path hint.
-/// True when: explicit path invocation AND shell integration IS configured.
+/// True when: explicit path invocation AND current shell has integration configured.
 pub(crate) fn should_show_explicit_path_hint() -> bool {
     crate::was_invoked_with_explicit_path()
-        && Shell::is_integration_configured(&crate::binary_name())
-            .ok()
-            .flatten()
-            .is_some()
+        && current_shell()
+            .and_then(|shell| shell.is_shell_configured(&crate::binary_name()).ok())
+            .unwrap_or(false)
 }
 
 /// Compute the shell warning reason for display in messages.
 ///
 /// Returns a reason string explaining why shell integration isn't working.
 /// See the module documentation for the complete spec of warning messages.
+///
+/// Checks specifically if the CURRENT shell (from $SHELL) has integration configured,
+/// not just any shell. This prevents misleading "shell requires restart" messages
+/// when e.g. bash has integration but the user is running fish.
 pub(crate) fn compute_shell_warning_reason() -> String {
-    let is_configured = Shell::is_integration_configured(&crate::binary_name())
-        .ok()
-        .flatten()
-        .is_some();
+    // Check if the CURRENT shell has integration configured, not just ANY shell
+    let is_configured = current_shell()
+        .and_then(|shell| shell.is_shell_configured(&crate::binary_name()).ok())
+        .unwrap_or(false);
     let explicit_path = crate::was_invoked_with_explicit_path();
     let invoked = crate::invocation_path();
     let wraps = crate::binary_name();
