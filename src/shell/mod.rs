@@ -416,4 +416,33 @@ mod tests {
             "{shell} config_line({prefix:?}) not detected:\n  {line}"
         );
     }
+
+    #[test]
+    fn test_file_has_integration() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let bashrc = temp_dir.path().join(".bashrc");
+
+        // Write a valid integration line
+        let mut file = std::fs::File::create(&bashrc).unwrap();
+        writeln!(
+            file,
+            r#"if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init bash)"; fi"#
+        )
+        .unwrap();
+
+        // Test file_has_integration directly
+        assert!(Shell::file_has_integration(&bashrc, "wt").unwrap());
+        assert!(!Shell::file_has_integration(&bashrc, "git-wt").unwrap());
+
+        // Test with non-matching content
+        let empty_file = temp_dir.path().join(".zshrc");
+        std::fs::write(&empty_file, "# just a comment\n").unwrap();
+        assert!(!Shell::file_has_integration(&empty_file, "wt").unwrap());
+    }
+
+    // Note: is_shell_configured() is not unit-tested because it requires
+    // mutating HOME env var (unsafe). It's tested indirectly via integration
+    // tests that exercise the shell integration warning paths.
 }
