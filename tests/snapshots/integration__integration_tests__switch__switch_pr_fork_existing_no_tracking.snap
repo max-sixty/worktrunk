@@ -36,5 +36,7 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mFetching PR #42...[39m
+[2m○[22m [1mAdd feature fix for edge case[22m (#42)
+  by @contributor · open
 [31m✗[39m [31mBranch [1mfeature-fix[22m exists but doesn't track PR #42[39m
 [2m↳[22m [2mTo free the name, run [90mgit branch -m -- feature-fix feature-fix-old[39m[22m

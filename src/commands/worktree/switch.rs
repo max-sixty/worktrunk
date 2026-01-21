@@ -24,6 +24,52 @@ struct ResolvedTarget {
     branch: String,
     /// How to create the worktree
     method: CreationMethod,
+    /// PR/MR URL to display as a hint after worktree creation
+    pr_mr_url: Option<String>,
+}
+
+/// Format PR context for display after fetching.
+///
+/// Shows title, author, state, and draft status on two lines:
+/// ```text
+/// ○ Fix authentication bug in login flow (#101)
+///   by @alice · open · draft
+/// ```
+fn format_pr_context(pr: &worktrunk::git::pr_ref::PrInfo) -> String {
+    let mut status_parts = vec![format!("by @{}", pr.author), pr.state.clone()];
+    if pr.draft {
+        status_parts.push("draft".to_string());
+    }
+    let status_line = status_parts.join(" · ");
+
+    cformat!(
+        "<bold>{}</> (#{})
+  {status_line}",
+        pr.title,
+        pr.number
+    )
+}
+
+/// Format MR context for display after fetching.
+///
+/// Shows title, author, state, and draft status on two lines:
+/// ```text
+/// ○ Fix authentication bug in login flow (!101)
+///   by @alice · opened · draft
+/// ```
+fn format_mr_context(mr: &worktrunk::git::mr_ref::MrInfo) -> String {
+    let mut status_parts = vec![format!("by @{}", mr.author), mr.state.clone()];
+    if mr.draft {
+        status_parts.push("draft".to_string());
+    }
+    let status_line = status_parts.join(" · ");
+
+    cformat!(
+        "<bold>{}</> (!{})
+  {status_line}",
+        mr.title,
+        mr.number
+    )
 }
 
 /// Resolve the switch target, handling pr:/mr: syntax and --create/--base flags.
@@ -63,6 +109,11 @@ fn resolve_switch_target(
         let repo_root = repo.repo_path();
         let pr_info = fetch_pr_info(pr_number, repo_root)?;
 
+        // Display PR context
+        crate::output::print(info_message(format_pr_context(&pr_info)))?;
+
+        let pr_url = pr_info.url.clone();
+
         if pr_info.is_cross_repository {
             // Fork PR: will need fetch + pushRemote config (see pr_ref module docs)
             let local_branch = local_branch_name(&pr_info);
@@ -83,6 +134,7 @@ fn resolve_switch_target(
                             create_branch: false,
                             base_branch: None,
                         },
+                        pr_mr_url: Some(pr_url),
                     });
                 } else {
                     // Branch exists but tracks something else
@@ -104,11 +156,12 @@ fn resolve_switch_target(
                 method: CreationMethod::ForkPr {
                     pr_number,
                     fork_push_url,
-                    pr_url: pr_info.url,
+                    pr_url: pr_url.clone(),
                     host: pr_info.host,
                     base_owner: pr_info.base_owner,
                     base_repo: pr_info.base_repo,
                 },
+                pr_mr_url: Some(pr_url),
             });
         } else {
             // Same-repo PR: fetch the branch to ensure remote refs are up-to-date.
@@ -140,6 +193,7 @@ fn resolve_switch_target(
                     create_branch: false,
                     base_branch: None,
                 },
+                pr_mr_url: Some(pr_url),
             });
         }
     }
@@ -168,6 +222,11 @@ fn resolve_switch_target(
         let repo_root = repo.repo_path();
         let mr_info = mr_ref::fetch_mr_info(mr_number, repo_root)?;
 
+        // Display MR context
+        crate::output::print(info_message(format_mr_context(&mr_info)))?;
+
+        let mr_url = mr_info.url.clone();
+
         if mr_info.is_cross_project {
             // Fork MR: will need fetch + pushRemote config (see mr_ref module docs)
             let local_branch = mr_ref::local_branch_name(&mr_info);
@@ -188,6 +247,7 @@ fn resolve_switch_target(
                             create_branch: false,
                             base_branch: None,
                         },
+                        pr_mr_url: Some(mr_url),
                     });
                 } else {
                     // Branch exists but tracks something else
@@ -216,9 +276,10 @@ fn resolve_switch_target(
                 method: CreationMethod::ForkMr {
                     mr_number,
                     fork_push_url,
-                    mr_url: mr_info.url,
+                    mr_url: mr_url.clone(),
                     target_project_url,
                 },
+                pr_mr_url: Some(mr_url),
             });
         } else {
             // Same-repo MR: just use the branch name, regular switch
@@ -228,6 +289,7 @@ fn resolve_switch_target(
                     create_branch: false,
                     base_branch: None,
                 },
+                pr_mr_url: Some(mr_url),
             });
         }
     }
@@ -308,6 +370,7 @@ fn resolve_switch_target(
             create_branch: create,
             base_branch,
         },
+        pr_mr_url: None,
     })
 }
 
@@ -321,6 +384,7 @@ fn check_existing_worktree(
     branch: &str,
     expected_path: &Path,
     new_previous: Option<String>,
+    pr_mr_url: Option<String>,
 ) -> anyhow::Result<Option<SwitchPlan>> {
     match repo.worktree_for_branch(branch)? {
         Some(existing_path) if existing_path.exists() => Ok(Some(SwitchPlan::Existing {
@@ -328,6 +392,7 @@ fn check_existing_worktree(
             branch: branch.to_string(),
             expected_path: expected_path.to_path_buf(),
             new_previous,
+            pr_mr_url,
         })),
         Some(_) => Err(GitError::WorktreeMissing {
             branch: branch.to_string(),
@@ -476,9 +541,13 @@ pub fn plan_switch(
     let expected_path = compute_worktree_path(repo, &target.branch, config)?;
 
     // Phase 3: Check if worktree already exists for this branch
-    if let Some(existing) =
-        check_existing_worktree(repo, &target.branch, &expected_path, new_previous.clone())?
-    {
+    if let Some(existing) = check_existing_worktree(
+        repo,
+        &target.branch,
+        &expected_path,
+        new_previous.clone(),
+        target.pr_mr_url.clone(),
+    )? {
         return Ok(existing);
     }
 
@@ -498,6 +567,7 @@ pub fn plan_switch(
         method: target.method,
         clobber_backup,
         new_previous,
+        pr_mr_url: target.pr_mr_url,
     })
 }
 
@@ -519,6 +589,7 @@ pub fn execute_switch(
             branch,
             expected_path,
             new_previous,
+            pr_mr_url,
         } => {
             let _ = repo.set_switch_previous(new_previous.as_deref());
 
@@ -539,7 +610,7 @@ pub fn execute_switch(
             let result = if already_at_worktree {
                 SwitchResult::AlreadyAt(path)
             } else {
-                SwitchResult::Existing(path)
+                SwitchResult::Existing { path, pr_mr_url }
             };
 
             Ok((
@@ -557,6 +628,7 @@ pub fn execute_switch(
             method,
             clobber_backup,
             new_previous,
+            pr_mr_url,
         } => {
             // Handle --clobber backup if needed (shared for all creation methods)
             if let Some(backup_path) = &clobber_backup {
@@ -809,6 +881,7 @@ pub fn execute_switch(
                     base_branch,
                     base_worktree_path,
                     from_remote,
+                    pr_mr_url,
                 },
                 SwitchBranchInfo {
                     branch,
