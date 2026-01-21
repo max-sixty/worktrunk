@@ -42,7 +42,7 @@ use commands::{
     handle_list, handle_merge, handle_rebase, handle_remove, handle_remove_current,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
     handle_state_set, handle_state_show, handle_unconfigure_shell, plan_switch,
-    resolve_worktree_arg, run_hook, step_commit, step_copy_ignored, step_for_each,
+    resolve_worktree_arg, run_hook, step_commit, step_copy_ignored, step_for_each, step_relocate,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
@@ -543,6 +543,11 @@ fn main() {
                 step_copy_ignored(from.as_deref(), to.as_deref(), dry_run)
             }
             StepCommand::ForEach { args } => step_for_each(args),
+            StepCommand::Relocate {
+                branches,
+                dry_run,
+                commit,
+            } => step_relocate(branches, dry_run, commit),
         },
         Commands::Hook { action } => match action {
             HookCommand::Show {

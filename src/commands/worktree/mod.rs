@@ -88,6 +88,7 @@ mod types;
 // Re-export public types and functions
 pub use push::handle_push;
 pub use remove::{handle_remove, handle_remove_current};
+pub(crate) use resolve::paths_match;
 pub use resolve::{
     get_path_mismatch, is_worktree_at_expected_path, resolve_worktree_arg, worktree_display_name,
 };

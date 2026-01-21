@@ -130,7 +130,7 @@ pub fn is_worktree_at_expected_path(
 /// Compare two paths for equality, canonicalizing to handle symlinks and relative paths.
 ///
 /// Returns `true` if the paths resolve to the same location.
-pub(super) fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
+pub(crate) fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
     use dunce::canonicalize;
     let a_canonical = canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
     let b_canonical = canonicalize(b).unwrap_or_else(|_| b.to_path_buf());

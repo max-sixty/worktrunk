@@ -302,4 +302,71 @@ Note: This command is experimental and may change in future versions.
         #[arg(required = true, last = true, num_args = 1..)]
         args: Vec<String>,
     },
+
+    /// Move worktrees to expected paths
+    ///
+    /// Relocates worktrees whose path doesn't match the `worktree-path` template.
+    #[command(
+        after_long_help = r#"Moves worktrees to match the configured `worktree-path` template.
+
+## Examples
+
+Preview what would be moved:
+
+```console
+wt step relocate --dry-run
+```
+
+Move all mismatched worktrees:
+
+```console
+wt step relocate
+```
+
+Auto-commit dirty worktrees before moving:
+
+```console
+wt step relocate --commit
+```
+
+Move specific worktrees:
+
+```console
+wt step relocate feature bugfix
+```
+
+## Dirty worktrees
+
+By default, worktrees with uncommitted changes are skipped. Use `--commit` to
+auto-commit changes with an LLM-generated message before relocating.
+
+## Main worktree
+
+If the main worktree (repo root) has a non-default branch checked out, relocate
+creates a new worktree at the expected path and switches main back to the
+default branch.
+
+## Skipped worktrees
+
+- **Dirty** (without `--commit`) — commit or stash changes first
+- **Locked** — unlock with `git worktree unlock`
+- **Target exists** — remove the conflicting path manually
+- **Detached HEAD** — no branch to compute expected path
+"#
+    )]
+    Relocate {
+        /// Worktrees to relocate (defaults to all mismatched)
+        #[arg(add = crate::completion::worktree_only_completer())]
+        branches: Vec<String>,
+
+        /// Show what would be moved
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Commit uncommitted changes before relocating
+        ///
+        /// Uses LLM-generated commit messages.
+        #[arg(long)]
+        commit: bool,
+    },
 }

@@ -16,6 +16,7 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 use worktrunk::styling::{
     format_with_gutter, hint_message, info_message, progress_message, success_message,
+    warning_message,
 };
 
 use super::commit::{CommitGenerator, CommitOptions};
@@ -708,6 +709,272 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
             }
         }
     }
+
+    Ok(())
+}
+
+/// Handle `wt step relocate` command
+///
+/// Moves worktrees to their expected paths based on the `worktree-path` template.
+pub fn step_relocate(branches: Vec<String>, dry_run: bool, commit: bool) -> anyhow::Result<()> {
+    use super::worktree::{get_path_mismatch, paths_match};
+    use worktrunk::path::format_path_for_display;
+    use worktrunk::shell_exec::Cmd;
+
+    let repo = Repository::current()?;
+    let config = UserConfig::load()?;
+    let default_branch = repo.default_branch().unwrap_or_default();
+    let repo_path = repo.repo_path().to_path_buf();
+
+    // Get all worktrees, excluding prunable ones
+    let worktrees: Vec<_> = repo
+        .list_worktrees()?
+        .into_iter()
+        .filter(|wt| wt.prunable.is_none())
+        .collect();
+
+    // Filter to requested branches if any were specified
+    let candidates: Vec<_> = if branches.is_empty() {
+        worktrees
+    } else {
+        worktrees
+            .into_iter()
+            .filter(|wt| {
+                wt.branch
+                    .as_ref()
+                    .is_some_and(|b| branches.iter().any(|arg| arg == b))
+            })
+            .collect()
+    };
+
+    // Find mismatched worktrees (worktrees not at their expected paths)
+    let mismatched: Vec<_> = candidates
+        .into_iter()
+        .filter_map(|wt| {
+            let branch = wt.branch.as_deref()?;
+            get_path_mismatch(&repo, branch, &wt.path, &config).map(|expected| (wt, expected))
+        })
+        .collect();
+
+    if mismatched.is_empty() {
+        crate::output::print(info_message("All worktrees are at expected paths"))?;
+        return Ok(());
+    }
+
+    // Dry run: show preview
+    if dry_run {
+        crate::output::print(info_message(format!(
+            "{} worktree{} would be relocated:",
+            mismatched.len(),
+            if mismatched.len() == 1 { "" } else { "s" }
+        )))?;
+        crate::output::blank()?;
+
+        for (wt, expected_path) in &mismatched {
+            let branch = wt.branch.as_deref().unwrap();
+            let src_display = format_path_for_display(&wt.path);
+            let dest_display = format_path_for_display(expected_path);
+
+            crate::output::print(cformat!(
+                "  <bold>{branch}</>: {src_display} → {dest_display}"
+            ))?;
+        }
+        return Ok(());
+    }
+
+    let cwd = std::env::current_dir().ok();
+    let mut relocated = 0;
+    let mut skipped = 0;
+
+    for (wt, expected_path) in &mismatched {
+        let branch = wt.branch.as_deref().unwrap();
+        let is_main = paths_match(&wt.path, &repo_path);
+
+        // Check locked
+        if let Some(reason) = &wt.locked {
+            let reason_text = if reason.is_empty() {
+                String::new()
+            } else {
+                format!(": {reason}")
+            };
+            crate::output::print(warning_message(cformat!(
+                "Skipping <bold>{branch}</> (locked{reason_text})"
+            )))?;
+            skipped += 1;
+            continue;
+        }
+
+        // Check target exists
+        if expected_path.exists() {
+            crate::output::print(warning_message(cformat!(
+                "Skipping <bold>{branch}</> (target exists: {})",
+                format_path_for_display(expected_path)
+            )))?;
+            skipped += 1;
+            continue;
+        }
+
+        // Check dirty
+        let worktree = repo.worktree_at(&wt.path);
+        if worktree.is_dirty()? {
+            if commit {
+                // Commit using LLM (like step_commit)
+                crate::output::print(progress_message(cformat!(
+                    "Committing changes in <bold>{branch}</>..."
+                )))?;
+                commit_worktree_changes(&repo, &wt.path, &config)?;
+            } else {
+                crate::output::print(warning_message(cformat!(
+                    "Skipping <bold>{branch}</> (has uncommitted changes)"
+                )))?;
+                crate::output::print(hint_message(
+                    "Use --commit to auto-commit changes before relocating",
+                ))?;
+                skipped += 1;
+                continue;
+            }
+        }
+
+        // Format paths for display
+        let src_display = format_path_for_display(&wt.path);
+        let dest_display = format_path_for_display(expected_path);
+
+        // Relocate
+        if is_main {
+            // Main worktree: switch main to default first, then create new wt
+            // (Must switch first because branch can't be checked out in two places)
+            crate::output::print(progress_message(cformat!(
+                "Switching main worktree to <bold>{}</>...",
+                default_branch
+            )))?;
+
+            Cmd::new("git")
+                .args(["checkout", &default_branch])
+                .current_dir(&repo_path)
+                .context("main")
+                .run()
+                .context("Failed to checkout default branch")?;
+
+            crate::output::print(progress_message(cformat!(
+                "Creating worktree for <bold>{branch}</> @ {dest_display}..."
+            )))?;
+
+            let expected_path_str = expected_path.to_str().ok_or_else(|| {
+                anyhow::anyhow!("Path contains invalid UTF-8: {}", expected_path.display())
+            })?;
+            Cmd::new("git")
+                .args(["worktree", "add", expected_path_str, branch])
+                .context(branch)
+                .run()
+                .context("Failed to create worktree")?;
+
+            crate::output::print(success_message(cformat!(
+                "Relocated <bold>{branch}</>: {src_display} → {dest_display}"
+            )))?;
+        } else {
+            // Regular worktree: git worktree move
+            let src_path_str = wt.path.to_str().ok_or_else(|| {
+                anyhow::anyhow!("Path contains invalid UTF-8: {}", wt.path.display())
+            })?;
+            let dest_path_str = expected_path.to_str().ok_or_else(|| {
+                anyhow::anyhow!("Path contains invalid UTF-8: {}", expected_path.display())
+            })?;
+            Cmd::new("git")
+                .args(["worktree", "move", src_path_str, dest_path_str])
+                .context(branch)
+                .run()
+                .context("Failed to move worktree")?;
+
+            crate::output::print(success_message(cformat!(
+                "Relocated <bold>{branch}</>: {src_display} → {dest_display}"
+            )))?;
+        }
+
+        relocated += 1;
+
+        // Update shell if user is inside the moved worktree
+        if let Some(ref cwd) = cwd
+            && cwd.starts_with(&wt.path)
+        {
+            let relative = cwd.strip_prefix(&wt.path).unwrap_or(Path::new(""));
+            crate::output::change_directory(expected_path.join(relative))?;
+        }
+    }
+
+    // Summary
+    if relocated > 0 || skipped > 0 {
+        crate::output::blank()?;
+        let relocated_word = if relocated == 1 {
+            "worktree"
+        } else {
+            "worktrees"
+        };
+        if skipped == 0 {
+            crate::output::print(success_message(format!(
+                "Relocated {relocated} {relocated_word}"
+            )))?;
+        } else {
+            let skipped_word = if skipped == 1 {
+                "worktree"
+            } else {
+                "worktrees"
+            };
+            crate::output::print(info_message(format!(
+                "Relocated {relocated} {relocated_word}, skipped {skipped} {skipped_word}"
+            )))?;
+        }
+    }
+
+    Ok(())
+}
+/// Commit changes in a specific worktree using LLM-generated message.
+fn commit_worktree_changes(
+    repo: &Repository,
+    worktree_path: &Path,
+    config: &UserConfig,
+) -> anyhow::Result<()> {
+    use worktrunk::shell_exec::Cmd;
+
+    let project_id = repo.project_identifier().ok();
+    let commit_config = config.commit_generation(project_id.as_deref());
+    let generator = super::commit::CommitGenerator::new(&commit_config);
+
+    // Stage all changes
+    Cmd::new("git")
+        .args(["add", "-A"])
+        .current_dir(worktree_path)
+        .run()
+        .context("Failed to stage changes")?;
+
+    // Check if there are staged changes
+    let worktree = repo.worktree_at(worktree_path);
+    if !worktree.has_staged_changes()? {
+        return Ok(()); // Nothing to commit
+    }
+
+    generator.emit_hint_if_needed()?;
+    let commit_message = crate::llm::generate_commit_message(&commit_config)?;
+
+    let formatted_message = generator.format_message_for_display(&commit_message);
+    crate::output::print(format_with_gutter(&formatted_message, None))?;
+
+    Cmd::new("git")
+        .args(["commit", "-m", &commit_message])
+        .current_dir(worktree_path)
+        .run()
+        .context("Failed to commit")?;
+
+    let commit_hash = Cmd::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(worktree_path)
+        .run()?;
+    let commit_hash = String::from_utf8_lossy(&commit_hash.stdout)
+        .trim()
+        .to_string();
+
+    crate::output::print(success_message(cformat!(
+        "Committed @ <dim>{commit_hash}</>"
+    )))?;
 
     Ok(())
 }
