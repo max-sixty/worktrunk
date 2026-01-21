@@ -12,7 +12,8 @@ use worktrunk::git::mr_ref;
 use worktrunk::git::pr_ref::{self, fork_remote_url};
 use worktrunk::git::{GitError, RefType, Repository};
 use worktrunk::styling::{
-    hint_message, info_message, progress_message, suggest_command, warning_message,
+    format_with_gutter, hint_message, info_message, progress_message, suggest_command,
+    warning_message,
 };
 
 use super::resolve::{compute_clobber_backup, compute_worktree_path, paths_match};
@@ -25,16 +26,14 @@ struct ResolvedTarget {
     branch: String,
     /// How to create the worktree
     method: CreationMethod,
-    /// PR/MR URL to display as a hint after worktree creation
-    pr_mr_url: Option<String>,
 }
 
-/// Format PR context for display after fetching.
+/// Format PR context for gutter display after fetching.
 ///
-/// Shows title, author, state, and draft status on two lines:
+/// Returns two lines for gutter formatting:
 /// ```text
-/// ○ Fix authentication bug in login flow (#101)
-///   by @alice · open · draft
+///  ┃ Fix authentication bug in login flow (#101)
+///  ┃ by @alice · open · https://github.com/owner/repo/pull/101
 /// ```
 fn format_pr_context(pr: &worktrunk::git::pr_ref::PrInfo) -> String {
     let mut status_parts = vec![format!("by @{}", pr.author), pr.state.clone()];
@@ -43,15 +42,20 @@ fn format_pr_context(pr: &worktrunk::git::pr_ref::PrInfo) -> String {
     }
     let status_line = status_parts.join(" · ");
 
-    cformat!("<bold>{}</> (#{})\n  {status_line}", pr.title, pr.number)
+    cformat!(
+        "<bold>{}</> (#{})\n{status_line} · <bright-black>{}</>",
+        pr.title,
+        pr.number,
+        pr.url
+    )
 }
 
-/// Format MR context for display after fetching.
+/// Format MR context for gutter display after fetching.
 ///
-/// Shows title, author, state, and draft status on two lines:
+/// Returns two lines for gutter formatting:
 /// ```text
-/// ○ Fix authentication bug in login flow (!101)
-///   by @alice · opened · draft
+///  ┃ Fix authentication bug in login flow (!101)
+///  ┃ by @alice · opened · https://gitlab.com/owner/repo/-/merge_requests/101
 /// ```
 fn format_mr_context(mr: &worktrunk::git::mr_ref::MrInfo) -> String {
     let mut status_parts = vec![format!("by @{}", mr.author), mr.state.clone()];
@@ -60,7 +64,12 @@ fn format_mr_context(mr: &worktrunk::git::mr_ref::MrInfo) -> String {
     }
     let status_line = status_parts.join(" · ");
 
-    cformat!("<bold>{}</> (!{})\n  {status_line}", mr.title, mr.number)
+    cformat!(
+        "<bold>{}</> (!{})\n{status_line} · <bright-black>{}</>",
+        mr.title,
+        mr.number,
+        mr.url
+    )
 }
 
 /// Resolve a PR reference (`pr:<number>` syntax).
@@ -92,10 +101,8 @@ fn resolve_pr_ref(
     let repo_root = repo.repo_path();
     let pr_info = pr_ref::fetch_pr_info(pr_number, repo_root)?;
 
-    // Display PR context
-    crate::output::print(info_message(format_pr_context(&pr_info)))?;
-
-    let pr_url = pr_info.url.clone();
+    // Display PR context with URL (as gutter under fetch progress)
+    crate::output::print(format_with_gutter(&format_pr_context(&pr_info), None))?;
 
     if pr_info.is_cross_repository {
         // Fork PR: check if branch already exists and is tracking this PR
@@ -112,7 +119,6 @@ fn resolve_pr_ref(
                         create_branch: false,
                         base_branch: None,
                     },
-                    pr_mr_url: Some(pr_url),
                 });
             } else {
                 return Err(GitError::BranchTracksDifferentRef {
@@ -146,10 +152,9 @@ fn resolve_pr_ref(
                 ref_type: RefType::Pr,
                 number: pr_number,
                 fork_push_url,
-                ref_url: pr_url.clone(),
+                ref_url: pr_info.url,
                 remote,
             },
-            pr_mr_url: Some(pr_url),
         });
     }
 
@@ -180,7 +185,6 @@ fn resolve_pr_ref(
             create_branch: false,
             base_branch: None,
         },
-        pr_mr_url: Some(pr_url),
     })
 }
 
@@ -213,10 +217,8 @@ fn resolve_mr_ref(
     let repo_root = repo.repo_path();
     let mr_info = mr_ref::fetch_mr_info(mr_number, repo_root)?;
 
-    // Display MR context
-    crate::output::print(info_message(format_mr_context(&mr_info)))?;
-
-    let mr_url = mr_info.url.clone();
+    // Display MR context with URL (as gutter under fetch progress)
+    crate::output::print(format_with_gutter(&format_mr_context(&mr_info), None))?;
 
     if mr_info.is_cross_project {
         // Fork MR: check if branch already exists and is tracking this MR
@@ -233,7 +235,6 @@ fn resolve_mr_ref(
                         create_branch: false,
                         base_branch: None,
                     },
-                    pr_mr_url: Some(mr_url),
                 });
             } else {
                 return Err(GitError::BranchTracksDifferentRef {
@@ -277,10 +278,9 @@ fn resolve_mr_ref(
                 ref_type: RefType::Mr,
                 number: mr_number,
                 fork_push_url,
-                ref_url: mr_url.clone(),
+                ref_url: mr_info.url,
                 remote,
             },
-            pr_mr_url: Some(mr_url),
         });
     }
 
@@ -291,7 +291,6 @@ fn resolve_mr_ref(
             create_branch: false,
             base_branch: None,
         },
-        pr_mr_url: Some(mr_url),
     })
 }
 
@@ -391,7 +390,6 @@ fn resolve_switch_target(
             create_branch: create,
             base_branch,
         },
-        pr_mr_url: None,
     })
 }
 
@@ -405,7 +403,6 @@ fn check_existing_worktree(
     branch: &str,
     expected_path: &Path,
     new_previous: Option<String>,
-    pr_mr_url: Option<String>,
 ) -> anyhow::Result<Option<SwitchPlan>> {
     match repo.worktree_for_branch(branch)? {
         Some(existing_path) if existing_path.exists() => Ok(Some(SwitchPlan::Existing {
@@ -413,7 +410,6 @@ fn check_existing_worktree(
             branch: branch.to_string(),
             expected_path: expected_path.to_path_buf(),
             new_previous,
-            pr_mr_url,
         })),
         Some(_) => Err(GitError::WorktreeMissing {
             branch: branch.to_string(),
@@ -562,13 +558,9 @@ pub fn plan_switch(
     let expected_path = compute_worktree_path(repo, &target.branch, config)?;
 
     // Phase 3: Check if worktree already exists for this branch
-    if let Some(existing) = check_existing_worktree(
-        repo,
-        &target.branch,
-        &expected_path,
-        new_previous.clone(),
-        target.pr_mr_url.clone(),
-    )? {
+    if let Some(existing) =
+        check_existing_worktree(repo, &target.branch, &expected_path, new_previous.clone())?
+    {
         return Ok(existing);
     }
 
@@ -588,7 +580,6 @@ pub fn plan_switch(
         method: target.method,
         clobber_backup,
         new_previous,
-        pr_mr_url: target.pr_mr_url,
     })
 }
 
@@ -610,7 +601,6 @@ pub fn execute_switch(
             branch,
             expected_path,
             new_previous,
-            pr_mr_url,
         } => {
             let _ = repo.set_switch_previous(new_previous.as_deref());
 
@@ -631,7 +621,7 @@ pub fn execute_switch(
             let result = if already_at_worktree {
                 SwitchResult::AlreadyAt(path)
             } else {
-                SwitchResult::Existing { path, pr_mr_url }
+                SwitchResult::Existing { path }
             };
 
             Ok((
@@ -649,7 +639,6 @@ pub fn execute_switch(
             method,
             clobber_backup,
             new_previous,
-            pr_mr_url,
         } => {
             // Handle --clobber backup if needed (shared for all creation methods)
             if let Some(backup_path) = &clobber_backup {
@@ -824,7 +813,6 @@ pub fn execute_switch(
                     base_branch,
                     base_worktree_path,
                     from_remote,
-                    pr_mr_url,
                 },
                 SwitchBranchInfo {
                     branch,

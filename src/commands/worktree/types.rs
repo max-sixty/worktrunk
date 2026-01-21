@@ -19,11 +19,7 @@ pub enum SwitchResult {
     /// Already at the target worktree (no action taken)
     AlreadyAt(PathBuf),
     /// Switched to existing worktree at the given path
-    Existing {
-        path: PathBuf,
-        /// PR/MR URL to display as a hint (for pr:/mr: checkouts)
-        pr_mr_url: Option<String>,
-    },
+    Existing { path: PathBuf },
     /// Created new worktree at the given path
     Created {
         path: PathBuf,
@@ -36,8 +32,6 @@ pub enum SwitchResult {
         /// Remote tracking branch if created from remote (e.g., "origin/feature")
         /// This is set when git's DWIM created a local branch from a remote
         from_remote: Option<String>,
-        /// PR/MR URL to display as a hint (for pr:/mr: checkouts)
-        pr_mr_url: Option<String>,
     },
 }
 
@@ -105,8 +99,6 @@ pub enum SwitchPlan {
         expected_path: PathBuf,
         /// Branch to record as "previous" for `wt switch -`
         new_previous: Option<String>,
-        /// PR/MR URL to display as a hint (for pr:/mr: checkouts)
-        pr_mr_url: Option<String>,
     },
     /// Need to create a new worktree
     Create {
@@ -118,8 +110,6 @@ pub enum SwitchPlan {
         clobber_backup: Option<PathBuf>,
         /// Branch to record as "previous" for `wt switch -`
         new_previous: Option<String>,
-        /// PR/MR URL to display as a hint (for pr:/mr: checkouts)
-        pr_mr_url: Option<String>,
     },
 }
 
@@ -247,10 +237,7 @@ mod tests {
     #[test]
     fn test_switch_result_path_existing() {
         let path = PathBuf::from("/test/existing");
-        let result = SwitchResult::Existing {
-            path: path.clone(),
-            pr_mr_url: None,
-        };
+        let result = SwitchResult::Existing { path: path.clone() };
         assert_eq!(result.path(), &path);
     }
 
@@ -263,7 +250,6 @@ mod tests {
             base_branch: Some("main".to_string()),
             base_worktree_path: Some("/test/main".to_string()),
             from_remote: None,
-            pr_mr_url: None,
         };
         assert_eq!(result.path(), &path);
     }
@@ -277,7 +263,6 @@ mod tests {
             base_branch: None,
             base_worktree_path: None,
             from_remote: Some("origin/feature".to_string()),
-            pr_mr_url: None,
         };
         assert_eq!(result.path(), &path);
     }

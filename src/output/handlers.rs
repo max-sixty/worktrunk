@@ -338,7 +338,7 @@ pub fn handle_switch_output(
             // User is already there - no path annotation needed
             None
         }
-        SwitchResult::Existing { pr_mr_url, .. } => {
+        SwitchResult::Existing { .. } => {
             if let Some(reason) = &shell_warning_reason {
                 // Shell integration not active — single warning with context
                 if let Some(warning) = branch_worktree_mismatch_warning {
@@ -356,10 +356,6 @@ pub fn handle_switch_output(
                 } else if should_show_explicit_path_hint() {
                     super::print(hint_message(explicit_path_hint(branch)))?;
                 }
-                // Show PR/MR URL hint if this was a pr:/mr: checkout
-                if let Some(url) = pr_mr_url {
-                    super::print(hint_message(cformat!("<bright-black>{url}</>")))?;
-                }
                 // User won't be there - show path in hook announcements
                 Some(path.clone())
             } else {
@@ -373,10 +369,6 @@ pub fn handle_switch_output(
                     false, // created_branch
                     None, None,
                 )))?;
-                // Show PR/MR URL hint if this was a pr:/mr: checkout
-                if let Some(url) = pr_mr_url {
-                    super::print(hint_message(cformat!("<bright-black>{url}</>")))?;
-                }
                 // cd will happen - no path annotation needed
                 None
             }
@@ -385,7 +377,6 @@ pub fn handle_switch_output(
             created_branch,
             base_branch,
             from_remote,
-            pr_mr_url,
             ..
         } => {
             // Always show success for creation
@@ -427,17 +418,9 @@ pub fn handle_switch_output(
                 } else if should_show_explicit_path_hint() {
                     super::print(hint_message(explicit_path_hint(branch)))?;
                 }
-                // Show PR/MR URL hint if this was a pr:/mr: checkout
-                if let Some(url) = pr_mr_url {
-                    super::print(hint_message(cformat!("<bright-black>{url}</>")))?;
-                }
                 // User won't be there - show path in hook announcements
                 Some(path.clone())
             } else {
-                // Show PR/MR URL hint if this was a pr:/mr: checkout
-                if let Some(url) = pr_mr_url {
-                    super::print(hint_message(cformat!("<bright-black>{url}</>")))?;
-                }
                 // cd will happen - no path annotation needed
                 None
             }
