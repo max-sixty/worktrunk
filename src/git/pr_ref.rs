@@ -27,6 +27,7 @@
 //! - `base.repo.owner.login`, `base.repo.name` — target repo (where PR refs live)
 //! - `html_url` — PR web URL
 
+use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::{Context, bail};
@@ -117,11 +118,7 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
         Ok(output) => output,
         Err(e) => {
             // Check if gh is not installed (OS error for command not found)
-            let error_str = e.to_string();
-            if error_str.contains("No such file")
-                || error_str.contains("not found")
-                || error_str.contains("cannot find")
-            {
+            if e.kind() == ErrorKind::NotFound {
                 bail!("GitHub CLI (gh) not installed; install from https://cli.github.com/");
             }
             return Err(anyhow::Error::from(e).context("Failed to run gh api"));
