@@ -10,7 +10,7 @@ use dunce::canonicalize;
 use worktrunk::config::UserConfig;
 use worktrunk::git::mr_ref;
 use worktrunk::git::pr_ref::{self, fork_remote_url, prefixed_local_branch_name};
-use worktrunk::git::{GitError, RefType, Repository};
+use worktrunk::git::{GitError, RefContext, RefType, Repository};
 use worktrunk::styling::{
     format_with_gutter, hint_message, info_message, progress_message, suggest_command,
     warning_message,
@@ -28,47 +28,26 @@ struct ResolvedTarget {
     method: CreationMethod,
 }
 
-/// Format PR context for gutter display after fetching.
+/// Format PR/MR context for gutter display after fetching.
 ///
 /// Returns two lines for gutter formatting:
 /// ```text
 ///  ┃ Fix authentication bug in login flow (#101)
 ///  ┃ by @alice · open · https://github.com/owner/repo/pull/101
 /// ```
-fn format_pr_context(pr: &worktrunk::git::pr_ref::PrInfo) -> String {
-    let mut status_parts = vec![format!("by @{}", pr.author), pr.state.clone()];
-    if pr.draft {
+fn format_ref_context(ctx: &impl RefContext) -> String {
+    let mut status_parts = vec![format!("by @{}", ctx.author()), ctx.state().to_string()];
+    if ctx.draft() {
         status_parts.push("draft".to_string());
     }
     let status_line = status_parts.join(" · ");
 
     cformat!(
-        "<bold>{}</> (#{})\n{status_line} · <bright-black>{}</>",
-        pr.title,
-        pr.number,
-        pr.url
-    )
-}
-
-/// Format MR context for gutter display after fetching.
-///
-/// Returns two lines for gutter formatting:
-/// ```text
-///  ┃ Fix authentication bug in login flow (!101)
-///  ┃ by @alice · opened · https://gitlab.com/owner/repo/-/merge_requests/101
-/// ```
-fn format_mr_context(mr: &worktrunk::git::mr_ref::MrInfo) -> String {
-    let mut status_parts = vec![format!("by @{}", mr.author), mr.state.clone()];
-    if mr.draft {
-        status_parts.push("draft".to_string());
-    }
-    let status_line = status_parts.join(" · ");
-
-    cformat!(
-        "<bold>{}</> (!{})\n{status_line} · <bright-black>{}</>",
-        mr.title,
-        mr.number,
-        mr.url
+        "<bold>{}</> ({}{})\n{status_line} · <bright-black>{}</>",
+        ctx.title(),
+        ctx.ref_type().symbol(),
+        ctx.number(),
+        ctx.url()
     )
 }
 
@@ -102,7 +81,7 @@ fn resolve_pr_ref(
     let pr_info = pr_ref::fetch_pr_info(pr_number, repo_root)?;
 
     // Display PR context with URL (as gutter under fetch progress)
-    crate::output::print(format_with_gutter(&format_pr_context(&pr_info), None))?;
+    crate::output::print(format_with_gutter(&format_ref_context(&pr_info), None))?;
 
     if pr_info.is_cross_repository {
         // Fork PR: check if branch already exists and is tracking this PR
@@ -247,7 +226,7 @@ fn resolve_mr_ref(
     let mr_info = mr_ref::fetch_mr_info(mr_number, repo_root)?;
 
     // Display MR context with URL (as gutter under fetch progress)
-    crate::output::print(format_with_gutter(&format_mr_context(&mr_info), None))?;
+    crate::output::print(format_with_gutter(&format_ref_context(&mr_info), None))?;
 
     if mr_info.is_cross_project {
         // Fork MR: check if branch already exists and is tracking this MR

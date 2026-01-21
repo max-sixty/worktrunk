@@ -74,6 +74,19 @@ impl RefType {
     }
 }
 
+/// Common display fields for PR/MR context.
+///
+/// Implemented by both `PrInfo` and `MrInfo` to enable unified formatting.
+pub trait RefContext {
+    fn ref_type(&self) -> RefType;
+    fn number(&self) -> u32;
+    fn title(&self) -> &str;
+    fn author(&self) -> &str;
+    fn state(&self) -> &str;
+    fn draft(&self) -> bool;
+    fn url(&self) -> &str;
+}
+
 /// Domain errors for git and worktree operations.
 ///
 /// This enum provides structured error data that can be pattern-matched and tested.

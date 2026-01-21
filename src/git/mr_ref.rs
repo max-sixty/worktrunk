@@ -60,6 +60,30 @@ pub struct MrInfo {
     pub url: String,
 }
 
+impl super::RefContext for MrInfo {
+    fn ref_type(&self) -> super::RefType {
+        super::RefType::Mr
+    }
+    fn number(&self) -> u32 {
+        self.number
+    }
+    fn title(&self) -> &str {
+        &self.title
+    }
+    fn author(&self) -> &str {
+        &self.author
+    }
+    fn state(&self) -> &str {
+        &self.state
+    }
+    fn draft(&self) -> bool {
+        self.draft
+    }
+    fn url(&self) -> &str {
+        &self.url
+    }
+}
+
 /// Raw JSON response from `glab mr view <number> --output json`.
 #[derive(Debug, Deserialize)]
 struct GlabMrResponse {

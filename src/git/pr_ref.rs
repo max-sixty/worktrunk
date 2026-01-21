@@ -67,6 +67,30 @@ pub struct PrInfo {
     pub url: String,
 }
 
+impl super::RefContext for PrInfo {
+    fn ref_type(&self) -> super::RefType {
+        super::RefType::Pr
+    }
+    fn number(&self) -> u32 {
+        self.number
+    }
+    fn title(&self) -> &str {
+        &self.title
+    }
+    fn author(&self) -> &str {
+        &self.author
+    }
+    fn state(&self) -> &str {
+        &self.state
+    }
+    fn draft(&self) -> bool {
+        self.draft
+    }
+    fn url(&self) -> &str {
+        &self.url
+    }
+}
+
 /// Raw JSON response from `gh api repos/{owner}/{repo}/pulls/{number}`.
 #[derive(Debug, Deserialize)]
 struct GhApiPrResponse {

@@ -40,6 +40,7 @@ pub use error::{
     // Special-handling error enum (Display produces styled output)
     HookErrorWithHint,
     // Platform-specific reference type (PR vs MR)
+    RefContext,
     RefType,
     WorktrunkError,
     // Error inspection functions
