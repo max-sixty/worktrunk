@@ -1995,6 +1995,10 @@ fn test_switch_pr_fork_prefixed_exists_same_pr(#[from(repo_with_remote)] repo: T
     ]);
 
     let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
         "head": {
             "ref": "feature-fix",
             "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
@@ -2060,6 +2064,10 @@ fn test_switch_pr_fork_prefixed_exists_different_pr(#[from(repo_with_remote)] re
     ]);
 
     let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
         "head": {
             "ref": "feature-fix",
             "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
