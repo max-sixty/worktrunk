@@ -2498,3 +2498,56 @@ fn test_switch_mr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
         assert_cmd_snapshot!("switch_mr_unknown_error", cmd);
     });
 }
+
+/// Set up a minimal bin directory with only git (no gh/glab).
+///
+/// Creates a temporary directory with a symlink to git, excluding gh/glab.
+/// Returns the path to use as PATH.
+fn setup_minimal_bin_without_cli(repo: &TestRepo) -> std::path::PathBuf {
+    let minimal_bin = repo.root_path().join("minimal-bin");
+    fs::create_dir_all(&minimal_bin).unwrap();
+
+    // Find git binary using the which crate (cross-platform)
+    let git_path = which::which("git").expect("git must be installed to run tests");
+
+    // Symlink git into our minimal bin directory
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&git_path, minimal_bin.join("git")).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(&git_path, minimal_bin.join("git.exe")).unwrap();
+
+    minimal_bin
+}
+
+/// Configure PATH to exclude gh/glab, keeping only git.
+///
+/// This simulates the "CLI not installed" scenario.
+fn configure_cli_not_installed_env(cmd: &mut std::process::Command, minimal_bin: &Path) {
+    cmd.env("PATH", minimal_bin);
+}
+
+/// Test pr: when gh CLI is not installed
+#[rstest]
+fn test_switch_pr_gh_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
+    let minimal_bin = setup_minimal_bin_without_cli(&repo);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_cli_not_installed_env(&mut cmd, &minimal_bin);
+        assert_cmd_snapshot!("switch_pr_gh_not_installed", cmd);
+    });
+}
+
+/// Test mr: when glab CLI is not installed
+#[rstest]
+fn test_switch_mr_glab_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
+    let minimal_bin = setup_minimal_bin_without_cli(&repo);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_cli_not_installed_env(&mut cmd, &minimal_bin);
+        assert_cmd_snapshot!("switch_mr_glab_not_installed", cmd);
+    });
+}

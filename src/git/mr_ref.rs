@@ -104,7 +104,7 @@ pub fn fetch_mr_info(mr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
             // Check if glab is not installed (OS error for command not found)
             if e.kind() == ErrorKind::NotFound {
                 bail!(
-                    "GitLab CLI (glab) not installed; install from https://gitlab.com/gitlab-org/cli"
+                    "GitLab CLI (glab) not installed; install from https://gitlab.com/gitlab-org/cli#installation"
                 );
             }
             return Err(anyhow::Error::from(e).context("Failed to run glab mr view"));
