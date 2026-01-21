@@ -129,8 +129,9 @@ impl RepositoryCliExt for Repository {
                             }
                             .into());
                         }
-                        return Err(GitError::NoWorktreeFound {
+                        return Err(GitError::BranchNotFound {
                             branch: branch.into(),
+                            show_create_hint: false,
                         }
                         .into());
                     }

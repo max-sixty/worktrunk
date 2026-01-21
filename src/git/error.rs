@@ -102,7 +102,14 @@ pub enum GitError {
     BranchAlreadyExists {
         branch: String,
     },
-    InvalidReference {
+    BranchNotFound {
+        branch: String,
+        /// Show hint about creating the branch. Set to false for remove operations
+        /// where suggesting creation doesn't make sense.
+        show_create_hint: bool,
+    },
+    /// Reference (branch, tag, commit) not found - used when any commit-ish is accepted
+    ReferenceNotFound {
         reference: String,
     },
 
@@ -112,9 +119,6 @@ pub enum GitError {
         action: Option<String>,
     },
     WorktreeMissing {
-        branch: String,
-    },
-    NoWorktreeFound {
         branch: String,
     },
     RemoteOnlyBranch {
@@ -293,15 +297,33 @@ impl std::fmt::Display for GitError {
                 )
             }
 
-            GitError::InvalidReference { reference } => {
-                let create_cmd = suggest_command("switch", &[reference], &["--create"]);
+            GitError::BranchNotFound {
+                branch,
+                show_create_hint,
+            } => {
                 let list_cmd = suggest_command("list", &[], &["--branches", "--remotes"]);
+                let hint = if *show_create_hint {
+                    let create_cmd = suggest_command("switch", &[branch], &["--create"]);
+                    cformat!(
+                        "To create a new branch, run <bright-black>{create_cmd}</>; to list branches, run <bright-black>{list_cmd}</>"
+                    )
+                } else {
+                    cformat!("To list branches, run <bright-black>{list_cmd}</>")
+                };
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(cformat!("Branch <bold>{reference}</> not found")),
-                    hint_message(cformat!(
-                        "To create a new branch, run <bright-black>{create_cmd}</>; to list branches, run <bright-black>{list_cmd}</>"
+                    error_message(cformat!("No branch named <bold>{branch}</>")),
+                    hint_message(hint)
+                )
+            }
+
+            GitError::ReferenceNotFound { reference } => {
+                write!(
+                    f,
+                    "{}",
+                    error_message(cformat!(
+                        "No branch, tag, or commit named <bold>{reference}</>"
                     ))
                 )
             }
@@ -329,14 +351,6 @@ impl std::fmt::Display for GitError {
                     hint_message(cformat!(
                         "To clean up, run <bright-black>git worktree prune</>"
                     ))
-                )
-            }
-
-            GitError::NoWorktreeFound { branch } => {
-                write!(
-                    f,
-                    "{}",
-                    error_message(cformat!("No worktree found for branch <bold>{branch}</>"))
                 )
             }
 
@@ -646,10 +660,14 @@ impl std::fmt::Display for GitError {
             }
 
             GitError::WorktreeNotFound { branch } => {
+                let switch_cmd = suggest_command("switch", &[branch], &[]);
                 write!(
                     f,
-                    "{}",
-                    error_message(cformat!("No worktree found for branch <bold>{branch}</>"))
+                    "{}\n{}",
+                    error_message(cformat!("Branch <bold>{branch}</> has no worktree")),
+                    hint_message(cformat!(
+                        "To create a worktree, run <bright-black>{switch_cmd}</>"
+                    ))
                 )
             }
 

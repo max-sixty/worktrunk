@@ -246,7 +246,7 @@ fn resolve_switch_target(
             ))?;
             None
         } else if !repo.ref_exists(&resolved)? {
-            return Err(GitError::InvalidReference {
+            return Err(GitError::ReferenceNotFound {
                 reference: resolved,
             }
             .into());
@@ -360,8 +360,9 @@ fn validate_worktree_creation(
     } = method
         && !repo.branch(branch).exists()?
     {
-        return Err(GitError::InvalidReference {
-            reference: branch.to_string(),
+        return Err(GitError::BranchNotFound {
+            branch: branch.to_string(),
+            show_create_hint: true,
         }
         .into());
     }

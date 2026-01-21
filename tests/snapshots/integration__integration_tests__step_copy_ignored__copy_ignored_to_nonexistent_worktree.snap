@@ -37,4 +37,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mNo worktree found for branch [1morphan-branch[22m[39m
+[31m✗[39m [31mBranch [1morphan-branch[22m has no worktree[39m
+[2m↳[22m [2mTo create a worktree, run [90mwt switch orphan-branch[39m[22m

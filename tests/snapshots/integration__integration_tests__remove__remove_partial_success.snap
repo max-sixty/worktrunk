@@ -36,5 +36,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mNo worktree found for branch [1mnonexistent[22m[39m
+[31m✗[39m [31mNo branch named [1mnonexistent[22m[39m
+[2m↳[22m [2mTo list branches, run [90mwt list --branches --remotes[39m[22m
 [36m◎ Removing [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m

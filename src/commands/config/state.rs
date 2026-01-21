@@ -205,8 +205,9 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
                 .unwrap_or_default();
 
             if head.is_empty() {
-                return Err(worktrunk::git::GitError::InvalidReference {
-                    reference: branch_name,
+                return Err(worktrunk::git::GitError::BranchNotFound {
+                    branch: branch_name,
+                    show_create_hint: true,
                 }
                 .into());
             }
