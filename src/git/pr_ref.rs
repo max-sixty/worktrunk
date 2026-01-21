@@ -393,6 +393,10 @@ mod tests {
             is_cross_repository: true,
             host: "github.com".to_string(),
             url: "https://github.com/owner/repo/pull/101".to_string(),
+            title: "Test PR".to_string(),
+            author: "contributor".to_string(),
+            state: "open".to_string(),
+            draft: false,
         };
         assert_eq!(prefixed_local_branch_name(&pr), "contributor/main");
     }
