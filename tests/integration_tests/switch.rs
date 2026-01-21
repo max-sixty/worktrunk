@@ -1904,6 +1904,150 @@ fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
     });
 }
 
+/// Test fork PR where prefixed branch already exists and tracks the same PR
+/// Should reuse the existing prefixed branch
+#[rstest]
+fn test_switch_pr_fork_prefixed_exists_same_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create the unprefixed branch (simulating existing local branch)
+    repo.run_git(&["branch", "feature-fix", "main"]);
+
+    // Create the prefixed branch with tracking config for THIS PR
+    let prefixed_branch = "contributor/feature-fix";
+    repo.run_git(&["branch", prefixed_branch, "main"]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.remote", prefixed_branch),
+        "origin",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.merge", prefixed_branch),
+        "refs/pull/42/head", // Same PR
+    ]);
+
+    // Create the worktree for the prefixed branch
+    let worktree_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("test-repo.contributor-feature-fix");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        worktree_path.to_str().unwrap(),
+        prefixed_branch,
+    ]);
+
+    // Set up GitHub URL
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_fork_prefixed_exists_same_pr", cmd);
+    });
+}
+
+/// Test fork PR where prefixed branch exists but tracks different PR (should error)
+#[rstest]
+fn test_switch_pr_fork_prefixed_exists_different_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create the unprefixed branch (simulating existing local branch)
+    repo.run_git(&["branch", "feature-fix", "main"]);
+
+    // Create the prefixed branch with tracking config for a DIFFERENT PR
+    let prefixed_branch = "contributor/feature-fix";
+    repo.run_git(&["branch", prefixed_branch, "main"]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.remote", prefixed_branch),
+        "origin",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.merge", prefixed_branch),
+        "refs/pull/99/head", // Different PR!
+    ]);
+
+    // Set up GitHub URL
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_fork_prefixed_exists_different_pr", cmd);
+    });
+}
+
 /// Test pr: when gh is not authenticated
 #[rstest]
 fn test_switch_pr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
