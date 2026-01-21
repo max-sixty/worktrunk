@@ -2726,6 +2726,9 @@ fn test_switch_mr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
 ///
 /// Creates a temporary directory with a symlink to git, excluding gh/glab.
 /// Returns the path to use as PATH.
+/// Create a minimal bin directory with only git, excluding gh/glab.
+/// Returns None on Windows where this approach doesn't work reliably.
+#[cfg(unix)]
 fn setup_minimal_bin_without_cli(repo: &TestRepo) -> Option<std::path::PathBuf> {
     let minimal_bin = repo.root_path().join("minimal-bin");
     fs::create_dir_all(&minimal_bin).unwrap();
@@ -2734,20 +2737,15 @@ fn setup_minimal_bin_without_cli(repo: &TestRepo) -> Option<std::path::PathBuf> 
     let git_path = which::which("git").expect("git must be installed to run tests");
 
     // Symlink git into our minimal bin directory
-    // On Windows, symlinks require Developer Mode or admin privileges
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(&git_path, minimal_bin.join("git")).unwrap();
-        Some(minimal_bin)
-    }
-    #[cfg(windows)]
-    {
-        // Try to create symlink, skip test if it fails (requires special privileges)
-        match std::os::windows::fs::symlink_file(&git_path, minimal_bin.join("git.exe")) {
-            Ok(_) => Some(minimal_bin),
-            Err(_) => None, // Symlinks not available, skip test
-        }
-    }
+    std::os::unix::fs::symlink(&git_path, minimal_bin.join("git")).unwrap();
+    Some(minimal_bin)
+}
+
+/// On Windows, git requires its entire installation directory to function,
+/// so we can't easily create a minimal PATH with just git. Skip these tests.
+#[cfg(windows)]
+fn setup_minimal_bin_without_cli(_repo: &TestRepo) -> Option<std::path::PathBuf> {
+    None
 }
 
 /// Configure PATH to exclude gh/glab, keeping only git.
