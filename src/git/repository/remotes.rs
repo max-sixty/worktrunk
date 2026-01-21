@@ -68,10 +68,19 @@ impl Repository {
     /// Find a remote that points to a specific owner/repo.
     ///
     /// Searches all configured remotes and returns the name of the first one
-    /// whose URL matches the given owner and repo (case-insensitive for owner).
+    /// whose URL matches the given owner and repo (case-insensitive).
+    ///
+    /// When `host` is `Some`, the remote must also match the host. This is
+    /// important for multi-host setups (e.g., both github.com and
+    /// github.enterprise.com).
     ///
     /// Returns `None` if no matching remote is found.
-    pub fn find_remote_for_repo(&self, owner: &str, repo: &str) -> Option<String> {
+    pub fn find_remote_for_repo(
+        &self,
+        host: Option<&str>,
+        owner: &str,
+        repo: &str,
+    ) -> Option<String> {
         // Get all remotes with URLs
         let output = self
             .run_command(&["config", "--get-regexp", r"remote\..+\.url"])
@@ -85,6 +94,8 @@ impl Repository {
                 // Case-insensitive comparison (GitHub owner/repo names are case-insensitive)
                 && parsed.owner().eq_ignore_ascii_case(owner)
                 && parsed.repo().eq_ignore_ascii_case(repo)
+                // If host is specified, it must also match (case-insensitive)
+                && host.is_none_or(|h| parsed.host().eq_ignore_ascii_case(h))
             {
                 return Some(name.to_string());
             }
@@ -95,13 +106,16 @@ impl Repository {
 
     /// Find a remote that points to the same project as the given URL.
     ///
-    /// Parses the URL to extract owner/repo, then searches configured remotes.
+    /// Parses the URL to extract host/owner/repo, then searches configured remotes.
+    /// Host matching ensures correct remote selection in multi-host setups
+    /// (e.g., both gitlab.com and gitlab.enterprise.com).
+    ///
     /// Useful for GitLab MRs where glab provides URLs directly.
     ///
     /// Returns `None` if the URL can't be parsed or no matching remote is found.
     pub fn find_remote_by_url(&self, target_url: &str) -> Option<String> {
         let parsed = GitRemoteUrl::parse(target_url)?;
-        self.find_remote_for_repo(parsed.owner(), parsed.repo())
+        self.find_remote_for_repo(Some(parsed.host()), parsed.owner(), parsed.repo())
     }
 
     /// Get all configured remote URLs.

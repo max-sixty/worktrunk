@@ -67,6 +67,11 @@ impl RefType {
             Self::Mr => "mr:",
         }
     }
+
+    /// Returns a display string like "PR #42" or "MR !42".
+    pub fn display(self, number: u32) -> String {
+        format!("{} {}{}", self.name(), self.symbol(), number)
+    }
 }
 
 /// Domain errors for git and worktree operations.
