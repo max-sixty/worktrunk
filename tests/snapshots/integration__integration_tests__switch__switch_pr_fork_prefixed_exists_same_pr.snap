@@ -37,6 +37,5 @@ exit_code: 0
 ----- stderr -----
 [36m◎[39m [36mFetching PR #42...[39m
 [2m○[22m Branch [1mcontributor/feature-fix[22m already configured for PR #42
-[33m▲[39m [33mBranch-worktree mismatch; expected [1mcontributor/feature-fix[22m @ [1m_REPO_.contributor-feature-fix[22m [31m⚑[39m[39m
-[33m▲[39m [33mWorktree for [1mcontributor/feature-fix[22m @ [1m[PROJECT_ID][22m, but cannot change directory — shell integration not installed[39m
+[33m▲[39m [33mWorktree for [1mcontributor/feature-fix[22m @ [1m_REPO_.contributor-feature-fix[22m, but cannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

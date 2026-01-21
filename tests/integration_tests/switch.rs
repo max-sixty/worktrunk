@@ -1926,11 +1926,12 @@ fn test_switch_pr_fork_prefixed_exists_same_pr(#[from(repo_with_remote)] repo: T
     ]);
 
     // Create the worktree for the prefixed branch
+    // Use "repo." prefix to match the test repo's directory naming convention
     let worktree_path = repo
         .root_path()
         .parent()
         .unwrap()
-        .join("test-repo.contributor-feature-fix");
+        .join("repo.contributor-feature-fix");
     repo.run_git(&[
         "worktree",
         "add",
