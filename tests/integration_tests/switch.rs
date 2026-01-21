@@ -2510,11 +2510,15 @@ fn setup_minimal_bin_without_cli(repo: &TestRepo) -> std::path::PathBuf {
     // Find git binary using the which crate (cross-platform)
     let git_path = which::which("git").expect("git must be installed to run tests");
 
-    // Symlink git into our minimal bin directory
+    // On Unix, symlink git. On Windows, copy it (symlinks require admin privileges)
     #[cfg(unix)]
     std::os::unix::fs::symlink(&git_path, minimal_bin.join("git")).unwrap();
     #[cfg(windows)]
-    std::os::windows::fs::symlink_file(&git_path, minimal_bin.join("git.exe")).unwrap();
+    {
+        let target = minimal_bin.join("git.exe");
+        // Copy the git executable instead of symlinking (Windows symlinks need admin)
+        fs::copy(&git_path, &target).unwrap();
+    }
 
     minimal_bin
 }
