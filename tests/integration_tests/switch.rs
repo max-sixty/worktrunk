@@ -1777,11 +1777,27 @@ fn test_switch_pr_fork_existing_same_pr(#[from(repo_with_remote)] repo: TestRepo
     });
 }
 
-/// Test fork PR where branch already exists but tracks different PR (should error)
+/// Test fork PR where branch already exists but tracks different PR
+/// Uses prefixed branch name `contributor/feature-fix` to avoid conflict
 #[rstest]
 fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a PR ref on the remote
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
     // Create the branch with tracking config for a DIFFERENT PR
-    // Branch name matches headRefName (no owner prefix) so git push works
     let branch_name = "feature-fix";
     repo.run_git(&["branch", branch_name, "main"]);
     repo.run_git(&[
@@ -1793,6 +1809,29 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
         "config",
         &format!("branch.{}.merge", branch_name),
         "refs/pull/99/head", // Different PR!
+    ]);
+
+    // Set up GitHub URL and redirect (like test_switch_pr_fork)
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
     ]);
 
     // gh api repos/{owner}/{repo}/pulls/{number} format
@@ -1823,13 +1862,52 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
 }
 
 /// Test fork PR where branch exists but has no tracking config
+/// Uses prefixed branch name `contributor/feature-fix` to avoid conflict
 #[rstest]
 fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a PR ref on the remote
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
     // Create the branch without any tracking config
-    // Branch name matches headRefName (no owner prefix) so git push works
     let branch_name = "feature-fix";
     repo.run_git(&["branch", branch_name, "main"]);
     // No config set - branch exists but doesn't track anything
+
+    // Set up GitHub URL and redirect (like test_switch_pr_fork)
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
 
     // gh api repos/{owner}/{repo}/pulls/{number} format
     let gh_response = r#"{
@@ -1855,6 +1933,151 @@ fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
         configure_mock_gh_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_existing_no_tracking", cmd);
+    });
+}
+
+/// Test fork PR where prefixed branch already exists and tracks the same PR
+/// Should reuse the existing prefixed branch
+#[rstest]
+fn test_switch_pr_fork_prefixed_exists_same_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create the unprefixed branch (simulating existing local branch)
+    repo.run_git(&["branch", "feature-fix", "main"]);
+
+    // Create the prefixed branch with tracking config for THIS PR
+    let prefixed_branch = "contributor/feature-fix";
+    repo.run_git(&["branch", prefixed_branch, "main"]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.remote", prefixed_branch),
+        "origin",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.merge", prefixed_branch),
+        "refs/pull/42/head", // Same PR
+    ]);
+
+    // Create the worktree for the prefixed branch
+    // Use "repo." prefix to match the test repo's directory naming convention
+    let worktree_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("repo.contributor-feature-fix");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        worktree_path.to_str().unwrap(),
+        prefixed_branch,
+    ]);
+
+    // Set up GitHub URL
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_fork_prefixed_exists_same_pr", cmd);
+    });
+}
+
+/// Test fork PR where prefixed branch exists but tracks different PR (should error)
+#[rstest]
+fn test_switch_pr_fork_prefixed_exists_different_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create the unprefixed branch (simulating existing local branch)
+    repo.run_git(&["branch", "feature-fix", "main"]);
+
+    // Create the prefixed branch with tracking config for a DIFFERENT PR
+    let prefixed_branch = "contributor/feature-fix";
+    repo.run_git(&["branch", prefixed_branch, "main"]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.remote", prefixed_branch),
+        "origin",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.merge", prefixed_branch),
+        "refs/pull/99/head", // Different PR!
+    ]);
+
+    // Set up GitHub URL
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_fork_prefixed_exists_different_pr", cmd);
     });
 }
 
@@ -2556,5 +2779,72 @@ fn test_switch_mr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
         configure_mock_glab_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_unknown_error", cmd);
+    });
+}
+
+/// Set up a minimal bin directory with only git (no gh/glab).
+///
+/// Creates a temporary directory with a symlink to git, excluding gh/glab.
+/// Returns the path to use as PATH.
+/// Create a minimal bin directory with only git, excluding gh/glab.
+/// Returns None on Windows where this approach doesn't work reliably.
+#[cfg(unix)]
+fn setup_minimal_bin_without_cli(repo: &TestRepo) -> Option<std::path::PathBuf> {
+    let minimal_bin = repo.root_path().join("minimal-bin");
+    fs::create_dir_all(&minimal_bin).unwrap();
+
+    // Find git binary using the which crate (cross-platform)
+    let git_path = which::which("git").expect("git must be installed to run tests");
+
+    // Symlink git into our minimal bin directory
+    std::os::unix::fs::symlink(&git_path, minimal_bin.join("git")).unwrap();
+    Some(minimal_bin)
+}
+
+/// On Windows, git requires its entire installation directory to function,
+/// so we can't easily create a minimal PATH with just git. Skip these tests.
+#[cfg(windows)]
+fn setup_minimal_bin_without_cli(_repo: &TestRepo) -> Option<std::path::PathBuf> {
+    None
+}
+
+/// Configure PATH to exclude gh/glab, keeping only git.
+///
+/// This simulates the "CLI not installed" scenario.
+fn configure_cli_not_installed_env(cmd: &mut std::process::Command, minimal_bin: &Path) {
+    cmd.env("PATH", minimal_bin);
+}
+
+/// Test pr: when gh CLI is not installed
+#[rstest]
+fn test_switch_pr_gh_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
+    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
+        // Symlinks not available (Windows without Developer Mode)
+        eprintln!("Skipping test: symlinks not available on this system");
+        return;
+    };
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_cli_not_installed_env(&mut cmd, &minimal_bin);
+        assert_cmd_snapshot!("switch_pr_gh_not_installed", cmd);
+    });
+}
+
+/// Test mr: when glab CLI is not installed
+#[rstest]
+fn test_switch_mr_glab_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
+    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
+        // Symlinks not available (Windows without Developer Mode)
+        eprintln!("Skipping test: symlinks not available on this system");
+        return;
+    };
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_cli_not_installed_env(&mut cmd, &minimal_bin);
+        assert_cmd_snapshot!("switch_mr_glab_not_installed", cmd);
     });
 }

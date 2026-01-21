@@ -27,6 +27,7 @@
 //! - `base.repo.owner.login`, `base.repo.name` — target repo (where PR refs live)
 //! - `html_url` — PR web URL
 
+use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::{Context, bail};
@@ -135,11 +136,7 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
         Ok(output) => output,
         Err(e) => {
             // Check if gh is not installed (OS error for command not found)
-            let error_str = e.to_string();
-            if error_str.contains("No such file")
-                || error_str.contains("not found")
-                || error_str.contains("cannot find")
-            {
+            if e.kind() == ErrorKind::NotFound {
                 bail!("GitHub CLI (gh) not installed; install from https://cli.github.com/");
             }
             return Err(anyhow::Error::from(e).context("Failed to run gh api"));
@@ -266,6 +263,17 @@ pub fn local_branch_name(pr: &PrInfo) -> String {
     pr.head_ref_name.clone()
 }
 
+/// Generate a prefixed local branch name for a fork PR when the unprefixed name conflicts.
+///
+/// Returns `<head_owner>/<head_ref_name>` (e.g., `contributor/main`).
+///
+/// This is used when the PR's branch name conflicts with an existing local branch.
+/// Note: `git push` won't work with this naming because the local and remote
+/// branch names don't match. Users must push manually with explicit refspecs.
+pub fn prefixed_local_branch_name(pr: &PrInfo) -> String {
+    format!("{}/{}", pr.head_owner, pr.head_ref_name)
+}
+
 /// Get the git protocol preference from `gh` (GitHub CLI).
 ///
 /// Returns `true` for SSH if `gh config get git_protocol` returns "ssh".
@@ -369,6 +377,24 @@ mod tests {
             url: "https://github.com/owner/repo/pull/101".to_string(),
         };
         assert_eq!(local_branch_name(&pr), "feature-auth");
+    }
+
+    #[test]
+    fn test_prefixed_local_branch_name() {
+        // When the fork's branch name conflicts with a local branch,
+        // we use owner/branch format as a fallback (push won't work)
+        let pr = PrInfo {
+            number: 101,
+            head_ref_name: "main".to_string(),
+            head_owner: "contributor".to_string(),
+            head_repo: "repo".to_string(),
+            base_owner: "owner".to_string(),
+            base_repo: "repo".to_string(),
+            is_cross_repository: true,
+            host: "github.com".to_string(),
+            url: "https://github.com/owner/repo/pull/101".to_string(),
+        };
+        assert_eq!(prefixed_local_branch_name(&pr), "contributor/main");
     }
 
     #[test]

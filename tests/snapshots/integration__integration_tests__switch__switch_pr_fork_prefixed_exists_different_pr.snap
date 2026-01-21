@@ -30,14 +30,11 @@ info:
     WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
 [36m◎[39m [36mFetching PR #42...[39m
-[33m▲[39m [33mUsing prefixed branch name [1mcontributor/feature-fix[22m due to name conflict[39m
-[2m↳[22m [2mPush to fork is not supported with prefixed branches; feedback welcome at https://github.com/max-sixty/worktrunk/issues/714[22m
-[32m✓[39m [32mCreated branch [1mcontributor/feature-fix[22m (tracking [1mPR #42[22m) and worktree @ [1m_REPO_.contributor-feature-fix[22m[39m
-[33m▲[39m [33mCannot change directory — shell integration not installed[39m
-[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
+[31m✗[39m [31mBranch [1mcontributor/feature-fix[22m exists but doesn't track PR #42[39m
+[2m↳[22m [2mTo free the name, run [90mgit branch -m -- contributor/feature-fix contributor/feature-fix-old[39m[22m

@@ -36,8 +36,6 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mFetching PR #42...[39m
-[33m▲[39m [33mUsing prefixed branch name [1mcontributor/feature-fix[22m due to name conflict[39m
-[2m↳[22m [2mPush to fork is not supported with prefixed branches; feedback welcome at https://github.com/max-sixty/worktrunk/issues/714[22m
-[32m✓[39m [32mCreated branch [1mcontributor/feature-fix[22m (tracking [1mPR #42[22m) and worktree @ [1m_REPO_.contributor-feature-fix[22m[39m
-[33m▲[39m [33mCannot change directory — shell integration not installed[39m
+[2m○[22m Branch [1mcontributor/feature-fix[22m already configured for PR #42
+[33m▲[39m [33mWorktree for [1mcontributor/feature-fix[22m @ [1m_REPO_.contributor-feature-fix[22m, but cannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
