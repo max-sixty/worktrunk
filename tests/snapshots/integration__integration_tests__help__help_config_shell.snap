@@ -25,18 +25,18 @@ exit_code: 0
 ----- stderr -----
 wt config shell - Shell integration setup
 
-Usage: [1m[36mwt config shell[0m [36m[OPTIONS][0m [36m<COMMAND>
+Usage: [1m[36mwt config shell[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
-[1m[32mCommands:
+[1m[32mCommands:[0m
   [1m[36minit[0m        Generate shell integration code
   [1m[36minstall[0m     Write shell integration to config files
   [1m[36muninstall[0m   Remove shell integration from config files
   [1m[36mshow-theme[0m  Show output theme samples
 
-[1m[32mOptions:
+[1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m  Print help
 
-[1m[32mGlobal Options:
+[1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command
       [1m[36m--config[0m[36m [0m[36m<path>[0m  User config file path
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: hooks, templates; -vv: debug report)

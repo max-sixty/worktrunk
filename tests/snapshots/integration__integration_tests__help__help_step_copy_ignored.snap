@@ -1,0 +1,132 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - step
+    - copy-ignored
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt step copy-ignored - Copy gitignored files to another worktree
+
+Copies gitignored files to another worktree. By default copies all gitignored files; use [1m.worktreeinclude[0m to limit what gets copied. Useful in hooks to copy build caches and dependencies to new worktrees. Skips symlinks and existing files.
+
+Usage: [1m[36mwt step copy-ignored[0m [36m[OPTIONS]
+
+[1m[32mOptions:
+      [1m[36m--from[0m[36m [0m[36m<FROM>
+          Source worktree branch
+          
+          Defaults to main worktree.
+
+      [1m[36m--to[0m[36m [0m[36m<TO>
+          Destination worktree branch
+          
+          Defaults to current worktree.
+
+      [1m[36m--dry-run
+          Show what would be copied
+
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+Git worktrees share the repository but not untracked files. This command copies gitignored files to another worktree, eliminating cold starts.
+
+[1m[32mSetup
+
+Add to the project config:
+
+  [2m# .config/wt.toml
+  [2m[post-start]
+  [2mcopy = "wt step copy-ignored"
+
+[1m[32mWhat gets copied
+
+All gitignored files are copied by default. Tracked files are never touched.
+
+To limit what gets copied, create [2m.worktreeinclude[0m with gitignore-style patterns. Files must be [1mboth[0m gitignored [1mand[0m in [2m.worktreeinclude[0m:
+
+  [2m# .worktreeinclude
+  [2m.env
+  [2mnode_modules/
+  [2mtarget/
+
+[1m[32mCommon patterns
+
+         Type                           Patterns                    
+   ───────────────── ────────────────────────────────────────────── 
+   Dependencies      node_modules/, .venv/, target/, vendor/, Pods/ 
+   Build caches      .cache/, .next/, .parcel-cache/, .turbo/       
+   Generated assets  Images, ML models, binaries too large for git  
+   Environment files .env (if not generated per-worktree)           
+
+[1m[32mFeatures
+
+- Uses copy-on-write (reflink) when available for space-efficient copies
+- Handles nested [2m.gitignore[0m files, global excludes, and [2m.git/info/exclude
+- Skips existing files (safe to re-run)
+- Skips [2m.git[0m entries and other worktrees
+
+[1m[32mPerformance
+
+Reflink copies share disk blocks until modified — no data is actually copied. For a 14GB [2mtarget/[0m directory:
+
+              Command            Time 
+   ───────────────────────────── ──── 
+   cp -R (full copy)             2m   
+   cp -Rc / wt step copy-ignored 20s  
+
+Uses per-file reflink (like [2mcp -Rc[0m) — copy time scales with file count.
+
+Use the [2mpost-start[0m hook so the copy runs in the background. Use [2mpost-create[0m instead if subsequent hooks or [2m--execute[0m command need the copied files immediately.
+
+[1m[32mLanguage-specific notes
+
+[32mRust
+
+The [2mtarget/[0m directory is huge (often 1-10GB). Copying with reflink cuts first build from ~68s to ~3s by reusing compiled dependencies.
+
+[32mNode.js
+
+[2mnode_modules/[0m is large but mostly static. If the project has no native dependencies, symlinks are even faster:
+
+  [2m[post-create]
+  [2mdeps = "ln -sf {{ primary_worktree_path }}/node_modules ."
+
+[32mPython
+
+Virtual environments contain absolute paths and can't be copied. Use [2muv sync[0m instead — it's fast enough that copying isn't worth it.
+
+[1m[32mBehavior vs Claude Code on desktop
+
+The [2m.worktreeinclude[0m pattern is shared with Claude Code on desktop, which copies matching files when creating worktrees. Differences:
+
+- worktrunk copies all gitignored files by default; Claude Code requires [2m.worktreeinclude
+- worktrunk uses copy-on-write for large directories like [2mtarget/[0m — potentially 30x faster on macOS, 6x on Linux
+- worktrunk runs as a configurable hook in the worktree lifecycle

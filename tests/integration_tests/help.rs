@@ -19,9 +19,6 @@ use rstest::rstest;
 fn snapshot_help(test_name: &str, args: &[&str]) {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
-    // Remove trailing ANSI reset codes at end of lines for cross-platform consistency
-    settings.add_filter(r"\x1b\[0m$", "");
-    settings.add_filter(r"\x1b\[0m\n", "\n");
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.args(args);
@@ -125,9 +122,6 @@ fn test_help_md_subcommand() {
 fn test_help_list_narrow_terminal() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
-    // Remove trailing ANSI reset codes for cross-platform consistency
-    settings.add_filter(r"\x1b\[0m$", "");
-    settings.add_filter(r"\x1b\[0m\n", "\n");
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.env("COLUMNS", "80");
@@ -156,9 +150,6 @@ fn test_nested_subcommand_suggestion(
 ) {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
-    // Remove trailing ANSI reset codes for cross-platform consistency
-    settings.add_filter(r"\x1b\[0m$", "");
-    settings.add_filter(r"\x1b\[0m\n", "\n");
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.arg(subcommand);

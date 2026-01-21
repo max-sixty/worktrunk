@@ -1,0 +1,53 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - hook
+    - show
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt hook show - Show configured hooks
+
+Lists user and project hooks. Project hooks show approval status (❓ = needs approval).
+
+Usage: [1m[36mwt hook show[0m [36m[OPTIONS][0m [36m[HOOK_TYPE]
+
+[1m[32mArguments:
+  [36m[HOOK_TYPE]
+          Hook type to show (default: all)
+          
+          [possible values: post-create, post-start, post-switch, pre-commit, pre-merge, post-merge, pre-remove, post-remove]
+
+[1m[32mOptions:
+      [1m[36m--expanded
+          Show expanded commands with current variables
+
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Verbose output (-v: hooks, templates; -vv: debug report)

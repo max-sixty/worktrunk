@@ -24,13 +24,13 @@ exit_code: 0
 ----- stderr -----
 wt list - List worktrees and their status
 
-Usage: [1m[36mwt list[0m [36m[OPTIONS]
-       [1m[36mwt list[0m [36m<COMMAND>
+Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
+       [1m[36mwt list[0m [36m<COMMAND>[0m
 
-[1m[32mCommands:
+[1m[32mCommands:[0m
   [1m[36mstatusline[0m  Single-line status for shell prompts
 
-[1m[32mOptions:
+[1m[32mOptions:[0m
       [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m  Output format (table, json) [default: table]
       [1m[36m--branches[0m         Include branches without worktrees
       [1m[36m--remotes[0m          Include remote branches
@@ -38,7 +38,7 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS]
       [1m[36m--progressive[0m      Show fast info immediately, update with slow info
   [1m[36m-h[0m, [1m[36m--help[0m             Print help (see more with '--help')
 
-[1m[32mGlobal Options:
+[1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command
       [1m[36m--config[0m[36m [0m[36m<path>[0m  User config file path
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: hooks, templates; -vv: debug report)

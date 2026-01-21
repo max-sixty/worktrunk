@@ -1,0 +1,416 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - hook
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt hook - Run configured hooks
+
+Usage: [1m[36mwt hook[0m [36m[OPTIONS][0m [36m<COMMAND>
+
+[1m[32mCommands:
+  [1m[36mshow[0m         Show configured hooks
+  [1m[36mpost-create[0m  Run post-create hooks
+  [1m[36mpost-start[0m   Run post-start hooks
+  [1m[36mpost-switch[0m  Run post-switch hooks
+  [1m[36mpre-commit[0m   Run pre-commit hooks
+  [1m[36mpre-merge[0m    Run pre-merge hooks
+  [1m[36mpost-merge[0m   Run post-merge hooks
+  [1m[36mpre-remove[0m   Run pre-remove hooks
+  [1m[36mpost-remove[0m  Run post-remove hooks
+  [1m[36mapprovals[0m    Manage command approvals
+
+[1m[32mOptions:
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+Hooks are shell commands that run at key points in the worktree lifecycle — automatically during [2mwt switch[0m, [2mwt merge[0m, & [2mwt remove[0m, or on demand via [2mwt hook <type>[0m. Both user ([2m~/.config/worktrunk/config.toml[0m) and project ([2m.config/wt.toml[0m) hooks are supported.
+
+[1m[32mHook types
+
+      Hook                When               Blocking     Fail-fast 
+   ─────────── ────────────────────────── ─────────────── ───────── 
+   post-start  After worktree created     No (background) No        
+   post-create After worktree created     Yes             No        
+   post-switch After every switch         No (background) No        
+   pre-commit  Before commit during merge Yes             Yes       
+   pre-merge   Before merging to target   Yes             Yes       
+   post-merge  After successful merge     Yes             No        
+   pre-remove  Before worktree removed    Yes             Yes       
+   post-remove After worktree removed     No (background) No        
+
+[1mBlocking[0m: Command waits for hook to complete before continuing.
+[1mFail-fast[0m: First failure aborts the operation.
+
+Background hooks show a single-line summary by default. Use [2m-v[0m to see expanded command details.
+
+[32mpost-start
+
+Dev servers, long builds, file watchers, copying caches. Output logged to [2m.git/wt-logs/{branch}-{source}-post-start-{name}.log[0m.
+
+  [2m[post-start]
+  [2mcopy = "wt step copy-ignored"
+  [2mserver = "npm run dev -- --port {{ branch | hash_port }}"
+
+[32mpost-create
+
+Tasks that must complete before [2mpost-start[0m hooks or [2m--execute[0m run: dependency installation, environment file generation.
+
+  [2m[post-create]
+  [2minstall = "npm ci"
+  [2menv = "echo 'PORT={{ branch | hash_port }}' > .env.local"
+
+[32mpost-switch
+
+Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current. Output logged to [2m.git/wt-logs/{branch}-{source}-post-switch-{name}.log[0m.
+
+  [2m[post-switch]
+  [2mtmux = "[ -n \"$TMUX\" ] && tmux rename-window '{{ branch | sanitize }}'"
+
+[32mpre-commit
+
+Formatters, linters, type checking — runs during [2mwt merge[0m before the squash commit.
+
+  [2m[pre-commit]
+  [2mformat = "cargo fmt -- --check"
+  [2mlint = "cargo clippy -- -D warnings"
+
+[32mpre-merge
+
+Tests, security scans, build verification — runs after rebase, before merge to target.
+
+  [2m[pre-merge]
+  [2mtest = "cargo test"
+  [2mbuild = "cargo build --release"
+
+[32mpost-merge
+
+Deployment, notifications, installing updated binaries. Runs in the target branch worktree if it exists, otherwise the main worktree.
+
+  [2mpost-merge = "cargo install --path ."
+
+[32mpre-remove
+
+Cleanup tasks before worktree is deleted, saving test artifacts, backing up state. Runs in the worktree being removed, with access to worktree files.
+
+  [2m[pre-remove]
+  [2marchive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/null || true"
+
+[32mpost-remove
+
+Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. All template variables reference the removed worktree, so cleanup scripts can identify resources to clean up. Output logged to [2m.git/wt-logs/{branch}-{source}-post-remove-{name}.log[0m.
+
+  [2m[post-remove]
+  [2mkill-server = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
+  [2mremove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
+
+During [2mwt merge[0m, hooks run in this order: pre-commit → pre-merge → pre-remove → post-remove → post-merge. See [2mwt merge[0m for the complete pipeline.
+
+[1m[32mSecurity
+
+Project commands require approval on first run:
+
+  [2m▲ repo needs approval to execute 3 commands:
+  [2m
+  [2m○ post-create install:
+  [2m   echo 'Installing dependencies...'
+  [2m
+  [2m❯ Allow and remember? [y/N]
+
+- Approvals are saved to user config ([2m~/.config/worktrunk/config.toml[0m)
+- If a command changes, new approval is required
+- Use [2m--yes[0m to bypass prompts (useful for CI/automation)
+- Use [2m--no-verify[0m to skip hooks
+
+Manage approvals with [2mwt hook approvals add[0m and [2mwt hook approvals clear[0m.
+
+[1m[32mConfiguration
+
+Hooks can be defined in two places: project config ([2m.config/wt.toml[0m) for repository-specific automation, or user config ([2m~/.config/worktrunk/config.toml[0m) for personal automation across all repositories.
+
+[32mProject hooks
+
+Project hooks are defined in [2m.config/wt.toml[0m. They can be a single command or multiple named commands:
+
+  [2m# Single command (string)
+  [2mpost-create = "npm install"
+  [2m
+  [2m# Multiple commands (table) — run sequentially in declaration order
+  [2m[pre-merge]
+  [2mtest = "cargo test"
+  [2mbuild = "cargo build --release"
+
+[32mUser hooks
+
+Define hooks in [2m~/.config/worktrunk/config.toml[0m to run for all repositories. User hooks run before project hooks and don't require approval.
+
+  [2m# ~/.config/worktrunk/config.toml
+  [2m[post-create]
+  [2msetup = "echo 'Setting up worktree...'"
+  [2m
+  [2m[pre-merge]
+  [2mnotify = "notify-send 'Merging {{ branch }}'"
+
+User hooks support the same hook types and template variables as project hooks.
+
+[1mKey differences from project hooks:
+
+       Aspect        Project hooks             User hooks            
+   ─────────────── ───────────────── ─────────────────────────────── 
+   Location        .config/wt.toml   ~/.config/worktrunk/config.toml 
+   Scope           Single repository All repositories                
+   Approval        Required          Not required                    
+   Execution order After user hooks  Before project hooks            
+
+Skip hooks with [2m--no-verify[0m. To run a specific hook when user and project both define the same name, use [2muser:name[0m or [2mproject:name[0m syntax.
+
+[1mUse cases:
+- Personal notifications or logging
+- Editor/IDE integration
+- Repository-agnostic setup tasks
+- Filtering by repository using JSON context
+
+[1mFiltering by repository:
+
+User hooks receive JSON context on stdin, enabling repository-specific behavior:
+
+  [2m# ~/.config/worktrunk/config.toml
+  [2m[post-create]
+  [2mgitlab-setup = """
+  [2mpython3 -c '
+  [2mimport json, sys, subprocess
+  [2mctx = json.load(sys.stdin)
+  [2mif "gitlab" in ctx.get("remote", ""):
+  [2m    subprocess.run(["glab", "mr", "create", "--fill"])
+  [2m'
+  [2m"""
+
+[32mTemplate variables
+
+Hooks can use template variables that expand at runtime:
+
+            Variable                                   Description                          
+   ─────────────────────────── ──────────────────────────────────────────────────────────── 
+   {{ repo }}                  Repository directory name                                    
+   {{ repo_path }}             Absolute path to repository root                             
+   {{ branch }}                Branch name                                                  
+   {{ worktree_name }}         Worktree directory name                                      
+   {{ worktree_path }}         Absolute worktree path                                       
+   {{ primary_worktree_path }} Main worktree path (for bare repos: default branch worktree) 
+   {{ default_branch }}        Default branch name                                          
+   {{ commit }}                Full HEAD commit SHA                                         
+   {{ short_commit }}          Short HEAD commit SHA (7 chars)                              
+   {{ remote }}                Primary remote name                                          
+   {{ remote_url }}            Remote URL                                                   
+   {{ upstream }}              Upstream tracking branch (if set)                            
+   {{ target }}                Target branch (merge hooks only)                             
+   {{ base }}                  Base branch (creation hooks only)                            
+   {{ base_worktree_path }}    Base branch worktree (creation hooks only)                   
+
+Some variables may not be defined: [2mupstream[0m is only set when the branch tracks a remote; [2mtarget[0m, [2mbase[0m, and [2mbase_worktree_path[0m are hook-specific. Using an undefined variable directly errors — use conditionals for optional behavior:
+
+  [2m[post-create]
+  [2m# Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature origin/feature)
+  [2msync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
+
+[32mWorktrunk filters
+
+Templates support Jinja2 filters for transforming values:
+
+     Filter             Example                                       Description                             
+   ─────────── ────────────────────────── ─────────────────────────────────────────────────────────────────── 
+   sanitize    {{ branch | sanitize }}    Replace / and \ with -                                              
+   sanitize_db {{ branch | sanitize_db }} Database-safe identifier with hash suffix ([a-z0-9_], max 63 chars) 
+   hash_port   {{ branch | hash_port }}   Hash to port 10000-19999                                            
+
+The [2msanitize[0m filter makes branch names safe for filesystem paths. The [2msanitize_db[0m filter produces database-safe identifiers (lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words). The [2mhash_port[0m filter is useful for running dev servers on unique ports per worktree:
+
+  [2m[post-start]
+  [2mdev = "npm run dev -- --host {{ branch }}.lvh.me --port {{ branch | hash_port }}"
+
+Hash any string, including concatenations:
+
+  [2m# Unique port per repo+branch combination
+  [2mdev = "npm run dev --port {{ (repo ~ '-' ~ branch) | hash_port }}"
+
+[32mWorktrunk functions
+
+Templates also support functions for dynamic lookups:
+
+              Function                            Example                              Description               
+   ─────────────────────────────── ───────────────────────────────────── ─────────────────────────────────────── 
+   worktree_path_of_branch(branch) {{ worktree_path_of_branch("main") }} Look up the path of a branch's worktree 
+
+The [2mworktree_path_of_branch[0m function returns the filesystem path of a worktree given a branch name, or an empty string if no worktree exists for that branch. This is useful for referencing files in other worktrees:
+
+  [2m[post-create]
+  [2m# Copy config from main worktree
+  [2msetup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"
+
+[32mJSON context
+
+Hooks also receive context as JSON on stdin, enabling hooks in any language:
+
+  [2mimport json, sys
+  [2mctx = json.load(sys.stdin)
+  [2mprint(f"Setting up {ctx['repo']} on branch {ctx['branch']}")
+
+The JSON includes all template variables plus [2mhook_type[0m and [2mhook_name[0m.
+
+[1m[32mRunning hooks manually
+
+[2mwt hook <type>[0m runs hooks on demand — useful for testing during development, running in CI pipelines, or re-running after a failure.
+
+  [2mwt hook pre-merge              # Run all pre-merge hooks
+  [2mwt hook pre-merge test         # Run hooks named "test" from both sources
+  [2mwt hook pre-merge user:        # Run all user hooks
+  [2mwt hook pre-merge project:     # Run all project hooks
+  [2mwt hook pre-merge user:test    # Run only user's "test" hook
+  [2mwt hook pre-merge project:test # Run only project's "test" hook
+  [2mwt hook pre-merge --yes        # Skip approval prompts (for CI)
+  [2mwt hook post-create --var branch=feature/test  # Override template variable
+
+The [2muser:[0m and [2mproject:[0m prefixes filter by source. Use [2muser:[0m or [2mproject:[0m alone to run all hooks from that source, or [2muser:name[0m / [2mproject:name[0m to run a specific hook.
+
+The [2m--var KEY=VALUE[0m flag overrides built-in template variables — useful for testing hooks with different contexts without switching to that context.
+
+[1m[32mDesigning effective hooks
+
+[32mpost-start vs post-create
+
+Both run when creating a worktree. The difference:
+
+      Hook           Execution                                 Best for                            
+   ─────────── ───────────────────── ───────────────────────────────────────────────────────────── 
+   post-start  Background, parallel  Long-running tasks that don't block worktree creation         
+   post-create Blocks until complete Tasks the developer needs before working (dependency install) 
+
+Many tasks work well in [2mpost-start[0m — they'll likely be ready by the time they're needed, especially when the fallback is recompiling. If unsure, prefer [2mpost-start[0m for faster worktree creation.
+
+Background processes spawned by [2mpost-start[0m outlive the worktree — pair them with [2mpost-remove[0m hooks to clean up. See Dev servers and Databases for examples.
+
+[32mCopying untracked files
+
+Git worktrees share the repository but not untracked files. [2mwt step copy-ignored[0m copies gitignored files between worktrees:
+
+  [2m[post-start]
+  [2mcopy = "wt step copy-ignored"
+
+Use [2mpost-create[0m instead if subsequent hooks or [2m--execute[0m command need the copied files immediately.
+
+[32mDev servers
+
+Run a dev server per worktree on a deterministic port using [2mhash_port[0m:
+
+  [2m[post-start]
+  [2mserver = "npm run dev -- --port {{ branch | hash_port }}"
+  [2m
+  [2m[post-remove]
+  [2mserver = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
+
+The port is stable across machines and restarts — [2mfeature-api[0m always gets the same port. Show it in [2mwt list[0m:
+
+  [2m[list]
+  [2murl = "http://localhost:{{ branch | hash_port }}"
+
+For subdomain-based routing (useful for cookies/CORS), use [2mlvh.me[0m which resolves to 127.0.0.1:
+
+  [2m[post-start]
+  [2mserver = "npm run dev -- --host {{ branch | sanitize }}.lvh.me --port {{ branch | hash_port }}"
+
+[32mDatabases
+
+Each worktree can have its own database. Docker containers get unique names and ports:
+
+  [2m[post-start]
+  [2mdb = """
+  [2mdocker run -d --rm \
+  [2m  --name {{ repo }}-{{ branch | sanitize }}-postgres \
+  [2m  -p {{ ('db-' ~ branch) | hash_port }}:5432 \
+  [2m  -e POSTGRES_DB={{ branch | sanitize_db }} \
+  [2m  -e POSTGRES_PASSWORD=dev \
+  [2m  postgres:16
+  [2m"""
+  [2m
+  [2m[post-remove]
+  [2mdb-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
+
+The [2m('db-' ~ branch)[0m concatenation hashes differently than plain [2mbranch[0m, so database and dev server ports don't collide.
+Jinja2's operator precedence has pipe [2m|[0m with higher precedence than concatenation [2m~[0m, meaning expressions need parentheses to filter concatenated values.
+
+Generate [2m.env.local[0m with the connection string:
+
+  [2m[post-create]
+  [2menv = """
+  [2mcat > .env.local << EOF
+  [2mDATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}
+  [2mDEV_PORT={{ branch | hash_port }}
+  [2mEOF
+  [2m"""
+
+[32mProgressive validation
+
+Quick checks before commit, thorough validation before merge:
+
+  [2m[pre-commit]
+  [2mlint = "npm run lint"
+  [2mtypecheck = "npm run typecheck"
+  [2m
+  [2m[pre-merge]
+  [2mtest = "npm test"
+  [2mbuild = "npm run build"
+
+[32mTarget-specific behavior
+
+Different actions for production vs staging:
+
+  [2mpost-merge = """
+  [2mif [ "{{ target }}" = "main" ]; then
+  [2m    npm run deploy:production
+  [2melif [ "{{ target }}" = "staging" ]; then
+  [2m    npm run deploy:staging
+  [2mfi
+  [2m"""
+
+[32mPython virtual environments
+
+Use [2muv sync[0m to recreate virtual environments (or [2mpython -m venv .venv && .venv/bin/pip install -r requirements.txt[0m for pip-based projects):
+
+  [2m[post-create]
+  [2minstall = "uv sync"
+
+For copying dependencies and caches between worktrees, see [2mwt step copy-ignored[0m.
+
+[1m[32mSee also
+
+- [2mwt merge[0m — Runs hooks automatically during merge
+- [2mwt switch[0m — Runs post-create/post-start hooks on [2m--create
+- [2mwt config[0m — Manage hook approvals

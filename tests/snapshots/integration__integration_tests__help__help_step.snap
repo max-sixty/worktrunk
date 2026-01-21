@@ -1,0 +1,78 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - step
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt step - Run individual operations
+
+The building blocks of [1mwt merge[0m — commit, squash, rebase, push — plus standalone utilities.
+
+Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
+
+[1m[32mCommands:
+  [1m[36mcommit[0m        Commit changes with LLM commit message
+  [1m[36msquash[0m        Squash commits since branching
+  [1m[36mpush[0m          Fast-forward target to current branch
+  [1m[36mrebase[0m        Rebase onto target
+  [1m[36mcopy-ignored[0m  Copy gitignored files to another worktree
+  [1m[36mfor-each[0m      [experimental] Run command in each worktree
+
+[1m[32mOptions:
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+[1m[32mExamples
+
+Commit with LLM-generated message:
+
+  [2mwt step commit
+
+Manual merge workflow with review between steps:
+
+  [2mwt step commit
+  [2mwt step squash
+  [2mwt step rebase
+  [2mwt step push
+
+[1m[32mOperations
+
+- [2mcommit[0m — Stage and commit with LLM-generated message
+- [2msquash[0m — Squash all branch commits into one with LLM-generated message
+- [2mrebase[0m — Rebase onto target branch
+- [2mpush[0m — Fast-forward target to current branch
+- [2mcopy-ignored[0m — Copy gitignored files between worktrees
+- [2mfor-each[0m — [experimental] Run a command in every worktree
+
+[1m[32mSee also
+
+- [2mwt merge[0m — Runs commit → squash → rebase → hooks → push → cleanup automatically
+- [2mwt hook[0m — Run configured hooks

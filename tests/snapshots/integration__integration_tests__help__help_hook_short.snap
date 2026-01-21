@@ -1,0 +1,47 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - hook
+    - "-h"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt hook - Run configured hooks
+
+Usage: [1m[36mwt hook[0m [36m[OPTIONS][0m [36m<COMMAND>
+
+[1m[32mCommands:
+  [1m[36mshow[0m         Show configured hooks
+  [1m[36mpost-create[0m  Run post-create hooks
+  [1m[36mpost-start[0m   Run post-start hooks
+  [1m[36mpost-switch[0m  Run post-switch hooks
+  [1m[36mpre-commit[0m   Run pre-commit hooks
+  [1m[36mpre-merge[0m    Run pre-merge hooks
+  [1m[36mpost-merge[0m   Run post-merge hooks
+  [1m[36mpre-remove[0m   Run pre-remove hooks
+  [1m[36mpost-remove[0m  Run post-remove hooks
+  [1m[36mapprovals[0m    Manage command approvals
+
+[1m[32mOptions:
+  [1m[36m-h[0m, [1m[36m--help[0m  Print help (see more with '--help')
+
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command
+      [1m[36m--config[0m[36m [0m[36m<path>[0m  User config file path
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: hooks, templates; -vv: debug report)

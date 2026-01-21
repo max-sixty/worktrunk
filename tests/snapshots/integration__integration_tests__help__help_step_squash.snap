@@ -1,0 +1,96 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - step
+    - squash
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt step squash - Squash commits since branching
+
+Stages working tree changes, squashes all commits since diverging from target into one, generates message with LLM.
+
+Usage: [1m[36mwt step squash[0m [36m[OPTIONS][0m [36m[TARGET]
+
+[1m[32mArguments:
+  [36m[TARGET]
+          Target branch
+          
+          Defaults to default branch.
+
+[1m[32mOptions:
+  [1m[36m-y[0m, [1m[36m--yes
+          Skip approval prompts
+
+      [1m[36m--no-verify
+          Skip hooks
+
+      [1m[36m--stage[0m[36m [0m[36m<STAGE>
+          What to stage before committing [default: all]
+
+          Possible values:
+          - [1m[36mall[0m:     Stage everything: untracked files + unstaged tracked changes
+          - [1m[36mtracked[0m: Stage tracked changes only (like [1mgit add -u[0m)
+          - [1m[36mnone[0m:    Stage nothing, commit only what's already in the index
+
+      [1m[36m--show-prompt
+          Show prompt without running LLM
+          
+          Outputs the rendered prompt to stdout for debugging or manual piping.
+
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+Stages all changes (including untracked files), then squashes all commits since diverging from the target branch into a single commit with an LLM-generated message.
+
+[1m[32mOptions
+
+[32m`--stage`
+
+Controls what to stage before squashing:
+
+    Value                        Behavior                        
+   ─────── ───────────────────────────────────────────────────── 
+   all     Stage all changes including untracked files (default) 
+   tracked Stage only modified tracked files                     
+   none    Don't stage anything, squash only committed changes   
+
+  [2mwt step squash --stage=none
+
+Configure the default in user config:
+
+  [2m[commit]
+  [2mstage = "tracked"
+
+[32m`--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+  [2mwt step squash --show-prompt | less

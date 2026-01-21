@@ -1,0 +1,74 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - step
+    - for-each
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt step for-each - [experimental] Run command in each worktree
+
+Usage: [1m[36mwt step for-each[0m [36m[OPTIONS][0m [1m[36m--[0m [36m<ARGS>...
+
+[1m[32mArguments:
+  [36m<ARGS>...
+          Command template (see --help for all variables)
+
+[1m[32mOptions:
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.
+
+Context JSON is piped to stdin for scripts that need structured data.
+
+[1m[32mTemplate variables
+
+All variables are shell-escaped. See [2mwt hook[0m template variables for the complete list and filters.
+
+[1m[32mExamples
+
+Check status across all worktrees:
+
+  [2mwt step for-each -- git status --short
+
+Run npm install in all worktrees:
+
+  [2mwt step for-each -- npm install
+
+Use branch name in command:
+
+  [2mwt step for-each -- "echo Branch: {{ branch }}"
+
+Pull updates in worktrees with upstreams (skips others):
+
+  [2mgit fetch --prune && wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
+
+Note: This command is experimental and may change in future versions.

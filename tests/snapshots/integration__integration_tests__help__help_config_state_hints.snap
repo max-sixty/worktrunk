@@ -1,0 +1,62 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - config
+    - state
+    - hints
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt config state hints - One-time hints shown in this repo
+
+Usage: [1m[36mwt config state hints[0m [36m[OPTIONS][0m [36m[COMMAND]
+
+[1m[32mCommands:
+  [1m[36mget[0m    List hints that have been shown
+  [1m[36mclear[0m  Clear hints (re-show on next trigger)
+
+[1m[32mOptions:
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+Some hints show once per repo on first use, then are recorded in git config
+as [2mworktrunk.hints.<name> = true[0m.
+
+[1m[32mCurrent hints
+
+       Name              Trigger                             Message                     
+   ───────────── ──────────────────────── ────────────────────────────────────────────── 
+   worktree-path First wt switch --create Customize worktree locations: wt config create 
+
+[1m[32mExamples
+
+  [2mwt config state hints              # list shown hints
+  [2mwt config state hints clear        # re-show all hints
+  [2mwt config state hints clear NAME   # re-show specific hint

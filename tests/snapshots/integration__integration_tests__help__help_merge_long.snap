@@ -22,38 +22,38 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt merge - Merge current branch into target
+wt merge - Merge current branch into target[0m
 
-Squash & rebase, fast-forward target, remove the worktree.
+Squash & rebase, fast-forward target, remove the worktree.[0m
 
-Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET]
+Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
 
-[1m[32mArguments:
-  [36m[TARGET]
-          Target branch
+[1m[32mArguments:[0m
+  [36m[TARGET][0m
+          Target branch[0m
           
-          Defaults to default branch.
+          Defaults to default branch.[0m
 
-[1m[32mOptions:
-      [1m[36m--no-squash
+[1m[32mOptions:[0m
+      [1m[36m--no-squash[0m
           Skip commit squashing
 
-      [1m[36m--no-commit
+      [1m[36m--no-commit[0m
           Skip commit and squash
 
-      [1m[36m--no-rebase
+      [1m[36m--no-rebase[0m
           Skip rebase (fail if not already rebased)
 
-      [1m[36m--no-remove
+      [1m[36m--no-remove[0m
           Keep worktree after merge
 
-      [1m[36m--no-verify
+      [1m[36m--no-verify[0m
           Skip hooks
 
-  [1m[36m-y[0m, [1m[36m--yes
+  [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-      [1m[36m--stage[0m[36m [0m[36m<STAGE>
+      [1m[36m--stage[0m[36m [0m[36m<STAGE>[0m
           What to stage before committing [default: all]
 
           Possible values:
@@ -61,45 +61,45 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET]
           - [1m[36mtracked[0m: Stage tracked changes only (like [1mgit add -u[0m)
           - [1m[36mnone[0m:    Stage nothing, commit only what's already in the index
 
-  [1m[36m-h[0m, [1m[36m--help
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 Unlike [2mgit merge[0m, this merges current into target (not target into current). Similar to clicking "Merge pull request" on GitHub, but locally. Target defaults to the default branch.
 
 
-[1m[32mExamples
+[1m[32mExamples[0m
 
 Merge to the default branch:
 
-  [2mwt merge
+  [2mwt merge[0m
 
 Merge to a different branch:
 
-  [2mwt merge develop
+  [2mwt merge develop[0m
 
 Keep the worktree after merging:
 
-  [2mwt merge --no-remove
+  [2mwt merge --no-remove[0m
 
 Preserve commit history (no squash):
 
-  [2mwt merge --no-squash
+  [2mwt merge --no-squash[0m
 
 Skip committing/squashing (rebase still runs unless --no-rebase):
 
-  [2mwt merge --no-commit
+  [2mwt merge --no-commit[0m
 
-[1m[32mPipeline
+[1m[32mPipeline[0m
 
 [2mwt merge[0m runs these steps:
 
@@ -113,7 +113,7 @@ Skip committing/squashing (rebase still runs unless --no-rebase):
 
 Use [2m--no-commit[0m to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless [2m--no-rebase[0m is passed. Useful after preparing commits manually with [2mwt step[0m. Requires a clean working tree.
 
-[1m[32mLocal CI
+[1m[32mLocal CI[0m
 
 For personal projects, pre-merge hooks open up the possibility of a workflow with much faster iteration — an order of magnitude more small changes instead of fewer large ones.
 
@@ -121,11 +121,11 @@ Historically, ensuring tests ran before merging was difficult to enforce locally
 
 The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run [2mwt merge[0m, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
 
-  [2m[pre-merge]
-  [2mtest = "cargo test"
-  [2mlint = "cargo clippy"
+  [2m[pre-merge][0m
+  [2mtest = "cargo test"[0m
+  [2mlint = "cargo clippy"[0m
 
-[1m[32mSee also
+[1m[32mSee also[0m
 
 - [2mwt step[0m — Run individual operations (commit, squash, rebase, push)
 - [2mwt remove[0m — Remove worktrees without merging

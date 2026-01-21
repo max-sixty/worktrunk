@@ -1,0 +1,126 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - remove
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt remove - Remove worktree; delete branch if merged
+
+For finished feature branches. Removes the current worktree by default.
+
+Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...
+
+[1m[32mArguments:
+  [36m[BRANCHES]...
+          Branch name [default: current]
+
+[1m[32mOptions:
+      [1m[36m--no-delete-branch
+          Keep branch after removal
+
+  [1m[36m-D[0m, [1m[36m--force-delete
+          Delete unmerged branches
+
+      [1m[36m--foreground
+          Run removal in foreground (block until complete)
+
+      [1m[36m--no-verify
+          Skip hooks
+
+  [1m[36m-y[0m, [1m[36m--yes
+          Skip approval prompts
+
+  [1m[36m-f[0m, [1m[36m--force
+          Force worktree removal
+          
+          Remove worktrees even if they contain untracked files (like build artifacts). Without this flag, removal fails if untracked files exist.
+
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+[1m[32mExamples
+
+Remove current worktree:
+
+  [2mwt remove
+
+Remove specific worktrees:
+
+  [2mwt remove feature-branch
+  [2mwt remove old-feature another-branch
+
+Keep the branch:
+
+  [2mwt remove --no-delete-branch feature-branch
+
+Force-delete an unmerged branch:
+
+  [2mwt remove -D experimental
+
+[1m[32mBranch cleanup
+
+By default, branches are deleted when merging them would add nothing. This works with squash-merge and rebase workflows where commit history differs but file changes match.
+
+Worktrunk checks five conditions (in order of cost):
+
+1. [1mSame commit[0m — Branch HEAD equals the default branch. Shows [2m_[0m in [2mwt list[0m.
+2. [1mAncestor[0m — Branch is in target's history (fast-forward or rebase case). Shows [2m⊂[0m.
+3. [1mNo added changes[0m — Three-dot diff ([2mtarget...branch[0m) is empty. Shows [2m⊂[0m.
+4. [1mTrees match[0m — Branch tree SHA equals target tree SHA. Shows [2m⊂[0m.
+5. [1mMerge adds nothing[0m — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows [2m⊂[0m.
+
+The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., [2morigin/main[0m) when strictly ahead.
+
+Branches showing [2m_[0m or [2m⊂[0m are dimmed as safe to delete.
+
+[1m[32mForce flags
+
+Worktrunk has two force flags for different situations:
+
+          Flag          Scope                          When to use                         
+   ─────────────────── ──────── ────────────────────────────────────────────────────────── 
+   --force (-f)        Worktree Worktree has untracked files (build artifacts, IDE config) 
+   --force-delete (-D) Branch   Branch has unmerged commits                                
+
+  [2mwt remove feature --force       # Remove worktree with untracked files
+  [2mwt remove feature -D            # Delete unmerged branch
+  [2mwt remove feature --force -D    # Both
+
+Without [2m--force[0m, removal fails if the worktree contains untracked files. Without [2m-D[0m, removal keeps branches with unmerged changes. Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
+
+[1m[32mBackground removal
+
+Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt-logs/{branch}-remove.log[0m. Use [2m--foreground[0m to run in the foreground.
+
+[1m[32mSee also
+
+- [2mwt merge[0m — Remove worktree after merging
+- [2mwt list[0m — View all worktrees

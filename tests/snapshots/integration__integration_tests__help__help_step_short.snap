@@ -24,9 +24,9 @@ exit_code: 0
 ----- stderr -----
 wt step - Run individual operations
 
-Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
+Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
-[1m[32mCommands:
+[1m[32mCommands:[0m
   [1m[36mcommit[0m        Commit changes with LLM commit message
   [1m[36msquash[0m        Squash commits since branching
   [1m[36mpush[0m          Fast-forward target to current branch
@@ -34,10 +34,10 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
   [1m[36mcopy-ignored[0m  Copy gitignored files to another worktree
   [1m[36mfor-each[0m      [experimental] Run command in each worktree
 
-[1m[32mOptions:
+[1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m  Print help (see more with '--help')
 
-[1m[32mGlobal Options:
+[1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command
       [1m[36m--config[0m[36m [0m[36m<path>[0m  User config file path
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: hooks, templates; -vv: debug report)

@@ -1,0 +1,69 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - config
+    - shell
+    - init
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt config shell init - Generate shell integration code
+
+Usage: [1m[36mwt config shell init[0m [36m[OPTIONS][0m [36m<bash|fish|zsh|powershell>
+
+[1m[32mArguments:
+  [36m<bash|fish|zsh|powershell>
+          Shell to generate code for
+          
+          [possible values: bash, fish, zsh, powershell]
+
+[1m[32mOptions:
+      [1m[36m--cmd[0m[36m [0m[36m<CMD>
+          Command name for shell integration (defaults to binary name)
+          
+          Use this to create shell integration for an alternate command name. For example, [1m--cmd=git-wt[0m creates a [1mgit-wt[0m shell function instead of [1mwt[0m, useful on Windows where [1mwt[0m conflicts with Windows Terminal.
+
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+Outputs shell code for [2meval[0m or sourcing. Most users should run [2mwt config shell install[0m instead, which adds this automatically.
+
+[1m[32mManual setup
+
+Add one line to the shell config:
+
+Bash (~/.bashrc):
+  [2meval "$(wt config shell init bash)"
+
+Fish (~/.config/fish/config.fish):
+  [2mwt config shell init fish | source
+
+Zsh (~/.zshrc):
+  [2meval "$(wt config shell init zsh)"

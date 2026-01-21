@@ -25,39 +25,39 @@ exit_code: 0
 ----- stderr -----
 wt hook approvals - Manage command approvals
 
-Usage: [1m[36mwt hook approvals[0m [36m[OPTIONS][0m [36m<COMMAND>
+Usage: [1m[36mwt hook approvals[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
-[1m[32mCommands:
+[1m[32mCommands:[0m
   [1m[36madd[0m    Store approvals in config
   [1m[36mclear[0m  Clear approved commands from config
 
-[1m[32mOptions:
-  [1m[36m-h[0m, [1m[36m--help
+[1m[32mOptions:[0m
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 Project hooks require approval on first run to prevent untrusted projects from running arbitrary commands.
 
-[1m[32mExamples
+[1m[32mExamples[0m
 
 Pre-approve all commands for current project:
-  [2mwt hook approvals add
+  [2mwt hook approvals add[0m
 
 Clear approvals for current project:
-  [2mwt hook approvals clear
+  [2mwt hook approvals clear[0m
 
 Clear global approvals:
-  [2mwt hook approvals clear --global
+  [2mwt hook approvals clear --global[0m
 
-[1m[32mHow approvals work
+[1m[32mHow approvals work[0m
 
 Approved commands are saved to user config. Re-approval is required when the command template changes or the project moves. Use [2m--yes[0m to bypass prompts in CI.

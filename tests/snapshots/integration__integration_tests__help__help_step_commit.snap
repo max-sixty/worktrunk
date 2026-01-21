@@ -1,0 +1,94 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - step
+    - commit
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt step commit - Commit changes with LLM commit message
+
+Stages working tree changes and commits with an LLM-generated message.
+
+Usage: [1m[36mwt step commit[0m [36m[OPTIONS]
+
+[1m[32mOptions:
+  [1m[36m-y[0m, [1m[36m--yes
+          Skip approval prompts
+
+      [1m[36m--no-verify
+          Skip hooks
+
+      [1m[36m--stage[0m[36m [0m[36m<STAGE>
+          What to stage before committing [default: all]
+
+          Possible values:
+          - [1m[36mall[0m:     Stage everything: untracked files + unstaged tracked changes
+          - [1m[36mtracked[0m: Stage tracked changes only (like [1mgit add -u[0m)
+          - [1m[36mnone[0m:    Stage nothing, commit only what's already in the index
+
+      [1m[36m--show-prompt
+          Show prompt without running LLM
+          
+          Outputs the rendered prompt to stdout for debugging or manual piping.
+
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+Stages all changes (including untracked files) and commits with an LLM-generated message.
+
+[1m[32mOptions
+
+[32m`--stage`
+
+Controls what to stage before committing:
+
+    Value                         Behavior                         
+   ─────── ─────────────────────────────────────────────────────── 
+   all     Stage all changes including untracked files (default)   
+   tracked Stage only modified tracked files                       
+   none    Don't stage anything, commit only what's already staged 
+
+  [2mwt step commit --stage=tracked
+
+Configure the default in user config:
+
+  [2m[commit]
+  [2mstage = "tracked"
+
+[32m`--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+  [2m# Inspect the rendered prompt
+  [2mwt step commit --show-prompt | less
+  [2m
+  [2m# Pipe to a different LLM
+  [2mwt step commit --show-prompt | llm -m gpt-5-nano

@@ -1,0 +1,97 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - select
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt select - Interactive worktree selector
+
+Browse and switch worktrees with live preview.
+
+Usage: [1m[36mwt select[0m [36m[OPTIONS]
+
+[1m[32mOptions:
+      [1m[36m--branches
+          Include branches without worktrees
+
+      [1m[36m--remotes
+          Include remote branches
+
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+
+[1m[32mExamples
+
+Open the selector:
+
+  [2mwt select
+
+[1m[32mPreview tabs
+
+Toggle between views with number keys:
+
+1. [1mHEAD±[0m — Diff of uncommitted changes
+2. [1mlog[0m — Recent commits; commits already on the default branch have dimmed hashes
+3. [1mmain…±[0m — Diff of changes since the merge-base with the default branch
+4. [1mremote⇅[0m — Diff vs upstream tracking branch (ahead/behind)
+
+[1m[32mKeybindings
+
+        Key                Action            
+   ───────────── ─────────────────────────── 
+   ↑/↓           Navigate worktree list      
+   Enter         Switch to selected worktree 
+   Esc           Cancel                      
+   (type)        Filter worktrees            
+   1/2/3/4       Switch preview tab          
+   Alt-p         Toggle preview panel        
+   Ctrl-u/Ctrl-d Scroll preview up/down      
+
+With [2m--branches[0m, branches without worktrees are included — selecting one creates a worktree. This matches [2mwt list --branches[0m.
+
+[1m[32mConfiguration
+
+[32mPager
+
+The preview panel pipes diff output through git's pager (typically [2mless[0m or [2mdelta[0m). Override pager behavior in user config:
+
+  [2m[select]
+  [2mpager = "delta --paging=never"
+
+This is useful when the default pager doesn't render correctly in the embedded preview panel.
+
+[1m[32mSee also
+
+- [2mwt list[0m — Static table view with all worktree metadata
+- [2mwt switch[0m — Direct switching to a known target branch
+
+Available on Unix only (macOS, Linux). On Windows, use [2mwt list[0m or [2mwt switch[0m directly.

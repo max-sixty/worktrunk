@@ -26,20 +26,20 @@ exit_code: 0
 ----- stderr -----
 wt config state clear - Clear all stored state
 
-Usage: [1m[36mwt config state clear[0m [36m[OPTIONS]
+Usage: [1m[36mwt config state clear[0m [36m[OPTIONS][0m
 
-[1m[32mOptions:
-  [1m[36m-h[0m, [1m[36m--help
+[1m[32mOptions:[0m
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 Clears all stored state:

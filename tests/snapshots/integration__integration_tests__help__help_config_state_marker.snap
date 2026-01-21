@@ -26,48 +26,48 @@ exit_code: 0
 ----- stderr -----
 wt config state marker - Branch markers
 
-Usage: [1m[36mwt config state marker[0m [36m[OPTIONS][0m [36m[COMMAND]
+Usage: [1m[36mwt config state marker[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
-[1m[32mCommands:
+[1m[32mCommands:[0m
   [1m[36mget[0m    Get marker for a branch
   [1m[36mset[0m    Set marker for a branch
   [1m[36mclear[0m  Clear marker for a branch
 
-[1m[32mOptions:
-  [1m[36m-h[0m, [1m[36m--help
+[1m[32mOptions:[0m
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 Custom status text or emoji shown in the [2mwt list[0m Status column.
 
-[1m[32mDisplay
+[1m[32mDisplay[0m
 
 Markers appear at the start of the Status column:
 
-  [2mBranch    Status   Path
-  [2mmain      ^        ~/code/myproject
-  [2mfeature   🚧↑      ~/code/myproject.feature
-  [2mbugfix    🤖!↑⇡    ~/code/myproject.bugfix
+  [2mBranch    Status   Path[0m
+  [2mmain      ^        ~/code/myproject[0m
+  [2mfeature   🚧↑      ~/code/myproject.feature[0m
+  [2mbugfix    🤖!↑⇡    ~/code/myproject.bugfix[0m
 
-[1m[32mUse cases
+[1m[32mUse cases[0m
 
 - [1mWork status[0m — [2m🚧[0m WIP, [2m✅[0m ready for review, [2m🔥[0m urgent
 - [1mAgent tracking[0m — The Claude Code plugin sets markers automatically
-- [1mNotes[0m — Any short text: [2m"blocked"[0m, [2m"needs tests"
+- [1mNotes[0m — Any short text: [2m"blocked"[0m, [2m"needs tests"[0m
 
-[1m[32mStorage
+[1m[32mStorage[0m
 
 Stored in git config as [2mworktrunk.state.<branch>.marker[0m. Set directly with:
 
-  [2mgit config worktrunk.state.feature.marker '{"marker":"🚧","set_at":0}'
+  [2mgit config worktrunk.state.feature.marker '{"marker":"🚧","set_at":0}'[0m
 
 Without a subcommand, runs [2mget[0m for the current branch. For [2m--branch[0m, use [2mget --branch=NAME[0m.

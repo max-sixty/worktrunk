@@ -1,0 +1,66 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt - Git worktree management for parallel AI agent workflows
+
+Usage: [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND]
+
+[1m[32mCommands:
+  [1m[36mswitch[0m  Switch to a worktree
+  [1m[36mlist[0m    List worktrees and their status
+  [1m[36mremove[0m  Remove worktree; delete branch if merged
+  [1m[36mmerge[0m   Merge current branch into target
+  [1m[36mselect[0m  Interactive worktree selector
+  [1m[36mstep[0m    Run individual operations
+  [1m[36mhook[0m    Run configured hooks
+  [1m[36mconfig[0m  Manage user & project configs
+
+[1m[32mOptions:
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
+
+  [1m[36m-V[0m, [1m[36m--version
+          Print version
+
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+Getting started
+
+  wt switch --create feature    # Create worktree and branch
+  wt switch feature             # Switch to worktree
+  wt list                       # Show all worktrees
+  wt remove                     # Remove worktree; delete branch if merged
+
+Run [2mwt config shell install[0m to set up directory switching.
+Run [2mwt config create[0m to customize worktree locations.
+
+Docs: https://worktrunk.dev
+GitHub: https://github.com/max-sixty/worktrunk

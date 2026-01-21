@@ -25,329 +25,329 @@ exit_code: 0
 ----- stderr -----
 wt config create - Create configuration file
 
-Usage: [1m[36mwt config create[0m [36m[OPTIONS]
+Usage: [1m[36mwt config create[0m [36m[OPTIONS][0m
 
-[1m[32mOptions:
-      [1m[36m--project
+[1m[32mOptions:[0m
+      [1m[36m--project[0m
           Create project config ([1m.config/wt.toml[0m) instead of user config
 
-  [1m[36m-h[0m, [1m[36m--help
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-[1m[32mUser config
+[1m[32mUser config[0m
 
 Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 
-  [2m# ## Worktrunk User Configuration
-  [2m#
-  [2m# Create with `wt config create`.
-  [2m#
-  [2m# Location:
-  [2m#
-  [2m# - macOS/Linux: `~/.config/worktrunk/config.toml` (or `$XDG_CONFIG_HOME` if set)
-  [2m# - Windows: `%APPDATA%\worktrunk\config.toml`
-  [2m#
-  [2m# ## Worktree path template
-  [2m#
-  [2m# Controls where new worktrees are created. Paths are relative to the repository root.
-  [2m#
-  [2m# **Variables:**
-  [2m#
-  [2m# - `{{ repo }}` — repository directory name
-  [2m# - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
-  [2m# - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
-  [2m# - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
-  [2m#
-  [2m# **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
-  [2m#
-  [2m# # Default — siblings in parent directory
-  [2m# # Creates: ~/code/myproject.feature-auth
-  [2m# worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
-  [2m#
-  [2m# # Inside the repository
-  [2m# # Creates: ~/code/myproject/.worktrees/feature-auth
-  [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"
-  [2m#
-  [2m# # Namespaced (useful when multiple repos share a parent directory)
-  [2m# # Creates: ~/code/worktrees/myproject/feature-auth
-  [2m# worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
-  [2m#
-  [2m# # Nested bare repo (git clone --bare <url> project/.git)
-  [2m# # Creates: ~/code/project/feature-auth (sibling to .git)
-  [2m# worktree-path = "../{{ branch | sanitize }}"
-  [2m#
-  [2m# ## LLM commit messages
-  [2m#
-  [2m# Generate commit messages automatically during merge. Requires an external CLI tool. See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and template customization.
-  [2m#
-  [2m# Using llm (https://github.com/simonw/llm) (install: `pip install llm llm-anthropic`):
-  [2m#
-  [2m# [commit-generation]
-  [2m# command = "llm"
-  [2m# args = ["-m", "claude-haiku-4.5"]
-  [2m#
-  [2m# Using aichat (https://github.com/sigoden/aichat):
-  [2m#
-  [2m# [commit-generation]
-  [2m# command = "aichat"
-  [2m# args = ["-m", "claude:claude-haiku-4.5"]
-  [2m#
-  [2m# See Custom prompt templates (#custom-prompt-templates) for inline template options.
-  [2m#
-  [2m# ## Commands
-  [2m#
-  [2m# ### List
-  [2m#
-  [2m# Persistent flag values for `wt list`. Override on command line as needed.
-  [2m#
-  [2m# [list]
-  [2m# full = false       # Show CI status and main…± diffstat columns (--full)
-  [2m# branches = false   # Include branches without worktrees (--branches)
-  [2m# remotes = false    # Include remote-only branches (--remotes)
-  [2m#
-  [2m# ### Commit
-  [2m#
-  [2m# Shared by `wt step commit`, `wt step squash`, and `wt merge`.
-  [2m#
-  [2m# [commit]
-  [2m# stage = "all"      # What to stage before commit: "all", "tracked", or "none"
-  [2m#
-  [2m# ### Merge
-  [2m#
-  [2m# All flags are on by default. Set to false to change default behavior.
-  [2m#
-  [2m# [merge]
-  [2m# squash = true      # Squash commits into one (--no-squash to preserve history)
-  [2m# commit = true      # Commit uncommitted changes first (--no-commit to skip)
-  [2m# rebase = true      # Rebase onto target before merge (--no-rebase to skip)
-  [2m# remove = true      # Remove worktree after merge (--no-remove to keep)
-  [2m# verify = true      # Run project hooks (--no-verify to skip)
-  [2m#
-  [2m# ### Select
-  [2m#
-  [2m# Pager behavior for `wt select` diff previews.
-  [2m#
-  [2m# [select]
-  [2m# # Pager command with flags for diff preview (overrides git's core.pager)
-  [2m# # Use this to specify pager flags needed for non-TTY contexts
-  [2m# # Example:
-  [2m# # pager = "delta --paging=never"
-  [2m#
-  [2m# ### Per-project settings (Experimental)
-  [2m#
-  [2m# Per-project settings are keyed by project identifier (e.g., `github.com/user/repo`).
-  [2m# These contain approved hook commands plus optional overrides of global settings.
-  [2m# Setting overrides (worktree-path, list, commit, merge) are new; approved-commands is stable.
-  [2m#
-  [2m# [projects."github.com/user/repo"]
-  [2m# # Approved hook commands (auto-populated when approving on first run)
-  [2m# approved-commands = ["npm ci", "npm test"]
-  [2m#
-  [2m# # Optional overrides (omit to use global settings)
-  [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"
-  [2m# list.full = true
-  [2m# merge.squash = false
-  [2m#
-  [2m# For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see `wt hook` docs (https://worktrunk.dev/hook/).
-  [2m#
-  [2m# ### Custom prompt templates
-  [2m#
-  [2m# Templates use minijinja (https://docs.rs/minijinja/) syntax.
-  [2m#
-  [2m# #### Commit template
-  [2m#
-  [2m# Available variables:
-  [2m#
-  [2m# - `{{ git_diff }}`, `{{ git_diff_stat }}` — diff content
-  [2m# - `{{ branch }}`, `{{ repo }}` — context
-  [2m# - `{{ recent_commits }}` — recent commit messages
-  [2m#
-  [2m# Default template:
-  [2m#
-  [2m# <!-- DEFAULT_TEMPLATE_START -->
-  [2m# [commit-generation]
-  [2m# template = """
-  [2m# Write a commit message for the staged changes below.
-  [2m#
-  [2m# <format>
-  [2m# - Subject under 50 chars, blank line, then optional body
-  [2m# - Output only the commit message, no quotes or code blocks
-  [2m# </format>
-  [2m#
-  [2m# <style>
-  [2m# - Imperative mood: "Add feature" not "Added feature"
-  [2m# - Match recent commit style (conventional commits if used)
-  [2m# - Describe the change, not the intent or benefit
-  [2m# </style>
-  [2m#
-  [2m# <diffstat>
-  [2m# {{ git_diff_stat }}
-  [2m# </diffstat>
-  [2m#
-  [2m# <diff>
-  [2m# {{ git_diff }}
-  [2m# </diff>
-  [2m#
-  [2m# <context>
-  [2m# Branch: {{ branch }}
-  [2m# {% if recent_commits %}<recent_commits>
-  [2m# {% for commit in recent_commits %}- {{ commit }}
-  [2m# {% endfor %}</recent_commits>{% endif %}
-  [2m# </context>
-  [2m#
-  [2m# """
-  [2m# <!-- DEFAULT_TEMPLATE_END -->
-  [2m#
-  [2m# #### Squash template
-  [2m#
-  [2m# Available variables (in addition to commit template variables):
-  [2m#
-  [2m# - `{{ commits }}` — list of commits being squashed
-  [2m# - `{{ target_branch }}` — merge target branch
-  [2m#
-  [2m# Default template:
-  [2m#
-  [2m# <!-- DEFAULT_SQUASH_TEMPLATE_START -->
-  [2m# [commit-generation]
-  [2m# squash-template = """
-  [2m# Combine these commits into a single commit message.
-  [2m#
-  [2m# <format>
-  [2m# - Subject under 50 chars, blank line, then optional body
-  [2m# - Output only the commit message, no quotes or code blocks
-  [2m# </format>
-  [2m#
-  [2m# <style>
-  [2m# - Imperative mood: "Add feature" not "Added feature"
-  [2m# - Match the style of commits being squashed (conventional commits if used)
-  [2m# - Describe the change, not the intent or benefit
-  [2m# </style>
-  [2m#
-  [2m# <commits branch="{{ branch }}" target="{{ target_branch }}">
-  [2m# {% for commit in commits %}- {{ commit }}
-  [2m# {% endfor %}</commits>
-  [2m#
-  [2m# <diffstat>
-  [2m# {{ git_diff_stat }}
-  [2m# </diffstat>
-  [2m#
-  [2m# <diff>
-  [2m# {{ git_diff }}
-  [2m# </diff>
-  [2m#
-  [2m# """
-  [2m# <!-- DEFAULT_SQUASH_TEMPLATE_END -->
+  [2m# ## Worktrunk User Configuration[0m
+  [2m#[0m
+  [2m# Create with `wt config create`.[0m
+  [2m#[0m
+  [2m# Location:[0m
+  [2m#[0m
+  [2m# - macOS/Linux: `~/.config/worktrunk/config.toml` (or `$XDG_CONFIG_HOME` if set)[0m
+  [2m# - Windows: `%APPDATA%\worktrunk\config.toml`[0m
+  [2m#[0m
+  [2m# ## Worktree path template[0m
+  [2m#[0m
+  [2m# Controls where new worktrees are created. Paths are relative to the repository root.[0m
+  [2m#[0m
+  [2m# **Variables:**[0m
+  [2m#[0m
+  [2m# - `{{ repo }}` — repository directory name[0m
+  [2m# - `{{ branch }}` — raw branch name (e.g., `feature/auth`)[0m
+  [2m# - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)[0m
+  [2m# - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)[0m
+  [2m#[0m
+  [2m# **Examples** for repo at `~/code/myproject`, branch `feature/auth`:[0m
+  [2m#[0m
+  [2m# # Default — siblings in parent directory[0m
+  [2m# # Creates: ~/code/myproject.feature-auth[0m
+  [2m# worktree-path = "../{{ repo }}.{{ branch | sanitize }}"[0m
+  [2m#[0m
+  [2m# # Inside the repository[0m
+  [2m# # Creates: ~/code/myproject/.worktrees/feature-auth[0m
+  [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
+  [2m#[0m
+  [2m# # Namespaced (useful when multiple repos share a parent directory)[0m
+  [2m# # Creates: ~/code/worktrees/myproject/feature-auth[0m
+  [2m# worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
+  [2m#[0m
+  [2m# # Nested bare repo (git clone --bare <url> project/.git)[0m
+  [2m# # Creates: ~/code/project/feature-auth (sibling to .git)[0m
+  [2m# worktree-path = "../{{ branch | sanitize }}"[0m
+  [2m#[0m
+  [2m# ## LLM commit messages[0m
+  [2m#[0m
+  [2m# Generate commit messages automatically during merge. Requires an external CLI tool. See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and template customization.[0m
+  [2m#[0m
+  [2m# Using llm (https://github.com/simonw/llm) (install: `pip install llm llm-anthropic`):[0m
+  [2m#[0m
+  [2m# [commit-generation][0m
+  [2m# command = "llm"[0m
+  [2m# args = ["-m", "claude-haiku-4.5"][0m
+  [2m#[0m
+  [2m# Using aichat (https://github.com/sigoden/aichat):[0m
+  [2m#[0m
+  [2m# [commit-generation][0m
+  [2m# command = "aichat"[0m
+  [2m# args = ["-m", "claude:claude-haiku-4.5"][0m
+  [2m#[0m
+  [2m# See Custom prompt templates (#custom-prompt-templates) for inline template options.[0m
+  [2m#[0m
+  [2m# ## Commands[0m
+  [2m#[0m
+  [2m# ### List[0m
+  [2m#[0m
+  [2m# Persistent flag values for `wt list`. Override on command line as needed.[0m
+  [2m#[0m
+  [2m# [list][0m
+  [2m# full = false       # Show CI status and main…± diffstat columns (--full)[0m
+  [2m# branches = false   # Include branches without worktrees (--branches)[0m
+  [2m# remotes = false    # Include remote-only branches (--remotes)[0m
+  [2m#[0m
+  [2m# ### Commit[0m
+  [2m#[0m
+  [2m# Shared by `wt step commit`, `wt step squash`, and `wt merge`.[0m
+  [2m#[0m
+  [2m# [commit][0m
+  [2m# stage = "all"      # What to stage before commit: "all", "tracked", or "none"[0m
+  [2m#[0m
+  [2m# ### Merge[0m
+  [2m#[0m
+  [2m# All flags are on by default. Set to false to change default behavior.[0m
+  [2m#[0m
+  [2m# [merge][0m
+  [2m# squash = true      # Squash commits into one (--no-squash to preserve history)[0m
+  [2m# commit = true      # Commit uncommitted changes first (--no-commit to skip)[0m
+  [2m# rebase = true      # Rebase onto target before merge (--no-rebase to skip)[0m
+  [2m# remove = true      # Remove worktree after merge (--no-remove to keep)[0m
+  [2m# verify = true      # Run project hooks (--no-verify to skip)[0m
+  [2m#[0m
+  [2m# ### Select[0m
+  [2m#[0m
+  [2m# Pager behavior for `wt select` diff previews.[0m
+  [2m#[0m
+  [2m# [select][0m
+  [2m# # Pager command with flags for diff preview (overrides git's core.pager)[0m
+  [2m# # Use this to specify pager flags needed for non-TTY contexts[0m
+  [2m# # Example:[0m
+  [2m# # pager = "delta --paging=never"[0m
+  [2m#[0m
+  [2m# ### Per-project settings (Experimental)[0m
+  [2m#[0m
+  [2m# Per-project settings are keyed by project identifier (e.g., `github.com/user/repo`).[0m
+  [2m# These contain approved hook commands plus optional overrides of global settings.[0m
+  [2m# Setting overrides (worktree-path, list, commit, merge) are new; approved-commands is stable.[0m
+  [2m#[0m
+  [2m# [projects."github.com/user/repo"][0m
+  [2m# # Approved hook commands (auto-populated when approving on first run)[0m
+  [2m# approved-commands = ["npm ci", "npm test"][0m
+  [2m#[0m
+  [2m# # Optional overrides (omit to use global settings)[0m
+  [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
+  [2m# list.full = true[0m
+  [2m# merge.squash = false[0m
+  [2m#[0m
+  [2m# For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see `wt hook` docs (https://worktrunk.dev/hook/).[0m
+  [2m#[0m
+  [2m# ### Custom prompt templates[0m
+  [2m#[0m
+  [2m# Templates use minijinja (https://docs.rs/minijinja/) syntax.[0m
+  [2m#[0m
+  [2m# #### Commit template[0m
+  [2m#[0m
+  [2m# Available variables:[0m
+  [2m#[0m
+  [2m# - `{{ git_diff }}`, `{{ git_diff_stat }}` — diff content[0m
+  [2m# - `{{ branch }}`, `{{ repo }}` — context[0m
+  [2m# - `{{ recent_commits }}` — recent commit messages[0m
+  [2m#[0m
+  [2m# Default template:[0m
+  [2m#[0m
+  [2m# <!-- DEFAULT_TEMPLATE_START -->[0m
+  [2m# [commit-generation][0m
+  [2m# template = """[0m
+  [2m# Write a commit message for the staged changes below.[0m
+  [2m#[0m
+  [2m# <format>[0m
+  [2m# - Subject under 50 chars, blank line, then optional body[0m
+  [2m# - Output only the commit message, no quotes or code blocks[0m
+  [2m# </format>[0m
+  [2m#[0m
+  [2m# <style>[0m
+  [2m# - Imperative mood: "Add feature" not "Added feature"[0m
+  [2m# - Match recent commit style (conventional commits if used)[0m
+  [2m# - Describe the change, not the intent or benefit[0m
+  [2m# </style>[0m
+  [2m#[0m
+  [2m# <diffstat>[0m
+  [2m# {{ git_diff_stat }}[0m
+  [2m# </diffstat>[0m
+  [2m#[0m
+  [2m# <diff>[0m
+  [2m# {{ git_diff }}[0m
+  [2m# </diff>[0m
+  [2m#[0m
+  [2m# <context>[0m
+  [2m# Branch: {{ branch }}[0m
+  [2m# {% if recent_commits %}<recent_commits>[0m
+  [2m# {% for commit in recent_commits %}- {{ commit }}[0m
+  [2m# {% endfor %}</recent_commits>{% endif %}[0m
+  [2m# </context>[0m
+  [2m#[0m
+  [2m# """[0m
+  [2m# <!-- DEFAULT_TEMPLATE_END -->[0m
+  [2m#[0m
+  [2m# #### Squash template[0m
+  [2m#[0m
+  [2m# Available variables (in addition to commit template variables):[0m
+  [2m#[0m
+  [2m# - `{{ commits }}` — list of commits being squashed[0m
+  [2m# - `{{ target_branch }}` — merge target branch[0m
+  [2m#[0m
+  [2m# Default template:[0m
+  [2m#[0m
+  [2m# <!-- DEFAULT_SQUASH_TEMPLATE_START -->[0m
+  [2m# [commit-generation][0m
+  [2m# squash-template = """[0m
+  [2m# Combine these commits into a single commit message.[0m
+  [2m#[0m
+  [2m# <format>[0m
+  [2m# - Subject under 50 chars, blank line, then optional body[0m
+  [2m# - Output only the commit message, no quotes or code blocks[0m
+  [2m# </format>[0m
+  [2m#[0m
+  [2m# <style>[0m
+  [2m# - Imperative mood: "Add feature" not "Added feature"[0m
+  [2m# - Match the style of commits being squashed (conventional commits if used)[0m
+  [2m# - Describe the change, not the intent or benefit[0m
+  [2m# </style>[0m
+  [2m#[0m
+  [2m# <commits branch="{{ branch }}" target="{{ target_branch }}">[0m
+  [2m# {% for commit in commits %}- {{ commit }}[0m
+  [2m# {% endfor %}</commits>[0m
+  [2m#[0m
+  [2m# <diffstat>[0m
+  [2m# {{ git_diff_stat }}[0m
+  [2m# </diffstat>[0m
+  [2m#[0m
+  [2m# <diff>[0m
+  [2m# {{ git_diff }}[0m
+  [2m# </diff>[0m
+  [2m#[0m
+  [2m# """[0m
+  [2m# <!-- DEFAULT_SQUASH_TEMPLATE_END -->[0m
 
-[1m[32mProject config
+[1m[32mProject config[0m
 
 With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repository:
 
-  [2m# Worktrunk Project Configuration
-  [2m# Copy to: <repo>/.config/wt.toml
-  [2m#
-  [2m# Project-specific hooks that run automatically during worktree operations.
-  [2m# Check this file into git to share hooks across all developers.
-  [2m
-  [2m# ============================================================================
-  [2m# Hook Formats
-  [2m# ============================================================================
-  [2m# All hooks support two formats:
-  [2m#
-  [2m# Single command:
-  [2m#   post-create = "npm install"
-  [2m#
-  [2m# Named table (multiple commands):
-  [2m#   [post-create]
-  [2m#   deps = "npm install"
-  [2m#   build = "npm run build"
-  [2m#
-  [2m# Named commands appear in output, making it easier to identify failures.
-  [2m
-  [2m# ============================================================================
-  [2m# Template Variables — see https://worktrunk.dev/hook/#template-variables
-  [2m# ============================================================================
-  [2m# Common variables:
-  [2m#   {{ repo }}               - Repository directory name (e.g., "myproject")
-  [2m#   {{ branch }}             - Branch name (e.g., "feature/auth")
-  [2m#   {{ worktree_path }}      - Absolute path to worktree
-  [2m#   {{ primary_worktree_path }} - Main worktree (or default branch worktree for bare repos)
-  [2m#   {{ default_branch }}     - Default branch name (e.g., "main")
-  [2m#   {{ target }}             - Target branch (merge hooks only)
-  [2m#
-  [2m# Filters:
-  [2m#   {{ branch | sanitize }}     - Replace / and \ with - (e.g., "feature-auth")
-  [2m#   {{ branch | sanitize_db }}  - Database-safe identifier with hash suffix (e.g., "feature_auth_x7k")
-  [2m#   {{ branch | hash_port }}    - Deterministic port 10000-19999
-  [2m
-  [2m# ============================================================================
-  [2m# Hooks
-  [2m# ============================================================================
-  [2m
-  [2m# Post-Create: Runs after worktree creation, BLOCKS until complete
-  [2m# Use for: installing dependencies, setting up databases, copying configs
-  [2m#
-  [2m# [post-create]
-  [2m# deps = "npm ci"
-  [2m# env = "cp .env.example .env"
-  [2m
-  [2m# Post-Start: Runs in BACKGROUND after worktree creation (parallel)
-  [2m# Use for: dev servers, file watchers, background builds
-  [2m# Output logged to .git/wt-logs/{branch}-project-post-start-{name}.log
-  [2m#
-  [2m# [post-start]
-  [2m# server = "npm run dev -- --port {{ branch | hash_port }}"
-  [2m# watch = "npm run watch"
-  [2m
-  [2m# Post-Switch: Runs in BACKGROUND after every switch (parallel)
-  [2m# Use for: terminal tab naming, tmux window titles, IDE notifications
-  [2m#
-  [2m# post-switch = "echo -ne '\\033]0;{{ branch }}\\007'"
-  [2m
-  [2m# Pre-Commit: Runs before committing during merge, BLOCKS (fail-fast)
-  [2m# Use for: formatters, linters, quick checks
-  [2m#
-  [2m# [pre-commit]
-  [2m# format = "npm run format:check"
-  [2m# lint = "npm run lint"
-  [2m
-  [2m# Pre-Merge: Runs before merging to target, BLOCKS (fail-fast)
-  [2m# Use for: tests, build verification
-  [2m#
-  [2m# [pre-merge]
-  [2m# test = "npm test"
-  [2m# build = "npm run build"
-  [2m
-  [2m# Post-Merge: Runs after successful merge, BLOCKS
-  [2m# Use for: deployment, notifications
-  [2m#
-  [2m# post-merge = "echo 'Merged {{ branch }} to {{ target }}'"
-  [2m
-  [2m# Pre-Remove: Runs before worktree removal, BLOCKS (fail-fast)
-  [2m# Use for: cleanup, stopping services
-  [2m#
-  [2m# pre-remove = "docker compose down"
-  [2m
-  [2m# ============================================================================
-  [2m# Dev Server URL (shown in `wt list`)
-  [2m# ============================================================================
-  [2m# [list]
-  [2m# url = "http://localhost:{{ branch | hash_port }}"
-  [2m
-  [2m# ============================================================================
-  [2m# CI Platform Override
-  [2m# ============================================================================
-  [2m# Override CI platform detection for GitHub Enterprise or self-hosted GitLab
-  [2m# with custom domains where URL detection fails.
-  [2m#
-  [2m# [ci]
-  [2m# platform = "github"  # or "gitlab"
+  [2m# Worktrunk Project Configuration[0m
+  [2m# Copy to: <repo>/.config/wt.toml[0m
+  [2m#[0m
+  [2m# Project-specific hooks that run automatically during worktree operations.[0m
+  [2m# Check this file into git to share hooks across all developers.[0m
+  [2m[0m
+  [2m# ============================================================================[0m
+  [2m# Hook Formats[0m
+  [2m# ============================================================================[0m
+  [2m# All hooks support two formats:[0m
+  [2m#[0m
+  [2m# Single command:[0m
+  [2m#   post-create = "npm install"[0m
+  [2m#[0m
+  [2m# Named table (multiple commands):[0m
+  [2m#   [post-create][0m
+  [2m#   deps = "npm install"[0m
+  [2m#   build = "npm run build"[0m
+  [2m#[0m
+  [2m# Named commands appear in output, making it easier to identify failures.[0m
+  [2m[0m
+  [2m# ============================================================================[0m
+  [2m# Template Variables — see https://worktrunk.dev/hook/#template-variables[0m
+  [2m# ============================================================================[0m
+  [2m# Common variables:[0m
+  [2m#   {{ repo }}               - Repository directory name (e.g., "myproject")[0m
+  [2m#   {{ branch }}             - Branch name (e.g., "feature/auth")[0m
+  [2m#   {{ worktree_path }}      - Absolute path to worktree[0m
+  [2m#   {{ primary_worktree_path }} - Main worktree (or default branch worktree for bare repos)[0m
+  [2m#   {{ default_branch }}     - Default branch name (e.g., "main")[0m
+  [2m#   {{ target }}             - Target branch (merge hooks only)[0m
+  [2m#[0m
+  [2m# Filters:[0m
+  [2m#   {{ branch | sanitize }}     - Replace / and \ with - (e.g., "feature-auth")[0m
+  [2m#   {{ branch | sanitize_db }}  - Database-safe identifier with hash suffix (e.g., "feature_auth_x7k")[0m
+  [2m#   {{ branch | hash_port }}    - Deterministic port 10000-19999[0m
+  [2m[0m
+  [2m# ============================================================================[0m
+  [2m# Hooks[0m
+  [2m# ============================================================================[0m
+  [2m[0m
+  [2m# Post-Create: Runs after worktree creation, BLOCKS until complete[0m
+  [2m# Use for: installing dependencies, setting up databases, copying configs[0m
+  [2m#[0m
+  [2m# [post-create][0m
+  [2m# deps = "npm ci"[0m
+  [2m# env = "cp .env.example .env"[0m
+  [2m[0m
+  [2m# Post-Start: Runs in BACKGROUND after worktree creation (parallel)[0m
+  [2m# Use for: dev servers, file watchers, background builds[0m
+  [2m# Output logged to .git/wt-logs/{branch}-project-post-start-{name}.log[0m
+  [2m#[0m
+  [2m# [post-start][0m
+  [2m# server = "npm run dev -- --port {{ branch | hash_port }}"[0m
+  [2m# watch = "npm run watch"[0m
+  [2m[0m
+  [2m# Post-Switch: Runs in BACKGROUND after every switch (parallel)[0m
+  [2m# Use for: terminal tab naming, tmux window titles, IDE notifications[0m
+  [2m#[0m
+  [2m# post-switch = "echo -ne '\\033]0;{{ branch }}\\007'"[0m
+  [2m[0m
+  [2m# Pre-Commit: Runs before committing during merge, BLOCKS (fail-fast)[0m
+  [2m# Use for: formatters, linters, quick checks[0m
+  [2m#[0m
+  [2m# [pre-commit][0m
+  [2m# format = "npm run format:check"[0m
+  [2m# lint = "npm run lint"[0m
+  [2m[0m
+  [2m# Pre-Merge: Runs before merging to target, BLOCKS (fail-fast)[0m
+  [2m# Use for: tests, build verification[0m
+  [2m#[0m
+  [2m# [pre-merge][0m
+  [2m# test = "npm test"[0m
+  [2m# build = "npm run build"[0m
+  [2m[0m
+  [2m# Post-Merge: Runs after successful merge, BLOCKS[0m
+  [2m# Use for: deployment, notifications[0m
+  [2m#[0m
+  [2m# post-merge = "echo 'Merged {{ branch }} to {{ target }}'"[0m
+  [2m[0m
+  [2m# Pre-Remove: Runs before worktree removal, BLOCKS (fail-fast)[0m
+  [2m# Use for: cleanup, stopping services[0m
+  [2m#[0m
+  [2m# pre-remove = "docker compose down"[0m
+  [2m[0m
+  [2m# ============================================================================[0m
+  [2m# Dev Server URL (shown in `wt list`)[0m
+  [2m# ============================================================================[0m
+  [2m# [list][0m
+  [2m# url = "http://localhost:{{ branch | hash_port }}"[0m
+  [2m[0m
+  [2m# ============================================================================[0m
+  [2m# CI Platform Override[0m
+  [2m# ============================================================================[0m
+  [2m# Override CI platform detection for GitHub Enterprise or self-hosted GitLab[0m
+  [2m# with custom domains where URL detection fails.[0m
+  [2m#[0m
+  [2m# [ci][0m
+  [2m# platform = "github"  # or "gitlab"[0m
