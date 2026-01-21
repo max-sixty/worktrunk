@@ -75,8 +75,9 @@ pub enum CreationMethod {
         ref_type: RefType,
         /// The PR/MR number.
         number: u32,
-        /// URL to push to (the fork's URL).
-        fork_push_url: String,
+        /// URL to push to (the fork's URL). `None` when using a prefixed branch
+        /// name (e.g., `contributor/main`) because push won't work.
+        fork_push_url: Option<String>,
         /// Web URL for the PR/MR.
         ref_url: String,
         /// Resolved remote name where PR/MR refs live (e.g., "origin", "upstream").

@@ -1753,11 +1753,27 @@ fn test_switch_pr_fork_existing_same_pr(#[from(repo_with_remote)] repo: TestRepo
     });
 }
 
-/// Test fork PR where branch already exists but tracks different PR (should error)
+/// Test fork PR where branch already exists but tracks different PR
+/// Uses prefixed branch name `contributor/feature-fix` to avoid conflict
 #[rstest]
 fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a PR ref on the remote
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
     // Create the branch with tracking config for a DIFFERENT PR
-    // Branch name matches headRefName (no owner prefix) so git push works
     let branch_name = "feature-fix";
     repo.run_git(&["branch", branch_name, "main"]);
     repo.run_git(&[
@@ -1769,6 +1785,29 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
         "config",
         &format!("branch.{}.merge", branch_name),
         "refs/pull/99/head", // Different PR!
+    ]);
+
+    // Set up GitHub URL and redirect (like test_switch_pr_fork)
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
     ]);
 
     // gh api repos/{owner}/{repo}/pulls/{number} format
@@ -1795,13 +1834,52 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
 }
 
 /// Test fork PR where branch exists but has no tracking config
+/// Uses prefixed branch name `contributor/feature-fix` to avoid conflict
 #[rstest]
 fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a PR ref on the remote
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
     // Create the branch without any tracking config
-    // Branch name matches headRefName (no owner prefix) so git push works
     let branch_name = "feature-fix";
     repo.run_git(&["branch", branch_name, "main"]);
     // No config set - branch exists but doesn't track anything
+
+    // Set up GitHub URL and redirect (like test_switch_pr_fork)
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
 
     // gh api repos/{owner}/{repo}/pulls/{number} format
     let gh_response = r#"{

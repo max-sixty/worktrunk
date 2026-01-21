@@ -9,7 +9,7 @@ use color_print::cformat;
 use dunce::canonicalize;
 use worktrunk::config::UserConfig;
 use worktrunk::git::mr_ref;
-use worktrunk::git::pr_ref::{self, fork_remote_url};
+use worktrunk::git::pr_ref::{self, fork_remote_url, prefixed_local_branch_name};
 use worktrunk::git::{GitError, RefType, Repository};
 use worktrunk::styling::{
     hint_message, info_message, progress_message, suggest_command, warning_message,
@@ -60,7 +60,10 @@ fn resolve_pr_ref(
         // Fork PR: check if branch already exists and is tracking this PR
         let local_branch = pr_ref::local_branch_name(&pr_info);
 
-        if let Some(tracks_this) = pr_ref::branch_tracks_pr(repo_root, &local_branch, pr_number) {
+        // Determine if we need to use a prefixed branch name due to conflicts
+        let (final_branch, fork_push_url) = if let Some(tracks_this) =
+            pr_ref::branch_tracks_pr(repo_root, &local_branch, pr_number)
+        {
             if tracks_this {
                 crate::output::print(info_message(cformat!(
                     "Branch <bold>{local_branch}</> already configured for PR #{pr_number}"
@@ -73,16 +76,44 @@ fn resolve_pr_ref(
                     },
                 });
             } else {
-                return Err(GitError::BranchTracksDifferentRef {
-                    branch: local_branch,
-                    ref_type: RefType::Pr,
-                    number: pr_number,
-                }
-                .into());
-            }
-        }
+                // Branch exists but doesn't track this PR - use prefixed name
+                let prefixed = prefixed_local_branch_name(&pr_info);
 
-        // Branch doesn't exist - need fork setup
+                // Check if the prefixed branch also exists and tracks this PR
+                if let Some(prefixed_tracks) =
+                    pr_ref::branch_tracks_pr(repo_root, &prefixed, pr_number)
+                {
+                    if prefixed_tracks {
+                        crate::output::print(info_message(cformat!(
+                            "Branch <bold>{prefixed}</> already configured for PR #{pr_number}"
+                        )))?;
+                        return Ok(ResolvedTarget {
+                            branch: prefixed,
+                            method: CreationMethod::Regular {
+                                create_branch: false,
+                                base_branch: None,
+                            },
+                        });
+                    }
+                    // Prefixed branch exists but tracks something else - error
+                    return Err(GitError::BranchTracksDifferentRef {
+                        branch: prefixed,
+                        ref_type: RefType::Pr,
+                        number: pr_number,
+                    }
+                    .into());
+                }
+
+                // Use prefixed branch name; push won't work (None for fork_push_url)
+                (prefixed, None)
+            }
+        } else {
+            // Branch doesn't exist - use unprefixed name with push support
+            let fork_push_url =
+                fork_remote_url(&pr_info.host, &pr_info.head_owner, &pr_info.head_repo);
+            (local_branch, Some(fork_push_url))
+        };
+
         // Resolve the remote now (during planning) to fail early if no matching remote exists
         let remote = repo
             .find_remote_for_repo(Some(&pr_info.host), &pr_info.base_owner, &pr_info.base_repo)
@@ -96,10 +127,8 @@ fn resolve_pr_ref(
                 }
             })?;
 
-        let fork_push_url = fork_remote_url(&pr_info.host, &pr_info.head_owner, &pr_info.head_repo);
-
         return Ok(ResolvedTarget {
-            branch: local_branch,
+            branch: final_branch,
             method: CreationMethod::ForkRef {
                 ref_type: RefType::Pr,
                 number: pr_number,
@@ -186,6 +215,9 @@ fn resolve_mr_ref(
                     },
                 });
             } else {
+                // TODO: Consider adding prefixed branch support for MRs like we do for PRs.
+                // For now, MRs with conflicting branch names return an error.
+                // See https://github.com/max-sixty/worktrunk/issues/714 for PR support.
                 return Err(GitError::BranchTracksDifferentRef {
                     branch: local_branch,
                     ref_type: RefType::Mr,
@@ -226,7 +258,7 @@ fn resolve_mr_ref(
             method: CreationMethod::ForkRef {
                 ref_type: RefType::Mr,
                 number: mr_number,
-                fork_push_url,
+                fork_push_url: Some(fork_push_url),
                 ref_url: mr_info.url,
                 remote,
             },
@@ -435,13 +467,14 @@ fn validate_worktree_creation(
 /// # Arguments
 ///
 /// * `remote_ref` - The ref to track (e.g., "pull/123/head" or "merge-requests/101/head")
+/// * `fork_push_url` - URL to push to, or `None` if push isn't supported (prefixed branch)
 /// * `label` - Human-readable label for error messages (e.g., "PR #123" or "MR !101")
 fn setup_fork_branch(
     repo: &Repository,
     branch: &str,
     remote: &str,
     remote_ref: &str,
-    fork_push_url: &str,
+    fork_push_url: Option<&str>,
     worktree_path: &Path,
     label: &str,
 ) -> anyhow::Result<()> {
@@ -453,15 +486,19 @@ fn setup_fork_branch(
     // Configure branch tracking for pull and push
     let branch_remote_key = format!("branch.{}.remote", branch);
     let branch_merge_key = format!("branch.{}.merge", branch);
-    let branch_push_remote_key = format!("branch.{}.pushRemote", branch);
     let merge_ref = format!("refs/{}", remote_ref);
 
     repo.run_command(&["config", &branch_remote_key, remote])
         .with_context(|| format!("Failed to configure branch.{}.remote", branch))?;
     repo.run_command(&["config", &branch_merge_key, &merge_ref])
         .with_context(|| format!("Failed to configure branch.{}.merge", branch))?;
-    repo.run_command(&["config", &branch_push_remote_key, fork_push_url])
-        .with_context(|| format!("Failed to configure branch.{}.pushRemote", branch))?;
+
+    // Only configure pushRemote if we have a fork URL (not using prefixed branch)
+    if let Some(url) = fork_push_url {
+        let branch_push_remote_key = format!("branch.{}.pushRemote", branch);
+        repo.run_command(&["config", &branch_push_remote_key, url])
+            .with_context(|| format!("Failed to configure branch.{}.pushRemote", branch))?;
+    }
 
     // Create worktree (delayed streaming: silent if fast, shows progress if slow)
     let worktree_path_str = worktree_path.to_string_lossy();
@@ -692,7 +729,7 @@ pub fn execute_switch(
                         &branch,
                         remote,
                         &remote_ref,
-                        fork_push_url,
+                        fork_push_url.as_deref(),
                         &worktree_path,
                         &label,
                     );
@@ -703,9 +740,20 @@ pub fn execute_switch(
                         return Err(e);
                     }
 
-                    crate::output::print(info_message(cformat!(
-                        "Push configured to fork: <bright-black>{fork_push_url}</>"
-                    )))?;
+                    // Show push configuration or warning about prefixed branch
+                    if let Some(url) = fork_push_url {
+                        crate::output::print(info_message(cformat!(
+                            "Push configured to fork: <bright-black>{url}</>"
+                        )))?;
+                    } else {
+                        // Prefixed branch name due to conflict - push won't work
+                        crate::output::print(warning_message(cformat!(
+                            "Using prefixed branch name <bold>{branch}</> due to name conflict"
+                        )))?;
+                        crate::output::print(hint_message(
+                            "Push to fork is not supported with prefixed branches; feedback welcome at https://github.com/max-sixty/worktrunk/issues/714",
+                        ))?;
+                    }
 
                     (false, None, Some(label))
                 }
