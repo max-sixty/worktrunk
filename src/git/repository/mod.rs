@@ -526,42 +526,6 @@ impl Repository {
         Ok(stdout)
     }
 
-    /// Run a git command in a specific directory.
-    ///
-    /// Like `run_command`, but runs in the specified directory instead of
-    /// the discovery path. Useful for operations on other worktrees.
-    pub fn run_command_in_dir(
-        &self,
-        args: &[&str],
-        dir: &std::path::Path,
-    ) -> anyhow::Result<String> {
-        let context = dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
-        let output = Cmd::new("git")
-            .args(args.iter().copied())
-            .current_dir(dir)
-            .context(context)
-            .run()
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stderr = stderr.replace('\r', "\n");
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let error_msg = [stderr.trim(), stdout.trim()]
-                .into_iter()
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n");
-            bail!("{}", error_msg);
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        Ok(stdout)
-    }
-
     /// Run a git command and return whether it succeeded (exit code 0).
     ///
     /// This is useful for commands that use exit codes for boolean results,

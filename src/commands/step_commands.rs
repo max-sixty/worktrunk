@@ -815,15 +815,19 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     // 2. Check out exchanged branches
 
     // Detach HEAD in both worktrees
-    repo.run_command_in_dir(&["checkout", "--detach"], main_path)
+    main_working_tree
+        .run_command(&["checkout", "--detach"])
         .context("Failed to detach HEAD in main worktree")?;
-    repo.run_command_in_dir(&["checkout", "--detach"], target_path)
+    target_working_tree
+        .run_command(&["checkout", "--detach"])
         .context("Failed to detach HEAD in target worktree")?;
 
     // Check out exchanged branches
-    repo.run_command_in_dir(&["checkout", &target_branch], main_path)
+    main_working_tree
+        .run_command(&["checkout", &target_branch])
         .context("Failed to check out branch in main worktree")?;
-    repo.run_command_in_dir(&["checkout", &main_branch], target_path)
+    target_working_tree
+        .run_command(&["checkout", &main_branch])
         .context("Failed to check out branch in target worktree")?;
 
     crate::output::print(success_message(cformat!(
