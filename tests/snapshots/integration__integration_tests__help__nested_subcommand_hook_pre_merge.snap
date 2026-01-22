@@ -23,7 +23,7 @@ exit_code: 2
 ----- stderr -----
 [1m[31merror:[0m unrecognized subcommand '[1m[33mpre-merge[0m'
 
-  [1m[32mtip:[0m a similar subcommand exists: '[1m[32mremove[0m'
+  [1m[32mtip:[0m some similar subcommands exist: '[1m[32mremove[0m', '[1m[32mrm[0m'
 
 [1m[32mUsage:[0m [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 

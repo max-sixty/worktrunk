@@ -410,6 +410,7 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 
     /// List worktrees and their status
     #[command(
+        visible_alias = "ls",
         after_long_help = r#"Shows uncommitted changes, divergence from the default branch and remote, and optional CI status.
 
 <!-- demo: wt-list.gif 1600x900 -->
@@ -682,7 +683,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
     /// Remove worktree; delete branch if merged
     ///
     /// Defaults to the current worktree.
-    #[command(after_long_help = r#"## Examples
+    #[command(visible_alias = "rm", after_long_help = r#"## Examples
 
 Remove current worktree:
 
