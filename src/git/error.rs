@@ -9,9 +9,11 @@
 //! - **`WorktrunkError`** - A minimal enum for semantic errors that need
 //!   special handling (exit codes, silent errors).
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 use color_print::{cformat, cwrite};
+use shell_escape::escape;
 
 use super::HookType;
 use crate::path::{escape_path_for_shell, format_path_for_display};
