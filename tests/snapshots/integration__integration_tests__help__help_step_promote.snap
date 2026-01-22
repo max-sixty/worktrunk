@@ -33,7 +33,7 @@ Usage: [1m[36mwt step promote[0m [36m[OPTIONS][0m [36m[BRANCH]
   [36m[BRANCH]
           Branch to promote to main worktree
           
-          Defaults to current branch. Required from main worktree.
+          Defaults to current branch, or default branch from main worktree.
 
 [1m[32mOptions:
   [1m[36m-h[0m, [1m[36m--help
@@ -53,16 +53,24 @@ Usage: [1m[36mwt step promote[0m [36m[OPTIONS][0m [36m[BRANCH]
 
 [1m[32mExample
 
+  [2m# from ~/project (main worktree)
   [2m$ wt step promote feature
 
-  [2mBefore:  ~/project → main       ~/project.feature → feature
-  [2mAfter:   ~/project → feature    ~/project.feature → main
+Before:
 
-To restore: [2mwt step promote main[0m.
+  [2m  Branch   Path
+  [2m@ main     ~/project
+  [2m+ feature  ~/project.feature
 
-The argument defaults to your current branch. After promoting feature, [2m~/project.feature[0m has [2mmain[0m — run [2mwt step promote[0m there to restore.
+After:
 
-From the main worktree, you must specify a branch.
+  [2m  Branch   Path
+  [2m@ feature  ~/project
+  [2m+ main     ~/project.feature
+
+To restore: [2mwt step promote main[0m from anywhere, or just [2mwt step promote[0m from the main worktree.
+
+Without an argument, promotes the current branch — or restores the default branch if run from the main worktree.
 
 [1m[32mRequirements
 

@@ -30,9 +30,9 @@ info:
     WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mSpecify a branch to promote. Run [90mwt list[39m to see available branches.[39m
+[2m○[22m Branch [1mmain[22m is already in main worktree

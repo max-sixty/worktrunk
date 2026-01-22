@@ -5,7 +5,6 @@ info:
   args:
     - step
     - promote
-    - main
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"

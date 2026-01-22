@@ -751,22 +751,23 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         })?;
 
     // Resolve the branch to promote
+    let default_branch = repo
+        .default_branch()
+        .ok_or_else(|| anyhow::anyhow!("Could not determine default branch"))?;
+
     let target_branch = match branch {
         Some(b) => b.to_string(),
         None => {
-            // Default to current worktree's branch (must not be in main worktree)
             let current_wt = repo.current_worktree();
             if !current_wt.is_linked()? {
-                anyhow::bail!(
-                    "{}",
-                    cformat!(
-                        "Specify a branch to promote. Run <bright-black>wt list</> to see available branches."
-                    )
-                );
+                // From main worktree with no args: restore default branch
+                default_branch.clone()
+            } else {
+                // From other worktree with no args: promote current branch
+                current_wt.branch()?.ok_or_else(|| GitError::DetachedHead {
+                    action: Some("promote".into()),
+                })?
             }
-            current_wt.branch()?.ok_or_else(|| GitError::DetachedHead {
-                action: Some("promote".into()),
-            })?
         }
     };
 
@@ -794,14 +795,11 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     target_working_tree.ensure_clean("promote", Some(&target_branch), false)?;
 
     // Check if we're restoring canonical state (promoting default branch back to main worktree)
-    let default_branch = repo
-        .default_branch()
-        .ok_or_else(|| anyhow::anyhow!("Could not determine default branch"))?;
     let is_restoring = target_branch == default_branch;
 
     if is_restoring {
-        // Restoring canonical state - no warning needed
-        crate::output::print(info_message("Restoring canonical worktree state"))?;
+        // Restoring default branch to main worktree - no warning needed
+        crate::output::print(info_message("Restoring main worktree"))?;
     } else {
         // Creating mismatch - show warning and how to restore
         crate::output::print(warning_message(
@@ -815,9 +813,6 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     // Perform the exchange:
     // 1. Detach both worktrees (releases branch locks)
     // 2. Check out exchanged branches
-    crate::output::print(progress_message(cformat!(
-        "Promoting <bold>{target_branch}</> to main worktree..."
-    )))?;
 
     // Detach HEAD in both worktrees
     repo.run_command_in_dir(&["checkout", "--detach"], main_path)
@@ -832,10 +827,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         .context("Failed to check out branch in target worktree")?;
 
     crate::output::print(success_message(cformat!(
-        "Promoted: main worktree now has <bold>{target_branch}</>"
-    )))?;
-    crate::output::print(info_message(cformat!(
-        "Worktree @ {} now has <bold>{main_branch}</>",
+        "Promoted: main worktree now has <bold>{target_branch}</>; {} now has <bold>{main_branch}</>",
         worktrunk::path::format_path_for_display(target_path)
     )))?;
 

@@ -38,6 +38,4 @@ exit_code: 0
 ----- stderr -----
 [33m▲[39m [33mPromoting creates mismatched worktree state (shown as ⚑ in wt list)[39m
 [2m↳[22m [2mRun [90mwt step promote main[39m to restore canonical locations[22m
-[36m◎[39m [36mPromoting [1mfeature[22m to main worktree...[39m
-[32m✓[39m [32mPromoted: main worktree now has [1mfeature[22m[39m
-[2m○[22m Worktree @ _REPO_.feature now has [1mmain[22m
+[32m✓[39m [32mPromoted: main worktree now has [1mfeature[22m; _REPO_.feature now has [1mmain[22m[39m

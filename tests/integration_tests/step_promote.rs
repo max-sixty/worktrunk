@@ -119,11 +119,48 @@ fn test_promote_already_in_main(repo: TestRepo) {
     ));
 }
 
-/// Test error when no argument from main worktree
+/// Test auto-restore with no argument from main worktree (after prior promote)
+#[rstest]
+fn test_promote_auto_restore(mut repo: TestRepo) {
+    let _settings_guard = setup_snapshot_settings(&repo).bind_to_scope();
+    let feature_path = repo.add_worktree("feature");
+
+    // First promote: feature to main worktree (creates mismatch)
+    repo.wt_command()
+        .args(["step", "promote", "feature"])
+        .output()
+        .unwrap();
+
+    // Verify first promote worked
+    assert_eq!(get_branch(&repo, repo.root_path()), "feature");
+    assert_eq!(get_branch(&repo, &feature_path), "main");
+
+    // Auto-restore: no argument from main worktree restores default branch
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["promote"],
+        Some(repo.root_path()),
+    ));
+
+    // Verify canonical state restored
+    assert_eq!(
+        get_branch(&repo, repo.root_path()),
+        "main",
+        "main worktree should have main again"
+    );
+    assert_eq!(
+        get_branch(&repo, &feature_path),
+        "feature",
+        "other worktree should have feature again"
+    );
+}
+
+/// Test auto-restore when no argument from main worktree (already canonical)
 #[rstest]
 fn test_promote_no_arg_from_main(repo: TestRepo) {
     let _settings_guard = setup_snapshot_settings(&repo).bind_to_scope();
-    // Running promote without argument from main worktree should error
+    // From main worktree with no arg: restores default branch (already there)
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",

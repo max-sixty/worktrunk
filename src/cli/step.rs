@@ -312,19 +312,29 @@ Note: This command is experimental and may change in future versions.
 ## Example
 
 ```console
+# from ~/project (main worktree)
 $ wt step promote feature
 ```
 
+Before:
+
 ```
-Before:  ~/project → main       ~/project.feature → feature
-After:   ~/project → feature    ~/project.feature → main
+  Branch   Path
+@ main     ~/project
++ feature  ~/project.feature
 ```
 
-To restore: `wt step promote main`.
+After:
 
-The argument defaults to your current branch. After promoting feature, `~/project.feature` has `main` — run `wt step promote` there to restore.
+```
+  Branch   Path
+@ feature  ~/project
++ main     ~/project.feature
+```
 
-From the main worktree, you must specify a branch.
+To restore: `wt step promote main` from anywhere, or just `wt step promote` from the main worktree.
+
+Without an argument, promotes the current branch — or restores the default branch if run from the main worktree.
 
 ## Requirements
 
@@ -335,7 +345,7 @@ From the main worktree, you must specify a branch.
     Promote {
         /// Branch to promote to main worktree
         ///
-        /// Defaults to current branch. Required from main worktree.
+        /// Defaults to current branch, or default branch from main worktree.
         #[arg(add = crate::completion::branch_value_completer())]
         branch: Option<String>,
     },
