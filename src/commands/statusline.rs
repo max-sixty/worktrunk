@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use std::env;
 use std::io::{self, Read};
 use std::path::Path;
-use worktrunk::git::{Repository, WorktreeInfo};
+use worktrunk::git::Repository;
 use worktrunk::styling::{get_terminal_width, truncate_visible};
 
 use super::list::{self, CollectOptions, StatuslineSegment};
@@ -264,24 +264,22 @@ fn get_git_status_segments(
         return Ok(vec![]);
     };
 
-    // Get default branch for comparisons
-    let default_branch = match repo.default_branch() {
-        Some(b) => b,
-        None => {
-            // Can't determine default branch - just show current branch
-            return Ok(vec![StatuslineSegment::from_column(
-                wt.branch.as_deref().unwrap_or("HEAD").to_string(),
-                ColumnKind::Branch,
-            )]);
-        }
-    };
+    // If we can't determine the default branch, just show current branch
+    if repo.default_branch().is_none() {
+        return Ok(vec![StatuslineSegment::from_column(
+            wt.branch.as_deref().unwrap_or("HEAD").to_string(),
+            ColumnKind::Branch,
+        )]);
+    }
 
-    // Determine if this is the home worktree (default branch's worktree, or first if none)
-    // Use the already-fetched worktrees to avoid a redundant git command
-    // Note: called `is_home` here because bare repos have no git "main worktree" -
-    // all worktrees are linked. The `is_main` param in build_worktree_item is for display.
-    let home_worktree = WorktreeInfo::find_home(&worktrees, &default_branch);
-    let is_home = home_worktree.is_some_and(|hw| wt.path == hw.path);
+    // Determine if this is the primary worktree
+    // - Normal repos: the main worktree (repo root)
+    // - Bare repos: the default branch's worktree
+    let is_home = repo
+        .primary_worktree()
+        .ok()
+        .flatten()
+        .is_some_and(|p| wt.path == p);
 
     // Build item with identity fields
     let mut item = list::build_worktree_item(wt, is_home, true, false);

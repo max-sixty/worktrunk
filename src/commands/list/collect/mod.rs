@@ -310,13 +310,17 @@ pub fn collect(
         crate::output::print(hint_message(hint))?;
     }
 
-    // Main worktree is the worktree on the default branch (if exists), else first non-prunable worktree.
-    // find_home returns None if all worktrees are prunable or the list is empty.
+    // Main worktree is the primary worktree (for sorting and is_main display).
+    // - Normal repos: the main worktree (repo root)
+    // - Bare repos: the default branch's worktree
     // TODO: show ellipsis or indicator when default_branch is None and columns are empty
-    let main_worktree =
-        WorktreeInfo::find_home(&worktrees, default_branch.as_deref().unwrap_or(""))
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
+    let primary_path = repo.primary_worktree()?;
+    let main_worktree = primary_path
+        .as_ref()
+        .and_then(|p| worktrees.iter().find(|wt| wt.path == *p))
+        .or_else(|| worktrees.iter().find(|wt| !wt.is_prunable()))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
 
     // Defer previous_branch lookup until after skeleton - set is_previous later
     // (skeleton shows placeholder gutter, actual symbols appear when data loads)
