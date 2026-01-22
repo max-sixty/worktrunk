@@ -35,7 +35,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mSkipping [1mfeature[22m (target blocked: _REPO_.feature)[39m
-[2m↳[22m [2mUse --clobber to backup blocking paths[22m
+[36m◎[39m [36mMoving [1mbeta[22m to temporary location...[39m
+[32m✓[39m [32mRelocated [1malpha[22m: _REPO_.beta → _REPO_.alpha[39m
+[32m✓[39m [32mRelocated [1mbeta[22m → _REPO_.beta[39m
 
-[2m○[22m Relocated 0 worktrees, skipped 1 worktree
+[32m✓[39m [32mRelocated 2 worktrees[39m

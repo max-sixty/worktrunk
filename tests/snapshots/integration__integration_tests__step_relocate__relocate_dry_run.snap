@@ -38,4 +38,4 @@ exit_code: 0
 ----- stderr -----
 [2m○[22m 1 worktree would be relocated:
 
-  [1mfeature[22m: [PROJECT_ID] → _REPO_.feature
+  [1mfeature[22m: _PARENT_/wrong-location → _REPO_.feature

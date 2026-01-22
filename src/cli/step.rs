@@ -323,10 +323,10 @@ Move all mismatched worktrees:
 wt step relocate
 ```
 
-Auto-commit dirty worktrees before moving:
+Auto-commit and clobber blockers (never fails):
 
 ```console
-wt step relocate --commit
+wt step relocate --commit --clobber
 ```
 
 Move specific worktrees:
@@ -335,22 +335,22 @@ Move specific worktrees:
 wt step relocate feature bugfix
 ```
 
-## Dirty worktrees
+## Swap handling
 
-By default, worktrees with uncommitted changes are skipped. Use `--commit` to
-auto-commit changes with an LLM-generated message before relocating.
+When worktrees are at each other's expected locations (e.g., `alpha` at
+`repo.beta` and `beta` at `repo.alpha`), relocate automatically resolves
+this by using a temporary location.
 
-## Main worktree
+## Clobbering
 
-If the main worktree (repo root) has a non-default branch checked out, relocate
-creates a new worktree at the expected path and switches main back to the
-default branch.
+With `--clobber`, non-worktree paths at target locations are moved to
+`<path>.bak-<timestamp>` before relocating.
 
 ## Skipped worktrees
 
-- **Dirty** (without `--commit`) — commit or stash changes first
+- **Dirty** (without `--commit`) — use `--commit` to auto-commit first
 - **Locked** — unlock with `git worktree unlock`
-- **Target exists** — remove the conflicting path manually
+- **Target blocked** (without `--clobber`) — use `--clobber` to backup blocker
 - **Detached HEAD** — no branch to compute expected path
 "#
     )]
@@ -364,9 +364,13 @@ default branch.
         dry_run: bool,
 
         /// Commit uncommitted changes before relocating
-        ///
-        /// Uses LLM-generated commit messages.
         #[arg(long)]
         commit: bool,
+
+        /// Backup non-worktree paths at target locations
+        ///
+        /// Moves blocking paths to `<path>.bak-<timestamp>`.
+        #[arg(long)]
+        clobber: bool,
     },
 }

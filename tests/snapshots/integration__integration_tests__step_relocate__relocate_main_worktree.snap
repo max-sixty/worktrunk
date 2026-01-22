@@ -36,7 +36,6 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mSwitching main worktree to [1mmain[22m...[39m
-[36m◎[39m [36mCreating worktree for [1mfeature[22m @ _REPO_.feature...[39m
 [32m✓[39m [32mRelocated [1mfeature[22m: _REPO_ → _REPO_.feature[39m
 
 [32m✓[39m [32mRelocated 1 worktree[39m

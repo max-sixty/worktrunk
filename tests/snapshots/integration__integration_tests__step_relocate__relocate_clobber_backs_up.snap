@@ -5,6 +5,7 @@ info:
   args:
     - step
     - relocate
+    - "--clobber"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -35,7 +36,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mSkipping [1mfeature[22m (target blocked: _REPO_.feature)[39m
-[2m↳[22m [2mUse --clobber to backup blocking paths[22m
+[36m◎[39m [36mBacking up _REPO_.feature → _REPO_.feature.bak-20250102-000000[39m
+[32m✓[39m [32mRelocated [1mfeature[22m: _PARENT_/wrong-location → _REPO_.feature[39m
 
-[2m○[22m Relocated 0 worktrees, skipped 1 worktree
+[32m✓[39m [32mRelocated 1 worktree[39m

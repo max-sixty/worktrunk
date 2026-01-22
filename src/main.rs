@@ -547,7 +547,8 @@ fn main() {
                 branches,
                 dry_run,
                 commit,
-            } => step_relocate(branches, dry_run, commit),
+                clobber,
+            } => step_relocate(branches, dry_run, commit, clobber),
         },
         Commands::Hook { action } => match action {
             HookCommand::Show {

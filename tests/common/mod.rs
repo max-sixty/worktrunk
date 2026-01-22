@@ -915,11 +915,17 @@ pub fn shell_command(
 ///
 /// Sets both Unix (`HOME`, `XDG_CONFIG_HOME`) and Windows (`USERPROFILE`) variables
 /// so the `home` crate can find the temp home directory on all platforms.
+///
+/// Canonicalizes the path on macOS to handle `/var` → `/private/var` symlinks.
+/// This ensures `format_path_for_display()` can correctly convert paths to `~/...`.
 pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
-    cmd.env("HOME", home);
+    // Canonicalize to resolve macOS symlinks (/var -> /private/var)
+    // This ensures paths match when format_path_for_display() compares against HOME
+    let home = canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    cmd.env("HOME", &home);
     cmd.env("XDG_CONFIG_HOME", home.join(".config"));
     // Windows: the `home` crate uses USERPROFILE for home_dir()
-    cmd.env("USERPROFILE", home);
+    cmd.env("USERPROFILE", &home);
     // Windows: etcetera uses APPDATA for config_dir() (AppData\Roaming)
     // Map it to .config to match Unix XDG_CONFIG_HOME behavior
     cmd.env("APPDATA", home.join(".config"));
@@ -2325,7 +2331,8 @@ fn setup_snapshot_settings_for_paths(
     // On CI, HOME is a temp directory, so paths under HOME become ~/something.
     // This catches paths like ~/wrong-path that don't follow the repo naming convention.
     // MUST come AFTER specific ~/repo patterns so they match first.
-    settings.add_filter(r"~/[a-zA-Z0-9_-]+", "[PROJECT_ID]");
+    // Uses _PARENT_ prefix (matching _REPO_ convention) and preserves directory name.
+    settings.add_filter(r"~/([a-zA-Z0-9_-]+)", "_PARENT_/$1");
 
     // Normalize HOME temp directory in snapshots (stdout/stderr content)
     // Matches any temp directory path (without trailing filename)
@@ -2459,8 +2466,11 @@ fn setup_snapshot_settings_for_paths(
 /// Use this for tests that need both a TestRepo and a temporary home (for user config testing).
 pub fn setup_snapshot_settings_with_home(repo: &TestRepo, temp_home: &TempDir) -> insta::Settings {
     let mut settings = setup_snapshot_settings(repo);
+    // Canonicalize to match paths in output (macOS /var -> /private/var)
+    let canonical_home =
+        canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().to_path_buf());
     settings.add_filter(
-        &regex::escape(&temp_home.path().to_string_lossy()),
+        &regex::escape(&canonical_home.to_string_lossy()),
         "[TEMP_HOME]",
     );
     settings
@@ -2473,8 +2483,11 @@ pub fn setup_snapshot_settings_with_home(repo: &TestRepo, temp_home: &TempDir) -
 pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
+    // Canonicalize to match paths in output (macOS /var -> /private/var)
+    let canonical_home =
+        canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().to_path_buf());
     settings.add_filter(
-        &regex::escape(&temp_home.path().to_string_lossy()),
+        &regex::escape(&canonical_home.to_string_lossy()),
         "[TEMP_HOME]",
     );
     settings.add_filter(r"\\", "/");

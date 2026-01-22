@@ -35,10 +35,10 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[32m✓[39m [32mRelocated [1mfeature-1[22m: [PROJECT_ID] → _REPO_.feature-1[39m
-[32m✓[39m [32mRelocated [1mfeature-2[22m: [PROJECT_ID] → _REPO_.feature-2[39m
-[32m✓[39m [32mRelocated [1mfeature-3[22m: [PROJECT_ID] → _REPO_.feature-3[39m
-[32m✓[39m [32mRelocated [1mfeature-4[22m: [PROJECT_ID] → _REPO_.feature-4[39m
-[32m✓[39m [32mRelocated [1mfeature-5[22m: [PROJECT_ID] → _REPO_.feature-5[39m
+[32m✓[39m [32mRelocated [1mfeature-1[22m: _PARENT_/wrong-1 → _REPO_.feature-1[39m
+[32m✓[39m [32mRelocated [1mfeature-2[22m: _PARENT_/wrong-2 → _REPO_.feature-2[39m
+[32m✓[39m [32mRelocated [1mfeature-3[22m: _PARENT_/wrong-3 → _REPO_.feature-3[39m
+[32m✓[39m [32mRelocated [1mfeature-4[22m: _PARENT_/wrong-4 → _REPO_.feature-4[39m
+[32m✓[39m [32mRelocated [1mfeature-5[22m: _PARENT_/wrong-5 → _REPO_.feature-5[39m
 
 [32m✓[39m [32mRelocated 5 worktrees[39m

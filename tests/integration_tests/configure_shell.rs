@@ -1055,7 +1055,8 @@ fn test_configure_shell_no_warning_when_compinit_enabled(repo: TestRepo, temp_ho
         repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
-        cmd.env("ZDOTDIR", temp_home.path()); // Point zsh to our test home for config
+        // Canonicalize to handle macOS /var -> /private/var symlinks
+        cmd.env("ZDOTDIR", crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().to_path_buf()));
         cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1"); // Bypass zsh subprocess check (unreliable on CI)
         cmd.arg("config")
             .arg("shell")

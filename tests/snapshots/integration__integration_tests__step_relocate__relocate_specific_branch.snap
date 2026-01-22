@@ -36,6 +36,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[32m✓[39m [32mRelocated [1mfeature1[22m: [PROJECT_ID] → _REPO_.feature1[39m
+[32m✓[39m [32mRelocated [1mfeature1[22m: _PARENT_/wrong-location-1 → _REPO_.feature1[39m
 
 [32m✓[39m [32mRelocated 1 worktree[39m

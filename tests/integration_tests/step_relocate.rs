@@ -170,6 +170,57 @@ fn test_relocate_dirty_without_commit(repo: TestRepo) {
     );
 }
 
+/// Test that --clobber backs up non-worktree paths at target locations
+#[rstest]
+fn test_relocate_clobber_backs_up(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // Create a worktree at a non-standard location
+    let wrong_path = parent.join("wrong-location");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        wrong_path.to_str().unwrap(),
+    ]);
+
+    // Create a directory at the expected location (non-worktree blocker)
+    let expected_path = parent.join("repo.feature");
+    fs::create_dir_all(&expected_path).unwrap();
+    fs::write(expected_path.join("existing-file.txt"), "existing content").unwrap();
+
+    // Relocate with --clobber should backup and move
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["relocate", "--clobber"],
+        None
+    ));
+
+    // Verify the worktree was moved
+    assert!(
+        expected_path.exists(),
+        "Worktree should be at expected location: {}",
+        expected_path.display()
+    );
+    assert!(
+        !wrong_path.exists(),
+        "Original path should no longer exist: {}",
+        wrong_path.display()
+    );
+
+    // Verify backup exists (with timestamp suffix)
+    let backup_exists = fs::read_dir(&parent)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.starts_with("repo.feature.bak-")
+        });
+    assert!(backup_exists, "Backup directory should exist");
+}
+
 /// Test relocating specific worktrees by branch name
 #[rstest]
 fn test_relocate_specific_branch(repo: TestRepo) {
@@ -246,6 +297,43 @@ fn test_relocate_main_worktree(repo: TestRepo) {
         "main",
         "Main worktree should be on default branch"
     );
+}
+
+/// Test swap scenario: two worktrees at each other's expected locations
+///
+/// When alpha is at repo.beta and beta is at repo.alpha, relocate
+/// automatically handles the swap via a temporary location.
+#[rstest]
+fn test_relocate_swap(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // Create worktrees at each other's expected locations
+    // alpha at repo.beta (where beta should go)
+    // beta at repo.alpha (where alpha should go)
+    let path_for_beta = parent.join("repo.beta");
+    let path_for_alpha = parent.join("repo.alpha");
+
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "alpha",
+        path_for_beta.to_str().unwrap(), // alpha at beta's expected location
+    ]);
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "beta",
+        path_for_alpha.to_str().unwrap(), // beta at alpha's expected location
+    ]);
+
+    // Relocate resolves the swap via temp location
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["relocate"], None));
+
+    // Verify both are now at their expected locations
+    assert!(path_for_alpha.exists(), "alpha should be at repo.alpha");
+    assert!(path_for_beta.exists(), "beta should be at repo.beta");
 }
 
 /// Test relocating multiple worktrees shows compact output
