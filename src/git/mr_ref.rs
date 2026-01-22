@@ -96,8 +96,12 @@ struct GlabMrResponse {
     source_project_id: u64,
     target_project_id: u64,
     web_url: String,
-    // Optional inline project data (may be present in some responses)
+    // Test-only: GitLab API doesn't return nested project objects, but tests
+    // provide them inline because the mock system can't distinguish between
+    // different API paths (all `glab api ...` calls return the same response).
+    #[serde(default)]
     source_project: Option<GlabProject>,
+    #[serde(default)]
     target_project: Option<GlabProject>,
 }
 
@@ -213,30 +217,29 @@ pub fn fetch_mr_info(mr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
 
     let is_cross_project = response.source_project_id != response.target_project_id;
 
-    // Get project URLs for cross-project (fork) MRs.
-    // Try inline data first (if present), fall back to separate API calls.
+    // Fetch project URLs for cross-project (fork) MRs.
+    // The GitLab MR API only returns project IDs, so we need separate API calls.
+    // Tests provide inline data (see GlabMrResponse comment) to avoid mock complexity.
     let (source_project_ssh_url, source_project_http_url) = if is_cross_project {
-        if let Some(ref project) = response.source_project {
-            (
-                project.ssh_url_to_repo.clone(),
-                project.http_url_to_repo.clone(),
-            )
-        } else {
-            fetch_project_urls(response.source_project_id, repo_root).unwrap_or((None, None))
-        }
+        response
+            .source_project
+            .as_ref()
+            .map(|p| (p.ssh_url_to_repo.clone(), p.http_url_to_repo.clone()))
+            .unwrap_or_else(|| {
+                fetch_project_urls(response.source_project_id, repo_root).unwrap_or((None, None))
+            })
     } else {
         (None, None)
     };
 
     let (target_project_ssh_url, target_project_http_url) = if is_cross_project {
-        if let Some(ref project) = response.target_project {
-            (
-                project.ssh_url_to_repo.clone(),
-                project.http_url_to_repo.clone(),
-            )
-        } else {
-            fetch_project_urls(response.target_project_id, repo_root).unwrap_or((None, None))
-        }
+        response
+            .target_project
+            .as_ref()
+            .map(|p| (p.ssh_url_to_repo.clone(), p.http_url_to_repo.clone()))
+            .unwrap_or_else(|| {
+                fetch_project_urls(response.target_project_id, repo_root).unwrap_or((None, None))
+            })
     } else {
         (None, None)
     };
