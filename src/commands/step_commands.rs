@@ -1028,7 +1028,7 @@ pub fn step_relocate(
     let temp_dir = repo.git_common_dir().join("wt-relocate-tmp");
     let mut relocated = 0;
     let mut moved_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
-    let mut temp_relocated: Vec<(usize, PathBuf, PathBuf)> = Vec::new(); // (index, temp_path, original_path)
+    let mut temp_relocated: Vec<(usize, PathBuf)> = Vec::new(); // (index, temp_path)
 
     // Helper to check if a target is currently empty (not occupied by a pending worktree)
     let is_target_empty = |idx: usize,
@@ -1161,7 +1161,7 @@ pub fn step_relocate(
                 let old_canonical = wt.path.canonicalize().unwrap_or_else(|_| wt.path.clone());
                 current_locations.remove(&old_canonical);
 
-                temp_relocated.push((i, temp_path.clone(), wt.path.clone()));
+                temp_relocated.push((i, temp_path.clone()));
                 moved_indices.insert(i);
             }
             None => break, // All done
@@ -1169,7 +1169,7 @@ pub fn step_relocate(
     }
 
     // Phase 5: Move temp-relocated worktrees to final destinations
-    for (i, temp_path, original_path) in temp_relocated {
+    for (i, temp_path) in temp_relocated {
         let (_, expected_path) = &pending[i];
         let branch = pending[i].0.branch.as_deref().unwrap();
 
@@ -1187,15 +1187,9 @@ pub fn step_relocate(
             "Relocated <bold>{branch}</> → {dest_display}"
         )))?;
 
-        // Update shell if user was inside the original worktree path
-        if let Some(ref cwd_path) = cwd
-            && cwd_path.starts_with(&original_path)
-        {
-            let relative = cwd_path
-                .strip_prefix(&original_path)
-                .unwrap_or(Path::new(""));
-            crate::output::change_directory(expected_path.join(relative))?;
-        }
+        // Note: Unlike direct moves, we don't update the shell directory here.
+        // If the user was inside this worktree, they're now in the temp location
+        // and can cd manually. This is a rare case (requires cycle resolution).
 
         relocated += 1;
     }
@@ -1208,24 +1202,17 @@ pub fn step_relocate(
     // Summary
     if relocated > 0 || skipped > 0 {
         crate::output::blank()?;
-        let relocated_word = if relocated == 1 {
-            "worktree"
-        } else {
-            "worktrees"
-        };
+        let plural = |n: usize| if n == 1 { "worktree" } else { "worktrees" };
         if skipped == 0 {
-            crate::output::print(success_message(format!(
-                "Relocated {relocated} {relocated_word}"
-            )))?;
+            let msg = format!("Relocated {relocated} {}", plural(relocated));
+            crate::output::print(success_message(msg))?;
         } else {
-            let skipped_word = if skipped == 1 {
-                "worktree"
-            } else {
-                "worktrees"
-            };
-            crate::output::print(info_message(format!(
-                "Relocated {relocated} {relocated_word}, skipped {skipped} {skipped_word}"
-            )))?;
+            let msg = format!(
+                "Relocated {relocated} {}, skipped {skipped} {}",
+                plural(relocated),
+                plural(skipped)
+            );
+            crate::output::print(info_message(msg))?;
         }
     }
 
