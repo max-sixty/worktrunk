@@ -4,7 +4,9 @@
 
 use color_print::cformat;
 use worktrunk::git::{GitError, Repository};
-use worktrunk::styling::{format_with_gutter, info_message, progress_message, success_message};
+use worktrunk::styling::{
+    eprintln, format_with_gutter, info_message, progress_message, success_message,
+};
 
 use super::types::MergeOperations;
 use crate::commands::repository_ext::RepositoryCliExt;
@@ -110,9 +112,12 @@ pub fn handle_push(
             format!(" ({})", notes.join(", "))
         };
 
-        crate::output::print(progress_message(cformat!(
-            "{verb_ing} {commit_count} {commit_text} to <bold>{target_branch}</> @ <dim>{head_sha}</>{operations_note}"
-        )))?;
+        eprintln!(
+            "{}",
+            progress_message(cformat!(
+                "{verb_ing} {commit_count} {commit_text} to <bold>{target_branch}</> @ <dim>{head_sha}</>{operations_note}"
+            ))
+        );
 
         // Show the commit graph with color
         let log_output = repo.run_command(&[
@@ -122,7 +127,7 @@ pub fn handle_push(
             "--oneline",
             &format!("{}..HEAD", target_branch),
         ])?;
-        crate::output::print(format_with_gutter(&log_output, None))?;
+        eprintln!("{}", format_with_gutter(&log_output, None));
 
         // Show diff statistics
         crate::commands::show_diffstat(&repo, &format!("{}..HEAD", target_branch))?;
@@ -167,10 +172,13 @@ pub fn handle_push(
         // Re-apply bright-black after stats (which end with a reset) so ) is also gray
         let stats_str = summary_parts.join(", ");
         let paren_close = cformat!("<bright-black>)</>"); // Separate to avoid cformat optimization
-        crate::output::print(success_message(cformat!(
-            "{verb} <bold>{target_branch}</> <bright-black>({stats_str}</>{}",
-            paren_close
-        )))?;
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "{verb} <bold>{target_branch}</> <bright-black>({stats_str}</>{}",
+                paren_close
+            ))
+        );
     } else {
         // For merge workflow context, explain why nothing was pushed
         let context = if let Some(ops) = operations {
@@ -191,9 +199,12 @@ pub fn handle_push(
         };
 
         // No action: nothing was pushed, just acknowledging state
-        crate::output::print(info_message(cformat!(
-            "Already up to date with <bold>{target_branch}</>{context}"
-        )))?;
+        eprintln!(
+            "{}",
+            info_message(cformat!(
+                "Already up to date with <bold>{target_branch}</>{context}"
+            ))
+        );
     }
 
     Ok(())

@@ -6,7 +6,7 @@ use worktrunk::config::CommandConfig;
 use worktrunk::git::WorktrunkError;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    error_message, format_bash_with_gutter, progress_message, verbosity, warning_message,
+    eprintln, error_message, format_bash_with_gutter, progress_message, verbosity, warning_message,
 };
 
 use super::command_executor::{CommandContext, PreparedCommand, prepare_commands};
@@ -56,8 +56,8 @@ impl SourcedCommand {
             }
             None => format!("{full_label}:"),
         };
-        crate::output::print(progress_message(message))?;
-        crate::output::print(format_bash_with_gutter(&self.prepared.expanded))?;
+        eprintln!("{}", progress_message(message));
+        eprintln!("{}", format_bash_with_gutter(&self.prepared.expanded));
         Ok(())
     }
 }
@@ -180,7 +180,7 @@ pub fn spawn_hook_commands_background(
             }
             None => format!("Running {hook_type} hooks: {}", names.join(", ")),
         };
-        crate::output::print(progress_message(message))?;
+        eprintln!("{}", progress_message(message));
     }
 
     let operation_prefix = hook_type.to_string();
@@ -218,11 +218,10 @@ pub fn spawn_hook_commands_background(
                 Some(name) => format!("Failed to spawn \"{name}\": {err_msg}"),
                 None => format!("Failed to spawn command: {err_msg}"),
             };
-            crate::output::print(warning_message(message))?;
+            eprintln!("{}", warning_message(message));
         }
     }
 
-    crate::output::flush()?;
     Ok(())
 }
 
@@ -327,7 +326,6 @@ pub fn run_hook_with_filter(
 
             match &failure_strategy {
                 HookFailureStrategy::FailFast => {
-                    crate::output::flush()?;
                     return Err(WorktrunkError::HookCommandFailed {
                         hook_type,
                         command_name: cmd.prepared.name.clone(),
@@ -341,7 +339,7 @@ pub fn run_hook_with_filter(
                         Some(name) => cformat!("Command <bold>{name}</> failed: {err_msg}"),
                         None => format!("Command failed: {err_msg}"),
                     };
-                    crate::output::print(error_message(message))?;
+                    eprintln!("{}", error_message(message));
 
                     // Track first failure to propagate exit code later (only for PostMerge)
                     if first_failure_exit_code.is_none() && hook_type == HookType::PostMerge {
@@ -351,8 +349,6 @@ pub fn run_hook_with_filter(
             }
         }
     }
-
-    crate::output::flush()?;
 
     // For Warn strategy with PostMerge: if any command failed, propagate the exit code
     // This matches git's behavior: post-hooks can't stop the operation but affect exit status

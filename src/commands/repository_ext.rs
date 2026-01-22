@@ -10,7 +10,7 @@ use worktrunk::git::{
     GitError, IntegrationReason, Repository, parse_porcelain_z, parse_untracked_files,
 };
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{format_with_gutter, progress_message, warning_message};
+use worktrunk::styling::{eprintln, format_with_gutter, progress_message, warning_message};
 
 /// Target for worktree removal.
 #[derive(Debug)]
@@ -275,10 +275,13 @@ impl RepositoryCliExt for Repository {
             nanos
         );
 
-        crate::output::print(progress_message(cformat!(
-            "Stashing changes in <bold>{}</>...",
-            format_path_for_display(wt_path)
-        )))?;
+        eprintln!(
+            "{}",
+            progress_message(cformat!(
+                "Stashing changes in <bold>{}</>...",
+                format_path_for_display(wt_path)
+            ))
+        );
 
         // Stash all changes including untracked files.
         // Note: git stash push returns exit code 0 whether or not anything was stashed.
@@ -370,12 +373,13 @@ fn warn_about_untracked_files(status_output: &str) -> anyhow::Result<()> {
 
     let count = files.len();
     let path_word = if count == 1 { "path" } else { "paths" };
-    crate::output::print(warning_message(format!(
-        "Auto-staging {count} untracked {path_word}:"
-    )))?;
+    eprintln!(
+        "{}",
+        warning_message(format!("Auto-staging {count} untracked {path_word}:"))
+    );
 
     let joined_files = files.join("\n");
-    crate::output::print(format_with_gutter(&joined_files, None))?;
+    eprintln!("{}", format_with_gutter(&joined_files, None));
 
     Ok(())
 }
@@ -400,10 +404,13 @@ struct StashData {
 impl StashData {
     /// Restore the stash, printing progress and warning on failure.
     fn restore(self) {
-        let _ = crate::output::print(progress_message(cformat!(
-            "Restoring stashed changes in <bold>{}</>...",
-            format_path_for_display(&self.path)
-        )));
+        eprintln!(
+            "{}",
+            progress_message(cformat!(
+                "Restoring stashed changes in <bold>{}</>...",
+                format_path_for_display(&self.path)
+            ))
+        );
 
         let success = Repository::current()
             .ok()
@@ -415,11 +422,14 @@ impl StashData {
             .is_some();
 
         if !success {
-            let _ = crate::output::print(warning_message(cformat!(
-                "Failed to restore stash <bold>{stash_ref}</>; run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
-                stash_ref = self.stash_ref,
-                path = format_path_for_display(&self.path),
-            )));
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "Failed to restore stash <bold>{stash_ref}</>; run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
+                    stash_ref = self.stash_ref,
+                    path = format_path_for_display(&self.path),
+                ))
+            );
         }
     }
 }

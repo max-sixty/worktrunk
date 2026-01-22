@@ -104,7 +104,9 @@ use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use std::sync::Arc;
 use worktrunk::git::{Repository, WorktreeInfo};
-use worktrunk::styling::{INFO_SYMBOL, format_with_gutter, hint_message, warning_message};
+use worktrunk::styling::{
+    INFO_SYMBOL, eprintln, format_with_gutter, hint_message, warning_message,
+};
 
 use crate::commands::is_worktree_at_expected_path;
 
@@ -305,9 +307,9 @@ pub fn collect(
     if let Some(configured) = repo.invalid_default_branch_config() {
         let msg =
             cformat!("Configured default branch <bold>{configured}</> does not exist locally");
-        crate::output::print(warning_message(msg))?;
+        eprintln!("{}", warning_message(msg));
         let hint = cformat!("To reset, run <bright-black>wt config state default-branch clear</>");
-        crate::output::print(hint_message(hint))?;
+        eprintln!("{}", hint_message(hint));
     }
 
     // Main worktree is the primary worktree (for sorting and is_main display).
@@ -780,10 +782,10 @@ pub fn collect(
             "\n\nThis likely indicates a git command hung. Run with -v for details, -vv to create a diagnostic file.",
         );
 
-        crate::output::print(warning_message(&diag))?;
+        eprintln!("{}", warning_message(&diag));
 
         // Show issue reporting hint (free function - doesn't collect diagnostic data)
-        crate::output::print(hint_message(crate::diagnostic::issue_hint()))?;
+        eprintln!("{}", hint_message(crate::diagnostic::issue_hint()));
     }
 
     // Compute status symbols for prunable worktrees (skipped during task spawning).
@@ -826,12 +828,12 @@ pub fn collect(
         } else {
             // Non-TTY: output to stdout (same as buffered mode)
             // Progressive skeleton was suppressed; now output the final table
-            crate::output::stdout(layout.format_header_line())?;
+            println!("{}", layout.format_header_line());
             for item in &all_items {
-                crate::output::stdout(layout.format_list_item_line(item))?;
+                println!("{}", layout.format_list_item_line(item));
             }
-            crate::output::stdout("")?;
-            crate::output::stdout(final_msg)?;
+            println!();
+            println!("{}", final_msg);
         }
     } else if render_table {
         // Buffered mode: render final table
@@ -843,12 +845,12 @@ pub fn collect(
             timed_out_count,
         );
 
-        crate::output::stdout(layout.format_header_line())?;
+        println!("{}", layout.format_header_line());
         for item in &all_items {
-            crate::output::stdout(layout.format_list_item_line(item))?;
+            println!("{}", layout.format_list_item_line(item));
         }
-        crate::output::stdout("")?;
-        crate::output::stdout(final_msg)?;
+        println!();
+        println!("{}", final_msg);
     }
 
     // Status symbols are now computed during data collection (both modes), no fallback needed
@@ -887,10 +889,10 @@ pub fn collect(
         }
 
         let warning = warning_parts.join("\n");
-        crate::output::print(warning_message(&warning))?;
+        eprintln!("{}", warning_message(&warning));
 
         // Show issue reporting hint (free function - doesn't collect diagnostic data)
-        crate::output::print(hint_message(crate::diagnostic::issue_hint()))?;
+        eprintln!("{}", hint_message(crate::diagnostic::issue_hint()));
     }
 
     // Populate display fields for all items (used by JSON output and statusline)

@@ -15,7 +15,7 @@ use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig};
 use worktrunk::git::{GitError, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    INFO_SYMBOL, PROMPT_SYMBOL, format_bash_with_gutter, format_heading, hint_message,
+    INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, hint_message,
     info_message, success_message,
 };
 
@@ -67,7 +67,7 @@ pub fn run_hook(
     let approved = approve_hooks_filtered(&ctx, &[hook_type], name_filter)?;
     // If declined, return early - the whole point of `wt hook` is to run hooks
     if !approved {
-        crate::output::print(worktrunk::styling::info_message("Commands declined"))?;
+        eprintln!("{}", worktrunk::styling::info_message("Commands declined"));
         return Ok(());
     }
 
@@ -314,7 +314,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     let commands = collect_commands_for_hooks(&project_config, &all_hooks);
 
     if commands.is_empty() {
-        crate::output::print(info_message("No commands configured in project"))?;
+        eprintln!("{}", info_message("No commands configured in project"));
         return Ok(());
     }
 
@@ -326,7 +326,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
             .collect();
 
         if unapproved.is_empty() {
-            crate::output::print(info_message("All commands already approved"))?;
+            eprintln!("{}", info_message("All commands already approved"));
             return Ok(());
         }
 
@@ -343,9 +343,9 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
 
     // Show result
     if approved {
-        crate::output::print(success_message("Commands approved & saved to config"))?;
+        eprintln!("{}", success_message("Commands approved & saved to config"));
     } else {
-        crate::output::print(info_message("Commands declined"))?;
+        eprintln!("{}", info_message("Commands declined"));
     }
 
     Ok(())
@@ -365,7 +365,7 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
             .collect();
 
         if projects_with_approvals.is_empty() {
-            crate::output::print(info_message("No approvals to clear"))?;
+            eprintln!("{}", info_message("No approvals to clear"));
             return Ok(());
         }
 
@@ -383,10 +383,13 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
         }
         config.save().context("Failed to save config")?;
 
-        crate::output::print(success_message(format!(
-            "Cleared approvals for {project_count} project{}",
-            if project_count == 1 { "" } else { "s" }
-        )))?;
+        eprintln!(
+            "{}",
+            success_message(format!(
+                "Cleared approvals for {project_count} project{}",
+                if project_count == 1 { "" } else { "s" }
+            ))
+        );
     } else {
         // Clear approvals for current project (default)
         let repo = Repository::current()?;
@@ -399,7 +402,7 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
             .is_some_and(|p| !p.approved_commands.is_empty());
 
         if !had_approvals {
-            crate::output::print(info_message("No approvals to clear for this project"))?;
+            eprintln!("{}", info_message("No approvals to clear for this project"));
             return Ok(());
         }
 
@@ -414,10 +417,13 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
             .revoke_project(&project_id, None)
             .context("Failed to clear project approvals")?;
 
-        crate::output::print(success_message(format!(
-            "Cleared {approval_count} approval{} for this project",
-            if approval_count == 1 { "" } else { "s" }
-        )))?;
+        eprintln!(
+            "{}",
+            success_message(format!(
+                "Cleared {approval_count} approval{} for this project",
+                if approval_count == 1 { "" } else { "s" }
+            ))
+        );
     }
 
     Ok(())

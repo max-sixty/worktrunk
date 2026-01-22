@@ -5,7 +5,7 @@ use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
-use worktrunk::styling::warning_message;
+use worktrunk::styling::{eprintln, warning_message};
 
 use minijinja::Environment;
 

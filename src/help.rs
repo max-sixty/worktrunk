@@ -8,6 +8,7 @@
 use std::process;
 
 use ansi_str::AnsiStr;
+use worktrunk::styling::eprintln;
 
 use crate::cli;
 

@@ -7,7 +7,8 @@ use worktrunk::git::{Repository, exit_code, set_base_path};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::extract_filename_from_path;
 use worktrunk::styling::{
-    error_message, format_with_gutter, hint_message, info_message, success_message, warning_message,
+    eprintln, error_message, format_with_gutter, hint_message, info_message, success_message,
+    warning_message,
 };
 
 mod cli;
@@ -281,10 +282,10 @@ fn main() {
                         let explicit_shell = shell.is_some();
                         handle_unconfigure_shell(shell, yes, dry_run, &binary_name())
                             .map_err(|e| anyhow::anyhow!("{}", e))
-                            .and_then(|scan_result| {
+                            .map(|scan_result| {
                                 // For --dry-run, preview was already shown by handler
                                 if dry_run {
-                                    return Ok(());
+                                    return;
                                 }
 
                                 // Count unique shells, not file results (fish may have 2 files: functions/ and legacy conf.d/)
@@ -311,10 +312,13 @@ fn main() {
                                         "shell extension"
                                     };
 
-                                    crate::output::print(success_message(cformat!(
-                                        "{} {what} for <bold>{shell}</> @ <bold>{path}</>",
-                                        result.action.description(),
-                                    )))?;
+                                    eprintln!(
+                                        "{}",
+                                        success_message(cformat!(
+                                            "{} {what} for <bold>{shell}</> @ <bold>{path}</>",
+                                            result.action.description(),
+                                        ))
+                                    );
                                 }
 
                                 // Show completion results
@@ -322,10 +326,13 @@ fn main() {
                                     let shell = result.shell;
                                     let path = format_path_for_display(&result.path);
 
-                                    crate::output::print(success_message(cformat!(
-                                        "{} completions for <bold>{shell}</> @ <bold>{path}</>",
-                                        result.action.description(),
-                                    )))?;
+                                    eprintln!(
+                                        "{}",
+                                        success_message(cformat!(
+                                            "{} completions for <bold>{shell}</> @ <bold>{path}</>",
+                                            result.action.description(),
+                                        ))
+                                    );
                                 }
 
                                 // Show not found - warning if explicit shell, hint if auto-scan
@@ -342,13 +349,17 @@ fn main() {
                                         "shell extension"
                                     };
                                     if explicit_shell {
-                                        crate::output::print(warning_message(format!(
-                                            "No {what} found in {path}"
-                                        )))?;
+                                        eprintln!(
+                                            "{}",
+                                            warning_message(format!("No {what} found in {path}"))
+                                        );
                                     } else {
-                                        crate::output::print(hint_message(cformat!(
-                                            "No <bright-black>{shell}</> {what} in {path}"
-                                        )))?;
+                                        eprintln!(
+                                            "{}",
+                                            hint_message(cformat!(
+                                                "No <bright-black>{shell}</> {what} in {path}"
+                                            ))
+                                        );
                                     }
                                 }
 
@@ -363,13 +374,19 @@ fn main() {
                                     }
                                     let path = format_path_for_display(path);
                                     if explicit_shell {
-                                        crate::output::print(warning_message(format!(
-                                            "No completions found in {path}"
-                                        )))?;
+                                        eprintln!(
+                                            "{}",
+                                            warning_message(format!(
+                                                "No completions found in {path}"
+                                            ))
+                                        );
                                     } else {
-                                        crate::output::print(hint_message(cformat!(
-                                            "No <bright-black>{shell}</> completions in {path}"
-                                        )))?;
+                                        eprintln!(
+                                            "{}",
+                                            hint_message(cformat!(
+                                                "No <bright-black>{shell}</> completions in {path}"
+                                            ))
+                                        );
                                     }
                                 }
 
@@ -378,20 +395,24 @@ fn main() {
                                     + scan_result.completion_not_found.len();
                                 if total_changes == 0 {
                                     if all_not_found == 0 {
-                                        crate::output::blank()?;
-                                        crate::output::print(hint_message(
-                                            "No shell integration found to remove",
-                                        ))?;
+                                        eprintln!();
+                                        eprintln!(
+                                            "{}",
+                                            hint_message("No shell integration found to remove")
+                                        );
                                     }
-                                    return Ok(());
+                                    return;
                                 }
 
                                 // Summary
-                                crate::output::blank()?;
+                                eprintln!();
                                 let plural = if shell_count == 1 { "" } else { "s" };
-                                crate::output::print(success_message(format!(
-                                    "Removed integration from {shell_count} shell{plural}"
-                                )))?;
+                                eprintln!(
+                                    "{}",
+                                    success_message(format!(
+                                        "Removed integration from {shell_count} shell{plural}"
+                                    ))
+                                );
 
                                 // Hint about restarting shell (only if current shell was affected)
                                 let current_shell = std::env::var("SHELL")
@@ -406,15 +427,16 @@ fn main() {
                                     });
 
                                 if current_shell_affected {
-                                    crate::output::print(hint_message(
-                                        "Restart shell to complete uninstall",
-                                    ))?;
+                                    eprintln!(
+                                        "{}",
+                                        hint_message("Restart shell to complete uninstall")
+                                    );
                                 }
-                                Ok(())
                             })
                     }
                     ConfigShellCommand::ShowTheme => {
-                        handle_show_theme().map_err(|e| anyhow::anyhow!("{}", e))
+                        handle_show_theme();
+                        Ok(())
                     }
                     ConfigShellCommand::Completions { shell } => handle_completions(shell),
                 }
@@ -501,9 +523,10 @@ fn main() {
                             let ctx = env.context(yes);
                             let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
                             if !approved {
-                                crate::output::print(info_message(
-                                    "Commands declined, squashing without hooks",
-                                ))?;
+                                eprintln!(
+                                    "{}",
+                                    info_message("Commands declined, squashing without hooks")
+                                );
                             }
                             approved
                         } else {
@@ -513,14 +536,18 @@ fn main() {
                         match handle_squash(target.as_deref(), yes, !verify, stage)? {
                             SquashResult::Squashed | SquashResult::NoNetChanges => {}
                             SquashResult::NoCommitsAhead(branch) => {
-                                crate::output::print(info_message(format!(
-                                    "Nothing to squash; no commits ahead of {branch}"
-                                )))?;
+                                eprintln!(
+                                    "{}",
+                                    info_message(format!(
+                                        "Nothing to squash; no commits ahead of {branch}"
+                                    ))
+                                );
                             }
                             SquashResult::AlreadySingleCommit => {
-                                crate::output::print(info_message(
-                                    "Nothing to squash; already a single commit",
-                                ))?;
+                                eprintln!(
+                                    "{}",
+                                    info_message("Nothing to squash; already a single commit")
+                                );
                             }
                         }
                         Ok(())
@@ -529,13 +556,13 @@ fn main() {
             }
             StepCommand::Push { target } => handle_push(target.as_deref(), "Pushed to", None),
             StepCommand::Rebase { target } => {
-                handle_rebase(target.as_deref()).and_then(|result| match result {
-                    RebaseResult::Rebased => Ok(()),
+                handle_rebase(target.as_deref()).map(|result| match result {
+                    RebaseResult::Rebased => (),
                     RebaseResult::UpToDate(branch) => {
-                        crate::output::print(info_message(cformat!(
-                            "Already up to date with <bold>{branch}</>"
-                        )))?;
-                        Ok(())
+                        eprintln!(
+                            "{}",
+                            info_message(cformat!("Already up to date with <bold>{branch}</>"))
+                        );
                     }
                 })
             }
@@ -560,9 +587,10 @@ fn main() {
                 vars,
             } => {
                 if no_background {
-                    let _ = output::print(warning_message(
-                        "--no-background is deprecated; use --foreground instead",
-                    ));
+                    eprintln!(
+                        "{}",
+                        warning_message("--no-background is deprecated; use --foreground instead")
+                    );
                 }
                 run_hook(
                     HookType::PostStart,
@@ -580,9 +608,10 @@ fn main() {
                 vars,
             } => {
                 if no_background {
-                    let _ = output::print(warning_message(
-                        "--no-background is deprecated; use --foreground instead",
-                    ));
+                    eprintln!(
+                        "{}",
+                        warning_message("--no-background is deprecated; use --foreground instead")
+                    );
                 }
                 run_hook(
                     HookType::PostSwitch,
@@ -646,10 +675,13 @@ fn main() {
         }
         #[cfg(not(unix))]
         Commands::Select { .. } => {
-            let _ = output::print(error_message("wt select is not available on Windows"));
-            let _ = output::print(hint_message(cformat!(
-                "To see all worktrees, run <bright-black>wt list</>; to switch directly, run <bright-black>wt switch BRANCH</>"
-            )));
+            eprintln!("{}", error_message("wt select is not available on Windows"));
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "To see all worktrees, run <bright-black>wt list</>; to switch directly, run <bright-black>wt switch BRANCH</>"
+                ))
+            );
             std::process::exit(1);
         }
         Commands::List {
@@ -762,11 +794,14 @@ fn main() {
 
                 // Show message if user declined approval
                 if !approved {
-                    crate::output::print(info_message(if plan.is_create() {
-                        "Commands declined, continuing worktree creation"
-                    } else {
-                        "Commands declined"
-                    }))?;
+                    eprintln!(
+                        "{}",
+                        info_message(if plan.is_create() {
+                            "Commands declined, continuing worktree creation"
+                        } else {
+                            "Commands declined"
+                        })
+                    );
                 }
 
                 // Execute the validated plan
@@ -892,9 +927,10 @@ fn main() {
             .and_then(|config| {
                 // Handle deprecated --no-background flag
                 if no_background {
-                    output::print(warning_message(
-                        "--no-background is deprecated; use --foreground instead",
-                    ))?;
+                    eprintln!(
+                        "{}",
+                        warning_message("--no-background is deprecated; use --foreground instead")
+                    );
                 }
                 let background = !(foreground || no_background);
 
@@ -923,9 +959,7 @@ fn main() {
                         ],
                     )?;
                     if !approved {
-                        crate::output::print(info_message(
-                            "Commands declined, continuing removal",
-                        ))?;
+                        eprintln!("{}", info_message("Commands declined, continuing removal"));
                     }
                     Ok(approved)
                 };
@@ -969,10 +1003,9 @@ fn main() {
                     let mut all_errors: Vec<anyhow::Error> = Vec::new();
 
                     // Helper: record error and continue
-                    let mut record_error = |e: anyhow::Error| -> anyhow::Result<()> {
-                        output::print(e.to_string())?;
+                    let mut record_error = |e: anyhow::Error| {
+                        eprintln!("{}", e);
                         all_errors.push(e);
-                        Ok(())
                     };
 
                     for branch_name in &branches {
@@ -985,7 +1018,7 @@ fn main() {
                         ) {
                             Ok(r) => r,
                             Err(e) => {
-                                record_error(e)?;
+                                record_error(e);
                                 continue;
                             }
                         };
@@ -1005,7 +1038,7 @@ fn main() {
                                         &config,
                                     ) {
                                         Ok(result) => plan_current = Some(result),
-                                        Err(e) => record_error(e)?,
+                                        Err(e) => record_error(e),
                                     }
                                     continue;
                                 }
@@ -1023,7 +1056,7 @@ fn main() {
                                     &config,
                                 ) {
                                     Ok(result) => plans_others.push(result),
-                                    Err(e) => record_error(e)?,
+                                    Err(e) => record_error(e),
                                 }
                             }
                             ResolvedWorktree::BranchOnly { branch } => {
@@ -1035,7 +1068,7 @@ fn main() {
                                     &config,
                                 ) {
                                     Ok(result) => plans_branch_only.push(result),
-                                    Err(e) => record_error(e)?,
+                                    Err(e) => record_error(e),
                                 }
                             }
                         }
@@ -1120,11 +1153,11 @@ fn main() {
     if let Err(e) = result {
         // GitError, WorktrunkError, and HookErrorWithHint produce styled output via Display
         if let Some(err) = e.downcast_ref::<worktrunk::git::GitError>() {
-            let _ = output::print(err.to_string());
+            eprintln!("{}", err);
         } else if let Some(err) = e.downcast_ref::<worktrunk::git::WorktrunkError>() {
-            let _ = output::print(err.to_string());
+            eprintln!("{}", err);
         } else if let Some(err) = e.downcast_ref::<worktrunk::git::HookErrorWithHint>() {
-            let _ = output::print(err.to_string());
+            eprintln!("{}", err);
         } else {
             // Anyhow error formatting:
             // - With context: show context as header, root cause in gutter
@@ -1136,9 +1169,9 @@ fn main() {
                 let chain: Vec<String> = e.chain().skip(1).map(|e| e.to_string()).collect();
                 if !chain.is_empty() {
                     // Has context: msg is context, chain contains intermediate + root cause
-                    let _ = output::print(error_message(&msg));
+                    eprintln!("{}", error_message(&msg));
                     let chain_text = chain.join("\n");
-                    let _ = output::print(format_with_gutter(&chain_text, None));
+                    eprintln!("{}", format_with_gutter(&chain_text, None));
                 } else if msg.contains('\n') || msg.contains('\r') {
                     // Multiline error without context - this shouldn't happen if all
                     // errors have proper context. Catch in debug builds, log in release.
@@ -1146,11 +1179,11 @@ fn main() {
                     log::warn!("Multiline error without context: {msg}");
                     // Normalize line endings for display
                     let normalized = msg.replace("\r\n", "\n").replace('\r', "\n");
-                    let _ = output::print(error_message("Command failed"));
-                    let _ = output::print(format_with_gutter(&normalized, None));
+                    eprintln!("{}", error_message("Command failed"));
+                    eprintln!("{}", format_with_gutter(&normalized, None));
                 } else {
                     // Single-line error without context: inline with emoji
-                    let _ = output::print(error_message(&msg));
+                    eprintln!("{}", error_message(&msg));
                 }
             }
         }
