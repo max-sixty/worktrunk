@@ -1069,10 +1069,8 @@ pub fn step_relocate(
 
                 if is_main {
                     // Main worktree: switch to default first, then create new wt
-                    crate::output::print(progress_message(cformat!(
-                        "Switching main worktree to <bold>{}</>...",
-                        default_branch
-                    )))?;
+                    let msg = cformat!("Switching main worktree to <bold>{default_branch}</>...");
+                    crate::output::print(progress_message(msg))?;
 
                     Cmd::new("git")
                         .args(["checkout", &default_branch])
@@ -1098,9 +1096,8 @@ pub fn step_relocate(
                         .context("Failed to move worktree")?;
                 }
 
-                crate::output::print(success_message(cformat!(
-                    "Relocated <bold>{branch}</>: {src_display} → {dest_display}"
-                )))?;
+                let msg = cformat!("Relocated <bold>{branch}</>: {src_display} → {dest_display}");
+                crate::output::print(success_message(msg))?;
 
                 // Update shell if user is inside
                 if let Some(ref cwd_path) = cwd
@@ -1145,9 +1142,8 @@ pub fn step_relocate(
                 // Sanitize branch name for temp path (feature/foo -> feature-foo)
                 let safe_branch = worktrunk::path::sanitize_for_filename(branch);
                 let temp_path = temp_dir.join(&safe_branch);
-                crate::output::print(progress_message(cformat!(
-                    "Moving <bold>{branch}</> to temporary location..."
-                )))?;
+                let msg = cformat!("Moving <bold>{branch}</> to temporary location...");
+                crate::output::print(progress_message(msg))?;
 
                 Cmd::new("git")
                     .args(["worktree", "move"])
@@ -1183,9 +1179,8 @@ pub fn step_relocate(
             .run()
             .context("Failed to move worktree from temp to final location")?;
 
-        crate::output::print(success_message(cformat!(
-            "Relocated <bold>{branch}</> → {dest_display}"
-        )))?;
+        let msg = cformat!("Relocated <bold>{branch}</> → {dest_display}");
+        crate::output::print(success_message(msg))?;
 
         // Note: Unlike direct moves, we don't update the shell directory here.
         // If the user was inside this worktree, they're now in the temp location
