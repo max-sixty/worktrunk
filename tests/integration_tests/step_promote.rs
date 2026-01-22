@@ -374,3 +374,33 @@ fn test_promote_detached_head_main(mut repo: TestRepo) {
         Some(repo.root_path()),
     ));
 }
+
+/// Test error when linked worktree has detached HEAD (no-arg promote)
+#[rstest]
+fn test_promote_detached_head_linked(mut repo: TestRepo) {
+    let _settings_guard = setup_snapshot_settings(&repo).bind_to_scope();
+    let feature_path = repo.add_worktree("feature");
+
+    // Detach HEAD in the linked worktree
+    let sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&sha.stdout).trim().to_string();
+
+    repo.git_command()
+        .args(["checkout", "--detach", &sha])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    // No-arg promote from linked worktree should fail due to detached HEAD
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["promote"],
+        Some(&feature_path),
+    ));
+}
