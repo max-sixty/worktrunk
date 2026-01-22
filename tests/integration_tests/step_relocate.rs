@@ -221,6 +221,47 @@ fn test_relocate_clobber_backs_up(repo: TestRepo) {
     assert!(backup_exists, "Backup directory should exist");
 }
 
+/// Test that --clobber refuses to clobber an existing worktree
+#[rstest]
+fn test_relocate_clobber_refuses_worktree(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // Create worktree alpha at a non-standard location
+    let wrong_path = parent.join("wrong-location");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "alpha",
+        wrong_path.to_str().unwrap(),
+    ]);
+
+    // Create another worktree beta at alpha's expected location
+    let expected_path = parent.join("repo.alpha");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "beta",
+        expected_path.to_str().unwrap(),
+    ]);
+
+    // Relocate with --clobber should still skip (can't clobber a worktree)
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["relocate", "--clobber", "alpha"],
+        None
+    ));
+
+    // Verify alpha was NOT moved (beta still occupies the target)
+    assert!(
+        wrong_path.exists(),
+        "alpha should still be at wrong location: {}",
+        wrong_path.display()
+    );
+}
+
 /// Test relocating specific worktrees by branch name
 #[rstest]
 fn test_relocate_specific_branch(repo: TestRepo) {
