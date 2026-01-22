@@ -24,6 +24,29 @@ mod project;
 mod test;
 mod user;
 
+use std::collections::HashMap;
+
+/// Trait for worktrunk config types (user and project config).
+///
+/// Both config types capture unrecognized fields during parsing, allowing
+/// validation to detect misplaced or misspelled keys.
+pub(crate) trait WorktrunkConfig: for<'de> serde::Deserialize<'de> {
+    /// Returns the map of unknown fields captured during deserialization.
+    fn unknown(&self) -> &HashMap<String, toml::Value>;
+}
+
+impl WorktrunkConfig for UserConfig {
+    fn unknown(&self) -> &HashMap<String, toml::Value> {
+        &self.unknown
+    }
+}
+
+impl WorktrunkConfig for ProjectConfig {
+    fn unknown(&self) -> &HashMap<String, toml::Value> {
+        &self.unknown
+    }
+}
+
 // Re-export public types
 pub use commands::{Command, CommandConfig};
 pub use deprecation::check_and_migrate as check_deprecated_vars;

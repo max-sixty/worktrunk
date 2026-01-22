@@ -28,6 +28,24 @@ pub enum ConfigType {
     Project,
 }
 
+impl ConfigType {
+    /// Check if a key would be valid in the OTHER config type.
+    fn is_valid_in_other(self, key: &str, value: &toml::Value) -> bool {
+        match self {
+            ConfigType::User => is_valid_key::<super::ProjectConfig>(key, value),
+            ConfigType::Project => is_valid_key::<super::UserConfig>(key, value),
+        }
+    }
+
+    /// Description of the other config type (for error messages).
+    fn other_description(self) -> &'static str {
+        match self {
+            ConfigType::User => "project config (.config/wt.toml)",
+            ConfigType::Project => "user config (~/.config/worktrunk/config.toml)",
+        }
+    }
+}
+
 /// Tracks which config paths have already shown deprecation warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
 static WARNED_DEPRECATED_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
@@ -285,23 +303,16 @@ pub fn check_and_migrate(
     Ok(true)
 }
 
-/// Check if an unknown key would be valid in user config
-fn is_user_config_key(key: &str, value: &toml::Value) -> bool {
+/// Check if a key+value would be valid in a specific config type.
+///
+/// Deserializes the key+value into the config type and checks whether it
+/// ends up in the `unknown` map. If it doesn't, the key is valid for that config.
+fn is_valid_key<T: super::WorktrunkConfig>(key: &str, value: &toml::Value) -> bool {
     let mut table = toml::map::Map::new();
     table.insert(key.to_string(), value.clone());
     toml::Value::Table(table)
-        .try_into::<super::UserConfig>()
-        .map(|c| !c.unknown.contains_key(key))
-        .unwrap_or(false)
-}
-
-/// Check if an unknown key would be valid in project config
-fn is_project_config_key(key: &str, value: &toml::Value) -> bool {
-    let mut table = toml::map::Map::new();
-    table.insert(key.to_string(), value.clone());
-    toml::Value::Table(table)
-        .try_into::<super::ProjectConfig>()
-        .map(|c| !c.unknown.contains_key(key))
+        .try_into::<T>()
+        .map(|c| !c.unknown().contains_key(key))
         .unwrap_or(false)
 }
 
@@ -315,19 +326,9 @@ pub fn key_belongs_in(
     value: &toml::Value,
     config_type: ConfigType,
 ) -> Option<&'static str> {
-    let belongs_elsewhere = match config_type {
-        ConfigType::User => is_project_config_key(key, value),
-        ConfigType::Project => is_user_config_key(key, value),
-    };
-
-    if belongs_elsewhere {
-        Some(match config_type {
-            ConfigType::User => "project config (.config/wt.toml)",
-            ConfigType::Project => "user config (~/.config/worktrunk/config.toml)",
-        })
-    } else {
-        None
-    }
+    config_type
+        .is_valid_in_other(key, value)
+        .then(|| config_type.other_description())
 }
 
 /// Warn about unknown fields in config file
