@@ -476,11 +476,7 @@ fn configure_shell_file(
             // Create parent directories if they don't exist
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).map_err(|e| {
-                    format!(
-                        "Failed to create directory {}: {}",
-                        format_path_for_display(parent),
-                        e
-                    )
+                    format!("Failed to create directory {}: {}", parent.display(), e)
                 })?;
             }
 
@@ -565,12 +561,8 @@ fn configure_fish_file(
 
     // Create parent directories if they don't exist
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| {
-            format!(
-                "Failed to create directory {}: {e}",
-                format_path_for_display(parent)
-            )
-        })?;
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create directory {}: {e}", parent.display()))?;
     }
 
     // Write the complete fish function file
@@ -843,21 +835,13 @@ pub fn process_shell_completions(
 
         // Create parent directory if needed
         if let Some(parent) = completion_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                format!(
-                    "Failed to create directory {}: {e}",
-                    format_path_for_display(parent)
-                )
-            })?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory {}: {e}", parent.display()))?;
         }
 
         // Write the completion file
-        fs::write(&completion_path, &fish_completion).map_err(|e| {
-            format!(
-                "Failed to write {}: {e}",
-                format_path_for_display(&completion_path)
-            )
-        })?;
+        fs::write(&completion_path, &fish_completion)
+            .map_err(|e| format!("Failed to write {}: {e}", completion_path.display()))?;
 
         results.push(CompletionResult {
             shell,
@@ -981,10 +965,7 @@ fn scan_for_uninstall(
                         });
                     } else {
                         fs::remove_file(&legacy_path).map_err(|e| {
-                            format!(
-                                "Failed to remove {}: {e}",
-                                format_path_for_display(&legacy_path)
-                            )
+                            format!("Failed to remove {}: {e}", legacy_path.display())
                         })?;
                         results.push(UninstallResult {
                             shell,
@@ -1048,11 +1029,7 @@ fn scan_for_uninstall(
                 });
             } else {
                 fs::remove_file(&completion_path).map_err(|e| {
-                    format!(
-                        "Failed to remove {}: {}",
-                        format_path_for_display(&completion_path),
-                        e
-                    )
+                    format!("Failed to remove {}: {}", completion_path.display(), e)
                 })?;
                 completion_results.push(CompletionUninstallResult {
                     shell,
