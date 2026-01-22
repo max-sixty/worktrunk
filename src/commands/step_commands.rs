@@ -1134,10 +1134,8 @@ pub fn step_relocate(
                 let (wt, _) = &pending[i];
                 let branch = wt.branch.as_deref().unwrap();
 
-                // Create temp directory if needed
-                if !temp_dir.exists() {
-                    std::fs::create_dir_all(&temp_dir)?;
-                }
+                // Create temp directory if needed (create_dir_all is no-op if exists)
+                std::fs::create_dir_all(&temp_dir)?;
 
                 // Sanitize branch name for temp path (feature/foo -> feature-foo)
                 let safe_branch = worktrunk::path::sanitize_for_filename(branch);
@@ -1252,9 +1250,8 @@ fn commit_worktree_changes(
         .trim()
         .to_string();
 
-    crate::output::print(success_message(cformat!(
-        "Committed @ <dim>{commit_hash}</>"
-    )))?;
+    let msg = cformat!("Committed @ <dim>{commit_hash}</>");
+    crate::output::print(success_message(msg))?;
 
     Ok(())
 }
