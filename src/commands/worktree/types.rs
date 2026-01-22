@@ -19,7 +19,7 @@ pub enum SwitchResult {
     /// Already at the target worktree (no action taken)
     AlreadyAt(PathBuf),
     /// Switched to existing worktree at the given path
-    Existing(PathBuf),
+    Existing { path: PathBuf },
     /// Created new worktree at the given path
     Created {
         path: PathBuf,
@@ -40,7 +40,7 @@ impl SwitchResult {
     pub fn path(&self) -> &PathBuf {
         match self {
             SwitchResult::AlreadyAt(path) => path,
-            SwitchResult::Existing(path) => path,
+            SwitchResult::Existing { path, .. } => path,
             SwitchResult::Created { path, .. } => path,
         }
     }
@@ -75,8 +75,9 @@ pub enum CreationMethod {
         ref_type: RefType,
         /// The PR/MR number.
         number: u32,
-        /// URL to push to (the fork's URL).
-        fork_push_url: String,
+        /// URL to push to (the fork's URL). `None` when using a prefixed branch
+        /// name (e.g., `contributor/main`) because push won't work.
+        fork_push_url: Option<String>,
         /// Web URL for the PR/MR.
         ref_url: String,
         /// Resolved remote name where PR/MR refs live (e.g., "origin", "upstream").
@@ -237,7 +238,7 @@ mod tests {
     #[test]
     fn test_switch_result_path_existing() {
         let path = PathBuf::from("/test/existing");
-        let result = SwitchResult::Existing(path.clone());
+        let result = SwitchResult::Existing { path: path.clone() };
         assert_eq!(result.path(), &path);
     }
 

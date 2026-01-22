@@ -27,6 +27,7 @@
 //! - `base.repo.owner.login`, `base.repo.name` — target repo (where PR refs live)
 //! - `html_url` — PR web URL
 
+use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::{Context, bail};
@@ -40,6 +41,14 @@ use crate::shell_exec::Cmd;
 pub struct PrInfo {
     /// The PR number.
     pub number: u32,
+    /// The PR title.
+    pub title: String,
+    /// The PR author's username.
+    pub author: String,
+    /// The PR state ("open", "closed").
+    pub state: String,
+    /// Whether this is a draft PR.
+    pub draft: bool,
     /// The branch name in the head repository.
     pub head_ref_name: String,
     /// The owner of the head repository (fork owner for cross-repo PRs).
@@ -58,12 +67,57 @@ pub struct PrInfo {
     pub url: String,
 }
 
+impl super::RefContext for PrInfo {
+    fn ref_type(&self) -> super::RefType {
+        super::RefType::Pr
+    }
+    fn number(&self) -> u32 {
+        self.number
+    }
+    fn title(&self) -> &str {
+        &self.title
+    }
+    fn author(&self) -> &str {
+        &self.author
+    }
+    fn state(&self) -> &str {
+        &self.state
+    }
+    fn draft(&self) -> bool {
+        self.draft
+    }
+    fn url(&self) -> &str {
+        &self.url
+    }
+}
+
 /// Raw JSON response from `gh api repos/{owner}/{repo}/pulls/{number}`.
 #[derive(Debug, Deserialize)]
 struct GhApiPrResponse {
+    title: String,
+    user: GhUser,
+    state: String,
+    #[serde(default)]
+    draft: bool,
     head: GhPrRef,
     base: GhPrRef,
     html_url: String,
+}
+
+/// Error response from GitHub API (stdout on failure).
+/// Example: `{"message":"Not Found","documentation_url":"...","status":"404"}`
+#[derive(Debug, Deserialize)]
+struct GhApiErrorResponse {
+    #[serde(default)]
+    message: String,
+    /// HTTP status code as a string (e.g., "404", "401", "403")
+    #[serde(default)]
+    status: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GhUser {
+    login: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,11 +171,7 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
         Ok(output) => output,
         Err(e) => {
             // Check if gh is not installed (OS error for command not found)
-            let error_str = e.to_string();
-            if error_str.contains("No such file")
-                || error_str.contains("not found")
-                || error_str.contains("cannot find")
-            {
+            if e.kind() == ErrorKind::NotFound {
                 bail!("GitHub CLI (gh) not installed; install from https://cli.github.com/");
             }
             return Err(anyhow::Error::from(e).context("Failed to run gh api"));
@@ -129,45 +179,36 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
     };
 
     if !output.status.success() {
+        // Parse the JSON error response from stdout for structured error handling.
+        // GitHub API returns JSON with "status" field containing the HTTP status code.
+        if let Ok(error_response) = serde_json::from_slice::<GhApiErrorResponse>(&output.stdout) {
+            match error_response.status.as_str() {
+                "404" => bail!("PR #{} not found", pr_number),
+                "401" => bail!("GitHub CLI not authenticated; run gh auth login"),
+                "403" => {
+                    // 403 can be rate limiting or permission denied
+                    let message_lower = error_response.message.to_lowercase();
+                    if message_lower.contains("rate limit") {
+                        bail!("GitHub API rate limit exceeded; wait a few minutes and retry");
+                    }
+                    bail!("GitHub API access forbidden: {}", error_response.message);
+                }
+                _ => {}
+            }
+        }
+
+        // Fallback for non-JSON errors (network issues, gh not configured, etc.)
+        // Include stdout if stderr is empty, as some errors are reported there.
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr_lower = stderr.to_lowercase();
-
-        // PR not found (HTTP 404)
-        if stderr_lower.contains("not found") || stderr_lower.contains("404") {
-            bail!("PR #{} not found", pr_number);
-        }
-
-        // Authentication errors
-        if stderr_lower.contains("authentication")
-            || stderr_lower.contains("logged in")
-            || stderr_lower.contains("auth login")
-            || stderr_lower.contains("not logged")
-            || stderr_lower.contains("401")
-        {
-            bail!("GitHub CLI not authenticated; run gh auth login");
-        }
-
-        // Rate limiting
-        if stderr_lower.contains("rate limit")
-            || stderr_lower.contains("api rate")
-            || stderr_lower.contains("403")
-        {
-            bail!("GitHub API rate limit exceeded; wait a few minutes and retry");
-        }
-
-        // Network errors
-        if stderr_lower.contains("network")
-            || stderr_lower.contains("connection")
-            || stderr_lower.contains("timeout")
-        {
-            bail!("Network error connecting to GitHub; check your internet connection");
-        }
-
-        // Unknown error - show full output in gutter for debugging
+        let details = if stderr.trim().is_empty() {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        } else {
+            stderr.trim().to_string()
+        };
         return Err(GitError::CliApiError {
             ref_type: super::RefType::Pr,
             message: format!("gh api failed for PR #{}", pr_number),
-            stderr: stderr.trim().to_string(),
+            stderr: details,
         }
         .into());
     }
@@ -222,6 +263,10 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
 
     Ok(PrInfo {
         number: pr_number,
+        title: response.title,
+        author: response.user.login,
+        state: response.state,
+        draft: response.draft,
         head_ref_name: response.head.ref_name,
         head_owner: head_repo.owner.login,
         head_repo: head_repo.name,
@@ -242,6 +287,17 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
 /// See module docs for why we can't use a prefixed name like `<owner>/<branch>`.
 pub fn local_branch_name(pr: &PrInfo) -> String {
     pr.head_ref_name.clone()
+}
+
+/// Generate a prefixed local branch name for a fork PR when the unprefixed name conflicts.
+///
+/// Returns `<head_owner>/<head_ref_name>` (e.g., `contributor/main`).
+///
+/// This is used when the PR's branch name conflicts with an existing local branch.
+/// Note: `git push` won't work with this naming because the local and remote
+/// branch names don't match. Users must push manually with explicit refspecs.
+pub fn prefixed_local_branch_name(pr: &PrInfo) -> String {
+    format!("{}/{}", pr.head_owner, pr.head_ref_name)
 }
 
 /// Get the git protocol preference from `gh` (GitHub CLI).
@@ -311,6 +367,10 @@ mod tests {
     fn test_local_branch_name_same_repo() {
         let pr = PrInfo {
             number: 101,
+            title: "Fix authentication bug".to_string(),
+            author: "alice".to_string(),
+            state: "open".to_string(),
+            draft: false,
             head_ref_name: "feature-auth".to_string(),
             head_owner: "owner".to_string(),
             head_repo: "repo".to_string(),
@@ -329,6 +389,10 @@ mod tests {
         // the local branch name must match the fork's branch for git push to work
         let pr = PrInfo {
             number: 101,
+            title: "Fix authentication bug".to_string(),
+            author: "contributor".to_string(),
+            state: "open".to_string(),
+            draft: false,
             head_ref_name: "feature-auth".to_string(),
             head_owner: "contributor".to_string(),
             head_repo: "repo".to_string(),
@@ -339,6 +403,28 @@ mod tests {
             url: "https://github.com/owner/repo/pull/101".to_string(),
         };
         assert_eq!(local_branch_name(&pr), "feature-auth");
+    }
+
+    #[test]
+    fn test_prefixed_local_branch_name() {
+        // When the fork's branch name conflicts with a local branch,
+        // we use owner/branch format as a fallback (push won't work)
+        let pr = PrInfo {
+            number: 101,
+            head_ref_name: "main".to_string(),
+            head_owner: "contributor".to_string(),
+            head_repo: "repo".to_string(),
+            base_owner: "owner".to_string(),
+            base_repo: "repo".to_string(),
+            is_cross_repository: true,
+            host: "github.com".to_string(),
+            url: "https://github.com/owner/repo/pull/101".to_string(),
+            title: "Test PR".to_string(),
+            author: "contributor".to_string(),
+            state: "open".to_string(),
+            draft: false,
+        };
+        assert_eq!(prefixed_local_branch_name(&pr), "contributor/main");
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::worktree::{BranchDeletionMode, RemoveResult, get_path_mismatch};
-use anyhow::Context;
+use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{
@@ -280,16 +280,13 @@ impl RepositoryCliExt for Repository {
             format_path_for_display(wt_path)
         )))?;
 
-        let stash_output =
-            wt.run_command(&["stash", "push", "--include-untracked", "-m", &stash_name])?;
+        // Stash all changes including untracked files.
+        // Note: git stash push returns exit code 0 whether or not anything was stashed.
+        wt.run_command(&["stash", "push", "--include-untracked", "-m", &stash_name])?;
 
-        if stash_output.contains("No local changes to save") {
-            return Ok(None);
-        }
-
+        // Verify stash was created by checking the stash list for our entry.
         let list_output = wt.run_command(&["stash", "list", "--format=%gd%x00%gs%x00"])?;
         let mut parts = list_output.split('\0');
-        let mut stash_ref = None;
         while let Some(id) = parts.next() {
             if id.is_empty() {
                 continue;
@@ -297,19 +294,23 @@ impl RepositoryCliExt for Repository {
             if let Some(message) = parts.next()
                 && (message == stash_name || message.ends_with(&stash_name))
             {
-                stash_ref = Some(id.to_string());
-                break;
+                return Ok(Some(TargetWorktreeStash::new(wt_path, id.to_string())));
             }
         }
 
-        let Some(stash_ref) = stash_ref else {
-            return Err(anyhow::anyhow!(
-                "Failed to locate autostash entry '{}'",
+        // Stash entry not found. Verify the worktree is now clean — if it's still
+        // dirty, stashing may have failed silently or our lookup missed the entry.
+        if wt.is_dirty()? {
+            bail!(
+                "Failed to stash changes in {}; worktree still has uncommitted changes. \
+                 Expected stash entry: '{}'. Check 'git stash list'.",
+                format_path_for_display(wt_path),
                 stash_name
-            ));
-        };
+            );
+        }
 
-        Ok(Some(TargetWorktreeStash::new(wt_path, stash_ref)))
+        // Worktree is clean and no stash entry — nothing needed to be stashed
+        Ok(None)
     }
 
     fn is_rebased_onto(&self, target: &str) -> anyhow::Result<bool> {

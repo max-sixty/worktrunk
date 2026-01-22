@@ -22,70 +22,70 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt remove - Remove worktree; delete branch if merged
+wt remove - Remove worktree; delete branch if merged[0m
 
-For finished feature branches. Removes the current worktree by default.
+For finished feature branches. Removes the current worktree by default.[0m
 
-Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...
+Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
 
-[1m[32mArguments:
-  [36m[BRANCHES]...
+[1m[32mArguments:[0m
+  [36m[BRANCHES]...[0m
           Branch name [default: current]
 
-[1m[32mOptions:
-      [1m[36m--no-delete-branch
+[1m[32mOptions:[0m
+      [1m[36m--no-delete-branch[0m
           Keep branch after removal
 
-  [1m[36m-D[0m, [1m[36m--force-delete
+  [1m[36m-D[0m, [1m[36m--force-delete[0m
           Delete unmerged branches
 
-      [1m[36m--foreground
+      [1m[36m--foreground[0m
           Run removal in foreground (block until complete)
 
-      [1m[36m--no-verify
+      [1m[36m--no-verify[0m
           Skip hooks
 
-  [1m[36m-y[0m, [1m[36m--yes
+  [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-  [1m[36m-f[0m, [1m[36m--force
-          Force worktree removal
+  [1m[36m-f[0m, [1m[36m--force[0m
+          Force worktree removal[0m
           
-          Remove worktrees even if they contain untracked files (like build artifacts). Without this flag, removal fails if untracked files exist.
+          Remove worktrees even if they contain untracked files (like build artifacts). Without this flag, removal fails if untracked files exist.[0m
 
-  [1m[36m-h[0m, [1m[36m--help
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-[1m[32mExamples
+[1m[32mExamples[0m
 
 Remove current worktree:
 
-  [2mwt remove
+  [2mwt remove[0m
 
 Remove specific worktrees:
 
-  [2mwt remove feature-branch
-  [2mwt remove old-feature another-branch
+  [2mwt remove feature-branch[0m
+  [2mwt remove old-feature another-branch[0m
 
 Keep the branch:
 
-  [2mwt remove --no-delete-branch feature-branch
+  [2mwt remove --no-delete-branch feature-branch[0m
 
 Force-delete an unmerged branch:
 
-  [2mwt remove -D experimental
+  [2mwt remove -D experimental[0m
 
-[1m[32mBranch cleanup
+[1m[32mBranch cleanup[0m
 
 By default, branches are deleted when merging them would add nothing. This works with squash-merge and rebase workflows where commit history differs but file changes match.
 
@@ -101,7 +101,7 @@ The 'same commit' check uses the local default branch; for other checks, 'target
 
 Branches showing [2m_[0m or [2m⊂[0m are dimmed as safe to delete.
 
-[1m[32mForce flags
+[1m[32mForce flags[0m
 
 Worktrunk has two force flags for different situations:
 
@@ -110,17 +110,17 @@ Worktrunk has two force flags for different situations:
    --force (-f)        Worktree Worktree has untracked files (build artifacts, IDE config) 
    --force-delete (-D) Branch   Branch has unmerged commits                                
 
-  [2mwt remove feature --force       # Remove worktree with untracked files
-  [2mwt remove feature -D            # Delete unmerged branch
-  [2mwt remove feature --force -D    # Both
+  [2mwt remove feature --force       # Remove worktree with untracked files[0m
+  [2mwt remove feature -D            # Delete unmerged branch[0m
+  [2mwt remove feature --force -D    # Both[0m
 
 Without [2m--force[0m, removal fails if the worktree contains untracked files. Without [2m-D[0m, removal keeps branches with unmerged changes. Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
 
-[1m[32mBackground removal
+[1m[32mBackground removal[0m
 
 Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt-logs/{branch}-remove.log[0m. Use [2m--foreground[0m to run in the foreground.
 
-[1m[32mSee also
+[1m[32mSee also[0m
 
 - [2mwt merge[0m — Remove worktree after merging
 - [2mwt list[0m — View all worktrees

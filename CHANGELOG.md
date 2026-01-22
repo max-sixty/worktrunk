@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.18.1
+
+### Fixed
+
+- **Submodule worktree paths**: Worktrees are now created in the correct location when running inside a git submodule. Previously, worktrees were created relative to the parent repo's `.git/modules/` directory instead of the submodule's working directory. ([#762](https://github.com/max-sixty/worktrunk/pull/762), thanks @lajarre; [#777](https://github.com/max-sixty/worktrunk/issues/777), thanks @mhonsel for reporting)
+- **Shell integration warnings**: Warnings about shell integration now check if the *current* shell has integration configured, not whether *any* shell does. This fixes misleading "shell requires restart" messages when e.g. bash had integration but the user was running fish. ([#772](https://github.com/max-sixty/worktrunk/pull/772))
+- **"Not found" error messages**: Improved error message phrasing — "No branch named X" instead of "Branch X not found", "Branch X has no worktree" instead of "No worktree found for branch X". Context-appropriate hints now appear (e.g., `wt remove` no longer suggests `--create`). ([#774](https://github.com/max-sixty/worktrunk/pull/774))
+
+### Internal
+
+- Unified PR/MR reference resolution, reducing code duplication. ([#778](https://github.com/max-sixty/worktrunk/pull/778))
+
 ## 0.18.0
 
 ### Improved

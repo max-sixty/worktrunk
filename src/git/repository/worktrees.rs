@@ -55,14 +55,10 @@ impl Repository {
             .map(|wt| wt.path.clone()))
     }
 
-    /// The primary worktree — where established files (ignored files, configs) typically live.
+    /// The "home" worktree — main worktree for normal repos, default branch worktree for bare.
     ///
-    /// - Normal repos: the main worktree (repo root) — this is where you cloned and set things up
-    /// - Bare repos: the default branch's worktree — no main worktree exists
-    ///
+    /// Used as the default source for `copy-ignored` and the `{{ primary_worktree_path }}` template.
     /// Returns `None` for bare repos when no worktree has the default branch.
-    ///
-    /// For template var `{{ primary_worktree_path }}`.
     pub fn primary_worktree(&self) -> anyhow::Result<Option<PathBuf>> {
         if self.is_bare() {
             let Some(branch) = self.default_branch() else {
@@ -222,20 +218,12 @@ impl Repository {
 
     /// Find the "home" path - where to cd when leaving a worktree.
     ///
-    /// This is the preferred destination after removing the current worktree
-    /// or after merge removes the worktree. Priority:
-    /// 1. The default branch's worktree (if it exists)
-    /// 2. The first worktree in the list
-    /// 3. The repo base directory (for bare repos with no worktrees)
+    /// Returns the primary worktree if it exists, otherwise the repo root.
+    /// - Normal repos: the main worktree (repo root)
+    /// - Bare repos: the default branch's worktree, or the bare repo directory
     pub fn home_path(&self) -> anyhow::Result<PathBuf> {
-        let worktrees = self.list_worktrees()?;
-        let default_branch = self.default_branch().unwrap_or_default();
-
-        if let Some(home) = WorktreeInfo::find_home(&worktrees, &default_branch) {
-            return Ok(home.path.clone());
-        }
-
-        // No worktrees - fall back to repo base (bare repo case)
-        Ok(self.repo_path().to_path_buf())
+        Ok(self
+            .primary_worktree()?
+            .unwrap_or_else(|| self.repo_path().to_path_buf()))
     }
 }

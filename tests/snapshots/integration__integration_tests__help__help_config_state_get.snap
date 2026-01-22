@@ -26,31 +26,31 @@ exit_code: 0
 ----- stderr -----
 wt config state get - Get all stored state
 
-Usage: [1m[36mwt config state get[0m [36m[OPTIONS]
+Usage: [1m[36mwt config state get[0m [36m[OPTIONS][0m
 
-[1m[32mOptions:
-      [1m[36m--format[0m[36m [0m[36m<FORMAT>
+[1m[32mOptions:[0m
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
           Output format (table, json)
           
           [default: table]
 
-  [1m[36m-h[0m, [1m[36m--help
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 Shows all stored state including:
 
 - [1mDefault branch[0m: Cached result of querying remote for default branch
-- [1mPrevious branch[0m: Previous branch for [2mwt switch -
+- [1mPrevious branch[0m: Previous branch for [2mwt switch -[0m
 - [1mBranch markers[0m: User-defined branch notes
 - [1mCI status[0m: Cached GitHub/GitLab CI status per branch (30s TTL)
 - [1mHints[0m: One-time hints that have been shown

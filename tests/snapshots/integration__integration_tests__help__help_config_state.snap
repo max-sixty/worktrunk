@@ -25,9 +25,9 @@ exit_code: 0
 ----- stderr -----
 wt config state - Manage internal data and cache
 
-Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>
+Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
-[1m[32mCommands:
+[1m[32mCommands:[0m
   [1m[36mdefault-branch[0m   Default branch setting
   [1m[36mprevious-branch[0m  Previous branch (for [1mwt switch -[0m)
   [1m[36mci-status[0m        CI status cache
@@ -37,47 +37,47 @@ Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>
   [1m[36mget[0m              Get all stored state
   [1m[36mclear[0m            Clear all stored state
 
-[1m[32mOptions:
-  [1m[36m-h[0m, [1m[36m--help
+[1m[32mOptions:[0m
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 State is stored in [2m.git/[0m (config entries and log files), separate from configuration files.
 Use [2mwt config show[0m to view file-based configuration.
 
-[1m[32mKeys
+[1m[32mKeys[0m
 
 - [1mdefault-branch[0m: The repository's default branch ([2mmain[0m, [2mmaster[0m, etc.)
-- [1mprevious-branch[0m: Previous branch for [2mwt switch -
+- [1mprevious-branch[0m: Previous branch for [2mwt switch -[0m
 - [1mci-status[0m: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - [1mmarker[0m: Custom status marker for a branch (shown in [2mwt list[0m)
 - [1mlogs[0m: Background operation logs
 
-[1m[32mExamples
+[1m[32mExamples[0m
 
 Get the default branch:
-  [2mwt config state default-branch
+  [2mwt config state default-branch[0m
 
 Set the default branch manually:
-  [2mwt config state default-branch set main
+  [2mwt config state default-branch set main[0m
 
 Set a marker for current branch:
-  [2mwt config state marker set "🚧 WIP"
+  [2mwt config state marker set "🚧 WIP"[0m
 
 Clear all CI status cache:
-  [2mwt config state ci-status clear --all
+  [2mwt config state ci-status clear --all[0m
 
 Show all stored state:
-  [2mwt config state get
+  [2mwt config state get[0m
 
 Clear all stored state:
-  [2mwt config state clear
+  [2mwt config state clear[0m

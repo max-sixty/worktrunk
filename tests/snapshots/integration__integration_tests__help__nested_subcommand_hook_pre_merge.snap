@@ -25,7 +25,7 @@ exit_code: 2
 
   [1m[32mtip:[0m a similar subcommand exists: '[1m[32mremove[0m'
 
-[1m[32mUsage:[0m [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND]
+[1m[32mUsage:[0m [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
 For more information, try '[1m[36m--help[0m'.
 

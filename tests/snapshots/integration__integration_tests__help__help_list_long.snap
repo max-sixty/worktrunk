@@ -24,43 +24,43 @@ exit_code: 0
 ----- stderr -----
 wt list - List worktrees and their status
 
-Usage: [1m[36mwt list[0m [36m[OPTIONS]
-       [1m[36mwt list[0m [36m<COMMAND>
+Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
+       [1m[36mwt list[0m [36m<COMMAND>[0m
 
-[1m[32mCommands:
+[1m[32mCommands:[0m
   [1m[36mstatusline[0m  Single-line status for shell prompts
 
-[1m[32mOptions:
-      [1m[36m--format[0m[36m [0m[36m<FORMAT>
+[1m[32mOptions:[0m
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
           Output format (table, json)
           
           [default: table]
 
-      [1m[36m--branches
+      [1m[36m--branches[0m
           Include branches without worktrees
 
-      [1m[36m--remotes
+      [1m[36m--remotes[0m
           Include remote branches
 
-      [1m[36m--full
+      [1m[36m--full[0m
           Include CI status and diff analysis (slower)
 
-      [1m[36m--progressive
-          Show fast info immediately, update with slow info
+      [1m[36m--progressive[0m
+          Show fast info immediately, update with slow info[0m
           
-          Displays local data (branches, paths, status) first, then updates with remote data (CI, upstream) as it arrives. Auto-enabled for TTY.
+          Displays local data (branches, paths, status) first, then updates with remote data (CI, upstream) as it arrives. Auto-enabled for TTY.[0m
 
-  [1m[36m-h[0m, [1m[36m--help
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 Shows uncommitted changes, divergence from the default branch and remote, and optional CI status.
@@ -68,25 +68,25 @@ Shows uncommitted changes, divergence from the default branch and remote, and op
 
 The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With [2m--full[0m, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
 
-[1m[32mExamples
+[1m[32mExamples[0m
 
 List all worktrees:
 
-  [2m$ wt list
+  [2m$ wt list[0m
 
 Include CI status and line diffs:
 
-  [2m$ wt list --full
+  [2m$ wt list --full[0m
 
 Include branches that don't have worktrees:
 
-  [2m$ wt list --branches --full
+  [2m$ wt list --branches --full[0m
 
 Output as JSON for scripting:
 
-  [2m$ wt list --format=json
+  [2m$ wt list --format=json[0m
 
-[1m[32mColumns
+[1m[32mColumns[0m
 
    Column                                Shows                               
    ─────── ───────────────────────────────────────────────────────────────── 
@@ -105,7 +105,7 @@ Output as JSON for scripting:
 
 Note: [2mmain↕[0m and [2mmain…±[0m refer to the default branch (header label stays [2mmain[0m for compactness). [2mmain…±[0m uses a merge-base (three-dot) diff.
 
-[32mCI status
+[32mCI status[0m
 
 The CI column shows GitHub/GitLab pipeline status:
 
@@ -121,7 +121,7 @@ The CI column shows GitHub/GitLab pipeline status:
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank. Results are cached for 30-60 seconds; use [2mwt config state[0m to view or clear.
 
-[1m[32mStatus symbols
+[1m[32mStatus symbols[0m
 
 The Status column has multiple subcolumns. Within each, only the first matching symbol is shown (listed in priority order):
 
@@ -153,37 +153,37 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 
 Rows are dimmed when safe to delete ([2m_[0m same commit with clean working tree or [2m⊂[0m content integrated).
 
-[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 
-[1m[32mJSON output
+[1m[32mJSON output[0m
 
 Query structured data with [2m--format=json[0m:
 
-  [2m# Current worktree path (for scripts)
-  [2mwt list --format=json | jq -r '.[] | select(.is_current) | .path'
-  [2m
-  [2m# Branches with uncommitted changes
-  [2mwt list --format=json | jq '.[] | select(.working_tree.modified)'
-  [2m
-  [2m# Worktrees with merge conflicts
-  [2mwt list --format=json | jq '.[] | select(.operation_state == "conflicts")'
-  [2m
-  [2m# Branches ahead of main (needs merging)
-  [2mwt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'
-  [2m
-  [2m# Integrated branches (safe to remove)
-  [2mwt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'
-  [2m
-  [2m# Branches without worktrees
-  [2mwt list --format=json --branches | jq '.[] | select(.kind == "branch") | .branch'
-  [2m
-  [2m# Worktrees ahead of remote (needs pushing)
-  [2mwt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'
-  [2m
-  [2m# Stale CI (local changes not reflected in CI)
-  [2mwt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
+  [2m# Current worktree path (for scripts)[0m
+  [2mwt list --format=json | jq -r '.[] | select(.is_current) | .path'[0m
+  [2m[0m
+  [2m# Branches with uncommitted changes[0m
+  [2mwt list --format=json | jq '.[] | select(.working_tree.modified)'[0m
+  [2m[0m
+  [2m# Worktrees with merge conflicts[0m
+  [2mwt list --format=json | jq '.[] | select(.operation_state == "conflicts")'[0m
+  [2m[0m
+  [2m# Branches ahead of main (needs merging)[0m
+  [2mwt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'[0m
+  [2m[0m
+  [2m# Integrated branches (safe to remove)[0m
+  [2mwt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'[0m
+  [2m[0m
+  [2m# Branches without worktrees[0m
+  [2mwt list --format=json --branches | jq '.[] | select(.kind == "branch") | .branch'[0m
+  [2m[0m
+  [2m# Worktrees ahead of remote (needs pushing)[0m
+  [2mwt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'[0m
+  [2m[0m
+  [2m# Stale CI (local changes not reflected in CI)[0m
+  [2mwt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'[0m
 
-[1mFields:
+[1mFields:[0m
 
          Field           Type                                 Description                             
    ────────────────── ─────────── ─────────────────────────────────────────────────────────────────── 
@@ -207,7 +207,7 @@ Query structured data with [2m--format=json[0m:
    statusline         string      Pre-formatted status with ANSI colors                               
    symbols            string      Raw status symbols without colors (e.g., "!?↓")                     
 
-[32mCommit object
+[32mCommit object[0m
 
      Field    Type          Description         
    ───────── ────── ─────────────────────────── 
@@ -216,7 +216,7 @@ Query structured data with [2m--format=json[0m:
    message   string Commit message (first line) 
    timestamp number Unix timestamp              
 
-[32mworking_tree object
+[32mworking_tree object[0m
 
      Field    Type                 Description               
    ───────── ─────── ─────────────────────────────────────── 
@@ -227,7 +227,7 @@ Query structured data with [2m--format=json[0m:
    deleted   boolean Has deleted files                       
    diff      object  Lines changed vs HEAD: {added, deleted} 
 
-[32mmain object
+[32mmain object[0m
 
    Field   Type                       Description                      
    ────── ────── ───────────────────────────────────────────────────── 
@@ -235,7 +235,7 @@ Query structured data with [2m--format=json[0m:
    behind number Commits behind the default branch                     
    diff   object Lines changed vs the default branch: {added, deleted} 
 
-[32mremote object
+[32mremote object[0m
 
    Field   Type          Description          
    ────── ────── ──────────────────────────── 
@@ -244,7 +244,7 @@ Query structured data with [2m--format=json[0m:
    ahead  number Commits ahead of remote      
    behind number Commits behind remote        
 
-[32mworktree object
+[32mworktree object[0m
 
     Field    Type                                       Description                                      
    ──────── ─────── ──────────────────────────────────────────────────────────────────────────────────── 
@@ -252,7 +252,7 @@ Query structured data with [2m--format=json[0m:
    reason   string  Reason for locked/prunable state                                                     
    detached boolean HEAD is detached                                                                     
 
-[32mci object
+[32mci object[0m
 
    Field   Type                      Description                    
    ────── ─────── ───────────────────────────────────────────────── 
@@ -261,22 +261,22 @@ Query structured data with [2m--format=json[0m:
    stale  boolean Local HEAD differs from remote (unpushed changes) 
    url    string  URL to the PR/MR page                             
 
-[32mmain_state values
+[32mmain_state values[0m
 
 These values describe the relation to the default branch.
 
-[2m"is_main"[0m [2m"orphan"[0m [2m"would_conflict"[0m [2m"empty"[0m [2m"same_commit"[0m [2m"integrated"[0m [2m"diverged"[0m [2m"ahead"[0m [2m"behind"
+[2m"is_main"[0m [2m"orphan"[0m [2m"would_conflict"[0m [2m"empty"[0m [2m"same_commit"[0m [2m"integrated"[0m [2m"diverged"[0m [2m"ahead"[0m [2m"behind"[0m
 
-[32mintegration_reason values
+[32mintegration_reason values[0m
 
-When [2mmain_state == "integrated"[0m: [2m"ancestor"[0m [2m"trees_match"[0m [2m"no_added_changes"[0m [2m"merge_adds_nothing"
+When [2mmain_state == "integrated"[0m: [2m"ancestor"[0m [2m"trees_match"[0m [2m"no_added_changes"[0m [2m"merge_adds_nothing"[0m
 
-[32mci.status values
+[32mci.status values[0m
 
-[2m"passed"[0m [2m"running"[0m [2m"failed"[0m [2m"conflicts"[0m [2m"no-ci"[0m [2m"error"
+[2m"passed"[0m [2m"running"[0m [2m"failed"[0m [2m"conflicts"[0m [2m"no-ci"[0m [2m"error"[0m
 
 Missing a field that would be generally useful? Open an issue at https://github.com/max-sixty/worktrunk.
 
-[1m[32mSee also
+[1m[32mSee also[0m
 
 - [2mwt select[0m — Interactive worktree picker with live preview

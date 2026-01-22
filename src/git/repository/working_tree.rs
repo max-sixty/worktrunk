@@ -54,12 +54,7 @@ pub struct WorkingTree<'a> {
 impl<'a> WorkingTree<'a> {
     /// Run a git command in this worktree and return stdout.
     pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
-        let output = Cmd::new("git")
-            .args(args.iter().copied())
-            .current_dir(&self.path)
-            .context(path_to_logging_context(&self.path))
-            .run()
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
+        let output = self.run_command_output(args)?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -75,6 +70,19 @@ impl<'a> WorkingTree<'a> {
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         Ok(stdout)
+    }
+
+    /// Run a git command in this worktree and return the raw Output.
+    ///
+    /// Use this when you need to check exit codes directly (e.g., for commands
+    /// where non-zero exit is not an error condition).
+    pub fn run_command_output(&self, args: &[&str]) -> anyhow::Result<std::process::Output> {
+        Cmd::new("git")
+            .args(args.iter().copied())
+            .current_dir(&self.path)
+            .context(path_to_logging_context(&self.path))
+            .run()
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
 
     // =========================================================================

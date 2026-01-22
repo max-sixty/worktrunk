@@ -4,7 +4,7 @@ info:
   program: wt
   args:
     - switch
-    - "mr:42"
+    - "pr:42"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -35,10 +35,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mFetching MR !42...[39m
-[107m [0m [1mAdd feature fix for edge case[22m (!42)
-[107m [0m by @contributor · opened · [90mhttps://gitlab.com/owner/test-repo/-/merge_requests/42[39m
-[2m○[22m Push configured to fork: [90mhttps://gitlab.com/contributor/test-repo.git[39m
-[32m✓[39m [32mCreated branch [1mfeature-fix[22m (tracking [1mMR !42[22m) and worktree @ [1m_REPO_.feature-fix[22m[39m
-[33m▲[39m [33mCannot change directory — shell integration not installed[39m
+[36m◎[39m [36mFetching PR #42...[39m
+[107m [0m [1mAdd feature fix for edge case[22m (#42)
+[107m [0m by @contributor · open · [90mhttps://github.com/owner/test-repo/pull/42[39m
+[2m○[22m Branch [1mcontributor/feature-fix[22m already configured for PR #42
+[33m▲[39m [33mWorktree for [1mcontributor/feature-fix[22m @ [1m_REPO_.contributor-feature-fix[22m, but cannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

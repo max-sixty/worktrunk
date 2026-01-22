@@ -36,4 +36,5 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mFetching PR #101...[39m
-[31m✗[39m [31mNetwork error connecting to GitHub; check your internet connection[39m
+[31m✗[39m [31mgh api failed for PR #101[39m
+[107m [0m connection refused: network is unreachable
