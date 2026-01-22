@@ -2537,9 +2537,15 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "https://gitlab.com/owner/test-repo.git",
     ]);
 
-    // glab mr view <number> --output json format
-    // source_project is the fork (contributor/test-repo), target_project is the upstream (owner/test-repo)
-    let glab_response = r#"{
+    // Set up mock glab with separate responses for MR API and project APIs.
+    // The mock-stub supports compound keys like "api projects/456" to match
+    // different API paths.
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "glab");
+
+    // MR API response (no nested project data - that comes from separate calls)
+    let mr_response = r#"{
         "title": "Add feature fix for edge case",
         "author": {"username": "contributor"},
         "state": "opened",
@@ -2547,18 +2553,40 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "source_branch": "feature-fix",
         "source_project_id": 456,
         "target_project_id": 123,
-        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42",
-        "source_project": {
-            "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
-        },
-        "target_project": {
-            "ssh_url_to_repo": "git@gitlab.com:owner/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/owner/test-repo.git"
-        }
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42"
     }"#;
 
-    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+    // Source project (fork) API response
+    let source_project_response = r#"{
+        "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
+        "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
+    }"#;
+
+    // Target project (upstream) API response
+    let target_project_response = r#"{
+        "ssh_url_to_repo": "git@gitlab.com:owner/test-repo.git",
+        "http_url_to_repo": "https://gitlab.com/owner/test-repo.git"
+    }"#;
+
+    MockConfig::new("glab")
+        .version("glab version 1.40.0 (mock)")
+        // Compound key: "api projects/:id/merge_requests/42"
+        .command(
+            "api projects/:id/merge_requests/42",
+            MockResponse::output(mr_response),
+        )
+        // Compound key: "api projects/456" (source project)
+        .command(
+            "api projects/456",
+            MockResponse::output(source_project_response),
+        )
+        // Compound key: "api projects/123" (target project)
+        .command(
+            "api projects/123",
+            MockResponse::output(target_project_response),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -2628,7 +2656,7 @@ fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo:
         "https://gitlab.com/owner/test-repo.git",
     ]);
 
-    // Fork MR response
+    // Fork MR response (project URLs not needed since branch already exists)
     let glab_response = r#"{
         "title": "Add feature fix for edge case",
         "author": {"username": "contributor"},
@@ -2637,15 +2665,7 @@ fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo:
         "source_branch": "feature-fix",
         "source_project_id": 456,
         "target_project_id": 123,
-        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42",
-        "source_project": {
-            "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
-        },
-        "target_project": {
-            "ssh_url_to_repo": "git@gitlab.com:owner/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/owner/test-repo.git"
-        }
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42"
     }"#;
 
     let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
@@ -2686,7 +2706,7 @@ fn test_switch_mr_fork_existing_branch_tracks_different(#[from(repo_with_remote)
         "https://gitlab.com/owner/test-repo.git",
     ]);
 
-    // Fork MR response for MR 42, but branch tracks MR 99
+    // Fork MR response for MR 42, but branch tracks MR 99 (error case)
     let glab_response = r#"{
         "title": "Add feature fix for edge case",
         "author": {"username": "contributor"},
@@ -2695,15 +2715,7 @@ fn test_switch_mr_fork_existing_branch_tracks_different(#[from(repo_with_remote)
         "source_branch": "feature-fix",
         "source_project_id": 456,
         "target_project_id": 123,
-        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42",
-        "source_project": {
-            "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
-        },
-        "target_project": {
-            "ssh_url_to_repo": "git@gitlab.com:owner/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/owner/test-repo.git"
-        }
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42"
     }"#;
 
     let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
@@ -2731,7 +2743,7 @@ fn test_switch_mr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
         "https://gitlab.com/owner/test-repo.git",
     ]);
 
-    // Fork MR response
+    // Fork MR response (project URLs not needed since branch already exists)
     let glab_response = r#"{
         "title": "Add feature fix for edge case",
         "author": {"username": "contributor"},
@@ -2740,15 +2752,7 @@ fn test_switch_mr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
         "source_branch": "feature-fix",
         "source_project_id": 456,
         "target_project_id": 123,
-        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42",
-        "source_project": {
-            "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
-        },
-        "target_project": {
-            "ssh_url_to_repo": "git@gitlab.com:owner/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/owner/test-repo.git"
-        }
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42"
     }"#;
 
     let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
