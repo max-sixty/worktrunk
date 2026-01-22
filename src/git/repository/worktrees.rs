@@ -55,14 +55,10 @@ impl Repository {
             .map(|wt| wt.path.clone()))
     }
 
-    /// The primary worktree — where established files (ignored files, configs) typically live.
+    /// The "home" worktree — main worktree for normal repos, default branch worktree for bare.
     ///
-    /// - Normal repos: the main worktree (repo root) — this is where you cloned and set things up
-    /// - Bare repos: the default branch's worktree — no main worktree exists
-    ///
+    /// Used as the default source for `copy-ignored` and the `{{ primary_worktree_path }}` template.
     /// Returns `None` for bare repos when no worktree has the default branch.
-    ///
-    /// For template var `{{ primary_worktree_path }}`.
     pub fn primary_worktree(&self) -> anyhow::Result<Option<PathBuf>> {
         if self.is_bare() {
             let Some(branch) = self.default_branch() else {

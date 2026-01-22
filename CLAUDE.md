@@ -31,7 +31,9 @@ Use deprecation warnings to get there smoothly when external interfaces must cha
 
 Use consistent terminology in documentation, help text, and code comments:
 
-- **main worktree** — the primary worktree (the original git directory), not "main branch worktree"
+- **main worktree** — the original git directory (from clone/init); bare repos have none
+- **linked worktree** — worktree created via `git worktree add` (git's official term)
+- **primary worktree** — the "home" worktree: main worktree for normal repos, default branch worktree for bare repos
 - **default branch** — the branch (main, master, etc.), not "main branch"
 - **target** — the destination for merge/rebase/push (e.g., "merge target"). Don't use "target" to mean worktrees — say "worktree" or "worktrees"
 
