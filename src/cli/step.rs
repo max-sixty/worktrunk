@@ -346,7 +346,7 @@ Without an argument, promotes the current branch — or restores the default bra
         /// Branch to promote to main worktree
         ///
         /// Defaults to current branch, or default branch from main worktree.
-        #[arg(add = crate::completion::branch_value_completer())]
+        #[arg(add = crate::completion::worktree_only_completer())]
         branch: Option<String>,
     },
 }

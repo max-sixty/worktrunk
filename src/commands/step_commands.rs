@@ -750,18 +750,15 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
             action: Some("promote".into()),
         })?;
 
-    // Resolve the branch to promote
-    let default_branch = repo
-        .default_branch()
-        .ok_or_else(|| anyhow::anyhow!("Could not determine default branch"))?;
-
+    // Resolve the branch to promote (default_branch computed lazily, only when needed)
     let target_branch = match branch {
         Some(b) => b.to_string(),
         None => {
             let current_wt = repo.current_worktree();
             if !current_wt.is_linked()? {
                 // From main worktree with no args: restore default branch
-                default_branch.clone()
+                repo.default_branch()
+                    .ok_or_else(|| anyhow::anyhow!("Could not determine default branch"))?
             } else {
                 // From other worktree with no args: promote current branch
                 current_wt.branch()?.ok_or_else(|| GitError::DetachedHead {
@@ -795,7 +792,9 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     target_working_tree.ensure_clean("promote", Some(&target_branch), false)?;
 
     // Check if we're restoring canonical state (promoting default branch back to main worktree)
-    let is_restoring = target_branch == default_branch;
+    // Only lookup default_branch if needed for messaging (already resolved if no-arg from main)
+    let default_branch = repo.default_branch();
+    let is_restoring = default_branch.as_ref() == Some(&target_branch);
 
     if is_restoring {
         // Restoring default branch to main worktree - no warning needed
@@ -805,30 +804,44 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         crate::output::print(warning_message(
             "Promoting creates mismatched worktree state (shown as ⚑ in wt list)",
         ))?;
-        crate::output::print(hint_message(cformat!(
-            "Run <bright-black>wt step promote {default_branch}</> to restore canonical locations"
-        )))?;
+        // Only show restore hint if we know the default branch
+        if let Some(default) = &default_branch {
+            crate::output::print(hint_message(cformat!(
+                "Run <bright-black>wt step promote {default}</> to restore canonical locations"
+            )))?;
+        }
     }
 
     // Perform the exchange:
     // 1. Detach both worktrees (releases branch locks)
-    // 2. Check out exchanged branches
+    // 2. Switch to exchanged branches
+    //
+    // Detach target first so if it fails, main worktree is unchanged.
+    // Use `git switch` for branch checkouts to avoid option injection from branch names.
 
-    // Detach HEAD in both worktrees
-    main_working_tree
-        .run_command(&["checkout", "--detach"])
-        .context("Failed to detach HEAD in main worktree")?;
+    // Detach HEAD in both worktrees (target first for safer failure mode)
     target_working_tree
         .run_command(&["checkout", "--detach"])
         .context("Failed to detach HEAD in target worktree")?;
+    if let Err(e) = main_working_tree.run_command(&["checkout", "--detach"]) {
+        // Try to restore target worktree before failing
+        let _ = target_working_tree.run_command(&["switch", &target_branch]);
+        return Err(e).context("Failed to detach HEAD in main worktree");
+    }
 
-    // Check out exchanged branches
-    main_working_tree
-        .run_command(&["checkout", &target_branch])
-        .context("Failed to check out branch in main worktree")?;
-    target_working_tree
-        .run_command(&["checkout", &main_branch])
-        .context("Failed to check out branch in target worktree")?;
+    // Switch to exchanged branches (git switch is branch-only, safer than checkout)
+    if let Err(e) = main_working_tree.run_command(&["switch", &target_branch]) {
+        // Try to restore both worktrees before failing
+        let _ = main_working_tree.run_command(&["switch", &main_branch]);
+        let _ = target_working_tree.run_command(&["switch", &target_branch]);
+        return Err(e).context("Failed to switch to branch in main worktree");
+    }
+    if let Err(e) = target_working_tree.run_command(&["switch", &main_branch]) {
+        // Try to restore both worktrees before failing
+        let _ = main_working_tree.run_command(&["switch", &main_branch]);
+        let _ = target_working_tree.run_command(&["switch", &target_branch]);
+        return Err(e).context("Failed to switch to branch in target worktree");
+    }
 
     crate::output::print(success_message(cformat!(
         "Promoted: main worktree now has <bold>{target_branch}</>; {} now has <bold>{main_branch}</>",

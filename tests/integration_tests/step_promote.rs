@@ -14,6 +14,11 @@ fn get_branch(repo: &TestRepo, dir: &std::path::Path) -> String {
         .current_dir(dir)
         .output()
         .unwrap();
+    assert!(
+        output.status.success(),
+        "git rev-parse failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
@@ -78,10 +83,16 @@ fn test_promote_restore(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
 
     // First promote: feature to main worktree
-    repo.wt_command()
+    let output = repo
+        .wt_command()
         .args(["step", "promote", "feature"])
         .output()
         .unwrap();
+    assert!(
+        output.status.success(),
+        "first promote failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Verify first promote worked
     assert_eq!(get_branch(&repo, repo.root_path()), "feature");
@@ -127,10 +138,16 @@ fn test_promote_auto_restore(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
 
     // First promote: feature to main worktree (creates mismatch)
-    repo.wt_command()
+    let output = repo
+        .wt_command()
         .args(["step", "promote", "feature"])
         .output()
         .unwrap();
+    assert!(
+        output.status.success(),
+        "first promote failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Verify first promote worked
     assert_eq!(get_branch(&repo, repo.root_path()), "feature");
@@ -226,10 +243,16 @@ fn test_promote_shows_mismatch_in_list(mut repo: TestRepo) {
     let _feature_path = repo.add_worktree("feature");
 
     // Promote
-    repo.wt_command()
+    let output = repo
+        .wt_command()
         .args(["step", "promote", "feature"])
         .output()
         .unwrap();
+    assert!(
+        output.status.success(),
+        "promote failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // List should show mismatch indicators
     assert_cmd_snapshot!(make_snapshot_cmd(
