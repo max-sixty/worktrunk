@@ -23,6 +23,7 @@ use super::commit::{CommitGenerator, CommitOptions};
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, run_hook_with_filter};
 use super::repository_ext::RepositoryCliExt;
+use super::worktree::compute_worktree_path;
 
 /// Handle `wt step commit` command
 ///
@@ -809,7 +810,7 @@ pub fn step_relocate(
     commit: bool,
     clobber: bool,
 ) -> anyhow::Result<()> {
-    use super::worktree::{get_path_mismatch, paths_match};
+    use super::worktree::paths_match;
     use worktrunk::path::format_path_for_display;
     use worktrunk::shell_exec::Cmd;
 
@@ -840,13 +841,31 @@ pub fn step_relocate(
     };
 
     // Find mismatched worktrees (worktrees not at their expected paths)
-    let mismatched: Vec<_> = candidates
-        .into_iter()
-        .filter_map(|wt| {
-            let branch = wt.branch.as_deref()?;
-            get_path_mismatch(&repo, branch, &wt.path, &config).map(|expected| (wt, expected))
-        })
-        .collect();
+    // Handle template errors explicitly rather than silently dropping
+    let mut mismatched: Vec<(worktrunk::git::WorktreeInfo, PathBuf)> = Vec::new();
+    for wt in candidates {
+        let Some(branch) = wt.branch.as_deref() else {
+            continue; // Detached HEAD worktrees can't be relocated
+        };
+
+        match compute_worktree_path(&repo, branch, &config) {
+            Ok(expected) => {
+                // Check if paths differ (canonical comparison)
+                let actual_canonical = wt.path.canonicalize().unwrap_or_else(|_| wt.path.clone());
+                let expected_canonical =
+                    expected.canonicalize().unwrap_or_else(|_| expected.clone());
+                if actual_canonical != expected_canonical {
+                    mismatched.push((wt, expected));
+                }
+            }
+            Err(e) => {
+                // Template expansion failed - warn user so they can fix config
+                crate::output::print(warning_message(cformat!(
+                    "Skipping <bold>{branch}</> (template error: {e})"
+                )))?;
+            }
+        }
+    }
 
     if mismatched.is_empty() {
         crate::output::print(info_message("All worktrees are at expected paths"))?;
@@ -959,8 +978,23 @@ pub fn step_relocate(
             continue;
         }
 
-        // Target exists but is NOT a worktree we're moving - it's a blocker
+        // Target exists but is NOT a worktree we're moving - check if it's a worktree at all
         let branch = pending[i].0.branch.as_deref().unwrap();
+
+        // SAFETY: Never clobber an existing worktree - that would corrupt git metadata
+        if let Some((_, occupant_branch)) = repo.worktree_at_path(expected_path)? {
+            let occupant_name = occupant_branch.as_deref().unwrap_or("(detached)");
+            crate::output::print(warning_message(cformat!(
+                "Skipping <bold>{branch}</> (target is worktree for <bold>{occupant_name}</>)"
+            )))?;
+            crate::output::print(hint_message(cformat!(
+                "Relocate or remove <bright-black>{occupant_name}</> first"
+            )))?;
+            blocked_by_non_worktree.insert(i);
+            skipped += 1;
+            continue;
+        }
+
         if clobber {
             // Backup the blocker (use get_now() for deterministic timestamps in tests)
             let timestamp_secs = worktrunk::utils::get_now() as i64;
@@ -997,7 +1031,7 @@ pub fn step_relocate(
     let temp_dir = repo.git_common_dir().join("wt-relocate-tmp");
     let mut relocated = 0;
     let mut moved_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
-    let mut temp_relocated: Vec<(usize, PathBuf)> = Vec::new(); // (index, temp_path)
+    let mut temp_relocated: Vec<(usize, PathBuf, PathBuf)> = Vec::new(); // (index, temp_path, original_path)
 
     // Helper to check if a target is currently empty (not occupied by a pending worktree)
     let is_target_empty = |idx: usize,
@@ -1087,9 +1121,17 @@ pub fn step_relocate(
             continue;
         }
 
-        // No progress - we have a cycle. Break it by moving one to temp.
+        // No progress - we have a cycle among movable worktrees.
+        // Find a non-main worktree to temp-move (git worktree move can't move main).
         let cycle_idx = (0..pending.len())
-            .find(|&i| !moved_indices.contains(&i) && !blocked_by_non_worktree.contains(&i));
+            .filter(|&i| !moved_indices.contains(&i) && !blocked_by_non_worktree.contains(&i))
+            .find(|&i| !paths_match(&pending[i].0.path, &repo_path)); // prefer non-main
+
+        // If all remaining are main worktrees (shouldn't happen in practice), fall back to any
+        let cycle_idx = cycle_idx.or_else(|| {
+            (0..pending.len())
+                .find(|&i| !moved_indices.contains(&i) && !blocked_by_non_worktree.contains(&i))
+        });
 
         match cycle_idx {
             Some(i) => {
@@ -1101,7 +1143,9 @@ pub fn step_relocate(
                     std::fs::create_dir_all(&temp_dir)?;
                 }
 
-                let temp_path = temp_dir.join(branch);
+                // Sanitize branch name for temp path (feature/foo -> feature-foo)
+                let safe_branch = worktrunk::path::sanitize_for_filename(branch);
+                let temp_path = temp_dir.join(&safe_branch);
                 crate::output::print(progress_message(cformat!(
                     "Moving <bold>{branch}</> to temporary location..."
                 )))?;
@@ -1118,7 +1162,7 @@ pub fn step_relocate(
                 let old_canonical = wt.path.canonicalize().unwrap_or_else(|_| wt.path.clone());
                 current_locations.remove(&old_canonical);
 
-                temp_relocated.push((i, temp_path.clone()));
+                temp_relocated.push((i, temp_path.clone(), wt.path.clone()));
                 moved_indices.insert(i);
             }
             None => break, // All done
@@ -1126,7 +1170,7 @@ pub fn step_relocate(
     }
 
     // Phase 5: Move temp-relocated worktrees to final destinations
-    for (i, temp_path) in temp_relocated {
+    for (i, temp_path, original_path) in temp_relocated {
         let (_, expected_path) = &pending[i];
         let branch = pending[i].0.branch.as_deref().unwrap();
 
@@ -1144,11 +1188,13 @@ pub fn step_relocate(
             "Relocated <bold>{branch}</> → {dest_display}"
         )))?;
 
-        // Update shell if user was inside
+        // Update shell if user was inside the original worktree path
         if let Some(ref cwd_path) = cwd
-            && cwd_path.starts_with(&temp_path)
+            && cwd_path.starts_with(&original_path)
         {
-            let relative = cwd_path.strip_prefix(&temp_path).unwrap_or(Path::new(""));
+            let relative = cwd_path
+                .strip_prefix(&original_path)
+                .unwrap_or(Path::new(""));
             crate::output::change_directory(expected_path.join(relative))?;
         }
 
