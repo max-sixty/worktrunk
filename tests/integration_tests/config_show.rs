@@ -365,6 +365,33 @@ fn test_config_show_warns_unknown_user_keys(mut repo: TestRepo, temp_home: TempD
     });
 }
 
+/// Tests that loading a config with a truly unknown key (not valid in either config type)
+/// emits a warning during config loading (not just config show).
+#[rstest]
+fn test_unknown_project_key_warning_during_load(repo: TestRepo, temp_home: TempDir) {
+    // Create project config with truly unknown key (not valid in either config type)
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "[invalid-section-name]\nkey = \"value\"",
+    )
+    .unwrap();
+
+    // Run `wt list` which loads project config via ProjectConfig::load()
+    // This triggers warn_unknown_fields (different from warn_unknown_keys used by config show)
+    let mut cmd = repo.wt_command();
+    cmd.arg("list").current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("has unknown field"),
+        "Expected unknown field warning during config load, got: {stderr}"
+    );
+}
+
 /// Tests that when a user-config-only key (commit-generation) appears in project config,
 /// the warning suggests moving it to user config.
 #[rstest]
