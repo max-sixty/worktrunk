@@ -170,6 +170,54 @@ fn test_relocate_dirty_without_commit(repo: TestRepo) {
     );
 }
 
+/// Test that --commit auto-commits dirty worktrees before relocating
+#[rstest]
+fn test_relocate_dirty_with_commit(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // Create a worktree at a non-standard location
+    let wrong_path = parent.join("wrong-location");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        wrong_path.to_str().unwrap(),
+    ]);
+
+    // Make uncommitted changes
+    fs::write(wrong_path.join("dirty.txt"), "uncommitted changes").unwrap();
+
+    // Configure mock LLM command via config file
+    let worktrunk_config = r#"
+[commit-generation]
+command = "sh"
+args = ["-c", "cat >/dev/null && echo 'chore: auto-commit before relocate'"]
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    // Relocate with --commit should commit then move
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["relocate", "--commit"],
+        None
+    ));
+
+    // Verify the worktree was moved to expected location
+    let expected_path = parent.join("repo.feature");
+    assert!(
+        expected_path.exists(),
+        "Worktree should be at expected path after commit: {}",
+        expected_path.display()
+    );
+    assert!(
+        !wrong_path.exists(),
+        "Old worktree path should no longer exist: {}",
+        wrong_path.display()
+    );
+}
+
 /// Test that --clobber backs up non-worktree paths at target locations
 #[rstest]
 fn test_relocate_clobber_backs_up(repo: TestRepo) {
