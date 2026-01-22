@@ -38,7 +38,7 @@ utilities.
 Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>commit</span></b>        Commit changes with LLM commit message
+  <b><span class=c>commit</span></b>        Stage and commit with LLM-generated message
   <b><span class=c>squash</span></b>        Squash commits since branching
   <b><span class=c>push</span></b>          Fast-forward target to current branch
   <b><span class=c>rebase</span></b>        Rebase onto target
@@ -61,7 +61,7 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
 
 ## wt step commit
 
-Commit changes with LLM commit message. Stages working tree changes and commits with an LLM-generated message.
+Stage and commit with LLM-generated message.
 
 Stages all changes (including untracked files) and commits with an [LLM-generated message](https://worktrunk.dev/llm-commits/).
 
@@ -102,9 +102,7 @@ wt step commit --show-prompt | llm -m gpt-5-nano
 
 ### Command reference
 
-wt step commit - Commit changes with LLM commit message
-
-Stages working tree changes and commits with an LLM-generated message.
+wt step commit - Stage and commit with LLM-generated message
 
 Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
 
@@ -144,7 +142,7 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
 
 ## wt step squash
 
-Squash commits since branching. Stages working tree changes, squashes all commits since diverging from target into one, generates message with LLM.
+Squash commits since branching. Stages changes and generates message with LLM.
 
 Stages all changes (including untracked files), then squashes all commits since diverging from the target branch into a single commit with an [LLM-generated message](https://worktrunk.dev/llm-commits/).
 
@@ -183,8 +181,7 @@ wt step squash --show-prompt | less
 
 wt step squash - Squash commits since branching
 
-Stages working tree changes, squashes all commits since diverging from target
-into one, generates message with LLM.
+Stages changes and generates message with LLM.
 
 Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span> <span class=c>[TARGET]</span>
 
@@ -230,7 +227,7 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
 
 ## wt step copy-ignored
 
-Copy gitignored files to another worktree. By default copies all gitignored files; use .worktreeinclude to limit what gets copied. Useful in hooks to copy build caches and dependencies to new worktrees. Skips symlinks and existing files.
+Copy gitignored files to another worktree. Eliminates cold starts by copying build caches and dependencies.
 
 Git worktrees share the repository but not untracked files. This command copies gitignored files to another worktree, eliminating cold starts.
 
@@ -317,9 +314,7 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
 
 wt step copy-ignored - Copy gitignored files to another worktree
 
-By default copies all gitignored files; use <b>.worktreeinclude</b> to limit what gets
-copied. Useful in hooks to copy build caches and dependencies to new worktrees.
-Skips symlinks and existing files.
+Eliminates cold starts by copying build caches and dependencies.
 
 Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]</span>
 
@@ -352,7 +347,7 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
 
 ## wt step for-each
 
-[experimental] Run command in each worktree.
+[experimental] Run command in each worktree. Executes sequentially with real-time output; continues on failure.
 
 Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.
 
@@ -393,6 +388,8 @@ Note: This command is experimental and may change in future versions.
 ### Command reference
 
 wt step for-each - [experimental] Run command in each worktree
+
+Executes sequentially with real-time output; continues on failure.
 
 Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</span> <b><span class=c>--</span></b> <span class=c>&lt;ARGS&gt;...</span>
 
