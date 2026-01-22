@@ -1,284 +1,39 @@
-//! PR reference resolution (`pr:<number>` syntax).
+//! GitHub PR reference resolution (`pr:<number>` syntax).
 //!
-//! This module resolves PR numbers to branches, enabling `wt switch pr:101` to
-//! check out the branch associated with a pull request.
+//! This module resolves PR numbers to branches for `wt switch pr:101`.
+//! For shared documentation on PR/MR resolution, see the `remote_ref` module.
 //!
-//! # Syntax
-//!
-//! The `pr:<number>` prefix is unambiguous because colons are invalid in git
-//! branch names (git rejects them as "not a valid branch name").
-//!
-//! ```text
-//! wt switch pr:101          # Switch to branch for PR #101
-//! wt switch pr:101 --yes    # Skip approval prompts
-//! ```
-//!
-//! **Invalid usage:**
-//!
-//! ```text
-//! wt switch --create pr:101   # Error: PR branch already exists
-//! ```
-//!
-//! The `--create` flag is incompatible with `pr:` because the branch must
-//! already exist (it's the PR's head branch).
-//!
-//! # Resolution Flow
-//!
-//! ```text
-//! pr:101
-//!   │
-//!   ▼
-//! ┌─────────────────────────────────────────────────────────┐
-//! │ gh pr view 101 --json headRefName,headRepository,       │
-//! │   headRepositoryOwner,isCrossRepository,url             │
-//! └─────────────────────────────────────────────────────────┘
-//!   │
-//!   ├─── isCrossRepository == false ───▶ Same-repo PR
-//!   │     │
-//!   │     └─▶ Branch exists in origin, use directly
-//!   │
-//!   └─── isCrossRepository == true ───▶ Fork PR
-//!         │
-//!         └─▶ Set up push to fork URL
-//! ```
-//!
-//! Push permissions are not checked upfront — if the user lacks permission
-//! (doesn't own fork, maintainer edits disabled), push will fail with a clear
-//! error. This avoids complex permission detection logic.
-//!
-//! # Same-Repo PRs
-//!
-//! When `isCrossRepository` is `false`, the PR's branch exists in `origin`:
-//!
-//! 1. Resolve `headRefName` (e.g., `"feature-auth"`)
-//! 2. Check if worktree exists for that branch → switch to it
-//! 3. Otherwise, create worktree for the branch (DWIM from remote)
-//! 4. Pushing works normally: `git push origin feature-auth`
-//!
-//! This is equivalent to `wt switch feature-auth` — the `pr:` syntax is just
-//! a convenience for looking up the branch name.
-//!
-//! # Fork PRs
-//!
-//! When `isCrossRepository` is `true`, the branch exists in a fork, not `origin`.
-//!
-//! ## The Problem
-//!
-//! GitHub's `refs/pull/<N>/head` refs are **read-only**. You cannot push to them:
-//!
-//! ```text
-//! $ git push origin HEAD:refs/pull/101/head
-//! error: cannot lock ref 'refs/pull/101/head': unable to resolve reference
-//! ```
-//!
-//! To update a fork PR, you must push to the **fork's branch**, not the PR ref.
-//!
-//! ## Push Strategy (No Remote Required)
-//!
-//! Git's `branch.<name>.pushRemote` config accepts a URL directly, not just a
-//! named remote. This means we can set up push tracking without adding remotes:
-//!
-//! ```text
-//! branch.contributor/feature.remote = origin
-//! branch.contributor/feature.merge = refs/pull/101/head
-//! branch.contributor/feature.pushRemote = git@github.com:contributor/repo.git
-//! ```
-//!
-//! This configuration gives us:
-//! - `git pull` fetches from origin's PR ref (stays up to date with PR)
-//! - `git push` pushes to the fork URL (updates the PR)
-//! - No stray remotes cluttering `git remote -v`
-//!
-//! ## Checkout Flow (Fork PRs)
-//!
-//! ```text
-//! 1. Get PR metadata from gh
-//!      │
-//!      ▼
-//! 2. Fetch PR head from origin
-//!    git fetch origin pull/101/head
-//!      │
-//!      ▼
-//! 3. Create local branch from FETCH_HEAD
-//!    git branch <local-branch> FETCH_HEAD
-//!      │
-//!      ▼
-//! 4. Configure branch tracking
-//!    git config branch.<local-branch>.remote origin
-//!    git config branch.<local-branch>.merge refs/pull/101/head
-//!    git config branch.<local-branch>.pushRemote <fork-url>
-//!      │
-//!      ▼
-//! 5. Create worktree for the branch
-//! ```
-//!
-//! ## Local Branch Naming
-//!
-//! To avoid collisions when multiple PRs have the same branch name (common with
-//! branches like `fix`, `update`, etc.), we use a naming scheme:
-//!
-//! - **Same-repo PR**: Use `headRefName` directly (e.g., `feature-auth`)
-//! - **Fork PR**: Use `<owner>/<headRefName>` (e.g., `contributor/feature-auth`)
-//!
-//! The `<owner>/` prefix ensures uniqueness and makes it clear which fork the
-//! branch comes from.
-//!
-//! ## Push Behavior
-//!
-//! After checkout, `git push` sends to the fork URL:
-//!
-//! ```text
-//! $ git push
-//! # Pushes to git@github.com:contributor/repo.git
-//! # PR automatically updates on GitHub
-//! ```
-//!
-//! No named remote is added — the URL is used directly via `pushRemote`.
-//!
-//! # Error Handling
-//!
-//! ## PR Not Found
-//!
-//! ```text
-//! ✗ PR #101 not found
-//! ↳ Run gh repo set-default --view to check which repo is being queried
-//! ```
-//!
-//! This often happens when `origin` points to a fork but `gh` hasn't been
-//! configured to look at the upstream repo. Fix with `gh repo set-default`.
-//!
-//! ## gh Not Authenticated
-//!
-//! ```text
-//! ✗ GitHub CLI not authenticated
-//! ↳ Run gh auth login to authenticate
-//! ```
-//!
-//! ## gh Not Installed
-//!
-//! ```text
-//! ✗ GitHub CLI (gh) required for pr: syntax
-//! ↳ Install from https://cli.github.com/
-//! ```
-//!
-//! ## --create Conflict
-//!
-//! ```text
-//! ✗ Cannot use --create with pr: syntax
-//! ↳ The PR's branch already exists; remove --create
-//! ```
-//!
-//! # Edge Cases
-//!
-//! ## Branch Name Collisions
-//!
-//! If user already has a local branch named `contributor/feature`:
-//!
-//! - Check if it tracks the same PR ref → reuse it
-//! - Otherwise → error with suggestion to delete the branch or use a different name
-//!
-//! ## Worktree Already Exists
-//!
-//! If worktree already exists for the resolved branch:
-//!
-//! - Switch to it (normal `wt switch` behavior)
-//! - Don't re-fetch or re-configure
-//!
-//! ## Draft PRs
-//!
-//! Draft PRs are checkable like regular PRs. The `isDraft` field could be
-//! shown in output but doesn't affect behavior.
-//!
-//! ## Renamed Branches
-//!
-//! If the PR's head branch was renamed after PR creation, `headRefName`
-//! reflects the current name. We always use the current name.
-//!
-//! # Platform Support
-//!
-//! This feature is GitHub-specific. GitLab has similar concepts:
-//!
-//! - `glab mr view <number>` with `source_branch` field
-//! - Different permission model (no exact "maintainer edits" equivalent)
-//!
-//! Future work could add `mr:<number>` syntax for GitLab, following the same
-//! patterns but using `glab` CLI.
-//!
-//! # Implementation Notes
+//! # GitHub-Specific Notes
 //!
 //! ## Repository Resolution
 //!
-//! `gh pr view` needs to know which GitHub repo to query. For fork workflows
-//! where `origin` points to a fork, `gh` needs to know to look at the parent
-//! repo for PRs.
+//! `gh api` needs to know which GitHub repo to query. For fork workflows
+//! where the primary remote points to a fork, `gh` needs to know to look at
+//! the parent repo for PRs.
 //!
 //! The `gh` CLI handles this via `gh repo set-default`:
 //!
 //! ```text
-//! # Stores in git config: remote.origin.gh-resolved = base
-//! gh repo set-default owner/upstream-repo
-//!
-//! # View current setting
-//! gh repo set-default --view
+//! gh repo set-default owner/upstream-repo  # Stores: remote.origin.gh-resolved = base
+//! gh repo set-default --view               # View current setting
 //! ```
 //!
-//! If `gh-resolved` is not set, `gh` may prompt interactively or use heuristics
-//! (checking if the repo is a fork and using its parent).
+//! If `gh-resolved` is not set, `gh` may prompt interactively or use heuristics.
 //!
-//! **Diagnostics:** `wt config show` should display the resolved repo so users
-//! understand which repo PR lookups will query.
+//! ## API Fields
 //!
-//! ## Required gh Fields
-//!
-//! ```bash
-//! gh pr view <number> --json \
-//!   headRefName,headRepository,headRepositoryOwner,isCrossRepository,url
-//! ```
-//!
-//! ## Remote URL Construction
-//!
-//! For SSH remotes:
-//! ```text
-//! git@github.com:<owner>/<repo>.git
-//! ```
-//!
-//! For HTTPS remotes:
-//! ```text
-//! https://github.com/<owner>/<repo>.git
-//! ```
-//!
-//! We match the protocol of the existing `origin` remote to be consistent
-//! with the user's authentication setup.
-//!
-//! ## Caching
-//!
-//! PR metadata is not cached — we always fetch fresh to ensure we have
-//! current state (PR might have been closed, branch might have been pushed).
-//!
-//! # Testing Strategy
-//!
-//! ## Unit Tests
-//!
-//! - PR number parsing from `pr:<number>` syntax
-//! - Local branch name generation
-//! - URL construction matching origin protocol
-//!
-//! ## Integration Tests (with mock gh)
-//!
-//! - Same-repo PR checkout
-//! - Fork PR checkout
-//! - Existing worktree reuse
-//! - Error cases: PR not found, gh not authenticated
-//!
-//! ## Manual Testing
-//!
-//! - Fork PR push/pull cycle
-//! - Interaction with `wt merge`
-//! - Multiple fork PRs with same branch name
+//! We use `gh api repos/{owner}/{repo}/pulls/<number>` which returns:
+//! - `head.ref`, `head.repo.owner.login`, `head.repo.name` — PR branch info
+//! - `base.repo.owner.login`, `base.repo.name` — target repo (where PR refs live)
+//! - `html_url` — PR web URL
+
+use std::io::ErrorKind;
+use std::path::Path;
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
 
+use super::error::GitError;
 use crate::shell_exec::Cmd;
 
 /// Information about a PR retrieved from GitHub.
@@ -286,32 +41,97 @@ use crate::shell_exec::Cmd;
 pub struct PrInfo {
     /// The PR number.
     pub number: u32,
+    /// The PR title.
+    pub title: String,
+    /// The PR author's username.
+    pub author: String,
+    /// The PR state ("open", "closed").
+    pub state: String,
+    /// Whether this is a draft PR.
+    pub draft: bool,
     /// The branch name in the head repository.
     pub head_ref_name: String,
     /// The owner of the head repository (fork owner for cross-repo PRs).
     pub head_owner: String,
     /// The name of the head repository.
     pub head_repo: String,
+    /// The owner of the base repository (where the PR was opened).
+    pub base_owner: String,
+    /// The name of the base repository.
+    pub base_repo: String,
     /// Whether this is a cross-repository (fork) PR.
     pub is_cross_repository: bool,
+    /// The GitHub host extracted from `html_url` (e.g., "github.com", "github.enterprise.com").
+    pub host: String,
     /// The PR's web URL.
     pub url: String,
 }
 
-/// Raw JSON response from `gh pr view`.
+impl super::RefContext for PrInfo {
+    fn ref_type(&self) -> super::RefType {
+        super::RefType::Pr
+    }
+    fn number(&self) -> u32 {
+        self.number
+    }
+    fn title(&self) -> &str {
+        &self.title
+    }
+    fn author(&self) -> &str {
+        &self.author
+    }
+    fn state(&self) -> &str {
+        &self.state
+    }
+    fn draft(&self) -> bool {
+        self.draft
+    }
+    fn url(&self) -> &str {
+        &self.url
+    }
+}
+
+/// Raw JSON response from `gh api repos/{owner}/{repo}/pulls/{number}`.
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GhPrResponse {
-    head_ref_name: String,
-    head_repository: GhRepository,
-    head_repository_owner: GhOwner,
-    is_cross_repository: bool,
-    url: String,
+struct GhApiPrResponse {
+    title: String,
+    user: GhUser,
+    state: String,
+    #[serde(default)]
+    draft: bool,
+    head: GhPrRef,
+    base: GhPrRef,
+    html_url: String,
+}
+
+/// Error response from GitHub API (stdout on failure).
+/// Example: `{"message":"Not Found","documentation_url":"...","status":"404"}`
+#[derive(Debug, Deserialize)]
+struct GhApiErrorResponse {
+    #[serde(default)]
+    message: String,
+    /// HTTP status code as a string (e.g., "404", "401", "403")
+    #[serde(default)]
+    status: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct GhRepository {
+struct GhUser {
+    login: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GhPrRef {
+    #[serde(rename = "ref")]
+    ref_name: String,
+    /// The repository for this ref. Can be `null` if the fork was deleted.
+    repo: Option<GhPrRepo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GhPrRepo {
     name: String,
+    owner: GhOwner,
 }
 
 #[derive(Debug, Deserialize)]
@@ -329,6 +149,9 @@ pub fn parse_pr_ref(input: &str) -> Option<u32> {
 
 /// Fetch PR information from GitHub using the `gh` CLI.
 ///
+/// Uses `gh api` to query the GitHub API directly, which provides
+/// both head and base repository information.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -336,14 +159,11 @@ pub fn parse_pr_ref(input: &str) -> Option<u32> {
 /// - The PR doesn't exist
 /// - The JSON response is malformed
 pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Result<PrInfo> {
+    // Use gh api with {owner}/{repo} placeholders - gh resolves these from repo context
+    let api_path = format!("repos/{{owner}}/{{repo}}/pulls/{}", pr_number);
+
     let output = match Cmd::new("gh")
-        .args([
-            "pr",
-            "view",
-            &pr_number.to_string(),
-            "--json",
-            "headRefName,headRepository,headRepositoryOwner,isCrossRepository,url",
-        ])
+        .args(["api", &api_path])
         .current_dir(repo_root)
         .env("GH_PROMPT_DISABLED", "1")
         .run()
@@ -351,102 +171,167 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
         Ok(output) => output,
         Err(e) => {
             // Check if gh is not installed (OS error for command not found)
-            let error_str = e.to_string();
-            if error_str.contains("No such file")
-                || error_str.contains("not found")
-                || error_str.contains("cannot find")
-            {
+            if e.kind() == ErrorKind::NotFound {
                 bail!("GitHub CLI (gh) not installed; install from https://cli.github.com/");
             }
-            return Err(anyhow::Error::from(e).context("Failed to run gh pr view"));
+            return Err(anyhow::Error::from(e).context("Failed to run gh api"));
         }
     };
 
     if !output.status.success() {
+        // Parse the JSON error response from stdout for structured error handling.
+        // GitHub API returns JSON with "status" field containing the HTTP status code.
+        if let Ok(error_response) = serde_json::from_slice::<GhApiErrorResponse>(&output.stdout) {
+            match error_response.status.as_str() {
+                "404" => bail!("PR #{} not found", pr_number),
+                "401" => bail!("GitHub CLI not authenticated; run gh auth login"),
+                "403" => {
+                    // 403 can be rate limiting or permission denied
+                    let message_lower = error_response.message.to_lowercase();
+                    if message_lower.contains("rate limit") {
+                        bail!("GitHub API rate limit exceeded; wait a few minutes and retry");
+                    }
+                    bail!("GitHub API access forbidden: {}", error_response.message);
+                }
+                _ => {}
+            }
+        }
+
+        // Fallback for non-JSON errors (network issues, gh not configured, etc.)
+        // Include stdout if stderr is empty, as some errors are reported there.
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr_lower = stderr.to_lowercase();
-
-        // PR not found (various phrasings across gh versions)
-        if stderr_lower.contains("could not resolve")
-            || stderr_lower.contains("not found")
-            || stderr_lower.contains("no pull request")
-        {
-            bail!("PR #{} not found", pr_number);
+        let details = if stderr.trim().is_empty() {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        } else {
+            stderr.trim().to_string()
+        };
+        return Err(GitError::CliApiError {
+            ref_type: super::RefType::Pr,
+            message: format!("gh api failed for PR #{}", pr_number),
+            stderr: details,
         }
-
-        // Authentication errors
-        if stderr_lower.contains("authentication")
-            || stderr_lower.contains("logged in")
-            || stderr_lower.contains("auth login")
-            || stderr_lower.contains("not logged")
-        {
-            bail!("GitHub CLI not authenticated; run gh auth login");
-        }
-
-        // Rate limiting
-        if stderr_lower.contains("rate limit") || stderr_lower.contains("api rate") {
-            bail!("GitHub API rate limit exceeded; wait a few minutes and retry");
-        }
-
-        // Network errors
-        if stderr_lower.contains("network")
-            || stderr_lower.contains("connection")
-            || stderr_lower.contains("timeout")
-        {
-            bail!("Network error connecting to GitHub; check your internet connection");
-        }
-
-        bail!("gh pr view failed: {}", stderr.trim());
+        .into());
     }
 
-    let response: GhPrResponse = serde_json::from_slice(&output.stdout).with_context(|| {
+    let response: GhApiPrResponse = serde_json::from_slice(&output.stdout).with_context(|| {
         format!(
-            "Failed to parse gh pr view JSON for PR #{}. \
-             This may indicate a gh version incompatibility or GitHub API change.",
+            "Failed to parse GitHub API response for PR #{}. \
+             This may indicate a GitHub API change.",
             pr_number
         )
     })?;
 
     // Validate required fields are not empty
-    if response.head_ref_name.is_empty() {
+    if response.head.ref_name.is_empty() {
         bail!(
             "PR #{} has empty branch name; the PR may be in an invalid state",
             pr_number
         );
     }
 
+    // Extract base repo (should always be present - the PR is opened against an existing repo)
+    let base_repo = response.base.repo.context(
+        "PR base repository is null; this is unexpected and may indicate a GitHub API issue",
+    )?;
+
+    // Extract head repo (can be null if the fork was deleted)
+    let head_repo = response.head.repo.ok_or_else(|| {
+        anyhow::anyhow!(
+            "PR #{} source repository was deleted. \
+             The fork that this PR was opened from no longer exists, \
+             so the branch cannot be checked out.",
+            pr_number
+        )
+    })?;
+
+    // Compute is_cross_repository by comparing base and head repos (case-insensitive)
+    let is_cross_repository = !base_repo
+        .owner
+        .login
+        .eq_ignore_ascii_case(&head_repo.owner.login)
+        || !base_repo.name.eq_ignore_ascii_case(&head_repo.name);
+
+    // Extract host from html_url (e.g., "https://github.com/owner/repo/pull/123" → "github.com")
+    let host = response
+        .html_url
+        .strip_prefix("https://")
+        .or_else(|| response.html_url.strip_prefix("http://"))
+        .and_then(|s| s.split('/').next())
+        .filter(|h| !h.is_empty())
+        .with_context(|| format!("Failed to parse host from PR URL: {}", response.html_url))?
+        .to_string();
+
     Ok(PrInfo {
         number: pr_number,
-        head_ref_name: response.head_ref_name,
-        head_owner: response.head_repository_owner.login,
-        head_repo: response.head_repository.name,
-        is_cross_repository: response.is_cross_repository,
-        url: response.url,
+        title: response.title,
+        author: response.user.login,
+        state: response.state,
+        draft: response.draft,
+        head_ref_name: response.head.ref_name,
+        head_owner: head_repo.owner.login,
+        head_repo: head_repo.name,
+        base_owner: base_repo.owner.login,
+        base_repo: base_repo.name,
+        is_cross_repository,
+        host,
+        url: response.html_url,
     })
 }
 
 /// Generate the local branch name for a PR.
 ///
-/// - Same-repo PRs: use `headRefName` directly
-/// - Fork PRs: use `<owner>/<headRefName>` to avoid collisions
+/// Uses `headRefName` directly for both same-repo and fork PRs. This ensures
+/// the local branch name matches the remote branch name, which is required for
+/// `git push` to work correctly with `push.default = current`.
+///
+/// See module docs for why we can't use a prefixed name like `<owner>/<branch>`.
 pub fn local_branch_name(pr: &PrInfo) -> String {
-    if pr.is_cross_repository {
-        format!("{}/{}", pr.head_owner, pr.head_ref_name)
+    pr.head_ref_name.clone()
+}
+
+/// Generate a prefixed local branch name for a fork PR when the unprefixed name conflicts.
+///
+/// Returns `<head_owner>/<head_ref_name>` (e.g., `contributor/main`).
+///
+/// This is used when the PR's branch name conflicts with an existing local branch.
+/// Note: `git push` won't work with this naming because the local and remote
+/// branch names don't match. Users must push manually with explicit refspecs.
+pub fn prefixed_local_branch_name(pr: &PrInfo) -> String {
+    format!("{}/{}", pr.head_owner, pr.head_ref_name)
+}
+
+/// Get the git protocol preference from `gh` (GitHub CLI).
+///
+/// Returns `true` for SSH if `gh config get git_protocol` returns "ssh".
+fn use_ssh_protocol() -> bool {
+    Cmd::new("gh")
+        .args(["config", "get", "git_protocol"])
+        .run()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim() == "ssh")
+        .unwrap_or(false)
+}
+
+/// Construct the remote URL for a fork repository.
+///
+/// Uses `gh config get git_protocol` to determine SSH vs HTTPS preference.
+pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
+    if use_ssh_protocol() {
+        fork_remote_url_ssh(host, owner, repo)
     } else {
-        pr.head_ref_name.clone()
+        fork_remote_url_https(host, owner, repo)
     }
 }
 
-/// Construct the remote URL for a fork, matching the protocol of the primary remote.
-///
-/// If remote uses SSH (`git@github.com:`), returns SSH URL.
-/// If remote uses HTTPS (`https://github.com/`), returns HTTPS URL.
-pub fn fork_remote_url(owner: &str, repo: &str, remote_url: &str) -> String {
-    if remote_url.starts_with("git@") || remote_url.contains("ssh://") {
-        format!("git@github.com:{}/{}.git", owner, repo)
-    } else {
-        format!("https://github.com/{}/{}.git", owner, repo)
-    }
+/// Construct an SSH-format remote URL.
+fn fork_remote_url_ssh(host: &str, owner: &str, repo: &str) -> String {
+    format!("git@{}:{}/{}.git", host, owner, repo)
+}
+
+/// Construct an HTTPS-format remote URL.
+fn fork_remote_url_https(host: &str, owner: &str, repo: &str) -> String {
+    format!("https://{}/{}/{}.git", host, owner, repo)
 }
 
 /// Check if a branch is tracking a specific PR.
@@ -454,38 +339,9 @@ pub fn fork_remote_url(owner: &str, repo: &str, remote_url: &str) -> String {
 /// Returns `Some(true)` if the branch is configured to track `refs/pull/<pr_number>/head`.
 /// Returns `Some(false)` if the branch exists but tracks something else.
 /// Returns `None` if the branch doesn't exist.
-pub fn branch_tracks_pr(repo_root: &std::path::Path, branch: &str, pr_number: u32) -> Option<bool> {
-    use crate::shell_exec::Cmd;
-
-    let config_key = format!("branch.{}.merge", branch);
-    let output = Cmd::new("git")
-        .args(["config", "--get", &config_key])
-        .current_dir(repo_root)
-        .run()
-        .ok()?;
-
-    if !output.status.success() {
-        // Config key doesn't exist - branch might not track anything
-        // Check if branch exists at all
-        let branch_exists = Cmd::new("git")
-            .args([
-                "show-ref",
-                "--verify",
-                "--quiet",
-                &format!("refs/heads/{}", branch),
-            ])
-            .current_dir(repo_root)
-            .run()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-
-        return if branch_exists { Some(false) } else { None };
-    }
-
-    let merge_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
+pub fn branch_tracks_pr(repo_root: &Path, branch: &str, pr_number: u32) -> Option<bool> {
     let expected_ref = format!("refs/pull/{}/head", pr_number);
-
-    Some(merge_ref == expected_ref)
+    super::branch_tracks_ref(repo_root, branch, &expected_ref)
 }
 
 #[cfg(test)]
@@ -511,10 +367,17 @@ mod tests {
     fn test_local_branch_name_same_repo() {
         let pr = PrInfo {
             number: 101,
+            title: "Fix authentication bug".to_string(),
+            author: "alice".to_string(),
+            state: "open".to_string(),
+            draft: false,
             head_ref_name: "feature-auth".to_string(),
             head_owner: "owner".to_string(),
             head_repo: "repo".to_string(),
+            base_owner: "owner".to_string(),
+            base_repo: "repo".to_string(),
             is_cross_repository: false,
+            host: "github.com".to_string(),
             url: "https://github.com/owner/repo/pull/101".to_string(),
         };
         assert_eq!(local_branch_name(&pr), "feature-auth");
@@ -522,26 +385,86 @@ mod tests {
 
     #[test]
     fn test_local_branch_name_fork() {
+        // Fork PRs also use headRefName directly (not owner/branch) because
+        // the local branch name must match the fork's branch for git push to work
         let pr = PrInfo {
             number: 101,
+            title: "Fix authentication bug".to_string(),
+            author: "contributor".to_string(),
+            state: "open".to_string(),
+            draft: false,
             head_ref_name: "feature-auth".to_string(),
             head_owner: "contributor".to_string(),
             head_repo: "repo".to_string(),
+            base_owner: "owner".to_string(),
+            base_repo: "repo".to_string(),
             is_cross_repository: true,
+            host: "github.com".to_string(),
             url: "https://github.com/owner/repo/pull/101".to_string(),
         };
-        assert_eq!(local_branch_name(&pr), "contributor/feature-auth");
+        assert_eq!(local_branch_name(&pr), "feature-auth");
     }
 
     #[test]
-    fn test_fork_remote_url_ssh() {
-        let url = fork_remote_url("contributor", "repo", "git@github.com:owner/repo.git");
-        assert_eq!(url, "git@github.com:contributor/repo.git");
+    fn test_prefixed_local_branch_name() {
+        // When the fork's branch name conflicts with a local branch,
+        // we use owner/branch format as a fallback (push won't work)
+        let pr = PrInfo {
+            number: 101,
+            head_ref_name: "main".to_string(),
+            head_owner: "contributor".to_string(),
+            head_repo: "repo".to_string(),
+            base_owner: "owner".to_string(),
+            base_repo: "repo".to_string(),
+            is_cross_repository: true,
+            host: "github.com".to_string(),
+            url: "https://github.com/owner/repo/pull/101".to_string(),
+            title: "Test PR".to_string(),
+            author: "contributor".to_string(),
+            state: "open".to_string(),
+            draft: false,
+        };
+        assert_eq!(prefixed_local_branch_name(&pr), "contributor/main");
     }
 
     #[test]
-    fn test_fork_remote_url_https() {
-        let url = fork_remote_url("contributor", "repo", "https://github.com/owner/repo.git");
-        assert_eq!(url, "https://github.com/contributor/repo.git");
+    fn test_fork_remote_url() {
+        // Protocol depends on `gh config get git_protocol`
+        let url = fork_remote_url("github.com", "contributor", "repo");
+        let valid_urls = [
+            "git@github.com:contributor/repo.git",
+            "https://github.com/contributor/repo.git",
+        ];
+        assert!(valid_urls.contains(&url.as_str()), "unexpected URL: {url}");
+
+        let url = fork_remote_url("github.example.com", "contributor", "repo");
+        let valid_urls = [
+            "git@github.example.com:contributor/repo.git",
+            "https://github.example.com/contributor/repo.git",
+        ];
+        assert!(valid_urls.contains(&url.as_str()), "unexpected URL: {url}");
+    }
+
+    #[test]
+    fn test_fork_remote_url_formats() {
+        // Test SSH format explicitly
+        assert_eq!(
+            fork_remote_url_ssh("github.com", "contributor", "repo"),
+            "git@github.com:contributor/repo.git"
+        );
+        assert_eq!(
+            fork_remote_url_ssh("github.example.com", "org", "project"),
+            "git@github.example.com:org/project.git"
+        );
+
+        // Test HTTPS format explicitly
+        assert_eq!(
+            fork_remote_url_https("github.com", "contributor", "repo"),
+            "https://github.com/contributor/repo.git"
+        );
+        assert_eq!(
+            fork_remote_url_https("github.example.com", "org", "project"),
+            "https://github.example.com/org/project.git"
+        );
     }
 }

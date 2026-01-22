@@ -1,13 +1,15 @@
 //! Repository - git repository operations.
 //!
 //! This module provides the [`Repository`] type for interacting with git repositories,
-//! and [`WorkingTree`] for worktree-specific operations.
+//! [`WorkingTree`] for worktree-specific operations, and [`Branch`] for branch-specific
+//! operations.
 //!
 //! # Module organization
 //!
 //! - `mod.rs` - Core types and construction
 //! - `working_tree.rs` - WorkingTree struct and worktree-specific operations
-//! - `branches.rs` - Branch listing, existence checks, completions
+//! - `branch.rs` - Branch struct and single-branch operations (exists, upstream, remotes)
+//! - `branches.rs` - Multi-branch operations (listing, filtering, completions)
 //! - `worktrees.rs` - Worktree management (list, resolve, remove)
 //! - `remotes.rs` - Remote and URL operations
 //! - `diff.rs` - Diff, history, and commit operations
@@ -16,7 +18,7 @@
 
 use crate::shell_exec::Cmd;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
@@ -34,6 +36,7 @@ use super::{DefaultBranchName, GitError, LineDiff, WorktreeInfo};
 pub(super) use super::{BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl};
 
 // Submodules with impl blocks
+mod branch;
 mod branches;
 mod config;
 mod diff;
@@ -42,7 +45,8 @@ mod remotes;
 mod working_tree;
 mod worktrees;
 
-// Re-export WorkingTree
+// Re-export WorkingTree and Branch
+pub use branch::Branch;
 pub use working_tree::WorkingTree;
 pub(super) use working_tree::path_to_logging_context;
 
@@ -63,6 +67,8 @@ pub(super) struct RepoCache {
     // ========== Repo-wide values (same for all worktrees) ==========
     /// Whether this is a bare repository
     pub(super) is_bare: OnceCell<bool>,
+    /// Repository root path (main worktree for normal repos, bare directory for bare repos)
+    pub(super) repo_path: OnceCell<PathBuf>,
     /// Default branch (main, master, etc.)
     pub(super) default_branch: OnceCell<Option<String>>,
     /// Invalid default branch config (user configured a branch that doesn't exist).
@@ -76,8 +82,6 @@ pub(super) struct RepoCache {
     pub(super) primary_remote_url: OnceCell<Option<String>>,
     /// Project identifier derived from remote URL
     pub(super) project_identifier: OnceCell<String>,
-    /// Repository root path (main worktree for normal repos, bare directory for bare repos)
-    pub(super) repo_path: OnceCell<PathBuf>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
@@ -114,8 +118,11 @@ pub enum ResolvedWorktree {
     },
 }
 
-/// Global base path for repository operations, set by -C flag
+/// Global base path for repository operations, set by -C flag.
 static BASE_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Default base path when -C flag is not provided.
+static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."));
 
 /// Initialize the global base path for repository operations.
 ///
@@ -127,10 +134,7 @@ pub fn set_base_path(path: PathBuf) {
 
 /// Get the base path for repository operations.
 fn base_path() -> &'static PathBuf {
-    static DEFAULT: OnceLock<PathBuf> = OnceLock::new();
-    BASE_PATH
-        .get()
-        .unwrap_or_else(|| DEFAULT.get_or_init(|| PathBuf::from(".")))
+    BASE_PATH.get().unwrap_or(&DEFAULT_BASE_PATH)
 }
 
 /// Repository state for git operations.
@@ -195,6 +199,7 @@ impl Repository {
     pub fn at(path: impl Into<PathBuf>) -> anyhow::Result<Self> {
         let discovery_path = path.into();
         let git_common_dir = Self::resolve_git_common_dir(&discovery_path)?;
+
         Ok(Self {
             discovery_path,
             git_common_dir,
@@ -261,6 +266,16 @@ impl Repository {
         }
     }
 
+    /// Get a branch handle for branch-specific operations.
+    ///
+    /// Use this when you need to query properties of a specific branch.
+    pub fn branch(&self, name: &str) -> Branch<'_> {
+        Branch {
+            repo: self,
+            name: name.to_string(),
+        }
+    }
+
     /// Get the current branch name, or error if in detached HEAD state.
     ///
     /// `action` describes what requires being on a branch (e.g., "merge").
@@ -299,47 +314,84 @@ impl Repository {
         self.git_common_dir().join("wt-logs")
     }
 
-    /// The repository root path.
+    /// The repository root path (the main worktree directory).
     ///
-    /// For normal repositories: the main worktree directory (parent of .git).
-    /// For bare repositories: the bare repository directory itself.
+    /// - Normal repositories: the main worktree directory (parent of .git)
+    /// - Bare repositories: the bare repository directory itself
+    /// - Submodules: the submodule's worktree (e.g., `/parent/sub`, not `/parent/.git/modules/sub`)
     ///
     /// This is the base for template expansion (`{{ repo }}`, `{{ repo_path }}`).
     /// NOT necessarily where established files live — use `primary_worktree()` for that.
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
-    pub fn repo_path(&self) -> anyhow::Result<PathBuf> {
-        self.cache
-            .repo_path
-            .get_or_try_init(|| {
-                let git_common_dir =
-                    canonicalize(self.git_common_dir()).context("Failed to canonicalize path")?;
+    ///
+    /// # Why we run from `git_common_dir`
+    ///
+    /// We need to return the *main* worktree regardless of which worktree we were discovered
+    /// from. For linked worktrees, `git_common_dir` is the stable reference that's shared
+    /// across all worktrees (e.g., `/myapp/.git` whether you're in `/myapp` or `/myapp.feature`).
+    ///
+    /// # Why the try-fallback approach
+    ///
+    /// `--show-toplevel` behavior depends on whether git has explicit worktree metadata:
+    ///
+    /// | git_common_dir location    | Has `core.worktree`? | `--show-toplevel` works? |
+    /// |----------------------------|----------------------|--------------------------|
+    /// | Normal `.git`              | No (implicit)        | No — "not a work tree"   |
+    /// | Submodule `.git/modules/X` | Yes (explicit)       | Yes — reads config       |
+    ///
+    /// Normal repos don't need `core.worktree` because the worktree is implicitly `parent(.git)`.
+    /// Submodules need it because their git data lives in the parent's `.git/modules/`.
+    ///
+    /// So we try `--show-toplevel` first (handles submodules), fall back to `parent()` (handles
+    /// normal repos). This avoids fragile path-based detection of submodules.
+    pub fn repo_path(&self) -> &Path {
+        self.cache.repo_path.get_or_init(|| {
+            // Bare repos have no worktree — the git directory IS the repo
+            if self.is_bare() {
+                return self.git_common_dir.clone();
+            }
 
-                if self.is_bare()? {
-                    Ok(git_common_dir)
-                } else {
-                    Ok(git_common_dir
-                        .parent()
-                        .context("Git directory has no parent")?
-                        .to_path_buf())
-                }
-            })
-            .cloned()
+            // Submodules: --show-toplevel succeeds (git has explicit core.worktree config)
+            if let Ok(out) = Cmd::new("git")
+                .args(["rev-parse", "--show-toplevel"])
+                .current_dir(&self.git_common_dir)
+                .context(path_to_logging_context(&self.git_common_dir))
+                .run()
+                && out.status.success()
+            {
+                return PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+            }
+
+            // Normal repos: --show-toplevel fails from inside .git, use implicit relationship
+            self.git_common_dir
+                .parent()
+                .expect("Git directory has no parent")
+                .to_path_buf()
+        })
     }
 
     /// Check if this is a bare repository (no working tree).
     ///
     /// Bare repositories have no main worktree — all worktrees are linked
     /// worktrees at templated paths, including the default branch.
+    ///
     /// Result is cached in the repository's shared cache (same for all clones).
-    pub fn is_bare(&self) -> anyhow::Result<bool> {
-        self.cache
-            .is_bare
-            .get_or_try_init(|| {
-                let output = self.run_command(&["config", "--bool", "core.bare"])?;
-                Ok(output.trim() == "true")
-            })
-            .copied()
+    /// Runs `git rev-parse --is-bare-repository` from git_common_dir to correctly
+    /// detect bare repos even when called from a linked worktree.
+    pub fn is_bare(&self) -> bool {
+        *self.cache.is_bare.get_or_init(|| {
+            // Run from git_common_dir, not discovery_path. This is important for
+            // worktrees of bare repos: running from the worktree returns false,
+            // but running from the bare repo returns true.
+            let output = Cmd::new("git")
+                .args(["rev-parse", "--is-bare-repository"])
+                .current_dir(&self.git_common_dir)
+                .context(path_to_logging_context(&self.git_common_dir))
+                .run()
+                .expect("git rev-parse failed on valid repo");
+            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
+        })
     }
 
     /// Check if git's builtin fsmonitor daemon is enabled.
@@ -489,6 +541,145 @@ impl Repository {
     /// ```
     pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {
         Ok(self.run_command_output(args)?.status.success())
+    }
+
+    /// Delay before showing progress output for slow operations.
+    /// See .claude/rules/cli-output-formatting.md: "Progress messages apply only to slow operations (>400ms)"
+    pub const SLOW_OPERATION_DELAY_MS: i64 = 400;
+
+    /// Run a git command with delayed output streaming.
+    ///
+    /// Buffers output initially, then streams if the command takes longer than
+    /// `delay_ms`. This provides a quiet experience for fast operations while
+    /// still showing progress for slow ones (like `worktree add` on large repos).
+    /// Pass `-1` to never switch to streaming (always buffer).
+    ///
+    /// If `progress_message` is provided, it will be printed to stderr when
+    /// streaming starts (i.e., when the delay threshold is exceeded).
+    ///
+    /// All output (both stdout and stderr from the child) is sent to stderr
+    /// to keep stdout clean for commands like `wt switch`.
+    pub fn run_command_delayed_stream(
+        &self,
+        args: &[&str],
+        delay_ms: i64,
+        progress_message: Option<String>,
+    ) -> anyhow::Result<()> {
+        use std::io::{BufRead, BufReader, Write};
+        use std::process::Stdio;
+        use std::sync::Mutex;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        // Allow tests to override delay threshold (-1 to disable, 0 for immediate)
+        let delay_ms = std::env::var("WT_TEST_DELAYED_STREAM_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(delay_ms);
+
+        let cmd_str = format!("git {}", args.join(" "));
+        log::debug!(
+            "$ {} [{}] (delayed stream, {}ms)",
+            cmd_str,
+            self.logging_context(),
+            delay_ms
+        );
+
+        let mut child = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&self.discovery_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
+            .spawn()
+            .with_context(|| format!("Failed to spawn: {}", cmd_str))?;
+
+        let stdout = child.stdout.take().expect("stdout was piped");
+        let stderr = child.stderr.take().expect("stderr was piped");
+
+        // Shared state: when true, output streams directly; when false, buffers
+        let streaming = Arc::new(AtomicBool::new(false));
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+
+        // Reader threads for stdout and stderr (both go to stderr)
+        let stdout_handle = {
+            let streaming = streaming.clone();
+            let buffer = buffer.clone();
+            thread::spawn(move || {
+                let reader = BufReader::new(stdout);
+                for line in reader.lines().map_while(Result::ok) {
+                    if streaming.load(Ordering::Relaxed) {
+                        let _ = writeln!(std::io::stderr(), "{}", line);
+                        let _ = std::io::stderr().flush();
+                    } else {
+                        buffer.lock().unwrap().push(line);
+                    }
+                }
+            })
+        };
+
+        let stderr_handle = {
+            let streaming = streaming.clone();
+            let buffer = buffer.clone();
+            thread::spawn(move || {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines().map_while(Result::ok) {
+                    if streaming.load(Ordering::Relaxed) {
+                        let _ = writeln!(std::io::stderr(), "{}", line);
+                        let _ = std::io::stderr().flush();
+                    } else {
+                        buffer.lock().unwrap().push(line);
+                    }
+                }
+            })
+        };
+
+        let start = Instant::now();
+
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let _ = stdout_handle.join();
+                    let _ = stderr_handle.join();
+
+                    if status.success() {
+                        return Ok(());
+                    }
+                    // Failed - return buffered output as error
+                    let lines = buffer.lock().unwrap();
+                    let exit_info = status
+                        .code()
+                        .map(|c| format!("exit code {c}"))
+                        .unwrap_or_else(|| "killed by signal".to_string());
+                    if lines.is_empty() {
+                        bail!("{cmd_str} failed ({exit_info})");
+                    } else {
+                        bail!("{}\n({cmd_str} failed, {exit_info})", lines.join("\n"));
+                    }
+                }
+                Ok(None) => {
+                    // Still running - check if we should switch to streaming (skip if delay_ms < 0)
+                    if delay_ms >= 0
+                        && !streaming.load(Ordering::Relaxed)
+                        && start.elapsed() >= Duration::from_millis(delay_ms as u64)
+                    {
+                        streaming.store(true, Ordering::Relaxed);
+
+                        if let Some(ref msg) = progress_message {
+                            let _ = writeln!(std::io::stderr(), "{}", msg);
+                        }
+                        for line in buffer.lock().unwrap().drain(..) {
+                            let _ = writeln!(std::io::stderr(), "{}", line);
+                        }
+                        let _ = std::io::stderr().flush();
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => bail!("Failed to wait for command: {}", e),
+            }
+        }
     }
 
     /// Run a git command and return the raw Output (for inspecting exit codes).

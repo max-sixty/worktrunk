@@ -255,7 +255,6 @@ fn run_with_timeout_impl(
 ) -> std::io::Result<std::process::Output> {
     use std::io::{ErrorKind, Read};
     use std::process::Stdio;
-    use std::time::Instant;
 
     // Spawn process with piped stdout/stderr
     let mut child = cmd

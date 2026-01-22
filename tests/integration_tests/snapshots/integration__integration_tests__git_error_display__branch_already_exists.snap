@@ -3,4 +3,4 @@ source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
 [31m✗[39m [31mBranch [1mfeature[22m already exists[39m
-[2m↳[22m [2mTo switch to the existing branch, remove [90m--create[39m and run [90mwt switch feature[39m[22m
+[2m↳[22m [2mTo switch to the existing branch, run without [90m--create[39m: [90mwt switch feature[39m[22m

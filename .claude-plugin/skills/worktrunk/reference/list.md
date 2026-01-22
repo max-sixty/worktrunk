@@ -1,6 +1,6 @@
 # wt list
 
-List worktrees and their status
+List worktrees and their status.
 
 Shows uncommitted changes, divergence from the default branch and remote, and optional CI status.
 
@@ -225,7 +225,7 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 
 ### main_state values
 
-These values describe relation to the default branch.
+These values describe the relation to the default branch.
 
 `"is_main"` `"orphan"` `"would_conflict"` `"empty"` `"same_commit"` `"integrated"` `"diverged"` `"ahead"` `"behind"`
 
@@ -281,4 +281,4 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Show debug info (-v), or also write diagnostic report (-vv)
+          Verbose output (-v: hooks, templates; -vv: debug report)

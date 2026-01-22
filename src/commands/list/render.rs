@@ -352,15 +352,13 @@ impl ColumnLayout {
             ColumnKind::Gutter => {
                 let mut cell = StyledLine::new();
                 let symbol = if let Some(data) = worktree_data {
-                    // Priority: @ (current) > ^ (main) > - (previous) > + (regular)
+                    // Priority: @ (current) > ^ (main) > + (regular, including previous)
                     if data.is_current {
                         "@ " // Current worktree
                     } else if data.is_main {
                         "^ " // Main worktree
-                    } else if data.is_previous {
-                        "- " // Previous worktree (wt switch -)
                     } else {
-                        "+ " // Regular worktree
+                        "+ " // Regular worktree (including previous)
                     }
                 } else {
                     "  " // Branch without worktree (two spaces to match width)
@@ -526,7 +524,7 @@ mod tests {
     use super::*;
     use crate::commands::list::layout::DiffDisplayConfig;
     use ansi_str::AnsiStr;
-    use worktrunk::styling::{ADDITION, DELETION, StyledLine};
+    use worktrunk::styling::{ADDITION, DELETION};
 
     fn format_diff_like_column(
         positive: usize,

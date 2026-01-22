@@ -147,7 +147,7 @@ pub fn handle_list(
     show_remotes: bool,
     show_full: bool,
     render_mode: RenderMode,
-    config: &worktrunk::config::WorktrunkConfig,
+    config: &worktrunk::config::UserConfig,
 ) -> anyhow::Result<()> {
     use collect::TaskKind;
 
@@ -213,7 +213,7 @@ pub fn handle_list(
             let json_items = json_output::to_json_items(&items);
             let json =
                 serde_json::to_string_pretty(&json_items).context("Failed to serialize to JSON")?;
-            crate::output::stdout(json)?;
+            println!("{}", json);
         }
         crate::OutputFormat::Table => {
             // Table and summary already rendered in collect() for all modes

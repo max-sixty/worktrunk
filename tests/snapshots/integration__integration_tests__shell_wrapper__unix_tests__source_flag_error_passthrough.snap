@@ -1,7 +1,8 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
-expression: output.normalized()
+expression: "&output.combined"
 ---
+
 [1m[31merror:[0m unrecognized subcommand '[1m[33mfoo[0m'
 
   [1m[32mtip:[0m a similar subcommand exists: '[1m[32mhook[0m'

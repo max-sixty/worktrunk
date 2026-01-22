@@ -5,7 +5,7 @@ default-members = [".", "tests/helpers/mock-stub"]
 
 [package]
 name = "worktrunk"
-version = "0.15.1"
+version = "0.18.1"
 edition = "2024"
 rust-version = "1.89"
 build = "build.rs"
@@ -72,7 +72,7 @@ chrono = "0.4"
 clap = { version = "4.5", features = ["derive", "unstable-ext", "wrap_help"] }
 clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
 # Only enable TOML format - saves ~250KB by excluding yaml, ron, json5, ini parsers
-config = { version = "0.15", default-features = false, features = ["toml", "convert-case"] }
+config = { version = "0.15", default-features = false, features = ["toml", "convert-case", "preserve_order"] }
 crossbeam-channel = "0.5"
 crossterm = "0.29"
 env_logger = "0.11"
@@ -117,6 +117,7 @@ regex = "1.12"
 ignore = "0.4"
 reflink-copy = "0.1"
 dashmap = "6.1.0"
+fs2 = "0.4.3"
 
 [target.'cfg(unix)'.dependencies]
 skim = "0.20"
@@ -124,10 +125,10 @@ nix = { version = "0.30", default-features = false, features = ["process", "sign
 signal-hook = "0.4"
 
 [build-dependencies]
-vergen-gitcl = { version = "1.0.8", features = ["build"] }
+vergen-gitcl = { version = "9.1.0", features = ["build"] }
 
 [dev-dependencies]
-insta = { version = "1.46.0", features = ["yaml", "redactions", "filters"] }
+insta = { version = "1.46.1", features = ["yaml", "redactions", "filters"] }
 insta-cmd = "0.6"
 rstest = "0.26"
 tempfile = "3.24"
@@ -138,6 +139,7 @@ regex = "1.12"
 vt100 = "0.16"
 ansi-to-html = "0.2.2"
 wt-perf = { path = "tests/helpers/wt-perf" }
+path-slash = "0.2.1"
 
 [[bench]]
 name = "completion"

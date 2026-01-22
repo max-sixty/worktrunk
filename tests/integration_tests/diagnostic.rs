@@ -397,35 +397,27 @@ fn test_vv_writes_diagnostic_on_error(mut repo: TestRepo) {
     );
 }
 
-/// With just -v (not -vv), diagnostic should NOT be written on successful commands.
-/// Diagnostics are only written when -vv is explicitly used (via main.rs hook).
+/// With just -v (not -vv), no logging files should be written.
+/// -v is reserved for future use; -vv is required for debug logging.
 #[rstest]
-fn test_v_does_not_write_diagnostic_without_error(repo: TestRepo) {
+fn test_v_does_not_enable_logging(repo: TestRepo) {
     // Run a successful command with just -v
     let output = repo.wt_command().args(["list", "-v"]).output().unwrap();
 
     assert!(output.status.success(), "Command should succeed");
 
-    // Diagnostic file should NOT exist (no error, not -vv)
-    let diagnostic_path = repo
-        .root_path()
-        .join(".git")
-        .join("wt-logs")
-        .join("diagnostic.md");
+    // Neither diagnostic.md nor verbose.log should exist with just -v
+    let wt_logs = repo.root_path().join(".git").join("wt-logs");
+    let diagnostic_path = wt_logs.join("diagnostic.md");
+    let verbose_log_path = wt_logs.join("verbose.log");
+
     assert!(
         !diagnostic_path.exists(),
-        "Diagnostic file should NOT be created with just -v on success"
+        "Diagnostic file should NOT be created with just -v"
     );
-
-    // But verbose.log should exist
-    let verbose_log_path = repo
-        .root_path()
-        .join(".git")
-        .join("wt-logs")
-        .join("verbose.log");
     assert!(
-        verbose_log_path.exists(),
-        "verbose.log should be created with -v"
+        !verbose_log_path.exists(),
+        "verbose.log should NOT be created with just -v (requires -vv)"
     );
 }
 

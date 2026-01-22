@@ -22,6 +22,71 @@ use crate::styling::{
     suggest_command,
 };
 
+/// Platform-specific reference type (PR vs MR).
+///
+/// Used to unify error handling for GitHub PRs and GitLab MRs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefType {
+    /// GitHub Pull Request
+    Pr,
+    /// GitLab Merge Request
+    Mr,
+}
+
+impl RefType {
+    /// Returns the number prefix symbol for this reference type.
+    /// - PR: "#" (e.g., "PR #42")
+    /// - MR: "!" (e.g., "MR !42")
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Self::Pr => "#",
+            Self::Mr => "!",
+        }
+    }
+
+    /// Returns the short name for this reference type.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Pr => "PR",
+            Self::Mr => "MR",
+        }
+    }
+
+    /// Returns the plural form of the short name.
+    pub fn name_plural(self) -> &'static str {
+        match self {
+            Self::Pr => "PRs",
+            Self::Mr => "MRs",
+        }
+    }
+
+    /// Returns the CLI syntax prefix (e.g., "pr:" or "mr:").
+    pub fn syntax(self) -> &'static str {
+        match self {
+            Self::Pr => "pr:",
+            Self::Mr => "mr:",
+        }
+    }
+
+    /// Returns a display string like "PR #42" or "MR !42".
+    pub fn display(self, number: u32) -> String {
+        format!("{} {}{}", self.name(), self.symbol(), number)
+    }
+}
+
+/// Common display fields for PR/MR context.
+///
+/// Implemented by both `PrInfo` and `MrInfo` to enable unified formatting.
+pub trait RefContext {
+    fn ref_type(&self) -> RefType;
+    fn number(&self) -> u32;
+    fn title(&self) -> &str;
+    fn author(&self) -> &str;
+    fn state(&self) -> &str;
+    fn draft(&self) -> bool;
+    fn url(&self) -> &str;
+}
+
 /// Domain errors for git and worktree operations.
 ///
 /// This enum provides structured error data that can be pattern-matched and tested.
@@ -55,7 +120,14 @@ pub enum GitError {
     BranchAlreadyExists {
         branch: String,
     },
-    InvalidReference {
+    BranchNotFound {
+        branch: String,
+        /// Show hint about creating the branch. Set to false for remove operations
+        /// where suggesting creation doesn't make sense.
+        show_create_hint: bool,
+    },
+    /// Reference (branch, tag, commit) not found - used when any commit-ish is accepted
+    ReferenceNotFound {
         reference: String,
     },
 
@@ -65,9 +137,6 @@ pub enum GitError {
         action: Option<String>,
     },
     WorktreeMissing {
-        branch: String,
-    },
-    NoWorktreeFound {
         branch: String,
     },
     RemoteOnlyBranch {
@@ -148,18 +217,36 @@ pub enum GitError {
     WorktreeNotFound {
         branch: String,
     },
-    /// --create flag used with pr: syntax (conflict - PR branch already exists)
-    PrCreateConflict {
-        pr_number: u32,
+    /// --create flag used with pr:/mr: syntax (conflict - branch already exists)
+    RefCreateConflict {
+        ref_type: RefType,
+        number: u32,
     },
-    /// --base flag used with pr: syntax (conflict - PR base is predetermined)
-    PrBaseConflict {
-        pr_number: u32,
+    /// --base flag used with pr:/mr: syntax (conflict - base is predetermined)
+    RefBaseConflict {
+        ref_type: RefType,
+        number: u32,
     },
-    /// Branch exists but is tracking a different PR
-    BranchTracksDifferentPr {
+    /// Branch exists but is tracking a different PR/MR
+    BranchTracksDifferentRef {
         branch: String,
-        pr_number: u32,
+        ref_type: RefType,
+        number: u32,
+    },
+    /// No remote found for the repository where the PR lives
+    NoRemoteForRepo {
+        owner: String,
+        repo: String,
+        /// Suggested URL to add as a remote (derived from primary remote's protocol/host)
+        suggested_url: String,
+    },
+    /// CLI API command failed with unrecognized error (gh or glab)
+    CliApiError {
+        ref_type: RefType,
+        /// Short description of what failed
+        message: String,
+        /// Full stderr output for debugging
+        stderr: String,
     },
     Other {
         message: String,
@@ -223,20 +310,38 @@ impl std::fmt::Display for GitError {
                     "{}\n{}",
                     error_message(cformat!("Branch <bold>{branch}</> already exists")),
                     hint_message(cformat!(
-                        "To switch to the existing branch, remove <bright-black>--create</> and run <bright-black>{switch_cmd}</>"
+                        "To switch to the existing branch, run without <bright-black>--create</>: <bright-black>{switch_cmd}</>"
                     ))
                 )
             }
 
-            GitError::InvalidReference { reference } => {
-                let create_cmd = suggest_command("switch", &[reference], &["--create"]);
+            GitError::BranchNotFound {
+                branch,
+                show_create_hint,
+            } => {
                 let list_cmd = suggest_command("list", &[], &["--branches", "--remotes"]);
+                let hint = if *show_create_hint {
+                    let create_cmd = suggest_command("switch", &[branch], &["--create"]);
+                    cformat!(
+                        "To create a new branch, run <bright-black>{create_cmd}</>; to list branches, run <bright-black>{list_cmd}</>"
+                    )
+                } else {
+                    cformat!("To list branches, run <bright-black>{list_cmd}</>")
+                };
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(cformat!("Branch <bold>{reference}</> not found")),
-                    hint_message(cformat!(
-                        "To create a new branch, run <bright-black>{create_cmd}</>; to list branches, run <bright-black>{list_cmd}</>"
+                    error_message(cformat!("No branch named <bold>{branch}</>")),
+                    hint_message(hint)
+                )
+            }
+
+            GitError::ReferenceNotFound { reference } => {
+                write!(
+                    f,
+                    "{}",
+                    error_message(cformat!(
+                        "No branch, tag, or commit named <bold>{reference}</>"
                     ))
                 )
             }
@@ -264,14 +369,6 @@ impl std::fmt::Display for GitError {
                     hint_message(cformat!(
                         "To clean up, run <bright-black>git worktree prune</>"
                     ))
-                )
-            }
-
-            GitError::NoWorktreeFound { branch } => {
-                write!(
-                    f,
-                    "{}",
-                    error_message(cformat!("No worktree found for branch <bold>{branch}</>"))
                 )
             }
 
@@ -581,46 +678,89 @@ impl std::fmt::Display for GitError {
             }
 
             GitError::WorktreeNotFound { branch } => {
-                write!(
-                    f,
-                    "{}",
-                    error_message(cformat!("No worktree found for branch <bold>{branch}</>"))
-                )
-            }
-
-            GitError::PrCreateConflict { pr_number } => {
+                let switch_cmd = suggest_command("switch", &[branch], &[]);
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(cformat!(
-                        "Cannot use <bold>--create</> with <bold>pr:{pr_number}</>"
-                    )),
-                    hint_message("PRs already have a branch; remove --create")
-                )
-            }
-
-            GitError::PrBaseConflict { pr_number } => {
-                write!(
-                    f,
-                    "{}\n{}",
-                    error_message(cformat!(
-                        "Cannot use <bold>--base</> with <bold>pr:{pr_number}</>"
-                    )),
-                    hint_message("PRs already have a base; remove --base")
-                )
-            }
-
-            GitError::BranchTracksDifferentPr { branch, pr_number } => {
-                write!(
-                    f,
-                    "{}\n{}",
-                    error_message(cformat!(
-                        "Branch <bold>{branch}</> exists but is not tracking PR #{pr_number}"
-                    )),
+                    error_message(cformat!("Branch <bold>{branch}</> has no worktree")),
                     hint_message(cformat!(
-                        "Delete the branch first: <bright-black>git branch -D {branch}</>"
+                        "To create a worktree, run <bright-black>{switch_cmd}</>"
                     ))
                 )
+            }
+
+            GitError::RefCreateConflict { ref_type, number } => {
+                let syntax = ref_type.syntax();
+                let name_plural = ref_type.name_plural();
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!(
+                        "Cannot use <bold>--create</> with <bold>{syntax}{number}</>"
+                    )),
+                    hint_message(format!(
+                        "{name_plural} already have a branch; remove --create"
+                    ))
+                )
+            }
+
+            GitError::RefBaseConflict { ref_type, number } => {
+                let syntax = ref_type.syntax();
+                let name_plural = ref_type.name_plural();
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!(
+                        "Cannot use <bold>--base</> with <bold>{syntax}{number}</>"
+                    )),
+                    hint_message(format!("{name_plural} already have a base; remove --base"))
+                )
+            }
+
+            GitError::BranchTracksDifferentRef {
+                branch,
+                ref_type,
+                number,
+            } => {
+                // The ref's branch name conflicts with an existing local branch.
+                // We can't use a different local name because git push requires
+                // the local and remote branch names to match (with push.default=current).
+                let escaped = escape(Cow::Borrowed(branch.as_str()));
+                let old_name = format!("{branch}-old");
+                let escaped_old = escape(Cow::Borrowed(&old_name));
+                let name = ref_type.name();
+                let symbol = ref_type.symbol();
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!(
+                        "Branch <bold>{branch}</> exists but doesn't track {name} {symbol}{number}"
+                    )),
+                    hint_message(cformat!(
+                        "To free the name, run <bright-black>git branch -m -- {escaped} {escaped_old}</>"
+                    ))
+                )
+            }
+
+            GitError::NoRemoteForRepo {
+                owner,
+                repo,
+                suggested_url,
+            } => {
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!("No remote found for <bold>{owner}/{repo}</>")),
+                    hint_message(cformat!(
+                        "Add the remote: <bright-black>git remote add upstream {suggested_url}</>"
+                    ))
+                )
+            }
+
+            GitError::CliApiError {
+                message, stderr, ..
+            } => {
+                write!(f, "{}", format_error_block(error_message(message), stderr))
             }
 
             GitError::Other { message } => {
@@ -795,7 +935,7 @@ mod tests {
         let downcast = err.downcast_ref::<GitError>().expect("Should downcast");
         assert_snapshot!(downcast.to_string(), @"
         [31m✗[39m [31mBranch [1mmain[22m already exists[39m
-        [2m↳[22m [2mTo switch to the existing branch, remove [90m--create[39m and run [90mwt switch main[39m[22m
+        [2m↳[22m [2mTo switch to the existing branch, run without [90m--create[39m: [90mwt switch main[39m[22m
         ");
     }
 
@@ -1191,6 +1331,35 @@ mod tests {
         assert!(display.contains("conflicting"));
         // Should still have hint about commit/stash
         assert!(display.contains("Commit or stash"));
+    }
+
+    #[test]
+    fn test_git_error_cli_api_error() {
+        let err = GitError::CliApiError {
+            ref_type: RefType::Pr,
+            message: "gh api failed for PR #42".into(),
+            stderr: "error: unexpected response\ncode: 500".into(),
+        };
+        let display = err.to_string();
+        // Verify header and gutter content are present
+        assert!(display.contains("gh api failed"));
+        assert!(display.contains("unexpected response"));
+        assert!(display.contains("500"));
+    }
+
+    #[test]
+    fn test_git_error_no_remote_for_repo() {
+        let err = GitError::NoRemoteForRepo {
+            owner: "upstream-owner".into(),
+            repo: "upstream-repo".into(),
+            suggested_url: "https://github.com/upstream-owner/upstream-repo.git".into(),
+        };
+        let display = err.to_string();
+        // Verify error message and hint
+        assert!(display.contains("No remote found"));
+        assert!(display.contains("upstream-owner/upstream-repo"));
+        assert!(display.contains("git remote add upstream"));
+        assert!(display.contains("https://github.com/upstream-owner/upstream-repo.git"));
     }
 
     #[test]

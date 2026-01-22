@@ -57,7 +57,7 @@ repos:
         entry: '\\x1b\['
         # format.rs strips ANSI codes injected by wrap_ansi crate
         # select.rs tests verify ANSI dimming behavior
-        exclude: '^(tests/|.*_test\.rs$|src/styling/(mod|format)\.rs$|src/commands/select\.rs$)'
+        exclude: '^(tests/|.*_test\.rs$|src/styling/(mod|format)\.rs$|src/commands/select/)'
       - id: no-std-canonicalize-in-tests
         name: no-std-canonicalize-in-tests
         description: Use dunce::canonicalize in tests to avoid Windows \\?\ prefix issues
@@ -74,7 +74,7 @@ repos:
         # select.rs: skim API's selected.output() is not Command::output()
         # tests/benches: test utilities run commands directly
         # src/config/{test,expansion,mod,user}.rs: TestRepo test fixtures use git init directly
-        exclude: '^(src/shell_exec\.rs|src/commands/select\.rs|src/config/(test|expansion|mod|user)\.rs|tests/|benches/)'
+        exclude: '^(src/shell_exec\.rs|src/commands/select/|src/config/(test|expansion|mod|user)\.rs|tests/|benches/)'
 
 ci:
   # pre-commit.ci doesn't have Rust toolchain, so skip Rust-specific hooks.

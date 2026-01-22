@@ -17,13 +17,16 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
     RUST_LOG: warn
-    SOURCE_DATE_EPOCH: "1735776000"
+    SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -43,6 +46,6 @@ exit_code: 0
 [107m [0m [1mfeature[22m: commit-details (fatal: bad object 0000000000000000000000000000000000000000)
 [107m [0m [1mfeature[22m: ahead-behind (git merge-base failed for main 0000000000000000000000000000000000000000: fatal: Not a valid commit name 0000000000000000000000000000000000000000)
 [107m [0m [1mfeature[22m: committed-trees-match (fatal: ambiguous argument '0000000000000000000000000000000000000000^{tree}': unknown revision or path not in the working tree.)
-[107m [0m [1mfeature[22m: has-file-changes (git merge-base failed for main feature: fatal: Not a valid commit name feature)
+[107m [0m [1mfeature[22m: has-file-changes (git merge-base failed for refs/heads/main refs/heads/feature: fatal: Not a valid commit name refs/heads/feature)
 [107m [0m [1mfeature[22m: working-tree-diff (fatal: bad object HEAD)[39m
 [2m↳[22m [2mTo create a diagnostic file, run with [90m-vv[39m[22m

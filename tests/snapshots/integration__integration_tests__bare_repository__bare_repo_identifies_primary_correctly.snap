@@ -6,7 +6,7 @@ info:
     - list
   env:
     CLICOLOR_FORCE: ""
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -17,9 +17,12 @@ info:
     LC_ALL: C
     NO_COLOR: ""
     RUST_LOG: warn
-    SOURCE_DATE_EPOCH: "1735776000"
+    SHELL: ""
+    TERM: alacritty
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
 ---
 success: true
 exit_code: 0

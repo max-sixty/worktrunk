@@ -646,7 +646,7 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // Linux has /bin/bash). Tests that need SHELL should set it explicitly.
     cmd.env_remove("SHELL");
     cmd.env("CLICOLOR_FORCE", "1");
-    cmd.env("SOURCE_DATE_EPOCH", TEST_EPOCH.to_string());
+    cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
     // Use wide terminal to prevent wrapping differences across platforms.
     // macOS temp paths (~80 chars) are much longer than Linux (~10 chars),
     // so error messages containing paths need room to avoid platform-specific line breaks.
@@ -657,6 +657,10 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("RUST_LOG", "warn");
     // Skip URL health checks to avoid flaky tests from random local processes
     cmd.env("WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK", "1");
+    // Disable delayed streaming for deterministic output across platforms.
+    // Without this, slow Windows CI triggers progress messages that don't appear on faster systems.
+    // Tests that need streaming (e.g., test_switch_create_shows_progress_when_forced) can override.
+    cmd.env("WT_TEST_DELAYED_STREAM_MS", "-1");
 
     // Pass through LLVM coverage profiling environment for subprocess coverage collection.
     // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record
@@ -690,7 +694,7 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
     cmd.env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z");
     cmd.env("LC_ALL", "C");
     cmd.env("LANG", "C");
-    cmd.env("SOURCE_DATE_EPOCH", TEST_EPOCH.to_string());
+    cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
     cmd.env("GIT_TERMINAL_PROMPT", "0");
 }
 
@@ -1089,7 +1093,7 @@ impl TestRepo {
             ),
             ("LC_ALL".to_string(), "C".to_string()),
             ("LANG".to_string(), "C".to_string()),
-            ("SOURCE_DATE_EPOCH".to_string(), TEST_EPOCH.to_string()),
+            ("WT_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
             (
                 "WORKTRUNK_CONFIG_PATH".to_string(),
                 self.test_config_path().display().to_string(),
@@ -1295,18 +1299,21 @@ impl TestRepo {
         self.remote.as_deref()
     }
 
-    /// Get the project identifier for test configs.
+    /// Get the project identifier (canonical path) for this test repo.
     ///
-    /// Returns the repository directory name. This works because the standard
-    /// fixture uses a local path remote (`../origin_git`) which doesn't parse
-    /// as a proper git URL, causing worktrunk to fall back to the directory name.
+    /// Returns the full canonical path of the repository. The standard fixture uses a local
+    /// path remote (`../origin_git`) which doesn't parse as a proper git URL, causing
+    /// worktrunk to fall back to the full canonical path.
     ///
-    /// Use this when writing test configs with `[projects."<id>"]` sections.
+    /// Use with TOML literal strings (single quotes) to avoid backslash escaping:
+    /// ```ignore
+    /// format!(r#"[projects.'{}']"#, repo.project_id())
+    /// ```
     pub fn project_id(&self) -> String {
-        self.root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("repo")
+        dunce::canonicalize(&self.root)
+            .unwrap_or_else(|_| self.root.clone())
+            .to_str()
+            .unwrap_or("")
             .to_string()
     }
 
@@ -1371,7 +1378,7 @@ impl TestRepo {
             .unwrap();
     }
 
-    /// Create a commit with a specific age relative to SOURCE_DATE_EPOCH
+    /// Create a commit with a specific age relative to TEST_EPOCH
     ///
     /// This allows creating commits that display specific relative ages
     /// in the Age column (e.g., "10m", "1h", "1d").
@@ -1455,6 +1462,21 @@ impl TestRepo {
         // Canonicalize worktree path to match what git returns
         let canonical_path = canonicalize(&worktree_path).unwrap();
         // Use branch as key (consistent with path generation)
+        self.worktrees
+            .insert(branch.to_string(), canonical_path.clone());
+        canonical_path
+    }
+
+    /// Creates a worktree at a custom path (for testing nested worktrees).
+    ///
+    /// Unlike `add_worktree`, this places the worktree at the specified path
+    /// rather than using the default sibling layout.
+    pub fn add_worktree_at_path(&mut self, branch: &str, path: &Path) -> PathBuf {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let path_str = path.to_str().unwrap();
+        self.run_git(&["worktree", "add", "-b", branch, path_str]);
+
+        let canonical_path = canonicalize(path).unwrap();
         self.worktrees
             .insert(branch.to_string(), canonical_path.clone());
         canonical_path
@@ -1801,20 +1823,60 @@ impl TestRepo {
 
     /// Setup mock `glab` that returns configurable MR/CI data for GitLab
     ///
-    /// Use this for testing GitLab CI status parsing code. The mock returns JSON data
-    /// for `glab mr list` and `glab repo view` commands.
+    /// Use this for testing GitLab CI status parsing code. The mock handles the
+    /// two-step MR resolution process:
+    /// - `glab mr list` returns basic MR info (iid, sha, conflicts, etc.)
+    /// - `glab mr view <iid>` returns full MR info including head_pipeline
     ///
     /// # Arguments
-    /// * `mr_json` - JSON string to return for `glab mr list --output json`
+    /// * `mr_json` - JSON string for MR data. Should include an `iid` field and
+    ///   optionally `head_pipeline`. This data is used for both `mr list` and
+    ///   `mr view` responses.
     /// * `project_id` - Optional project ID to return from `glab repo view`
+    ///
+    /// # Note
+    /// The mock automatically handles the compound command matching:
+    /// - "mr list" → returns MR list data
+    /// - "mr view" → returns same data (works because glab mr view returns same fields)
     pub fn setup_mock_glab_with_ci_data(&mut self, mr_json: &str, project_id: Option<u64>) {
         use crate::common::mock_commands::{MockConfig, MockResponse};
 
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
-        // Write JSON data file
-        std::fs::write(mock_bin.join("mr_data.json"), mr_json).unwrap();
+        // Parse the MR JSON to create separate list and view responses
+        // mr list needs: iid (for two-step lookup), sha, has_conflicts, detailed_merge_status, source_project_id, web_url
+        // mr view needs: sha, has_conflicts, detailed_merge_status, head_pipeline, pipeline, web_url
+        //
+        // Since we provide the same JSON for both, we need to ensure iid is present.
+        // The actual glab mr list doesn't return head_pipeline, but our mock can return
+        // it harmlessly - the code will ignore it and do a second lookup.
+
+        // Write JSON data files - same data for list (array) and view (single object)
+        std::fs::write(mock_bin.join("mr_list_data.json"), mr_json).unwrap();
+
+        // For mr view, create separate files for each MR by iid
+        // This allows triple-matching "mr view <iid>" to return the correct MR
+        let mut mock_config = MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("mr list", MockResponse::file("mr_list_data.json"));
+
+        // Parse MR array and create iid-specific view commands
+        // Triple match: "mr view 1" matches before "mr view" (see mock-stub)
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(mr_json)
+            && let Some(arr) = parsed.as_array()
+        {
+            for mr in arr {
+                if let Some(iid) = mr.get("iid").and_then(|v| v.as_u64()) {
+                    let filename = format!("mr_view_{}.json", iid);
+                    let json = serde_json::to_string(mr).unwrap_or_default();
+                    std::fs::write(mock_bin.join(&filename), json).unwrap();
+                    mock_config = mock_config
+                        .command(&format!("mr view {}", iid), MockResponse::file(&filename));
+                }
+            }
+        }
 
         // Build project ID response
         let project_id_response = match project_id {
@@ -1822,16 +1884,84 @@ impl TestRepo {
             None => r#"{"error": "not found"}"#.to_string(),
         };
 
-        // Configure glab mock
-        MockConfig::new("glab")
-            .version("glab version 1.0.0 (mock)")
-            .command("auth", MockResponse::exit(0))
-            .command("mr", MockResponse::file("mr_data.json"))
+        // Configure glab mock with compound command matching
+        // "mr view <iid>" is matched before "mr view" (see mock-stub triple matching)
+        mock_config
             .command("repo", MockResponse::output(&project_id_response))
             .command("ci", MockResponse::output("[]"))
             .write(&mock_bin);
 
         // Configure gh mock (fails - no GitHub support)
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Setup mock glab where mr list succeeds but mr view fails.
+    ///
+    /// Use this to test the error path when `glab mr view` fails after finding an MR.
+    /// The mock returns the MR from mr list but exits with error for mr view.
+    pub fn setup_mock_glab_with_failing_mr_view(&mut self, mr_json: &str, project_id: Option<u64>) {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        std::fs::write(mock_bin.join("mr_list_data.json"), mr_json).unwrap();
+
+        let project_id_response = match project_id {
+            Some(id) => format!(r#"{{"id": {}}}"#, id),
+            None => r#"{"error": "not found"}"#.to_string(),
+        };
+
+        // glab mock: mr list succeeds, but NO mr view commands registered
+        // (falls back to exit code 1)
+        MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("mr list", MockResponse::file("mr_list_data.json"))
+            // No "mr view" commands - will fall back to default exit code 1
+            .command("repo", MockResponse::output(&project_id_response))
+            .command("ci", MockResponse::output("[]"))
+            .write(&mock_bin);
+
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Set up mock glab that returns a rate limit error on `ci list`.
+    ///
+    /// Used to test the `is_retriable_error` path in `detect_gitlab_pipeline`.
+    /// MR list returns empty (no MRs), so the code falls through to pipeline detection
+    /// which then hits the rate limit error.
+    pub fn setup_mock_glab_with_ci_rate_limit(&mut self, project_id: Option<u64>) {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        let project_id_response = match project_id {
+            Some(id) => format!(r#"{{"id": {}}}"#, id),
+            None => r#"{"error": "not found"}"#.to_string(),
+        };
+
+        // glab mock: mr list returns empty (no MRs), ci list fails with rate limit
+        MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("mr list", MockResponse::output("[]")) // No MRs - triggers ci list fallback
+            .command("repo", MockResponse::output(&project_id_response))
+            .command(
+                "ci",
+                MockResponse::stderr("API rate limit exceeded").with_exit_code(1),
+            )
+            .write(&mock_bin);
+
         MockConfig::new("gh")
             .command("_default", MockResponse::exit(1))
             .write(&mock_bin);
@@ -2788,7 +2918,7 @@ mod tests {
     fn test_unix_to_iso8601() {
         // 2025-01-01T00:00:00Z
         assert_eq!(unix_to_iso8601(1735689600), "2025-01-01T00:00:00Z");
-        // 2025-01-02T00:00:00Z (SOURCE_DATE_EPOCH)
+        // 2025-01-02T00:00:00Z (TEST_EPOCH)
         assert_eq!(unix_to_iso8601(1735776000), "2025-01-02T00:00:00Z");
         // 2024-12-31T00:00:00Z (one day before 2025-01-01)
         assert_eq!(unix_to_iso8601(1735603200), "2024-12-31T00:00:00Z");
