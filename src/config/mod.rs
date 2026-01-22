@@ -28,7 +28,7 @@ mod user;
 pub use commands::{Command, CommandConfig};
 pub use deprecation::check_and_migrate as check_deprecated_vars;
 pub use deprecation::normalize_template_vars;
-pub use deprecation::warn_unknown_fields;
+pub use deprecation::{ConfigType, key_belongs_in, warn_unknown_fields};
 pub use expansion::{
     DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, expand_template, redact_credentials,
     sanitize_branch_name, sanitize_db,
@@ -741,7 +741,8 @@ squash-template-file = "~/file.txt"
     fn test_find_unknown_project_keys_with_typo() {
         let toml_str = "[post-merge-command]\ndeploy = \"task deploy\"";
         let unknown = find_unknown_project_keys(toml_str);
-        assert_eq!(unknown, vec!["post-merge-command"]);
+        assert!(unknown.contains_key("post-merge-command"));
+        assert_eq!(unknown.len(), 1);
     }
 
     #[test]
@@ -757,15 +758,16 @@ squash-template-file = "~/file.txt"
         let toml_str = "[post-merge-command]\ndeploy = \"task deploy\"\n\n[after-create]\nsetup = \"npm install\"";
         let unknown = find_unknown_project_keys(toml_str);
         assert_eq!(unknown.len(), 2);
-        assert!(unknown.contains(&"post-merge-command".to_string()));
-        assert!(unknown.contains(&"after-create".to_string()));
+        assert!(unknown.contains_key("post-merge-command"));
+        assert!(unknown.contains_key("after-create"));
     }
 
     #[test]
     fn test_find_unknown_user_keys_with_typo() {
         let toml_str = "worktree-path = \"../test\"\n\n[commit-gen]\ncommand = \"llm\"";
         let unknown = find_unknown_user_keys(toml_str);
-        assert_eq!(unknown, vec!["commit-gen"]);
+        assert!(unknown.contains_key("commit-gen"));
+        assert_eq!(unknown.len(), 1);
     }
 
     #[test]
@@ -847,6 +849,48 @@ test = "cargo test"
             unknown.is_empty(),
             "hook fields should not be reported as unknown: {:?}",
             unknown
+        );
+    }
+
+    #[test]
+    fn test_user_config_key_in_project_config_is_detected() {
+        // commit-generation is a user-config-only key
+        let toml_str = r#"
+[commit-generation]
+command = "claude"
+"#;
+        let unknown = find_unknown_project_keys(toml_str);
+        assert!(
+            unknown.contains_key("commit-generation"),
+            "commit-generation should be unknown in project config"
+        );
+
+        // Verify it's valid in user config
+        let unknown_in_user = find_unknown_user_keys(toml_str);
+        assert!(
+            unknown_in_user.is_empty(),
+            "commit-generation should be valid in user config"
+        );
+    }
+
+    #[test]
+    fn test_project_config_key_in_user_config_is_detected() {
+        // ci is a project-config-only key
+        let toml_str = r#"
+[ci]
+platform = "github"
+"#;
+        let unknown = find_unknown_user_keys(toml_str);
+        assert!(
+            unknown.contains_key("ci"),
+            "ci should be unknown in user config"
+        );
+
+        // Verify it's valid in project config
+        let unknown_in_project = find_unknown_project_keys(toml_str);
+        assert!(
+            unknown_in_project.is_empty(),
+            "ci should be valid in project config"
         );
     }
 }

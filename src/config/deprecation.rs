@@ -16,10 +16,17 @@ use color_print::cformat;
 use minijinja::Environment;
 use shell_escape::escape;
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
+
+/// Which type of config file we're working with
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigType {
+    User,
+    Project,
+}
 
 /// Tracks which config paths have already shown deprecation warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
@@ -278,14 +285,67 @@ pub fn check_and_migrate(
     Ok(true)
 }
 
+/// Check if an unknown key would be valid in user config
+fn is_user_config_key(key: &str, value: &toml::Value) -> bool {
+    let mut table = toml::map::Map::new();
+    table.insert(key.to_string(), value.clone());
+    toml::Value::Table(table)
+        .try_into::<super::UserConfig>()
+        .map(|c| !c.unknown.contains_key(key))
+        .unwrap_or(false)
+}
+
+/// Check if an unknown key would be valid in project config
+fn is_project_config_key(key: &str, value: &toml::Value) -> bool {
+    let mut table = toml::map::Map::new();
+    table.insert(key.to_string(), value.clone());
+    toml::Value::Table(table)
+        .try_into::<super::ProjectConfig>()
+        .map(|c| !c.unknown.contains_key(key))
+        .unwrap_or(false)
+}
+
+/// Returns the config location where this key belongs, if it's in the wrong config.
+///
+/// For example, if `commit-generation` is found in project config, returns
+/// `Some("user config (~/.config/worktrunk/config.toml)")`.
+/// Returns `None` if the key is truly unknown (not valid in either config).
+pub fn key_belongs_in(
+    key: &str,
+    value: &toml::Value,
+    config_type: ConfigType,
+) -> Option<&'static str> {
+    let belongs_elsewhere = match config_type {
+        ConfigType::User => is_project_config_key(key, value),
+        ConfigType::Project => is_user_config_key(key, value),
+    };
+
+    if belongs_elsewhere {
+        Some(match config_type {
+            ConfigType::User => "project config (.config/wt.toml)",
+            ConfigType::Project => "user config (~/.config/worktrunk/config.toml)",
+        })
+    } else {
+        None
+    }
+}
+
 /// Warn about unknown fields in config file
 ///
 /// Emits a warning for each unknown field, deduplicated per path per process.
 /// Unlike deprecated vars, there's no migration file — the warning just repeats
 /// until the user removes or fixes the unknown field.
 ///
+/// When an unknown key belongs in the other config type (user vs project),
+/// the warning includes a hint about where to move it.
+///
 /// The `label` is used in the warning message (e.g., "User config" or "Project config").
-pub fn warn_unknown_fields(path: &Path, unknown_keys: &[String], label: &str) {
+pub fn warn_unknown_fields(
+    path: &Path,
+    unknown_keys: &HashMap<String, toml::Value>,
+    label: &str,
+    config_type: ConfigType,
+) {
     if unknown_keys.is_empty() {
         return;
     }
@@ -300,23 +360,23 @@ pub fn warn_unknown_fields(path: &Path, unknown_keys: &[String], label: &str) {
         guard.insert(canonical_path);
     }
 
-    // Build inline list of unknown keys
-    let keys_display: Vec<String> = unknown_keys
-        .iter()
-        .map(|k| cformat!("<bold>{}</>", k))
-        .collect();
-
-    let warning = format!(
-        "{} has unknown {}: {} (will be ignored)",
-        label,
-        if unknown_keys.len() == 1 {
-            "field"
+    for (key, value) in unknown_keys {
+        if let Some(other_location) = key_belongs_in(key, value, config_type) {
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "{label} has key <bold>{key}</> which belongs in {other_location} (will be ignored)"
+                ))
+            );
         } else {
-            "fields"
-        },
-        keys_display.join(", ")
-    );
-    eprintln!("{}", warning_message(warning));
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "{label} has unknown field <bold>{key}</> (will be ignored)"
+                ))
+            );
+        }
+    }
 
     // Flush stderr to ensure output appears before any subsequent messages
     std::io::stderr().flush().ok();

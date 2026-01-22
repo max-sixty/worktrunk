@@ -340,7 +340,11 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
         // Only check for unknown keys if config is valid
-        warn_unknown_keys(out, &find_unknown_user_keys(&contents))?;
+        warn_unknown_keys(
+            out,
+            &find_unknown_user_keys(&contents),
+            worktrunk::config::ConfigType::User,
+        )?;
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)
@@ -350,13 +354,30 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
 }
 
 /// Write warnings for any unknown config keys
-pub(super) fn warn_unknown_keys(out: &mut String, unknown_keys: &[String]) -> anyhow::Result<()> {
-    for key in unknown_keys {
-        writeln!(
-            out,
-            "{}",
-            warning_message(cformat!("Unknown key <bold>{key}</> will be ignored"))
-        )?;
+///
+/// When an unknown key belongs in the other config type (user vs project),
+/// the warning includes a hint about where to move it.
+pub(super) fn warn_unknown_keys(
+    out: &mut String,
+    unknown_keys: &std::collections::HashMap<String, toml::Value>,
+    config_type: worktrunk::config::ConfigType,
+) -> anyhow::Result<()> {
+    for (key, value) in unknown_keys {
+        if let Some(other_location) = worktrunk::config::key_belongs_in(key, value, config_type) {
+            writeln!(
+                out,
+                "{}",
+                warning_message(cformat!(
+                    "Key <bold>{key}</> belongs in {other_location} (will be ignored)"
+                ))
+            )?;
+        } else {
+            writeln!(
+                out,
+                "{}",
+                warning_message(cformat!("Unknown key <bold>{key}</> will be ignored"))
+            )?;
+        }
     }
     Ok(())
 }
@@ -409,7 +430,11 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
         // Only check for unknown keys if config is valid
-        warn_unknown_keys(out, &find_unknown_project_keys(&contents))?;
+        warn_unknown_keys(
+            out,
+            &find_unknown_project_keys(&contents),
+            worktrunk::config::ConfigType::Project,
+        )?;
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)

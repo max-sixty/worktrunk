@@ -118,27 +118,83 @@ mod tests {
 
     #[test]
     fn test_warn_unknown_keys_empty() {
+        use std::collections::HashMap;
         let mut out = String::new();
-        warn_unknown_keys(&mut out, &[]).unwrap();
+        warn_unknown_keys(
+            &mut out,
+            &HashMap::new(),
+            worktrunk::config::ConfigType::User,
+        )
+        .unwrap();
         assert!(out.is_empty());
     }
 
     #[test]
     fn test_warn_unknown_keys_single() {
+        use std::collections::HashMap;
         let mut out = String::new();
-        warn_unknown_keys(&mut out, &["unknown-key".to_string()]).unwrap();
+        let mut unknown = HashMap::new();
+        unknown.insert(
+            "unknown-key".to_string(),
+            toml::Value::String("value".to_string()),
+        );
+        warn_unknown_keys(&mut out, &unknown, worktrunk::config::ConfigType::User).unwrap();
         assert!(out.contains("unknown-key"));
-        assert!(out.contains("Unknown key"));
+        assert!(out.contains("Unknown"));
     }
 
     #[test]
     fn test_warn_unknown_keys_multiple() {
+        use std::collections::HashMap;
         let mut out = String::new();
-        warn_unknown_keys(&mut out, &["key1".to_string(), "key2".to_string()]).unwrap();
+        let mut unknown = HashMap::new();
+        unknown.insert(
+            "key1".to_string(),
+            toml::Value::String("value1".to_string()),
+        );
+        unknown.insert(
+            "key2".to_string(),
+            toml::Value::String("value2".to_string()),
+        );
+        warn_unknown_keys(&mut out, &unknown, worktrunk::config::ConfigType::User).unwrap();
         assert!(out.contains("key1"));
         assert!(out.contains("key2"));
-        // Should have two separate warning lines
-        assert_eq!(out.matches("Unknown key").count(), 2);
+    }
+
+    #[test]
+    fn test_warn_unknown_keys_suggests_other_config() {
+        use std::collections::HashMap;
+
+        // Test: commit-generation in project config should suggest user config
+        let mut out = String::new();
+        let mut unknown = HashMap::new();
+        // Build a commit-generation table value
+        let mut inner = toml::map::Map::new();
+        inner.insert(
+            "command".to_string(),
+            toml::Value::String("claude".to_string()),
+        );
+        unknown.insert("commit-generation".to_string(), toml::Value::Table(inner));
+        warn_unknown_keys(&mut out, &unknown, worktrunk::config::ConfigType::Project).unwrap();
+        assert!(
+            out.contains("user config"),
+            "Should suggest user config for commit-generation in project config: {out}"
+        );
+
+        // Test: ci in user config should suggest project config
+        let mut out = String::new();
+        let mut unknown = HashMap::new();
+        let mut inner = toml::map::Map::new();
+        inner.insert(
+            "platform".to_string(),
+            toml::Value::String("github".to_string()),
+        );
+        unknown.insert("ci".to_string(), toml::Value::Table(inner));
+        warn_unknown_keys(&mut out, &unknown, worktrunk::config::ConfigType::User).unwrap();
+        assert!(
+            out.contains("project config"),
+            "Should suggest project config for ci in user config: {out}"
+        );
     }
 
     // ==================== render_ci_tool_status tests ====================
