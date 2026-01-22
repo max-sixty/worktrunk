@@ -3,7 +3,7 @@
 //! Determines whether a repository uses GitHub or GitLab based on
 //! project config override or remote URL detection.
 
-use worktrunk::git::Repository;
+use worktrunk::git::{GitRemoteUrl, Repository};
 
 /// CI platform detected from project config override or remote URL.
 ///
@@ -17,12 +17,14 @@ pub enum CiPlatform {
     GitLab,
 }
 
-/// Detect the CI platform from a remote URL by searching for "github" or "gitlab".
+/// Detect the CI platform from a remote URL.
+///
+/// Uses [`GitRemoteUrl`] to parse the URL and check the host for "github" or "gitlab".
 pub fn detect_platform_from_url(url: &str) -> Option<CiPlatform> {
-    let url_lower = url.to_ascii_lowercase();
-    if url_lower.contains("github") {
+    let parsed = GitRemoteUrl::parse(url)?;
+    if parsed.is_github() {
         Some(CiPlatform::GitHub)
-    } else if url_lower.contains("gitlab") {
+    } else if parsed.is_gitlab() {
         Some(CiPlatform::GitLab)
     } else {
         None
@@ -32,8 +34,8 @@ pub fn detect_platform_from_url(url: &str) -> Option<CiPlatform> {
 /// Get the CI platform for a repository.
 ///
 /// If `platform_override` is provided (from project config `[ci] platform`),
-/// uses that value directly. Otherwise, detects platform from the primary
-/// remote URL.
+/// uses that value directly. Otherwise, searches all remote URLs for a
+/// supported platform (GitHub or GitLab).
 pub fn get_platform_for_repo(
     repo: &Repository,
     platform_override: Option<&str>,
@@ -50,9 +52,19 @@ pub fn get_platform_for_repo(
         );
     }
 
-    // Fall back to URL detection
-    let url = repo.primary_remote_url()?;
-    detect_platform_from_url(&url)
+    // Search all remotes for a supported platform
+    for (remote_name, url) in repo.all_remote_urls() {
+        if let Some(platform) = detect_platform_from_url(&url) {
+            log::debug!(
+                "Detected CI platform {} from remote '{}'",
+                platform,
+                remote_name
+            );
+            return Some(platform);
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]

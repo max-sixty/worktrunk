@@ -315,13 +315,15 @@ impl serde::Serialize for OperationState {
     }
 }
 
-/// Git operation state for a worktree
+/// Active git operation in a worktree
 ///
-/// Represents whether a worktree is in the middle of a git operation.
+/// Represents raw data about whether a worktree is in the middle of a git operation.
+/// This is distinct from [`OperationState`] which is the display enum (includes Conflicts,
+/// has symbols/colors).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, strum::IntoStaticStr)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
-pub enum GitOperationState {
+pub enum ActiveGitOperation {
     #[strum(serialize = "")]
     #[serde(rename = "")]
     #[default]
@@ -332,7 +334,7 @@ pub enum GitOperationState {
     Merge,
 }
 
-impl GitOperationState {
+impl ActiveGitOperation {
     pub fn is_none(&self) -> bool {
         matches!(self, Self::None)
     }
@@ -670,19 +672,19 @@ mod tests {
     }
 
     // ============================================================================
-    // GitOperationState Tests
+    // ActiveGitOperation Tests
     // ============================================================================
 
     #[test]
     fn test_git_operation_state_default() {
-        let state = GitOperationState::default();
-        assert_eq!(state, GitOperationState::None);
+        let state = ActiveGitOperation::default();
+        assert_eq!(state, ActiveGitOperation::None);
     }
 
     #[test]
     fn test_git_operation_state_is_none() {
-        assert!(GitOperationState::None.is_none());
-        assert!(!GitOperationState::Rebase.is_none());
-        assert!(!GitOperationState::Merge.is_none());
+        assert!(ActiveGitOperation::None.is_none());
+        assert!(!ActiveGitOperation::Rebase.is_none());
+        assert!(!ActiveGitOperation::Merge.is_none());
     }
 }

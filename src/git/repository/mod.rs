@@ -18,7 +18,7 @@
 
 use crate::shell_exec::Cmd;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
@@ -67,6 +67,8 @@ pub(super) struct RepoCache {
     // ========== Repo-wide values (same for all worktrees) ==========
     /// Whether this is a bare repository
     pub(super) is_bare: OnceCell<bool>,
+    /// Repository root path (main worktree for normal repos, bare directory for bare repos)
+    pub(super) repo_path: OnceCell<PathBuf>,
     /// Default branch (main, master, etc.)
     pub(super) default_branch: OnceCell<Option<String>>,
     /// Invalid default branch config (user configured a branch that doesn't exist).
@@ -80,8 +82,6 @@ pub(super) struct RepoCache {
     pub(super) primary_remote_url: OnceCell<Option<String>>,
     /// Project identifier derived from remote URL
     pub(super) project_identifier: OnceCell<String>,
-    /// Repository root path (main worktree for normal repos, bare directory for bare repos)
-    pub(super) repo_path: OnceCell<PathBuf>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
@@ -118,8 +118,11 @@ pub enum ResolvedWorktree {
     },
 }
 
-/// Global base path for repository operations, set by -C flag
+/// Global base path for repository operations, set by -C flag.
 static BASE_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Default base path when -C flag is not provided.
+static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."));
 
 /// Initialize the global base path for repository operations.
 ///
@@ -131,10 +134,7 @@ pub fn set_base_path(path: PathBuf) {
 
 /// Get the base path for repository operations.
 fn base_path() -> &'static PathBuf {
-    static DEFAULT: OnceLock<PathBuf> = OnceLock::new();
-    BASE_PATH
-        .get()
-        .unwrap_or_else(|| DEFAULT.get_or_init(|| PathBuf::from(".")))
+    BASE_PATH.get().unwrap_or(&DEFAULT_BASE_PATH)
 }
 
 /// Repository state for git operations.
@@ -199,6 +199,7 @@ impl Repository {
     pub fn at(path: impl Into<PathBuf>) -> anyhow::Result<Self> {
         let discovery_path = path.into();
         let git_common_dir = Self::resolve_git_common_dir(&discovery_path)?;
+
         Ok(Self {
             discovery_path,
             git_common_dir,
@@ -313,47 +314,84 @@ impl Repository {
         self.git_common_dir().join("wt-logs")
     }
 
-    /// The repository root path.
+    /// The repository root path (the main worktree directory).
     ///
-    /// For normal repositories: the main worktree directory (parent of .git).
-    /// For bare repositories: the bare repository directory itself.
+    /// - Normal repositories: the main worktree directory (parent of .git)
+    /// - Bare repositories: the bare repository directory itself
+    /// - Submodules: the submodule's worktree (e.g., `/parent/sub`, not `/parent/.git/modules/sub`)
     ///
     /// This is the base for template expansion (`{{ repo }}`, `{{ repo_path }}`).
     /// NOT necessarily where established files live — use `primary_worktree()` for that.
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
-    pub fn repo_path(&self) -> anyhow::Result<PathBuf> {
-        self.cache
-            .repo_path
-            .get_or_try_init(|| {
-                let git_common_dir =
-                    canonicalize(self.git_common_dir()).context("Failed to canonicalize path")?;
+    ///
+    /// # Why we run from `git_common_dir`
+    ///
+    /// We need to return the *main* worktree regardless of which worktree we were discovered
+    /// from. For linked worktrees, `git_common_dir` is the stable reference that's shared
+    /// across all worktrees (e.g., `/myapp/.git` whether you're in `/myapp` or `/myapp.feature`).
+    ///
+    /// # Why the try-fallback approach
+    ///
+    /// `--show-toplevel` behavior depends on whether git has explicit worktree metadata:
+    ///
+    /// | git_common_dir location    | Has `core.worktree`? | `--show-toplevel` works? |
+    /// |----------------------------|----------------------|--------------------------|
+    /// | Normal `.git`              | No (implicit)        | No — "not a work tree"   |
+    /// | Submodule `.git/modules/X` | Yes (explicit)       | Yes — reads config       |
+    ///
+    /// Normal repos don't need `core.worktree` because the worktree is implicitly `parent(.git)`.
+    /// Submodules need it because their git data lives in the parent's `.git/modules/`.
+    ///
+    /// So we try `--show-toplevel` first (handles submodules), fall back to `parent()` (handles
+    /// normal repos). This avoids fragile path-based detection of submodules.
+    pub fn repo_path(&self) -> &Path {
+        self.cache.repo_path.get_or_init(|| {
+            // Bare repos have no worktree — the git directory IS the repo
+            if self.is_bare() {
+                return self.git_common_dir.clone();
+            }
 
-                if self.is_bare()? {
-                    Ok(git_common_dir)
-                } else {
-                    Ok(git_common_dir
-                        .parent()
-                        .context("Git directory has no parent")?
-                        .to_path_buf())
-                }
-            })
-            .cloned()
+            // Submodules: --show-toplevel succeeds (git has explicit core.worktree config)
+            if let Ok(out) = Cmd::new("git")
+                .args(["rev-parse", "--show-toplevel"])
+                .current_dir(&self.git_common_dir)
+                .context(path_to_logging_context(&self.git_common_dir))
+                .run()
+                && out.status.success()
+            {
+                return PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+            }
+
+            // Normal repos: --show-toplevel fails from inside .git, use implicit relationship
+            self.git_common_dir
+                .parent()
+                .expect("Git directory has no parent")
+                .to_path_buf()
+        })
     }
 
     /// Check if this is a bare repository (no working tree).
     ///
     /// Bare repositories have no main worktree — all worktrees are linked
     /// worktrees at templated paths, including the default branch.
+    ///
     /// Result is cached in the repository's shared cache (same for all clones).
-    pub fn is_bare(&self) -> anyhow::Result<bool> {
-        self.cache
-            .is_bare
-            .get_or_try_init(|| {
-                let output = self.run_command(&["config", "--bool", "core.bare"])?;
-                Ok(output.trim() == "true")
-            })
-            .copied()
+    /// Runs `git rev-parse --is-bare-repository` from git_common_dir to correctly
+    /// detect bare repos even when called from a linked worktree.
+    pub fn is_bare(&self) -> bool {
+        *self.cache.is_bare.get_or_init(|| {
+            // Run from git_common_dir, not discovery_path. This is important for
+            // worktrees of bare repos: running from the worktree returns false,
+            // but running from the bare repo returns true.
+            let output = Cmd::new("git")
+                .args(["rev-parse", "--is-bare-repository"])
+                .current_dir(&self.git_common_dir)
+                .context(path_to_logging_context(&self.git_common_dir))
+                .run()
+                .expect("git rev-parse failed on valid repo");
+            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
+        })
     }
 
     /// Check if git's builtin fsmonitor daemon is enabled.
@@ -507,13 +545,14 @@ impl Repository {
 
     /// Delay before showing progress output for slow operations.
     /// See .claude/rules/cli-output-formatting.md: "Progress messages apply only to slow operations (>400ms)"
-    pub const SLOW_OPERATION_DELAY_MS: u64 = 400;
+    pub const SLOW_OPERATION_DELAY_MS: i64 = 400;
 
     /// Run a git command with delayed output streaming.
     ///
     /// Buffers output initially, then streams if the command takes longer than
     /// `delay_ms`. This provides a quiet experience for fast operations while
     /// still showing progress for slow ones (like `worktree add` on large repos).
+    /// Pass `-1` to never switch to streaming (always buffer).
     ///
     /// If `progress_message` is provided, it will be printed to stderr when
     /// streaming starts (i.e., when the delay threshold is exceeded).
@@ -523,7 +562,7 @@ impl Repository {
     pub fn run_command_delayed_stream(
         &self,
         args: &[&str],
-        delay_ms: u64,
+        delay_ms: i64,
         progress_message: Option<String>,
     ) -> anyhow::Result<()> {
         use std::io::{BufRead, BufReader, Write};
@@ -533,7 +572,7 @@ impl Repository {
         use std::thread;
         use std::time::{Duration, Instant};
 
-        // Allow tests to override delay threshold (e.g., 0 to force immediate streaming)
+        // Allow tests to override delay threshold (-1 to disable, 0 for immediate)
         let delay_ms = std::env::var("WT_TEST_DELAYED_STREAM_MS")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -598,7 +637,6 @@ impl Repository {
         };
 
         let start = Instant::now();
-        let delay = Duration::from_millis(delay_ms);
 
         loop {
             match child.try_wait() {
@@ -622,8 +660,11 @@ impl Repository {
                     }
                 }
                 Ok(None) => {
-                    // Still running - check if we should switch to streaming
-                    if !streaming.load(Ordering::Relaxed) && start.elapsed() >= delay {
+                    // Still running - check if we should switch to streaming (skip if delay_ms < 0)
+                    if delay_ms >= 0
+                        && !streaming.load(Ordering::Relaxed)
+                        && start.elapsed() >= Duration::from_millis(delay_ms as u64)
+                    {
                         streaming.store(true, Ordering::Relaxed);
 
                         if let Some(ref msg) = progress_message {

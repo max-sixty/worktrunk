@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.18.1
+
+### Fixed
+
+- **Submodule worktree paths**: Worktrees are now created in the correct location when running inside a git submodule. Previously, worktrees were created relative to the parent repo's `.git/modules/` directory instead of the submodule's working directory. ([#762](https://github.com/max-sixty/worktrunk/pull/762), thanks @lajarre; [#777](https://github.com/max-sixty/worktrunk/issues/777), thanks @mhonsel for reporting)
+- **Shell integration warnings**: Warnings about shell integration now check if the *current* shell has integration configured, not whether *any* shell does. This fixes misleading "shell requires restart" messages when e.g. bash had integration but the user was running fish. ([#772](https://github.com/max-sixty/worktrunk/pull/772))
+- **"Not found" error messages**: Improved error message phrasing — "No branch named X" instead of "Branch X not found", "Branch X has no worktree" instead of "No worktree found for branch X". Context-appropriate hints now appear (e.g., `wt remove` no longer suggests `--create`). ([#774](https://github.com/max-sixty/worktrunk/pull/774))
+
+### Internal
+
+- Unified PR/MR reference resolution, reducing code duplication. ([#778](https://github.com/max-sixty/worktrunk/pull/778))
+
+## 0.18.0
+
+### Improved
+
+- **Post-remove hook**: New hook type runs after worktree removal. Template variables (`{{ branch }}`, `{{ worktree_path }}`, `{{ commit }}`) reference the removed worktree, enabling cleanup scripts for containers, servers, or other resources. ([#757](https://github.com/max-sixty/worktrunk/pull/757))
+- **Graceful handling of missing worktree directories**: `wt remove` now prunes stale git metadata when the worktree directory was deleted externally (e.g., `rm -rf`), making the command more idempotent. Fixes [#724](https://github.com/max-sixty/worktrunk/issues/724). (thanks @strangemonad for reporting)
+- **Config validation warnings at load time**: Unknown fields in config files (typos like `[commit-gen]` instead of `[commit-generation]`) now show warnings immediately instead of only in `wt config show`. ([#758](https://github.com/max-sixty/worktrunk/pull/758))
+
+### Fixed
+
+- **Age column shows "future" on NixOS/direnv**: `wt list` no longer uses `SOURCE_DATE_EPOCH` for time calculations, which NixOS and direnv commonly set to past timestamps for reproducible builds. Fixes [#763](https://github.com/max-sixty/worktrunk/issues/763). (thanks @ngotchac for reporting)
+- **CI status with URL-based pushremote**: CI detection now works when `branch.<name>.pushremote` is set to a URL directly (as `gh pr checkout` does) instead of a remote name. ([#769](https://github.com/max-sixty/worktrunk/pull/769))
+- **GitLab nested groups in URL parsing**: URLs like `gitlab.com/group/subgroup/repo` now correctly identify `repo` as the repository name instead of `subgroup`. This was a security fix — previously, approval bypass was possible across sibling repos in the same parent group. ([#768](https://github.com/max-sixty/worktrunk/pull/768))
+- **GitLab CI status detection**: Fixed multiple issues with `glab` CLI compatibility — MR lookup now uses two-step resolution, "manual" pipelines show as running instead of failed, and rate limit errors are handled properly. Fixes [#764](https://github.com/max-sixty/worktrunk/issues/764). (thanks @ngotchac for reporting)
+
+### Internal
+
+- Refactored accessor functions to use bare nouns per Rust convention. ([#765](https://github.com/max-sixty/worktrunk/pull/765))
+- Clarified target/integration naming across codebase. ([#755](https://github.com/max-sixty/worktrunk/pull/755))
+
+## 0.17.0
+
+### Improved
+
+- **Per-project config overrides** (Experimental): Override settings per-project in user config. Supports `worktree-path`, `commit-generation`, `list`, `commit`, and `merge` sections. Config precedence: CLI arg > project config > global config > default. Closes [#596](https://github.com/max-sixty/worktrunk/issues/596). ([#749](https://github.com/max-sixty/worktrunk/pull/749))
+- **Search all remotes for branch existence**: Branch existence checks and completions now search all remotes instead of just the primary remote, matching git's behavior. When a branch exists on multiple remotes, completions show all of them (e.g., `feature ⇣ 2d origin, upstream`). ([#744](https://github.com/max-sixty/worktrunk/pull/744))
+- **CI detection for fork workflows**: CI status detection now searches all remotes and uses `gh config get git_protocol` / `glab config get git_protocol` for fork URL protocol preference instead of inferring from existing remotes. ([#753](https://github.com/max-sixty/worktrunk/pull/753))
+
+### Fixed
+
+- **Same-repo PR switching with stale refs**: `wt switch pr:N` for same-repo PRs now fetches the branch before validation, fixing "Branch not found" errors when local refs were stale. ([#742](https://github.com/max-sixty/worktrunk/pull/742))
+- **Project identifier collision for repos without remotes**: Repos without remotes now use their full canonical path as the project identifier instead of just the directory name, preventing approval collisions between unrelated repos (e.g., `~/work/myproject` vs `~/personal/myproject`). Users with remoteless repos will need to re-approve commands. ([#747](https://github.com/max-sixty/worktrunk/pull/747))
+
+### Internal
+
+- Cross-platform path handling improvements using `path-slash` crate and `Path::file_name()`. ([#750](https://github.com/max-sixty/worktrunk/pull/750))
+- Renamed `WorktrunkConfig` to `UserConfig` internally. ([#746](https://github.com/max-sixty/worktrunk/pull/746))
+
+## 0.16.0
+
+### Improved
+
+- **Background hook verbosity**: Background hooks (post-start, post-switch) now show a single-line summary by default instead of per-hook output. Use `-v` to see detailed output with expanded commands. We're open to feedback on this change — let us know in [#690](https://github.com/max-sixty/worktrunk/issues/690). (thanks @clutchski for reporting)
+
+### Internal
+
+- Fixed dead Apple documentation link in copy-ignored rationale. ([#743](https://github.com/max-sixty/worktrunk/pull/743))
+
+## 0.15.5
+
+### Fixed
+
+- **Hook execution order**: Hooks now run in the order defined in the config file. Previously, HashMap iteration randomized the order. Fixes [#737](https://github.com/max-sixty/worktrunk/issues/737). (thanks @ngotchac for reporting)
+
 ## 0.15.4
 
 ### Improved

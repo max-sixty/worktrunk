@@ -7,7 +7,7 @@ use worktrunk::git::{LineDiff, Repository};
 
 use super::super::ci_status::PrStatus;
 use super::super::model::{
-    AheadBehind, BranchDiffTotals, CommitDetails, GitOperationState, UpstreamStatus,
+    ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus,
     WorkingTreeStatus,
 };
 use super::types::{ErrorCause, TaskError, TaskKind, TaskResult};
@@ -512,7 +512,7 @@ impl Task for GitOperationTask {
             .branch_ref
             .working_tree(&ctx.repo)
             .expect("GitOperationTask requires a worktree");
-        let git_operation = detect_git_operation(&wt);
+        let git_operation = detect_active_git_operation(&wt);
         Ok(TaskResult::GitOperation {
             item_idx: ctx.item_idx,
             git_operation,
@@ -654,13 +654,15 @@ impl Task for UrlStatusTask {
 // ============================================================================
 
 /// Detect if a worktree is in the middle of a git operation (rebase/merge).
-pub(crate) fn detect_git_operation(wt: &worktrunk::git::WorkingTree<'_>) -> GitOperationState {
+pub(crate) fn detect_active_git_operation(
+    wt: &worktrunk::git::WorkingTree<'_>,
+) -> ActiveGitOperation {
     if wt.is_rebasing().unwrap_or(false) {
-        GitOperationState::Rebase
+        ActiveGitOperation::Rebase
     } else if wt.is_merging().unwrap_or(false) {
-        GitOperationState::Merge
+        ActiveGitOperation::Merge
     } else {
-        GitOperationState::None
+        ActiveGitOperation::None
     }
 }
 

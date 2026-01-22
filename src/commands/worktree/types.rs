@@ -4,6 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
+use worktrunk::git::RefType;
+
 /// Flags indicating which merge operations occurred
 #[derive(Debug, Clone, Copy)]
 pub struct MergeOperations {
@@ -17,7 +19,7 @@ pub enum SwitchResult {
     /// Already at the target worktree (no action taken)
     AlreadyAt(PathBuf),
     /// Switched to existing worktree at the given path
-    Existing(PathBuf),
+    Existing { path: PathBuf },
     /// Created new worktree at the given path
     Created {
         path: PathBuf,
@@ -38,7 +40,7 @@ impl SwitchResult {
     pub fn path(&self) -> &PathBuf {
         match self {
             SwitchResult::AlreadyAt(path) => path,
-            SwitchResult::Existing(path) => path,
+            SwitchResult::Existing { path, .. } => path,
             SwitchResult::Created { path, .. } => path,
         }
     }
@@ -63,15 +65,23 @@ pub enum CreationMethod {
         /// Base branch for creation (resolved, validated to exist)
         base_branch: Option<String>,
     },
-    /// Fork PR: fetch from refs/pull/N/head, create branch, configure pushRemote
-    ForkPr {
-        pr_number: u32,
-        fork_push_url: String,
-        pr_url: String,
-        /// Owner of the base repository (where the PR was opened)
-        base_owner: String,
-        /// Name of the base repository
-        base_repo: String,
+    /// Fork PR/MR: fetch from refs/pull/N/head or refs/merge-requests/N/head,
+    /// create branch, configure pushRemote.
+    ///
+    /// The remote is resolved during planning (before approval prompts) to ensure
+    /// early failure if no matching remote exists.
+    ForkRef {
+        /// The reference type (PR or MR).
+        ref_type: RefType,
+        /// The PR/MR number.
+        number: u32,
+        /// URL to push to (the fork's URL). `None` when using a prefixed branch
+        /// name (e.g., `contributor/main`) because push won't work.
+        fork_push_url: Option<String>,
+        /// Web URL for the PR/MR.
+        ref_url: String,
+        /// Resolved remote name where PR/MR refs live (e.g., "origin", "upstream").
+        remote: String,
     },
 }
 
@@ -186,17 +196,26 @@ pub enum RemoveResult {
         /// Expected path based on config template. `Some` when actual path differs
         /// from expected (path mismatch), `None` when path matches template.
         expected_path: Option<PathBuf>,
+        /// Commit SHA of the removed worktree's HEAD, captured before removal.
+        /// Used for post-remove hook template variables so they reference the
+        /// removed worktree's state, not the execution context.
+        removed_commit: Option<String>,
     },
-    /// Branch exists but has no worktree - attempt branch deletion only
+    /// Branch exists but has no worktree - attempt branch deletion only.
+    ///
+    /// `pruned` indicates whether the worktree was pruned (directory was missing).
+    /// When true, shows an info message instead of a warning.
     BranchOnly {
         branch_name: String,
         deletion_mode: BranchDeletionMode,
+        /// True if the worktree was pruned before returning this result.
+        pruned: bool,
     },
 }
 
-/// Context for worktree resolution - determines which checks are performed.
+/// Operation mode for worktree resolution - determines which checks are performed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResolutionContext {
+pub enum OperationMode {
     /// Creating or switching to a worktree - path occupation is an error
     /// because we need to create a worktree at the expected path.
     CreateOrSwitch,
@@ -219,7 +238,7 @@ mod tests {
     #[test]
     fn test_switch_result_path_existing() {
         let path = PathBuf::from("/test/existing");
-        let result = SwitchResult::Existing(path.clone());
+        let result = SwitchResult::Existing { path: path.clone() };
         assert_eq!(result.path(), &path);
     }
 
@@ -314,6 +333,7 @@ mod tests {
             integration_reason: Some(worktrunk::git::IntegrationReason::SameCommit),
             force_worktree: false,
             expected_path: None,
+            removed_commit: Some("abc1234567890".to_string()),
         };
         match result {
             RemoveResult::RemovedWorktree {
@@ -326,6 +346,7 @@ mod tests {
                 integration_reason,
                 force_worktree,
                 expected_path,
+                removed_commit,
             } => {
                 assert_eq!(main_path.to_str().unwrap(), "/main");
                 assert_eq!(worktree_path.to_str().unwrap(), "/worktree");
@@ -337,6 +358,7 @@ mod tests {
                 assert!(integration_reason.is_some());
                 assert!(!force_worktree);
                 assert!(expected_path.is_none());
+                assert_eq!(removed_commit.as_deref(), Some("abc1234567890"));
             }
             _ => panic!("Expected RemovedWorktree variant"),
         }
@@ -347,15 +369,39 @@ mod tests {
         let result = RemoveResult::BranchOnly {
             branch_name: "stale-branch".to_string(),
             deletion_mode: BranchDeletionMode::Keep,
+            pruned: false,
         };
         match result {
             RemoveResult::BranchOnly {
                 branch_name,
                 deletion_mode,
+                pruned,
             } => {
                 assert_eq!(branch_name, "stale-branch");
                 assert!(deletion_mode.should_keep());
                 assert!(!deletion_mode.is_force());
+                assert!(!pruned);
+            }
+            _ => panic!("Expected BranchOnly variant"),
+        }
+    }
+
+    #[test]
+    fn test_remove_result_branch_only_pruned() {
+        let result = RemoveResult::BranchOnly {
+            branch_name: "pruned-branch".to_string(),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            pruned: true,
+        };
+        match result {
+            RemoveResult::BranchOnly {
+                branch_name,
+                deletion_mode,
+                pruned,
+            } => {
+                assert_eq!(branch_name, "pruned-branch");
+                assert!(!deletion_mode.should_keep());
+                assert!(pruned);
             }
             _ => panic!("Expected BranchOnly variant"),
         }
@@ -373,6 +419,7 @@ mod tests {
             integration_reason: None, // Force delete skips integration check
             force_worktree: true,
             expected_path: None,
+            removed_commit: None, // Detached HEAD may not have meaningful commit
         };
         match result {
             RemoveResult::RemovedWorktree {

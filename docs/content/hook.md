@@ -8,7 +8,7 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt hook --help-page` — edit cli.rs to update -->
 
-Run configured hooks
+Run configured hooks.
 
 Hooks are shell commands that run at key points in the worktree lifecycle — automatically during `wt switch`, `wt merge`, & `wt remove`, or on demand via `wt hook <type>`. Both user (`~/.config/worktrunk/config.toml`) and project (`.config/wt.toml`) hooks are supported.
 
@@ -23,9 +23,12 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 | `pre-merge` | Before merging to target | Yes | Yes |
 | `post-merge` | After successful merge | Yes | No |
 | `pre-remove` | Before worktree removed | Yes | Yes |
+| `post-remove` | After worktree removed | No (background) | No |
 
 **Blocking**: Command waits for hook to complete before continuing.
 **Fail-fast**: First failure aborts the operation.
+
+Background hooks show a single-line summary by default. Use `-v` to see expanded command details.
 
 ### post-start
 
@@ -86,14 +89,24 @@ post-merge = "cargo install --path ."
 
 ### pre-remove
 
-Cleanup tasks, saving state, notifying external systems.
+Cleanup tasks before worktree is deleted, saving test artifacts, backing up state. Runs in the worktree being removed, with access to worktree files.
 
 ```toml
 [pre-remove]
-cleanup = "rm -rf /tmp/cache/{{ branch }}"
+archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/null || true"
 ```
 
-During `wt merge`, hooks run in this order: pre-commit → pre-merge → pre-remove → post-merge. See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
+### post-remove
+
+Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. All template variables reference the removed worktree, so cleanup scripts can identify resources to clean up. Output logged to `.git/wt-logs/{branch}-{source}-post-remove-{name}.log`.
+
+```toml
+[post-remove]
+kill-server = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
+remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
+```
+
+During `wt merge`, hooks run in this order: pre-commit → pre-merge → pre-remove → post-remove → post-merge. See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
 
 ## Security
 
@@ -296,7 +309,7 @@ Both run when creating a worktree. The difference:
 
 Many tasks work well in `post-start` — they'll likely be ready by the time they're needed, especially when the fallback is recompiling. If unsure, prefer `post-start` for faster worktree creation.
 
-Background processes spawned by `post-start` outlive the worktree — pair them with `pre-remove` hooks to clean up. See [Dev servers](#dev-servers) and [Databases](#databases) for examples.
+Background processes spawned by `post-start` outlive the worktree — pair them with `post-remove` hooks to clean up. See [Dev servers](#dev-servers) and [Databases](#databases) for examples.
 
 ### Copying untracked files
 
@@ -317,7 +330,7 @@ Run a dev server per worktree on a deterministic port using `hash_port`:
 [post-start]
 server = "npm run dev -- --port {{ branch | hash_port }}"
 
-[pre-remove]
+[post-remove]
 server = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
 ```
 
@@ -350,7 +363,7 @@ docker run -d --rm \
   postgres:16
 """
 
-[pre-remove]
+[post-remove]
 db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
 ```
 
@@ -430,6 +443,7 @@ Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>pre-merge</span></b>    Run pre-merge hooks
   <b><span class=c>post-merge</span></b>   Run post-merge hooks
   <b><span class=c>pre-remove</span></b>   Run pre-remove hooks
+  <b><span class=c>post-remove</span></b>  Run post-remove hooks
   <b><span class=c>approvals</span></b>    Manage command approvals
 
 <b><span class=g>Options:</span></b>
@@ -444,10 +458,12 @@ Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span 
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Show debug info and write diagnostic report (-vv)
+          Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
 ## wt hook approvals
+
+Manage command approvals.
 
 Project hooks require approval on first run to prevent untrusted projects from running arbitrary commands.
 
@@ -495,7 +511,7 @@ Usage: <b><span class=c>wt hook approvals</span></b> <span class=c>[OPTIONS]</sp
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Show debug info and write diagnostic report (-vv)
+          Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
 <!-- END AUTO-GENERATED from `wt hook --help-page` -->

@@ -18,7 +18,6 @@ Unlike `git merge`, this merges current into target (not target into current). S
   <img src="/assets/docs/light/wt-merge.gif" alt="wt merge demo" width="1600" height="900">
 </picture>
 </figure>
-
 ## Examples
 
 Merge to the default branch:
@@ -139,7 +138,7 @@ Usage: <b><span class=c>wt merge</span></b> <span class=c>[OPTIONS]</span> <span
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Show debug info and write diagnostic report (-vv)
+          Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
 <!-- END AUTO-GENERATED from `wt merge --help-page` -->

@@ -2,6 +2,7 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: "&output.combined"
 ---
+
 [36m◎[39m [36mRunning pre-merge [1mproject:format[22m:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'✓ Code formatting check passed'[0m[2m
 ✓ Code formatting check passed

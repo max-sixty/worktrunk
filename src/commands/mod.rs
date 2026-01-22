@@ -42,7 +42,7 @@ pub(crate) use step_commands::{
     step_show_squash_prompt,
 };
 pub(crate) use worktree::{
-    ResolutionContext, execute_switch, handle_remove, handle_remove_current,
+    OperationMode, execute_switch, handle_remove, handle_remove_current,
     is_worktree_at_expected_path, plan_switch, resolve_worktree_arg, worktree_display_name,
 };
 
@@ -72,7 +72,7 @@ pub(crate) fn format_command_label(command_type: &str, name: Option<&str>) -> St
 /// * `repo` - The repository to query
 /// * `range` - The commit range to diff (e.g., "HEAD~1..HEAD" or "main..HEAD")
 pub(crate) fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> anyhow::Result<()> {
-    use worktrunk::styling::format_with_gutter;
+    use worktrunk::styling::{eprintln, format_with_gutter};
 
     let term_width = crate::display::get_terminal_width();
     let stat_width = term_width.saturating_sub(worktrunk::styling::GUTTER_OVERHEAD);
@@ -88,7 +88,7 @@ pub(crate) fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> a
         .to_string();
 
     if !diff_stat.is_empty() {
-        crate::output::print(format_with_gutter(&diff_stat, None))?;
+        eprintln!("{}", format_with_gutter(&diff_stat, None));
     }
 
     Ok(())

@@ -1,6 +1,6 @@
 use anyhow::Context;
 use std::path::PathBuf;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 
 use super::command_executor::CommandContext;
@@ -19,9 +19,8 @@ pub struct CommandEnv {
     pub repo: Repository,
     /// Current branch name, if on a branch (None in detached HEAD state).
     pub branch: Option<String>,
-    pub config: WorktrunkConfig,
+    pub config: UserConfig,
     pub worktree_path: PathBuf,
-    pub repo_root: PathBuf,
 }
 
 impl CommandEnv {
@@ -33,17 +32,13 @@ impl CommandEnv {
         let repo = Repository::current()?;
         let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
         let branch = repo.require_current_branch(action)?;
-        let config = WorktrunkConfig::load().context("Failed to load config")?;
-        let repo_root = repo
-            .repo_path()
-            .context("Failed to determine repository root")?;
+        let config = UserConfig::load().context("Failed to load config")?;
 
         Ok(Self {
             repo,
             branch: Some(branch),
             config,
             worktree_path,
-            repo_root,
         })
     }
 
@@ -59,17 +54,13 @@ impl CommandEnv {
             .current_worktree()
             .branch()
             .context("Failed to determine current branch")?;
-        let config = WorktrunkConfig::load().context("Failed to load config")?;
-        let repo_root = repo
-            .repo_path()
-            .context("Failed to determine repository root")?;
+        let config = UserConfig::load().context("Failed to load config")?;
 
         Ok(Self {
             repo,
             branch,
             config,
             worktree_path,
-            repo_root,
         })
     }
 
@@ -80,7 +71,6 @@ impl CommandEnv {
             &self.config,
             self.branch.as_deref(),
             &self.worktree_path,
-            &self.repo_root,
             yes,
         )
     }
@@ -93,5 +83,28 @@ impl CommandEnv {
             }
             .into()
         })
+    }
+
+    /// Get the project identifier for per-project config lookup.
+    ///
+    /// Uses the remote URL if available, otherwise the canonical repository path.
+    /// Returns None only if the path is not valid UTF-8.
+    pub fn project_id(&self) -> Option<String> {
+        self.repo.project_identifier().ok()
+    }
+
+    /// Get the commit generation config, merging project-specific settings.
+    pub fn commit_generation(&self) -> worktrunk::config::CommitGenerationConfig {
+        self.config.commit_generation(self.project_id().as_deref())
+    }
+
+    /// Get the commit config, merging project-specific settings.
+    pub fn commit(&self) -> Option<worktrunk::config::CommitConfig> {
+        self.config.commit(self.project_id().as_deref())
+    }
+
+    /// Get the merge config, merging project-specific settings.
+    pub fn merge(&self) -> Option<worktrunk::config::MergeConfig> {
+        self.config.merge(self.project_id().as_deref())
     }
 }

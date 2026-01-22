@@ -7,10 +7,9 @@ use color_print::cformat;
 use std::path::PathBuf;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{hint_message, info_message, success_message};
+use worktrunk::styling::{eprintln, hint_message, info_message, success_message};
 
 use super::state::require_user_config_path;
-use crate::output;
 
 /// Example user configuration file content (displayed in help with values uncommented)
 const USER_CONFIG_EXAMPLE: &str = include_str!("../../../dev/config.example.toml");
@@ -87,10 +86,13 @@ fn create_config_file(
 ) -> anyhow::Result<()> {
     // Check if file already exists
     if path.exists() {
-        output::print(info_message(cformat!(
-            "{config_type} already exists: <bold>{}</>",
-            format_path_for_display(&path)
-        )))?;
+        eprintln!(
+            "{}",
+            info_message(cformat!(
+                "{config_type} already exists: <bold>{}</>",
+                format_path_for_display(&path)
+            ))
+        );
 
         // Build hint message based on whether the other config exists
         let hint = if other_config_exists {
@@ -107,7 +109,7 @@ fn create_config_file(
                 "To view, run <bright-black>wt config show</>. To create a project config, run <bright-black>wt config create --project</>"
             )
         };
-        output::print(hint_message(hint))?;
+        eprintln!("{}", hint_message(hint));
         return Ok(());
     }
 
@@ -121,14 +123,17 @@ fn create_config_file(
     std::fs::write(&path, commented_config).context("Failed to write config file")?;
 
     // Success message
-    output::print(success_message(cformat!(
-        "Created {}: <bold>{}</>",
-        config_type.to_lowercase(),
-        format_path_for_display(&path)
-    )))?;
-    output::blank()?;
+    eprintln!(
+        "{}",
+        success_message(cformat!(
+            "Created {}: <bold>{}</>",
+            config_type.to_lowercase(),
+            format_path_for_display(&path)
+        ))
+    );
+    eprintln!();
     for hint in success_hints {
-        output::print(hint_message(*hint))?;
+        eprintln!("{}", hint_message(*hint));
     }
 
     Ok(())

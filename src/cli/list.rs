@@ -4,9 +4,7 @@ use clap::Subcommand;
 #[derive(Subcommand)]
 pub enum ListSubcommand {
     /// Single-line status for shell prompts
-    ///
-    /// For shell prompts, starship, or editor integrations.
-    #[command(after_long_help = "Format: `branch  status  ±working  commits  upstream  ci`")]
+    #[command(after_long_help = "Output format: `branch  status  ±working  commits  upstream  ci`")]
     Statusline {
         /// Claude Code mode: read context from stdin, add directory and model
         ///

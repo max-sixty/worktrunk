@@ -150,6 +150,10 @@ impl Repository {
     /// Returns branches in completion order: worktrees first, then local branches,
     /// then remote-only branches. Each category is sorted by recency.
     ///
+    /// Searches all remotes (matching git's checkout behavior). If the same branch
+    /// exists on multiple remotes, all remote names are included in the result so
+    /// completions can show that the branch is ambiguous.
+    ///
     /// For remote branches, returns the local name (e.g., "fix" not "origin/fix")
     /// since `git worktree add path fix` auto-creates a tracking branch.
     pub fn branches_for_completion(&self) -> anyhow::Result<Vec<CompletionBranch>> {
@@ -171,59 +175,70 @@ impl Repository {
         let local_branches: Vec<(String, i64)> = local_output
             .lines()
             .filter_map(|line| {
-                let parts: Vec<&str> = line.split('\t').collect();
-                if parts.len() == 2 {
-                    let timestamp = parts[1].parse().unwrap_or(0);
-                    Some((parts[0].to_string(), timestamp))
-                } else {
-                    None
-                }
+                let (name, timestamp_str) = line.split_once('\t')?;
+                let timestamp = timestamp_str.parse().unwrap_or(0);
+                Some((name.to_string(), timestamp))
             })
             .collect();
 
         let local_branch_names: HashSet<String> =
             local_branches.iter().map(|(n, _)| n.clone()).collect();
 
-        // Get remote branches with timestamps (if remotes exist)
-        let remote_branches: Vec<(String, String, i64)> = if let Ok(remote) = self.primary_remote()
-        {
-            let remote_ref_path = format!("refs/remotes/{}/", remote);
-            let remote_prefix = format!("{}/", remote);
+        // Get remote branches with timestamps from all remotes
+        // Matches git's behavior: searches all remotes for branch names
+        let remote_output = self.run_command(&[
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:lstrip=2)\t%(committerdate:unix)",
+            "refs/remotes/",
+        ])?;
 
-            let remote_output = self.run_command(&[
-                "for-each-ref",
-                "--sort=-committerdate",
-                "--format=%(refname:lstrip=2)\t%(committerdate:unix)",
-                &remote_ref_path,
-            ])?;
+        // Group by branch name, collecting all remotes that have each branch.
+        // Uses HashMap for grouping, then sorts by timestamp to preserve recency order.
+        use std::collections::HashMap;
+        let mut branch_remotes: HashMap<String, (Vec<String>, i64)> = HashMap::new();
 
-            let remote_head = format!("{}/HEAD", remote);
-            remote_output
-                .lines()
-                .filter_map(|line| {
-                    let parts: Vec<&str> = line.split('\t').collect();
-                    if parts.len() == 2 {
-                        let full_name = parts[0];
-                        // Skip <remote>/HEAD
-                        if full_name == remote_head {
-                            return None;
-                        }
-                        // Strip remote prefix to get local name
-                        let local_name = full_name.strip_prefix(&remote_prefix)?;
-                        // Skip if local branch exists (user should use local)
-                        if local_branch_names.contains(local_name) {
-                            return None;
-                        }
-                        let timestamp = parts[1].parse().unwrap_or(0);
-                        Some((local_name.to_string(), remote.to_string(), timestamp))
-                    } else {
-                        None
-                    }
+        for line in remote_output.lines() {
+            // Format: "<remote>/<branch>\t<timestamp>"
+            let Some((full_name, timestamp_str)) = line.split_once('\t') else {
+                continue;
+            };
+
+            // Parse <remote>/<branch> - find first slash to split
+            let Some((remote_name, local_name)) = full_name.split_once('/') else {
+                continue;
+            };
+
+            // Skip <remote>/HEAD
+            if local_name == "HEAD" {
+                continue;
+            }
+            // Skip if local branch exists (user should use local)
+            if local_branch_names.contains(local_name) {
+                continue;
+            }
+
+            let timestamp = timestamp_str.parse().unwrap_or(0);
+
+            // Add remote to this branch's list, keeping the most recent timestamp
+            branch_remotes
+                .entry(local_name.to_string())
+                .and_modify(|(remotes, existing_ts)| {
+                    remotes.push(remote_name.to_string());
+                    *existing_ts = (*existing_ts).max(timestamp);
                 })
-                .collect()
-        } else {
-            Vec::new()
-        };
+                .or_insert_with(|| (vec![remote_name.to_string()], timestamp));
+        }
+
+        // Convert to vec and sort by timestamp (descending = most recent first)
+        let mut remote_branches: Vec<(String, Vec<String>, i64)> = branch_remotes
+            .into_iter()
+            .map(|(name, (mut remotes, timestamp))| {
+                remotes.sort(); // Deterministic remote ordering within each branch
+                (name, remotes, timestamp)
+            })
+            .collect();
+        remote_branches.sort_by(|a, b| b.2.cmp(&a.2));
 
         // Build result: worktrees first, then local, then remote
         let mut result = Vec::new();
@@ -251,11 +266,11 @@ impl Repository {
         }
 
         // Remote-only branches
-        for (local_name, remote_name, timestamp) in remote_branches {
+        for (local_name, remotes, timestamp) in remote_branches {
             result.push(CompletionBranch {
                 name: local_name,
                 timestamp,
-                category: BranchCategory::Remote(remote_name),
+                category: BranchCategory::Remote(remotes),
             });
         }
 

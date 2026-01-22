@@ -48,24 +48,16 @@ impl<'a> Branch<'a> {
     }
 
     /// Check if this branch exists (local or remote).
+    ///
+    /// Checks all remotes, matching git's default behavior for `git checkout`.
     pub fn exists(&self) -> anyhow::Result<bool> {
         // Try local branch first
         if self.exists_locally()? {
             return Ok(true);
         }
 
-        // Try remote branch (if remotes exist)
-        let Ok(remote) = self.repo.primary_remote() else {
-            return Ok(false);
-        };
-        Ok(self
-            .repo
-            .run_command(&[
-                "rev-parse",
-                "--verify",
-                &format!("refs/remotes/{}/{}", remote, self.name),
-            ])
-            .is_ok())
+        // Check if any remote has this branch
+        Ok(!self.remotes()?.is_empty())
     }
 
     /// Find which remotes have this branch.
@@ -148,5 +140,44 @@ impl<'a> Branch<'a> {
         // Returns "origin/branch", extract remote name
         let remote = push_ref.trim().split('/').next()?;
         (!remote.is_empty()).then(|| remote.to_string())
+    }
+
+    /// Get the URL of the remote where this branch would be pushed.
+    ///
+    /// Uses `%(push:remotename)` which returns either a remote name or URL directly
+    /// (`gh pr checkout` sets pushremote to a URL rather than a remote name).
+    /// Returns `None` if no push remote is configured or the remote has no URL.
+    pub fn push_remote_url(&self) -> Option<String> {
+        // %(push:remotename) returns either a remote name or URL directly
+        // Unlike @{push}, this doesn't fail when pushremote is a URL
+        let push_remote = self
+            .repo
+            .run_command(&[
+                "for-each-ref",
+                "--format=%(push:remotename)",
+                &format!("refs/heads/{}", self.name),
+            ])
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())?;
+
+        // If it's already a URL, return it directly
+        if push_remote.contains("://") || push_remote.starts_with("git@") {
+            Some(push_remote)
+        } else {
+            // It's a remote name, look up its URL
+            self.repo.remote_url(&push_remote)
+        }
+    }
+
+    /// Get the GitHub URL for this branch's push remote, if it's a GitHub URL.
+    ///
+    /// Returns the push remote URL if configured and pointing to GitHub,
+    /// otherwise returns `None`.
+    pub fn github_push_url(&self) -> Option<String> {
+        use crate::git::GitRemoteUrl;
+        let url = self.push_remote_url()?;
+        let parsed = GitRemoteUrl::parse(&url)?;
+        parsed.is_github().then_some(url)
     }
 }

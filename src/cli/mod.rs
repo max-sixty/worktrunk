@@ -225,7 +225,7 @@ pub(crate) struct Cli {
     )]
     pub config: Option<std::path::PathBuf>,
 
-    /// Show debug info and write diagnostic report (-vv)
+    /// Verbose output (-v: hooks, templates; -vv: debug report)
     #[arg(
         long,
         short = 'v',
@@ -293,12 +293,14 @@ wt switch --create temp --no-verify      # Skip hooks
 | `@` | Current branch/worktree |
 | `-` | Previous worktree (like `cd -`) |
 | `pr:{N}` | GitHub PR #N's branch |
+| `mr:{N}` | GitLab MR !N's branch |
 
 ```console
 wt switch -                      # Back to previous
 wt switch ^                      # Default branch worktree
 wt switch --create fix --base=@  # Branch from current HEAD
 wt switch pr:123                 # PR #123's branch
+wt switch mr:101                 # MR !101's branch
 ```
 
 ## GitHub pull requests (experimental)
@@ -312,6 +314,18 @@ wt switch pr:101                 # Checkout PR #101
 Requires `gh` CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:` syntax since the branch already exists.
 
 **Fork PRs:** The local branch uses the PR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
+
+## GitLab merge requests (experimental)
+
+The `mr:<number>` syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches `refs/merge-requests/N/head` and configures `pushRemote` to the fork URL.
+
+```console
+wt switch mr:101                 # Checkout MR !101
+```
+
+Requires `glab` CLI to be installed and authenticated. The `--create` flag cannot be used with `mr:` syntax since the branch already exists.
+
+**Fork MRs:** The local branch uses the MR's branch name directly, so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
 ## When wt switch fails
 
@@ -332,7 +346,7 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
     Switch {
         /// Branch name or shortcut
         ///
-        /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR, experimental)
+        /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)
         #[arg(add = crate::completion::worktree_branch_completer())]
         branch: String,
 
@@ -399,7 +413,6 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         after_long_help = r#"Shows uncommitted changes, divergence from the default branch and remote, and optional CI status.
 
 <!-- demo: wt-list.gif 1600x900 -->
-
 The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
 
 ## Examples
@@ -668,7 +681,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
 
     /// Remove worktree; delete branch if merged
     ///
-    /// For finished feature branches. Removes the current worktree by default.
+    /// Defaults to the current worktree.
     #[command(after_long_help = r#"## Examples
 
 Remove current worktree:
@@ -733,6 +746,10 @@ Without `--force`, removal fails if the worktree contains untracked files. Witho
 
 Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
 
+## Hooks
+
+`pre-remove` hooks run before the worktree is deleted (with access to worktree files). `post-remove` hooks run after removal. See [`wt hook`](@/hook.md) for configuration.
+
 ## See also
 
 - [`wt merge`](@/merge.md) — Remove worktree after merging
@@ -782,7 +799,6 @@ Removal runs in the background by default (returns immediately). Logs are writte
         after_long_help = r#"Unlike `git merge`, this merges current into target (not target into current). Similar to clicking "Merge pull request" on GitHub, but locally. Target defaults to the default branch.
 
 <!-- demo: wt-merge.gif 1600x900 -->
-
 ## Examples
 
 Merge to the default branch:
@@ -1033,9 +1049,12 @@ wt step push
 | `pre-merge` | Before merging to target | Yes | Yes |
 | `post-merge` | After successful merge | Yes | No |
 | `pre-remove` | Before worktree removed | Yes | Yes |
+| `post-remove` | After worktree removed | No (background) | No |
 
 **Blocking**: Command waits for hook to complete before continuing.
 **Fail-fast**: First failure aborts the operation.
+
+Background hooks show a single-line summary by default. Use `-v` to see expanded command details.
 
 ### post-start
 
@@ -1096,14 +1115,24 @@ post-merge = "cargo install --path ."
 
 ### pre-remove
 
-Cleanup tasks, saving state, notifying external systems.
+Cleanup tasks before worktree is deleted, saving test artifacts, backing up state. Runs in the worktree being removed, with access to worktree files.
 
 ```toml
 [pre-remove]
-cleanup = "rm -rf /tmp/cache/{{ branch }}"
+archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/null || true"
 ```
 
-During `wt merge`, hooks run in this order: pre-commit → pre-merge → pre-remove → post-merge. See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
+### post-remove
+
+Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. All template variables reference the removed worktree, so cleanup scripts can identify resources to clean up. Output logged to `.git/wt-logs/{branch}-{source}-post-remove-{name}.log`.
+
+```toml
+[post-remove]
+kill-server = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
+remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
+```
+
+During `wt merge`, hooks run in this order: pre-commit → pre-merge → pre-remove → post-remove → post-merge. See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
 
 ## Security
 
@@ -1306,7 +1335,7 @@ Both run when creating a worktree. The difference:
 
 Many tasks work well in `post-start` — they'll likely be ready by the time they're needed, especially when the fallback is recompiling. If unsure, prefer `post-start` for faster worktree creation.
 
-Background processes spawned by `post-start` outlive the worktree — pair them with `pre-remove` hooks to clean up. See [Dev servers](#dev-servers) and [Databases](#databases) for examples.
+Background processes spawned by `post-start` outlive the worktree — pair them with `post-remove` hooks to clean up. See [Dev servers](#dev-servers) and [Databases](#databases) for examples.
 
 ### Copying untracked files
 
@@ -1327,7 +1356,7 @@ Run a dev server per worktree on a deterministic port using `hash_port`:
 [post-start]
 server = "npm run dev -- --port {{ branch | hash_port }}"
 
-[pre-remove]
+[post-remove]
 server = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
 ```
 
@@ -1360,7 +1389,7 @@ docker run -d --rm \
   postgres:16
 """
 
-[pre-remove]
+[post-remove]
 db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
 ```
 
@@ -1581,13 +1610,21 @@ Pager behavior for `wt select` diff previews.
 # pager = "delta --paging=never"
 ```
 
-### Approved commands
+### Per-project settings (Experimental)
 
-Commands approved for project hooks. Auto-populated when approving hooks on first run, or via `wt hook approvals add`.
+Per-project settings are keyed by project identifier (e.g., `github.com/user/repo`).
+These contain approved hook commands plus optional overrides of global settings.
+Setting overrides (worktree-path, list, commit, merge) are new; approved-commands is stable.
 
 ```toml
 [projects."github.com/user/repo"]
+# Approved hook commands (auto-populated when approving on first run)
 approved-commands = ["npm ci", "npm test"]
+
+# Optional overrides (omit to use global settings)
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+list.full = true
+merge.squash = false
 ```
 
 For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see [`wt hook` docs](@/hook.md).

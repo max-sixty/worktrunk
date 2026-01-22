@@ -1,6 +1,7 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
-expression: output.normalized()
+expression: "&output.combined"
 ---
+
 [2m○[22m Already up to date with [1mmain[22m (no new commits, no rebase needed)
 [2m○[22m Worktree preserved (main worktree)

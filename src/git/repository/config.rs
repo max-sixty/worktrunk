@@ -25,7 +25,7 @@ impl Repository {
     /// Read a user-defined marker from `worktrunk.state.<branch>.marker` in git config.
     ///
     /// Markers are stored as JSON: `{"marker": "text", "set_at": unix_timestamp}`.
-    pub fn branch_keyed_marker(&self, branch: &str) -> Option<String> {
+    pub fn branch_marker(&self, branch: &str) -> Option<String> {
         #[derive(serde::Deserialize)]
         struct MarkerValue {
             marker: Option<String>,
@@ -44,13 +44,13 @@ impl Repository {
 
     /// Read user-defined branch-keyed marker.
     pub fn user_marker(&self, branch: Option<&str>) -> Option<String> {
-        branch.and_then(|branch| self.branch_keyed_marker(branch))
+        branch.and_then(|branch| self.branch_marker(branch))
     }
 
-    /// Record the previous branch in worktrunk.history for `wt switch -` support.
+    /// Set the previous branch in worktrunk.history for `wt switch -` support.
     ///
     /// Stores the branch we're switching FROM, so `wt switch -` can return to it.
-    pub fn record_switch_previous(&self, previous: Option<&str>) -> anyhow::Result<()> {
+    pub fn set_switch_previous(&self, previous: Option<&str>) -> anyhow::Result<()> {
         if let Some(prev) = previous {
             self.run_command(&["config", "worktrunk.history", prev])?;
         }
@@ -61,7 +61,7 @@ impl Repository {
     /// Get the previous branch from worktrunk.history for `wt switch -`.
     ///
     /// Returns the branch we came from, enabling ping-pong switching.
-    pub fn get_switch_previous(&self) -> Option<String> {
+    pub fn switch_previous(&self) -> Option<String> {
         self.run_command(&["config", "--get", "worktrunk.history"])
             .ok()
             .map(|s| s.trim().to_string())
@@ -246,7 +246,11 @@ impl Repository {
     pub fn require_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
         let branch = self.resolve_target_branch(target)?;
         if !self.branch(&branch).exists()? {
-            return Err(GitError::InvalidReference { reference: branch }.into());
+            return Err(GitError::BranchNotFound {
+                branch,
+                show_create_hint: true,
+            }
+            .into());
         }
         Ok(branch)
     }
@@ -258,7 +262,7 @@ impl Repository {
     pub fn require_target_ref(&self, target: Option<&str>) -> anyhow::Result<String> {
         let reference = self.resolve_target_branch(target)?;
         if !self.ref_exists(&reference)? {
-            return Err(GitError::InvalidReference { reference }.into());
+            return Err(GitError::ReferenceNotFound { reference }.into());
         }
         Ok(reference)
     }
@@ -283,7 +287,7 @@ impl Repository {
         // - Empty repos: No branches exist yet, but HEAD tells us the intended default
         // - Linked worktrees: HEAD points to CURRENT branch, so skip this heuristic
         // - Normal repos: HEAD points to CURRENT branch, so skip this heuristic
-        let is_bare = self.is_bare()?;
+        let is_bare = self.is_bare();
         let in_linked_worktree = self.current_worktree().is_linked()?;
         if ((is_bare && !in_linked_worktree) || branches.is_empty())
             && let Ok(head_ref) = self.run_command(&["symbolic-ref", "HEAD"])

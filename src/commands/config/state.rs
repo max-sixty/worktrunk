@@ -11,14 +11,14 @@ use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    format_heading, format_with_gutter, info_message, success_message, warning_message,
+    eprintln, format_heading, format_with_gutter, info_message, println, success_message,
+    warning_message,
 };
 use worktrunk::utils::get_now;
 
 use super::super::list::ci_status::CachedCiStatus;
 use crate::display::format_relative_time_short;
 use crate::help_pager::show_help_in_pager;
-use crate::output;
 
 // ==================== Path Helpers ====================
 
@@ -176,20 +176,20 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
                     "Cannot determine default branch. To configure, run <bold>wt config state default-branch set BRANCH</>"
                 ))
             })?;
-            output::stdout(branch_name)?;
+            println!("{branch_name}");
         }
-        "previous-branch" => match repo.get_switch_previous() {
-            Some(prev) => output::stdout(prev)?,
-            None => output::stdout("")?,
+        "previous-branch" => match repo.switch_previous() {
+            Some(prev) => println!("{prev}"),
+            None => println!(""),
         },
         "marker" => {
             let branch_name = match branch {
                 Some(b) => b,
                 None => repo.require_current_branch("get marker for current branch")?,
             };
-            match repo.branch_keyed_marker(&branch_name) {
-                Some(marker) => output::stdout(marker)?,
-                None => output::stdout("")?,
+            match repo.branch_marker(&branch_name) {
+                Some(marker) => println!("{marker}"),
+                None => println!(""),
             }
         }
         "ci-status" => {
@@ -205,8 +205,9 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
                 .unwrap_or_default();
 
             if head.is_empty() {
-                return Err(worktrunk::git::GitError::InvalidReference {
-                    reference: branch_name,
+                return Err(worktrunk::git::GitError::BranchNotFound {
+                    branch: branch_name,
+                    show_create_hint: true,
                 }
                 .into());
             }
@@ -222,7 +223,7 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
                     s.ci_status
                 });
             let status_str: &'static str = ci_status.into();
-            output::stdout(status_str)?;
+            println!("{status_str}");
         }
         // TODO: Consider simplifying to just print the path and let users run `ls -al` themselves
         "logs" => {
@@ -231,7 +232,7 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
 
             // Display through pager (fall back to stderr if pager unavailable)
             if show_help_in_pager(&out, true).is_err() {
-                worktrunk::styling::eprintln!("{}", out);
+                eprintln!("{}", out);
             }
         }
         _ => {
@@ -252,20 +253,23 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
         "default-branch" => {
             // Warn if the branch doesn't exist locally
             if !repo.branch(&value).exists_locally()? {
-                output::print(warning_message(cformat!(
-                    "Branch <bold>{value}</> does not exist locally"
-                )))?;
+                eprintln!(
+                    "{}",
+                    warning_message(cformat!("Branch <bold>{value}</> does not exist locally"))
+                );
             }
             repo.set_default_branch(&value)?;
-            output::print(success_message(cformat!(
-                "Set default branch to <bold>{value}</>"
-            )))?;
+            eprintln!(
+                "{}",
+                success_message(cformat!("Set default branch to <bold>{value}</>"))
+            );
         }
         "previous-branch" => {
-            repo.record_switch_previous(Some(&value))?;
-            output::print(success_message(cformat!(
-                "Set previous branch to <bold>{value}</>"
-            )))?;
+            repo.set_switch_previous(Some(&value))?;
+            eprintln!(
+                "{}",
+                success_message(cformat!("Set previous branch to <bold>{value}</>"))
+            );
         }
         "marker" => {
             let branch_name = match branch {
@@ -283,9 +287,12 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
             let config_key = format!("worktrunk.state.{branch_name}.marker");
             repo.run_command(&["config", &config_key, &json.to_string()])?;
 
-            output::print(success_message(cformat!(
-                "Set marker for <bold>{branch_name}</> to <bold>{value}</>"
-            )))?;
+            eprintln!(
+                "{}",
+                success_message(cformat!(
+                    "Set marker for <bold>{branch_name}</> to <bold>{value}</>"
+                ))
+            );
         }
         _ => {
             anyhow::bail!("Unknown key: {key}. Valid keys: default-branch, previous-branch, marker")
@@ -302,9 +309,9 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
     match key {
         "default-branch" => {
             if repo.clear_default_branch_cache()? {
-                output::print(success_message("Cleared default branch cache"))?;
+                eprintln!("{}", success_message("Cleared default branch cache"));
             } else {
-                output::print(info_message("No default branch cache to clear"))?;
+                eprintln!("{}", info_message("No default branch cache to clear"));
             }
         }
         "previous-branch" => {
@@ -312,21 +319,24 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                 .run_command(&["config", "--unset", "worktrunk.history"])
                 .is_ok()
             {
-                output::print(success_message("Cleared previous branch"))?;
+                eprintln!("{}", success_message("Cleared previous branch"));
             } else {
-                output::print(info_message("No previous branch to clear"))?;
+                eprintln!("{}", info_message("No previous branch to clear"));
             }
         }
         "ci-status" => {
             if all {
                 let cleared = CachedCiStatus::clear_all(&repo);
                 if cleared == 0 {
-                    output::print(info_message("No CI cache entries to clear"))?;
+                    eprintln!("{}", info_message("No CI cache entries to clear"));
                 } else {
-                    output::print(success_message(cformat!(
-                        "Cleared <bold>{cleared}</> CI cache entr{}",
-                        if cleared == 1 { "y" } else { "ies" }
-                    )))?;
+                    eprintln!(
+                        "{}",
+                        success_message(cformat!(
+                            "Cleared <bold>{cleared}</> CI cache entr{}",
+                            if cleared == 1 { "y" } else { "ies" }
+                        ))
+                    );
                 }
             } else {
                 // Clear CI status for specific branch
@@ -339,13 +349,15 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                     .run_command(&["config", "--unset", &config_key])
                     .is_ok()
                 {
-                    output::print(success_message(cformat!(
-                        "Cleared CI cache for <bold>{branch_name}</>"
-                    )))?;
+                    eprintln!(
+                        "{}",
+                        success_message(cformat!("Cleared CI cache for <bold>{branch_name}</>"))
+                    );
                 } else {
-                    output::print(info_message(cformat!(
-                        "No CI cache for <bold>{branch_name}</>"
-                    )))?;
+                    eprintln!(
+                        "{}",
+                        info_message(cformat!("No CI cache for <bold>{branch_name}</>"))
+                    );
                 }
             }
         }
@@ -364,12 +376,15 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                 }
 
                 if cleared_count == 0 {
-                    output::print(info_message("No markers to clear"))?;
+                    eprintln!("{}", info_message("No markers to clear"));
                 } else {
-                    output::print(success_message(cformat!(
-                        "Cleared <bold>{cleared_count}</> marker{}",
-                        if cleared_count == 1 { "" } else { "s" }
-                    )))?;
+                    eprintln!(
+                        "{}",
+                        success_message(cformat!(
+                            "Cleared <bold>{cleared_count}</> marker{}",
+                            if cleared_count == 1 { "" } else { "s" }
+                        ))
+                    );
                 }
             } else {
                 let branch_name = match branch {
@@ -382,25 +397,30 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                     .run_command(&["config", "--unset", &config_key])
                     .is_ok()
                 {
-                    output::print(success_message(cformat!(
-                        "Cleared marker for <bold>{branch_name}</>"
-                    )))?;
+                    eprintln!(
+                        "{}",
+                        success_message(cformat!("Cleared marker for <bold>{branch_name}</>"))
+                    );
                 } else {
-                    output::print(info_message(cformat!(
-                        "No marker set for <bold>{branch_name}</>"
-                    )))?;
+                    eprintln!(
+                        "{}",
+                        info_message(cformat!("No marker set for <bold>{branch_name}</>"))
+                    );
                 }
             }
         }
         "logs" => {
             let cleared = clear_logs(&repo)?;
             if cleared == 0 {
-                output::print(info_message("No logs to clear"))?;
+                eprintln!("{}", info_message("No logs to clear"));
             } else {
-                output::print(success_message(cformat!(
-                    "Cleared <bold>{cleared}</> log file{}",
-                    if cleared == 1 { "" } else { "s" }
-                )))?;
+                eprintln!(
+                    "{}",
+                    success_message(cformat!(
+                        "Cleared <bold>{cleared}</> log file{}",
+                        if cleared == 1 { "" } else { "s" }
+                    ))
+                );
             }
         }
         _ => {
@@ -461,9 +481,9 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
     }
 
     if cleared_any {
-        output::print(success_message("Cleared all stored state"))?;
+        eprintln!("{}", success_message("Cleared all stored state"));
     } else {
-        output::print(info_message("No stored state to clear"))?;
+        eprintln!("{}", info_message("No stored state to clear"));
     }
 
     Ok(())
@@ -489,7 +509,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
     let default_branch = repo.default_branch();
 
     // Get previous branch
-    let previous_branch = repo.get_switch_previous();
+    let previous_branch = repo.switch_previous();
 
     // Get markers
     let markers: Vec<serde_json::Value> = get_all_markers(repo)
@@ -579,7 +599,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "hints": hints
     });
 
-    output::stdout(serde_json::to_string_pretty(&output)?)?;
+    println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 
@@ -598,7 +618,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
 
     // Show previous branch (for `wt switch -`)
     writeln!(out, "{}", format_heading("PREVIOUS BRANCH", None))?;
-    match repo.get_switch_previous() {
+    match repo.switch_previous() {
         Some(prev) => writeln!(out, "{}", format_with_gutter(&prev, None))?,
         None => writeln!(out, "{}", format_with_gutter("(none)", None))?,
     }
@@ -677,7 +697,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     if let Err(e) = show_help_in_pager(&out, true) {
         log::debug!("Pager invocation failed: {}", e);
         // Fall back to direct output via eprintln (matches help behavior)
-        worktrunk::styling::eprintln!("{}", out);
+        eprintln!("{}", out);
     }
 
     Ok(())

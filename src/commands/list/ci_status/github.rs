@@ -3,28 +3,26 @@
 //! Detects CI status from GitHub PRs and workflow runs using the `gh` CLI.
 
 use serde::Deserialize;
-use worktrunk::git::{Repository, parse_owner_repo, parse_remote_owner};
+use worktrunk::git::{GitRemoteUrl, Repository, parse_remote_owner};
 
 use super::{
     CiSource, CiStatus, MAX_PRS_TO_FETCH, PrStatus, is_retriable_error, non_interactive_cmd,
     parse_json,
 };
 
-/// Get the owner of the origin remote (for GitHub fork detection).
-///
-/// Used for client-side filtering of PRs by source repository.
-/// See [`parse_remote_owner`] for details on why this is necessary.
-fn get_origin_owner(repo: &Repository) -> Option<String> {
-    let url = repo.primary_remote_url()?;
-    parse_remote_owner(&url)
-}
-
-/// Get the owner and repo name from the primary remote.
+/// Get the owner and repo name from any GitHub remote.
 ///
 /// Used for GitHub API calls that require `repos/{owner}/{repo}/...` paths.
-fn get_owner_repo(repo: &Repository) -> Option<(String, String)> {
-    let url = repo.primary_remote_url()?;
-    parse_owner_repo(&url)
+/// Searches all remotes for a GitHub URL (API calls are repo-wide, not branch-specific).
+fn get_github_owner_repo(repo: &Repository) -> Option<(String, String)> {
+    for (_, url) in repo.all_remote_urls() {
+        if let Some(parsed) = GitRemoteUrl::parse(&url)
+            && parsed.is_github()
+        {
+            return Some((parsed.owner().to_string(), parsed.repo().to_string()));
+        }
+    }
+    None
 }
 
 /// Detect GitHub PR CI status for a branch.
@@ -38,7 +36,7 @@ fn get_owner_repo(repo: &Repository) -> Option<(String, String)> {
 /// Since `gh pr list --head` doesn't support `owner:branch` format, we:
 /// 1. Fetch all open PRs with matching branch name (up to 20)
 /// 2. Include `headRepositoryOwner` in the JSON output
-/// 3. Filter client-side by comparing `headRepositoryOwner.login` to our origin owner
+/// 3. Filter client-side by comparing `headRepositoryOwner.login` to the branch's push remote owner
 ///
 /// This correctly handles:
 /// - Fork workflows (PRs from your fork to upstream)
@@ -47,10 +45,18 @@ fn get_owner_repo(repo: &Repository) -> Option<(String, String)> {
 pub(super) fn detect_github(repo: &Repository, branch: &str, local_head: &str) -> Option<PrStatus> {
     let repo_root = repo.current_worktree().root().ok()?;
 
-    // Get origin owner for filtering (see parse_remote_owner docs for why)
-    let origin_owner = get_origin_owner(repo);
-    if origin_owner.is_none() {
-        log::debug!("Could not determine origin owner for {}", branch);
+    // Get the owner of the branch's push remote for filtering PRs by source repository.
+    // Uses @{push} which resolves through pushRemote → remote.pushDefault → tracking remote.
+    let branch_owner = repo
+        .branch(branch)
+        .github_push_url()
+        .and_then(|url| parse_remote_owner(&url));
+    if branch_owner.is_none() {
+        log::debug!(
+            "Branch {} has no GitHub push remote; skipping PR-based CI detection",
+            branch
+        );
+        return None;
     }
 
     // Use `gh pr list --head` instead of `gh pr view` to handle numeric branch names correctly.
@@ -96,32 +102,22 @@ pub(super) fn detect_github(repo: &Repository, branch: &str, local_head: &str) -
     // Filter to PRs from our origin (case-insensitive comparison for GitHub usernames).
     // If headRepositoryOwner is missing (older GH CLI, Enterprise, or permissions),
     // treat it as a potential match to avoid false negatives.
-    let pr_info = if let Some(ref owner) = origin_owner {
-        let matched = pr_list.iter().find(|pr| {
-            pr.head_repository_owner
-                .as_ref()
-                .map(|h| h.login.eq_ignore_ascii_case(owner))
-                .unwrap_or(true) // Missing owner field = potential match
-        });
-        if matched.is_none() && !pr_list.is_empty() {
-            log::debug!(
-                "Found {} PRs for branch {} but none from origin owner {}",
-                pr_list.len(),
-                branch,
-                owner
-            );
-        }
-        matched
-    } else {
-        // If we can't determine origin owner, fall back to first open PR
-        // This is less accurate but better than nothing
+    let owner = branch_owner.as_ref().unwrap(); // Safe: returned early if None
+    let pr_info = pr_list.iter().find(|pr| {
+        pr.head_repository_owner
+            .as_ref()
+            .map(|h| h.login.eq_ignore_ascii_case(owner))
+            .unwrap_or(true) // Missing owner field = potential match
+    });
+    if pr_info.is_none() && !pr_list.is_empty() {
         log::debug!(
-            "No origin owner for {}, using first open PR for branch {}",
-            repo_root.display(),
-            branch
+            "Found {} PRs for branch {} but none from owner {}",
+            pr_list.len(),
+            branch,
+            owner
         );
-        pr_list.first()
-    }?;
+    }
+    let pr_info = pr_info?;
 
     // Determine CI status using priority: conflicts > running > failed > passed > no_ci
     let ci_status = if pr_info.merge_state_status.as_deref() == Some("DIRTY") {
@@ -151,7 +147,7 @@ pub(super) fn detect_github(repo: &Repository, branch: &str, local_head: &str) -
 /// status across multiple workflows (e.g., `ci` and `publish-docs`).
 pub(super) fn detect_github_commit_checks(repo: &Repository, local_head: &str) -> Option<PrStatus> {
     let repo_root = repo.current_worktree().root().ok()?;
-    let (owner, repo_name) = get_owner_repo(repo)?;
+    let (owner, repo_name) = get_github_owner_repo(repo)?;
 
     // Use GitHub's check-runs API to get all checks for this commit
     let output = match non_interactive_cmd("gh")

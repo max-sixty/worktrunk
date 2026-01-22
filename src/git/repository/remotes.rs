@@ -68,10 +68,19 @@ impl Repository {
     /// Find a remote that points to a specific owner/repo.
     ///
     /// Searches all configured remotes and returns the name of the first one
-    /// whose URL matches the given owner and repo (case-insensitive for owner).
+    /// whose URL matches the given owner and repo (case-insensitive).
+    ///
+    /// When `host` is `Some`, the remote must also match the host. This is
+    /// important for multi-host setups (e.g., both github.com and
+    /// github.enterprise.com).
     ///
     /// Returns `None` if no matching remote is found.
-    pub fn find_remote_for_repo(&self, owner: &str, repo: &str) -> Option<String> {
+    pub fn find_remote_for_repo(
+        &self,
+        host: Option<&str>,
+        owner: &str,
+        repo: &str,
+    ) -> Option<String> {
         // Get all remotes with URLs
         let output = self
             .run_command(&["config", "--get-regexp", r"remote\..+\.url"])
@@ -85,12 +94,49 @@ impl Repository {
                 // Case-insensitive comparison (GitHub owner/repo names are case-insensitive)
                 && parsed.owner().eq_ignore_ascii_case(owner)
                 && parsed.repo().eq_ignore_ascii_case(repo)
+                // If host is specified, it must also match (case-insensitive)
+                && host.is_none_or(|h| parsed.host().eq_ignore_ascii_case(h))
             {
                 return Some(name.to_string());
             }
         }
 
         None
+    }
+
+    /// Find a remote that points to the same project as the given URL.
+    ///
+    /// Parses the URL to extract host/owner/repo, then searches configured remotes.
+    /// Host matching ensures correct remote selection in multi-host setups
+    /// (e.g., both gitlab.com and gitlab.enterprise.com).
+    ///
+    /// Useful for GitLab MRs where glab provides URLs directly.
+    ///
+    /// Returns `None` if the URL can't be parsed or no matching remote is found.
+    pub fn find_remote_by_url(&self, target_url: &str) -> Option<String> {
+        let parsed = GitRemoteUrl::parse(target_url)?;
+        self.find_remote_for_repo(Some(parsed.host()), parsed.owner(), parsed.repo())
+    }
+
+    /// Get all configured remote URLs.
+    ///
+    /// Returns a list of (remote_name, url) pairs for all remotes with URLs.
+    /// Useful for searching across remotes when the specific remote is unknown.
+    pub fn all_remote_urls(&self) -> Vec<(String, String)> {
+        let output = match self.run_command(&["config", "--get-regexp", r"remote\..+\.url"]) {
+            Ok(output) => output,
+            Err(_) => return Vec::new(),
+        };
+
+        output
+            .lines()
+            .filter_map(|line| {
+                // Parse "remote.<name>.url <value>" format
+                let rest = line.strip_prefix("remote.")?;
+                let (name, url) = rest.split_once(".url ")?;
+                Some((name.to_string(), url.to_string()))
+            })
+            .collect()
     }
 
     /// Get the URL for the primary remote, if configured.
@@ -110,7 +156,7 @@ impl Repository {
     /// Get a project identifier for approval tracking.
     ///
     /// Uses the git remote URL if available (e.g., "github.com/user/repo"),
-    /// otherwise falls back to the repository directory name.
+    /// otherwise falls back to the full canonical path of the repository.
     ///
     /// This identifier is used to track which commands have been approved
     /// for execution in this project.
@@ -139,14 +185,16 @@ impl Repository {
                     return Ok(url.to_string());
                 }
 
-                // Fall back to repository name (use worktree base for consistency across all worktrees)
-                let repo_root = self.repo_path()?;
-                let repo_name = repo_root
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .context("Repository directory has no valid name")?;
+                // Fall back to full canonical path (use worktree base for consistency across all worktrees)
+                // Full path avoids collisions across unrelated repos with the same directory name
+                let repo_root = self.repo_path();
+                let canonical =
+                    dunce::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
+                let path_str = canonical
+                    .to_str()
+                    .context("Repository path is not valid UTF-8")?;
 
-                Ok(repo_name.to_string())
+                Ok(path_str.to_string())
             })
             .cloned()
     }

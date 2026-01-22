@@ -297,68 +297,53 @@ mod tests {
     #[test]
     fn test_parse_porcelain_list_single_worktree() {
         let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\n\n";
-        let result = WorktreeInfo::parse_porcelain_list(output);
-        assert!(result.is_ok());
-        let worktrees = result.unwrap();
-        assert_eq!(worktrees.len(), 1);
-        assert_eq!(worktrees[0].path.to_str().unwrap(), "/path/to/repo");
-        assert_eq!(worktrees[0].head, "abc123");
-        assert_eq!(worktrees[0].branch, Some("main".to_string()));
+        let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+        let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
+        assert_eq!(wt.path.to_str().unwrap(), "/path/to/repo");
+        assert_eq!(wt.head, "abc123");
+        assert_eq!(wt.branch, Some("main".to_string()));
     }
 
     #[test]
     fn test_parse_porcelain_list_multiple_worktrees() {
         let output = "worktree /path/main\nHEAD aaa\nbranch refs/heads/main\n\nworktree /path/feature\nHEAD bbb\nbranch refs/heads/feature\n\n";
-        let result = WorktreeInfo::parse_porcelain_list(output);
-        assert!(result.is_ok());
-        let worktrees = result.unwrap();
-        assert_eq!(worktrees.len(), 2);
-        assert_eq!(worktrees[0].branch, Some("main".to_string()));
-        assert_eq!(worktrees[1].branch, Some("feature".to_string()));
+        let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+        let [main_wt, feature_wt]: [WorktreeInfo; 2] = worktrees.try_into().unwrap();
+        assert_eq!(main_wt.branch, Some("main".to_string()));
+        assert_eq!(feature_wt.branch, Some("feature".to_string()));
     }
 
     #[test]
     fn test_parse_porcelain_list_bare_repo() {
         let output = "worktree /path/to/repo.git\nHEAD abc123\nbare\n\n";
-        let result = WorktreeInfo::parse_porcelain_list(output);
-        assert!(result.is_ok());
-        let worktrees = result.unwrap();
-        assert_eq!(worktrees.len(), 1);
-        assert!(worktrees[0].bare);
+        let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+        let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
+        assert!(wt.bare);
     }
 
     #[test]
     fn test_parse_porcelain_list_detached() {
         let output = "worktree /path/to/repo\nHEAD abc123\ndetached\n\n";
-        let result = WorktreeInfo::parse_porcelain_list(output);
-        assert!(result.is_ok());
-        let worktrees = result.unwrap();
-        assert_eq!(worktrees.len(), 1);
-        assert!(worktrees[0].detached);
-        assert!(worktrees[0].branch.is_none());
+        let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+        let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
+        assert!(wt.detached);
+        assert!(wt.branch.is_none());
     }
 
     #[test]
     fn test_parse_porcelain_list_locked() {
         let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nlocked reason for lock\n\n";
-        let result = WorktreeInfo::parse_porcelain_list(output);
-        assert!(result.is_ok());
-        let worktrees = result.unwrap();
-        assert_eq!(worktrees.len(), 1);
-        assert_eq!(worktrees[0].locked, Some("reason for lock".to_string()));
+        let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+        let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
+        assert_eq!(wt.locked, Some("reason for lock".to_string()));
     }
 
     #[test]
     fn test_parse_porcelain_list_prunable() {
         let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nprunable gitdir file missing\n\n";
-        let result = WorktreeInfo::parse_porcelain_list(output);
-        assert!(result.is_ok());
-        let worktrees = result.unwrap();
-        assert_eq!(worktrees.len(), 1);
-        assert_eq!(
-            worktrees[0].prunable,
-            Some("gitdir file missing".to_string())
-        );
+        let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+        let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
+        assert_eq!(wt.prunable, Some("gitdir file missing".to_string()));
     }
 
     #[test]
@@ -397,10 +382,9 @@ mod tests {
     fn test_parse_porcelain_list_branch_without_refs_prefix() {
         // This can happen in some edge cases
         let output = "worktree /path/to/repo\nHEAD abc123\nbranch main\n\n";
-        let result = WorktreeInfo::parse_porcelain_list(output);
-        assert!(result.is_ok());
-        let worktrees = result.unwrap();
+        let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+        let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
         // Should use the branch name as-is when no refs/heads/ prefix
-        assert_eq!(worktrees[0].branch, Some("main".to_string()));
+        assert_eq!(wt.branch, Some("main".to_string()));
     }
 }

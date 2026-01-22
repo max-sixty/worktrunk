@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use worktrunk::HookType;
-use worktrunk::config::{Command, CommandConfig, WorktrunkConfig, expand_template};
+use worktrunk::config::{Command, CommandConfig, UserConfig, expand_template};
 use worktrunk::git::Repository;
 use worktrunk::path::to_posix_path;
 
@@ -17,21 +17,19 @@ pub struct PreparedCommand {
 #[derive(Clone, Copy, Debug)]
 pub struct CommandContext<'a> {
     pub repo: &'a Repository,
-    pub config: &'a WorktrunkConfig,
+    pub config: &'a UserConfig,
     /// Current branch name, if on a branch (None in detached HEAD state).
     pub branch: Option<&'a str>,
     pub worktree_path: &'a Path,
-    pub repo_root: &'a Path,
     pub yes: bool,
 }
 
 impl<'a> CommandContext<'a> {
     pub fn new(
         repo: &'a Repository,
-        config: &'a WorktrunkConfig,
+        config: &'a UserConfig,
         branch: Option<&'a str>,
         worktree_path: &'a Path,
-        repo_root: &'a Path,
         yes: bool,
     ) -> Self {
         Self {
@@ -39,7 +37,6 @@ impl<'a> CommandContext<'a> {
             config,
             branch,
             worktree_path,
-            repo_root,
             yes,
         }
     }
@@ -47,6 +44,19 @@ impl<'a> CommandContext<'a> {
     /// Get branch name, using "HEAD" as fallback for detached HEAD state.
     pub fn branch_or_head(&self) -> &str {
         self.branch.unwrap_or("HEAD")
+    }
+
+    /// Get the project identifier for per-project config lookup.
+    ///
+    /// Uses the remote URL if available, otherwise the canonical repository path.
+    /// Returns None only if the path is not valid UTF-8.
+    pub fn project_id(&self) -> Option<String> {
+        self.repo.project_identifier().ok()
+    }
+
+    /// Get the commit generation config, merging project-specific settings.
+    pub fn commit_generation(&self) -> worktrunk::config::CommitGenerationConfig {
+        self.config.commit_generation(self.project_id().as_deref())
     }
 }
 
@@ -58,7 +68,7 @@ pub fn build_hook_context(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
 ) -> HashMap<String, String> {
-    let repo_root = ctx.repo_root;
+    let repo_root = ctx.repo.repo_path();
     let repo_name = repo_root
         .file_name()
         .and_then(|n| n.to_str())

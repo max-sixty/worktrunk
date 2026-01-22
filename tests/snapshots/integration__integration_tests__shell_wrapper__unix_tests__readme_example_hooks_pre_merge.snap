@@ -2,6 +2,7 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: "&output.combined"
 ---
+
 [36m◎[39m [36mSquashing 3 commits into a single commit [90m(2 files, [32m+45[39m[39m[90m)[39m...[39m
 [36m◎[39m [36mGenerating squash commit message...[39m
 [107m [0m [1mfeat(api): Add user authentication endpoints[22m

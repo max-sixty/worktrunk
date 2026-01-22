@@ -294,8 +294,9 @@ fn test_project_identifier_no_remote_fallback() {
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let id = repository.project_identifier().unwrap();
-    // Should be the repo directory name
-    assert_eq!(id, "repo");
+    // Should be the full canonical path (security: avoids collisions across unrelated repos)
+    let expected = dunce::canonicalize(repo.root_path()).unwrap();
+    assert_eq!(id, expected.to_str().unwrap());
 }
 
 // =============================================================================
@@ -499,4 +500,158 @@ fn test_integration_functions_handle_remote_refs() {
     // refs/heads/origin/main doesn't exist)
     assert!(repository.same_commit("origin/main", "main").unwrap());
     assert!(repository.is_ancestor("origin/main", "main").unwrap());
+}
+
+// =============================================================================
+// Bug: repo_path() inside git submodules
+// =============================================================================
+
+/// Test that `repo_path()` returns the correct working directory when run inside
+/// a git submodule.
+///
+/// Previously, `repo_path()` derived the path from `git_common_dir.parent()`, which
+/// fails for submodules where git data is stored in `parent/.git/modules/sub`.
+/// The fix tries `git rev-parse --show-toplevel` first (works for submodules),
+/// falling back to parent of git_common_dir for normal repos.
+#[test]
+fn test_repo_path_in_submodule() {
+    use tempfile::TempDir;
+
+    // Create parent repository
+    let parent_temp = TempDir::new().unwrap();
+    let parent_path = parent_temp.path().join("parent");
+    fs::create_dir(&parent_path).unwrap();
+
+    // Initialize parent repo with git config
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["init", "-q"])
+        .current_dir(&parent_path)
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null");
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "git init failed for parent");
+
+    // Configure git user for commits
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(&parent_path)
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(&parent_path)
+        .output()
+        .unwrap();
+
+    // Create initial commit in parent
+    fs::write(parent_path.join("README.md"), "# Parent").unwrap();
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(&parent_path)
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(&parent_path)
+        .output()
+        .unwrap();
+
+    // Create submodule repository (as a separate repo first)
+    let sub_temp = TempDir::new().unwrap();
+    let sub_origin_path = sub_temp.path().join("submodule-origin");
+    fs::create_dir(&sub_origin_path).unwrap();
+
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["init", "-q"])
+        .current_dir(&sub_origin_path)
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null");
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "git init failed for submodule origin"
+    );
+
+    // Configure git user for submodule
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(&sub_origin_path)
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(&sub_origin_path)
+        .output()
+        .unwrap();
+
+    // Create initial commit in submodule origin
+    fs::write(sub_origin_path.join("README.md"), "# Submodule").unwrap();
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(&sub_origin_path)
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["commit", "-m", "Submodule initial commit"])
+        .current_dir(&sub_origin_path)
+        .output()
+        .unwrap();
+
+    // Add submodule to parent (using local path directly, with file transport allowed)
+    let output = std::process::Command::new("git")
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_origin_path.to_str().unwrap(),
+            "sub",
+        ])
+        .current_dir(&parent_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git submodule add failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Commit the submodule addition
+    std::process::Command::new("git")
+        .args(["commit", "-m", "Add submodule"])
+        .current_dir(&parent_path)
+        .output()
+        .unwrap();
+
+    // Now test: create Repository from inside the submodule
+    let submodule_path = parent_path.join("sub");
+    assert!(
+        submodule_path.exists(),
+        "Submodule path should exist: {:?}",
+        submodule_path
+    );
+
+    let repository = Repository::at(submodule_path.clone()).unwrap();
+
+    // The key assertion: repo_path() should return the submodule's working directory,
+    // NOT something like parent/.git/modules/sub
+    let repo_path = repository.repo_path();
+
+    // Canonicalize both paths for comparison (handles symlinks like /var -> /private/var on macOS)
+    let expected = dunce::canonicalize(&submodule_path).unwrap();
+    let actual = dunce::canonicalize(repo_path).unwrap();
+
+    assert_eq!(
+        actual, expected,
+        "repo_path() should return submodule's working directory ({:?}), not git modules path",
+        expected
+    );
+
+    // Also verify that git_common_dir is in the parent's .git/modules/ (confirming this is a real submodule)
+    let git_common_dir = repository.git_common_dir();
+    assert!(
+        git_common_dir.to_string_lossy().contains(".git/modules"),
+        "git_common_dir should be in parent's .git/modules/ for a submodule, got: {:?}",
+        git_common_dir
+    );
 }

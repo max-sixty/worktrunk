@@ -2,6 +2,7 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: "&output.combined"
 ---
+
 [36m◎[39m [36mRunning pre-merge [1mproject:check1[22m:[39m
 [107m [0m [2m[0m[2m[34m_REPO_/mixed-output.sh[0m[2m check1 3
 [check1] stdout line 1

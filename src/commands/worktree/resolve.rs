@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 
 use color_print::cformat;
 use normalize_path::NormalizePath;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::{GitError, Repository, ResolvedWorktree};
 
-use super::types::ResolutionContext;
+use super::types::OperationMode;
 
 /// Resolve a worktree argument using branch-first lookup.
 ///
@@ -27,8 +27,8 @@ use super::types::ResolutionContext;
 pub fn resolve_worktree_arg(
     repo: &Repository,
     name: &str,
-    config: &WorktrunkConfig,
-    context: ResolutionContext,
+    config: &UserConfig,
+    context: OperationMode,
 ) -> anyhow::Result<ResolvedWorktree> {
     // Special symbols - delegate to Repository for consistent error handling
     match name {
@@ -50,7 +50,7 @@ pub fn resolve_worktree_arg(
     }
 
     // No worktree for branch - check if expected path is occupied (only for create/switch)
-    if context == ResolutionContext::CreateOrSwitch {
+    if context == OperationMode::CreateOrSwitch {
         let expected_path = compute_worktree_path(repo, name, config)?;
         if let Some((_, occupant_branch)) = repo.worktree_at_path(&expected_path)? {
             // Path is occupied by a different branch's worktree
@@ -76,16 +76,16 @@ pub fn resolve_worktree_arg(
 pub fn compute_worktree_path(
     repo: &Repository,
     branch: &str,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
 ) -> anyhow::Result<PathBuf> {
-    let repo_root = repo.repo_path()?;
+    let repo_root = repo.repo_path();
     let default_branch = repo.default_branch().unwrap_or_default();
-    let is_bare = repo.is_bare()?;
+    let is_bare = repo.is_bare();
 
     // Default branch lives at repo root (main worktree), not a templated path.
     // Exception: bare repos have no main worktree, so all branches use templated paths.
     if !is_bare && branch == default_branch {
-        return Ok(repo_root);
+        return Ok(repo_root.to_path_buf());
     }
 
     let repo_name = repo_root
@@ -99,8 +99,9 @@ pub fn compute_worktree_path(
             )
         })?;
 
+    let project = repo.project_identifier().ok();
     let relative_path = config
-        .format_path(repo_name, branch, repo)
+        .format_path(repo_name, branch, repo, project.as_deref())
         .map_err(|e| anyhow::anyhow!("Failed to format worktree path: {e}"))?;
 
     Ok(repo_root.join(relative_path).normalize())
@@ -116,7 +117,7 @@ pub fn compute_worktree_path(
 pub fn is_worktree_at_expected_path(
     wt: &worktrunk::git::WorktreeInfo,
     repo: &Repository,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
 ) -> bool {
     match &wt.branch {
         Some(branch) => compute_worktree_path(repo, branch, config)
@@ -144,7 +145,7 @@ pub fn get_path_mismatch(
     repo: &Repository,
     branch: &str,
     actual_path: &std::path::Path,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
 ) -> Option<PathBuf> {
     compute_worktree_path(repo, branch, config)
         .ok()
@@ -163,7 +164,7 @@ pub fn get_path_mismatch(
 pub fn worktree_display_name(
     wt: &worktrunk::git::WorktreeInfo,
     repo: &Repository,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
 ) -> String {
     let dir_name = wt.dir_name();
 

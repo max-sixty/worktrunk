@@ -11,7 +11,4 @@ Installing dependencies...
 Building project...
 [32m✓[39m [32mCreated branch [1mfeature-hooks[22m from [1mmain[22m and worktree @ [1m_REPO_.feature-hooks[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
-[36m◎[39m [36mRunning post-start [1mproject:server[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Starting dev server on port 3000'[0m[2m
-[36m◎[39m [36mRunning post-start [1mproject:watch[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Watching for file changes'[0m[2m
+[36m◎[39m [36mRunning post-start hooks: [1mproject:server[22m, [1mproject:watch[22m[39m

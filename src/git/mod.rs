@@ -5,8 +5,10 @@ use std::path::PathBuf;
 // Submodules
 mod diff;
 mod error;
+pub mod mr_ref;
 mod parse;
 pub mod pr_ref;
+pub mod remote_ref;
 mod repository;
 mod url;
 
@@ -37,6 +39,9 @@ pub use error::{
     GitError,
     // Special-handling error enum (Display produces styled output)
     HookErrorWithHint,
+    // Platform-specific reference type (PR vs MR)
+    RefContext,
+    RefType,
     WorktrunkError,
     // Error inspection functions
     add_hook_skip_hint,
@@ -44,7 +49,7 @@ pub use error::{
 };
 pub use parse::{parse_porcelain_z, parse_untracked_files};
 pub use repository::{Branch, Repository, ResolvedWorktree, WorkingTree, set_base_path};
-pub(crate) use url::GitRemoteUrl;
+pub use url::GitRemoteUrl;
 pub use url::{parse_owner_repo, parse_remote_owner};
 /// Why branch content is considered integrated into the target branch.
 ///
@@ -229,8 +234,8 @@ pub enum BranchCategory {
     Worktree,
     /// Local branch without worktree
     Local,
-    /// Remote-only branch (includes remote name)
-    Remote(String),
+    /// Remote-only branch (includes remote names — multiple if same branch on multiple remotes)
+    Remote(Vec<String>),
 }
 
 /// Branch information for shell completions
@@ -246,6 +251,58 @@ pub struct CompletionBranch {
 
 // Re-export parsing helpers for internal use
 pub(crate) use parse::DefaultBranchName;
+
+use crate::shell_exec::Cmd;
+
+/// Check if a local branch is tracking a specific remote ref.
+///
+/// Returns `Some(true)` if the branch is configured to track the given ref.
+/// Returns `Some(false)` if the branch exists but tracks something else (or nothing).
+/// Returns `None` if the branch doesn't exist.
+///
+/// Used by PR/MR checkout to detect when a branch name collision exists.
+///
+/// TODO: This only checks `branch.<name>.merge`, not `branch.<name>.remote`. A branch
+/// could track the right ref but have the wrong remote configured, which matters for
+/// fork PRs/MRs where refs live on the target repo. Consider checking both values.
+///
+/// # Arguments
+/// * `repo_root` - Path to run git commands from
+/// * `branch` - Local branch name to check
+/// * `expected_ref` - Full ref path (e.g., `refs/pull/101/head` or `refs/merge-requests/42/head`)
+pub fn branch_tracks_ref(
+    repo_root: &std::path::Path,
+    branch: &str,
+    expected_ref: &str,
+) -> Option<bool> {
+    let config_key = format!("branch.{}.merge", branch);
+    let output = Cmd::new("git")
+        .args(["config", "--get", &config_key])
+        .current_dir(repo_root)
+        .run()
+        .ok()?;
+
+    if !output.status.success() {
+        // Config key doesn't exist - branch might not track anything
+        // Check if branch exists at all
+        let branch_exists = Cmd::new("git")
+            .args([
+                "show-ref",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{}", branch),
+            ])
+            .current_dir(repo_root)
+            .run()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        return if branch_exists { Some(false) } else { None };
+    }
+
+    let merge_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Some(merge_ref == expected_ref)
+}
 
 // Note: HookType and WorktreeInfo are defined in this module and are already public.
 // They're accessible as git::HookType and git::WorktreeInfo without needing re-export.
@@ -271,6 +328,7 @@ pub enum HookType {
     PreMerge,
     PostMerge,
     PreRemove,
+    PostRemove,
 }
 
 /// Reference to a branch for parallel task execution.
@@ -380,35 +438,6 @@ impl WorktreeInfo {
     /// use `worktree_display_name()` from the commands module instead.
     pub fn dir_name(&self) -> &str {
         path_dir_name(&self.path)
-    }
-
-    /// Find the "home" worktree - the default branch's worktree if it exists,
-    /// otherwise the first non-prunable worktree in the list.
-    ///
-    /// This is the preferred destination when we need to cd somewhere
-    /// (e.g., after removing the current worktree, or after merge removes the worktree).
-    ///
-    /// Prunable worktrees (directory deleted but git still tracks metadata) are
-    /// excluded since we can't cd to a directory that doesn't exist.
-    ///
-    /// For normal repos, `worktrees[0]` is usually the default branch's worktree,
-    /// so the fallback rarely matters. For bare repos, there's no semantic "main"
-    /// worktree, so preferring the default branch's worktree provides consistency.
-    ///
-    /// Returns `None` if all worktrees are prunable or `worktrees` is empty.
-    /// If `default_branch` doesn't match any non-prunable worktree, returns the
-    /// first non-prunable worktree.
-    pub fn find_home<'a>(
-        worktrees: &'a [WorktreeInfo],
-        default_branch: &str,
-    ) -> Option<&'a WorktreeInfo> {
-        // Filter out prunable worktrees (directory deleted but git still tracks metadata).
-        // Can't cd to a worktree that doesn't exist.
-        worktrees
-            .iter()
-            .filter(|wt| !wt.is_prunable())
-            .find(|wt| wt.branch.as_deref() == Some(default_branch))
-            .or_else(|| worktrees.iter().find(|wt| !wt.is_prunable()))
     }
 }
 
@@ -585,50 +614,6 @@ mod tests {
                 "Hook {hook:?} should be kebab-case, got: {display}"
             );
         }
-    }
-
-    #[test]
-    fn test_find_home() {
-        let make_wt = |branch: Option<&str>| WorktreeInfo {
-            path: PathBuf::from(format!("/repo.{}", branch.unwrap_or("detached"))),
-            head: "abc123".into(),
-            branch: branch.map(String::from),
-            bare: false,
-            detached: branch.is_none(),
-            locked: None,
-            prunable: None,
-        };
-
-        // Empty list returns None
-        assert!(WorktreeInfo::find_home(&[], "main").is_none());
-
-        // Single worktree on default branch
-        let wts = vec![make_wt(Some("main"))];
-        assert_eq!(
-            WorktreeInfo::find_home(&wts, "main").unwrap().path.to_str(),
-            Some("/repo.main")
-        );
-
-        // Default branch not first - should still find it
-        let wts = vec![make_wt(Some("feature")), make_wt(Some("main"))];
-        assert_eq!(
-            WorktreeInfo::find_home(&wts, "main").unwrap().path.to_str(),
-            Some("/repo.main")
-        );
-
-        // No default branch match - returns first
-        let wts = vec![make_wt(Some("feature")), make_wt(Some("bugfix"))];
-        assert_eq!(
-            WorktreeInfo::find_home(&wts, "main").unwrap().path.to_str(),
-            Some("/repo.feature")
-        );
-
-        // Empty default branch - returns first
-        let wts = vec![make_wt(Some("feature"))];
-        assert_eq!(
-            WorktreeInfo::find_home(&wts, "").unwrap().path.to_str(),
-            Some("/repo.feature")
-        );
     }
 
     #[test]

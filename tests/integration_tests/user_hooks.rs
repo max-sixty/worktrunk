@@ -573,6 +573,273 @@ block = "exit 1"
 }
 
 // ============================================================================
+// User Post-Remove Hook Tests
+// ============================================================================
+
+#[rstest]
+fn test_user_post_remove_hook_executes(mut repo: TestRepo) {
+    // Create a worktree to remove
+    let _feature_wt = repo.add_worktree("feature");
+
+    // Write user config with post-remove hook
+    // Hook writes to parent dir (temp dir) since the worktree itself is removed
+    repo.write_test_config(
+        r#"[post-remove]
+cleanup = "echo 'USER_POST_REMOVE_RAN' > ../user_postremove_marker.txt"
+"#,
+    );
+
+    snapshot_remove(
+        "user_post_remove_executes",
+        &repo,
+        &["feature", "--force-delete"],
+        Some(repo.root_path()),
+    );
+
+    // Wait for background hook to complete
+    let marker_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("user_postremove_marker.txt");
+    crate::common::wait_for_file(&marker_file);
+    assert!(
+        marker_file.exists(),
+        "User post-remove hook should have run"
+    );
+}
+
+/// Verify that post-remove hook template variables reference the removed worktree,
+/// not the worktree where the hook executes from.
+#[rstest]
+fn test_user_post_remove_template_vars_reference_removed_worktree(mut repo: TestRepo) {
+    // Create a worktree with a unique commit to verify commit capture
+    let feature_wt_path =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
+
+    // Get the commit SHA of the feature worktree BEFORE removal
+    let feature_commit = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&feature_wt_path)
+        .output()
+        .unwrap();
+    let feature_commit = String::from_utf8_lossy(&feature_commit.stdout);
+    let feature_commit = feature_commit.trim();
+    let feature_short_commit = &feature_commit[..7];
+
+    // Write user config that captures template variables to a file
+    // Hook writes to parent dir (temp dir) since the worktree itself is removed
+    repo.write_test_config(
+        r#"[post-remove]
+capture = "echo 'branch={{ branch }} worktree_path={{ worktree_path }} worktree_name={{ worktree_name }} commit={{ commit }} short_commit={{ short_commit }}' > ../postremove_vars.txt"
+"#,
+    );
+
+    // Run from main worktree, remove the feature worktree
+    repo.wt_command()
+        .args(["remove", "feature", "--force-delete", "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // Wait for background hook to complete
+    let vars_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("postremove_vars.txt");
+    crate::common::wait_for_file(&vars_file);
+
+    let content = std::fs::read_to_string(&vars_file).unwrap();
+
+    // Verify branch is the removed branch
+    assert!(
+        content.contains("branch=feature"),
+        "branch should be the removed branch 'feature', got: {content}"
+    );
+
+    // Extract worktree name for cross-platform comparison.
+    // Hooks run in Git Bash on Windows, which converts paths to MSYS2 format
+    // (/c/Users/... instead of C:\Users\... or C:/Users/...). Instead of trying
+    // to match exact path formats, verify the path ends with the worktree name.
+    let feature_wt_name = feature_wt_path
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+
+    // Verify worktree_path is the removed worktree's path (not the main worktree)
+    // The worktree_path in hook output should end with the worktree directory name
+    assert!(
+        content.contains(&format!("/{feature_wt_name} "))
+            || content.contains(&format!("\\{feature_wt_name} ")),
+        "worktree_path should end with the removed worktree's name '{feature_wt_name}', got: {content}"
+    );
+
+    // Verify worktree_name is the removed worktree's directory name
+    assert!(
+        content.contains(&format!("worktree_name={feature_wt_name}")),
+        "worktree_name should be the removed worktree's name '{feature_wt_name}', got: {content}"
+    );
+
+    // Verify commit is the removed worktree's commit (not main worktree's commit)
+    assert!(
+        content.contains(&format!("commit={feature_commit}")),
+        "commit should be the removed worktree's commit '{feature_commit}', got: {content}"
+    );
+
+    // Verify short_commit is the first 7 chars of the removed worktree's commit
+    assert!(
+        content.contains(&format!("short_commit={feature_short_commit}")),
+        "short_commit should be '{feature_short_commit}', got: {content}"
+    );
+}
+
+#[rstest]
+fn test_user_post_remove_skipped_with_no_verify(mut repo: TestRepo) {
+    // Create a worktree to remove
+    let feature_wt = repo.add_worktree("feature");
+
+    // Write user config with post-remove hook that creates a marker
+    repo.write_test_config(
+        r#"[post-remove]
+marker = "echo 'SHOULD_NOT_RUN' > ../no_verify_postremove.txt"
+"#,
+    );
+
+    snapshot_remove(
+        "user_post_remove_no_verify",
+        &repo,
+        &["feature", "--force-delete", "--no-verify"],
+        Some(repo.root_path()),
+    );
+
+    // Worktree should be removed
+    let timeout = Duration::from_secs(5);
+    let poll_interval = Duration::from_millis(50);
+    let start = std::time::Instant::now();
+    while feature_wt.exists() && start.elapsed() < timeout {
+        thread::sleep(poll_interval);
+    }
+    assert!(
+        !feature_wt.exists(),
+        "Worktree should be removed with --no-verify"
+    );
+
+    // Post-remove hook should NOT have run
+    let marker_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("no_verify_postremove.txt");
+    thread::sleep(Duration::from_millis(500)); // Wait to ensure hook would have run if enabled
+    assert!(
+        !marker_file.exists(),
+        "Post-remove hook should be skipped when --no-verify is used"
+    );
+}
+
+/// Verify that post-remove hooks run during `wt merge` (which removes the worktree).
+/// This tests the main production use case for post-remove hooks.
+#[rstest]
+fn test_user_post_remove_hook_runs_during_merge(mut repo: TestRepo) {
+    // Create feature worktree with a commit
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
+
+    // Write user config with post-remove hook
+    // Hook writes to temp dir (parent of repo) since worktree is removed
+    repo.write_test_config(
+        r#"[post-remove]
+cleanup = "echo 'POST_REMOVE_DURING_MERGE' > ../merge_postremove_marker.txt"
+"#,
+    );
+
+    // Run merge from feature worktree - this should trigger post-remove hooks
+    repo.wt_command()
+        .args(["merge", "main", "--yes"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    // Wait for background hook to complete
+    let marker_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("merge_postremove_marker.txt");
+    crate::common::wait_for_file(&marker_file);
+
+    assert!(
+        marker_file.exists(),
+        "Post-remove hook should run during wt merge"
+    );
+    let contents = fs::read_to_string(&marker_file).unwrap();
+    assert!(
+        contents.contains("POST_REMOVE_DURING_MERGE"),
+        "Marker file should contain expected content"
+    );
+}
+
+// Note: The `return Ok(())` path in spawn_post_remove_hooks when UserConfig::load()
+// fails (handlers.rs line 556) is defensive code for an extremely rare race condition
+// where config becomes invalid between command startup and hook execution. This is
+// not easily testable without complex timing manipulation and matches the existing
+// pattern in spawn_post_switch_after_remove (line 584).
+
+#[rstest]
+fn test_standalone_hook_post_remove_invalid_template(repo: TestRepo) {
+    // Write project config with invalid template syntax (unclosed braces)
+    repo.write_project_config(r#"post-remove = "echo {{ invalid""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-remove", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "wt hook post-remove should fail with invalid template"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Failed to expand command template"),
+        "Error should mention template expansion failure, got: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_standalone_hook_post_remove_name_filter_no_match(repo: TestRepo) {
+    // Write project config with a named hook
+    repo.write_project_config(
+        r#"[post-remove]
+cleanup = "echo cleanup"
+"#,
+    );
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    // Use a name filter that doesn't match any configured hook
+    cmd.args(["hook", "post-remove", "nonexistent", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "wt hook post-remove should fail when name filter doesn't match"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No hook named") || stderr.contains("nonexistent"),
+        "Error should mention the unmatched filter, got: {stderr}"
+    );
+}
+
+// ============================================================================
 // User Pre-Commit Hook Tests
 // ============================================================================
 
@@ -906,6 +1173,52 @@ fn test_standalone_hook_pre_remove(repo: TestRepo) {
     assert!(marker.exists(), "pre-remove hook should have run");
     let content = fs::read_to_string(&marker).unwrap();
     assert!(content.contains("STANDALONE_PRE_REMOVE"));
+}
+
+#[rstest]
+fn test_standalone_hook_post_remove(repo: TestRepo) {
+    // Write project config with post-remove hook
+    repo.write_project_config(r#"post-remove = "echo 'STANDALONE_POST_REMOVE' > hook_ran.txt""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-remove", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt hook post-remove should succeed (spawns in background)"
+    );
+
+    // Wait for background hook to complete
+    let marker = repo.root_path().join("hook_ran.txt");
+    crate::common::wait_for_file(&marker);
+    let content = fs::read_to_string(&marker).unwrap();
+    assert!(content.contains("STANDALONE_POST_REMOVE"));
+}
+
+#[rstest]
+fn test_standalone_hook_post_remove_foreground(repo: TestRepo) {
+    // Write project config with post-remove hook
+    repo.write_project_config(r#"post-remove = "echo 'FOREGROUND_POST_REMOVE' > hook_ran.txt""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-remove", "--yes", "--foreground"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt hook post-remove --foreground should succeed"
+    );
+
+    // Hook runs in foreground, so marker should exist immediately
+    let marker = repo.root_path().join("hook_ran.txt");
+    assert!(marker.exists(), "post-remove hook should have run");
+    let content = fs::read_to_string(&marker).unwrap();
+    assert!(content.contains("FOREGROUND_POST_REMOVE"));
 }
 
 #[rstest]
@@ -1357,5 +1670,42 @@ test = "echo '{{ main_worktree }}' > alias_output.txt"
     assert!(
         contents.contains("/custom/path"),
         "Deprecated alias should be overridden, got: {contents}"
+    );
+}
+
+// ============================================================================
+// Hook Order Preservation Tests (Issue #737)
+// ============================================================================
+
+/// Test that user hooks execute in TOML insertion order, not alphabetical
+/// See: https://github.com/max-sixty/worktrunk/issues/737
+#[rstest]
+fn test_user_hooks_preserve_toml_order(repo: TestRepo) {
+    // Write user config with hooks in specific order (NOT alphabetical: vscode, claude, copy, submodule)
+    // If order were alphabetical, it would be: claude, copy, submodule, vscode
+    repo.write_test_config(
+        r#"[post-create]
+vscode = "echo '1' >> hook_order.txt"
+claude = "echo '2' >> hook_order.txt"
+copy = "echo '3' >> hook_order.txt"
+submodule = "echo '4' >> hook_order.txt"
+"#,
+    );
+
+    snapshot_switch("user_hooks_preserve_order", &repo, &["--create", "feature"]);
+
+    // Verify execution order by reading the output file
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let order_file = worktree_path.join("hook_order.txt");
+    assert!(order_file.exists(), "hook_order.txt should be created");
+
+    let contents = fs::read_to_string(&order_file).unwrap();
+    let lines: Vec<&str> = contents.lines().collect();
+
+    // Hooks should execute in TOML order: 1, 2, 3, 4
+    assert_eq!(
+        lines,
+        vec!["1", "2", "3", "4"],
+        "Hooks should execute in TOML insertion order (vscode, claude, copy, submodule)"
     );
 }
