@@ -1225,18 +1225,12 @@ fn commit_worktree_changes(
     let commit_config = config.commit_generation(project_id.as_deref());
     let generator = super::commit::CommitGenerator::new(&commit_config);
 
-    // Stage all changes
+    // Stage all changes - if is_dirty() was true, this must stage something
     Cmd::new("git")
         .args(["add", "-A"])
         .current_dir(worktree_path)
         .run()
         .context("Failed to stage changes")?;
-
-    // Check if there are staged changes
-    let worktree = repo.worktree_at(worktree_path);
-    if !worktree.has_staged_changes()? {
-        return Ok(()); // Nothing to commit
-    }
 
     generator.emit_hint_if_needed()?;
     let commit_message = crate::llm::generate_commit_message(&commit_config)?;
