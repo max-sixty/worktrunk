@@ -1,7 +1,8 @@
 //! Global output context with file-based directive passing
 //!
-//! This provides a logging-like API where you configure output once
-//! at program start, then use output functions anywhere without passing parameters.
+//! This module handles shell integration directives (cd, exec) that need to be
+//! communicated to the parent shell. For regular output, use `eprintln!`/`println!`
+//! directly (from `worktrunk::styling` for color support).
 //!
 //! # Implementation
 //!
@@ -15,14 +16,6 @@
 //! When `WORKTRUNK_DIRECTIVE_FILE` is set (by the shell wrapper), wt writes shell commands
 //! (like `cd '/path'`) to that file. The shell wrapper sources the file after wt exits.
 //! This allows the parent shell to change directory.
-//!
-//! # Trade-offs
-//!
-//! - Zero parameter threading - call from anywhere
-//! - Lazy initialization - state initialized on first use
-//! - Spawned threads automatically use correct context
-//! - Simple implementation - no traits, no handler structs
-//! - stdout always available for data output (JSON, etc.)
 
 use std::fs::OpenOptions;
 use std::io::{self, Write};
@@ -34,7 +27,6 @@ use std::sync::{Mutex, OnceLock};
 use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 #[cfg(unix)]
 use worktrunk::shell_exec::ShellConfig;
-use worktrunk::styling::{eprintln, stderr};
 
 // Re-export set_verbosity from the library's styling module.
 // This ensures the binary and library share the same global state.
@@ -86,42 +78,6 @@ fn has_directive_file() -> bool {
         .expect("OUTPUT_STATE lock poisoned")
         .directive_file
         .is_some()
-}
-
-/// Print a message to stderr (written as-is)
-///
-/// Use with message formatting functions for semantic output:
-/// ```ignore
-/// use worktrunk::styling::{error_message, success_message, hint_message};
-/// output::print(error_message("Failed to create branch"))?;
-/// output::print(success_message("Branch created"))?;
-/// output::print(hint_message("Use --force to override"))?;
-/// ```
-pub fn print(message: impl Into<String>) -> io::Result<()> {
-    eprintln!("{}", message.into());
-    stderr().flush()
-}
-
-/// Emit a blank line for visual separation
-pub fn blank() -> io::Result<()> {
-    eprintln!();
-    stderr().flush()
-}
-
-/// Write to stdout (pipeable output)
-///
-/// Used for primary command output: table rows, JSON, prompts, statuslines.
-/// This is pipeable — `wt list | grep feature` works because stdout data
-/// goes to stdout while progress/warnings go to stderr.
-///
-/// Example:
-/// ```rust,ignore
-/// output::stdout(json_string)?;
-/// output::stdout(layout.format_header_line())?;
-/// ```
-pub fn stdout(content: impl Into<String>) -> io::Result<()> {
-    println!("{}", content.into());
-    io::stdout().flush()
 }
 
 /// Write a directive to the directive file (if set)
@@ -248,14 +204,6 @@ fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result
         return Err(err);
     }
     Ok(())
-}
-
-/// Flush any buffered output (both stdout and stderr)
-///
-/// Call before interactive prompts to prevent stream interleaving.
-pub fn flush() -> io::Result<()> {
-    io::stdout().flush()?;
-    io::stderr().flush()
 }
 
 /// Terminate command output
@@ -439,7 +387,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             // Access output system in spawned thread
-            let _ = flush();
+            let _ = is_shell_integration_active();
             tx.send(()).unwrap();
         })
         .join()

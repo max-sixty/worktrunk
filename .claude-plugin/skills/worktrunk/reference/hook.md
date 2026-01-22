@@ -1,6 +1,6 @@
 # wt hook
 
-Run configured hooks
+Run configured hooks.
 
 Hooks are shell commands that run at key points in the worktree lifecycle — automatically during `wt switch`, `wt merge`, & `wt remove`, or on demand via `wt hook <type>`. Both user (`~/.config/worktrunk/config.toml`) and project (`.config/wt.toml`) hooks are supported.
 
@@ -446,6 +446,8 @@ Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span 
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 ## wt hook approvals
+
+Manage command approvals.
 
 Project hooks require approval on first run to prevent untrusted projects from running arbitrary commands.
 

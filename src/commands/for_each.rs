@@ -31,12 +31,11 @@ use worktrunk::git::Repository;
 use worktrunk::git::WorktrunkError;
 use worktrunk::shell_exec::ShellConfig;
 use worktrunk::styling::{
-    error_message, format_with_gutter, progress_message, success_message, warning_message,
+    eprintln, error_message, format_with_gutter, progress_message, success_message, warning_message,
 };
 
 use crate::commands::command_executor::{CommandContext, build_hook_context};
 use crate::commands::worktree_display_name;
-use crate::output;
 
 /// Run a command in each worktree sequentially.
 ///
@@ -62,7 +61,10 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
 
     for wt in &worktrees {
         let display_name = worktree_display_name(wt, &repo, &config);
-        output::print(progress_message(format!("Running in {display_name}...")))?;
+        eprintln!(
+            "{}",
+            progress_message(format!("Running in {display_name}..."))
+        );
 
         // Build full hook context for this worktree
         // Pass wt.branch directly (not the display string) so detached HEAD maps to None -> "HEAD"
@@ -83,18 +85,16 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
         let context_json = serde_json::to_string(&context_map)
             .expect("HashMap<String, String> serialization should never fail");
 
-        // Flush output before running command to ensure message ordering
-        output::flush()?;
-
         // Execute command: stream both stdout and stderr in real-time
         // Pipe context JSON to stdin for scripts that want structured data
         match run_command_streaming(&command, &wt.path, Some(&context_json)) {
             Ok(()) => {}
             Err(CommandError::SpawnFailed(err)) => {
-                output::print(error_message(cformat!(
-                    "Failed in <bold>{display_name}</> (spawn failed)"
-                )))?;
-                output::print(format_with_gutter(&err, None))?;
+                eprintln!(
+                    "{}",
+                    error_message(cformat!("Failed in <bold>{display_name}</> (spawn failed)"))
+                );
+                eprintln!("{}", format_with_gutter(&err, None));
                 failed.push(display_name.to_string());
             }
             Err(CommandError::ExitCode(exit_code)) => {
@@ -102,30 +102,37 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
                 let exit_info = exit_code
                     .map(|code| format!(" (exit code {code})"))
                     .unwrap_or_default();
-                output::print(error_message(cformat!(
-                    "Failed in <bold>{display_name}</>{exit_info}"
-                )))?;
+                eprintln!(
+                    "{}",
+                    error_message(cformat!("Failed in <bold>{display_name}</>{exit_info}"))
+                );
                 failed.push(display_name.to_string());
             }
         }
     }
 
     // Summary
-    output::blank()?;
+    eprintln!();
     if failed.is_empty() {
-        output::print(success_message(format!(
-            "Completed in {total} worktree{}",
-            if total == 1 { "" } else { "s" }
-        )))?;
+        eprintln!(
+            "{}",
+            success_message(format!(
+                "Completed in {total} worktree{}",
+                if total == 1 { "" } else { "s" }
+            ))
+        );
         Ok(())
     } else {
-        output::print(warning_message(format!(
-            "{} of {total} worktree{} failed",
-            failed.len(),
-            if total == 1 { "" } else { "s" }
-        )))?;
+        eprintln!(
+            "{}",
+            warning_message(format!(
+                "{} of {total} worktree{} failed",
+                failed.len(),
+                if total == 1 { "" } else { "s" }
+            ))
+        );
         let failed_list = failed.join("\n");
-        output::print(format_with_gutter(&failed_list, None))?;
+        eprintln!("{}", format_with_gutter(&failed_list, None));
         // Return silent error so main exits with code 1 without duplicate message
         Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into())
     }

@@ -24,7 +24,7 @@ exit_code: 0
 ----- stderr -----
 wt remove - Remove worktree; delete branch if merged[0m
 
-For finished feature branches. Removes the current worktree by default.[0m
+Defaults to the current worktree.[0m
 
 Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
 
@@ -119,6 +119,10 @@ Without [2m--force[0m, removal fails if the worktree contains untracked files.
 [1m[32mBackground removal[0m
 
 Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt-logs/{branch}-remove.log[0m. Use [2m--foreground[0m to run in the foreground.
+
+[1m[32mHooks[0m
+
+[2mpre-remove[0m hooks run before the worktree is deleted (with access to worktree files). [2mpost-remove[0m hooks run after removal. See [2mwt hook[0m for configuration.
 
 [1m[32mSee also[0m
 

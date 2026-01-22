@@ -18,7 +18,6 @@ Unlike `git merge`, this merges current into target (not target into current). S
   <img src="/assets/docs/light/wt-merge.gif" alt="wt merge demo" width="1600" height="900">
 </picture>
 </figure>
-
 ## Examples
 
 Merge to the default branch:

@@ -4,24 +4,38 @@
 //! When shell integration is active (`WORKTRUNK_DIRECTIVE_FILE` is set), directives are written
 //! to the file, not stdout.
 //!
-//! This test enforces: **No stdout writes in command code except via output system**
+//! This test enforces: **No accidental stdout writes in command code**
 //!
 //! Allowed:
-//! - `output::*` functions (route to correct stream)
 //! - `eprintln!` / `eprint!` (stderr is safe)
+//! - `println!` / `print!` in files listed in `STDOUT_ALLOWED_PATHS` (data output)
 //!
-//! Exceptions:
-//! - `init.rs` - outputs shell integration code to stdout for `eval`
-//! - `statusline.rs` - outputs status line text to stdout for shell prompts
+//! When adding stdout output:
+//! - Use `worktrunk::styling::println` for color-aware output
+//! - Add the file path to `STDOUT_ALLOWED_PATHS` with a comment explaining why
 
 use std::fs;
 use std::path::Path;
 
-/// Files that are allowed to use println!/print! for stdout
-/// These intentionally output to stdout (e.g., shell code for eval)
-const STDOUT_ALLOWED_FILES: &[&str] = &[
-    "init.rs",       // Outputs shell integration code for: eval "$(wt config shell init bash)"
-    "statusline.rs", // Outputs status line text for shell prompts (PS1)
+use path_slash::PathExt as _;
+
+/// Paths (relative to src/commands/) that are allowed to use println!/print! for stdout.
+/// These intentionally output data to stdout for scripting/piping.
+const STDOUT_ALLOWED_PATHS: &[&str] = &[
+    // Shell integration code for: eval "$(wt config shell init bash)"
+    "init.rs",
+    // Status line text for shell prompts (PS1)
+    "statusline.rs",
+    // Table and summary output for wt list
+    "list/collect/mod.rs",
+    // JSON output for wt list --format=json
+    "list/mod.rs",
+    // State data output (branch names, previous worktree, etc.)
+    "config/state.rs",
+    // Hint list output
+    "config/hints.rs",
+    // LLM prompt output for wt step commit --show-prompt
+    "step_commands.rs",
 ];
 
 /// Substrings that indicate the line is a special case (e.g., in a comment or test reference)
@@ -40,19 +54,25 @@ fn check_no_stdout_in_commands() {
     let mut violations = Vec::new();
 
     // Recursively scan all .rs files under src/commands/
-    scan_directory(&commands_dir, &stdout_tokens, &mut violations);
+    scan_directory(
+        &commands_dir,
+        &stdout_tokens,
+        &mut violations,
+        &commands_dir,
+    );
 
     if !violations.is_empty() {
         panic!(
-            "stdout writes found in command code (use output::* instead):\n\n{}\n\n\
+            "Unexpected stdout writes in command code:\n\n{}\n\n\
              stdout is reserved for data output (JSON, tables).\n\
-             Use output::print(), output::stdout(), etc. instead.",
+             Use worktrunk::styling::println for stdout, eprintln for stderr.\n\
+             Add file path to STDOUT_ALLOWED_PATHS if stdout is intentional.",
             violations.join("\n")
         );
     }
 }
 
-fn scan_directory(dir: &Path, tokens: &[&str], violations: &mut Vec<String>) {
+fn scan_directory(dir: &Path, tokens: &[&str], violations: &mut Vec<String>, commands_dir: &Path) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -62,18 +82,22 @@ fn scan_directory(dir: &Path, tokens: &[&str], violations: &mut Vec<String>) {
         let path = entry.path();
 
         if path.is_dir() {
-            scan_directory(&path, tokens, violations);
+            scan_directory(&path, tokens, violations, commands_dir);
         } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-            check_file(&path, tokens, violations);
+            check_file(&path, tokens, violations, commands_dir);
         }
     }
 }
 
-fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>) {
-    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, commands_dir: &Path) {
+    // Get path relative to src/commands/ for matching against STDOUT_ALLOWED_PATHS
+    let relative_path = path
+        .strip_prefix(commands_dir)
+        .map(|p| p.to_slash_lossy())
+        .unwrap_or_default();
 
     // Skip files that are allowed to use stdout
-    if STDOUT_ALLOWED_FILES.contains(&file_name) {
+    if STDOUT_ALLOWED_PATHS.contains(&relative_path.as_ref()) {
         return;
     }
 

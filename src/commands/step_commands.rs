@@ -15,7 +15,7 @@ use worktrunk::HookType;
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 use worktrunk::styling::{
-    format_with_gutter, hint_message, info_message, progress_message, success_message,
+    eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
     warning_message,
 };
 
@@ -43,7 +43,7 @@ pub fn step_commit(
         let project_id = repo.project_identifier().ok();
         let commit_config = config.commit_generation(project_id.as_deref());
         let prompt = crate::llm::build_commit_prompt(&commit_config)?;
-        crate::output::stdout(prompt)?;
+        println!("{}", prompt);
         return Ok(());
     }
 
@@ -60,9 +60,10 @@ pub fn step_commit(
     let no_verify = if !no_verify {
         let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
         if !approved {
-            crate::output::print(worktrunk::styling::info_message(
-                "Commands declined, committing without hooks",
-            ))?;
+            eprintln!(
+                "{}",
+                info_message("Commands declined, committing without hooks",)
+            );
             true // Skip hooks
         } else {
             false // Run hooks
@@ -149,7 +150,10 @@ pub fn handle_squash(
     let has_any_pre_commit = has_project_pre_commit || has_user_pre_commit;
 
     if skip_pre_commit && has_any_pre_commit {
-        crate::output::print(info_message("Skipping pre-commit hooks (--no-verify)"))?;
+        eprintln!(
+            "{}",
+            info_message("Skipping pre-commit hooks (--no-verify)")
+        );
     }
 
     // Run pre-commit hooks (user first, then project)
@@ -238,22 +242,25 @@ pub fn handle_squash(
             "Squashing {commit_count} {commit_text}{with_changes} into a single commit <bright-black>({parts_str}</>{paren_close}..."
         )
     };
-    crate::output::print(progress_message(squash_progress))?;
+    eprintln!("{}", progress_message(squash_progress));
 
     // Create safety backup before potentially destructive reset if there are working tree changes
     if has_staged {
         let backup_message = format!("{} → {} (squash)", current_branch, integration_target);
         let sha = wt.create_safety_backup(&backup_message)?;
-        crate::output::print(hint_message(format!("Backup created @ {sha}")))?;
+        eprintln!("{}", hint_message(format!("Backup created @ {sha}")));
     }
 
     // Get commit subjects for the squash message
     let subjects = repo.commit_subjects(&range)?;
 
     // Generate squash commit message
-    crate::output::print(progress_message("Generating squash commit message..."))?;
+    eprintln!(
+        "{}",
+        progress_message("Generating squash commit message...")
+    );
 
-    generator.emit_hint_if_needed()?;
+    generator.emit_hint_if_needed();
 
     // Get current branch and repo name for template variables
     let repo_root = wt.root()?;
@@ -273,7 +280,7 @@ pub fn handle_squash(
 
     // Display the generated commit message
     let formatted_message = generator.format_message_for_display(&commit_message);
-    crate::output::print(format_with_gutter(&formatted_message, None))?;
+    eprintln!("{}", format_with_gutter(&formatted_message, None));
 
     // Reset to merge base (soft reset stages all changes, including any already-staged uncommitted changes)
     repo.run_command(&["reset", "--soft", &merge_base])
@@ -281,9 +288,12 @@ pub fn handle_squash(
 
     // Check if there are actually any changes to commit
     if !wt.has_staged_changes()? {
-        crate::output::print(info_message(format!(
-            "No changes after squashing {commit_count} {commit_text}"
-        )))?;
+        eprintln!(
+            "{}",
+            info_message(format!(
+                "No changes after squashing {commit_count} {commit_text}"
+            ))
+        );
         return Ok(SquashResult::NoNetChanges);
     }
 
@@ -298,9 +308,10 @@ pub fn handle_squash(
         .to_string();
 
     // Show success immediately after completing the squash
-    crate::output::print(success_message(cformat!(
-        "Squashed @ <dim>{commit_hash}</>"
-    )))?;
+    eprintln!(
+        "{}",
+        success_message(cformat!("Squashed @ <dim>{commit_hash}</>"))
+    );
 
     Ok(SquashResult::Squashed)
 }
@@ -345,7 +356,7 @@ pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
         repo_name,
         &effective_config,
     )?;
-    crate::output::stdout(prompt)?;
+    println!("{}", prompt);
     Ok(())
 }
 
@@ -378,9 +389,10 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 
     // Only show progress for true rebases (fast-forwards are instant)
     if !is_fast_forward {
-        crate::output::print(progress_message(cformat!(
-            "Rebasing onto <bold>{integration_target}</>..."
-        )))?;
+        eprintln!(
+            "{}",
+            progress_message(cformat!("Rebasing onto <bold>{integration_target}</>..."))
+        );
     }
 
     let rebase_result = repo.run_command(&["rebase", &integration_target]);
@@ -421,13 +433,15 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 
     // Success
     if is_fast_forward {
-        crate::output::print(success_message(cformat!(
-            "Fast-forwarded to <bold>{integration_target}</>"
-        )))?;
+        eprintln!(
+            "{}",
+            success_message(cformat!("Fast-forwarded to <bold>{integration_target}</>"))
+        );
     } else {
-        crate::output::print(success_message(cformat!(
-            "Rebased onto <bold>{integration_target}</>"
-        )))?;
+        eprintln!(
+            "{}",
+            success_message(cformat!("Rebased onto <bold>{integration_target}</>"))
+        );
     }
 
     Ok(RebaseResult::Rebased)
@@ -486,7 +500,10 @@ pub fn step_copy_ignored(
     };
 
     if source_path == dest_path {
-        crate::output::print(info_message("Source and destination are the same worktree"))?;
+        eprintln!(
+            "{}",
+            info_message("Source and destination are the same worktree")
+        );
         return Ok(());
     }
 
@@ -535,7 +552,7 @@ pub fn step_copy_ignored(
         .collect();
 
     if entries_to_copy.is_empty() {
-        crate::output::print(info_message("No matching files to copy"))?;
+        eprintln!("{}", info_message("No matching files to copy"));
         return Ok(());
     }
 
@@ -554,12 +571,15 @@ pub fn step_copy_ignored(
             })
             .collect();
         let entry_word = if items.len() == 1 { "entry" } else { "entries" };
-        crate::output::print(info_message(format!(
-            "Would copy {} {}:\n{}",
-            items.len(),
-            entry_word,
-            format_with_gutter(&items.join("\n"), None)
-        )))?;
+        eprintln!(
+            "{}",
+            info_message(format!(
+                "Would copy {} {}:\n{}",
+                items.len(),
+                entry_word,
+                format_with_gutter(&items.join("\n"), None)
+            ))
+        );
         return Ok(());
     }
 
@@ -593,9 +613,10 @@ pub fn step_copy_ignored(
     } else {
         "entries"
     };
-    crate::output::print(success_message(format!(
-        "Copied {copied_count} {entry_word}"
-    )))?;
+    eprintln!(
+        "{}",
+        success_message(format!("Copied {copied_count} {entry_word}"))
+    );
 
     Ok(())
 }
@@ -860,35 +881,40 @@ pub fn step_relocate(
             }
             Err(e) => {
                 // Template expansion failed - warn user so they can fix config
-                crate::output::print(warning_message(cformat!(
-                    "Skipping <bold>{branch}</> (template error: {e})"
-                )))?;
+                eprintln!(
+                    "{}",
+                    warning_message(cformat!("Skipping <bold>{branch}</> (template error: {e})"))
+                );
             }
         }
     }
 
     if mismatched.is_empty() {
-        crate::output::print(info_message("All worktrees are at expected paths"))?;
+        eprintln!("{}", info_message("All worktrees are at expected paths"));
         return Ok(());
     }
 
     // Dry run: show preview
     if dry_run {
-        crate::output::print(info_message(format!(
-            "{} worktree{} would be relocated:",
-            mismatched.len(),
-            if mismatched.len() == 1 { "" } else { "s" }
-        )))?;
-        crate::output::blank()?;
+        eprintln!(
+            "{}",
+            info_message(format!(
+                "{} worktree{} would be relocated:",
+                mismatched.len(),
+                if mismatched.len() == 1 { "" } else { "s" }
+            ))
+        );
+        eprintln!();
 
         for (wt, expected_path) in &mismatched {
             let branch = wt.branch.as_deref().unwrap();
             let src_display = format_path_for_display(&wt.path);
             let dest_display = format_path_for_display(expected_path);
 
-            crate::output::print(cformat!(
-                "  <bold>{branch}</>: {src_display} → {dest_display}"
-            ))?;
+            eprintln!(
+                "{}",
+                cformat!("  <bold>{branch}</>: {src_display} → {dest_display}")
+            );
         }
         return Ok(());
     }
@@ -908,9 +934,10 @@ pub fn step_relocate(
             } else {
                 format!(": {reason}")
             };
-            crate::output::print(warning_message(cformat!(
-                "Skipping <bold>{branch}</> (locked{reason_text})"
-            )))?;
+            eprintln!(
+                "{}",
+                warning_message(cformat!("Skipping <bold>{branch}</> (locked{reason_text})"))
+            );
             skipped += 1;
             continue;
         }
@@ -919,17 +946,20 @@ pub fn step_relocate(
         let worktree = repo.worktree_at(&wt.path);
         if worktree.is_dirty()? {
             if commit {
-                crate::output::print(progress_message(cformat!(
-                    "Committing changes in <bold>{branch}</>..."
-                )))?;
+                eprintln!(
+                    "{}",
+                    progress_message(cformat!("Committing changes in <bold>{branch}</>..."))
+                );
                 commit_worktree_changes(&repo, &wt.path, &config)?;
             } else {
-                crate::output::print(warning_message(cformat!(
-                    "Skipping <bold>{branch}</> (uncommitted changes)"
-                )))?;
-                crate::output::print(hint_message(
-                    "Use --commit to auto-commit changes before relocating",
-                ))?;
+                eprintln!(
+                    "{}",
+                    warning_message(cformat!("Skipping <bold>{branch}</> (uncommitted changes)"))
+                );
+                eprintln!(
+                    "{}",
+                    hint_message("Use --commit to auto-commit changes before relocating",)
+                );
                 skipped += 1;
                 continue;
             }
@@ -940,11 +970,14 @@ pub fn step_relocate(
 
     if pending.is_empty() {
         if skipped > 0 {
-            crate::output::blank()?;
-            crate::output::print(info_message(format!(
-                "Skipped {skipped} worktree{}",
-                if skipped == 1 { "" } else { "s" }
-            )))?;
+            eprintln!();
+            eprintln!(
+                "{}",
+                info_message(format!(
+                    "Skipped {skipped} worktree{}",
+                    if skipped == 1 { "" } else { "s" }
+                ))
+            );
         }
         return Ok(());
     }
@@ -987,9 +1020,9 @@ pub fn step_relocate(
             let msg = cformat!(
                 "Skipping <bold>{branch}</> (target is worktree for <bold>{occupant_name}</>)"
             );
-            crate::output::print(warning_message(msg))?;
+            eprintln!("{}", warning_message(msg));
             let hint = cformat!("Relocate or remove <bright-black>{occupant_name}</> first");
-            crate::output::print(hint_message(hint))?;
+            eprintln!("{}", hint_message(hint));
             blocked_by_non_worktree.insert(i);
             skipped += 1;
             continue;
@@ -1010,14 +1043,17 @@ pub fn step_relocate(
             ));
             let src = format_path_for_display(expected_path);
             let dest = format_path_for_display(&backup_path);
-            crate::output::print(progress_message(cformat!("Backing up {src} → {dest}")))?;
+            eprintln!(
+                "{}",
+                progress_message(cformat!("Backing up {src} → {dest}"))
+            );
             std::fs::rename(expected_path, &backup_path)
                 .with_context(|| format!("Failed to backup {}", expected_path.display()))?;
         } else {
             let blocked = format_path_for_display(expected_path);
             let msg = cformat!("Skipping <bold>{branch}</> (target blocked: {blocked})");
-            crate::output::print(warning_message(msg))?;
-            crate::output::print(hint_message("Use --clobber to backup blocking paths"))?;
+            eprintln!("{}", warning_message(msg));
+            eprintln!("{}", hint_message("Use --clobber to backup blocking paths"));
             blocked_by_non_worktree.insert(i);
             skipped += 1;
         }
@@ -1070,7 +1106,7 @@ pub fn step_relocate(
                 if is_main {
                     // Main worktree: switch to default first, then create new wt
                     let msg = cformat!("Switching main worktree to <bold>{default_branch}</>...");
-                    crate::output::print(progress_message(msg))?;
+                    eprintln!("{}", progress_message(msg));
 
                     Cmd::new("git")
                         .args(["checkout", &default_branch])
@@ -1097,7 +1133,7 @@ pub fn step_relocate(
                 }
 
                 let msg = cformat!("Relocated <bold>{branch}</>: {src_display} → {dest_display}");
-                crate::output::print(success_message(msg))?;
+                eprintln!("{}", success_message(msg));
 
                 // Update shell if user is inside
                 if let Some(ref cwd_path) = cwd
@@ -1141,7 +1177,7 @@ pub fn step_relocate(
                 let safe_branch = worktrunk::path::sanitize_for_filename(branch);
                 let temp_path = temp_dir.join(&safe_branch);
                 let msg = cformat!("Moving <bold>{branch}</> to temporary location...");
-                crate::output::print(progress_message(msg))?;
+                eprintln!("{}", progress_message(msg));
 
                 Cmd::new("git")
                     .args(["worktree", "move"])
@@ -1178,7 +1214,7 @@ pub fn step_relocate(
             .context("Failed to move worktree from temp to final location")?;
 
         let msg = cformat!("Relocated <bold>{branch}</> → {dest_display}");
-        crate::output::print(success_message(msg))?;
+        eprintln!("{}", success_message(msg));
 
         // Note: Unlike direct moves, we don't update the shell directory here.
         // If the user was inside this worktree, they're now in the temp location
@@ -1194,18 +1230,18 @@ pub fn step_relocate(
 
     // Summary
     if relocated > 0 || skipped > 0 {
-        crate::output::blank()?;
+        eprintln!();
         let plural = |n: usize| if n == 1 { "worktree" } else { "worktrees" };
         if skipped == 0 {
             let msg = format!("Relocated {relocated} {}", plural(relocated));
-            crate::output::print(success_message(msg))?;
+            eprintln!("{}", success_message(msg));
         } else {
             let msg = format!(
                 "Relocated {relocated} {}, skipped {skipped} {}",
                 plural(relocated),
                 plural(skipped)
             );
-            crate::output::print(info_message(msg))?;
+            eprintln!("{}", info_message(msg));
         }
     }
 
@@ -1230,11 +1266,11 @@ fn commit_worktree_changes(
         .run()
         .context("Failed to stage changes")?;
 
-    generator.emit_hint_if_needed()?;
+    generator.emit_hint_if_needed();
     let commit_message = crate::llm::generate_commit_message(&commit_config)?;
 
     let formatted_message = generator.format_message_for_display(&commit_message);
-    crate::output::print(format_with_gutter(&formatted_message, None))?;
+    eprintln!("{}", format_with_gutter(&formatted_message, None));
 
     Cmd::new("git")
         .args(["commit", "-m", &commit_message])
@@ -1251,7 +1287,7 @@ fn commit_worktree_changes(
         .to_string();
 
     let msg = cformat!("Committed @ <dim>{commit_hash}</>");
-    crate::output::print(success_message(msg))?;
+    eprintln!("{}", success_message(msg));
 
     Ok(())
 }
