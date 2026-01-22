@@ -42,8 +42,11 @@ pub mod list_snapshots;
 // Progressive output tests use PTY and are Unix-only for now
 #[cfg(unix)]
 pub mod progressive_output;
-// Shell integration tests are Unix-only for now (Windows support planned)
-#[cfg(all(unix, feature = "shell-integration-tests"))]
+// PTY execution helpers - cross-platform (uses portable_pty with ConPTY on Windows)
+#[cfg(feature = "shell-integration-tests")]
+pub mod pty;
+// Shell integration tests - cross-platform with PTY support
+#[cfg(feature = "shell-integration-tests")]
 pub mod shell;
 
 // Cross-platform mock command helpers
@@ -351,19 +354,23 @@ pub fn merge_scenario_multi_commit(mut repo: TestRepo) -> (TestRepo, PathBuf) {
     (repo, feature_wt)
 }
 
-/// Returns a PTY system with a guard that restores the TTY foreground pgrp on drop.
+/// Returns a PTY system with platform-appropriate setup.
 ///
-/// Use this instead of `portable_pty::native_pty_system()` directly to ensure:
-/// 1. PTY tests work in background process groups (signals blocked)
-/// 2. SIGTTIN/SIGTTOU are blocked to prevent test processes from being stopped
+/// On Unix, this blocks SIGTTIN/SIGTTOU signals to prevent test processes from
+/// being stopped when PTY operations interact with terminal control.
+///
+/// On Windows, this returns the native ConPTY system directly.
+///
+/// Use this instead of `portable_pty::native_pty_system()` directly to ensure
+/// PTY tests work correctly across platforms.
 ///
 /// NOTE: PTY tests are behind the `shell-integration-tests` feature because they can
 /// trigger a nextest bug where its InputHandler cleanup receives SIGTTOU. This happens
 /// when tests spawn interactive shells (zsh -ic, bash -ic) which take control of the
 /// foreground process group. See https://github.com/nextest-rs/nextest/issues/2878
 /// Workaround: run with NEXTEST_NO_INPUT_HANDLER=1. See CLAUDE.md for details.
-#[cfg(unix)]
 pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
+    #[cfg(unix)]
     ignore_tty_signals();
     portable_pty::native_pty_system()
 }
@@ -371,13 +378,11 @@ pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
 /// Open a PTY pair with default size (48 rows x 200 cols).
 ///
 /// Most PTY tests use this standard size. Returns the master/slave pair.
-#[cfg(unix)]
 pub fn open_pty() -> portable_pty::PtyPair {
     open_pty_with_size(48, 200)
 }
 
 /// Open a PTY pair with specified size.
-#[cfg(unix)]
 pub fn open_pty_with_size(rows: u16, cols: u16) -> portable_pty::PtyPair {
     native_pty_system()
         .openpty(portable_pty::PtySize {
@@ -637,8 +642,11 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // Note: env_remove above may cause insta-cmd to capture empty values in snapshots,
     // but correctness (isolating from host WORKTRUNK_* vars) trumps snapshot aesthetics.
     cmd.env("WORKTRUNK_CONFIG_PATH", "/nonexistent/test/config.toml");
+    // Remove $SHELL to avoid platform-dependent diagnostic output (macOS has /bin/zsh,
+    // Linux has /bin/bash). Tests that need SHELL should set it explicitly.
+    cmd.env_remove("SHELL");
     cmd.env("CLICOLOR_FORCE", "1");
-    cmd.env("SOURCE_DATE_EPOCH", TEST_EPOCH.to_string());
+    cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
     // Use wide terminal to prevent wrapping differences across platforms.
     // macOS temp paths (~80 chars) are much longer than Linux (~10 chars),
     // so error messages containing paths need room to avoid platform-specific line breaks.
@@ -649,6 +657,10 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("RUST_LOG", "warn");
     // Skip URL health checks to avoid flaky tests from random local processes
     cmd.env("WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK", "1");
+    // Disable delayed streaming for deterministic output across platforms.
+    // Without this, slow Windows CI triggers progress messages that don't appear on faster systems.
+    // Tests that need streaming (e.g., test_switch_create_shows_progress_when_forced) can override.
+    cmd.env("WT_TEST_DELAYED_STREAM_MS", "-1");
 
     // Pass through LLVM coverage profiling environment for subprocess coverage collection.
     // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record
@@ -682,7 +694,7 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
     cmd.env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z");
     cmd.env("LC_ALL", "C");
     cmd.env("LANG", "C");
-    cmd.env("SOURCE_DATE_EPOCH", TEST_EPOCH.to_string());
+    cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
     cmd.env("GIT_TERMINAL_PROMPT", "0");
 }
 
@@ -778,14 +790,46 @@ pub fn configure_pty_command(cmd: &mut portable_pty::CommandBuilder) {
     cmd.env_clear();
 
     // Minimal environment for shells/binaries to function
-    cmd.env(
-        "HOME",
-        home::home_dir().unwrap().to_string_lossy().to_string(),
-    );
+    let home_dir = home::home_dir().unwrap().to_string_lossy().to_string();
+    cmd.env("HOME", &home_dir);
     cmd.env(
         "PATH",
         std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
     );
+
+    // Windows-specific env vars required for processes to run
+    #[cfg(windows)]
+    {
+        // USERPROFILE is Windows equivalent of HOME
+        cmd.env("USERPROFILE", &home_dir);
+
+        // SystemRoot is critical - many DLLs and system components need this
+        if let Ok(val) = std::env::var("SystemRoot") {
+            cmd.env("SystemRoot", &val);
+            cmd.env("windir", &val); // Alias used by some programs
+        }
+
+        // SystemDrive (usually C:)
+        if let Ok(val) = std::env::var("SystemDrive") {
+            cmd.env("SystemDrive", val);
+        }
+
+        // TEMP/TMP directories
+        if let Ok(val) = std::env::var("TEMP") {
+            cmd.env("TEMP", &val);
+            cmd.env("TMP", val);
+        }
+
+        // COMSPEC (cmd.exe path) - needed by some programs
+        if let Ok(val) = std::env::var("COMSPEC") {
+            cmd.env("COMSPEC", val);
+        }
+
+        // PSModulePath for PowerShell
+        if let Ok(val) = std::env::var("PSModulePath") {
+            cmd.env("PSModulePath", val);
+        }
+    }
 
     // Pass through LLVM coverage profiling environment for subprocess coverage.
     // Without this, spawned binaries can't write coverage data.
@@ -1049,7 +1093,7 @@ impl TestRepo {
             ),
             ("LC_ALL".to_string(), "C".to_string()),
             ("LANG".to_string(), "C".to_string()),
-            ("SOURCE_DATE_EPOCH".to_string(), TEST_EPOCH.to_string()),
+            ("WT_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
             (
                 "WORKTRUNK_CONFIG_PATH".to_string(),
                 self.test_config_path().display().to_string(),
@@ -1250,18 +1294,26 @@ impl TestRepo {
         &self.root
     }
 
-    /// Get the project identifier for test configs.
+    /// Get the path to the bare remote repository, if created.
+    pub fn remote_path(&self) -> Option<&Path> {
+        self.remote.as_deref()
+    }
+
+    /// Get the project identifier (canonical path) for this test repo.
     ///
-    /// Returns the repository directory name. This works because the standard
-    /// fixture uses a local path remote (`../origin_git`) which doesn't parse
-    /// as a proper git URL, causing worktrunk to fall back to the directory name.
+    /// Returns the full canonical path of the repository. The standard fixture uses a local
+    /// path remote (`../origin_git`) which doesn't parse as a proper git URL, causing
+    /// worktrunk to fall back to the full canonical path.
     ///
-    /// Use this when writing test configs with `[projects."<id>"]` sections.
+    /// Use with TOML literal strings (single quotes) to avoid backslash escaping:
+    /// ```ignore
+    /// format!(r#"[projects.'{}']"#, repo.project_id())
+    /// ```
     pub fn project_id(&self) -> String {
-        self.root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("repo")
+        dunce::canonicalize(&self.root)
+            .unwrap_or_else(|_| self.root.clone())
+            .to_str()
+            .unwrap_or("")
             .to_string()
     }
 
@@ -1326,7 +1378,7 @@ impl TestRepo {
             .unwrap();
     }
 
-    /// Create a commit with a specific age relative to SOURCE_DATE_EPOCH
+    /// Create a commit with a specific age relative to TEST_EPOCH
     ///
     /// This allows creating commits that display specific relative ages
     /// in the Age column (e.g., "10m", "1h", "1d").
@@ -1410,6 +1462,21 @@ impl TestRepo {
         // Canonicalize worktree path to match what git returns
         let canonical_path = canonicalize(&worktree_path).unwrap();
         // Use branch as key (consistent with path generation)
+        self.worktrees
+            .insert(branch.to_string(), canonical_path.clone());
+        canonical_path
+    }
+
+    /// Creates a worktree at a custom path (for testing nested worktrees).
+    ///
+    /// Unlike `add_worktree`, this places the worktree at the specified path
+    /// rather than using the default sibling layout.
+    pub fn add_worktree_at_path(&mut self, branch: &str, path: &Path) -> PathBuf {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let path_str = path.to_str().unwrap();
+        self.run_git(&["worktree", "add", "-b", branch, path_str]);
+
+        let canonical_path = canonicalize(path).unwrap();
         self.worktrees
             .insert(branch.to_string(), canonical_path.clone());
         canonical_path
@@ -1756,20 +1823,60 @@ impl TestRepo {
 
     /// Setup mock `glab` that returns configurable MR/CI data for GitLab
     ///
-    /// Use this for testing GitLab CI status parsing code. The mock returns JSON data
-    /// for `glab mr list` and `glab repo view` commands.
+    /// Use this for testing GitLab CI status parsing code. The mock handles the
+    /// two-step MR resolution process:
+    /// - `glab mr list` returns basic MR info (iid, sha, conflicts, etc.)
+    /// - `glab mr view <iid>` returns full MR info including head_pipeline
     ///
     /// # Arguments
-    /// * `mr_json` - JSON string to return for `glab mr list --output json`
+    /// * `mr_json` - JSON string for MR data. Should include an `iid` field and
+    ///   optionally `head_pipeline`. This data is used for both `mr list` and
+    ///   `mr view` responses.
     /// * `project_id` - Optional project ID to return from `glab repo view`
+    ///
+    /// # Note
+    /// The mock automatically handles the compound command matching:
+    /// - "mr list" → returns MR list data
+    /// - "mr view" → returns same data (works because glab mr view returns same fields)
     pub fn setup_mock_glab_with_ci_data(&mut self, mr_json: &str, project_id: Option<u64>) {
         use crate::common::mock_commands::{MockConfig, MockResponse};
 
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
-        // Write JSON data file
-        std::fs::write(mock_bin.join("mr_data.json"), mr_json).unwrap();
+        // Parse the MR JSON to create separate list and view responses
+        // mr list needs: iid (for two-step lookup), sha, has_conflicts, detailed_merge_status, source_project_id, web_url
+        // mr view needs: sha, has_conflicts, detailed_merge_status, head_pipeline, pipeline, web_url
+        //
+        // Since we provide the same JSON for both, we need to ensure iid is present.
+        // The actual glab mr list doesn't return head_pipeline, but our mock can return
+        // it harmlessly - the code will ignore it and do a second lookup.
+
+        // Write JSON data files - same data for list (array) and view (single object)
+        std::fs::write(mock_bin.join("mr_list_data.json"), mr_json).unwrap();
+
+        // For mr view, create separate files for each MR by iid
+        // This allows triple-matching "mr view <iid>" to return the correct MR
+        let mut mock_config = MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("mr list", MockResponse::file("mr_list_data.json"));
+
+        // Parse MR array and create iid-specific view commands
+        // Triple match: "mr view 1" matches before "mr view" (see mock-stub)
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(mr_json)
+            && let Some(arr) = parsed.as_array()
+        {
+            for mr in arr {
+                if let Some(iid) = mr.get("iid").and_then(|v| v.as_u64()) {
+                    let filename = format!("mr_view_{}.json", iid);
+                    let json = serde_json::to_string(mr).unwrap_or_default();
+                    std::fs::write(mock_bin.join(&filename), json).unwrap();
+                    mock_config = mock_config
+                        .command(&format!("mr view {}", iid), MockResponse::file(&filename));
+                }
+            }
+        }
 
         // Build project ID response
         let project_id_response = match project_id {
@@ -1777,16 +1884,84 @@ impl TestRepo {
             None => r#"{"error": "not found"}"#.to_string(),
         };
 
-        // Configure glab mock
-        MockConfig::new("glab")
-            .version("glab version 1.0.0 (mock)")
-            .command("auth", MockResponse::exit(0))
-            .command("mr", MockResponse::file("mr_data.json"))
+        // Configure glab mock with compound command matching
+        // "mr view <iid>" is matched before "mr view" (see mock-stub triple matching)
+        mock_config
             .command("repo", MockResponse::output(&project_id_response))
             .command("ci", MockResponse::output("[]"))
             .write(&mock_bin);
 
         // Configure gh mock (fails - no GitHub support)
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Setup mock glab where mr list succeeds but mr view fails.
+    ///
+    /// Use this to test the error path when `glab mr view` fails after finding an MR.
+    /// The mock returns the MR from mr list but exits with error for mr view.
+    pub fn setup_mock_glab_with_failing_mr_view(&mut self, mr_json: &str, project_id: Option<u64>) {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        std::fs::write(mock_bin.join("mr_list_data.json"), mr_json).unwrap();
+
+        let project_id_response = match project_id {
+            Some(id) => format!(r#"{{"id": {}}}"#, id),
+            None => r#"{"error": "not found"}"#.to_string(),
+        };
+
+        // glab mock: mr list succeeds, but NO mr view commands registered
+        // (falls back to exit code 1)
+        MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("mr list", MockResponse::file("mr_list_data.json"))
+            // No "mr view" commands - will fall back to default exit code 1
+            .command("repo", MockResponse::output(&project_id_response))
+            .command("ci", MockResponse::output("[]"))
+            .write(&mock_bin);
+
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Set up mock glab that returns a rate limit error on `ci list`.
+    ///
+    /// Used to test the `is_retriable_error` path in `detect_gitlab_pipeline`.
+    /// MR list returns empty (no MRs), so the code falls through to pipeline detection
+    /// which then hits the rate limit error.
+    pub fn setup_mock_glab_with_ci_rate_limit(&mut self, project_id: Option<u64>) {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        let project_id_response = match project_id {
+            Some(id) => format!(r#"{{"id": {}}}"#, id),
+            None => r#"{"error": "not found"}"#.to_string(),
+        };
+
+        // glab mock: mr list returns empty (no MRs), ci list fails with rate limit
+        MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("mr list", MockResponse::output("[]")) // No MRs - triggers ci list fallback
+            .command("repo", MockResponse::output(&project_id_response))
+            .command(
+                "ci",
+                MockResponse::stderr("API rate limit exceeded").with_exit_code(1),
+            )
+            .write(&mock_bin);
+
         MockConfig::new("gh")
             .command("_default", MockResponse::exit(1))
             .write(&mock_bin);
@@ -1806,6 +1981,9 @@ impl TestRepo {
     /// caller's PATH instead of a hardcoded minimal list.
     pub fn configure_mock_commands(&self, cmd: &mut Command) {
         if let Some(mock_bin) = &self.mock_bin_path {
+            // Tell mock-stub where to find config files directly, avoiding PATH search
+            cmd.env("MOCK_CONFIG_DIR", mock_bin);
+
             // On Windows, env vars are case-insensitive but Rust stores them
             // case-sensitively. Find the actual PATH variable name to avoid
             // creating a duplicate with different case.
@@ -1991,6 +2169,8 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     // Windows: etcetera uses APPDATA for config_dir()
     settings.add_redaction(".env.APPDATA", "[TEST_CONFIG_HOME]");
     settings.add_redaction(".env.PATH", "[PATH]");
+    // Mock commands directory (temp path for mock gh/glab binaries)
+    settings.add_redaction(".env.MOCK_CONFIG_DIR", "[MOCK_CONFIG_DIR]");
 }
 
 /// Create configured insta Settings for snapshot tests
@@ -2326,6 +2506,58 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     add_standard_env_redactions(&mut settings);
 
     settings
+}
+
+// =============================================================================
+// PTY Test Filters
+// =============================================================================
+//
+// PTY-based tests (shell wrappers, approval prompts, TUI select) capture output
+// from pseudo-terminals. This output has platform-specific artifacts that need
+// normalization for stable snapshots.
+//
+// These filters consolidate patterns that were previously scattered across
+// individual `normalize_*` functions in each test file. Using insta filters
+// instead of custom normalization functions:
+// - Reduces code duplication
+// - Ensures consistent normalization across all PTY tests
+// - Makes it easier to add new normalizations in one place
+//
+// Usage:
+//   let mut settings = insta::Settings::clone_current();
+//   add_pty_filters(&mut settings);
+//   settings.bind(|| {
+//       assert_snapshot!(output);
+//   });
+
+/// Add filters for PTY-specific artifacts that vary between platforms.
+///
+/// This handles:
+/// - macOS PTY control sequences (^D followed by backspaces)
+/// - Leading ANSI reset codes that vary between macOS and Linux
+///
+/// Note: CRLF normalization is done eagerly in PTY exec functions, not here.
+pub fn add_pty_filters(settings: &mut insta::Settings) {
+    // macOS PTYs emit ^D (literal caret-D) followed by backspaces (0x08)
+    // when EOF is signaled. Linux PTYs don't. Strip these for consistency.
+    settings.add_filter(r"\^D\x08+", "");
+
+    // Remove redundant leading reset codes per line.
+    // macOS and Linux PTYs generate ANSI codes slightly differently.
+    // This handles lines that start with ESC[0m (reset).
+    settings.add_filter(r"(?m)^\x1b\[0m", "");
+}
+
+/// Add filters for binary paths (target/debug/wt) in PTY output.
+///
+/// Test binaries are run from the cargo target directory, which varies.
+pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
+    // Match paths ending in target/debug/wt or target/release/wt
+    // Also handles llvm-cov-target used by cargo-llvm-cov
+    settings.add_filter(
+        r"[^\s]+/target/(?:llvm-cov-target/)?(?:debug|release)/wt",
+        "[BIN]",
+    );
 }
 
 /// Create a configured Command for snapshot testing
@@ -2686,7 +2918,7 @@ mod tests {
     fn test_unix_to_iso8601() {
         // 2025-01-01T00:00:00Z
         assert_eq!(unix_to_iso8601(1735689600), "2025-01-01T00:00:00Z");
-        // 2025-01-02T00:00:00Z (SOURCE_DATE_EPOCH)
+        // 2025-01-02T00:00:00Z (TEST_EPOCH)
         assert_eq!(unix_to_iso8601(1735776000), "2025-01-02T00:00:00Z");
         // 2024-12-31T00:00:00Z (one day before 2025-01-01)
         assert_eq!(unix_to_iso8601(1735603200), "2024-12-31T00:00:00Z");

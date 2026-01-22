@@ -14,24 +14,16 @@ wsc feature -- 'Fix GH #322'          # Runs `claude 'Fix GH #322'`
 
 ## Eliminate cold starts
 
-Use [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) in a `post-create` hook to copy gitignored files (caches, dependencies, `.env`) between worktrees:
+Use [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) to copy gitignored files (caches, dependencies, `.env`) between worktrees:
 
 ```toml
-[post-create]
+[post-start]
 copy = "wt step copy-ignored"
-install = "npm ci"
 ```
 
-All gitignored files are copied by default. To copy only specific patterns, create a `.worktreeinclude` file using gitignore syntax:
+Use `post-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
-```gitignore
-# .worktreeinclude — optional, limits what gets copied
-.env
-node_modules/
-target/
-```
-
-See [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) for details and language-specific notes.
+All gitignored files are copied by default. To limit what gets copied, create `.worktreeinclude` with patterns — files must be both gitignored and listed. See [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) for details.
 
 ## Dev server per worktree
 
@@ -60,13 +52,6 @@ The URL column in `wt list` shows each worktree's dev server:
 <span class=d>○</span> <span class=d>Showing 3 worktrees, 2 with changes, 2 ahead, 2 columns hidden</span>
 
 Ports are deterministic — `fix-auth` always gets port 16460, regardless of which machine or when. The URL dims if the server isn't running.
-
-For subdomain-based routing (useful for cookies and CORS), use `lvh.me` which resolves to 127.0.0.1:
-
-```toml
-[post-start]
-server = "npm run dev -- --host {{ branch | sanitize }}.lvh.me --port {{ branch | hash_port }}"
-```
 
 ## Database per worktree
 
@@ -218,6 +203,79 @@ The [worktrunk skill](https://worktrunk.dev/claude-code/) includes guidance for 
 When I ask you to spawn parallel worktrees, use the agent handoff pattern
 from the worktrunk skill.
 ```
+
+## Tmux session per worktree
+
+Each worktree gets its own tmux session with a multi-pane layout. Sessions are named after the branch for easy identification.
+
+```toml
+# .config/wt.toml
+[post-create]
+tmux = """
+S="{{ branch | sanitize }}"
+W="{{ worktree_path }}"
+tmux new-session -d -s "$S" -c "$W" -n dev
+
+# Create 4-pane layout: shell | backend / claude | frontend
+tmux split-window -h -t "$S:dev" -c "$W"
+tmux split-window -v -t "$S:dev.0" -c "$W"
+tmux split-window -v -t "$S:dev.2" -c "$W"
+
+# Start services in each pane
+tmux send-keys -t "$S:dev.1" 'npm run backend' Enter
+tmux send-keys -t "$S:dev.2" 'claude' Enter
+tmux send-keys -t "$S:dev.3" 'npm run frontend' Enter
+
+tmux select-pane -t "$S:dev.0"
+echo "✓ Session '$S' — attach with: tmux attach -t $S"
+"""
+
+[pre-remove]
+tmux = "tmux kill-session -t '{{ branch | sanitize }}' 2>/dev/null || true"
+```
+
+`pre-remove` stops all services when the worktree is removed.
+
+To create a worktree and immediately attach:
+
+```bash
+wt switch --create feature -x 'tmux attach -t {{ branch | sanitize }}'
+```
+
+## Subdomain routing with Caddy
+<!-- Hand-tested 2025-01-15 -->
+
+Clean URLs like `http://feature-auth.myproject.lvh.me` without port numbers. Useful for cookies, CORS, and matching production URL structure.
+
+**Prerequisites:** [Caddy](https://caddyserver.com/docs/install) (`brew install caddy`)
+
+```toml
+# .config/wt.toml
+[post-start]
+server = "npm run dev -- --port {{ branch | hash_port }}"
+proxy = """
+  curl -sf --max-time 0.5 http://localhost:2019/config/ || caddy start
+  curl -sf http://localhost:2019/config/apps/http/servers/wt || \
+    curl -sfX PUT http://localhost:2019/config/apps/http/servers/wt -H 'Content-Type: application/json' \
+      -d '{"listen":[":8080"],"automatic_https":{"disable":true},"routes":[]}'
+  curl -sf -X DELETE http://localhost:2019/id/wt:{{ repo }}:{{ branch | sanitize }} || true
+  curl -sfX PUT http://localhost:2019/config/apps/http/servers/wt/routes/0 -H 'Content-Type: application/json' \
+    -d '{"@id":"wt:{{ repo }}:{{ branch | sanitize }}","match":[{"host":["{{ branch | sanitize }}.{{ repo }}.lvh.me"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"127.0.0.1:{{ branch | hash_port }}"}]}]}'
+"""
+
+[pre-remove]
+proxy = "curl -sf -X DELETE http://localhost:2019/id/wt:{{ repo }}:{{ branch | sanitize }} || true"
+
+[list]
+url = "http://{{ branch | sanitize }}.{{ repo }}.lvh.me:8080"
+```
+
+**How it works:**
+
+1. `wt switch --create feature-auth` runs the `post-start` hook, starting the dev server on a deterministic port (`{{ branch | hash_port }}` → 16460)
+2. The hook starts Caddy if needed and registers a route using the same port: `feature-auth.myproject` → `localhost:16460`
+3. `lvh.me` is a public domain with wildcard DNS — `*.lvh.me` resolves to `127.0.0.1`
+4. Visiting `http://feature-auth.myproject.lvh.me:8080`: Caddy matches the subdomain and proxies to the dev server
 
 ## Bare repository layout
 

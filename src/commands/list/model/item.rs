@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use worktrunk::git::{IntegrationReason, IntegrationSignals, LineDiff, check_integration};
 
-use super::state::{Divergence, GitOperationState, MainState, OperationState, WorktreeState};
+use super::state::{ActiveGitOperation, Divergence, MainState, OperationState, WorktreeState};
 use super::stats::{AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus};
 use super::status_symbols::{StatusSymbols, WorkingTreeStatus};
 use crate::commands::list::ci_status::PrStatus;
@@ -79,8 +79,8 @@ pub struct WorktreeData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_tree_diff: Option<LineDiff>,
     /// Git operation in progress (rebase/merge)
-    #[serde(skip_serializing_if = "GitOperationState::is_none")]
-    pub git_operation: GitOperationState,
+    #[serde(skip_serializing_if = "ActiveGitOperation::is_none")]
+    pub git_operation: ActiveGitOperation,
     pub is_main: bool,
     /// Whether this is the current worktree (matches repo discovery path: PWD or `-C`)
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -480,9 +480,9 @@ impl ListItem {
                 // Operation state - priority: conflicts > rebase > merge
                 let operation_state = if has_conflicts {
                     OperationState::Conflicts
-                } else if data.git_operation == GitOperationState::Rebase {
+                } else if data.git_operation == ActiveGitOperation::Rebase {
                     OperationState::Rebase
-                } else if data.git_operation == GitOperationState::Merge {
+                } else if data.git_operation == ActiveGitOperation::Merge {
                     OperationState::Merge
                 } else {
                     OperationState::None

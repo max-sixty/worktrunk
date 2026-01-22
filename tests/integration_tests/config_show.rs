@@ -700,15 +700,14 @@ fn test_deprecated_template_variables_show_warning(repo: TestRepo, temp_home: Te
     fs::write(
         config_path,
         // Use all deprecated variables: repo_root, worktree, main_worktree
+        // Note: hooks are at top-level in user config, not in a [hooks] section
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[hooks]
 post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
 "#,
     )
     .unwrap();
 
-    // Use `wt list` which loads config through WorktrunkConfig::load() and triggers deprecation check
+    // Use `wt list` which loads config through UserConfig::load() and triggers deprecation check
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
@@ -814,12 +813,13 @@ fn test_deprecated_template_variables_hint_deduplication(repo: TestRepo, temp_ho
 #[rstest]
 fn test_deprecated_config_deleted_shows_regenerate_hint(repo: TestRepo, temp_home: TempDir) {
     // Write project config with deprecated variables
+    // Use deprecated variable main_worktree (should be repo) in a valid project config field
     let project_config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&project_config_dir).unwrap();
     let project_config_path = project_config_dir.join("wt.toml");
     fs::write(
         &project_config_path,
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
 "#,
     )
     .unwrap();

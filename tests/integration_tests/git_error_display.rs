@@ -38,12 +38,23 @@ fn display_worktree_missing() {
 }
 
 #[test]
-fn display_no_worktree_found() {
-    let err = GitError::NoWorktreeFound {
+fn branch_not_found() {
+    let err = GitError::BranchNotFound {
         branch: "nonexistent".into(),
+        show_create_hint: true,
     };
 
-    assert_snapshot!("no_worktree_found", err.to_string());
+    assert_snapshot!("branch_not_found", err.to_string());
+}
+
+#[test]
+fn branch_not_found_no_create_hint() {
+    let err = GitError::BranchNotFound {
+        branch: "nonexistent".into(),
+        show_create_hint: false,
+    };
+
+    assert_snapshot!("branch_not_found_no_create_hint", err.to_string());
 }
 
 #[test]
@@ -100,6 +111,7 @@ fn display_uncommitted_changes() {
     let err = GitError::UncommittedChanges {
         action: Some("remove worktree".into()),
         branch: None,
+        force_hint: false,
     };
 
     assert_snapshot!("uncommitted_changes", err.to_string());
@@ -110,9 +122,21 @@ fn display_uncommitted_changes_with_branch() {
     let err = GitError::UncommittedChanges {
         action: Some("remove worktree".into()),
         branch: Some("feature-branch".into()),
+        force_hint: false,
     };
 
     assert_snapshot!("uncommitted_changes_with_branch", err.to_string());
+}
+
+#[test]
+fn display_uncommitted_changes_with_force_hint() {
+    let err = GitError::UncommittedChanges {
+        action: Some("remove worktree".into()),
+        branch: Some("feature-branch".into()),
+        force_hint: true,
+    };
+
+    assert_snapshot!("uncommitted_changes_with_force_hint", err.to_string());
 }
 
 #[test]
@@ -122,15 +146,6 @@ fn display_branch_already_exists() {
     };
 
     assert_snapshot!("branch_already_exists", err.to_string());
-}
-
-#[test]
-fn display_invalid_reference() {
-    let err = GitError::InvalidReference {
-        reference: "nonexistent-branch".into(),
-    };
-
-    assert_snapshot!("invalid_reference", err.to_string());
 }
 
 // ============================================================================
@@ -306,6 +321,75 @@ fn display_hook_command_failed_with_skip_hint() {
         "hook_command_failed_with_skip_hint",
         err_with_hint.to_string()
     );
+}
+
+// ============================================================================
+// Multiline error formatting (tests the pattern used in main.rs catchall)
+// ============================================================================
+
+/// Test that multiline errors without context are formatted with header + gutter.
+/// This is the pattern used in main.rs for untyped anyhow errors.
+#[test]
+fn multiline_error_formatting() {
+    use worktrunk::styling::{error_message, format_with_gutter};
+
+    // Simulate what main.rs does for multiline errors without context:
+    // 1. Show "Command failed" header
+    // 2. Show the error content in a gutter
+
+    let multiline_error =
+        "fatal: Unable to read current working directory\nerror: Could not determine cwd";
+
+    let header = error_message("Command failed").to_string();
+    let gutter = format_with_gutter(multiline_error, None);
+
+    // Verify header has error symbol
+    assert!(
+        header.contains("Command failed"),
+        "Header should contain 'Command failed'"
+    );
+
+    // Verify gutter contains both lines
+    assert!(
+        gutter.contains("fatal: Unable to read"),
+        "Gutter should contain first line"
+    );
+    assert!(
+        gutter.contains("Could not determine cwd"),
+        "Gutter should contain second line"
+    );
+
+    // Snapshot the combined output
+    assert_snapshot!(
+        "multiline_error_formatting",
+        format!("{}\n{}", header, gutter)
+    );
+}
+
+/// Test that CRLF and CR line endings are normalized before formatting.
+/// main.rs normalizes: msg.replace("\r\n", "\n").replace('\r', "\n")
+#[test]
+fn multiline_error_crlf_normalization() {
+    use worktrunk::styling::format_with_gutter;
+
+    // Test CRLF (Windows line endings)
+    let crlf_error = "line1\r\nline2\r\nline3";
+    let normalized = crlf_error.replace("\r\n", "\n").replace('\r', "\n");
+    let gutter = format_with_gutter(&normalized, None);
+
+    // All three lines should appear
+    assert!(gutter.contains("line1"), "Should contain line1");
+    assert!(gutter.contains("line2"), "Should contain line2");
+    assert!(gutter.contains("line3"), "Should contain line3");
+
+    // Test CR only (old Mac line endings)
+    let cr_error = "line1\rline2\rline3";
+    let normalized = cr_error.replace("\r\n", "\n").replace('\r', "\n");
+    let gutter = format_with_gutter(&normalized, None);
+
+    assert!(gutter.contains("line1"), "CR: Should contain line1");
+    assert!(gutter.contains("line2"), "CR: Should contain line2");
+    assert!(gutter.contains("line3"), "CR: Should contain line3");
 }
 
 // ============================================================================

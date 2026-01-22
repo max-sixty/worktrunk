@@ -366,9 +366,13 @@ main {
 
 // Demo GIFs - shrink to min-width, then horizontal scroll
 .content figure.demo {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
     margin-top: 0.25rem;
+
+    picture {
+        display: block;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
 
     img {
         display: block;

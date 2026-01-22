@@ -5,6 +5,7 @@ use crate::common::{
     repo_with_multi_commit_feature, setup_snapshot_settings,
 };
 use insta_cmd::assert_cmd_snapshot;
+use path_slash::PathExt as _;
 use rstest::rstest;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1074,7 +1075,7 @@ mod tests {
     // On Windows, use .exe extension for the config-driven mock binary
     let llm_name = if cfg!(windows) { "llm.exe" } else { "llm" };
     let llm_path = bin_dir.join(llm_name);
-    let llm_path_str = llm_path.to_string_lossy().replace('\\', "/");
+    let llm_path_str = llm_path.to_slash_lossy();
     let worktrunk_config = format!(
         r#"
 [commit-generation]
@@ -1085,12 +1086,16 @@ command = "{llm_path_str}"
 
     // Merge with --yes to skip approval prompts for commands
     let (path_var, path_with_bin) = make_path_with_mock_bin(&bin_dir);
+    let bin_dir_str = bin_dir.to_string_lossy();
     snapshot_merge_with_env(
         "readme_example_complex",
         &repo,
         &["main", "--yes"],
         Some(&feature_wt),
-        &[(&path_var, &path_with_bin)],
+        &[
+            (&path_var, &path_with_bin),
+            ("MOCK_CONFIG_DIR", &bin_dir_str),
+        ],
     );
 }
 

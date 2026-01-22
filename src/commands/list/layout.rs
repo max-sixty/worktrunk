@@ -195,7 +195,6 @@ const COMMIT_HASH_WIDTH: usize = 8;
 /// columns to be allocated at low priority (base_priority + EMPTY_PENALTY) for
 /// visual consistency on wide terminals.
 fn fit_header(header: &str, data_width: usize) -> usize {
-    use unicode_width::UnicodeWidthStr;
     data_width.max(header.width())
 }
 
@@ -892,8 +891,6 @@ pub fn calculate_layout_with_width(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::list::columns::ColumnKind;
-    use std::path::PathBuf;
     use worktrunk::git::LineDiff;
 
     #[test]
@@ -1186,7 +1183,7 @@ mod tests {
     #[test]
     fn test_visible_columns_follow_gap_rule() {
         use crate::commands::list::model::{
-            AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields, GitOperationState,
+            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields,
             ItemKind, ListItem, StatusSymbols, UpstreamStatus, WorktreeData,
         };
 
@@ -1226,7 +1223,7 @@ mod tests {
                 locked: None,
                 prunable: None,
                 working_tree_diff: Some(LineDiff::from((100, 50))),
-                git_operation: GitOperationState::None,
+                git_operation: ActiveGitOperation::None,
                 is_main: false,
                 is_current: false,
                 is_previous: false,
@@ -1288,7 +1285,7 @@ mod tests {
     #[test]
     fn test_column_positions_with_empty_columns() {
         use crate::commands::list::model::{
-            AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields, GitOperationState,
+            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields,
             ItemKind, ListItem, StatusSymbols, UpstreamStatus, WorktreeData,
         };
 
@@ -1324,7 +1321,7 @@ mod tests {
                 locked: None,
                 prunable: None,
                 working_tree_diff: Some(LineDiff::default()),
-                git_operation: GitOperationState::None,
+                git_operation: ActiveGitOperation::None,
                 is_main: true, // Primary worktree: no ahead/behind shown
                 is_current: false,
                 is_previous: false,

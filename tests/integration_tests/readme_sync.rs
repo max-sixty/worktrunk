@@ -37,11 +37,7 @@ static MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-/// Regex to strip ANSI escape codes (actual escape sequences)
-static ANSI_ESCAPE_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\x1b\[[0-9;]*m").unwrap());
-
-/// Regex to strip literal bracket notation (as stored in snapshots)
+/// Regex for literal bracket notation (as stored in snapshots) - used by literal_to_escape
 static ANSI_LITERAL_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[[0-9;]*m").unwrap());
 
 /// Regex to find docs snapshot markers (HTML output)
@@ -121,8 +117,6 @@ static ZOLA_FIGURE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Output format for section updates
 enum OutputFormat {
-    /// README: plain text in ```console``` code block
-    Readme,
     /// Docs: HTML with ANSI colors in {% terminal() %} shortcode
     DocsHtml,
     /// Unwrapped: raw markdown content (help commands, doc sections)
@@ -155,31 +149,18 @@ impl MarkerType {
     /// Get the OutputFormat for this marker type
     fn output_format(&self) -> OutputFormat {
         match self {
-            Self::Snapshot => OutputFormat::Readme,
+            Self::Snapshot => unreachable!("README has no snapshot markers"),
             Self::Help | Self::Section => OutputFormat::Unwrapped,
         }
     }
 
-    /// Strip wrapper from content based on marker type
-    /// Snapshots are wrapped in ```console```, help/sections are unwrapped
+    /// Extract inner content (help/sections are unwrapped)
     fn extract_inner(&self, content: &str) -> String {
         match self {
-            Self::Snapshot => strip_code_block(content),
+            Self::Snapshot => unreachable!("README has no snapshot markers"),
             Self::Help | Self::Section => content.to_string(),
         }
     }
-}
-
-/// Regex to strip code block wrapper from content
-static CODE_BLOCK_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)^```\w*\n(.*)\n```$").unwrap());
-
-/// Strip code block wrapper if present, returning inner content
-fn strip_code_block(content: &str) -> String {
-    CODE_BLOCK_REGEX
-        .captures(content.trim())
-        .map(|cap| cap.get(1).unwrap().as_str().to_string())
-        .unwrap_or_else(|| content.to_string())
 }
 
 /// Parse a snapshot file, returning the user-facing output content
@@ -249,12 +230,6 @@ fn replace_placeholders(content: &str) -> String {
 /// Format replacement content based on output format
 fn format_replacement(id: &str, content: &str, format: &OutputFormat) -> String {
     match format {
-        OutputFormat::Readme => {
-            format!(
-                "<!-- ⚠️ AUTO-GENERATED from {} — edit source to update -->\n\n```console\n{}\n```\n\n<!-- END AUTO-GENERATED -->",
-                id, content
-            )
-        }
         OutputFormat::DocsHtml => {
             format!(
                 "<!-- ⚠️ AUTO-GENERATED-HTML from {} — edit source to update -->\n\n{{% terminal() %}}\n{}\n{{% end %}}\n\n<!-- END AUTO-GENERATED -->",
@@ -404,12 +379,6 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
     Ok(result)
 }
 
-/// Strip ANSI escape codes from text
-fn strip_ansi(text: &str) -> String {
-    let text = ANSI_ESCAPE_REGEX.replace_all(text, "");
-    ANSI_LITERAL_REGEX.replace_all(&text, "").to_string()
-}
-
 /// Convert literal bracket notation [32m to actual escape sequences \x1b[32m
 fn literal_to_escape(text: &str) -> String {
     ANSI_LITERAL_REGEX
@@ -418,23 +387,6 @@ fn literal_to_escape(text: &str) -> String {
             format!("\x1b{code}")
         })
         .to_string()
-}
-
-/// Parse content from an insta snapshot file, optionally including command line.
-/// Command line comes from the README (preserved during update), not the snapshot.
-fn parse_snapshot_with_command(
-    path: &Path,
-    readme_command: Option<&str>,
-) -> Result<String, String> {
-    let raw = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-
-    let content = strip_ansi(&parse_snapshot_raw(&raw));
-
-    Ok(match readme_command {
-        Some(cmd) => format!("{}\n{}", cmd, content),
-        None => content,
-    })
 }
 
 /// Trim trailing whitespace from each line and overall.
@@ -566,6 +518,7 @@ fn get_help_output(id: &str, project_root: &Path) -> Result<String, String> {
 
     // Use the already-built binary from cargo test (wt_command provides isolation)
     let output = wt_command()
+        .env("NO_COLOR", "1") // Plain text for README
         .args(&args[1..]) // Skip "wt" prefix
         .current_dir(project_root)
         .output()
@@ -580,9 +533,6 @@ fn get_help_output(id: &str, project_root: &Path) -> Result<String, String> {
     } else {
         stderr.to_string()
     };
-
-    // Strip ANSI codes
-    let help_output = strip_ansi(&help_output);
 
     // Trim trailing whitespace from each line and join
     let help_output = help_output
@@ -788,21 +738,14 @@ fn get_docs_section_for_readme(id: &str, project_root: &Path) -> Result<String, 
 
 /// Get content for a README marker based on its type
 ///
-/// Handles all marker types: snapshots (.snap), help (`cmd`), sections (#anchor)
+/// Handles help (`cmd`) and section (#anchor) markers.
 fn get_readme_content(
     id: &str,
-    current_content: &str,
+    _current_content: &str,
     project_root: &Path,
 ) -> Result<String, String> {
     match MarkerType::from_id(id) {
-        MarkerType::Snapshot => {
-            // Extract existing command line from README if present
-            let inner = strip_code_block(current_content);
-            let existing_command = inner.lines().next().filter(|line| line.starts_with("$ "));
-            let full_path = project_root.join(id);
-            parse_snapshot_with_command(&full_path, existing_command)
-                .map(|content| trim_lines(&replace_placeholders(&content)))
-        }
+        MarkerType::Snapshot => unreachable!("README has no snapshot markers"),
         MarkerType::Help => get_help_output(id, project_root),
         MarkerType::Section => {
             get_docs_section_for_readme(id, project_root).map(|c| trim_lines(&c))
@@ -813,12 +756,8 @@ fn get_readme_content(
 /// Sync all README markers in a single pass
 ///
 /// Processes all AUTO-GENERATED markers in one regex traversal:
-/// - Snapshots (.snap) - terminal output in ```console``` blocks
 /// - Help commands (`cmd`) - rendered markdown from --help-md
 /// - Doc sections (#anchor) - extracted content from docs
-///
-/// Replaces the previous 3-pass approach with a single pass, detecting
-/// marker type from ID characteristics (extension, backticks, # anchor).
 fn sync_readme_markers(
     readme_content: &str,
     project_root: &Path,
@@ -887,8 +826,9 @@ fn sync_readme_markers(
 /// # Transform Rules
 ///
 /// 1. Code fence markers (```` ``` ````, ```` ```toml ````) → stripped entirely
-/// 2. All other lines → prefixed with `# `
-/// 3. Trailing empty comment lines → trimmed
+/// 2. Markdown links → converted to plain URLs (config files aren't rendered as markdown)
+/// 3. All other lines → prefixed with `# `
+/// 4. Trailing empty comment lines → trimmed
 fn transform_config_source_to_toml(source: &str) -> String {
     let mut result = Vec::new();
     let mut in_code_block = false;
@@ -901,6 +841,11 @@ fn transform_config_source_to_toml(source: &str) -> String {
             in_code_block = !in_code_block;
             continue;
         }
+
+        // Convert markdown links to plain text for config file readability
+        // [Link text](@/page.md) → Link text (https://worktrunk.dev/page/)
+        // [Link text](https://...) → Link text (https://...)
+        let line = convert_markdown_links_for_config(line);
 
         // Comment all lines
         if line.is_empty() {
@@ -916,6 +861,36 @@ fn transform_config_source_to_toml(source: &str) -> String {
     }
 
     result.join("\n")
+}
+
+/// Convert markdown links to plain text with URL in parentheses.
+///
+/// Config files aren't rendered as markdown, so links need to be readable as plain text.
+/// - `[Link text](@/page.md)` → `Link text (https://worktrunk.dev/page/)`
+/// - `[Link text](https://example.com)` → `Link text (https://example.com)`
+fn convert_markdown_links_for_config(line: &str) -> String {
+    use regex::Regex;
+    use std::sync::LazyLock;
+
+    static MARKDOWN_LINK: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
+
+    MARKDOWN_LINK
+        .replace_all(line, |caps: &regex::Captures| {
+            let text = &caps[1];
+            let url = &caps[2];
+
+            // Convert Zola @/ links to full URLs
+            let url = if let Some(path) = url.strip_prefix("@/") {
+                let page = path.trim_end_matches(".md");
+                format!("https://worktrunk.dev/{page}/")
+            } else {
+                url.to_string()
+            };
+
+            format!("{text} ({url})")
+        })
+        .to_string()
 }
 
 /// Extract user config documentation from src/cli/mod.rs

@@ -9,7 +9,7 @@
 [![Codecov](https://img.shields.io/codecov/c/github/max-sixty/worktrunk?style=for-the-badge&logo=codecov)](https://codecov.io/gh/max-sixty/worktrunk)
 [![Stars](https://img.shields.io/github/stars/max-sixty/worktrunk?style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/stargazers)
 
-> **January 2026**: Worktrunk was [released](https://x.com/max_sixty/status/2006077845391724739?s=20) over the holidays, and lots of folks seem to be using it. It's built with love (there's no slop!). If social proof is helpful: I also created [PRQL](https://github.com/PRQL/prql) (10k stars) and am a maintainer of [Xarray](https://github.com/pydata/xarray) (4k stars), [Insta](https://github.com/mitsuhiko/insta), & [Numbagg](https://github.com/numbagg/numbagg). Please let me know any frictions at all; I'm intensely focused on Worktrunk's excellence, and the biggest gap is how others experience using it.
+> **January 2026**: Worktrunk was [released](https://x.com/max_sixty/status/2006077845391724739?s=20) over the holidays, and lots of folks seem to be using it. It's built with love (there's no slop!). If social proof is helpful: I also created [PRQL](https://github.com/PRQL/prql) (10k stars) and am a maintainer of [Xarray](https://github.com/pydata/xarray) (4k stars), [Insta](https://github.com/mitsuhiko/insta), & [Numbagg](https://github.com/numbagg/numbagg). Please let me know any frictions at all; I'm intensely focused on making Worktrunk excellent, and the biggest gap is understanding how others experience using it.
 
 Worktrunk is a CLI for git worktree management, designed for running AI agents in parallel.
 
@@ -100,7 +100,7 @@ A demo with some advanced features:
 **Homebrew (macOS & Linux):**
 
 ```bash
-brew install max-sixty/worktrunk/wt && wt config shell install
+brew install worktrunk && wt config shell install
 ```
 
 Shell integration allows commands to change directories.
@@ -109,6 +109,26 @@ Shell integration allows commands to change directories.
 
 ```bash
 cargo install worktrunk && wt config shell install
+```
+
+<details>
+<summary><strong>Windows</strong></summary>
+
+On Windows, `wt` defaults to Windows Terminal's command. Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
+
+```bash
+winget install max-sixty.worktrunk
+git-wt config shell install
+```
+
+Alternatively, disable Windows Terminal's alias (Settings → Privacy & security → For developers → App Execution Aliases → disable "Windows Terminal") to use `wt` directly.
+
+</details>
+
+**Arch Linux:**
+
+```bash
+paru worktrunk-bin && wt config shell install
 ```
 
 ## Next steps

@@ -617,11 +617,12 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     assert!(subcommands.contains(&"pre-merge"), "Missing pre-merge");
     assert!(subcommands.contains(&"post-merge"), "Missing post-merge");
     assert!(subcommands.contains(&"pre-remove"), "Missing pre-remove");
+    assert!(subcommands.contains(&"post-remove"), "Missing post-remove");
     assert!(subcommands.contains(&"approvals"), "Missing approvals");
     assert_eq!(
         subcommands.len(),
-        9,
-        "Should have exactly 9 hook subcommands"
+        10,
+        "Should have exactly 10 hook subcommands"
     );
 
     // Test 2: Partial input "po" - filters to post-* subcommands
@@ -633,6 +634,7 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     assert!(subcommands.contains(&"post-start"));
     assert!(subcommands.contains(&"post-switch"));
     assert!(subcommands.contains(&"post-merge"));
+    assert!(subcommands.contains(&"post-remove"));
     assert!(!subcommands.contains(&"pre-commit"));
     assert!(!subcommands.contains(&"pre-merge"));
 }
@@ -1218,4 +1220,101 @@ fn test_complete_excludes_deprecated_args(repo: TestRepo) {
             );
         }
     }
+}
+
+/// Test static shell completions command for package managers.
+///
+/// The `wt config shell completions <shell>` command outputs static completion
+/// scripts suitable for package manager integration (e.g., Homebrew's
+/// `generate_completions_from_executable`).
+#[rstest]
+fn test_static_completions_for_all_shells() {
+    // Test each supported shell produces valid output
+    for shell in ["bash", "fish", "zsh", "powershell"] {
+        let output = wt_command()
+            .args(["config", "shell", "completions", shell])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "{shell}: completions command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.is_empty(),
+            "{shell}: completions output should not be empty"
+        );
+
+        // Each shell should have some indication it's a completion script
+        match shell {
+            "bash" => {
+                assert!(
+                    stdout.contains("complete") || stdout.contains("_wt"),
+                    "{shell}: should contain bash completion markers"
+                );
+            }
+            "fish" => {
+                assert!(
+                    stdout.contains("complete") && stdout.contains("wt"),
+                    "{shell}: should contain fish completion markers"
+                );
+            }
+            "zsh" => {
+                assert!(
+                    stdout.contains("#compdef") || stdout.contains("_wt"),
+                    "{shell}: should contain zsh completion markers"
+                );
+            }
+            "powershell" => {
+                assert!(
+                    stdout.contains("Register-ArgumentCompleter")
+                        || stdout.contains("$scriptBlock"),
+                    "{shell}: should contain PowerShell completion markers"
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+#[rstest]
+fn test_complete_switch_shows_all_remotes_for_ambiguous_branch(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Set up two remotes: origin and upstream
+    repo.setup_remote("main");
+    repo.setup_custom_remote("upstream", "main");
+
+    // Create a branch locally and push to both remotes
+    repo.run_git(&["checkout", "-b", "shared-feature"]);
+    repo.commit_with_message("Add shared feature");
+    repo.run_git(&["push", "origin", "shared-feature"]);
+    repo.run_git(&["push", "upstream", "shared-feature"]);
+
+    // Delete local branch so it only exists on remotes
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["branch", "-D", "shared-feature"]);
+
+    // Test completion with fish shell to see help text (bash doesn't show descriptions)
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", ""], "fish")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // The branch should appear with both remotes listed
+    // Format: "shared-feature\t⇣ <time> origin, upstream" (sorted alphabetically)
+    assert!(
+        stdout.contains("shared-feature"),
+        "Should show shared-feature branch: {stdout}"
+    );
+    // Check that both remotes are shown (order is alphabetical: origin, upstream)
+    assert!(
+        stdout.contains("origin") && stdout.contains("upstream"),
+        "Should show both remotes for ambiguous branch: {stdout}"
+    );
 }

@@ -453,12 +453,11 @@ pub fn to_json_items(items: &[ListItem]) -> Vec<JsonItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::list::ci_status::{CiSource, CiStatus};
+    use crate::commands::list::ci_status::CiStatus;
     use crate::commands::list::model::{
-        Divergence, GitOperationState, MainState, OperationState, StatusSymbols, WorkingTreeStatus,
-        WorktreeData, WorktreeState,
+        ActiveGitOperation, Divergence, MainState, OperationState, StatusSymbols,
+        WorkingTreeStatus, WorktreeData, WorktreeState,
     };
-    use std::path::PathBuf;
 
     // ============================================================================
     // JsonDiff Tests
@@ -632,7 +631,7 @@ mod tests {
             locked: None,
             prunable: None,
             working_tree_diff: None,
-            git_operation: GitOperationState::None,
+            git_operation: ActiveGitOperation::None,
             branch_worktree_mismatch: false,
             working_diff_display: None,
         }

@@ -3,9 +3,7 @@ use clap::Subcommand;
 /// Run individual operations
 #[derive(Subcommand)]
 pub enum StepCommand {
-    /// Commit changes with LLM commit message
-    ///
-    /// Stages working tree changes and commits with an LLM-generated message.
+    /// Stage and commit with LLM-generated message
     #[command(
         after_long_help = r#"Stages all changes (including untracked files) and commits with an [LLM-generated message](@/llm-commits.md).
 
@@ -67,7 +65,7 @@ wt step commit --show-prompt | llm -m gpt-5-nano
 
     /// Squash commits since branching
     ///
-    /// Stages working tree changes, squashes all commits since diverging from target into one, generates message with LLM.
+    /// Stages changes and generates message with LLM.
     #[command(
         after_long_help = r#"Stages all changes (including untracked files), then squashes all commits since diverging from the target branch into a single commit with an [LLM-generated message](@/llm-commits.md).
 
@@ -130,10 +128,19 @@ wt step squash --show-prompt | less
     },
 
     /// Fast-forward target to current branch
-    ///
-    /// Updates the local target branch (e.g., `main`) to include current commits.
-    /// Similar to `git push . HEAD:<target>`, but uses
-    /// `receive.denyCurrentBranch=updateInstead` internally.
+    #[command(
+        after_long_help = r#"Updates the local target branch (e.g., `main`) to include current commits.
+
+## Examples
+
+```console
+wt step push             # Fast-forward main to current branch
+wt step push develop     # Fast-forward develop instead
+```
+
+Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updateInstead` internally.
+"#
+    )]
     Push {
         /// Target branch
         ///
@@ -143,6 +150,17 @@ wt step squash --show-prompt | less
     },
 
     /// Rebase onto target
+    #[command(
+        after_long_help = r#"Rebases the current branch onto the target branch. Conflicts abort immediately; use `git rebase --abort` to recover.
+
+## Examples
+
+```console
+wt step rebase            # Rebase onto default branch
+wt step rebase develop    # Rebase onto develop
+```
+"#
+    )]
     Rebase {
         /// Target branch
         ///
@@ -153,10 +171,7 @@ wt step squash --show-prompt | less
 
     /// Copy gitignored files to another worktree
     ///
-    /// Copies gitignored files to another worktree. By default copies all
-    /// gitignored files; use `.worktreeinclude` to limit what gets copied.
-    /// Useful in post-create hooks to sync local config files (`.env`, IDE
-    /// settings) to new worktrees. Skips symlinks and existing files.
+    /// Eliminates cold starts by copying build caches and dependencies.
     #[command(
         after_long_help = r#"Git worktrees share the repository but not untracked files. This command copies gitignored files to another worktree, eliminating cold starts.
 
@@ -166,23 +181,22 @@ Add to the project config:
 
 ```toml
 # .config/wt.toml
-[post-create]
+[post-start]
 copy = "wt step copy-ignored"
-```
-
-All gitignored files are copied by default, as if `.worktreeinclude` contained `**`. To copy only specific patterns, create a `.worktreeinclude` file using gitignore syntax:
-
-```gitignore
-# .worktreeinclude — optional, limits what gets copied
-.env
-node_modules/
-target/
-.cache/
 ```
 
 ## What gets copied
 
-Only gitignored files are copied — tracked files are never touched. If `.worktreeinclude` exists, files must match **both** `.worktreeinclude` **and** be gitignored.
+All gitignored files are copied by default. Tracked files are never touched.
+
+To limit what gets copied, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
+
+```gitignore
+# .worktreeinclude
+.env
+node_modules/
+target/
+```
 
 ## Common patterns
 
@@ -211,7 +225,7 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 
 Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
 
-If the files are needed before any commands run in the worktree, put `wt step copy-ignored` in the `post-create` hook. Otherwise use the `post-start` hook so the copy runs in the background.
+Use the `post-start` hook so the copy runs in the background. Use `post-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
 ## Language-specific notes
 
@@ -260,6 +274,8 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
     },
 
     /// \[experimental\] Run command in each worktree
+    ///
+    /// Executes sequentially with real-time output; continues on failure.
     #[command(
         after_long_help = r#"Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.
 

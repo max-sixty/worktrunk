@@ -1,6 +1,6 @@
 # wt list
 
-List worktrees and their status
+List worktrees and their status.
 
 Shows uncommitted changes, divergence from the default branch and remote, and optional CI status.
 
@@ -98,6 +98,7 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⊟` | Prunable (directory missing) |
 | | `⊞` | Locked worktree |
 | Default branch | `^` | Is the default branch |
+| | `∅` | Orphan branch (no common ancestor with the default branch) |
 | | `✗` | Would conflict if merged to the default branch (with `--full`, includes uncommitted changes) |
 | | `_` | Same commit as the default branch, clean |
 | | `–` | Same commit as the default branch, uncommitted changes |
@@ -209,7 +210,7 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `state` | string | `"branch_worktree_mismatch"`, `"prunable"`, `"locked"` (absent when normal) |
+| `state` | string | `"no_worktree"`, `"branch_worktree_mismatch"`, `"prunable"`, `"locked"` (absent when normal) |
 | `reason` | string | Reason for locked/prunable state |
 | `detached` | boolean | HEAD is detached |
 
@@ -224,9 +225,9 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 
 ### main_state values
 
-These values describe relation to the default branch.
+These values describe the relation to the default branch.
 
-`"is_main"` `"would_conflict"` `"empty"` `"same_commit"` `"integrated"` `"diverged"` `"ahead"` `"behind"`
+`"is_main"` `"orphan"` `"would_conflict"` `"empty"` `"same_commit"` `"integrated"` `"diverged"` `"ahead"` `"behind"`
 
 ### integration_reason values
 
@@ -280,4 +281,4 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Show debug info (-v), or also write diagnostic report (-vv)
+          Verbose output (-v: hooks, templates; -vv: debug report)

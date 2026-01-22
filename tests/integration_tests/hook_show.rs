@@ -70,9 +70,8 @@ fn test_hook_show_no_hooks(repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-#[rstest]
-fn test_hook_show_filter_by_type(repo: TestRepo, temp_home: TempDir) {
-    // Create user config without hooks
+/// Helper to set up a repo with all hook types configured for filter tests
+fn setup_all_hook_types(repo: &TestRepo, temp_home: &TempDir) {
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
@@ -82,7 +81,6 @@ fn test_hook_show_filter_by_type(repo: TestRepo, temp_home: TempDir) {
     )
     .unwrap();
 
-    // Create project config with multiple hook types
     repo.write_project_config(
         r#"[post-start]
 deps = "npm install"
@@ -93,9 +91,20 @@ test = "cargo test"
 
 [post-merge]
 deploy = "scripts/deploy.sh"
+
+[pre-remove]
+cleanup = "echo cleanup"
+
+[post-remove]
+notify = "echo removed"
 "#,
     );
     repo.commit("Add project config");
+}
+
+#[rstest]
+fn test_hook_show_filter_by_type(repo: TestRepo, temp_home: TempDir) {
+    setup_all_hook_types(&repo, &temp_home);
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -112,9 +121,66 @@ deploy = "scripts/deploy.sh"
 }
 
 #[rstest]
+fn test_hook_show_filter_post_merge(repo: TestRepo, temp_home: TempDir) {
+    setup_all_hook_types(&repo, &temp_home);
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("hook")
+            .arg("show")
+            .arg("post-merge")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_hook_show_filter_pre_remove(repo: TestRepo, temp_home: TempDir) {
+    setup_all_hook_types(&repo, &temp_home);
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("hook")
+            .arg("show")
+            .arg("pre-remove")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_hook_show_filter_post_remove(repo: TestRepo, temp_home: TempDir) {
+    setup_all_hook_types(&repo, &temp_home);
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("hook")
+            .arg("show")
+            .arg("post-remove")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
 fn test_hook_show_approval_status(repo: TestRepo, temp_home: TempDir) {
-    // Remove origin so project_identifier is "repo" (directory name)
+    // Remove origin so project_identifier uses full canonical path
     repo.run_git(&["remote", "remove", "origin"]);
+
+    // Get the canonical path for the project identifier (escaped for TOML)
+    let project_id_str = repo.project_id();
 
     // Create user config at XDG path with one approved command
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -122,11 +188,13 @@ fn test_hook_show_approval_status(repo: TestRepo, temp_home: TempDir) {
     let config_path = global_config_dir.join("config.toml");
     fs::write(
         &config_path,
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+        format!(
+            r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
-[projects."repo"]
+[projects.'{project_id_str}']
 approved-commands = ["cargo build"]
-"#,
+"#
+        ),
     )
     .unwrap();
 
@@ -182,7 +250,8 @@ fn test_hook_show_project_config_no_hooks(repo: TestRepo, temp_home: TempDir) {
     // Create project config without any hook sections
     repo.write_project_config(
         r#"# Project config with no hooks
-worktree-path = "../project.{{ branch }}"
+[list]
+url = "http://localhost:8080"
 "#,
     );
     repo.commit("Add project config without hooks");
@@ -230,7 +299,7 @@ lint = "pre-commit run"
 /// Test `wt hook clear` when no approvals exist for the project.
 #[rstest]
 fn test_hook_clear_no_approvals(repo: TestRepo, temp_home: TempDir) {
-    // Remove origin so project_identifier is "repo" (directory name)
+    // Remove origin so project_identifier uses full canonical path
     repo.run_git(&["remote", "remove", "origin"]);
 
     // Create user config without any project approvals
@@ -260,8 +329,11 @@ fn test_hook_clear_no_approvals(repo: TestRepo, temp_home: TempDir) {
 /// Test `wt hook clear` when project has approvals to clear.
 #[rstest]
 fn test_hook_clear_with_approvals(repo: TestRepo, temp_home: TempDir) {
-    // Remove origin so project_identifier is "repo" (directory name)
+    // Remove origin so project_identifier uses full canonical path
     repo.run_git(&["remote", "remove", "origin"]);
+
+    // Get the canonical path for the project identifier (escaped for TOML)
+    let project_id_str = repo.project_id();
 
     // Create user config with approved commands for this project
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -269,11 +341,13 @@ fn test_hook_clear_with_approvals(repo: TestRepo, temp_home: TempDir) {
     let config_path = global_config_dir.join("config.toml");
     fs::write(
         &config_path,
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+        format!(
+            r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
-[projects."repo"]
+[projects.'{project_id_str}']
 approved-commands = ["cargo build", "cargo test", "npm install"]
-"#,
+"#
+        ),
     )
     .unwrap();
 
@@ -283,6 +357,117 @@ approved-commands = ["cargo build", "cargo test", "npm install"]
         repo.configure_wt_cmd(&mut cmd);
         cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
         cmd.args(["hook", "approvals", "clear"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test that syntax errors in templates are shown (not swallowed) with --expanded.
+#[rstest]
+fn test_hook_show_expanded_syntax_error(repo: TestRepo, temp_home: TempDir) {
+    // Create user config without hooks
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    // Create project config with broken template syntax (unclosed brace)
+    repo.write_project_config(
+        r#"[pre-commit]
+broken = "echo {{ branch"
+"#,
+    );
+    repo.commit("Add project config with broken template");
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("hook")
+            .arg("show")
+            .arg("pre-commit")
+            .arg("--expanded")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test that undefined variable errors show both template and error with --expanded.
+/// The `base` variable is only defined for post-create hooks, so using it in pre-commit
+/// will trigger an undefined variable error that shows both the error and raw template.
+#[rstest]
+fn test_hook_show_expanded_undefined_var(repo: TestRepo, temp_home: TempDir) {
+    // Create user config without hooks
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    // Create project config with `base` variable (only defined for post-create hooks)
+    // In pre-commit context, this will be undefined and should show error + template
+    repo.write_project_config(
+        r#"[pre-commit]
+optional-var = "echo {{ base }}"
+"#,
+    );
+    repo.commit("Add project config with optional variable");
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("hook")
+            .arg("show")
+            .arg("pre-commit")
+            .arg("--expanded")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test that valid templates expand correctly with --expanded.
+#[rstest]
+fn test_hook_show_expanded_valid_template(repo: TestRepo, temp_home: TempDir) {
+    // Create user config without hooks
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    // Create project config with valid template using defined variables
+    repo.write_project_config(
+        r#"[pre-commit]
+valid = "echo branch={{ branch }} repo={{ repo }}"
+"#,
+    );
+    repo.commit("Add project config with valid template");
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("hook")
+            .arg("show")
+            .arg("pre-commit")
+            .arg("--expanded")
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
 

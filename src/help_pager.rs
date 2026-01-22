@@ -64,7 +64,14 @@ fn detect_help_pager() -> Option<String> {
 
 /// Show help text through a pager with TTY access for interactive scrolling.
 ///
-/// Only uses pager when stdout or stderr is a terminal. Falls back to direct output if:
+/// The `use_pager` flag controls whether to attempt pager display:
+/// - `true` (--help): Uses pager when available and terminal is detected
+/// - `false` (-h): Always prints directly to stderr, never uses pager
+///
+/// This follows git's convention where `-h` never opens a pager (muscle-memory safe)
+/// while `--help` uses a pager for longer content.
+///
+/// Even when `use_pager=true`, falls back to direct output if:
 /// - No pager configured (prints to stderr)
 /// - Neither stdout nor stderr is a TTY (prints to stderr)
 /// - Pager spawn fails (prints to stderr)
@@ -72,7 +79,14 @@ fn detect_help_pager() -> Option<String> {
 /// Note: All fallbacks output to stderr for consistency with pager behavior
 /// (which sends output to stderr via `>&2`). This ensures `config show`
 /// works correctly since stdout is reserved for data output.
-pub(crate) fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
+pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) -> std::io::Result<()> {
+    // Short help (-h) never uses a pager
+    if !use_pager {
+        log::debug!("Short help (-h) requested, printing directly to stderr");
+        eprint!("{}", help_text);
+        return Ok(());
+    }
+
     let Some(pager_cmd) = detect_help_pager() else {
         log::debug!("No pager configured, printing help directly to stderr");
         eprint!("{}", help_text);
@@ -103,6 +117,7 @@ pub(crate) fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
     // Spawn pager with TTY access (interactive, unlike detached diff renderer)
     // Falls back to direct output if pager unavailable (e.g., less not installed)
     let shell = ShellConfig::get();
+    log::debug!("$ {} (pager)", pager_cmd);
     let mut cmd = shell.command(&final_cmd);
     // Prevent subprocesses from writing to the directive file
     cmd.env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR);
@@ -138,8 +153,7 @@ fn compute_less_flags(user_less: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::compute_less_flags;
-    use crate::pager::parse_pager_value;
+    use super::{compute_less_flags, parse_pager_value};
 
     #[test]
     fn test_validate_excludes_cat() {

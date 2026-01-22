@@ -232,6 +232,19 @@ fn thread_id_number() -> u64 {
         .unwrap_or(0)
 }
 
+/// Log command output (stdout/stderr) for debugging.
+fn log_output(output: &std::process::Output) {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    for line in stdout.lines() {
+        log::debug!("  {}", line);
+    }
+    for line in stderr.lines() {
+        log::debug!("  ! {}", line);
+    }
+}
+
 /// Implementation of timeout-based command execution.
 ///
 /// Spawns the process, captures stdout/stderr in background threads, and waits with timeout.
@@ -242,7 +255,6 @@ fn run_with_timeout_impl(
 ) -> std::io::Result<std::process::Output> {
     use std::io::{ErrorKind, Read};
     use std::process::Stdio;
-    use std::time::Instant;
 
     // Spawn process with piped stdout/stderr
     let mut child = cmd
@@ -602,6 +614,7 @@ impl Cmd {
                     dur_us,
                     output.status.success()
                 );
+                log_output(output);
             }
             (Ok(output), None) => {
                 log::debug!(
@@ -612,6 +625,7 @@ impl Cmd {
                     dur_us,
                     output.status.success()
                 );
+                log_output(output);
             }
             (Err(e), Some(ctx)) => {
                 log::debug!(

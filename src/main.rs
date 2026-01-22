@@ -2,12 +2,13 @@ use anyhow::Context;
 use clap::FromArgMatches;
 use color_print::cformat;
 use std::process;
-use worktrunk::config::{WorktrunkConfig, expand_template, set_config_path};
+use worktrunk::config::{UserConfig, expand_template, set_config_path};
 use worktrunk::git::{Repository, exit_code, set_base_path};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::extract_filename_from_path;
 use worktrunk::styling::{
-    error_message, format_with_gutter, hint_message, info_message, success_message, warning_message,
+    eprintln, error_message, format_with_gutter, hint_message, info_message, success_message,
+    warning_message,
 };
 
 mod cli;
@@ -36,8 +37,8 @@ use commands::command_executor::{CommandContext, build_hook_context};
 use commands::handle_select;
 use commands::worktree::{SwitchResult, handle_push};
 use commands::{
-    MergeOptions, RebaseResult, ResolutionContext, SquashResult, add_approvals, approve_hooks,
-    clear_approvals, execute_switch, handle_config_create, handle_config_show,
+    MergeOptions, OperationMode, RebaseResult, SquashResult, add_approvals, approve_hooks,
+    clear_approvals, execute_switch, handle_completions, handle_config_create, handle_config_show,
     handle_configure_shell, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
     handle_list, handle_merge, handle_rebase, handle_remove, handle_remove_current,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
@@ -67,10 +68,12 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
         && let Some(unknown) = err.get(clap::error::ContextKind::InvalidSubcommand)
     {
         let cmd = cli::build_command();
-        if let Some(suggestion) = cli::suggest_nested_subcommand(&cmd, unknown.to_string().as_str())
-        {
-            eprint!("{}", err.render().ansi());
-            ceprintln!("\n  <yellow>tip:</>  did you mean <cyan,bold>{suggestion}</cyan,bold>?");
+        if let Some(suggestion) = cli::suggest_nested_subcommand(&cmd, &unknown.to_string()) {
+            ceprintln!(
+                "{}
+  <yellow>tip:</>  did you mean <cyan,bold>{suggestion}</cyan,bold>?",
+                err.render().ansi()
+            );
             process::exit(2);
         }
     }
@@ -82,12 +85,15 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
     let is_switch_missing_arg = err.kind() == ErrorKind::MissingRequiredArgument
         && (err_str.contains("wt switch") || err_str.contains("wt.exe switch"));
     if is_switch_missing_arg {
-        eprint!("{}", err.render().ansi());
-        eprintln!();
-        ceprintln!("<green,bold>Quick switches:</>");
-        ceprintln!("  <cyan,bold>wt switch ^</>    default branch's worktree");
-        ceprintln!("  <cyan,bold>wt switch -</>    previous worktree");
-        ceprintln!("  <cyan,bold>wt select</>      interactive picker");
+        ceprintln!(
+            "{}
+
+<green,bold>Quick switches:</>
+  <cyan,bold>wt switch ^</>    # default branch's worktree
+  <cyan,bold>wt switch -</>    # previous worktree
+  <cyan,bold>wt select</>      # interactive picker",
+            err.render().ansi()
+        );
         process::exit(2);
     }
 
@@ -146,8 +152,8 @@ fn main() {
     }
 
     // Configure logging based on --verbose flag or RUST_LOG env var
-    // When --verbose is set, also write logs to .git/wt-logs/verbose.log
-    if cli.verbose >= 1 {
+    // When -vv is set, also write logs to .git/wt-logs/verbose.log
+    if cli.verbose >= 2 {
         verbose_log::init();
     }
 
@@ -155,9 +161,12 @@ fn main() {
     let verbose_level = cli.verbose;
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
 
-    // --verbose takes precedence over RUST_LOG: use Builder::new() to ignore env var
+    // Set global verbosity level for styled verbose output
+    output::set_verbosity(verbose_level);
+
+    // -vv enables debug logging via env_logger; -v uses styled output (not logging)
     // Otherwise, respect RUST_LOG (defaulting to off)
-    let mut builder = if cli.verbose >= 1 {
+    let mut builder = if cli.verbose >= 2 {
         let mut b = env_logger::Builder::new();
         b.filter_level(log::LevelFilter::Debug);
         b
@@ -273,10 +282,10 @@ fn main() {
                         let explicit_shell = shell.is_some();
                         handle_unconfigure_shell(shell, yes, dry_run, &binary_name())
                             .map_err(|e| anyhow::anyhow!("{}", e))
-                            .and_then(|scan_result| {
+                            .map(|scan_result| {
                                 // For --dry-run, preview was already shown by handler
                                 if dry_run {
-                                    return Ok(());
+                                    return;
                                 }
 
                                 // Count unique shells, not file results (fish may have 2 files: functions/ and legacy conf.d/)
@@ -303,10 +312,13 @@ fn main() {
                                         "shell extension"
                                     };
 
-                                    crate::output::print(success_message(cformat!(
-                                        "{} {what} for <bold>{shell}</> @ <bold>{path}</>",
-                                        result.action.description(),
-                                    )))?;
+                                    eprintln!(
+                                        "{}",
+                                        success_message(cformat!(
+                                            "{} {what} for <bold>{shell}</> @ <bold>{path}</>",
+                                            result.action.description(),
+                                        ))
+                                    );
                                 }
 
                                 // Show completion results
@@ -314,10 +326,13 @@ fn main() {
                                     let shell = result.shell;
                                     let path = format_path_for_display(&result.path);
 
-                                    crate::output::print(success_message(cformat!(
-                                        "{} completions for <bold>{shell}</> @ <bold>{path}</>",
-                                        result.action.description(),
-                                    )))?;
+                                    eprintln!(
+                                        "{}",
+                                        success_message(cformat!(
+                                            "{} completions for <bold>{shell}</> @ <bold>{path}</>",
+                                            result.action.description(),
+                                        ))
+                                    );
                                 }
 
                                 // Show not found - warning if explicit shell, hint if auto-scan
@@ -334,13 +349,17 @@ fn main() {
                                         "shell extension"
                                     };
                                     if explicit_shell {
-                                        crate::output::print(warning_message(format!(
-                                            "No {what} found in {path}"
-                                        )))?;
+                                        eprintln!(
+                                            "{}",
+                                            warning_message(format!("No {what} found in {path}"))
+                                        );
                                     } else {
-                                        crate::output::print(hint_message(cformat!(
-                                            "No <bright-black>{shell}</> {what} in {path}"
-                                        )))?;
+                                        eprintln!(
+                                            "{}",
+                                            hint_message(cformat!(
+                                                "No <bright-black>{shell}</> {what} in {path}"
+                                            ))
+                                        );
                                     }
                                 }
 
@@ -355,13 +374,19 @@ fn main() {
                                     }
                                     let path = format_path_for_display(path);
                                     if explicit_shell {
-                                        crate::output::print(warning_message(format!(
-                                            "No completions found in {path}"
-                                        )))?;
+                                        eprintln!(
+                                            "{}",
+                                            warning_message(format!(
+                                                "No completions found in {path}"
+                                            ))
+                                        );
                                     } else {
-                                        crate::output::print(hint_message(cformat!(
-                                            "No <bright-black>{shell}</> completions in {path}"
-                                        )))?;
+                                        eprintln!(
+                                            "{}",
+                                            hint_message(cformat!(
+                                                "No <bright-black>{shell}</> completions in {path}"
+                                            ))
+                                        );
                                     }
                                 }
 
@@ -370,20 +395,24 @@ fn main() {
                                     + scan_result.completion_not_found.len();
                                 if total_changes == 0 {
                                     if all_not_found == 0 {
-                                        crate::output::blank()?;
-                                        crate::output::print(hint_message(
-                                            "No shell integration found to remove",
-                                        ))?;
+                                        eprintln!();
+                                        eprintln!(
+                                            "{}",
+                                            hint_message("No shell integration found to remove")
+                                        );
                                     }
-                                    return Ok(());
+                                    return;
                                 }
 
                                 // Summary
-                                crate::output::blank()?;
+                                eprintln!();
                                 let plural = if shell_count == 1 { "" } else { "s" };
-                                crate::output::print(success_message(format!(
-                                    "Removed integration from {shell_count} shell{plural}"
-                                )))?;
+                                eprintln!(
+                                    "{}",
+                                    success_message(format!(
+                                        "Removed integration from {shell_count} shell{plural}"
+                                    ))
+                                );
 
                                 // Hint about restarting shell (only if current shell was affected)
                                 let current_shell = std::env::var("SHELL")
@@ -398,16 +427,18 @@ fn main() {
                                     });
 
                                 if current_shell_affected {
-                                    crate::output::print(hint_message(
-                                        "Restart shell to complete uninstall",
-                                    ))?;
+                                    eprintln!(
+                                        "{}",
+                                        hint_message("Restart shell to complete uninstall")
+                                    );
                                 }
-                                Ok(())
                             })
                     }
                     ConfigShellCommand::ShowTheme => {
-                        handle_show_theme().map_err(|e| anyhow::anyhow!("{}", e))
+                        handle_show_theme();
+                        Ok(())
                     }
+                    ConfigShellCommand::Completions { shell } => handle_completions(shell),
                 }
             }
             ConfigCommand::Create { project } => handle_config_create(project),
@@ -470,77 +501,68 @@ fn main() {
                 verify,
                 stage,
                 show_prompt,
-            } => WorktrunkConfig::load()
-                .context("Failed to load config")
-                .and_then(|config| {
-                    let stage_final = stage
-                        .or_else(|| config.commit.and_then(|c| c.stage))
-                        .unwrap_or_default();
-                    step_commit(yes, !verify, stage_final, show_prompt)
-                }),
+            } => step_commit(yes, !verify, stage, show_prompt),
             StepCommand::Squash {
                 target,
                 yes,
                 verify,
                 stage,
                 show_prompt,
-            } => WorktrunkConfig::load()
-                .context("Failed to load config")
-                .and_then(|config| {
-                    let stage_final = stage
-                        .or_else(|| config.commit.and_then(|c| c.stage))
-                        .unwrap_or_default();
+            } => {
+                // Handle --show-prompt early: just build and output the prompt
+                if show_prompt {
+                    commands::step_show_squash_prompt(target.as_deref())
+                } else {
+                    (|| {
+                        // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
+                        // Shadow verify: if user declines approval, skip hooks but continue squash
+                        let verify = if verify {
+                            use commands::command_approval::approve_hooks;
+                            use commands::context::CommandEnv;
+                            let env = CommandEnv::for_action("squash")?;
+                            let ctx = env.context(yes);
+                            let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
+                            if !approved {
+                                eprintln!(
+                                    "{}",
+                                    info_message("Commands declined, squashing without hooks")
+                                );
+                            }
+                            approved
+                        } else {
+                            false
+                        };
 
-                    // Handle --show-prompt early: just build and output the prompt
-                    if show_prompt {
-                        return commands::step_show_squash_prompt(
-                            target.as_deref(),
-                            &config.commit_generation,
-                        );
-                    }
-
-                    // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
-                    // Shadow verify: if user declines approval, skip hooks but continue squash
-                    let verify = if verify {
-                        use commands::command_approval::approve_hooks;
-                        use commands::context::CommandEnv;
-                        let env = CommandEnv::for_action("squash")?;
-                        let ctx = env.context(yes);
-                        let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
-                        if !approved {
-                            crate::output::print(info_message(
-                                "Commands declined, squashing without hooks",
-                            ))?;
+                        match handle_squash(target.as_deref(), yes, !verify, stage)? {
+                            SquashResult::Squashed | SquashResult::NoNetChanges => {}
+                            SquashResult::NoCommitsAhead(branch) => {
+                                eprintln!(
+                                    "{}",
+                                    info_message(format!(
+                                        "Nothing to squash; no commits ahead of {branch}"
+                                    ))
+                                );
+                            }
+                            SquashResult::AlreadySingleCommit => {
+                                eprintln!(
+                                    "{}",
+                                    info_message("Nothing to squash; already a single commit")
+                                );
+                            }
                         }
-                        approved
-                    } else {
-                        false
-                    };
-
-                    match handle_squash(target.as_deref(), yes, !verify, stage_final)? {
-                        SquashResult::Squashed | SquashResult::NoNetChanges => {}
-                        SquashResult::NoCommitsAhead(branch) => {
-                            crate::output::print(info_message(format!(
-                                "Nothing to squash; no commits ahead of {branch}"
-                            )))?;
-                        }
-                        SquashResult::AlreadySingleCommit => {
-                            crate::output::print(info_message(
-                                "Nothing to squash; already a single commit",
-                            ))?;
-                        }
-                    }
-                    Ok(())
-                }),
+                        Ok(())
+                    })()
+                }
+            }
             StepCommand::Push { target } => handle_push(target.as_deref(), "Pushed to", None),
             StepCommand::Rebase { target } => {
-                handle_rebase(target.as_deref()).and_then(|result| match result {
-                    RebaseResult::Rebased => Ok(()),
+                handle_rebase(target.as_deref()).map(|result| match result {
+                    RebaseResult::Rebased => (),
                     RebaseResult::UpToDate(branch) => {
-                        crate::output::print(info_message(cformat!(
-                            "Already up to date with <bold>{branch}</>"
-                        )))?;
-                        Ok(())
+                        eprintln!(
+                            "{}",
+                            info_message(cformat!("Already up to date with <bold>{branch}</>"))
+                        );
                     }
                 })
             }
@@ -565,9 +587,10 @@ fn main() {
                 vars,
             } => {
                 if no_background {
-                    let _ = output::print(warning_message(
-                        "--no-background is deprecated; use --foreground instead",
-                    ));
+                    eprintln!(
+                        "{}",
+                        warning_message("--no-background is deprecated; use --foreground instead")
+                    );
                 }
                 run_hook(
                     HookType::PostStart,
@@ -585,9 +608,10 @@ fn main() {
                 vars,
             } => {
                 if no_background {
-                    let _ = output::print(warning_message(
-                        "--no-background is deprecated; use --foreground instead",
-                    ));
+                    eprintln!(
+                        "{}",
+                        warning_message("--no-background is deprecated; use --foreground instead")
+                    );
                 }
                 run_hook(
                     HookType::PostSwitch,
@@ -609,6 +633,18 @@ fn main() {
             HookCommand::PreRemove { name, yes, vars } => {
                 run_hook(HookType::PreRemove, yes, None, name.as_deref(), &vars)
             }
+            HookCommand::PostRemove {
+                name,
+                yes,
+                foreground,
+                vars,
+            } => run_hook(
+                HookType::PostRemove,
+                yes,
+                Some(foreground),
+                name.as_deref(),
+                &vars,
+            ),
             HookCommand::Approvals { action } => match action {
                 ApprovalsCommand::Add { all } => add_approvals(all),
                 ApprovalsCommand::Clear { global } => clear_approvals(global),
@@ -616,13 +652,17 @@ fn main() {
         },
         #[cfg(unix)]
         Commands::Select { branches, remotes } => {
-            WorktrunkConfig::load()
+            UserConfig::load()
                 .context("Failed to load config")
                 .and_then(|config| {
-                    // Get config values from [list] config (shared with wt list)
+                    // Get project ID for per-project config lookup
+                    let project_id = Repository::current()
+                        .ok()
+                        .and_then(|r| r.project_identifier().ok());
+
+                    // Get effective list config (merges project-specific with global)
                     let (show_branches_config, show_remotes_config) = config
-                        .list
-                        .as_ref()
+                        .list(project_id.as_deref())
                         .map(|l| (l.branches.unwrap_or(false), l.remotes.unwrap_or(false)))
                         .unwrap_or((false, false));
 
@@ -635,10 +675,13 @@ fn main() {
         }
         #[cfg(not(unix))]
         Commands::Select { .. } => {
-            let _ = output::print(error_message("wt select is not available on Windows"));
-            let _ = output::print(hint_message(cformat!(
-                "To see all worktrees, run <bright-black>wt list</>; to switch directly, run <bright-black>wt switch BRANCH</>"
-            )));
+            eprintln!("{}", error_message("wt select is not available on Windows"));
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "To see all worktrees, run <bright-black>wt list</>; to switch directly, run <bright-black>wt switch BRANCH</>"
+                ))
+            );
             std::process::exit(1);
         }
         Commands::List {
@@ -657,13 +700,17 @@ fn main() {
                 use commands::list::progressive::RenderMode;
 
                 // Load config and merge with CLI flags (CLI flags take precedence)
-                WorktrunkConfig::load()
+                UserConfig::load()
                     .context("Failed to load config")
                     .and_then(|config| {
-                        // Get config values from global list config
+                        // Get project ID for per-project config lookup
+                        let project_id = Repository::current()
+                            .ok()
+                            .and_then(|r| r.project_identifier().ok());
+
+                        // Get effective list config (merges project-specific with global)
                         let (show_branches_config, show_remotes_config, show_full_config) = config
-                            .list
-                            .as_ref()
+                            .list(project_id.as_deref())
                             .map(|l| {
                                 (
                                     l.branches.unwrap_or(false),
@@ -705,7 +752,7 @@ fn main() {
             yes,
             clobber,
             verify,
-        } => WorktrunkConfig::load()
+        } => UserConfig::load()
             .context("Failed to load config")
             .and_then(|mut config| {
                 let repo = Repository::current().context("Failed to switch worktree")?;
@@ -717,13 +764,11 @@ fn main() {
                 // This ensures approval happens once at the command entry point
                 // If user declines, skip hooks but continue with worktree operation
                 let approved = if verify {
-                    let repo_root = repo.repo_path().context("Failed to switch worktree")?;
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
                         Some(plan.branch()),
                         plan.worktree_path(),
-                        &repo_root,
                         yes,
                     );
                     // Approve different hooks based on whether we're creating or switching
@@ -749,11 +794,14 @@ fn main() {
 
                 // Show message if user declined approval
                 if !approved {
-                    crate::output::print(info_message(if plan.is_create() {
-                        "Commands declined, continuing worktree creation"
-                    } else {
-                        "Commands declined"
-                    }))?;
+                    eprintln!(
+                        "{}",
+                        info_message(if plan.is_create() {
+                            "Commands declined, continuing worktree creation"
+                        } else {
+                            "Commands declined"
+                        })
+                    );
                 }
 
                 // Execute the validated plan
@@ -762,8 +810,7 @@ fn main() {
                 // Show success message (temporal locality: immediately after worktree operation)
                 // Returns path to display in hooks when user's shell won't be in the worktree
                 // Also shows worktree-path hint on first --create (before shell integration warning)
-                let hooks_display_path =
-                    handle_switch_output(&result, &branch_info, execute.as_deref())?;
+                let hooks_display_path = handle_switch_output(&result, &branch_info)?;
 
                 // Offer shell integration if not already installed/active
                 // (only shows prompt/hint when shell integration isn't working)
@@ -785,7 +832,7 @@ fn main() {
                         base_worktree_path,
                         ..
                     } => (base_branch.as_deref(), base_worktree_path.as_deref()),
-                    SwitchResult::Existing(_) | SwitchResult::AlreadyAt(_) => (None, None),
+                    SwitchResult::Existing { .. } | SwitchResult::AlreadyAt(_) => (None, None),
                 };
                 let extra_vars: Vec<(&str, &str)> = [
                     base_branch.map(|b| ("base", b)),
@@ -800,13 +847,11 @@ fn main() {
                 // - post-start: runs only when creating a NEW worktree
                 if !skip_hooks {
                     let repo = Repository::current()?;
-                    let repo_root = repo.repo_path().context("Failed to switch worktree")?;
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
                         Some(&branch_info.branch),
                         result.path(),
-                        &repo_root,
                         yes,
                     );
 
@@ -824,13 +869,11 @@ fn main() {
                 if let Some(cmd) = execute {
                     // Build template context for expansion (includes base vars when creating)
                     let repo = Repository::current()?;
-                    let repo_root = repo.repo_path().context("Failed to get repo root")?;
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
                         Some(&branch_info.branch),
                         result.path(),
-                        &repo_root,
                         yes,
                     );
                     let template_vars = build_hook_context(&ctx, &extra_vars);
@@ -840,9 +883,10 @@ fn main() {
                         .collect();
 
                     // Expand template variables in command (shell_escape: true for safety)
-                    let expanded_cmd = expand_template(&cmd, &vars, true, &repo).map_err(|e| {
-                        anyhow::anyhow!("Failed to expand --execute template: {}", e)
-                    })?;
+                    let expanded_cmd =
+                        expand_template(&cmd, &vars, true, &repo, "--execute command").map_err(
+                            |e| anyhow::anyhow!("Failed to expand --execute template: {}", e),
+                        )?;
 
                     // Append any trailing args (after --) to the execute command
                     // Each arg is also expanded, then shell-escaped
@@ -852,9 +896,10 @@ fn main() {
                         let expanded_args: Result<Vec<_>, _> = execute_args
                             .iter()
                             .map(|arg| {
-                                expand_template(arg, &vars, false, &repo).map_err(|e| {
-                                    anyhow::anyhow!("Failed to expand argument template: {}", e)
-                                })
+                                expand_template(arg, &vars, false, &repo, "--execute argument")
+                                    .map_err(|e| {
+                                        anyhow::anyhow!("Failed to expand argument template: {}", e)
+                                    })
                             })
                             .collect();
                         let escaped_args: Vec<_> = expanded_args?
@@ -863,7 +908,7 @@ fn main() {
                             .collect();
                         format!("{} {}", expanded_cmd, escaped_args.join(" "))
                     };
-                    execute_user_command(&full_cmd)?;
+                    execute_user_command(&full_cmd, hooks_display_path.as_deref())?;
                 }
 
                 Ok(())
@@ -877,14 +922,15 @@ fn main() {
             verify,
             yes,
             force,
-        } => WorktrunkConfig::load()
+        } => UserConfig::load()
             .context("Failed to load config")
             .and_then(|config| {
                 // Handle deprecated --no-background flag
                 if no_background {
-                    output::print(warning_message(
-                        "--no-background is deprecated; use --foreground instead",
-                    ))?;
+                    eprintln!(
+                        "{}",
+                        warning_message("--no-background is deprecated; use --foreground instead")
+                    );
                 }
                 let background = !(foreground || no_background);
 
@@ -904,12 +950,16 @@ fn main() {
                     use commands::context::CommandEnv;
                     let env = CommandEnv::for_action_branchless()?;
                     let ctx = env.context(yes);
-                    let approved =
-                        approve_hooks(&ctx, &[HookType::PreRemove, HookType::PostSwitch])?;
+                    let approved = approve_hooks(
+                        &ctx,
+                        &[
+                            HookType::PreRemove,
+                            HookType::PostRemove,
+                            HookType::PostSwitch,
+                        ],
+                    )?;
                     if !approved {
-                        crate::output::print(info_message(
-                            "Commands declined, continuing removal",
-                        ))?;
+                        eprintln!("{}", info_message("Commands declined, continuing removal"));
                     }
                     Ok(approved)
                 };
@@ -953,10 +1003,9 @@ fn main() {
                     let mut all_errors: Vec<anyhow::Error> = Vec::new();
 
                     // Helper: record error and continue
-                    let mut record_error = |e: anyhow::Error| -> anyhow::Result<()> {
-                        output::print(e.to_string())?;
+                    let mut record_error = |e: anyhow::Error| {
+                        eprintln!("{}", e);
                         all_errors.push(e);
-                        Ok(())
                     };
 
                     for branch_name in &branches {
@@ -965,11 +1014,11 @@ fn main() {
                             &repo,
                             branch_name,
                             &config,
-                            ResolutionContext::Remove,
+                            OperationMode::Remove,
                         ) {
                             Ok(r) => r,
                             Err(e) => {
-                                record_error(e)?;
+                                record_error(e);
                                 continue;
                             }
                         };
@@ -989,7 +1038,7 @@ fn main() {
                                         &config,
                                     ) {
                                         Ok(result) => plan_current = Some(result),
-                                        Err(e) => record_error(e)?,
+                                        Err(e) => record_error(e),
                                     }
                                     continue;
                                 }
@@ -1007,7 +1056,7 @@ fn main() {
                                     &config,
                                 ) {
                                     Ok(result) => plans_others.push(result),
-                                    Err(e) => record_error(e)?,
+                                    Err(e) => record_error(e),
                                 }
                             }
                             ResolvedWorktree::BranchOnly { branch } => {
@@ -1019,7 +1068,7 @@ fn main() {
                                     &config,
                                 ) {
                                     Ok(result) => plans_branch_only.push(result),
-                                    Err(e) => record_error(e)?,
+                                    Err(e) => record_error(e),
                                 }
                             }
                         }
@@ -1076,59 +1125,39 @@ fn main() {
             no_verify,
             yes,
             stage,
-        } => WorktrunkConfig::load()
-            .context("Failed to load config")
-            .and_then(|config| {
-                // Convert paired flags to Option<bool>
-                fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
-                    match (positive, negative) {
-                        (true, _) => Some(true),
-                        (_, true) => Some(false),
-                        _ => None,
-                    }
+        } => {
+            // Convert paired flags to Option<bool>
+            fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
+                match (positive, negative) {
+                    (true, _) => Some(true),
+                    (_, true) => Some(false),
+                    _ => None,
                 }
+            }
 
-                // Get config defaults (positive form: true = do it)
-                let merge_config = config.merge.as_ref();
-                let squash_default = merge_config.and_then(|m| m.squash).unwrap_or(true);
-                let commit_default = merge_config.and_then(|m| m.commit).unwrap_or(true);
-                let rebase_default = merge_config.and_then(|m| m.rebase).unwrap_or(true);
-                let remove_default = merge_config.and_then(|m| m.remove).unwrap_or(true);
-                let verify_default = merge_config.and_then(|m| m.verify).unwrap_or(true);
-
-                // CLI flags override config, config overrides defaults
-                let squash_final = flag_pair(squash, no_squash).unwrap_or(squash_default);
-                let commit_final = flag_pair(commit, no_commit).unwrap_or(commit_default);
-                let rebase_final = flag_pair(rebase, no_rebase).unwrap_or(rebase_default);
-                let remove_final = flag_pair(remove, no_remove).unwrap_or(remove_default);
-                let verify_final = flag_pair(verify, no_verify).unwrap_or(verify_default);
-
-                // Stage defaults from [commit] config section
-                let stage_final = stage
-                    .or_else(|| config.commit.and_then(|c| c.stage))
-                    .unwrap_or_default();
-
-                handle_merge(MergeOptions {
-                    target: target.as_deref(),
-                    squash: squash_final,
-                    commit: commit_final,
-                    rebase: rebase_final,
-                    remove: remove_final,
-                    verify: verify_final,
-                    yes,
-                    stage_mode: stage_final,
-                })
-            }),
+            // Pass CLI flags as options; handle_merge determines effective defaults
+            // using per-project config merged with global config
+            handle_merge(MergeOptions {
+                target: target.as_deref(),
+                squash: flag_pair(squash, no_squash),
+                commit: flag_pair(commit, no_commit),
+                rebase: flag_pair(rebase, no_rebase),
+                remove: flag_pair(remove, no_remove),
+                verify: flag_pair(verify, no_verify),
+                yes,
+                stage,
+            })
+        }
     };
 
     if let Err(e) = result {
         // GitError, WorktrunkError, and HookErrorWithHint produce styled output via Display
         if let Some(err) = e.downcast_ref::<worktrunk::git::GitError>() {
-            let _ = output::print(err.to_string());
+            eprintln!("{}", err);
         } else if let Some(err) = e.downcast_ref::<worktrunk::git::WorktrunkError>() {
-            let _ = output::print(err.to_string());
+            eprintln!("{}", err);
         } else if let Some(err) = e.downcast_ref::<worktrunk::git::HookErrorWithHint>() {
-            let _ = output::print(err.to_string());
+            eprintln!("{}", err);
         } else {
             // Anyhow error formatting:
             // - With context: show context as header, root cause in gutter
@@ -1140,19 +1169,21 @@ fn main() {
                 let chain: Vec<String> = e.chain().skip(1).map(|e| e.to_string()).collect();
                 if !chain.is_empty() {
                     // Has context: msg is context, chain contains intermediate + root cause
-                    let _ = output::print(error_message(&msg));
+                    eprintln!("{}", error_message(&msg));
                     let chain_text = chain.join("\n");
-                    let _ = output::print(format_with_gutter(&chain_text, None));
-                } else if msg.contains('\n') {
+                    eprintln!("{}", format_with_gutter(&chain_text, None));
+                } else if msg.contains('\n') || msg.contains('\r') {
                     // Multiline error without context - this shouldn't happen if all
                     // errors have proper context. Catch in debug builds, log in release.
                     debug_assert!(false, "Multiline error without context: {msg}");
                     log::warn!("Multiline error without context: {msg}");
-                    let _ = output::print(error_message("Command failed"));
-                    let _ = output::print(format_with_gutter(&msg, None));
+                    // Normalize line endings for display
+                    let normalized = msg.replace("\r\n", "\n").replace('\r', "\n");
+                    eprintln!("{}", error_message("Command failed"));
+                    eprintln!("{}", format_with_gutter(&normalized, None));
                 } else {
                     // Single-line error without context: inline with emoji
-                    let _ = output::print(error_message(&msg));
+                    eprintln!("{}", error_message(&msg));
                 }
             }
         }

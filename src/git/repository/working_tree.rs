@@ -54,19 +54,11 @@ pub struct WorkingTree<'a> {
 impl<'a> WorkingTree<'a> {
     /// Run a git command in this worktree and return stdout.
     pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
-        let output = Cmd::new("git")
-            .args(args.iter().copied())
-            .current_dir(&self.path)
-            .context(path_to_logging_context(&self.path))
-            .run()
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
+        let output = self.run_command_output(args)?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stderr = stderr.replace('\r', "\n");
-            for line in stderr.trim().lines() {
-                log::debug!("  ! {}", line);
-            }
             let stdout = String::from_utf8_lossy(&output.stdout);
             let error_msg = [stderr.trim(), stdout.trim()]
                 .into_iter()
@@ -77,12 +69,20 @@ impl<'a> WorkingTree<'a> {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        if !stdout.is_empty() {
-            for line in stdout.trim().lines() {
-                log::debug!("  {}", line);
-            }
-        }
         Ok(stdout)
+    }
+
+    /// Run a git command in this worktree and return the raw Output.
+    ///
+    /// Use this when you need to check exit codes directly (e.g., for commands
+    /// where non-zero exit is not an error condition).
+    pub fn run_command_output(&self, args: &[&str]) -> anyhow::Result<std::process::Output> {
+        Cmd::new("git")
+            .args(args.iter().copied())
+            .current_dir(&self.path)
+            .context(path_to_logging_context(&self.path))
+            .run()
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
 
     // =========================================================================
@@ -188,11 +188,18 @@ impl<'a> WorkingTree<'a> {
     /// Returns an error if there are uncommitted changes.
     /// - `action` describes what was blocked (e.g., "remove worktree").
     /// - `branch` identifies which branch for multi-worktree operations.
-    pub fn ensure_clean(&self, action: &str, branch: Option<&str>) -> anyhow::Result<()> {
+    /// - `force_hint` when true, the error hint mentions `--force` as an alternative.
+    pub fn ensure_clean(
+        &self,
+        action: &str,
+        branch: Option<&str>,
+        force_hint: bool,
+    ) -> anyhow::Result<()> {
         if self.is_dirty()? {
             return Err(GitError::UncommittedChanges {
                 action: Some(action.into()),
                 branch: branch.map(String::from),
+                force_hint,
             }
             .into());
         }
@@ -209,5 +216,81 @@ impl<'a> WorkingTree<'a> {
     pub fn working_tree_diff_vs_ref(&self, ref_name: &str) -> anyhow::Result<LineDiff> {
         let stdout = self.run_command(&["diff", "--numstat", ref_name])?;
         LineDiff::from_numstat(&stdout)
+    }
+
+    /// Determine whether there are staged changes in the index.
+    ///
+    /// Returns `Ok(true)` when staged changes are present, `Ok(false)` otherwise.
+    ///
+    /// Note: The index is per-worktree in git, so this checks this specific
+    /// worktree's staging area.
+    pub fn has_staged_changes(&self) -> anyhow::Result<bool> {
+        // Exit code 0 = no diff (no staged changes), exit code 1 = diff exists (has staged changes)
+        // run_command returns Ok on exit 0, Err on non-zero
+        // So: Err means has changes
+        Ok(self
+            .run_command(&["diff", "--cached", "--quiet", "--exit-code"])
+            .is_err())
+    }
+
+    /// Create a safety backup of current working tree state without affecting the working tree.
+    ///
+    /// This creates a backup commit containing all changes (staged, unstaged, and untracked files)
+    /// and stores it in a custom ref (`refs/wt-backup/<branch>`). This creates a reflog entry
+    /// for recovery without polluting the stash list. The working tree remains unchanged.
+    ///
+    /// Users can find safety backups with: `git reflog show refs/wt-backup/<branch>`
+    ///
+    /// Returns the short SHA of the backup commit.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use worktrunk::git::Repository;
+    ///
+    /// let repo = Repository::current()?;
+    /// let wt = repo.current_worktree();
+    /// let sha = wt.create_safety_backup("feature → main (squash)")?;
+    /// println!("Backup created: {}", sha);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn create_safety_backup(&self, message: &str) -> anyhow::Result<String> {
+        // Create a backup commit using git stash create (without storing it in the stash list)
+        let backup_sha = self
+            .run_command(&["stash", "create", "--include-untracked"])?
+            .trim()
+            .to_string();
+
+        // Validate that we got a SHA back
+        if backup_sha.is_empty() {
+            return Err(GitError::Other {
+                message: "git stash create returned empty SHA - no changes to backup".into(),
+            }
+            .into());
+        }
+
+        // Get current branch name to use in the ref name
+        let branch = self
+            .run_command(&["rev-parse", "--abbrev-ref", "HEAD"])?
+            .trim()
+            .to_string();
+
+        // Sanitize branch name for use in ref path (replace / with -)
+        let safe_branch = branch.replace('/', "-");
+
+        // Update a custom ref to point to this commit
+        // --create-reflog ensures the reflog is created for this custom ref
+        // This creates a reflog entry but doesn't add to the stash list
+        let ref_name = format!("refs/wt-backup/{}", safe_branch);
+        self.run_command(&[
+            "update-ref",
+            "--create-reflog",
+            "-m",
+            message,
+            &ref_name,
+            &backup_sha,
+        ])
+        .context("Failed to create backup ref")?;
+
+        Ok(backup_sha[..7].to_string())
     }
 }

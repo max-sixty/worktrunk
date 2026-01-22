@@ -142,9 +142,7 @@ pub fn sanitize_for_filename(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
-    use super::{format_path_for_display, home_dir, sanitize_for_filename, to_posix_path};
+    use super::{PathBuf, format_path_for_display, home_dir, sanitize_for_filename, to_posix_path};
 
     #[test]
     fn shortens_path_under_home() {

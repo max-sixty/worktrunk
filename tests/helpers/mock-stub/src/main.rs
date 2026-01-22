@@ -1,7 +1,9 @@
 //! Config-driven mock executable for integration tests.
 //!
 //! Reads a JSON config file to determine responses. When invoked as `gh`,
-//! looks for `gh.json` in the same directory and responds based on config.
+//! looks for `gh.json` and responds based on config.
+//!
+//! Config location: `MOCK_CONFIG_DIR` env var (set by test harness)
 //!
 //! Config format:
 //! ```json
@@ -15,10 +17,14 @@
 //! }
 //! ```
 //!
-//! Command matching:
-//! - `gh --version` → outputs version string
-//! - `gh auth ...` → matches "auth" command
-//! - `gh pr list ...` → matches "pr" command
+//! Command matching (in priority order):
+//! 1. `gh --version` → outputs version string
+//! 2. Triple: `glab mr view 123` → matches "mr view 123" (first three args)
+//! 3. Compound: `gh mr list ...` → matches "mr list" (first two args)
+//! 4. Single: `gh mr ...` → matches "mr" (first arg only)
+//! 5. `_default` → fallback if no match
+//!
+//! This allows different responses for `glab mr view 1` vs `glab mr view 2`.
 //!
 //! Response types:
 //! - `file`: read and output contents of specified file (relative to config dir)
@@ -30,6 +36,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::process::exit;
 
 #[derive(Debug, Deserialize)]
@@ -43,59 +50,29 @@ struct Config {
 struct CommandResponse {
     file: Option<String>,
     output: Option<String>,
+    stderr: Option<String>,
     #[serde(default)]
     exit_code: i32,
 }
 
-/// Find the executable path, preserving symlinks.
-///
-/// When spawned via PATH lookup (e.g., `Command::new("gh")`), argv\[0\] has no
-/// directory component. We look it up in PATH to find the symlink location,
-/// which is critical for finding the config file (e.g., `gh.json`).
-fn find_executable_path() -> std::path::PathBuf {
+/// Get command name from argv\[0\].
+fn command_name() -> String {
     let argv0 = env::args().next().expect("mock: no argv[0]");
-    let exe_path = std::path::Path::new(&argv0);
+    std::path::Path::new(&argv0)
+        .file_stem()
+        .expect("mock: argv[0] has no file stem")
+        .to_string_lossy()
+        .into_owned()
+}
 
-    // If argv[0] has a path component, use it directly
-    if exe_path.parent().is_some_and(|p| !p.as_os_str().is_empty()) {
-        return exe_path.to_path_buf();
-    }
-
-    // argv[0] is just a name (e.g., "gh"), look it up in PATH
-    if let Some(path_var) = env::var_os("PATH") {
-        for dir in env::split_paths(&path_var) {
-            let candidate = dir.join(&argv0);
-            if candidate.exists() {
-                return candidate;
-            }
-            // On Windows, also check with .exe extension
-            #[cfg(windows)]
-            {
-                let candidate_exe = dir.join(format!("{}.exe", argv0));
-                if candidate_exe.exists() {
-                    return candidate_exe;
-                }
-            }
-        }
-    }
-
-    // Last resort: current_exe() (resolves symlinks, may break config lookup)
-    env::current_exe().expect("failed to get executable path")
+fn config_dir() -> PathBuf {
+    PathBuf::from(env::var_os("MOCK_CONFIG_DIR").expect("mock: MOCK_CONFIG_DIR not set"))
 }
 
 fn main() {
-    let exe_path = find_executable_path();
-    let exe_dir = exe_path
-        .parent()
-        .expect("mock: executable has no parent directory")
-        .to_path_buf();
-    let cmd_name = exe_path
-        .file_stem()
-        .expect("mock: executable has no file stem")
-        .to_string_lossy()
-        .into_owned();
-
-    let config_path = exe_dir.join(format!("{}.json", cmd_name));
+    let cmd_name = command_name();
+    let config_dir = config_dir();
+    let config_path = config_dir.join(format!("{}.json", cmd_name));
 
     let content = fs::read_to_string(&config_path).unwrap_or_else(|e| {
         eprintln!("mock: failed to read {}: {}", config_path.display(), e);
@@ -117,20 +94,47 @@ fn main() {
         exit(0);
     }
 
-    // Match first argument against commands, fall back to _default
+    // Match against commands with priority: triple > compound > single > _default
+    // Triple: "mr view 123" matches before "mr view"
+    // Compound: "mr list" matches before "mr"
     let default_response = CommandResponse {
         file: None,
         output: None,
+        stderr: None,
         exit_code: 1,
     };
-    let response = args
-        .first()
-        .and_then(|cmd| config.commands.get(cmd))
+
+    // Try triple match first (e.g., "mr view 1", "mr view 2")
+    let triple_key = if args.len() >= 3 {
+        Some(format!("{} {} {}", args[0], args[1], args[2]))
+    } else {
+        None
+    };
+
+    // Try compound match (e.g., "mr list", "mr view")
+    let compound_key = if args.len() >= 2 {
+        Some(format!("{} {}", args[0], args[1]))
+    } else {
+        None
+    };
+
+    let response = triple_key
+        .as_ref()
+        .and_then(|key| config.commands.get(key))
+        // Fall back to compound match
+        .or_else(|| {
+            compound_key
+                .as_ref()
+                .and_then(|key| config.commands.get(key))
+        })
+        // Fall back to single-arg match
+        .or_else(|| args.first().and_then(|cmd| config.commands.get(cmd)))
+        // Fall back to _default
         .or_else(|| config.commands.get("_default"))
         .unwrap_or(&default_response);
 
     if let Some(file) = &response.file {
-        let file_path = exe_dir.join(file);
+        let file_path = config_dir.join(file);
         match fs::read_to_string(&file_path) {
             Ok(contents) => {
                 print!("{}", contents);
@@ -144,6 +148,11 @@ fn main() {
     } else if let Some(output) = &response.output {
         print!("{}", output);
         io::stdout().flush().unwrap();
+    }
+
+    if let Some(stderr_output) = &response.stderr {
+        eprint!("{}", stderr_output);
+        io::stderr().flush().unwrap();
     }
 
     exit(response.exit_code);

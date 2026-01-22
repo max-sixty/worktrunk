@@ -3,7 +3,7 @@ use std::path::Path;
 use worktrunk::HookType;
 use worktrunk::config::ProjectConfig;
 use worktrunk::git::Repository;
-use worktrunk::styling::info_message;
+use worktrunk::styling::{eprintln, info_message};
 
 use super::command_approval::approve_command_batch;
 use super::command_executor::CommandContext;
@@ -17,15 +17,24 @@ use super::worktree::{
 };
 
 /// Options for the merge command
+///
+/// All boolean fields are optional CLI overrides. If None, the effective config
+/// (project-specific merged with global) is used. If that's also None, defaults apply.
 pub struct MergeOptions<'a> {
     pub target: Option<&'a str>,
-    pub squash: bool,
-    pub commit: bool,
-    pub rebase: bool,
-    pub remove: bool,
-    pub verify: bool,
+    /// CLI override for squash. None = use effective config default.
+    pub squash: Option<bool>,
+    /// CLI override for commit. None = use effective config default.
+    pub commit: Option<bool>,
+    /// CLI override for rebase. None = use effective config default.
+    pub rebase: Option<bool>,
+    /// CLI override for remove. None = use effective config default.
+    pub remove: Option<bool>,
+    /// CLI override for verify. None = use effective config default.
+    pub verify: Option<bool>,
     pub yes: bool,
-    pub stage_mode: super::commit::StageMode,
+    /// CLI override for stage mode. None = use effective config default.
+    pub stage: Option<super::commit::StageMode>,
 }
 
 /// Collect all commands that will be executed during merge.
@@ -55,6 +64,7 @@ fn collect_merge_commands(
         hooks.push(HookType::PostMerge);
         if will_remove {
             hooks.push(HookType::PreRemove);
+            hooks.push(HookType::PostRemove);
             hooks.push(HookType::PostSwitch);
         }
     }
@@ -68,13 +78,13 @@ fn collect_merge_commands(
 pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let MergeOptions {
         target,
-        squash,
-        commit,
-        rebase,
-        remove,
-        verify,
+        squash: squash_opt,
+        commit: commit_opt,
+        rebase: rebase_opt,
+        remove: remove_opt,
+        verify: verify_opt,
         yes,
-        stage_mode,
+        stage,
     } = opts;
 
     let env = CommandEnv::for_action("merge")?;
@@ -83,11 +93,40 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Merge requires being on a branch (can't merge from detached HEAD)
     let current_branch = env.require_branch("merge")?.to_string();
 
+    // Get effective merge config (project-specific merged with global)
+    let merge_config = env.merge();
+
+    // Determine final values: CLI > project config > global config > default (true)
+    let squash = squash_opt
+        .or_else(|| merge_config.as_ref().and_then(|m| m.squash))
+        .unwrap_or(true);
+    let commit = commit_opt
+        .or_else(|| merge_config.as_ref().and_then(|m| m.commit))
+        .unwrap_or(true);
+    let rebase = rebase_opt
+        .or_else(|| merge_config.as_ref().and_then(|m| m.rebase))
+        .unwrap_or(true);
+    let remove = remove_opt
+        .or_else(|| merge_config.as_ref().and_then(|m| m.remove))
+        .unwrap_or(true);
+    let verify = verify_opt
+        .or_else(|| merge_config.as_ref().and_then(|m| m.verify))
+        .unwrap_or(true);
+
+    // Stage mode: CLI > project commit config > global commit config > default
+    let stage_mode = stage
+        .or_else(|| env.commit().and_then(|c| c.stage))
+        .unwrap_or_default();
+
+    // Cache current worktree for multiple queries
+    let current_wt = repo.current_worktree();
+
     // Validate --no-commit: requires clean working tree
-    if !commit && repo.current_worktree().is_dirty()? {
+    if !commit && current_wt.is_dirty()? {
         return Err(worktrunk::git::GitError::UncommittedChanges {
             action: Some("merge with --no-commit".into()),
             branch: Some(current_branch.clone()),
+            force_hint: false,
         }
         .into());
     }
@@ -101,7 +140,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
 
     // When current == target or we're in the main worktree, disable remove (can't remove it)
-    let in_main = !repo.current_worktree().is_linked().unwrap_or(false);
+    let in_main = !current_wt.is_linked().unwrap_or(false);
     let on_target = current_branch == target_branch;
     let remove_effective = remove && !on_target && !in_main;
 
@@ -115,14 +154,14 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // If commands were declined, skip hooks but continue with merge
     // Shadow verify to gate all subsequent hook execution on approval
     let verify = if !approved {
-        crate::output::print(info_message("Commands declined, continuing merge"))?;
+        eprintln!("{}", info_message("Commands declined, continuing merge"));
         false
     } else {
         verify
     };
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
-    let committed = if commit && repo.current_worktree().is_dirty()? {
+    let committed = if commit && current_wt.is_dirty()? {
         if squash_enabled {
             false // Squash path handles staging and committing
         } else {
@@ -148,7 +187,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
                 Some(&target_branch),
                 yes,
                 !verify, // skip_pre_commit when !verify
-                stage_mode
+                Some(stage_mode)
             )?,
             super::step_commands::SquashResult::Squashed
         )
@@ -203,18 +242,19 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     if remove_effective {
         // STEP 1: Check for uncommitted changes before attempting cleanup
         // This prevents showing "Cleaning up worktree..." before failing
-        repo.current_worktree()
-            .ensure_clean("remove worktree after merge", Some(&current_branch))?;
+        current_wt.ensure_clean("remove worktree after merge", Some(&current_branch), false)?;
 
         // STEP 2: Remove worktree via shared remove output handler so final message matches wt remove
-        let worktree_root = repo.current_worktree().root()?.to_path_buf();
-        // After a successful merge, compute integration reason from main_path
-        let effective_target = repo.effective_integration_target(&target_branch);
-        let signals =
-            worktrunk::git::compute_integration_lazy(repo, &current_branch, &effective_target)?;
-        let integration_reason = worktrunk::git::check_integration(&signals);
+        let worktree_root = current_wt.root()?.to_path_buf();
+        // After a successful merge, get integration reason
+        let (_, integration_reason) = repo.integration_reason(&current_branch, &target_branch)?;
         // Compute expected_path for path mismatch detection
         let expected_path = get_path_mismatch(repo, &current_branch, &worktree_root, config);
+        // Capture commit SHA before removal for post-remove hook template variables
+        let removed_commit = current_wt
+            .run_command(&["rev-parse", "HEAD"])
+            .ok()
+            .map(|s| s.trim().to_string());
         let remove_result = RemoveResult::RemovedWorktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
@@ -227,6 +267,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             // commit, removal will fail and user can run `wt remove --force`
             force_worktree: false,
             expected_path,
+            removed_commit,
         };
         // Run hooks during merge removal (pass through verify flag)
         // Approval was handled at the gate (collect_merge_commands)
@@ -240,21 +281,13 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         } else {
             "Worktree preserved (--no-remove)"
         };
-        crate::output::print(info_message(message))?;
-        crate::output::flush()?;
+        eprintln!("{}", info_message(message));
     }
 
     if verify {
         // Execute post-merge commands in the destination worktree
         // This runs after cleanup so the context is clear to the user
-        let ctx = CommandContext::new(
-            repo,
-            config,
-            Some(&current_branch),
-            &destination_path,
-            &destination_path,
-            yes,
-        );
+        let ctx = CommandContext::new(repo, config, Some(&current_branch), &destination_path, yes);
         // Show path when user's shell won't be in the destination directory where hooks run.
         let display_path = if remove_effective && !in_main && !on_target {
             // Worktree removed, user will cd to destination

@@ -1,4 +1,4 @@
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 
 #[test]
 fn test_select_pager_config_deserialization() {
@@ -8,7 +8,7 @@ fn test_select_pager_config_deserialization() {
 pager = "test-pager --custom-flag"
 "#;
 
-    let config: WorktrunkConfig = toml::from_str(config_content).unwrap();
+    let config: UserConfig = toml::from_str(config_content).unwrap();
 
     assert!(config.select.is_some());
     let select = config.select.unwrap();
@@ -23,7 +23,7 @@ fn test_select_pager_config_empty_string() {
 pager = ""
 "#;
 
-    let config: WorktrunkConfig = toml::from_str(config_content).unwrap();
+    let config: UserConfig = toml::from_str(config_content).unwrap();
 
     assert!(config.select.is_some());
     let select = config.select.unwrap();
@@ -38,6 +38,6 @@ fn test_select_config_optional() {
 full = true
 "#;
 
-    let config: WorktrunkConfig = toml::from_str(config_content).unwrap();
+    let config: UserConfig = toml::from_str(config_content).unwrap();
     assert!(config.select.is_none());
 }
