@@ -21,30 +21,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
-/// Which type of config file we're working with
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConfigType {
-    User,
-    Project,
-}
-
-impl ConfigType {
-    /// Check if a key would be valid in the OTHER config type.
-    fn is_valid_in_other(self, key: &str, value: &toml::Value) -> bool {
-        match self {
-            ConfigType::User => is_valid_key::<super::ProjectConfig>(key, value),
-            ConfigType::Project => is_valid_key::<super::UserConfig>(key, value),
-        }
-    }
-
-    /// Description of the other config type (for error messages).
-    fn other_description(self) -> &'static str {
-        match self {
-            ConfigType::User => "project config (.config/wt.toml)",
-            ConfigType::Project => "user config (~/.config/worktrunk/config.toml)",
-        }
-    }
-}
+use super::WorktrunkConfig;
 
 /// Tracks which config paths have already shown deprecation warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
@@ -303,49 +280,34 @@ pub fn check_and_migrate(
     Ok(true)
 }
 
-/// Check if a key+value would be valid in a specific config type.
-///
-/// Deserializes the key+value into the config type and checks whether it
-/// ends up in the `unknown` map. If it doesn't, the key is valid for that config.
-fn is_valid_key<T: super::WorktrunkConfig>(key: &str, value: &toml::Value) -> bool {
-    let mut table = toml::map::Map::new();
-    table.insert(key.to_string(), value.clone());
-    toml::Value::Table(table)
-        .try_into::<T>()
-        .map(|c| !c.unknown().contains_key(key))
-        .unwrap_or(false)
-}
-
 /// Returns the config location where this key belongs, if it's in the wrong config.
 ///
-/// For example, if `commit-generation` is found in project config, returns
+/// Generic over `C`, the config type where the key was found. If the key would
+/// be valid in `C::Other`, returns that config's description.
+///
+/// For example, `key_belongs_in::<ProjectConfig>("commit-generation", value)` returns
 /// `Some("user config (~/.config/worktrunk/config.toml)")`.
 /// Returns `None` if the key is truly unknown (not valid in either config).
-pub fn key_belongs_in(
+pub fn key_belongs_in<C: super::WorktrunkConfig>(
     key: &str,
     value: &toml::Value,
-    config_type: ConfigType,
 ) -> Option<&'static str> {
-    config_type
-        .is_valid_in_other(key, value)
-        .then(|| config_type.other_description())
+    C::Other::is_valid_key(key, value).then(C::Other::description)
 }
 
 /// Warn about unknown fields in config file
 ///
-/// Emits a warning for each unknown field, deduplicated per path per process.
-/// Unlike deprecated vars, there's no migration file — the warning just repeats
-/// until the user removes or fixes the unknown field.
+/// Generic over `C`, the config type being loaded. Emits a warning for each
+/// unknown field, deduplicated per path per process.
 ///
-/// When an unknown key belongs in the other config type (user vs project),
+/// When an unknown key belongs in the other config type (`C::Other`),
 /// the warning includes a hint about where to move it.
 ///
 /// The `label` is used in the warning message (e.g., "User config" or "Project config").
-pub fn warn_unknown_fields(
+pub fn warn_unknown_fields<C: super::WorktrunkConfig>(
     path: &Path,
     unknown_keys: &HashMap<String, toml::Value>,
     label: &str,
-    config_type: ConfigType,
 ) {
     if unknown_keys.is_empty() {
         return;
@@ -362,7 +324,7 @@ pub fn warn_unknown_fields(
     }
 
     for (key, value) in unknown_keys {
-        if let Some(other_location) = key_belongs_in(key, value, config_type) {
+        if let Some(other_location) = key_belongs_in::<C>(key, value) {
             eprintln!(
                 "{}",
                 warning_message(cformat!(

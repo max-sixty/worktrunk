@@ -29,21 +29,50 @@ use std::collections::HashMap;
 /// Trait for worktrunk config types (user and project config).
 ///
 /// Both config types capture unrecognized fields during parsing, allowing
-/// validation to detect misplaced or misspelled keys.
-pub(crate) trait WorktrunkConfig: for<'de> serde::Deserialize<'de> {
+/// validation to detect misplaced or misspelled keys. The `Other` associated
+/// type enables checking whether a key belongs in the other config.
+pub trait WorktrunkConfig: for<'de> serde::Deserialize<'de> + Sized {
+    /// The other config type (UserConfig ↔ ProjectConfig).
+    type Other: WorktrunkConfig;
+
     /// Returns the map of unknown fields captured during deserialization.
     fn unknown(&self) -> &HashMap<String, toml::Value>;
+
+    /// Human-readable description of where this config lives.
+    fn description() -> &'static str;
+
+    /// Check if a key+value would be valid in this config type.
+    fn is_valid_key(key: &str, value: &toml::Value) -> bool {
+        let mut table = toml::map::Map::new();
+        table.insert(key.to_string(), value.clone());
+        toml::Value::Table(table)
+            .try_into::<Self>()
+            .map(|c| !c.unknown().contains_key(key))
+            .unwrap_or(false)
+    }
 }
 
 impl WorktrunkConfig for UserConfig {
+    type Other = ProjectConfig;
+
     fn unknown(&self) -> &HashMap<String, toml::Value> {
         &self.unknown
+    }
+
+    fn description() -> &'static str {
+        "user config (~/.config/worktrunk/config.toml)"
     }
 }
 
 impl WorktrunkConfig for ProjectConfig {
+    type Other = UserConfig;
+
     fn unknown(&self) -> &HashMap<String, toml::Value> {
         &self.unknown
+    }
+
+    fn description() -> &'static str {
+        "project config (.config/wt.toml)"
     }
 }
 
@@ -51,7 +80,7 @@ impl WorktrunkConfig for ProjectConfig {
 pub use commands::{Command, CommandConfig};
 pub use deprecation::check_and_migrate as check_deprecated_vars;
 pub use deprecation::normalize_template_vars;
-pub use deprecation::{ConfigType, key_belongs_in, warn_unknown_fields};
+pub use deprecation::{key_belongs_in, warn_unknown_fields};
 pub use expansion::{
     DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, expand_template, redact_credentials,
     sanitize_branch_name, sanitize_db,

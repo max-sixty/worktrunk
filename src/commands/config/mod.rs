@@ -18,7 +18,10 @@ pub use state::{
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::path::PathBuf;
+
+    use worktrunk::config::{ProjectConfig, UserConfig};
 
     use super::create::comment_out_config;
     use super::show::{render_ci_tool_status, warn_unknown_keys};
@@ -118,27 +121,24 @@ mod tests {
 
     #[test]
     fn test_warn_unknown_keys_empty() {
-        use std::collections::HashMap;
-        let out = warn_unknown_keys(&HashMap::new(), worktrunk::config::ConfigType::User);
+        let out = warn_unknown_keys::<UserConfig>(&HashMap::new());
         assert!(out.is_empty());
     }
 
     #[test]
     fn test_warn_unknown_keys_single() {
-        use std::collections::HashMap;
         let mut unknown = HashMap::new();
         unknown.insert(
             "unknown-key".to_string(),
             toml::Value::String("value".to_string()),
         );
-        let out = warn_unknown_keys(&unknown, worktrunk::config::ConfigType::User);
+        let out = warn_unknown_keys::<UserConfig>(&unknown);
         assert!(out.contains("unknown-key"));
         assert!(out.contains("Unknown"));
     }
 
     #[test]
     fn test_warn_unknown_keys_multiple() {
-        use std::collections::HashMap;
         let mut unknown = HashMap::new();
         unknown.insert(
             "key1".to_string(),
@@ -148,15 +148,13 @@ mod tests {
             "key2".to_string(),
             toml::Value::String("value2".to_string()),
         );
-        let out = warn_unknown_keys(&unknown, worktrunk::config::ConfigType::User);
+        let out = warn_unknown_keys::<UserConfig>(&unknown);
         assert!(out.contains("key1"));
         assert!(out.contains("key2"));
     }
 
     #[test]
     fn test_warn_unknown_keys_suggests_other_config() {
-        use std::collections::HashMap;
-
         // Test: commit-generation in project config should suggest user config
         let mut unknown = HashMap::new();
         // Build a commit-generation table value
@@ -166,7 +164,7 @@ mod tests {
             toml::Value::String("claude".to_string()),
         );
         unknown.insert("commit-generation".to_string(), toml::Value::Table(inner));
-        let out = warn_unknown_keys(&unknown, worktrunk::config::ConfigType::Project);
+        let out = warn_unknown_keys::<ProjectConfig>(&unknown);
         assert!(
             out.contains("user config"),
             "Should suggest user config for commit-generation in project config: {out}"
@@ -180,7 +178,7 @@ mod tests {
             toml::Value::String("github".to_string()),
         );
         unknown.insert("ci".to_string(), toml::Value::Table(inner));
-        let out = warn_unknown_keys(&unknown, worktrunk::config::ConfigType::User);
+        let out = warn_unknown_keys::<UserConfig>(&unknown);
         assert!(
             out.contains("project config"),
             "Should suggest project config for ci in user config: {out}"

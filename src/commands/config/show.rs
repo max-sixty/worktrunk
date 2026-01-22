@@ -340,10 +340,9 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
         // Only check for unknown keys if config is valid
-        out.push_str(&warn_unknown_keys(
-            &find_unknown_user_keys(&contents),
-            worktrunk::config::ConfigType::User,
-        ));
+        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
+            &contents,
+        )));
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)
@@ -354,16 +353,15 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
 
 /// Format warnings for any unknown config keys.
 ///
-/// When an unknown key belongs in the other config type (user vs project),
-/// the warning includes a hint about where to move it.
-pub(super) fn warn_unknown_keys(
+/// Generic over `C`, the config type where the keys were found. When an unknown
+/// key belongs in `C::Other`, the warning includes a hint about where to move it.
+pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
     unknown_keys: &std::collections::HashMap<String, toml::Value>,
-    config_type: worktrunk::config::ConfigType,
 ) -> String {
     use std::fmt::Write;
     let mut out = String::new();
     for (key, value) in unknown_keys {
-        let msg = match worktrunk::config::key_belongs_in(key, value, config_type) {
+        let msg = match worktrunk::config::key_belongs_in::<C>(key, value) {
             Some(location) => {
                 cformat!("Key <bold>{key}</> belongs in {location} (will be ignored)")
             }
@@ -422,9 +420,8 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
         // Only check for unknown keys if config is valid
-        out.push_str(&warn_unknown_keys(
+        out.push_str(&warn_unknown_keys::<ProjectConfig>(
             &find_unknown_project_keys(&contents),
-            worktrunk::config::ConfigType::Project,
         ));
     }
 

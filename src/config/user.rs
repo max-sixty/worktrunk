@@ -609,11 +609,10 @@ impl UserConfig {
                 // (must check file content directly, not config.unknown, because
                 // config.unknown includes env vars which shouldn't trigger warnings)
                 let unknown_keys = find_unknown_keys(&content);
-                super::deprecation::warn_unknown_fields(
+                super::deprecation::warn_unknown_fields::<UserConfig>(
                     config_path,
                     &unknown_keys,
                     "User config",
-                    super::deprecation::ConfigType::User,
                 );
             }
 
