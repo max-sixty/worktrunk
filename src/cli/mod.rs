@@ -413,7 +413,6 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         after_long_help = r#"Shows uncommitted changes, divergence from the default branch and remote, and optional CI status.
 
 <!-- demo: wt-list.gif 1600x900 -->
-
 The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
 
 ## Examples
@@ -682,7 +681,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
 
     /// Remove worktree; delete branch if merged
     ///
-    /// For finished feature branches. Removes the current worktree by default.
+    /// Defaults to the current worktree.
     #[command(after_long_help = r#"## Examples
 
 Remove current worktree:
@@ -747,6 +746,10 @@ Without `--force`, removal fails if the worktree contains untracked files. Witho
 
 Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
 
+## Hooks
+
+`pre-remove` hooks run before the worktree is deleted (with access to worktree files). `post-remove` hooks run after removal. See [`wt hook`](@/hook.md) for configuration.
+
 ## See also
 
 - [`wt merge`](@/merge.md) — Remove worktree after merging
@@ -796,7 +799,6 @@ Removal runs in the background by default (returns immediately). Logs are writte
         after_long_help = r#"Unlike `git merge`, this merges current into target (not target into current). Similar to clicking "Merge pull request" on GitHub, but locally. Target defaults to the default branch.
 
 <!-- demo: wt-merge.gif 1600x900 -->
-
 ## Examples
 
 Merge to the default branch:

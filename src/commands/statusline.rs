@@ -6,7 +6,6 @@
 //! This command reuses the data collection infrastructure from `wt list`,
 //! avoiding duplication of git operations.
 
-use crate::output;
 use anyhow::{Context, Result};
 use std::env;
 use std::io::{self, Read};
@@ -132,7 +131,7 @@ const PRIORITY_MODEL: u8 = 1;
 
 /// Run the statusline command.
 ///
-/// Output uses `output::stdout()` for raw stdout (bypasses anstream color detection).
+/// Output uses `println!` for raw stdout (bypasses anstream color detection).
 /// Shell prompts (PS1) and Claude Code always expect ANSI codes.
 pub fn run(claude_code: bool) -> Result<()> {
     // Get context - either from stdin (claude-code mode) or current directory
@@ -209,7 +208,7 @@ pub fn run(claude_code: bool) -> Result<()> {
     let output = fix_dim_after_color_reset(&output);
     let output = truncate_visible(&format!("{reset} {output}"), max_width);
 
-    output::stdout(output)?;
+    println!("{}", output);
 
     Ok(())
 }

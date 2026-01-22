@@ -19,14 +19,13 @@
 
 use super::hook_filter::{HookSource, ParsedFilter};
 use super::project_config::{HookCommand, collect_commands_for_hooks};
-use crate::output;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{GitError, HookType};
 use worktrunk::styling::{
-    INFO_SYMBOL, PROMPT_SYMBOL, WARNING_SYMBOL, eprint, format_bash_with_gutter, hint_message,
-    stderr, warning_message,
+    INFO_SYMBOL, PROMPT_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_bash_with_gutter,
+    hint_message, stderr, warning_message,
 };
 
 /// Batch approval helper used when multiple commands are queued for execution.
@@ -90,10 +89,14 @@ pub fn approve_command_batch(
         }
 
         if updated && let Err(e) = fresh_config.save() {
-            let _ = output::print(warning_message(format!(
-                "Failed to save command approval: {e}"
-            )));
-            let _ = output::print(hint_message("Approval will be requested again next time."));
+            eprintln!(
+                "{}",
+                warning_message(format!("Failed to save command approval: {e}"))
+            );
+            eprintln!(
+                "{}",
+                hint_message("Approval will be requested again next time.")
+            );
         }
     }
 
@@ -112,14 +115,13 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
     let count = commands.len();
     let plural = if count == 1 { "" } else { "s" };
 
-    // CRITICAL: Flush stdout before writing to stderr to prevent stream interleaving
-    // Flushes both stdout (for data output) and stderr (for messages)
-    crate::output::flush()?;
-
-    output::print(cformat!(
-        "{WARNING_SYMBOL} <yellow><bold>{project_name}</> needs approval to execute <bold>{count}</> command{plural}:</>"
-    ))?;
-    output::blank()?;
+    eprintln!(
+        "{}",
+        cformat!(
+            "{WARNING_SYMBOL} <yellow><bold>{project_name}</> needs approval to execute <bold>{count}</> command{plural}:</>"
+        )
+    );
+    eprintln!();
 
     for cmd in commands {
         // Format as: {phase} {bold}{name}{bold:#}:
@@ -130,8 +132,8 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
             Some(name) => cformat!("{INFO_SYMBOL} {phase} <bold>{name}</>:"),
             None => format!("{INFO_SYMBOL} {phase}:"),
         };
-        output::print(label)?;
-        output::print(format_bash_with_gutter(&cmd.command.template))?;
+        eprintln!("{}", label);
+        eprintln!("{}", format_bash_with_gutter(&cmd.command.template));
     }
 
     // Check if stdin is a TTY before attempting to prompt
@@ -153,7 +155,7 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
     let mut response = String::new();
     io::stdin().read_line(&mut response)?;
 
-    output::blank()?;
+    eprintln!();
 
     Ok(response.trim().eq_ignore_ascii_case("y"))
 }

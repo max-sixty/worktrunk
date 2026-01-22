@@ -16,7 +16,7 @@ use worktrunk::HookType;
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 use worktrunk::styling::{
-    format_with_gutter, hint_message, info_message, progress_message, success_message,
+    eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
     warning_message,
 };
 
@@ -43,7 +43,7 @@ pub fn step_commit(
         let project_id = repo.project_identifier().ok();
         let commit_config = config.commit_generation(project_id.as_deref());
         let prompt = crate::llm::build_commit_prompt(&commit_config)?;
-        crate::output::stdout(prompt)?;
+        println!("{}", prompt);
         return Ok(());
     }
 
@@ -60,9 +60,10 @@ pub fn step_commit(
     let no_verify = if !no_verify {
         let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
         if !approved {
-            crate::output::print(worktrunk::styling::info_message(
-                "Commands declined, committing without hooks",
-            ))?;
+            eprintln!(
+                "{}",
+                worktrunk::styling::info_message("Commands declined, committing without hooks")
+            );
             true // Skip hooks
         } else {
             false // Run hooks
@@ -149,7 +150,10 @@ pub fn handle_squash(
     let has_any_pre_commit = has_project_pre_commit || has_user_pre_commit;
 
     if skip_pre_commit && has_any_pre_commit {
-        crate::output::print(info_message("Skipping pre-commit hooks (--no-verify)"))?;
+        eprintln!(
+            "{}",
+            info_message("Skipping pre-commit hooks (--no-verify)")
+        );
     }
 
     // Run pre-commit hooks (user first, then project)
@@ -238,22 +242,25 @@ pub fn handle_squash(
             "Squashing {commit_count} {commit_text}{with_changes} into a single commit <bright-black>({parts_str}</>{paren_close}..."
         )
     };
-    crate::output::print(progress_message(squash_progress))?;
+    eprintln!("{}", progress_message(squash_progress));
 
     // Create safety backup before potentially destructive reset if there are working tree changes
     if has_staged {
         let backup_message = format!("{} → {} (squash)", current_branch, integration_target);
         let sha = wt.create_safety_backup(&backup_message)?;
-        crate::output::print(hint_message(format!("Backup created @ {sha}")))?;
+        eprintln!("{}", hint_message(format!("Backup created @ {sha}")));
     }
 
     // Get commit subjects for the squash message
     let subjects = repo.commit_subjects(&range)?;
 
     // Generate squash commit message
-    crate::output::print(progress_message("Generating squash commit message..."))?;
+    eprintln!(
+        "{}",
+        progress_message("Generating squash commit message...")
+    );
 
-    generator.emit_hint_if_needed()?;
+    generator.emit_hint_if_needed();
 
     // Get current branch and repo name for template variables
     let repo_root = wt.root()?;
@@ -273,7 +280,7 @@ pub fn handle_squash(
 
     // Display the generated commit message
     let formatted_message = generator.format_message_for_display(&commit_message);
-    crate::output::print(format_with_gutter(&formatted_message, None))?;
+    eprintln!("{}", format_with_gutter(&formatted_message, None));
 
     // Reset to merge base (soft reset stages all changes, including any already-staged uncommitted changes)
     repo.run_command(&["reset", "--soft", &merge_base])
@@ -281,9 +288,12 @@ pub fn handle_squash(
 
     // Check if there are actually any changes to commit
     if !wt.has_staged_changes()? {
-        crate::output::print(info_message(format!(
-            "No changes after squashing {commit_count} {commit_text}"
-        )))?;
+        eprintln!(
+            "{}",
+            info_message(format!(
+                "No changes after squashing {commit_count} {commit_text}"
+            ))
+        );
         return Ok(SquashResult::NoNetChanges);
     }
 
@@ -298,9 +308,10 @@ pub fn handle_squash(
         .to_string();
 
     // Show success immediately after completing the squash
-    crate::output::print(success_message(cformat!(
-        "Squashed @ <dim>{commit_hash}</>"
-    )))?;
+    eprintln!(
+        "{}",
+        success_message(cformat!("Squashed @ <dim>{commit_hash}</>"))
+    );
 
     Ok(SquashResult::Squashed)
 }
@@ -345,7 +356,7 @@ pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
         repo_name,
         &effective_config,
     )?;
-    crate::output::stdout(prompt)?;
+    println!("{}", prompt);
     Ok(())
 }
 
@@ -378,9 +389,10 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 
     // Only show progress for true rebases (fast-forwards are instant)
     if !is_fast_forward {
-        crate::output::print(progress_message(cformat!(
-            "Rebasing onto <bold>{integration_target}</>..."
-        )))?;
+        eprintln!(
+            "{}",
+            progress_message(cformat!("Rebasing onto <bold>{integration_target}</>..."))
+        );
     }
 
     let rebase_result = repo.run_command(&["rebase", &integration_target]);
@@ -421,13 +433,15 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 
     // Success
     if is_fast_forward {
-        crate::output::print(success_message(cformat!(
-            "Fast-forwarded to <bold>{integration_target}</>"
-        )))?;
+        eprintln!(
+            "{}",
+            success_message(cformat!("Fast-forwarded to <bold>{integration_target}</>"))
+        );
     } else {
-        crate::output::print(success_message(cformat!(
-            "Rebased onto <bold>{integration_target}</>"
-        )))?;
+        eprintln!(
+            "{}",
+            success_message(cformat!("Rebased onto <bold>{integration_target}</>"))
+        );
     }
 
     Ok(RebaseResult::Rebased)
@@ -486,7 +500,10 @@ pub fn step_copy_ignored(
     };
 
     if source_path == dest_path {
-        crate::output::print(info_message("Source and destination are the same worktree"))?;
+        eprintln!(
+            "{}",
+            info_message("Source and destination are the same worktree")
+        );
         return Ok(());
     }
 
@@ -535,7 +552,7 @@ pub fn step_copy_ignored(
         .collect();
 
     if entries_to_copy.is_empty() {
-        crate::output::print(info_message("No matching files to copy"))?;
+        eprintln!("{}", info_message("No matching files to copy"));
         return Ok(());
     }
 
@@ -554,12 +571,15 @@ pub fn step_copy_ignored(
             })
             .collect();
         let entry_word = if items.len() == 1 { "entry" } else { "entries" };
-        crate::output::print(info_message(format!(
-            "Would copy {} {}:\n{}",
-            items.len(),
-            entry_word,
-            format_with_gutter(&items.join("\n"), None)
-        )))?;
+        eprintln!(
+            "{}",
+            info_message(format!(
+                "Would copy {} {}:\n{}",
+                items.len(),
+                entry_word,
+                format_with_gutter(&items.join("\n"), None)
+            ))
+        );
         return Ok(());
     }
 
@@ -593,9 +613,10 @@ pub fn step_copy_ignored(
     } else {
         "entries"
     };
-    crate::output::print(success_message(format!(
-        "Copied {copied_count} {entry_word}"
-    )))?;
+    eprintln!(
+        "{}",
+        success_message(format!("Copied {copied_count} {entry_word}"))
+    );
 
     Ok(())
 }
@@ -798,17 +819,21 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
 
     if is_restoring {
         // Restoring default branch to main worktree - no warning needed
-        crate::output::print(info_message("Restoring main worktree"))?;
+        eprintln!("{}", info_message("Restoring main worktree"));
     } else {
         // Creating mismatch - show warning and how to restore
-        crate::output::print(warning_message(
-            "Promoting creates mismatched worktree state (shown as ⚑ in wt list)",
-        ))?;
+        eprintln!(
+            "{}",
+            warning_message("Promoting creates mismatched worktree state (shown as ⚑ in wt list)",)
+        );
         // Only show restore hint if we know the default branch
         if let Some(default) = &default_branch {
-            crate::output::print(hint_message(cformat!(
-                "Run <bright-black>wt step promote {default}</> to restore canonical locations"
-            )))?;
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "Run <bright-black>wt step promote {default}</> to restore canonical locations"
+                ))
+            );
         }
     }
 
@@ -835,10 +860,13 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         .run_command(&["switch", &main_branch])
         .context("Failed to switch to branch in target worktree")?;
 
-    crate::output::print(success_message(cformat!(
-        "Promoted: main worktree now has <bold>{target_branch}</>; {} now has <bold>{main_branch}</>",
-        worktrunk::path::format_path_for_display(target_path)
-    )))?;
+    eprintln!(
+        "{}",
+        success_message(cformat!(
+            "Promoted: main worktree now has <bold>{target_branch}</>; {} now has <bold>{main_branch}</>",
+            worktrunk::path::format_path_for_display(target_path)
+        ))
+    );
 
     Ok(PromoteResult::Promoted)
 }

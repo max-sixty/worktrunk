@@ -4,11 +4,9 @@ use std::path::{Path, PathBuf};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
 use worktrunk::styling::{
-    INFO_SYMBOL, PROMPT_SYMBOL, SUCCESS_SYMBOL, format_bash_with_gutter, format_with_gutter,
-    warning_message,
+    INFO_SYMBOL, PROMPT_SYMBOL, SUCCESS_SYMBOL, eprintln, format_bash_with_gutter,
+    format_with_gutter, warning_message,
 };
-
-use crate::output;
 
 pub struct ConfigureResult {
     pub shell: Shell,
@@ -160,10 +158,13 @@ fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<
         }
         Err(e) => {
             // Warn but don't fail - the new integration will still work
-            let _ = crate::output::print(warning_message(format!(
-                "Failed to remove deprecated {}: {e}",
-                format_path_for_display(&legacy_path)
-            )));
+            eprintln!(
+                "{}",
+                warning_message(format!(
+                    "Failed to remove deprecated {}: {e}",
+                    format_path_for_display(&legacy_path)
+                ))
+            );
         }
     }
 
@@ -609,11 +610,11 @@ pub fn show_install_preview(
             "shell extension & completions"
         };
 
-        let _ = output::print(format!(
+        eprintln!(
             "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        ));
+        );
 
         // Show the config content that will be added with gutter
         // Fish: show the wrapper (it's a complete file that sources the full function)
@@ -625,8 +626,8 @@ pub fn show_install_preview(
         } else {
             result.config_line.clone()
         };
-        let _ = output::print(format_bash_with_gutter(&content));
-        let _ = output::blank(); // Blank line after each shell block
+        eprintln!("{}", format_bash_with_gutter(&content));
+        eprintln!(); // Blank line after each shell block
     }
 
     // Show completion changes (only fish has separate completion files)
@@ -638,16 +639,16 @@ pub fn show_install_preview(
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
 
-        let _ = output::print(format!(
+        eprintln!(
             "{} {} completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        ));
+        );
 
         // Show the completion content that will be written
         let fish_completion = fish_completion_content(cmd);
-        let _ = output::print(format_bash_with_gutter(fish_completion.trim()));
-        let _ = output::blank(); // Blank line after
+        eprintln!("{}", format_bash_with_gutter(fish_completion.trim()));
+        eprintln!(); // Blank line after
     }
 }
 
@@ -673,10 +674,10 @@ pub fn show_uninstall_preview(
         // Deprecated files get a different message format
         if let Some(canonical) = &result.superseded_by {
             let canonical_path = format_path_for_display(canonical);
-            let _ = output::print(format!(
+            eprintln!(
                 "{INFO_SYMBOL} {} {bold}{path}{bold:#} (deprecated; now using {bold}{canonical_path}{bold:#})",
                 result.action.description(),
-            ));
+            );
         } else {
             // Bash/Zsh: inline completions; Fish: separate completion file
             let what = if matches!(shell, Shell::Fish) {
@@ -685,11 +686,11 @@ pub fn show_uninstall_preview(
                 "shell extension & completions"
             };
 
-            let _ = output::print(format!(
+            eprintln!(
                 "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
                 result.action.symbol(),
                 result.action.description(),
-            ));
+            );
         }
     }
 
@@ -697,11 +698,11 @@ pub fn show_uninstall_preview(
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
 
-        let _ = output::print(format!(
+        eprintln!(
             "{} {} completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        ));
+        );
     }
 }
 
@@ -716,9 +717,6 @@ pub fn prompt_for_install(
     cmd: &str,
     prompt_text: &str,
 ) -> Result<bool, String> {
-    // Flush before interactive prompt
-    crate::output::flush().map_err(|e| e.to_string())?;
-
     loop {
         eprint!(
             "{}",
@@ -765,7 +763,7 @@ fn prompt_yes_no() -> Result<bool, String> {
         .read_line(&mut input)
         .map_err(|e| e.to_string())?;
 
-    crate::output::blank().map_err(|e| e.to_string())?;
+    eprintln!();
 
     let response = input.trim().to_lowercase();
     Ok(response == "y" || response == "yes")
@@ -1121,8 +1119,6 @@ fn prompt_for_uninstall_confirmation(
 ) -> Result<bool, String> {
     use anstyle::Style;
 
-    crate::output::flush().map_err(|e| e.to_string())?;
-
     for result in results {
         let bold = Style::new().bold();
         let shell = result.shell;
@@ -1134,12 +1130,11 @@ fn prompt_for_uninstall_confirmation(
             "shell extension & completions"
         };
 
-        crate::output::print(format!(
+        eprintln!(
             "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        ))
-        .map_err(|e| e.to_string())?;
+        );
     }
 
     for result in completion_results {
@@ -1147,84 +1142,86 @@ fn prompt_for_uninstall_confirmation(
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
 
-        crate::output::print(format!(
+        eprintln!(
             "{} {} completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        ))
-        .map_err(|e| e.to_string())?;
+        );
     }
 
     prompt_yes_no()
 }
 
 /// Show samples of all output message types
-pub fn handle_show_theme() -> Result<(), String> {
+pub fn handle_show_theme() {
     use color_print::cformat;
     use worktrunk::styling::{
         error_message, hint_message, info_message, progress_message, success_message,
     };
 
     // Progress
-    crate::output::print(progress_message(cformat!(
-        "Rebasing <bold>feature</> onto <bold>main</>..."
-    )))
-    .map_err(|e| e.to_string())?;
+    eprintln!(
+        "{}",
+        progress_message(cformat!("Rebasing <bold>feature</> onto <bold>main</>..."))
+    );
 
     // Success
-    crate::output::print(success_message(cformat!(
-        "Created worktree for <bold>feature</> @ <bold>/path/to/worktree</>"
-    )))
-    .map_err(|e| e.to_string())?;
+    eprintln!(
+        "{}",
+        success_message(cformat!(
+            "Created worktree for <bold>feature</> @ <bold>/path/to/worktree</>"
+        ))
+    );
 
     // Error
-    crate::output::print(error_message(cformat!("Branch <bold>feature</> not found")))
-        .map_err(|e| e.to_string())?;
+    eprintln!(
+        "{}",
+        error_message(cformat!("Branch <bold>feature</> not found"))
+    );
 
     // Warning
-    crate::output::print(warning_message(cformat!(
-        "Branch <bold>feature</> has uncommitted changes"
-    )))
-    .map_err(|e| e.to_string())?;
+    eprintln!(
+        "{}",
+        warning_message(cformat!("Branch <bold>feature</> has uncommitted changes"))
+    );
 
     // Hint
-    crate::output::print(hint_message(cformat!(
-        "To rebase onto main, run <bright-black>wt merge</>"
-    )))
-    .map_err(|e| e.to_string())?;
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "To rebase onto main, run <bright-black>wt merge</>"
+        ))
+    );
 
     // Info
-    crate::output::print(info_message(cformat!("Showing <bold>5</> worktrees")))
-        .map_err(|e| e.to_string())?;
+    eprintln!("{}", info_message(cformat!("Showing <bold>5</> worktrees")));
 
-    crate::output::blank().map_err(|e| e.to_string())?;
+    eprintln!();
 
     // Gutter - quoted content
-    crate::output::print(info_message("Gutter formatting (quoted content):"))
-        .map_err(|e| e.to_string())?;
-    crate::output::print(format_with_gutter(
-        "[commit-generation]\ncommand = \"llm --model claude\"",
-        None,
-    ))
-    .map_err(|e| e.to_string())?;
+    eprintln!("{}", info_message("Gutter formatting (quoted content):"));
+    eprintln!(
+        "{}",
+        format_with_gutter(
+            "[commit-generation]\ncommand = \"llm --model claude\"",
+            None,
+        )
+    );
 
-    crate::output::blank().map_err(|e| e.to_string())?;
+    eprintln!();
 
     // Gutter - bash code
-    crate::output::print(info_message("Gutter formatting (shell code):"))
-        .map_err(|e| e.to_string())?;
-    crate::output::print(format_bash_with_gutter(
-        "eval \"$(wt config shell init bash)\"",
-    ))
-    .map_err(|e| e.to_string())?;
+    eprintln!("{}", info_message("Gutter formatting (shell code):"));
+    eprintln!(
+        "{}",
+        format_bash_with_gutter("eval \"$(wt config shell init bash)\"",)
+    );
 
-    crate::output::blank().map_err(|e| e.to_string())?;
+    eprintln!();
 
     // Prompt
-    crate::output::print(info_message("Prompt formatting:")).map_err(|e| e.to_string())?;
-    crate::output::print(format!("{PROMPT_SYMBOL} Proceed? [y/N] ")).map_err(|e| e.to_string())?;
-
-    Ok(())
+    eprintln!("{}", info_message("Prompt formatting:"));
+    eprintln!("{PROMPT_SYMBOL} Proceed? [y/N] ");
 }
 
 #[cfg(test)]

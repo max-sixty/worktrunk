@@ -3,7 +3,7 @@ use std::path::Path;
 use worktrunk::HookType;
 use worktrunk::config::ProjectConfig;
 use worktrunk::git::Repository;
-use worktrunk::styling::info_message;
+use worktrunk::styling::{eprintln, info_message};
 
 use super::command_approval::approve_command_batch;
 use super::command_executor::CommandContext;
@@ -154,7 +154,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // If commands were declined, skip hooks but continue with merge
     // Shadow verify to gate all subsequent hook execution on approval
     let verify = if !approved {
-        crate::output::print(info_message("Commands declined, continuing merge"))?;
+        eprintln!("{}", info_message("Commands declined, continuing merge"));
         false
     } else {
         verify
@@ -281,8 +281,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         } else {
             "Worktree preserved (--no-remove)"
         };
-        crate::output::print(info_message(message))?;
-        crate::output::flush()?;
+        eprintln!("{}", info_message(message));
     }
 
     if verify {

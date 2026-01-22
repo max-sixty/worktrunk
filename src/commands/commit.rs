@@ -4,7 +4,7 @@ use worktrunk::HookType;
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::Repository;
 use worktrunk::styling::{
-    format_with_gutter, hint_message, info_message, progress_message, success_message,
+    eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
 };
 
 use super::command_executor::CommandContext;
@@ -66,13 +66,15 @@ impl<'a> CommitGenerator<'a> {
         result
     }
 
-    pub fn emit_hint_if_needed(&self) -> anyhow::Result<()> {
+    pub fn emit_hint_if_needed(&self) {
         if !self.config.is_configured() {
-            crate::output::print(hint_message(cformat!(
-                "Using fallback commit message. For LLM setup guide, run <bright-black>wt config --help</>"
-            )))?;
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "Using fallback commit message. For LLM setup guide, run <bright-black>wt config --help</>"
+                ))
+            );
         }
-        Ok(())
     }
 
     pub fn commit_staged_changes(
@@ -118,13 +120,13 @@ impl<'a> CommitGenerator<'a> {
             cformat!("{action} <bright-black>({parts_str}</>{paren_close}")
         };
 
-        crate::output::print(progress_message(full_progress_msg))?;
+        eprintln!("{}", progress_message(full_progress_msg));
 
-        self.emit_hint_if_needed()?;
+        self.emit_hint_if_needed();
         let commit_message = crate::llm::generate_commit_message(self.config)?;
 
         let formatted_message = self.format_message_for_display(&commit_message);
-        crate::output::print(format_with_gutter(&formatted_message, None))?;
+        eprintln!("{}", format_with_gutter(&formatted_message, None));
 
         repo.run_command(&["commit", "-m", &commit_message])
             .context("Failed to commit")?;
@@ -134,9 +136,10 @@ impl<'a> CommitGenerator<'a> {
             .trim()
             .to_string();
 
-        crate::output::print(success_message(cformat!(
-            "Committed changes @ <dim>{commit_hash}</>"
-        )))?;
+        eprintln!(
+            "{}",
+            success_message(cformat!("Committed changes @ <dim>{commit_hash}</>"))
+        );
 
         Ok(())
     }
@@ -155,7 +158,10 @@ impl CommitOptions<'_> {
 
         // Show skip message
         if self.no_verify && any_hooks_exist {
-            crate::output::print(info_message("Skipping pre-commit hooks (--no-verify)"))?;
+            eprintln!(
+                "{}",
+                info_message("Skipping pre-commit hooks (--no-verify)")
+            );
         }
 
         if !self.no_verify {

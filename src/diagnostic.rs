@@ -39,7 +39,7 @@
 //! use crate::diagnostic::issue_hint;
 //!
 //! // Show hint telling user to run with -vv
-//! output::print(hint_message(issue_hint()))?;
+//! eprintln!("{}", hint_message(issue_hint()));
 //! ```
 //!
 use std::path::PathBuf;
@@ -51,7 +51,7 @@ use minijinja::{Environment, context};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
-use worktrunk::styling::{hint_message, info_message, warning_message};
+use worktrunk::styling::{eprintln, hint_message, info_message, warning_message};
 
 use crate::cli::version_str;
 use crate::output;
@@ -238,7 +238,10 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
     match report.write_diagnostic_file(&repo) {
         Some(path) => {
             let path_display = format_path_for_display(&path);
-            let _ = output::print(info_message(format!("Diagnostic saved: {path_display}")));
+            eprintln!(
+                "{}",
+                info_message(format!("Diagnostic saved: {path_display}"))
+            );
 
             // Only show gh command if gh is installed
             if is_gh_installed() {
@@ -246,13 +249,16 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
                 let path_str = path.to_string_lossy().replace('\'', "'\\''");
                 // URL with prefilled body: ## Gist\n\n[Paste URL]\n\n## Description\n\n[Describe the issue]
                 let issue_url = "https://github.com/max-sixty/worktrunk/issues/new?body=%23%23%20Gist%0A%0A%5BPaste%20gist%20URL%5D%0A%0A%23%23%20Description%0A%0A%5BDescribe%20the%20issue%5D";
-                let _ = output::print(hint_message(cformat!(
-                    "To report a bug, create a secret gist with <bright-black>gh gist create --web '{path_str}'</> and reference it from an issue at <bright-black>{issue_url}</>"
-                )));
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "To report a bug, create a secret gist with <bright-black>gh gist create --web '{path_str}'</> and reference it from an issue at <bright-black>{issue_url}</>"
+                    ))
+                );
             }
         }
         None => {
-            let _ = output::print(warning_message("Failed to write diagnostic file"));
+            eprintln!("{}", warning_message("Failed to write diagnostic file"));
         }
     }
 }

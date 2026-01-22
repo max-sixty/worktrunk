@@ -11,7 +11,7 @@
 //! - **stderr**: Status messages (progress, success, errors, hints, warnings)
 //!
 //! This separation allows piping (`wt list | grep foo`) without status messages interfering.
-//! Use `output::stdout()` for primary output, `output::print()` for status messages.
+//! Use `println!` for primary output, `eprintln!` for status messages.
 
 mod constants;
 mod format;

@@ -12,7 +12,7 @@ use worktrunk::git::mr_ref;
 use worktrunk::git::pr_ref::{self, fork_remote_url, prefixed_local_branch_name};
 use worktrunk::git::{GitError, RefContext, RefType, Repository};
 use worktrunk::styling::{
-    format_with_gutter, hint_message, info_message, progress_message, suggest_command,
+    eprintln, format_with_gutter, hint_message, info_message, progress_message, suggest_command,
     warning_message,
 };
 
@@ -75,13 +75,19 @@ fn resolve_pr_ref(
     }
 
     // Fetch PR info (network call via gh CLI)
-    crate::output::print(progress_message(cformat!("Fetching PR #{pr_number}...")))?;
+    eprintln!(
+        "{}",
+        progress_message(cformat!("Fetching PR #{pr_number}..."))
+    );
 
     let repo_root = repo.repo_path();
     let pr_info = pr_ref::fetch_pr_info(pr_number, repo_root)?;
 
     // Display PR context with URL (as gutter under fetch progress)
-    crate::output::print(format_with_gutter(&format_ref_context(&pr_info), None))?;
+    eprintln!(
+        "{}",
+        format_with_gutter(&format_ref_context(&pr_info), None)
+    );
 
     if pr_info.is_cross_repository {
         // Fork PR: check if branch already exists and is tracking this PR
@@ -92,9 +98,12 @@ fn resolve_pr_ref(
             pr_ref::branch_tracks_pr(repo_root, &local_branch, pr_number)
         {
             if tracks_this {
-                crate::output::print(info_message(cformat!(
-                    "Branch <bold>{local_branch}</> already configured for PR #{pr_number}"
-                )))?;
+                eprintln!(
+                    "{}",
+                    info_message(cformat!(
+                        "Branch <bold>{local_branch}</> already configured for PR #{pr_number}"
+                    ))
+                );
                 return Ok(ResolvedTarget {
                     branch: local_branch,
                     method: CreationMethod::Regular {
@@ -111,9 +120,12 @@ fn resolve_pr_ref(
                     pr_ref::branch_tracks_pr(repo_root, &prefixed, pr_number)
                 {
                     if prefixed_tracks {
-                        crate::output::print(info_message(cformat!(
-                            "Branch <bold>{prefixed}</> already configured for PR #{pr_number}"
-                        )))?;
+                        eprintln!(
+                            "{}",
+                            info_message(cformat!(
+                                "Branch <bold>{prefixed}</> already configured for PR #{pr_number}"
+                            ))
+                        );
                         return Ok(ResolvedTarget {
                             branch: prefixed,
                             method: CreationMethod::Regular {
@@ -181,9 +193,10 @@ fn resolve_pr_ref(
         })?;
     let branch = &pr_info.head_ref_name;
 
-    crate::output::print(progress_message(cformat!(
-        "Fetching <bold>{branch}</> from {remote}..."
-    )))?;
+    eprintln!(
+        "{}",
+        progress_message(cformat!("Fetching <bold>{branch}</> from {remote}..."))
+    );
     repo.run_command(&["fetch", &remote, branch])
         .with_context(|| format!("Failed to fetch branch '{}' from {}", branch, remote))?;
 
@@ -220,13 +233,19 @@ fn resolve_mr_ref(
     }
 
     // Fetch MR info (network call via glab CLI)
-    crate::output::print(progress_message(cformat!("Fetching MR !{mr_number}...")))?;
+    eprintln!(
+        "{}",
+        progress_message(cformat!("Fetching MR !{mr_number}..."))
+    );
 
     let repo_root = repo.repo_path();
     let mr_info = mr_ref::fetch_mr_info(mr_number, repo_root)?;
 
     // Display MR context with URL (as gutter under fetch progress)
-    crate::output::print(format_with_gutter(&format_ref_context(&mr_info), None))?;
+    eprintln!(
+        "{}",
+        format_with_gutter(&format_ref_context(&mr_info), None)
+    );
 
     if mr_info.is_cross_project {
         // Fork MR: check if branch already exists and is tracking this MR
@@ -234,9 +253,12 @@ fn resolve_mr_ref(
 
         if let Some(tracks_this) = mr_ref::branch_tracks_mr(repo_root, &local_branch, mr_number) {
             if tracks_this {
-                crate::output::print(info_message(cformat!(
-                    "Branch <bold>{local_branch}</> already configured for MR !{mr_number}"
-                )))?;
+                eprintln!(
+                    "{}",
+                    info_message(cformat!(
+                        "Branch <bold>{local_branch}</> already configured for MR !{mr_number}"
+                    ))
+                );
                 return Ok(ResolvedTarget {
                     branch: local_branch,
                     method: CreationMethod::Regular {
@@ -334,9 +356,10 @@ fn resolve_switch_target(
     let resolved_base = if let Some(base_str) = base {
         let resolved = repo.resolve_worktree_name(base_str)?;
         if !create {
-            crate::output::print(warning_message(
-                "--base flag is only used with --create, ignoring",
-            ))?;
+            eprintln!(
+                "{}",
+                warning_message("--base flag is only used with --create, ignoring")
+            );
             None
         } else if !repo.ref_exists(&resolved)? {
             return Err(GitError::ReferenceNotFound {
@@ -364,14 +387,20 @@ fn resolve_switch_target(
         let remotes = branch_handle.remotes()?;
         if !remotes.is_empty() {
             let remote_ref = format!("{}/{}", remotes[0], resolved_branch);
-            crate::output::print(warning_message(cformat!(
-                "Branch <bold>{resolved_branch}</> exists on remote ({remote_ref}); creating new branch from base instead"
-            )))?;
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "Branch <bold>{resolved_branch}</> exists on remote ({remote_ref}); creating new branch from base instead"
+                ))
+            );
             let remove_cmd = suggest_command("remove", &[&resolved_branch], &[]);
             let switch_cmd = suggest_command("switch", &[&resolved_branch], &[]);
-            crate::output::print(hint_message(cformat!(
-                "To switch to the remote branch, delete this branch and run without <bright-black>--create</>: <bright-black>{remove_cmd} && {switch_cmd}</>"
-            )))?;
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "To switch to the remote branch, delete this branch and run without <bright-black>--create</>: <bright-black>{remove_cmd} && {switch_cmd}</>"
+                ))
+            );
         }
     }
 
@@ -380,12 +409,18 @@ fn resolve_switch_target(
         resolved_base.or_else(|| {
             // Check for invalid configured default branch
             if let Some(configured) = repo.invalid_default_branch_config() {
-                let _ = crate::output::print(warning_message(cformat!(
-                    "Configured default branch <bold>{configured}</> does not exist locally"
-                )));
-                let _ = crate::output::print(hint_message(cformat!(
-                    "To reset, run <bright-black>wt config state default-branch clear</>"
-                )));
+                eprintln!(
+                    "{}",
+                    warning_message(cformat!(
+                        "Configured default branch <bold>{configured}</> does not exist locally"
+                    ))
+                );
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "To reset, run <bright-black>wt config state default-branch clear</>"
+                    ))
+                );
             }
             repo.resolve_target_branch(None)
                 .ok()
@@ -660,9 +695,12 @@ pub fn execute_switch(
             if let Some(backup_path) = &clobber_backup {
                 let path_display = worktrunk::path::format_path_for_display(&worktree_path);
                 let backup_display = worktrunk::path::format_path_for_display(backup_path);
-                crate::output::print(warning_message(cformat!(
-                    "Moving <bold>{path_display}</> to <bold>{backup_display}</> (--clobber)"
-                )))?;
+                eprintln!(
+                    "{}",
+                    warning_message(cformat!(
+                        "Moving <bold>{path_display}</> to <bold>{backup_display}</> (--clobber)"
+                    ))
+                );
 
                 std::fs::rename(&worktree_path, backup_path).with_context(|| {
                     format!("Failed to move {path_display} to {backup_display}")
@@ -772,17 +810,26 @@ pub fn execute_switch(
 
                     // Show push configuration or warning about prefixed branch
                     if let Some(url) = fork_push_url {
-                        crate::output::print(info_message(cformat!(
-                            "Push configured to fork: <bright-black>{url}</>"
-                        )))?;
+                        eprintln!(
+                            "{}",
+                            info_message(cformat!(
+                                "Push configured to fork: <bright-black>{url}</>"
+                            ))
+                        );
                     } else {
                         // Prefixed branch name due to conflict - push won't work
-                        crate::output::print(warning_message(cformat!(
-                            "Using prefixed branch name <bold>{branch}</> due to name conflict"
-                        )))?;
-                        crate::output::print(hint_message(
-                            "Push to fork is not supported with prefixed branches; feedback welcome at https://github.com/max-sixty/worktrunk/issues/714",
-                        ))?;
+                        eprintln!(
+                            "{}",
+                            warning_message(cformat!(
+                                "Using prefixed branch name <bold>{branch}</> due to name conflict"
+                            ))
+                        );
+                        eprintln!(
+                            "{}",
+                            hint_message(
+                                "Push to fork is not supported with prefixed branches; feedback welcome at https://github.com/max-sixty/worktrunk/issues/714",
+                            )
+                        );
                     }
 
                     (false, None, Some(label))

@@ -63,7 +63,7 @@ use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{Shell, current_shell, extract_filename_from_path};
-use worktrunk::styling::hint_message;
+use worktrunk::styling::{eprintln, hint_message};
 
 /// Shell integration install hint message.
 // TODO(hints-count): After showing this hint 5+ times, suggest `wt config show` for diagnostics.
@@ -182,9 +182,12 @@ pub fn print_skipped_shells(
 ) -> anyhow::Result<()> {
     for (shell, path) in skipped {
         let path = format_path_for_display(path);
-        super::print(hint_message(cformat!(
-            "Skipped <bright-black>{shell}</>; <bright-black>{path}</> not found"
-        )))?;
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "Skipped <bright-black>{shell}</>; <bright-black>{path}</> not found"
+            ))
+        );
     }
     Ok(())
 }
@@ -240,10 +243,10 @@ pub fn print_shell_install_result(
 
         match result.action {
             ConfigAction::Added | ConfigAction::Created => {
-                super::print(success_message(message))?;
+                eprintln!("{}", success_message(message));
             }
             ConfigAction::AlreadyExists => {
-                super::print(info_message(message))?;
+                eprintln!("{}", info_message(message));
             }
             ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
                 unreachable!("Preview actions handled by confirmation prompt")
@@ -263,10 +266,10 @@ pub fn print_shell_install_result(
             );
             match comp_result.action {
                 ConfigAction::Added | ConfigAction::Created => {
-                    super::print(success_message(comp_message))?;
+                    eprintln!("{}", success_message(comp_message));
                 }
                 ConfigAction::AlreadyExists => {
-                    super::print(info_message(comp_message))?;
+                    eprintln!("{}", info_message(comp_message));
                 }
                 ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
                     unreachable!("Preview actions handled by confirmation prompt")
@@ -285,9 +288,12 @@ pub fn print_shell_install_result(
             .find(|r| r.shell == Shell::Fish)
             .map(|r| format_path_for_display(&r.path))
             .unwrap_or_else(|| "~/.config/fish/functions/".to_string());
-        super::print(info_message(cformat!(
-            "Removed <bold>{old_path}</> (deprecated; now using <bold>{new_path}</>)"
-        )))?;
+        eprintln!(
+            "{}",
+            info_message(cformat!(
+                "Removed <bold>{old_path}</> (deprecated; now using <bold>{new_path}</>)"
+            ))
+        );
     }
 
     // Show skipped shells
@@ -295,25 +301,32 @@ pub fn print_shell_install_result(
 
     // Summary
     if shells_configured_count > 0 {
-        super::blank()?;
+        eprintln!();
         let plural = if shells_configured_count == 1 {
             ""
         } else {
             "s"
         };
-        super::print(success_message(format!(
-            "Configured {shells_configured_count} shell{plural}"
-        )))?;
+        eprintln!(
+            "{}",
+            success_message(format!(
+                "Configured {shells_configured_count} shell{plural}"
+            ))
+        );
     } else {
-        super::print(success_message("All shells already configured"))?;
+        eprintln!("{}", success_message("All shells already configured"));
     }
 
     // Zsh compinit advisory
     if scan_result.zsh_needs_compinit {
-        super::print(warning_message(
-            "Completions require compinit; add to ~/.zshrc before the wt line:",
-        ))?;
-        super::print(format_bash_with_gutter("autoload -Uz compinit && compinit"))?;
+        eprintln!(
+            "{}",
+            warning_message("Completions require compinit; add to ~/.zshrc before the wt line:",)
+        );
+        eprintln!(
+            "{}",
+            format_bash_with_gutter("autoload -Uz compinit && compinit")
+        );
     }
 
     // Restart hint for current shell
@@ -331,7 +344,7 @@ pub fn print_shell_install_result(
         });
 
         if current_shell_result.is_some() {
-            super::print(hint_message(shell_restart_hint()))?;
+            eprintln!("{}", hint_message(shell_restart_hint()));
         }
     }
 
@@ -374,7 +387,7 @@ pub fn prompt_shell_integration(
             // Point them to manual installation
             None => shell_integration_hint(),
         };
-        super::print(hint_message(msg))?;
+        eprintln!("{}", hint_message(msg));
         return Ok(false);
     };
 
@@ -385,7 +398,7 @@ pub fn prompt_shell_integration(
 
     // No config files exist - show install hint
     if scan.configured.is_empty() {
-        super::print(hint_message(shell_integration_hint()))?;
+        eprintln!("{}", hint_message(shell_integration_hint()));
         return Ok(false);
     }
 
@@ -400,7 +413,7 @@ pub fn prompt_shell_integration(
         // Shell integration is configured but not active for this invocation
         if !crate::was_invoked_with_explicit_path() {
             // Invoked via PATH but wrapper isn't active - needs shell restart
-            super::print(hint_message(shell_restart_hint()))?;
+            eprintln!("{}", hint_message(shell_restart_hint()));
         }
         // For explicit paths: no hint needed - handle_switch_output() warning already explains
         return Ok(false);
@@ -408,13 +421,13 @@ pub fn prompt_shell_integration(
 
     // Can't or shouldn't prompt - show install hint
     if config.skip_shell_integration_prompt || !is_tty || skip_prompt {
-        super::print(hint_message(shell_integration_hint()))?;
+        eprintln!("{}", hint_message(shell_integration_hint()));
         return Ok(false);
     }
 
     // TTY + first time: Show interactive prompt
     // Accepting installs for all shells with config files (same as `wt config shell install`)
-    super::blank()?;
+    eprintln!();
     let confirmed = prompt_for_install(
         &scan.configured,
         &scan.completion_results,
@@ -426,7 +439,7 @@ pub fn prompt_shell_integration(
     if !confirmed {
         // Only skip future prompts after explicit decline (not Ctrl+C)
         let _ = config.set_skip_shell_integration_prompt(None);
-        super::print(hint_message(shell_integration_hint()))?;
+        eprintln!("{}", hint_message(shell_integration_hint()));
         return Ok(false);
     }
 
