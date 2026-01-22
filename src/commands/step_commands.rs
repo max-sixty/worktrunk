@@ -817,31 +817,23 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     // 2. Switch to exchanged branches
     //
     // Detach target first so if it fails, main worktree is unchanged.
-    // Use `git switch` for branch checkouts to avoid option injection from branch names.
+    // Use `git switch` for branch checkouts (branch-only, no path ambiguity).
 
     // Detach HEAD in both worktrees (target first for safer failure mode)
     target_working_tree
         .run_command(&["checkout", "--detach"])
         .context("Failed to detach HEAD in target worktree")?;
-    if let Err(e) = main_working_tree.run_command(&["checkout", "--detach"]) {
-        // Try to restore target worktree before failing
-        let _ = target_working_tree.run_command(&["switch", &target_branch]);
-        return Err(e).context("Failed to detach HEAD in main worktree");
-    }
+    main_working_tree
+        .run_command(&["checkout", "--detach"])
+        .context("Failed to detach HEAD in main worktree")?;
 
-    // Switch to exchanged branches (git switch is branch-only, safer than checkout)
-    if let Err(e) = main_working_tree.run_command(&["switch", &target_branch]) {
-        // Try to restore both worktrees before failing
-        let _ = main_working_tree.run_command(&["switch", &main_branch]);
-        let _ = target_working_tree.run_command(&["switch", &target_branch]);
-        return Err(e).context("Failed to switch to branch in main worktree");
-    }
-    if let Err(e) = target_working_tree.run_command(&["switch", &main_branch]) {
-        // Try to restore both worktrees before failing
-        let _ = main_working_tree.run_command(&["switch", &main_branch]);
-        let _ = target_working_tree.run_command(&["switch", &target_branch]);
-        return Err(e).context("Failed to switch to branch in target worktree");
-    }
+    // Switch to exchanged branches
+    main_working_tree
+        .run_command(&["switch", &target_branch])
+        .context("Failed to switch to branch in main worktree")?;
+    target_working_tree
+        .run_command(&["switch", &main_branch])
+        .context("Failed to switch to branch in target worktree")?;
 
     crate::output::print(success_message(cformat!(
         "Promoted: main worktree now has <bold>{target_branch}</>; {} now has <bold>{main_branch}</>",
