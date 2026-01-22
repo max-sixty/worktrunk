@@ -416,7 +416,7 @@ fn expand_subdoc_placeholders(text: &str, parent_cmd: &clap::Command, parent_nam
 
 /// Combine a command's about, long_about, and after_long_help into documentation content.
 ///
-/// The pattern is: "definition. subtitle\n\n[after_long_help]"
+/// The pattern is: `"definition. subtitle\n\n<after_long_help>"`
 /// - `about` is the one-liner definition
 /// - `subtitle` is the extra content in `long_about` beyond the `about`
 /// - If `long_about` doesn't extend `about`, subtitle is empty
