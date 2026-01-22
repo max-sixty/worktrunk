@@ -385,6 +385,11 @@ fn test_unknown_project_key_warning_during_load(repo: TestRepo, temp_home: TempD
     set_temp_home_env(&mut cmd, temp_home.path());
 
     let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "Command should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("has unknown field"),

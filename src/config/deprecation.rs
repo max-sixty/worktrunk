@@ -11,6 +11,7 @@
 //! To regenerate a project config migration file, run `wt config state hints clear deprecated-project-config`.
 //! To regenerate a user config migration file, delete the existing `.new` file.
 
+use crate::config::WorktrunkConfig;
 use crate::styling::{eprintln, hint_message, warning_message};
 use color_print::cformat;
 use minijinja::Environment;
@@ -20,8 +21,6 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
-
-use super::WorktrunkConfig;
 
 /// Tracks which config paths have already shown deprecation warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
@@ -288,10 +287,7 @@ pub fn check_and_migrate(
 /// For example, `key_belongs_in::<ProjectConfig>("commit-generation", value)` returns
 /// `Some("user config (~/.config/worktrunk/config.toml)")`.
 /// Returns `None` if the key is truly unknown (not valid in either config).
-pub fn key_belongs_in<C: super::WorktrunkConfig>(
-    key: &str,
-    value: &toml::Value,
-) -> Option<&'static str> {
+pub fn key_belongs_in<C: WorktrunkConfig>(key: &str, value: &toml::Value) -> Option<&'static str> {
     C::Other::is_valid_key(key, value).then(C::Other::description)
 }
 
@@ -304,7 +300,7 @@ pub fn key_belongs_in<C: super::WorktrunkConfig>(
 /// the warning includes a hint about where to move it.
 ///
 /// The `label` is used in the warning message (e.g., "User config" or "Project config").
-pub fn warn_unknown_fields<C: super::WorktrunkConfig>(
+pub fn warn_unknown_fields<C: WorktrunkConfig>(
     path: &Path,
     unknown_keys: &HashMap<String, toml::Value>,
     label: &str,
@@ -323,7 +319,12 @@ pub fn warn_unknown_fields<C: super::WorktrunkConfig>(
         guard.insert(canonical_path);
     }
 
-    for (key, value) in unknown_keys {
+    // Sort keys for deterministic output order
+    let mut keys: Vec<_> = unknown_keys.keys().collect();
+    keys.sort();
+
+    for key in keys {
+        let value = &unknown_keys[key];
         if let Some(other_location) = key_belongs_in::<C>(key, value) {
             eprintln!(
                 "{}",

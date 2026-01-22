@@ -360,14 +360,20 @@ pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
 ) -> String {
     use std::fmt::Write;
     let mut out = String::new();
-    for (key, value) in unknown_keys {
+
+    // Sort keys for deterministic output order
+    let mut keys: Vec<_> = unknown_keys.keys().collect();
+    keys.sort();
+
+    for key in keys {
+        let value = &unknown_keys[key];
         let msg = match worktrunk::config::key_belongs_in::<C>(key, value) {
             Some(location) => {
                 cformat!("Key <bold>{key}</> belongs in {location} (will be ignored)")
             }
             None => cformat!("Unknown key <bold>{key}</> will be ignored"),
         };
-        writeln!(out, "{}", warning_message(msg)).unwrap();
+        let _ = writeln!(out, "{}", warning_message(msg));
     }
     out
 }
