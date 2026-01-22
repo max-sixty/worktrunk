@@ -24,7 +24,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt config state default-branch - Default branch setting
+wt config state default-branch - Default branch detection and override
 
 Usage: [1m[36mwt config state default-branch[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
