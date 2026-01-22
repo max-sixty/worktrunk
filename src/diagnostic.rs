@@ -30,8 +30,11 @@
 //!
 //! # File Location
 //!
-//! Reports are written to `.git/wt-logs/diagnostic.md` in the main worktree.
-//! Verbose logs go to `.git/wt-logs/verbose.log`.
+//! Reports are written to `<git-common-dir>/wt-logs/diagnostic.md`:
+//! - Normal repos: `.git/wt-logs/diagnostic.md`
+//! - Bare repos: `<bare-repo>/wt-logs/diagnostic.md`
+//!
+//! Verbose logs go to `<git-common-dir>/wt-logs/verbose.log`.
 //!
 //! # Usage
 //!
@@ -171,7 +174,10 @@ impl DiagnosticReport {
     }
 
     /// Write the diagnostic report to a file.
-    fn write_file(&self, repo: &Repository) -> Option<PathBuf> {
+    ///
+    /// Called from `write_if_verbose()` when verbose >= 2.
+    /// Returns the path if successful, None if write failed.
+    pub fn write_diagnostic_file(&self, repo: &Repository) -> Option<PathBuf> {
         let log_dir = repo.wt_logs_dir();
         std::fs::create_dir_all(&log_dir).ok()?;
 
@@ -179,14 +185,6 @@ impl DiagnosticReport {
         std::fs::write(&path, &self.content).ok()?;
 
         Some(path)
-    }
-
-    /// Write the diagnostic report to a file (for -vv flag).
-    ///
-    /// Called from `write_if_verbose()` when verbose >= 2.
-    /// Returns the path if successful, None if write failed.
-    pub fn write_diagnostic_file(&self, repo: &Repository) -> Option<PathBuf> {
-        self.write_file(repo)
     }
 }
 
