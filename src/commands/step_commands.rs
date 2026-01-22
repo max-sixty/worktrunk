@@ -984,12 +984,12 @@ pub fn step_relocate(
         // SAFETY: Never clobber an existing worktree - that would corrupt git metadata
         if let Some((_, occupant_branch)) = repo.worktree_at_path(expected_path)? {
             let occupant_name = occupant_branch.as_deref().unwrap_or("(detached)");
-            crate::output::print(warning_message(cformat!(
+            let msg = cformat!(
                 "Skipping <bold>{branch}</> (target is worktree for <bold>{occupant_name}</>)"
-            )))?;
-            crate::output::print(hint_message(cformat!(
-                "Relocate or remove <bright-black>{occupant_name}</> first"
-            )))?;
+            );
+            crate::output::print(warning_message(msg))?;
+            let hint = cformat!("Relocate or remove <bright-black>{occupant_name}</> first");
+            crate::output::print(hint_message(hint))?;
             blocked_by_non_worktree.insert(i);
             skipped += 1;
             continue;
@@ -1008,18 +1008,15 @@ pub fn step_relocate(
                     .unwrap_or_default()
                     .to_string_lossy()
             ));
-            crate::output::print(progress_message(cformat!(
-                "Backing up {} → {}",
-                format_path_for_display(expected_path),
-                format_path_for_display(&backup_path)
-            )))?;
+            let src = format_path_for_display(expected_path);
+            let dest = format_path_for_display(&backup_path);
+            crate::output::print(progress_message(cformat!("Backing up {src} → {dest}")))?;
             std::fs::rename(expected_path, &backup_path)
                 .with_context(|| format!("Failed to backup {}", expected_path.display()))?;
         } else {
-            crate::output::print(warning_message(cformat!(
-                "Skipping <bold>{branch}</> (target blocked: {})",
-                format_path_for_display(expected_path)
-            )))?;
+            let blocked = format_path_for_display(expected_path);
+            let msg = cformat!("Skipping <bold>{branch}</> (target blocked: {blocked})");
+            crate::output::print(warning_message(msg))?;
             crate::output::print(hint_message("Use --clobber to backup blocking paths"))?;
             blocked_by_non_worktree.insert(i);
             skipped += 1;
@@ -1044,10 +1041,12 @@ pub fn step_relocate(
             return true;
         }
         let canonical = expected.canonicalize().unwrap_or_else(|_| expected.clone());
-        match current_locs.get(&canonical) {
-            Some(&occupant_idx) => moved.contains(&occupant_idx), // Occupant already moved
-            None => false, // Non-worktree blocker (should have been handled)
-        }
+        // If target exists, it must be a worktree we're tracking (non-worktree blockers
+        // were handled in phase 3 - either clobbered or added to blocked_by_non_worktree)
+        let occupant_idx = current_locs
+            .get(&canonical)
+            .expect("existing target must be a tracked worktree");
+        moved.contains(occupant_idx)
     };
 
     // Process until all pending are moved or in temp

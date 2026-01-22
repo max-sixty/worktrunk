@@ -110,6 +110,51 @@ fn test_relocate_locked_worktree(repo: TestRepo) {
     );
 }
 
+/// Test mixed success and skip (covers "Relocated X, skipped Y" output)
+#[rstest]
+fn test_relocate_mixed_success_and_skip(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // Create one worktree that can be moved
+    let wrong_path1 = parent.join("wrong-location-1");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature1",
+        wrong_path1.to_str().unwrap(),
+    ]);
+
+    // Create another worktree that is locked (will be skipped)
+    let wrong_path2 = parent.join("wrong-location-2");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature2",
+        wrong_path2.to_str().unwrap(),
+    ]);
+    repo.run_git(&["worktree", "lock", wrong_path2.to_str().unwrap()]);
+
+    // Relocate should move feature1 and skip feature2
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["relocate"], None));
+
+    // Verify feature1 was moved
+    let expected_path1 = parent.join("repo.feature1");
+    assert!(
+        expected_path1.exists(),
+        "feature1 should be at expected path: {}",
+        expected_path1.display()
+    );
+
+    // Verify feature2 was NOT moved (locked)
+    assert!(
+        wrong_path2.exists(),
+        "Locked feature2 should not be moved: {}",
+        wrong_path2.display()
+    );
+}
+
 /// Test that existing target path causes skip
 #[rstest]
 fn test_relocate_target_exists(repo: TestRepo) {
