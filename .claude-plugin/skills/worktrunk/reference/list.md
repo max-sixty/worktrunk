@@ -1,6 +1,6 @@
 # wt list
 
-List worktrees and their status
+List worktrees and their status.
 
 Shows uncommitted changes, divergence from the default branch and remote, and optional CI status.
 

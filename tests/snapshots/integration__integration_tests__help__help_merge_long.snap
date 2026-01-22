@@ -76,7 +76,6 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
 
 Unlike [2mgit merge[0m, this merges current into target (not target into current). Similar to clicking "Merge pull request" on GitHub, but locally. Target defaults to the default branch.
 
-
 [1m[32mExamples[0m
 
 Merge to the default branch:

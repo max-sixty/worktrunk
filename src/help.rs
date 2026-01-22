@@ -259,40 +259,11 @@ Commands with pages: merge, switch, remove, list"
         return;
     };
 
-    // Get the long_about (subtitle) and after_long_help content
+    // Get combined docs: about + subtitle + after_long_help
     // Transform for web docs: console→bash, status colors, demo images
     // Subdocs are expanded separately so main Command reference comes first
     let parent_name = format!("wt {}", subcommand);
-    let about = sub.get_about().map(|s| s.to_string());
-    let long_about = sub.get_long_about().map(|s| s.to_string());
-    let after_long_help = sub
-        .get_after_long_help()
-        .map(|s| s.to_string())
-        .unwrap_or_default();
-
-    // Extract subtitle: the part of long_about beyond the short about
-    // Doc comments produce: "Short about\n\nLong description" in long_about
-    // We only want the long description part (subtitle) for web docs
-    let subtitle = match (&about, &long_about) {
-        (Some(short), Some(long)) if long.starts_with(short) => {
-            let rest = long[short.len()..].trim_start();
-            if rest.is_empty() {
-                None
-            } else {
-                Some(rest.to_string())
-            }
-        }
-        _ => None,
-    };
-
-    // Combine: definition + subtitle as single lead paragraph, then after_long_help
-    // Definition doesn't have trailing period, subtitle does, so join with ". "
-    let raw_help = match (&about, &subtitle) {
-        (Some(def), Some(sub)) => format!("{def}. {sub}\n\n{after_long_help}"),
-        (Some(def), None) => format!("{def}\n\n{after_long_help}"),
-        (None, Some(sub)) => format!("{sub}\n\n{after_long_help}"),
-        (None, None) => after_long_help,
-    };
+    let raw_help = combine_command_docs(sub);
 
     // Split content at first subdoc placeholder
     let subdoc_marker = "<!-- subdoc:";
@@ -444,6 +415,45 @@ fn expand_subdoc_placeholders(text: &str, parent_cmd: &clap::Command, parent_nam
     result
 }
 
+/// Combine a command's about, long_about, and after_long_help into documentation content.
+///
+/// The pattern is: `"definition. subtitle\n\n<after_long_help>"`
+/// - `about` is the one-liner definition
+/// - `subtitle` is the extra content in `long_about` beyond the `about`
+/// - If `long_about` doesn't extend `about`, subtitle is empty
+fn combine_command_docs(cmd: &clap::Command) -> String {
+    let about = cmd.get_about().map(|s| s.to_string());
+    let long_about = cmd.get_long_about().map(|s| s.to_string());
+    let after_long_help = cmd
+        .get_after_long_help()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+
+    // Extract subtitle: the part of long_about beyond the short about
+    // Doc comments produce: "Short about\n\nLong description" in long_about
+    // We only want the long description part (subtitle) for web docs
+    let subtitle = match (&about, &long_about) {
+        (Some(short), Some(long)) if long.starts_with(short) => {
+            let rest = long[short.len()..].trim_start();
+            if rest.is_empty() {
+                None
+            } else {
+                Some(rest.to_string())
+            }
+        }
+        _ => None,
+    };
+
+    // Combine: definition + subtitle as single lead paragraph, then after_long_help
+    // Definition doesn't have trailing period, subtitle does, so join with ". "
+    match (&about, &subtitle) {
+        (Some(def), Some(sub)) => format!("{def}. {sub}\n\n{after_long_help}"),
+        (Some(def), None) => format!("{def}.\n\n{after_long_help}"),
+        (None, Some(sub)) => format!("{sub}\n\n{after_long_help}"),
+        (None, None) => after_long_help,
+    }
+}
+
 /// Format a subcommand as an H2 section for docs.
 ///
 /// Includes the subcommand's `after_long_help` (conceptual docs) followed by
@@ -458,11 +468,8 @@ fn format_subcommand_section(
     // full_command is "wt config create"
     let full_command = format!("{} {}", parent_name, subcommand_name);
 
-    // Get the raw after_long_help content
-    let raw_help = sub
-        .get_after_long_help()
-        .map(|s| s.to_string())
-        .unwrap_or_default();
+    // Get combined docs: about + subtitle + after_long_help
+    let raw_help = combine_command_docs(sub);
 
     // Split content at first subdoc placeholder so command reference comes before nested subdocs
     let subdoc_marker = "<!-- subdoc:";

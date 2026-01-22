@@ -341,12 +341,11 @@ Without a subcommand, runs `get`. Use `set` to override or `clear` to reset."#
         name = "ci-status",
         after_long_help = r#"Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 
-## How it works
+Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `ci.platform = "github"` in `.config/wt.toml` for self-hosted instances.
 
-1. **Platform detection** — From `[ci] platform` in project config, or detected from remote URL (github.com → GitHub, gitlab.com → GitLab)
-2. **CLI requirement** — Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated
-3. **What's checked** — PRs/MRs first, then branch pipelines for branches with upstream
-4. **Caching** — Results cached 30-60 seconds per branch+commit
+Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
+
+Results cache for 30-60 seconds. Indicators dim when local changes haven't been pushed.
 
 ## Status values
 

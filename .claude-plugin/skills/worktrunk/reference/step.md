@@ -61,6 +61,8 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
 
 ## wt step commit
 
+Commit changes with LLM commit message. Stages working tree changes and commits with an LLM-generated message.
+
 Stages all changes (including untracked files) and commits with an [LLM-generated message](https://worktrunk.dev/llm-commits/).
 
 ### Options
@@ -141,6 +143,8 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 ## wt step squash
+
+Squash commits since branching. Stages working tree changes, squashes all commits since diverging from target into one, generates message with LLM.
 
 Stages all changes (including untracked files), then squashes all commits since diverging from the target branch into a single commit with an [LLM-generated message](https://worktrunk.dev/llm-commits/).
 
@@ -225,6 +229,8 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 ## wt step copy-ignored
+
+Copy gitignored files to another worktree. By default copies all gitignored files; use .worktreeinclude to limit what gets copied. Useful in hooks to copy build caches and dependencies to new worktrees. Skips symlinks and existing files.
 
 Git worktrees share the repository but not untracked files. This command copies gitignored files to another worktree, eliminating cold starts.
 
@@ -311,10 +317,9 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
 
 wt step copy-ignored - Copy gitignored files to another worktree
 
-Copies gitignored files to another worktree. By default copies all gitignored
-files; use <b>.worktreeinclude</b> to limit what gets copied. Useful in hooks to copy
-build caches and dependencies to new worktrees. Skips symlinks and existing
-files.
+By default copies all gitignored files; use <b>.worktreeinclude</b> to limit what gets
+copied. Useful in hooks to copy build caches and dependencies to new worktrees.
+Skips symlinks and existing files.
 
 Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]</span>
 
@@ -346,6 +351,8 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 ## wt step for-each
+
+[experimental] Run command in each worktree.
 
 Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.
 

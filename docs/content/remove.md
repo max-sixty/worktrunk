@@ -8,7 +8,7 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt remove --help-page` — edit cli.rs to update -->
 
-Remove worktree; delete branch if merged. For finished feature branches. Removes the current worktree by default.
+Remove worktree; delete branch if merged. Defaults to the current worktree.
 
 ## Examples
 
@@ -74,6 +74,10 @@ Without `--force`, removal fails if the worktree contains untracked files. Witho
 
 Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
 
+## Hooks
+
+`pre-remove` hooks run before the worktree is deleted (with access to worktree files). `post-remove` hooks run after removal. See [`wt hook`](@/hook.md) for configuration.
+
 ## See also
 
 - [`wt merge`](@/merge.md) — Remove worktree after merging
@@ -84,7 +88,7 @@ Removal runs in the background by default (returns immediately). Logs are writte
 {% terminal() %}
 wt remove - Remove worktree; delete branch if merged
 
-For finished feature branches. Removes the current worktree by default.
+Defaults to the current worktree.
 
 Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <span class=c>[BRANCHES]...</span>
 

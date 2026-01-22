@@ -153,10 +153,9 @@ wt step squash --show-prompt | less
 
     /// Copy gitignored files to another worktree
     ///
-    /// Copies gitignored files to another worktree. By default copies all
-    /// gitignored files; use `.worktreeinclude` to limit what gets copied.
-    /// Useful in hooks to copy build caches and dependencies to new worktrees.
-    /// Skips symlinks and existing files.
+    /// By default copies all gitignored files; use `.worktreeinclude` to limit
+    /// what gets copied. Useful in hooks to copy build caches and dependencies
+    /// to new worktrees. Skips symlinks and existing files.
     #[command(
         after_long_help = r#"Git worktrees share the repository but not untracked files. This command copies gitignored files to another worktree, eliminating cold starts.
 
