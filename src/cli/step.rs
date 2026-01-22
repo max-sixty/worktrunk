@@ -302,4 +302,41 @@ Note: This command is experimental and may change in future versions.
         #[arg(required = true, last = true, num_args = 1..)]
         args: Vec<String>,
     },
+
+    /// \[experimental\] Put a branch into the main worktree
+    ///
+    /// The displaced branch moves to the promoted branch's worktree.
+    #[command(
+        after_long_help = r#"**Experimental.** Use promote for temporary testing when the main worktree has special significance (Docker Compose, IDE configs, heavy build artifacts anchored to project root), and hooks & tools aren't yet set up to run on arbitrary worktrees. The idiomatic Worktrunk workflow does not use `promote`; instead each worktree has a full environment. `promote` is the only Worktrunk command which changes a branch in an existing worktree.
+
+## Example
+
+```console
+$ wt step promote feature
+```
+
+```
+Before:  ~/project → main       ~/project.feature → feature
+After:   ~/project → feature    ~/project.feature → main
+```
+
+To restore: `wt step promote main`.
+
+The argument defaults to your current branch. After promoting feature, `~/project.feature` has `main` — run `wt step promote` there to restore.
+
+From the main worktree, you must specify a branch.
+
+## Requirements
+
+- Both worktrees must be clean
+- The branch must have an existing worktree
+"#
+    )]
+    Promote {
+        /// Branch to promote to main worktree
+        ///
+        /// Defaults to current branch. Required from main worktree.
+        #[arg(add = crate::completion::branch_value_completer())]
+        branch: Option<String>,
+    },
 }

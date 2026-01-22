@@ -6,6 +6,7 @@
 //! - `step_show_squash_prompt` - Show squash prompt without executing
 //! - `handle_rebase` - Rebase onto target branch
 //! - `step_copy_ignored` - Copy gitignored files matching .worktreeinclude
+//! - `handle_promote` - Put a branch into the main worktree
 
 use std::path::{Path, PathBuf};
 
@@ -16,6 +17,7 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 use worktrunk::styling::{
     format_with_gutter, hint_message, info_message, progress_message, success_message,
+    warning_message,
 };
 
 use super::commit::{CommitGenerator, CommitOptions};
@@ -710,6 +712,134 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Result of a promote operation
+pub enum PromoteResult {
+    /// Branch was promoted successfully
+    Promoted,
+    /// Already in canonical state (requested branch is already in main)
+    AlreadyInMain(String),
+}
+
+/// Handle `wt step promote` command
+///
+/// Promotes a branch to the main worktree, exchanging it with whatever branch is currently there.
+pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
+    use worktrunk::git::GitError;
+
+    let repo = Repository::current()?;
+    let worktrees = repo.list_worktrees()?;
+
+    if worktrees.is_empty() {
+        anyhow::bail!("No worktrees found");
+    }
+
+    // For normal repos, worktrees[0] is the main worktree
+    // For bare repos, there's no main worktree - we don't support promote there
+    if repo.is_bare() {
+        anyhow::bail!("wt step promote is not supported in bare repositories");
+    }
+
+    let main_wt = &worktrees[0];
+    let main_path = &main_wt.path;
+    let main_branch = main_wt
+        .branch
+        .clone()
+        .ok_or_else(|| GitError::DetachedHead {
+            action: Some("promote".into()),
+        })?;
+
+    // Resolve the branch to promote
+    let target_branch = match branch {
+        Some(b) => b.to_string(),
+        None => {
+            // Default to current worktree's branch (must not be in main worktree)
+            let current_wt = repo.current_worktree();
+            if !current_wt.is_linked()? {
+                anyhow::bail!(
+                    "{}",
+                    cformat!(
+                        "Specify a branch to promote. Run <bright-black>wt list</> to see available branches."
+                    )
+                );
+            }
+            current_wt.branch()?.ok_or_else(|| GitError::DetachedHead {
+                action: Some("promote".into()),
+            })?
+        }
+    };
+
+    // Check if target is already in main worktree
+    if target_branch == main_branch {
+        return Ok(PromoteResult::AlreadyInMain(target_branch));
+    }
+
+    // Find the worktree with the target branch
+    let target_wt = worktrees
+        .iter()
+        .skip(1) // Skip main worktree
+        .find(|wt| wt.branch.as_deref() == Some(&target_branch))
+        .ok_or_else(|| GitError::WorktreeNotFound {
+            branch: target_branch.clone(),
+        })?;
+
+    let target_path = &target_wt.path;
+
+    // Ensure both worktrees are clean
+    let main_working_tree = repo.worktree_at(main_path);
+    let target_working_tree = repo.worktree_at(target_path);
+
+    main_working_tree.ensure_clean("promote", Some(&main_branch), false)?;
+    target_working_tree.ensure_clean("promote", Some(&target_branch), false)?;
+
+    // Check if we're restoring canonical state (promoting default branch back to main worktree)
+    let default_branch = repo
+        .default_branch()
+        .ok_or_else(|| anyhow::anyhow!("Could not determine default branch"))?;
+    let is_restoring = target_branch == default_branch;
+
+    if is_restoring {
+        // Restoring canonical state - no warning needed
+        crate::output::print(info_message("Restoring canonical worktree state"))?;
+    } else {
+        // Creating mismatch - show warning and how to restore
+        crate::output::print(warning_message(
+            "Promoting creates mismatched worktree state (shown as ⚑ in wt list)",
+        ))?;
+        crate::output::print(hint_message(cformat!(
+            "Run <bright-black>wt step promote {default_branch}</> to restore canonical locations"
+        )))?;
+    }
+
+    // Perform the exchange:
+    // 1. Detach both worktrees (releases branch locks)
+    // 2. Check out exchanged branches
+    crate::output::print(progress_message(cformat!(
+        "Promoting <bold>{target_branch}</> to main worktree..."
+    )))?;
+
+    // Detach HEAD in both worktrees
+    repo.run_command_in_dir(&["checkout", "--detach"], main_path)
+        .context("Failed to detach HEAD in main worktree")?;
+    repo.run_command_in_dir(&["checkout", "--detach"], target_path)
+        .context("Failed to detach HEAD in target worktree")?;
+
+    // Check out exchanged branches
+    repo.run_command_in_dir(&["checkout", &target_branch], main_path)
+        .context("Failed to check out branch in main worktree")?;
+    repo.run_command_in_dir(&["checkout", &main_branch], target_path)
+        .context("Failed to check out branch in target worktree")?;
+
+    crate::output::print(success_message(cformat!(
+        "Promoted: main worktree now has <bold>{target_branch}</>"
+    )))?;
+    crate::output::print(info_message(cformat!(
+        "Worktree @ {} now has <bold>{main_branch}</>",
+        worktrunk::path::format_path_for_display(target_path)
+    )))?;
+
+    Ok(PromoteResult::Promoted)
 }
 
 #[cfg(test)]

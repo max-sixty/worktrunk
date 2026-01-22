@@ -1,0 +1,70 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - step
+    - promote
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt step promote - [experimental] Put a branch into the main worktree
+
+The displaced branch moves to the promoted branch's worktree.
+
+Usage: [1m[36mwt step promote[0m [36m[OPTIONS][0m [36m[BRANCH]
+
+[1m[32mArguments:
+  [36m[BRANCH]
+          Branch to promote to main worktree
+          
+          Defaults to current branch. Required from main worktree.
+
+[1m[32mOptions:
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+[1mExperimental.[0m Use promote for temporary testing when the main worktree has special significance (Docker Compose, IDE configs, heavy build artifacts anchored to project root), and hooks & tools aren't yet set up to run on arbitrary worktrees. The idiomatic Worktrunk workflow does not use [2mpromote[0m; instead each worktree has a full environment. [2mpromote[0m is the only Worktrunk command which changes a branch in an existing worktree.
+
+[1m[32mExample
+
+  [2m$ wt step promote feature
+
+  [2mBefore:  ~/project → main       ~/project.feature → feature
+  [2mAfter:   ~/project → feature    ~/project.feature → main
+
+To restore: [2mwt step promote main[0m.
+
+The argument defaults to your current branch. After promoting feature, [2m~/project.feature[0m has [2mmain[0m — run [2mwt step promote[0m there to restore.
+
+From the main worktree, you must specify a branch.
+
+[1m[32mRequirements
+
+- Both worktrees must be clean
+- The branch must have an existing worktree

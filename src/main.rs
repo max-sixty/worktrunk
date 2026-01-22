@@ -39,7 +39,7 @@ use commands::{
     MergeOptions, OperationMode, RebaseResult, SquashResult, add_approvals, approve_hooks,
     clear_approvals, execute_switch, handle_completions, handle_config_create, handle_config_show,
     handle_configure_shell, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
-    handle_list, handle_merge, handle_rebase, handle_remove, handle_remove_current,
+    handle_list, handle_merge, handle_promote, handle_rebase, handle_remove, handle_remove_current,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
     handle_state_set, handle_state_show, handle_unconfigure_shell, plan_switch,
     resolve_worktree_arg, run_hook, step_commit, step_copy_ignored, step_for_each,
@@ -543,6 +543,18 @@ fn main() {
                 step_copy_ignored(from.as_deref(), to.as_deref(), dry_run)
             }
             StepCommand::ForEach { args } => step_for_each(args),
+            StepCommand::Promote { branch } => {
+                use commands::PromoteResult;
+                handle_promote(branch.as_deref()).and_then(|result| match result {
+                    PromoteResult::Promoted => Ok(()),
+                    PromoteResult::AlreadyInMain(branch) => {
+                        crate::output::print(info_message(cformat!(
+                            "Branch <bold>{branch}</> is already in main worktree"
+                        )))?;
+                        Ok(())
+                    }
+                })
+            }
         },
         Commands::Hook { action } => match action {
             HookCommand::Show {

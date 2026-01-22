@@ -38,8 +38,8 @@ pub(crate) use merge::{MergeOptions, execute_pre_remove_commands, handle_merge};
 #[cfg(unix)]
 pub(crate) use select::handle_select;
 pub(crate) use step_commands::{
-    RebaseResult, SquashResult, handle_rebase, handle_squash, step_commit, step_copy_ignored,
-    step_show_squash_prompt,
+    PromoteResult, RebaseResult, SquashResult, handle_promote, handle_rebase, handle_squash,
+    step_commit, step_copy_ignored, step_show_squash_prompt,
 };
 pub(crate) use worktree::{
     OperationMode, execute_switch, handle_remove, handle_remove_current,

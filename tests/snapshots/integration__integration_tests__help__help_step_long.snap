@@ -35,6 +35,7 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36mrebase[0m        Rebase onto target
   [1m[36mcopy-ignored[0m  Copy gitignored files to another worktree
   [1m[36mfor-each[0m      [experimental] Run command in each worktree
+  [1m[36mpromote[0m       [experimental] Put a branch into the main worktree
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
@@ -71,6 +72,7 @@ Manual merge workflow with review between steps:
 - [2mpush[0m — Fast-forward target to current branch
 - [2mcopy-ignored[0m — Copy gitignored files between worktrees
 - [2mfor-each[0m — [experimental] Run a command in every worktree
+- [2mpromote[0m — [experimental] Put a branch into the main worktree
 
 [1m[32mSee also[0m
 
