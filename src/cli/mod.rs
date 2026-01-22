@@ -682,7 +682,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
 
     /// Remove worktree; delete branch if merged
     ///
-    /// For finished feature branches. Removes the current worktree by default.
+    /// Defaults to the current worktree.
     #[command(after_long_help = r#"## Examples
 
 Remove current worktree:
@@ -746,6 +746,10 @@ Without `--force`, removal fails if the worktree contains untracked files. Witho
 ## Background removal
 
 Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
+
+## Hooks
+
+`pre-remove` hooks run before the worktree is deleted (with access to worktree files). `post-remove` hooks run after removal. See [`wt hook`](@/hook.md) for configuration.
 
 ## See also
 
