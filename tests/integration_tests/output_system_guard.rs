@@ -17,6 +17,8 @@
 use std::fs;
 use std::path::Path;
 
+use path_slash::PathExt as _;
+
 /// Paths (relative to src/commands/) that are allowed to use println!/print! for stdout.
 /// These intentionally output data to stdout for scripting/piping.
 const STDOUT_ALLOWED_PATHS: &[&str] = &[
@@ -91,12 +93,11 @@ fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, comman
     // Get path relative to src/commands/ for matching against STDOUT_ALLOWED_PATHS
     let relative_path = path
         .strip_prefix(commands_dir)
-        .ok()
-        .and_then(|p| p.to_str())
-        .unwrap_or("");
+        .map(|p| p.to_slash_lossy())
+        .unwrap_or_default();
 
     // Skip files that are allowed to use stdout
-    if STDOUT_ALLOWED_PATHS.contains(&relative_path) {
+    if STDOUT_ALLOWED_PATHS.contains(&relative_path.as_ref()) {
         return;
     }
 
