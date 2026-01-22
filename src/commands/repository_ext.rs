@@ -3,7 +3,7 @@ use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::worktree::{BranchDeletionMode, RemoveResult, get_path_mismatch};
-use anyhow::Context;
+use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{
@@ -298,7 +298,18 @@ impl RepositoryCliExt for Repository {
             }
         }
 
-        // Stash entry not found — nothing was stashed
+        // Stash entry not found. Verify the worktree is now clean — if it's still
+        // dirty, stashing may have failed silently or our lookup missed the entry.
+        if wt.is_dirty()? {
+            bail!(
+                "Failed to stash changes in {}; worktree still has uncommitted changes. \
+                 Expected stash entry: '{}'. Check 'git stash list'.",
+                format_path_for_display(wt_path),
+                stash_name
+            );
+        }
+
+        // Worktree is clean and no stash entry — nothing needed to be stashed
         Ok(None)
     }
 

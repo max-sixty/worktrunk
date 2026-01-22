@@ -2344,7 +2344,7 @@ fn test_switch_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
     // Create a feature branch and push it
     repo.add_worktree("feature-auth");
 
-    // glab mr view <number> --output json format
+    // glab api projects/:id/merge_requests/<number> format
     let glab_response = r#"{
         "title": "Fix authentication bug in login flow",
         "author": {"username": "alice"},

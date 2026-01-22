@@ -183,11 +183,17 @@ pub fn fetch_mr_info(mr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
         }
 
         // Fallback for non-JSON errors (network issues, glab not configured, etc.)
+        // Include stdout if stderr is empty, as some errors are reported there.
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let details = if stderr.trim().is_empty() {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        } else {
+            stderr.trim().to_string()
+        };
         return Err(GitError::CliApiError {
             ref_type: super::RefType::Mr,
             message: format!("glab api failed for MR !{}", mr_number),
-            stderr: stderr.trim().to_string(),
+            stderr: details,
         }
         .into());
     }
@@ -212,14 +218,26 @@ pub fn fetch_mr_info(mr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
 
     // Fetch project URLs for cross-project (fork) MRs.
     // The GitLab MR API only returns project IDs, so we need separate API calls.
+    // TODO(perf): Defer URL fetching until after branch_tracks_mr check in switch.rs
+    // to avoid unnecessary API calls when branch already exists and tracks this MR.
     let (source_project_ssh_url, source_project_http_url) = if is_cross_project {
-        fetch_project_urls(response.source_project_id, repo_root).unwrap_or((None, None))
+        fetch_project_urls(response.source_project_id, repo_root).with_context(|| {
+            format!(
+                "Failed to fetch source project {} for MR !{}",
+                response.source_project_id, mr_number
+            )
+        })?
     } else {
         (None, None)
     };
 
     let (target_project_ssh_url, target_project_http_url) = if is_cross_project {
-        fetch_project_urls(response.target_project_id, repo_root).unwrap_or((None, None))
+        fetch_project_urls(response.target_project_id, repo_root).with_context(|| {
+            format!(
+                "Failed to fetch target project {} for MR !{}",
+                response.target_project_id, mr_number
+            )
+        })?
     } else {
         (None, None)
     };

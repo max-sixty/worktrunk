@@ -198,11 +198,17 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
         }
 
         // Fallback for non-JSON errors (network issues, gh not configured, etc.)
+        // Include stdout if stderr is empty, as some errors are reported there.
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let details = if stderr.trim().is_empty() {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        } else {
+            stderr.trim().to_string()
+        };
         return Err(GitError::CliApiError {
             ref_type: super::RefType::Pr,
             message: format!("gh api failed for PR #{}", pr_number),
-            stderr: stderr.trim().to_string(),
+            stderr: details,
         }
         .into());
     }
