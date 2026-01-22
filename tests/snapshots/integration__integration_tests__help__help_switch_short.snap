@@ -24,13 +24,13 @@ exit_code: 0
 ----- stderr -----
 wt switch - Switch to a worktree
 
-Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m]
+Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m][0m
 
-[1m[32mArguments:
+[1m[32mArguments:[0m
   [36m<BRANCH>[0m           Branch name or shortcut
   [36m[EXECUTE_ARGS]...[0m  Additional arguments for --execute command (after --)
 
-[1m[32mOptions:
+[1m[32mOptions:[0m
   [1m[36m-c[0m, [1m[36m--create[0m             Create a new branch
   [1m[36m-b[0m, [1m[36m--base[0m[36m [0m[36m<BASE>[0m        Base branch
   [1m[36m-x[0m, [1m[36m--execute[0m[36m [0m[36m<EXECUTE>[0m  Command to run after switch
@@ -39,7 +39,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
       [1m[36m--no-verify[0m          Skip hooks
   [1m[36m-h[0m, [1m[36m--help[0m               Print help (see more with '--help')
 
-[1m[32mGlobal Options:
+[1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command
       [1m[36m--config[0m[36m [0m[36m<path>[0m  User config file path
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: hooks, templates; -vv: debug report)

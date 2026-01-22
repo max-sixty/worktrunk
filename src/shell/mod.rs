@@ -96,22 +96,43 @@ impl Shell {
         }
     }
 
-    /// Check if shell integration is configured for the given command name.
+    /// Check if this shell has integration configured.
     ///
-    /// Returns the path to the first config file with integration if found.
-    /// This helps detect the "configured but not restarted shell" state.
-    ///
-    /// The `cmd` parameter specifies the command name to look for (e.g., "wt" or "git-wt").
-    /// This ensures we only consider integration "configured" if it uses the same binary
-    /// we're running as - prevents confusion when users have multiple installs.
-    pub fn is_integration_configured(
-        cmd: &str,
-    ) -> Result<Option<std::path::PathBuf>, std::io::Error> {
-        let results = scan_for_detection_details(cmd)?;
-        Ok(results
-            .into_iter()
-            .find(|r| !r.matched_lines.is_empty())
-            .map(|r| r.path))
+    /// Used for accurate warning messages that need to know about the user's
+    /// current shell specifically (e.g., "shell requires restart" vs "not installed").
+    pub fn is_shell_configured(&self, cmd: &str) -> Result<bool, std::io::Error> {
+        let config_paths = self.config_paths(cmd)?;
+
+        // For fish, also check legacy conf.d location
+        let mut paths_to_check = config_paths;
+        if matches!(self, Shell::Fish)
+            && let Ok(legacy) = Shell::legacy_fish_conf_d_path(cmd)
+        {
+            paths_to_check.push(legacy);
+        }
+
+        for path in paths_to_check {
+            if !path.exists() {
+                continue;
+            }
+            if Self::file_has_integration(&path, cmd)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Check if a file contains shell integration lines for the given command.
+    fn file_has_integration(path: &std::path::Path, cmd: &str) -> Result<bool, std::io::Error> {
+        use std::io::{BufRead, BufReader};
+
+        let file = std::fs::File::open(path)?;
+        for line in BufReader::new(file).lines() {
+            if is_shell_integration_line(&line?, cmd) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
@@ -395,4 +416,33 @@ mod tests {
             "{shell} config_line({prefix:?}) not detected:\n  {line}"
         );
     }
+
+    #[test]
+    fn test_file_has_integration() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let bashrc = temp_dir.path().join(".bashrc");
+
+        // Write a valid integration line
+        let mut file = std::fs::File::create(&bashrc).unwrap();
+        writeln!(
+            file,
+            r#"if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init bash)"; fi"#
+        )
+        .unwrap();
+
+        // Test file_has_integration directly
+        assert!(Shell::file_has_integration(&bashrc, "wt").unwrap());
+        assert!(!Shell::file_has_integration(&bashrc, "git-wt").unwrap());
+
+        // Test with non-matching content
+        let empty_file = temp_dir.path().join(".zshrc");
+        std::fs::write(&empty_file, "# just a comment\n").unwrap();
+        assert!(!Shell::file_has_integration(&empty_file, "wt").unwrap());
+    }
+
+    // Note: is_shell_configured() is not unit-tested because it requires
+    // mutating HOME env var (unsafe). It's tested indirectly via integration
+    // tests that exercise the shell integration warning paths.
 }

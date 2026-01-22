@@ -36,5 +36,5 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mFetching MR !101...[39m
-[31m✗[39m [31mglab mr view failed for MR !101[39m
+[31m✗[39m [31mglab api failed for MR !101[39m
 [107m [0m glab: unexpected internal error: something went wrong

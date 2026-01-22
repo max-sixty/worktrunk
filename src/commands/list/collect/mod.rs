@@ -104,7 +104,9 @@ use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use std::sync::Arc;
 use worktrunk::git::{Repository, WorktreeInfo};
-use worktrunk::styling::{INFO_SYMBOL, format_with_gutter, hint_message, warning_message};
+use worktrunk::styling::{
+    INFO_SYMBOL, eprintln, format_with_gutter, hint_message, warning_message,
+};
 
 use crate::commands::is_worktree_at_expected_path;
 
@@ -305,18 +307,22 @@ pub fn collect(
     if let Some(configured) = repo.invalid_default_branch_config() {
         let msg =
             cformat!("Configured default branch <bold>{configured}</> does not exist locally");
-        crate::output::print(warning_message(msg))?;
+        eprintln!("{}", warning_message(msg));
         let hint = cformat!("To reset, run <bright-black>wt config state default-branch clear</>");
-        crate::output::print(hint_message(hint))?;
+        eprintln!("{}", hint_message(hint));
     }
 
-    // Main worktree is the worktree on the default branch (if exists), else first non-prunable worktree.
-    // find_home returns None if all worktrees are prunable or the list is empty.
+    // Main worktree is the primary worktree (for sorting and is_main display).
+    // - Normal repos: the main worktree (repo root)
+    // - Bare repos: the default branch's worktree
     // TODO: show ellipsis or indicator when default_branch is None and columns are empty
-    let main_worktree =
-        WorktreeInfo::find_home(&worktrees, default_branch.as_deref().unwrap_or(""))
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
+    let primary_path = repo.primary_worktree()?;
+    let main_worktree = primary_path
+        .as_ref()
+        .and_then(|p| worktrees.iter().find(|wt| wt.path == *p))
+        .or_else(|| worktrees.iter().find(|wt| !wt.is_prunable()))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
 
     // Defer previous_branch lookup until after skeleton - set is_previous later
     // (skeleton shows placeholder gutter, actual symbols appear when data loads)
@@ -776,10 +782,10 @@ pub fn collect(
             "\n\nThis likely indicates a git command hung. Run with -v for details, -vv to create a diagnostic file.",
         );
 
-        crate::output::print(warning_message(&diag))?;
+        eprintln!("{}", warning_message(&diag));
 
         // Show issue reporting hint (free function - doesn't collect diagnostic data)
-        crate::output::print(hint_message(crate::diagnostic::issue_hint()))?;
+        eprintln!("{}", hint_message(crate::diagnostic::issue_hint()));
     }
 
     // Compute status symbols for prunable worktrees (skipped during task spawning).
@@ -822,12 +828,12 @@ pub fn collect(
         } else {
             // Non-TTY: output to stdout (same as buffered mode)
             // Progressive skeleton was suppressed; now output the final table
-            crate::output::stdout(layout.format_header_line())?;
+            println!("{}", layout.format_header_line());
             for item in &all_items {
-                crate::output::stdout(layout.format_list_item_line(item))?;
+                println!("{}", layout.format_list_item_line(item));
             }
-            crate::output::stdout("")?;
-            crate::output::stdout(final_msg)?;
+            println!();
+            println!("{}", final_msg);
         }
     } else if render_table {
         // Buffered mode: render final table
@@ -839,12 +845,12 @@ pub fn collect(
             timed_out_count,
         );
 
-        crate::output::stdout(layout.format_header_line())?;
+        println!("{}", layout.format_header_line());
         for item in &all_items {
-            crate::output::stdout(layout.format_list_item_line(item))?;
+            println!("{}", layout.format_list_item_line(item));
         }
-        crate::output::stdout("")?;
-        crate::output::stdout(final_msg)?;
+        println!();
+        println!("{}", final_msg);
     }
 
     // Status symbols are now computed during data collection (both modes), no fallback needed
@@ -883,10 +889,10 @@ pub fn collect(
         }
 
         let warning = warning_parts.join("\n");
-        crate::output::print(warning_message(&warning))?;
+        eprintln!("{}", warning_message(&warning));
 
         // Show issue reporting hint (free function - doesn't collect diagnostic data)
-        crate::output::print(hint_message(crate::diagnostic::issue_hint()))?;
+        eprintln!("{}", hint_message(crate::diagnostic::issue_hint()));
     }
 
     // Populate display fields for all items (used by JSON output and statusline)

@@ -25,23 +25,23 @@ exit_code: 0
 ----- stderr -----
 wt config show - Show configuration files & locations
 
-Usage: [1m[36mwt config show[0m [36m[OPTIONS]
+Usage: [1m[36mwt config show[0m [36m[OPTIONS][0m
 
-[1m[32mOptions:
-      [1m[36m--full
+[1m[32mOptions:[0m
+      [1m[36m--full[0m
           Run diagnostic checks (CI tools, commit generation)
 
-  [1m[36m-h[0m, [1m[36m--help
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 Shows location and contents of user config ([2m~/.config/worktrunk/config.toml[0m)
@@ -49,11 +49,11 @@ and project config ([2m.config/wt.toml[0m).
 
 If a config file doesn't exist, shows defaults that would be used.
 
-[1m[32mFull diagnostics
+[1m[32mFull diagnostics[0m
 
 Use [2m--full[0m to run diagnostic checks:
 
-  [2mwt config show --full
+  [2mwt config show --full[0m
 
 This tests:
 - [1mCI tool status[0m — Whether [2mgh[0m (GitHub) or [2mglab[0m (GitLab) is installed and authenticated

@@ -246,7 +246,11 @@ impl Repository {
     pub fn require_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
         let branch = self.resolve_target_branch(target)?;
         if !self.branch(&branch).exists()? {
-            return Err(GitError::InvalidReference { reference: branch }.into());
+            return Err(GitError::BranchNotFound {
+                branch,
+                show_create_hint: true,
+            }
+            .into());
         }
         Ok(branch)
     }
@@ -258,7 +262,7 @@ impl Repository {
     pub fn require_target_ref(&self, target: Option<&str>) -> anyhow::Result<String> {
         let reference = self.resolve_target_branch(target)?;
         if !self.ref_exists(&reference)? {
-            return Err(GitError::InvalidReference { reference }.into());
+            return Err(GitError::ReferenceNotFound { reference }.into());
         }
         Ok(reference)
     }

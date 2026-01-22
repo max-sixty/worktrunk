@@ -38,12 +38,23 @@ fn display_worktree_missing() {
 }
 
 #[test]
-fn display_no_worktree_found() {
-    let err = GitError::NoWorktreeFound {
+fn branch_not_found() {
+    let err = GitError::BranchNotFound {
         branch: "nonexistent".into(),
+        show_create_hint: true,
     };
 
-    assert_snapshot!("no_worktree_found", err.to_string());
+    assert_snapshot!("branch_not_found", err.to_string());
+}
+
+#[test]
+fn branch_not_found_no_create_hint() {
+    let err = GitError::BranchNotFound {
+        branch: "nonexistent".into(),
+        show_create_hint: false,
+    };
+
+    assert_snapshot!("branch_not_found_no_create_hint", err.to_string());
 }
 
 #[test]
@@ -135,15 +146,6 @@ fn display_branch_already_exists() {
     };
 
     assert_snapshot!("branch_already_exists", err.to_string());
-}
-
-#[test]
-fn display_invalid_reference() {
-    let err = GitError::InvalidReference {
-        reference: "nonexistent-branch".into(),
-    };
-
-    assert_snapshot!("invalid_reference", err.to_string());
 }
 
 // ============================================================================

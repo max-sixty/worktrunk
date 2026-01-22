@@ -26,30 +26,30 @@ exit_code: 0
 ----- stderr -----
 wt config state previous-branch - Previous branch (for [1mwt switch -[0m)
 
-Usage: [1m[36mwt config state previous-branch[0m [36m[OPTIONS][0m [36m[COMMAND]
+Usage: [1m[36mwt config state previous-branch[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
-[1m[32mCommands:
+[1m[32mCommands:[0m
   [1m[36mget[0m    Get the previous branch
   [1m[36mset[0m    Set the previous branch
   [1m[36mclear[0m  Clear the previous branch
 
-[1m[32mOptions:
-  [1m[36m-h[0m, [1m[36m--help
+[1m[32mOptions:[0m
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 Enables [2mwt switch -[0m to return to the previous worktree, similar to [2mcd -[0m or [2mgit checkout -[0m.
 
-[1m[32mHow it works
+[1m[32mHow it works[0m
 
 Updated automatically on every [2mwt switch[0m. Stored in git config as [2mworktrunk.history[0m.
 

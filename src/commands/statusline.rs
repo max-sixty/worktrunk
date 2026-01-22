@@ -6,12 +6,11 @@
 //! This command reuses the data collection infrastructure from `wt list`,
 //! avoiding duplication of git operations.
 
-use crate::output;
 use anyhow::{Context, Result};
 use std::env;
 use std::io::{self, Read};
 use std::path::Path;
-use worktrunk::git::{Repository, WorktreeInfo};
+use worktrunk::git::Repository;
 use worktrunk::styling::{get_terminal_width, truncate_visible};
 
 use super::list::{self, CollectOptions, StatuslineSegment};
@@ -132,7 +131,7 @@ const PRIORITY_MODEL: u8 = 1;
 
 /// Run the statusline command.
 ///
-/// Output uses `output::stdout()` for raw stdout (bypasses anstream color detection).
+/// Output uses `println!` for raw stdout (bypasses anstream color detection).
 /// Shell prompts (PS1) and Claude Code always expect ANSI codes.
 pub fn run(claude_code: bool) -> Result<()> {
     // Get context - either from stdin (claude-code mode) or current directory
@@ -209,7 +208,7 @@ pub fn run(claude_code: bool) -> Result<()> {
     let output = fix_dim_after_color_reset(&output);
     let output = truncate_visible(&format!("{reset} {output}"), max_width);
 
-    output::stdout(output)?;
+    println!("{}", output);
 
     Ok(())
 }
@@ -264,24 +263,22 @@ fn get_git_status_segments(
         return Ok(vec![]);
     };
 
-    // Get default branch for comparisons
-    let default_branch = match repo.default_branch() {
-        Some(b) => b,
-        None => {
-            // Can't determine default branch - just show current branch
-            return Ok(vec![StatuslineSegment::from_column(
-                wt.branch.as_deref().unwrap_or("HEAD").to_string(),
-                ColumnKind::Branch,
-            )]);
-        }
-    };
+    // If we can't determine the default branch, just show current branch
+    if repo.default_branch().is_none() {
+        return Ok(vec![StatuslineSegment::from_column(
+            wt.branch.as_deref().unwrap_or("HEAD").to_string(),
+            ColumnKind::Branch,
+        )]);
+    }
 
-    // Determine if this is the home worktree (default branch's worktree, or first if none)
-    // Use the already-fetched worktrees to avoid a redundant git command
-    // Note: called `is_home` here because bare repos have no git "main worktree" -
-    // all worktrees are linked. The `is_main` param in build_worktree_item is for display.
-    let home_worktree = WorktreeInfo::find_home(&worktrees, &default_branch);
-    let is_home = home_worktree.is_some_and(|hw| wt.path == hw.path);
+    // Determine if this is the primary worktree
+    // - Normal repos: the main worktree (repo root)
+    // - Bare repos: the default branch's worktree
+    let is_home = repo
+        .primary_worktree()
+        .ok()
+        .flatten()
+        .is_some_and(|p| wt.path == p);
 
     // Build item with identity fields
     let mut item = list::build_worktree_item(wt, is_home, true, false);

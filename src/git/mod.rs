@@ -8,6 +8,7 @@ mod error;
 pub mod mr_ref;
 mod parse;
 pub mod pr_ref;
+pub mod remote_ref;
 mod repository;
 mod url;
 
@@ -39,6 +40,7 @@ pub use error::{
     // Special-handling error enum (Display produces styled output)
     HookErrorWithHint,
     // Platform-specific reference type (PR vs MR)
+    RefContext,
     RefType,
     WorktrunkError,
     // Error inspection functions
@@ -437,35 +439,6 @@ impl WorktreeInfo {
     pub fn dir_name(&self) -> &str {
         path_dir_name(&self.path)
     }
-
-    /// Find the "home" worktree - the default branch's worktree if it exists,
-    /// otherwise the first non-prunable worktree in the list.
-    ///
-    /// This is the preferred destination when we need to cd somewhere
-    /// (e.g., after removing the current worktree, or after merge removes the worktree).
-    ///
-    /// Prunable worktrees (directory deleted but git still tracks metadata) are
-    /// excluded since we can't cd to a directory that doesn't exist.
-    ///
-    /// For normal repos, `worktrees[0]` is usually the default branch's worktree,
-    /// so the fallback rarely matters. For bare repos, there's no semantic "main"
-    /// worktree, so preferring the default branch's worktree provides consistency.
-    ///
-    /// Returns `None` if all worktrees are prunable or `worktrees` is empty.
-    /// If `default_branch` doesn't match any non-prunable worktree, returns the
-    /// first non-prunable worktree.
-    pub fn find_home<'a>(
-        worktrees: &'a [WorktreeInfo],
-        default_branch: &str,
-    ) -> Option<&'a WorktreeInfo> {
-        // Filter out prunable worktrees (directory deleted but git still tracks metadata).
-        // Can't cd to a worktree that doesn't exist.
-        worktrees
-            .iter()
-            .filter(|wt| !wt.is_prunable())
-            .find(|wt| wt.branch.as_deref() == Some(default_branch))
-            .or_else(|| worktrees.iter().find(|wt| !wt.is_prunable()))
-    }
 }
 
 // Helper functions for worktree parsing
@@ -641,50 +614,6 @@ mod tests {
                 "Hook {hook:?} should be kebab-case, got: {display}"
             );
         }
-    }
-
-    #[test]
-    fn test_find_home() {
-        let make_wt = |branch: Option<&str>| WorktreeInfo {
-            path: PathBuf::from(format!("/repo.{}", branch.unwrap_or("detached"))),
-            head: "abc123".into(),
-            branch: branch.map(String::from),
-            bare: false,
-            detached: branch.is_none(),
-            locked: None,
-            prunable: None,
-        };
-
-        // Empty list returns None
-        assert!(WorktreeInfo::find_home(&[], "main").is_none());
-
-        // Single worktree on default branch
-        let wts = vec![make_wt(Some("main"))];
-        assert_eq!(
-            WorktreeInfo::find_home(&wts, "main").unwrap().path.to_str(),
-            Some("/repo.main")
-        );
-
-        // Default branch not first - should still find it
-        let wts = vec![make_wt(Some("feature")), make_wt(Some("main"))];
-        assert_eq!(
-            WorktreeInfo::find_home(&wts, "main").unwrap().path.to_str(),
-            Some("/repo.main")
-        );
-
-        // No default branch match - returns first
-        let wts = vec![make_wt(Some("feature")), make_wt(Some("bugfix"))];
-        assert_eq!(
-            WorktreeInfo::find_home(&wts, "main").unwrap().path.to_str(),
-            Some("/repo.feature")
-        );
-
-        // Empty default branch - returns first
-        let wts = vec![make_wt(Some("feature"))];
-        assert_eq!(
-            WorktreeInfo::find_home(&wts, "").unwrap().path.to_str(),
-            Some("/repo.feature")
-        );
     }
 
     #[test]

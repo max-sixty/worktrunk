@@ -427,6 +427,8 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
 
 ## wt config show
 
+Show configuration files & locations.
+
 Shows location and contents of user config (`~/.config/worktrunk/config.toml`)
 and project config (`.config/wt.toml`).
 
@@ -470,6 +472,8 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
 {% end %}
 
 ## wt config state
+
+Manage internal data and cache.
 
 State is stored in `.git/` (config entries and log files), separate from configuration files.
 Use `wt config show` to view file-based configuration.
@@ -522,7 +526,7 @@ wt config state - Manage internal data and cache
 Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>default-branch</span></b>   Default branch setting
+  <b><span class=c>default-branch</span></b>   Default branch detection and override
   <b><span class=c>previous-branch</span></b>  Previous branch (for <b>wt switch -</b>)
   <b><span class=c>ci-status</span></b>        CI status cache
   <b><span class=c>marker</span></b>           Branch markers
@@ -547,6 +551,8 @@ Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span
 {% end %}
 
 ## wt config state default-branch
+
+Default branch detection and override.
 
 Useful in scripts to avoid hardcoding `main` or `master`:
 
@@ -576,7 +582,7 @@ The local inference fallback uses these heuristics in order:
 ### Command reference
 
 {% terminal() %}
-wt config state default-branch - Default branch setting
+wt config state default-branch - Default branch detection and override
 
 Usage: <b><span class=c>wt config state default-branch</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
 
@@ -602,14 +608,15 @@ Usage: <b><span class=c>wt config state default-branch</span></b> <span class=c>
 
 ## wt config state ci-status
 
+CI status cache.
+
 Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 
-### How it works
+Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `ci.platform = "github"` in `.config/wt.toml` for self-hosted instances.
 
-1. **Platform detection** — From `[ci] platform` in project config, or detected from remote URL (github.com → GitHub, gitlab.com → GitLab)
-2. **CLI requirement** — Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated
-3. **What's checked** — PRs/MRs first, then branch pipelines for branches with upstream
-4. **Caching** — Results cached 30-60 seconds per branch+commit
+Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
+
+Results cache for 30-60 seconds. Indicators dim when local changes haven't been pushed.
 
 ### Status values
 
@@ -653,6 +660,8 @@ Usage: <b><span class=c>wt config state ci-status</span></b> <span class=c>[OPTI
 {% end %}
 
 ## wt config state marker
+
+Branch markers.
 
 Custom status text or emoji shown in the `wt list` Status column.
 
@@ -711,6 +720,8 @@ Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS
 {% end %}
 
 ## wt config state logs
+
+Background operation logs.
 
 View and manage logs from background operations.
 

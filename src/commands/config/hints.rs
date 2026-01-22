@@ -4,9 +4,7 @@
 
 use color_print::cformat;
 use worktrunk::git::Repository;
-use worktrunk::styling::{info_message, success_message};
-
-use crate::output;
+use worktrunk::styling::{eprintln, info_message, println, success_message};
 
 /// Handle the hints get command (list shown hints)
 pub fn handle_hints_get() -> anyhow::Result<()> {
@@ -14,10 +12,10 @@ pub fn handle_hints_get() -> anyhow::Result<()> {
     let hints = repo.list_shown_hints();
 
     if hints.is_empty() {
-        output::print(info_message("No hints have been shown"))?;
+        eprintln!("{}", info_message("No hints have been shown"));
     } else {
         for hint in hints {
-            output::stdout(&hint)?;
+            println!("{hint}");
         }
     }
 
@@ -35,7 +33,7 @@ pub fn handle_hints_clear(name: Option<String>) -> anyhow::Result<()> {
             } else {
                 info_message(cformat!("Hint <bold>{hint_name}</> was not set"))
             };
-            output::print(msg)?;
+            eprintln!("{msg}");
         }
         None => {
             let cleared = repo.clear_all_hints()?;
@@ -45,7 +43,7 @@ pub fn handle_hints_clear(name: Option<String>) -> anyhow::Result<()> {
                 let suffix = if cleared == 1 { "" } else { "s" };
                 success_message(cformat!("Cleared <bold>{cleared}</> hint{suffix}"))
             };
-            output::print(msg)?;
+            eprintln!("{msg}");
         }
     }
 

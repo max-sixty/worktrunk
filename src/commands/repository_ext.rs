@@ -3,14 +3,14 @@ use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::worktree::{BranchDeletionMode, RemoveResult, get_path_mismatch};
-use anyhow::Context;
+use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{
     GitError, IntegrationReason, Repository, parse_porcelain_z, parse_untracked_files,
 };
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{format_with_gutter, progress_message, warning_message};
+use worktrunk::styling::{eprintln, format_with_gutter, progress_message, warning_message};
 
 /// Target for worktree removal.
 #[derive(Debug)]
@@ -129,8 +129,9 @@ impl RepositoryCliExt for Repository {
                             }
                             .into());
                         }
-                        return Err(GitError::NoWorktreeFound {
+                        return Err(GitError::BranchNotFound {
                             branch: branch.into(),
+                            show_create_hint: false,
                         }
                         .into());
                     }
@@ -274,21 +275,21 @@ impl RepositoryCliExt for Repository {
             nanos
         );
 
-        crate::output::print(progress_message(cformat!(
-            "Stashing changes in <bold>{}</>...",
-            format_path_for_display(wt_path)
-        )))?;
+        eprintln!(
+            "{}",
+            progress_message(cformat!(
+                "Stashing changes in <bold>{}</>...",
+                format_path_for_display(wt_path)
+            ))
+        );
 
-        let stash_output =
-            wt.run_command(&["stash", "push", "--include-untracked", "-m", &stash_name])?;
+        // Stash all changes including untracked files.
+        // Note: git stash push returns exit code 0 whether or not anything was stashed.
+        wt.run_command(&["stash", "push", "--include-untracked", "-m", &stash_name])?;
 
-        if stash_output.contains("No local changes to save") {
-            return Ok(None);
-        }
-
+        // Verify stash was created by checking the stash list for our entry.
         let list_output = wt.run_command(&["stash", "list", "--format=%gd%x00%gs%x00"])?;
         let mut parts = list_output.split('\0');
-        let mut stash_ref = None;
         while let Some(id) = parts.next() {
             if id.is_empty() {
                 continue;
@@ -296,19 +297,23 @@ impl RepositoryCliExt for Repository {
             if let Some(message) = parts.next()
                 && (message == stash_name || message.ends_with(&stash_name))
             {
-                stash_ref = Some(id.to_string());
-                break;
+                return Ok(Some(TargetWorktreeStash::new(wt_path, id.to_string())));
             }
         }
 
-        let Some(stash_ref) = stash_ref else {
-            return Err(anyhow::anyhow!(
-                "Failed to locate autostash entry '{}'",
+        // Stash entry not found. Verify the worktree is now clean — if it's still
+        // dirty, stashing may have failed silently or our lookup missed the entry.
+        if wt.is_dirty()? {
+            bail!(
+                "Failed to stash changes in {}; worktree still has uncommitted changes. \
+                 Expected stash entry: '{}'. Check 'git stash list'.",
+                format_path_for_display(wt_path),
                 stash_name
-            ));
-        };
+            );
+        }
 
-        Ok(Some(TargetWorktreeStash::new(wt_path, stash_ref)))
+        // Worktree is clean and no stash entry — nothing needed to be stashed
+        Ok(None)
     }
 
     fn is_rebased_onto(&self, target: &str) -> anyhow::Result<bool> {
@@ -368,12 +373,13 @@ fn warn_about_untracked_files(status_output: &str) -> anyhow::Result<()> {
 
     let count = files.len();
     let path_word = if count == 1 { "path" } else { "paths" };
-    crate::output::print(warning_message(format!(
-        "Auto-staging {count} untracked {path_word}:"
-    )))?;
+    eprintln!(
+        "{}",
+        warning_message(format!("Auto-staging {count} untracked {path_word}:"))
+    );
 
     let joined_files = files.join("\n");
-    crate::output::print(format_with_gutter(&joined_files, None))?;
+    eprintln!("{}", format_with_gutter(&joined_files, None));
 
     Ok(())
 }
@@ -398,10 +404,13 @@ struct StashData {
 impl StashData {
     /// Restore the stash, printing progress and warning on failure.
     fn restore(self) {
-        let _ = crate::output::print(progress_message(cformat!(
-            "Restoring stashed changes in <bold>{}</>...",
-            format_path_for_display(&self.path)
-        )));
+        eprintln!(
+            "{}",
+            progress_message(cformat!(
+                "Restoring stashed changes in <bold>{}</>...",
+                format_path_for_display(&self.path)
+            ))
+        );
 
         let success = Repository::current()
             .ok()
@@ -413,11 +422,14 @@ impl StashData {
             .is_some();
 
         if !success {
-            let _ = crate::output::print(warning_message(cformat!(
-                "Failed to restore stash <bold>{stash_ref}</>; run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
-                stash_ref = self.stash_ref,
-                path = format_path_for_display(&self.path),
-            )));
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "Failed to restore stash <bold>{stash_ref}</>; run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
+                    stash_ref = self.stash_ref,
+                    path = format_path_for_display(&self.path),
+                ))
+            );
         }
     }
 }

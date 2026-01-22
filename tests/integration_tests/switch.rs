@@ -1463,6 +1463,10 @@ fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
 
     // gh api repos/{owner}/{repo}/pulls/{number} format
     let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
         "head": {
             "ref": "feature-auth",
             "repo": {"name": "test-repo", "owner": {"login": "owner"}}
@@ -1504,6 +1508,10 @@ fn test_switch_pr_same_repo_no_remote(#[from(repo_with_remote)] repo: TestRepo) 
     // but origin points to contributor/test-repo (different repo)
     // So find_remote_for_repo("owner", "test-repo") will fail
     let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
         "head": {
             "ref": "feature-auth",
             "repo": {"name": "test-repo", "owner": {"login": "owner"}}
@@ -1585,6 +1593,10 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     // gh api repos/{owner}/{repo}/pulls/{number} format
     // head.repo is the fork (contributor/test-repo), base.repo is the upstream (owner/test-repo)
     let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
         "head": {
             "ref": "feature-fix",
             "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
@@ -1627,6 +1639,10 @@ fn test_switch_pr_fork_no_upstream_remote(#[from(repo_with_remote)] repo: TestRe
     // but origin points to contributor/test-repo (the fork)
     // So find_remote_for_repo("owner", "test-repo") will fail
     let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
         "head": {
             "ref": "feature-fix",
             "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
@@ -1657,12 +1673,14 @@ fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     // Copy mock-stub binary as "gh"
     copy_mock_binary(&mock_bin, "gh");
 
-    // Configure gh api to return error for PR not found (errors go to stderr)
+    // Configure gh api to return error for PR not found (JSON on stdout, human-readable on stderr)
     MockConfig::new("gh")
         .version("gh version 2.0.0 (mock)")
         .command(
             "api",
-            MockResponse::stderr("gh api: Not Found (HTTP 404)").with_exit_code(1),
+            MockResponse::output(r#"{"message":"Not Found","status":"404"}"#)
+                .with_stderr("gh: Not Found (HTTP 404)")
+                .with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -1681,6 +1699,10 @@ fn test_switch_pr_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
     // gh api repos/{owner}/{repo}/pulls/{number} format with null head.repo
     // This happens when the fork that the PR was opened from has been deleted
     let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
         "head": {
             "ref": "feature-fix",
             "repo": null
@@ -1732,6 +1754,10 @@ fn test_switch_pr_fork_existing_same_pr(#[from(repo_with_remote)] repo: TestRepo
 
     // gh api repos/{owner}/{repo}/pulls/{number} format
     let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
         "head": {
             "ref": "feature-fix",
             "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
@@ -1753,11 +1779,27 @@ fn test_switch_pr_fork_existing_same_pr(#[from(repo_with_remote)] repo: TestRepo
     });
 }
 
-/// Test fork PR where branch already exists but tracks different PR (should error)
+/// Test fork PR where branch already exists but tracks different PR
+/// Uses prefixed branch name `contributor/feature-fix` to avoid conflict
 #[rstest]
 fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a PR ref on the remote
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
     // Create the branch with tracking config for a DIFFERENT PR
-    // Branch name matches headRefName (no owner prefix) so git push works
     let branch_name = "feature-fix";
     repo.run_git(&["branch", branch_name, "main"]);
     repo.run_git(&[
@@ -1771,8 +1813,35 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
         "refs/pull/99/head", // Different PR!
     ]);
 
+    // Set up GitHub URL and redirect (like test_switch_pr_fork)
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
     // gh api repos/{owner}/{repo}/pulls/{number} format
     let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
         "head": {
             "ref": "feature-fix",
             "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
@@ -1795,16 +1864,59 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
 }
 
 /// Test fork PR where branch exists but has no tracking config
+/// Uses prefixed branch name `contributor/feature-fix` to avoid conflict
 #[rstest]
 fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a PR ref on the remote
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
     // Create the branch without any tracking config
-    // Branch name matches headRefName (no owner prefix) so git push works
     let branch_name = "feature-fix";
     repo.run_git(&["branch", branch_name, "main"]);
     // No config set - branch exists but doesn't track anything
 
+    // Set up GitHub URL and redirect (like test_switch_pr_fork)
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
     // gh api repos/{owner}/{repo}/pulls/{number} format
     let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
         "head": {
             "ref": "feature-fix",
             "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
@@ -1826,6 +1938,159 @@ fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
     });
 }
 
+/// Test fork PR where prefixed branch already exists and tracks the same PR
+/// Should reuse the existing prefixed branch
+#[rstest]
+fn test_switch_pr_fork_prefixed_exists_same_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create the unprefixed branch (simulating existing local branch)
+    repo.run_git(&["branch", "feature-fix", "main"]);
+
+    // Create the prefixed branch with tracking config for THIS PR
+    let prefixed_branch = "contributor/feature-fix";
+    repo.run_git(&["branch", prefixed_branch, "main"]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.remote", prefixed_branch),
+        "origin",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.merge", prefixed_branch),
+        "refs/pull/42/head", // Same PR
+    ]);
+
+    // Create the worktree for the prefixed branch
+    // Use "repo." prefix to match the test repo's directory naming convention
+    let worktree_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("repo.contributor-feature-fix");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        worktree_path.to_str().unwrap(),
+        prefixed_branch,
+    ]);
+
+    // Set up GitHub URL
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_fork_prefixed_exists_same_pr", cmd);
+    });
+}
+
+/// Test fork PR where prefixed branch exists but tracks different PR (should error)
+#[rstest]
+fn test_switch_pr_fork_prefixed_exists_different_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create the unprefixed branch (simulating existing local branch)
+    repo.run_git(&["branch", "feature-fix", "main"]);
+
+    // Create the prefixed branch with tracking config for a DIFFERENT PR
+    let prefixed_branch = "contributor/feature-fix";
+    repo.run_git(&["branch", prefixed_branch, "main"]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.remote", prefixed_branch),
+        "origin",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{}.merge", prefixed_branch),
+        "refs/pull/99/head", // Different PR!
+    ]);
+
+    // Set up GitHub URL
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_fork_prefixed_exists_different_pr", cmd);
+    });
+}
+
 /// Test pr: when gh is not authenticated
 #[rstest]
 fn test_switch_pr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
@@ -1834,15 +2099,14 @@ fn test_switch_pr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "gh");
 
-    // Configure gh api to return auth error
+    // Configure gh api to return auth error (JSON on stdout, human-readable on stderr)
     MockConfig::new("gh")
         .version("gh version 2.0.0 (mock)")
         .command(
             "api",
-            MockResponse::stderr(
-                "To use GitHub CLI in a non-interactive context, please run gh auth login",
-            )
-            .with_exit_code(1),
+            MockResponse::output(r#"{"message":"Requires authentication","status":"401"}"#)
+                .with_stderr("gh: Requires authentication (HTTP 401)")
+                .with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -1863,13 +2127,16 @@ fn test_switch_pr_rate_limit(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "gh");
 
-    // Configure gh api to return rate limit error (HTTP 403)
+    // Configure gh api to return rate limit error (JSON on stdout, human-readable on stderr)
     MockConfig::new("gh")
         .version("gh version 2.0.0 (mock)")
         .command(
             "api",
-            MockResponse::stderr("gh api: API rate limit exceeded for user (HTTP 403)")
-                .with_exit_code(1),
+            MockResponse::output(
+                r#"{"message":"API rate limit exceeded for user","status":"403"}"#,
+            )
+            .with_stderr("gh: API rate limit exceeded (HTTP 403)")
+            .with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -1913,7 +2180,7 @@ fn test_switch_pr_network_error(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "gh");
 
-    // Configure gh api to return network error
+    // Configure gh api to return network error (no JSON, just stderr for network failures)
     MockConfig::new("gh")
         .version("gh version 2.0.0 (mock)")
         .command(
@@ -1968,6 +2235,10 @@ fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
 
     // Configure gh to return valid JSON but with empty branch name (head.ref is "")
     let gh_response = r#"{
+        "title": "PR with empty branch",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
         "head": {
             "ref": "",
             "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
@@ -1999,7 +2270,7 @@ fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
 
 /// Helper to set up mock glab for MR tests with custom MR response.
 ///
-/// The response should be in `glab mr view <number> --output json` format:
+/// The response should be in `glab api projects/:id/merge_requests/<number>` format:
 /// - `source_branch`, `source_project_id`, `target_project_id`
 /// - `web_url`
 fn setup_mock_glab_for_mr(repo: &TestRepo, glab_response: Option<&str>) -> std::path::PathBuf {
@@ -2015,7 +2286,7 @@ fn setup_mock_glab_for_mr(repo: &TestRepo, glab_response: Option<&str>) -> std::
 
         MockConfig::new("glab")
             .version("glab version 1.40.0 (mock)")
-            .command("mr", MockResponse::file("mr_response.json"))
+            .command("api", MockResponse::file("mr_response.json"))
             .command("_default", MockResponse::exit(1))
             .write(&mock_bin);
     }
@@ -2073,8 +2344,12 @@ fn test_switch_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
     // Create a feature branch and push it
     repo.add_worktree("feature-auth");
 
-    // glab mr view <number> --output json format
+    // glab api projects/:id/merge_requests/<number> format
     let glab_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "author": {"username": "alice"},
+        "state": "opened",
+        "draft": false,
         "source_branch": "feature-auth",
         "source_project_id": 123,
         "target_project_id": 123,
@@ -2100,15 +2375,12 @@ fn test_switch_mr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     // Copy mock-stub binary as "glab"
     copy_mock_binary(&mock_bin, "glab");
 
-    // Configure glab mr to return error for MR not found
+    // Configure glab api to return 404 error (JSON on stdout like real GitLab API)
     MockConfig::new("glab")
         .version("glab version 1.40.0 (mock)")
         .command(
-            "mr",
-            MockResponse::stderr(
-                "GET https://gitlab.com/api/v4/projects/123/merge_requests/9999: 404 Not Found",
-            )
-            .with_exit_code(1),
+            "api",
+            MockResponse::output(r#"{"message":"404 Not found"}"#).with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -2129,15 +2401,12 @@ fn test_switch_mr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "glab");
 
-    // Configure glab mr to return auth error
+    // Configure glab api to return 401 error (JSON on stdout like real GitLab API)
     MockConfig::new("glab")
         .version("glab version 1.40.0 (mock)")
         .command(
-            "mr",
-            MockResponse::stderr(
-                "glab: To use GitLab CLI in a non-interactive context, please run `glab auth login`",
-            )
-            .with_exit_code(1),
+            "api",
+            MockResponse::output(r#"{"message":"401 Unauthorized"}"#).with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -2158,10 +2427,10 @@ fn test_switch_mr_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "glab");
 
-    // Configure glab mr to return invalid JSON
+    // Configure glab api to return invalid JSON
     MockConfig::new("glab")
         .version("glab version 1.40.0 (mock)")
-        .command("mr", MockResponse::output("not valid json {{{"))
+        .command("api", MockResponse::output("not valid json {{{"))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
@@ -2181,8 +2450,12 @@ fn test_switch_mr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "glab");
 
-    // Configure glab to return valid JSON but with empty branch name
+    // Configure glab api to return valid JSON but with empty branch name
     let glab_response = r#"{
+        "title": "MR with empty branch",
+        "author": {"username": "contributor"},
+        "state": "opened",
+        "draft": false,
         "source_branch": "",
         "source_project_id": 456,
         "target_project_id": 123,
@@ -2191,7 +2464,7 @@ fn test_switch_mr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
 
     MockConfig::new("glab")
         .version("glab version 1.40.0 (mock)")
-        .command("mr", MockResponse::output(glab_response))
+        .command("api", MockResponse::output(glab_response))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
 
@@ -2264,24 +2537,56 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "https://gitlab.com/owner/test-repo.git",
     ]);
 
-    // glab mr view <number> --output json format
-    // source_project is the fork (contributor/test-repo), target_project is the upstream (owner/test-repo)
-    let glab_response = r#"{
+    // Set up mock glab with separate responses for MR API and project APIs.
+    // The mock-stub supports compound keys like "api projects/456" to match
+    // different API paths.
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "glab");
+
+    // MR API response (no nested project data - that comes from separate calls)
+    let mr_response = r#"{
+        "title": "Add feature fix for edge case",
+        "author": {"username": "contributor"},
+        "state": "opened",
+        "draft": false,
         "source_branch": "feature-fix",
         "source_project_id": 456,
         "target_project_id": 123,
-        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42",
-        "source_project": {
-            "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
-        },
-        "target_project": {
-            "ssh_url_to_repo": "git@gitlab.com:owner/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/owner/test-repo.git"
-        }
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42"
     }"#;
 
-    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+    // Source project (fork) API response
+    let source_project_response = r#"{
+        "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
+        "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
+    }"#;
+
+    // Target project (upstream) API response
+    let target_project_response = r#"{
+        "ssh_url_to_repo": "git@gitlab.com:owner/test-repo.git",
+        "http_url_to_repo": "https://gitlab.com/owner/test-repo.git"
+    }"#;
+
+    MockConfig::new("glab")
+        .version("glab version 1.40.0 (mock)")
+        // Compound key: "api projects/:id/merge_requests/42"
+        .command(
+            "api projects/:id/merge_requests/42",
+            MockResponse::output(mr_response),
+        )
+        // Compound key: "api projects/456" (source project)
+        .command(
+            "api projects/456",
+            MockResponse::output(source_project_response),
+        )
+        // Compound key: "api projects/123" (target project)
+        .command(
+            "api projects/123",
+            MockResponse::output(target_project_response),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -2351,20 +2656,16 @@ fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo:
         "https://gitlab.com/owner/test-repo.git",
     ]);
 
-    // Fork MR response
+    // Fork MR response (project URLs not needed since branch already exists)
     let glab_response = r#"{
+        "title": "Add feature fix for edge case",
+        "author": {"username": "contributor"},
+        "state": "opened",
+        "draft": false,
         "source_branch": "feature-fix",
         "source_project_id": 456,
         "target_project_id": 123,
-        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42",
-        "source_project": {
-            "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
-        },
-        "target_project": {
-            "ssh_url_to_repo": "git@gitlab.com:owner/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/owner/test-repo.git"
-        }
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42"
     }"#;
 
     let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
@@ -2405,20 +2706,16 @@ fn test_switch_mr_fork_existing_branch_tracks_different(#[from(repo_with_remote)
         "https://gitlab.com/owner/test-repo.git",
     ]);
 
-    // Fork MR response for MR 42, but branch tracks MR 99
+    // Fork MR response for MR 42, but branch tracks MR 99 (error case)
     let glab_response = r#"{
+        "title": "Add feature fix for edge case",
+        "author": {"username": "contributor"},
+        "state": "opened",
+        "draft": false,
         "source_branch": "feature-fix",
         "source_project_id": 456,
         "target_project_id": 123,
-        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42",
-        "source_project": {
-            "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
-        },
-        "target_project": {
-            "ssh_url_to_repo": "git@gitlab.com:owner/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/owner/test-repo.git"
-        }
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42"
     }"#;
 
     let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
@@ -2446,20 +2743,16 @@ fn test_switch_mr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
         "https://gitlab.com/owner/test-repo.git",
     ]);
 
-    // Fork MR response
+    // Fork MR response (project URLs not needed since branch already exists)
     let glab_response = r#"{
+        "title": "Add feature fix for edge case",
+        "author": {"username": "contributor"},
+        "state": "opened",
+        "draft": false,
         "source_branch": "feature-fix",
         "source_project_id": 456,
         "target_project_id": 123,
-        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42",
-        "source_project": {
-            "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
-        },
-        "target_project": {
-            "ssh_url_to_repo": "git@gitlab.com:owner/test-repo.git",
-            "http_url_to_repo": "https://gitlab.com/owner/test-repo.git"
-        }
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42"
     }"#;
 
     let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
@@ -2480,11 +2773,11 @@ fn test_switch_mr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "glab");
 
-    // Configure glab mr to return an unknown error
+    // Configure glab api to return an unknown error (non-JSON stderr, like network errors)
     MockConfig::new("glab")
         .version("glab version 1.40.0 (mock)")
         .command(
-            "mr",
+            "api",
             MockResponse::stderr("glab: unexpected internal error: something went wrong")
                 .with_exit_code(1),
         )
@@ -2496,5 +2789,72 @@ fn test_switch_mr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
         configure_mock_glab_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_unknown_error", cmd);
+    });
+}
+
+/// Set up a minimal bin directory with only git (no gh/glab).
+///
+/// Creates a temporary directory with a symlink to git, excluding gh/glab.
+/// Returns the path to use as PATH.
+/// Create a minimal bin directory with only git, excluding gh/glab.
+/// Returns None on Windows where this approach doesn't work reliably.
+#[cfg(unix)]
+fn setup_minimal_bin_without_cli(repo: &TestRepo) -> Option<std::path::PathBuf> {
+    let minimal_bin = repo.root_path().join("minimal-bin");
+    fs::create_dir_all(&minimal_bin).unwrap();
+
+    // Find git binary using the which crate (cross-platform)
+    let git_path = which::which("git").expect("git must be installed to run tests");
+
+    // Symlink git into our minimal bin directory
+    std::os::unix::fs::symlink(&git_path, minimal_bin.join("git")).unwrap();
+    Some(minimal_bin)
+}
+
+/// On Windows, git requires its entire installation directory to function,
+/// so we can't easily create a minimal PATH with just git. Skip these tests.
+#[cfg(windows)]
+fn setup_minimal_bin_without_cli(_repo: &TestRepo) -> Option<std::path::PathBuf> {
+    None
+}
+
+/// Configure PATH to exclude gh/glab, keeping only git.
+///
+/// This simulates the "CLI not installed" scenario.
+fn configure_cli_not_installed_env(cmd: &mut std::process::Command, minimal_bin: &Path) {
+    cmd.env("PATH", minimal_bin);
+}
+
+/// Test pr: when gh CLI is not installed
+#[rstest]
+fn test_switch_pr_gh_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
+    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
+        // Symlinks not available (Windows without Developer Mode)
+        eprintln!("Skipping test: symlinks not available on this system");
+        return;
+    };
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_cli_not_installed_env(&mut cmd, &minimal_bin);
+        assert_cmd_snapshot!("switch_pr_gh_not_installed", cmd);
+    });
+}
+
+/// Test mr: when glab CLI is not installed
+#[rstest]
+fn test_switch_mr_glab_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
+    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
+        // Symlinks not available (Windows without Developer Mode)
+        eprintln!("Skipping test: symlinks not available on this system");
+        return;
+    };
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_cli_not_installed_env(&mut cmd, &minimal_bin);
+        assert_cmd_snapshot!("switch_mr_glab_not_installed", cmd);
     });
 }

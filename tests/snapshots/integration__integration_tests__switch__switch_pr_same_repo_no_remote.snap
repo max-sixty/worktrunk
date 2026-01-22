@@ -36,5 +36,7 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mFetching PR #101...[39m
+[107m [0m [1mFix authentication bug in login flow[22m (#101)
+[107m [0m by @alice · open · [90mhttps://github.com/owner/test-repo/pull/101[39m
 [31m✗[39m [31mNo remote found for [1mowner/test-repo[22m[39m
 [2m↳[22m [2mAdd the remote: [90mgit remote add upstream https://github.com/owner/test-repo.git[39m[22m
