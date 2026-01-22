@@ -526,7 +526,7 @@ wt config state - Manage internal data and cache
 Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>default-branch</span></b>   Default branch setting
+  <b><span class=c>default-branch</span></b>   Default branch detection and override
   <b><span class=c>previous-branch</span></b>  Previous branch (for <b>wt switch -</b>)
   <b><span class=c>ci-status</span></b>        CI status cache
   <b><span class=c>marker</span></b>           Branch markers
@@ -552,7 +552,7 @@ Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span
 
 ## wt config state default-branch
 
-Default branch setting.
+Default branch detection and override.
 
 Useful in scripts to avoid hardcoding `main` or `master`:
 
@@ -582,7 +582,7 @@ The local inference fallback uses these heuristics in order:
 ### Command reference
 
 {% terminal() %}
-wt config state default-branch - Default branch setting
+wt config state default-branch - Default branch detection and override
 
 Usage: <b><span class=c>wt config state default-branch</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
 

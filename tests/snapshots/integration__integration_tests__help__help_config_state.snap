@@ -28,7 +28,7 @@ wt config state - Manage internal data and cache
 Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
-  [1m[36mdefault-branch[0m   Default branch setting
+  [1m[36mdefault-branch[0m   Default branch detection and override
   [1m[36mprevious-branch[0m  Previous branch (for [1mwt switch -[0m)
   [1m[36mci-status[0m        CI status cache
   [1m[36mmarker[0m           Branch markers
