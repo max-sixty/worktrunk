@@ -338,7 +338,7 @@ pub fn handle_switch_output(
             // User is already there - no path annotation needed
             None
         }
-        SwitchResult::Existing(_) => {
+        SwitchResult::Existing { .. } => {
             if let Some(reason) = &shell_warning_reason {
                 // Shell integration not active — single warning with context
                 if let Some(warning) = branch_worktree_mismatch_warning {

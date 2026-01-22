@@ -10,9 +10,10 @@ use dunce::canonicalize;
 use worktrunk::config::UserConfig;
 use worktrunk::git::mr_ref;
 use worktrunk::git::pr_ref::{self, fork_remote_url, prefixed_local_branch_name};
-use worktrunk::git::{GitError, RefType, Repository};
+use worktrunk::git::{GitError, RefContext, RefType, Repository};
 use worktrunk::styling::{
-    hint_message, info_message, progress_message, suggest_command, warning_message,
+    format_with_gutter, hint_message, info_message, progress_message, suggest_command,
+    warning_message,
 };
 
 use super::resolve::{compute_clobber_backup, compute_worktree_path, paths_match};
@@ -25,6 +26,29 @@ struct ResolvedTarget {
     branch: String,
     /// How to create the worktree
     method: CreationMethod,
+}
+
+/// Format PR/MR context for gutter display after fetching.
+///
+/// Returns two lines for gutter formatting:
+/// ```text
+///  ┃ Fix authentication bug in login flow (#101)
+///  ┃ by @alice · open · https://github.com/owner/repo/pull/101
+/// ```
+fn format_ref_context(ctx: &impl RefContext) -> String {
+    let mut status_parts = vec![format!("by @{}", ctx.author()), ctx.state().to_string()];
+    if ctx.draft() {
+        status_parts.push("draft".to_string());
+    }
+    let status_line = status_parts.join(" · ");
+
+    cformat!(
+        "<bold>{}</> ({}{})\n{status_line} · <bright-black>{}</>",
+        ctx.title(),
+        ctx.ref_type().symbol(),
+        ctx.number(),
+        ctx.url()
+    )
 }
 
 /// Resolve a PR reference (`pr:<number>` syntax).
@@ -55,6 +79,9 @@ fn resolve_pr_ref(
 
     let repo_root = repo.repo_path();
     let pr_info = pr_ref::fetch_pr_info(pr_number, repo_root)?;
+
+    // Display PR context with URL (as gutter under fetch progress)
+    crate::output::print(format_with_gutter(&format_ref_context(&pr_info), None))?;
 
     if pr_info.is_cross_repository {
         // Fork PR: check if branch already exists and is tracking this PR
@@ -197,6 +224,9 @@ fn resolve_mr_ref(
 
     let repo_root = repo.repo_path();
     let mr_info = mr_ref::fetch_mr_info(mr_number, repo_root)?;
+
+    // Display MR context with URL (as gutter under fetch progress)
+    crate::output::print(format_with_gutter(&format_ref_context(&mr_info), None))?;
 
     if mr_info.is_cross_project {
         // Fork MR: check if branch already exists and is tracking this MR
@@ -607,7 +637,7 @@ pub fn execute_switch(
             let result = if already_at_worktree {
                 SwitchResult::AlreadyAt(path)
             } else {
-                SwitchResult::Existing(path)
+                SwitchResult::Existing { path }
             };
 
             Ok((

@@ -22,81 +22,81 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt switch - Switch to a worktree
+wt switch - Switch to a worktree[0m
 
-Creates one if needed.
+Creates one if needed.[0m
 
-Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m]
+Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m][0m
 
-[1m[32mArguments:
-  [36m<BRANCH>
-          Branch name or shortcut
+[1m[32mArguments:[0m
+  [36m<BRANCH>[0m
+          Branch name or shortcut[0m
           
-          Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)
+          Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)[0m
 
-  [36m[EXECUTE_ARGS]...
-          Additional arguments for --execute command (after --)
+  [36m[EXECUTE_ARGS]...[0m
+          Additional arguments for --execute command (after --)[0m
           
-          Arguments after [1m--[0m are appended to the execute command. Each argument is expanded for templates, then POSIX shell-escaped.
+          Arguments after [1m--[0m are appended to the execute command. Each argument is expanded for templates, then POSIX shell-escaped.[0m
 
-[1m[32mOptions:
-  [1m[36m-c[0m, [1m[36m--create
+[1m[32mOptions:[0m
+  [1m[36m-c[0m, [1m[36m--create[0m
           Create a new branch
 
-  [1m[36m-b[0m, [1m[36m--base[0m[36m [0m[36m<BASE>
-          Base branch
+  [1m[36m-b[0m, [1m[36m--base[0m[36m [0m[36m<BASE>[0m
+          Base branch[0m
           
-          Defaults to default branch.
+          Defaults to default branch.[0m
 
-  [1m[36m-x[0m, [1m[36m--execute[0m[36m [0m[36m<EXECUTE>
-          Command to run after switch
+  [1m[36m-x[0m, [1m[36m--execute[0m[36m [0m[36m<EXECUTE>[0m
+          Command to run after switch[0m
           
-          Replaces the wt process with the command after switching, giving it full terminal control. Useful for launching editors, AI agents, or other interactive tools.
+          Replaces the wt process with the command after switching, giving it full terminal control. Useful for launching editors, AI agents, or other interactive tools.[0m
           
-          Supports ]8;;@/hook.md#template-variables\[4mhook template variables]8;;\[0m ([1m{{ branch }}[0m, [1m{{ worktree_path }}[0m, etc.) and filters. [1m{{ base }}[0m and [1m{{ base_worktree_path }}[0m require [1m--create[0m.
+          Supports ]8;;@/hook.md#template-variables\[4mhook template variables]8;;\[0m ([1m{{ branch }}[0m, [1m{{ worktree_path }}[0m, etc.) and filters. [1m{{ base }}[0m and [1m{{ base_worktree_path }}[0m require [1m--create[0m.[0m
           
-          Especially useful with shell aliases:
+          Especially useful with shell aliases:[0m
           
-            [1m[1malias wsc='wt switch --create -x claude'
-            [1mwsc feature-branch -- 'Fix GH #322'
+            [1m[1malias wsc='wt switch --create -x claude'[0m
+            [1mwsc feature-branch -- 'Fix GH #322'[0m
+          [0m
+          Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code. Arguments after [1m--[0m are passed to the command, so [1mwsc feature -- 'Fix GH #322'[0m runs [1mclaude 'Fix GH #322'[0m, starting Claude with a prompt.[0m
           
-          Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code. Arguments after [1m--[0m are passed to the command, so [1mwsc feature -- 'Fix GH #322'[0m runs [1mclaude 'Fix GH #322'[0m, starting Claude with a prompt.
-          
-          Template example: [1m-x 'code {{ worktree_path }}'[0m opens VS Code at the worktree, [1m-x 'tmux new -s {{ branch | sanitize }}'[0m starts a tmux session named after the branch.
+          Template example: [1m-x 'code {{ worktree_path }}'[0m opens VS Code at the worktree, [1m-x 'tmux new -s {{ branch | sanitize }}'[0m starts a tmux session named after the branch.[0m
 
-  [1m[36m-y[0m, [1m[36m--yes
+  [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-      [1m[36m--clobber
+      [1m[36m--clobber[0m
           Remove stale paths at target
 
-      [1m[36m--no-verify
+      [1m[36m--no-verify[0m
           Skip hooks
 
-  [1m[36m-h[0m, [1m[36m--help
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike [2mgit switch[0m, this navigates between worktrees rather than changing branches in place.
 
-[1m[32mExamples
+[1m[32mExamples[0m
 
-  [2mwt switch feature-auth           # Switch to worktree
-  [2mwt switch -                      # Previous worktree (like cd -)
-  [2mwt switch --create new-feature   # Create new branch and worktree
-  [2mwt switch --create hotfix --base production
-  [2mwt switch pr:123                 # Switch to PR #123's branch
+  [2mwt switch feature-auth           # Switch to worktree[0m
+  [2mwt switch -                      # Previous worktree (like cd -)[0m
+  [2mwt switch --create new-feature   # Create new branch and worktree[0m
+  [2mwt switch --create hotfix --base production[0m
+  [2mwt switch pr:123                 # Switch to PR #123's branch[0m
 
-[1m[32mCreating a branch
+[1m[32mCreating a branch[0m
 
 The [2m--create[0m flag creates a new branch from the [2m--base[0m branch (defaults to default branch). Without [2m--create[0m, the branch must already exist.
 
@@ -104,7 +104,7 @@ The [2m--create[0m flag creates a new branch from the [2m--base[0m branch (d
 
 Without [2m--create[0m, switching to a remote branch (e.g., [2mwt switch feature[0m when only [2morigin/feature[0m exists) creates a local branch tracking the remote — this is the standard git behavior and is preserved.
 
-[1m[32mCreating worktrees
+[1m[32mCreating worktrees[0m
 
 If the branch already has a worktree, [2mwt switch[0m changes directories to it. Otherwise, it creates one, running hooks.
 
@@ -115,12 +115,12 @@ When creating a worktree, worktrunk:
 3. Runs post-create hooks (blocking)
 4. Spawns post-start hooks (background)
 
-  [2mwt switch feature                        # Existing branch → creates worktree
-  [2mwt switch --create feature               # New branch and worktree
-  [2mwt switch --create fix --base release    # New branch from release
-  [2mwt switch --create temp --no-verify      # Skip hooks
+  [2mwt switch feature                        # Existing branch → creates worktree[0m
+  [2mwt switch --create feature               # New branch and worktree[0m
+  [2mwt switch --create fix --base release    # New branch from release[0m
+  [2mwt switch --create temp --no-verify      # Skip hooks[0m
 
-[1m[32mShortcuts
+[1m[32mShortcuts[0m
 
    Shortcut            Meaning            
    ──────── ───────────────────────────── 
@@ -130,41 +130,41 @@ When creating a worktree, worktrunk:
    pr:{N}   GitHub PR #N's branch         
    mr:{N}   GitLab MR !N's branch         
 
-  [2mwt switch -                      # Back to previous
-  [2mwt switch ^                      # Default branch worktree
-  [2mwt switch --create fix --base=@  # Branch from current HEAD
-  [2mwt switch pr:123                 # PR #123's branch
-  [2mwt switch mr:101                 # MR !101's branch
+  [2mwt switch -                      # Back to previous[0m
+  [2mwt switch ^                      # Default branch worktree[0m
+  [2mwt switch --create fix --base=@  # Branch from current HEAD[0m
+  [2mwt switch pr:123                 # PR #123's branch[0m
+  [2mwt switch mr:101                 # MR !101's branch[0m
 
-[1m[32mGitHub pull requests (experimental)
+[1m[32mGitHub pull requests (experimental)[0m
 
 The [2mpr:<number>[0m syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches [2mrefs/pull/N/head[0m and configures [2mpushRemote[0m to the fork URL.
 
-  [2mwt switch pr:101                 # Checkout PR #101
+  [2mwt switch pr:101                 # Checkout PR #101[0m
 
 Requires [2mgh[0m CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with [2mpr:[0m syntax since the branch already exists.
 
 [1mFork PRs:[0m The local branch uses the PR's branch name directly (e.g., [2mfeature-fix[0m), so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
 
-[1m[32mGitLab merge requests (experimental)
+[1m[32mGitLab merge requests (experimental)[0m
 
 The [2mmr:<number>[0m syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches [2mrefs/merge-requests/N/head[0m and configures [2mpushRemote[0m to the fork URL.
 
-  [2mwt switch mr:101                 # Checkout MR !101
+  [2mwt switch mr:101                 # Checkout MR !101[0m
 
 Requires [2mglab[0m CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with [2mmr:[0m syntax since the branch already exists.
 
 [1mFork MRs:[0m The local branch uses the MR's branch name directly, so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
 
-[1m[32mWhen wt switch fails
+[1m[32mWhen wt switch fails[0m
 
-- [1mBranch doesn't exist[0m — Use [2m--create[0m, or check [2mwt list --branches
+- [1mBranch doesn't exist[0m — Use [2m--create[0m, or check [2mwt list --branches[0m
 - [1mPath occupied[0m — Another worktree is at the target path; switch to it or remove it
 - [1mStale directory[0m — Use [2m--clobber[0m to remove a non-worktree directory at the target path
 
 To change which branch a worktree is on, use [2mgit switch[0m inside that worktree.
 
-[1m[32mSee also
+[1m[32mSee also[0m
 
 - [2mwt select[0m — Interactive worktree selection
 - [2mwt list[0m — View all worktrees

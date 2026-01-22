@@ -41,6 +41,14 @@ use crate::shell_exec::Cmd;
 pub struct PrInfo {
     /// The PR number.
     pub number: u32,
+    /// The PR title.
+    pub title: String,
+    /// The PR author's username.
+    pub author: String,
+    /// The PR state ("open", "closed").
+    pub state: String,
+    /// Whether this is a draft PR.
+    pub draft: bool,
     /// The branch name in the head repository.
     pub head_ref_name: String,
     /// The owner of the head repository (fork owner for cross-repo PRs).
@@ -59,9 +67,38 @@ pub struct PrInfo {
     pub url: String,
 }
 
+impl super::RefContext for PrInfo {
+    fn ref_type(&self) -> super::RefType {
+        super::RefType::Pr
+    }
+    fn number(&self) -> u32 {
+        self.number
+    }
+    fn title(&self) -> &str {
+        &self.title
+    }
+    fn author(&self) -> &str {
+        &self.author
+    }
+    fn state(&self) -> &str {
+        &self.state
+    }
+    fn draft(&self) -> bool {
+        self.draft
+    }
+    fn url(&self) -> &str {
+        &self.url
+    }
+}
+
 /// Raw JSON response from `gh api repos/{owner}/{repo}/pulls/{number}`.
 #[derive(Debug, Deserialize)]
 struct GhApiPrResponse {
+    title: String,
+    user: GhUser,
+    state: String,
+    #[serde(default)]
+    draft: bool,
     head: GhPrRef,
     base: GhPrRef,
     html_url: String,
@@ -76,6 +113,11 @@ struct GhApiErrorResponse {
     /// HTTP status code as a string (e.g., "404", "401", "403")
     #[serde(default)]
     status: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GhUser {
+    login: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -215,6 +257,10 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
 
     Ok(PrInfo {
         number: pr_number,
+        title: response.title,
+        author: response.user.login,
+        state: response.state,
+        draft: response.draft,
         head_ref_name: response.head.ref_name,
         head_owner: head_repo.owner.login,
         head_repo: head_repo.name,
@@ -315,6 +361,10 @@ mod tests {
     fn test_local_branch_name_same_repo() {
         let pr = PrInfo {
             number: 101,
+            title: "Fix authentication bug".to_string(),
+            author: "alice".to_string(),
+            state: "open".to_string(),
+            draft: false,
             head_ref_name: "feature-auth".to_string(),
             head_owner: "owner".to_string(),
             head_repo: "repo".to_string(),
@@ -333,6 +383,10 @@ mod tests {
         // the local branch name must match the fork's branch for git push to work
         let pr = PrInfo {
             number: 101,
+            title: "Fix authentication bug".to_string(),
+            author: "contributor".to_string(),
+            state: "open".to_string(),
+            draft: false,
             head_ref_name: "feature-auth".to_string(),
             head_owner: "contributor".to_string(),
             head_repo: "repo".to_string(),
@@ -359,6 +413,10 @@ mod tests {
             is_cross_repository: true,
             host: "github.com".to_string(),
             url: "https://github.com/owner/repo/pull/101".to_string(),
+            title: "Test PR".to_string(),
+            author: "contributor".to_string(),
+            state: "open".to_string(),
+            draft: false,
         };
         assert_eq!(prefixed_local_branch_name(&pr), "contributor/main");
     }

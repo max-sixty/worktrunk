@@ -26,34 +26,34 @@ exit_code: 0
 ----- stderr -----
 wt config state default-branch - Default branch setting
 
-Usage: [1m[36mwt config state default-branch[0m [36m[OPTIONS][0m [36m[COMMAND]
+Usage: [1m[36mwt config state default-branch[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
-[1m[32mCommands:
+[1m[32mCommands:[0m
   [1m[36mget[0m    Get the default branch
   [1m[36mset[0m    Set the default branch
   [1m[36mclear[0m  Clear the default branch cache
 
-[1m[32mOptions:
-  [1m[36m-h[0m, [1m[36m--help
+[1m[32mOptions:[0m
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 Useful in scripts to avoid hardcoding [2mmain[0m or [2mmaster[0m:
 
-  [2mgit rebase $(wt config state default-branch)
+  [2mgit rebase $(wt config state default-branch)[0m
 
 Without a subcommand, runs [2mget[0m. Use [2mset[0m to override, or [2mclear[0m then [2mget[0m to re-detect.
 
-[1m[32mDetection
+[1m[32mDetection[0m
 
 Worktrunk detects the default branch automatically:
 
@@ -66,6 +66,6 @@ Once detected, the result is cached in [2mworktrunk.default-branch[0m for fast
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
-- For bare repos or empty repos, checks [2msymbolic-ref HEAD
-- Checks [2mgit config init.defaultBranch
-- Looks for common names: [2mmain[0m, [2mmaster[0m, [2mdevelop[0m, [2mtrunk
+- For bare repos or empty repos, checks [2msymbolic-ref HEAD[0m
+- Checks [2mgit config init.defaultBranch[0m
+- Looks for common names: [2mmain[0m, [2mmaster[0m, [2mdevelop[0m, [2mtrunk[0m

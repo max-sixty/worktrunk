@@ -24,12 +24,12 @@ exit_code: 0
 ----- stderr -----
 wt merge - Merge current branch into target
 
-Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET]
+Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
 
-[1m[32mArguments:
+[1m[32mArguments:[0m
   [36m[TARGET][0m  Target branch
 
-[1m[32mOptions:
+[1m[32mOptions:[0m
       [1m[36m--no-squash[0m      Skip commit squashing
       [1m[36m--no-commit[0m      Skip commit and squash
       [1m[36m--no-rebase[0m      Skip rebase (fail if not already rebased)
@@ -39,7 +39,7 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET]
       [1m[36m--stage[0m[36m [0m[36m<STAGE>[0m  What to stage before committing [default: all] [possible values: all, tracked, none]
   [1m[36m-h[0m, [1m[36m--help[0m           Print help (see more with '--help')
 
-[1m[32mGlobal Options:
+[1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command
       [1m[36m--config[0m[36m [0m[36m<path>[0m  User config file path
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: hooks, templates; -vv: debug report)

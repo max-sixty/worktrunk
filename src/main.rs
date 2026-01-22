@@ -797,7 +797,7 @@ fn main() {
                         base_worktree_path,
                         ..
                     } => (base_branch.as_deref(), base_worktree_path.as_deref()),
-                    SwitchResult::Existing(_) | SwitchResult::AlreadyAt(_) => (None, None),
+                    SwitchResult::Existing { .. } | SwitchResult::AlreadyAt(_) => (None, None),
                 };
                 let extra_vars: Vec<(&str, &str)> = [
                     base_branch.map(|b| ("base", b)),

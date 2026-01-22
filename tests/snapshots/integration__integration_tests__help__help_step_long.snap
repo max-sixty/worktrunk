@@ -22,13 +22,13 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt step - Run individual operations
+wt step - Run individual operations[0m
 
-The building blocks of [1mwt merge[0m — commit, squash, rebase, push — plus standalone utilities.
+The building blocks of [1mwt merge[0m — commit, squash, rebase, push — plus standalone utilities.[0m
 
-Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
+Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
-[1m[32mCommands:
+[1m[32mCommands:[0m
   [1m[36mcommit[0m        Commit changes with LLM commit message
   [1m[36msquash[0m        Squash commits since branching
   [1m[36mpush[0m          Fast-forward target to current branch
@@ -36,34 +36,34 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
   [1m[36mcopy-ignored[0m  Copy gitignored files to another worktree
   [1m[36mfor-each[0m      [experimental] Run command in each worktree
 
-[1m[32mOptions:
-  [1m[36m-h[0m, [1m[36m--help
+[1m[32mOptions:[0m
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-[1m[32mExamples
+[1m[32mExamples[0m
 
 Commit with LLM-generated message:
 
-  [2mwt step commit
+  [2mwt step commit[0m
 
 Manual merge workflow with review between steps:
 
-  [2mwt step commit
-  [2mwt step squash
-  [2mwt step rebase
-  [2mwt step push
+  [2mwt step commit[0m
+  [2mwt step squash[0m
+  [2mwt step rebase[0m
+  [2mwt step push[0m
 
-[1m[32mOperations
+[1m[32mOperations[0m
 
 - [2mcommit[0m — Stage and commit with LLM-generated message
 - [2msquash[0m — Squash all branch commits into one with LLM-generated message
@@ -72,7 +72,7 @@ Manual merge workflow with review between steps:
 - [2mcopy-ignored[0m — Copy gitignored files between worktrees
 - [2mfor-each[0m — [experimental] Run a command in every worktree
 
-[1m[32mSee also
+[1m[32mSee also[0m
 
 - [2mwt merge[0m — Runs commit → squash → rebase → hooks → push → cleanup automatically
 - [2mwt hook[0m — Run configured hooks

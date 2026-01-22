@@ -26,29 +26,29 @@ exit_code: 0
 ----- stderr -----
 wt config state logs - Background operation logs
 
-Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m[COMMAND]
+Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
-[1m[32mCommands:
+[1m[32mCommands:[0m
   [1m[36mget[0m    List background operation log files
   [1m[36mclear[0m  Clear background operation logs
 
-[1m[32mOptions:
-  [1m[36m-h[0m, [1m[36m--help
+[1m[32mOptions:[0m
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 View and manage logs from background operations.
 
-[1m[32mWhat's logged
+[1m[32mWhat's logged[0m
 
        Operation                     Log file                 
    ────────────────── ─────────────────────────────────────── 
@@ -57,23 +57,23 @@ View and manage logs from background operations.
 
 Source is [2muser[0m or [2mproject[0m depending on where the hook is defined.
 
-[1m[32mLocation
+[1m[32mLocation[0m
 
 All logs are stored in [2m.git/wt-logs/[0m (in the main worktree's git directory).
 
-[1m[32mBehavior
+[1m[32mBehavior[0m
 
 - [1mOverwrites[0m — Same operation on same branch overwrites previous log
 - [1mPersists[0m — Logs from deleted branches remain until manually cleared
 - [1mShared[0m — All worktrees write to the same log directory
 
-[1m[32mExamples
+[1m[32mExamples[0m
 
 List all log files:
-  [2mwt config state logs get
+  [2mwt config state logs get[0m
 
 View a specific log:
-  [2mcat "$(git rev-parse --git-dir)/wt-logs/feature-project-post-start-build.log"
+  [2mcat "$(git rev-parse --git-dir)/wt-logs/feature-project-post-start-build.log"[0m
 
 Clear all logs:
-  [2mwt config state logs clear
+  [2mwt config state logs clear[0m

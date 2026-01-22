@@ -19,7 +19,7 @@ pub enum SwitchResult {
     /// Already at the target worktree (no action taken)
     AlreadyAt(PathBuf),
     /// Switched to existing worktree at the given path
-    Existing(PathBuf),
+    Existing { path: PathBuf },
     /// Created new worktree at the given path
     Created {
         path: PathBuf,
@@ -40,7 +40,7 @@ impl SwitchResult {
     pub fn path(&self) -> &PathBuf {
         match self {
             SwitchResult::AlreadyAt(path) => path,
-            SwitchResult::Existing(path) => path,
+            SwitchResult::Existing { path, .. } => path,
             SwitchResult::Created { path, .. } => path,
         }
     }
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn test_switch_result_path_existing() {
         let path = PathBuf::from("/test/existing");
-        let result = SwitchResult::Existing(path.clone());
+        let result = SwitchResult::Existing { path: path.clone() };
         assert_eq!(result.path(), &path);
     }
 
