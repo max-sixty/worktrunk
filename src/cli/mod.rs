@@ -413,7 +413,6 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         after_long_help = r#"Shows uncommitted changes, divergence from the default branch and remote, and optional CI status.
 
 <!-- demo: wt-list.gif 1600x900 -->
-
 The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
 
 ## Examples
@@ -796,7 +795,6 @@ Removal runs in the background by default (returns immediately). Logs are writte
         after_long_help = r#"Unlike `git merge`, this merges current into target (not target into current). Similar to clicking "Merge pull request" on GitHub, but locally. Target defaults to the default branch.
 
 <!-- demo: wt-merge.gif 1600x900 -->
-
 ## Examples
 
 Merge to the default branch:
