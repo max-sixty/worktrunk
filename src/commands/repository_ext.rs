@@ -280,16 +280,13 @@ impl RepositoryCliExt for Repository {
             format_path_for_display(wt_path)
         )))?;
 
-        let stash_output =
-            wt.run_command(&["stash", "push", "--include-untracked", "-m", &stash_name])?;
+        // Stash all changes including untracked files.
+        // Note: git stash push returns exit code 0 whether or not anything was stashed.
+        wt.run_command(&["stash", "push", "--include-untracked", "-m", &stash_name])?;
 
-        if stash_output.contains("No local changes to save") {
-            return Ok(None);
-        }
-
+        // Verify stash was created by checking the stash list for our entry.
         let list_output = wt.run_command(&["stash", "list", "--format=%gd%x00%gs%x00"])?;
         let mut parts = list_output.split('\0');
-        let mut stash_ref = None;
         while let Some(id) = parts.next() {
             if id.is_empty() {
                 continue;
@@ -297,19 +294,12 @@ impl RepositoryCliExt for Repository {
             if let Some(message) = parts.next()
                 && (message == stash_name || message.ends_with(&stash_name))
             {
-                stash_ref = Some(id.to_string());
-                break;
+                return Ok(Some(TargetWorktreeStash::new(wt_path, id.to_string())));
             }
         }
 
-        let Some(stash_ref) = stash_ref else {
-            return Err(anyhow::anyhow!(
-                "Failed to locate autostash entry '{}'",
-                stash_name
-            ));
-        };
-
-        Ok(Some(TargetWorktreeStash::new(wt_path, stash_ref)))
+        // Stash entry not found — nothing was stashed
+        Ok(None)
     }
 
     fn is_rebased_onto(&self, target: &str) -> anyhow::Result<bool> {

@@ -67,6 +67,17 @@ struct GhApiPrResponse {
     html_url: String,
 }
 
+/// Error response from GitHub API (stdout on failure).
+/// Example: `{"message":"Not Found","documentation_url":"...","status":"404"}`
+#[derive(Debug, Deserialize)]
+struct GhApiErrorResponse {
+    #[serde(default)]
+    message: String,
+    /// HTTP status code as a string (e.g., "404", "401", "403")
+    #[serde(default)]
+    status: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct GhPrRef {
     #[serde(rename = "ref")]
@@ -126,41 +137,26 @@ pub fn fetch_pr_info(pr_number: u32, repo_root: &std::path::Path) -> anyhow::Res
     };
 
     if !output.status.success() {
+        // Parse the JSON error response from stdout for structured error handling.
+        // GitHub API returns JSON with "status" field containing the HTTP status code.
+        if let Ok(error_response) = serde_json::from_slice::<GhApiErrorResponse>(&output.stdout) {
+            match error_response.status.as_str() {
+                "404" => bail!("PR #{} not found", pr_number),
+                "401" => bail!("GitHub CLI not authenticated; run gh auth login"),
+                "403" => {
+                    // 403 can be rate limiting or permission denied
+                    let message_lower = error_response.message.to_lowercase();
+                    if message_lower.contains("rate limit") {
+                        bail!("GitHub API rate limit exceeded; wait a few minutes and retry");
+                    }
+                    bail!("GitHub API access forbidden: {}", error_response.message);
+                }
+                _ => {}
+            }
+        }
+
+        // Fallback for non-JSON errors (network issues, gh not configured, etc.)
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr_lower = stderr.to_lowercase();
-
-        // PR not found (HTTP 404)
-        if stderr_lower.contains("not found") || stderr_lower.contains("404") {
-            bail!("PR #{} not found", pr_number);
-        }
-
-        // Authentication errors
-        if stderr_lower.contains("authentication")
-            || stderr_lower.contains("logged in")
-            || stderr_lower.contains("auth login")
-            || stderr_lower.contains("not logged")
-            || stderr_lower.contains("401")
-        {
-            bail!("GitHub CLI not authenticated; run gh auth login");
-        }
-
-        // Rate limiting
-        if stderr_lower.contains("rate limit")
-            || stderr_lower.contains("api rate")
-            || stderr_lower.contains("403")
-        {
-            bail!("GitHub API rate limit exceeded; wait a few minutes and retry");
-        }
-
-        // Network errors
-        if stderr_lower.contains("network")
-            || stderr_lower.contains("connection")
-            || stderr_lower.contains("timeout")
-        {
-            bail!("Network error connecting to GitHub; check your internet connection");
-        }
-
-        // Unknown error - show full output in gutter for debugging
         return Err(GitError::CliApiError {
             ref_type: super::RefType::Pr,
             message: format!("gh api failed for PR #{}", pr_number),
