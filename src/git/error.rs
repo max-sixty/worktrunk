@@ -310,7 +310,7 @@ impl std::fmt::Display for GitError {
                     "{}\n{}",
                     error_message(cformat!("Branch <bold>{branch}</> already exists")),
                     hint_message(cformat!(
-                        "To switch to the existing branch, remove <bright-black>--create</> and run <bright-black>{switch_cmd}</>"
+                        "To switch to the existing branch, run without <bright-black>--create</>: <bright-black>{switch_cmd}</>"
                     ))
                 )
             }
@@ -935,7 +935,7 @@ mod tests {
         let downcast = err.downcast_ref::<GitError>().expect("Should downcast");
         assert_snapshot!(downcast.to_string(), @"
         [31m✗[39m [31mBranch [1mmain[22m already exists[39m
-        [2m↳[22m [2mTo switch to the existing branch, remove [90m--create[39m and run [90mwt switch main[39m[22m
+        [2m↳[22m [2mTo switch to the existing branch, run without [90m--create[39m: [90mwt switch main[39m[22m
         ");
     }
 
