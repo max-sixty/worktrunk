@@ -27,7 +27,7 @@ wt step - Run individual operations
 Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
-  [1m[36mcommit[0m        Commit changes with LLM commit message
+  [1m[36mcommit[0m        Stage and commit with LLM-generated message
   [1m[36msquash[0m        Squash commits since branching
   [1m[36mpush[0m          Fast-forward target to current branch
   [1m[36mrebase[0m        Rebase onto target

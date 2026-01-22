@@ -287,7 +287,7 @@ wt config state clear
 
 #[derive(Subcommand)]
 pub enum StateCommand {
-    /// Default branch setting
+    /// Default branch detection and override
     #[command(
         name = "default-branch",
         after_long_help = r#"Useful in scripts to avoid hardcoding `main` or `master`:
