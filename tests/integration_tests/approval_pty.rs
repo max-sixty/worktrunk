@@ -59,10 +59,6 @@ fn approval_pty_settings(repo: &TestRepo) -> insta::Settings {
 fn test_env_vars_with_shell(repo: &TestRepo) -> Vec<(String, String)> {
     let mut env_vars = repo.test_env_vars();
     env_vars.push(("SHELL".to_string(), "/bin/zsh".to_string()));
-    // Disable delayed streaming to prevent progress messages from appearing in snapshots.
-    // Without this, slow CI systems may show "Creating worktree..." progress that doesn't
-    // appear on faster systems, causing snapshot mismatches.
-    env_vars.push(("WT_TEST_DELAYED_STREAM_MS".to_string(), "-1".to_string()));
     env_vars
 }
 
