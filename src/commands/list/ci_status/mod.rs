@@ -306,8 +306,8 @@ impl PrStatus {
     /// Detect CI status without caching (internal implementation)
     ///
     /// Platform is determined by project config override or remote URL detection.
-    /// For unknown platforms (e.g., GitHub Enterprise with custom domains), falls back
-    /// to trying both platforms.
+    /// Returns `None` if the platform cannot be determined (user should set
+    /// `ci.platform` in project config for non-standard hostnames).
     /// PR/MR detection always runs. Workflow/pipeline fallback only runs if `has_upstream`.
     fn detect_uncached(
         repo: &Repository,
@@ -323,55 +323,16 @@ impl PrStatus {
         let platform = get_platform_for_repo(repo, platform_override);
 
         match platform {
-            Some(CiPlatform::GitHub) => {
-                Self::detect_github_ci(repo, branch, local_head, has_upstream)
-            }
-            Some(CiPlatform::GitLab) => {
-                Self::detect_gitlab_ci(repo, branch, local_head, has_upstream)
-            }
+            Some(p) => p.detect_ci(repo, branch, local_head, has_upstream),
             None => {
-                // Unknown platform (e.g., GitHub Enterprise, self-hosted GitLab with custom domain)
-                // Fall back to trying both platforms
-                log::debug!("Could not determine CI platform, trying both");
-                Self::detect_github_ci(repo, branch, local_head, has_upstream)
-                    .or_else(|| Self::detect_gitlab_ci(repo, branch, local_head, has_upstream))
+                // Unknown platform - user should set ci.platform in project config
+                log::debug!(
+                    "Could not detect CI platform from remote URL; \
+                     set ci.platform in .config/wt.toml for CI status"
+                );
+                None
             }
         }
-    }
-
-    /// Detect GitHub CI status (PR first, then workflow if has_upstream)
-    fn detect_github_ci(
-        repo: &Repository,
-        branch: &str,
-        local_head: &str,
-        has_upstream: bool,
-    ) -> Option<Self> {
-        if let Some(status) = github::detect_github(repo, branch, local_head) {
-            return Some(status);
-        }
-        if has_upstream {
-            return github::detect_github_commit_checks(repo, local_head);
-        }
-        None
-    }
-
-    /// Detect GitLab CI status (MR first, then pipeline if has_upstream)
-    fn detect_gitlab_ci(
-        repo: &Repository,
-        branch: &str,
-        local_head: &str,
-        has_upstream: bool,
-    ) -> Option<Self> {
-        if !tool_available("glab", &["--version"]) {
-            return None;
-        }
-        if let Some(status) = gitlab::detect_gitlab(repo, branch, local_head) {
-            return Some(status);
-        }
-        if has_upstream {
-            return gitlab::detect_gitlab_pipeline(branch, local_head);
-        }
-        None
     }
 }
 

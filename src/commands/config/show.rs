@@ -340,7 +340,9 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
         // Only check for unknown keys if config is valid
-        warn_unknown_keys(out, &find_unknown_user_keys(&contents))?;
+        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
+            &contents,
+        )));
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)
@@ -349,16 +351,31 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Write warnings for any unknown config keys
-pub(super) fn warn_unknown_keys(out: &mut String, unknown_keys: &[String]) -> anyhow::Result<()> {
-    for key in unknown_keys {
-        writeln!(
-            out,
-            "{}",
-            warning_message(cformat!("Unknown key <bold>{key}</> will be ignored"))
-        )?;
+/// Format warnings for any unknown config keys.
+///
+/// Generic over `C`, the config type where the keys were found. When an unknown
+/// key belongs in `C::Other`, the warning includes a hint about where to move it.
+pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
+    unknown_keys: &std::collections::HashMap<String, toml::Value>,
+) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+
+    // Sort keys for deterministic output order
+    let mut keys: Vec<_> = unknown_keys.keys().collect();
+    keys.sort();
+
+    for key in keys {
+        let value = &unknown_keys[key];
+        let msg = match worktrunk::config::key_belongs_in::<C>(key, value) {
+            Some(location) => {
+                cformat!("Key <bold>{key}</> belongs in {location} (will be ignored)")
+            }
+            None => cformat!("Unknown key <bold>{key}</> will be ignored"),
+        };
+        let _ = writeln!(out, "{}", warning_message(msg));
     }
-    Ok(())
+    out
 }
 
 fn render_project_config(out: &mut String) -> anyhow::Result<()> {
@@ -409,7 +426,9 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
         // Only check for unknown keys if config is valid
-        warn_unknown_keys(out, &find_unknown_project_keys(&contents))?;
+        out.push_str(&warn_unknown_keys::<ProjectConfig>(
+            &find_unknown_project_keys(&contents),
+        ));
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)
