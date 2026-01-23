@@ -198,7 +198,7 @@ Hooks can use template variables that expand at runtime:
 | `{{ branch }}` | Branch name |
 | `{{ worktree_name }}` | Worktree directory name |
 | `{{ worktree_path }}` | Absolute worktree path |
-| `{{ primary_worktree_path }}` | Main worktree path (for bare repos: default branch worktree) |
+| `{{ primary_worktree_path }}` | Primary worktree path (main worktree for normal repos; default branch worktree for bare repos) |
 | `{{ default_branch }}` | Default branch name |
 | `{{ commit }}` | Full HEAD commit SHA |
 | `{{ short_commit }}` | Short HEAD commit SHA (7 chars) |

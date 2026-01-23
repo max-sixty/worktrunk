@@ -2,11 +2,12 @@
 //!
 //! Personal preferences and per-project approved commands, not checked into git.
 
+use std::path::PathBuf;
+use std::sync::OnceLock;
+
 use config::{Case, Config, ConfigError, File};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::sync::OnceLock;
 
 use super::HooksConfig;
 
