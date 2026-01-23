@@ -1290,3 +1290,47 @@ args = ["-m", "haiku"]
         "Migration should remove args field"
     );
 }
+
+/// Test that deprecated project-level [projects."...".commit-generation] shows warning
+#[rstest]
+fn test_deprecated_commit_generation_project_level_shows_warning(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Write user config with deprecated project-level commit-generation
+    let config_path = repo.test_config_path();
+    fs::write(
+        config_path,
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[projects."github.com/example/repo".commit-generation]
+command = "llm -m gpt-4"
+"#,
+    )
+    .unwrap();
+
+    // Use `wt list` which loads config through UserConfig::load() and triggers deprecation check
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify migration file was created and has correct transformations
+    let migration_file = config_path.with_extension("toml.new");
+    assert!(
+        migration_file.exists(),
+        "Migration file should be created at {:?}",
+        migration_file
+    );
+
+    let migrated_content = fs::read_to_string(&migration_file).unwrap();
+    assert!(
+        migrated_content.contains("[projects.\"github.com/example/repo\".commit.generation]"),
+        "Migration should rename project-level section"
+    );
+}
