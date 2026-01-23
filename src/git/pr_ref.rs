@@ -89,6 +89,13 @@ impl super::RefContext for PrInfo {
     fn url(&self) -> &str {
         &self.url
     }
+    fn source_ref(&self) -> String {
+        if self.is_cross_repository {
+            format!("{}:{}", self.head_owner, self.head_ref_name)
+        } else {
+            self.head_ref_name.clone()
+        }
+    }
 }
 
 /// Raw JSON response from `gh api repos/{owner}/{repo}/pulls/{number}`.
@@ -466,5 +473,47 @@ mod tests {
             fork_remote_url_https("github.example.com", "org", "project"),
             "https://github.example.com/org/project.git"
         );
+    }
+
+    #[test]
+    fn test_source_ref_same_repo() {
+        let pr = PrInfo {
+            number: 101,
+            title: "Fix bug".to_string(),
+            author: "alice".to_string(),
+            state: "open".to_string(),
+            draft: false,
+            head_ref_name: "feature-auth".to_string(),
+            head_owner: "owner".to_string(),
+            head_repo: "repo".to_string(),
+            base_owner: "owner".to_string(),
+            base_repo: "repo".to_string(),
+            is_cross_repository: false,
+            host: "github.com".to_string(),
+            url: "https://github.com/owner/repo/pull/101".to_string(),
+        };
+        use crate::git::RefContext;
+        assert_eq!(pr.source_ref(), "feature-auth");
+    }
+
+    #[test]
+    fn test_source_ref_fork() {
+        let pr = PrInfo {
+            number: 42,
+            title: "Add feature".to_string(),
+            author: "contributor".to_string(),
+            state: "open".to_string(),
+            draft: false,
+            head_ref_name: "feature-fix".to_string(),
+            head_owner: "contributor".to_string(),
+            head_repo: "repo".to_string(),
+            base_owner: "owner".to_string(),
+            base_repo: "repo".to_string(),
+            is_cross_repository: true,
+            host: "github.com".to_string(),
+            url: "https://github.com/owner/repo/pull/42".to_string(),
+        };
+        use crate::git::RefContext;
+        assert_eq!(pr.source_ref(), "contributor:feature-fix");
     }
 }

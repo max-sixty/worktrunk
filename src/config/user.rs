@@ -225,7 +225,7 @@ pub struct UserConfig {
 
     /// Captures unknown fields for validation warnings
     #[serde(flatten, default, skip_serializing)]
-    pub(crate) unknown: std::collections::HashMap<String, toml::Value>,
+    pub unknown: std::collections::HashMap<String, toml::Value>,
 }
 
 /// Configuration for commit message generation
@@ -609,7 +609,11 @@ impl UserConfig {
                 // (must check file content directly, not config.unknown, because
                 // config.unknown includes env vars which shouldn't trigger warnings)
                 let unknown_keys = find_unknown_keys(&content);
-                super::deprecation::warn_unknown_fields(config_path, &unknown_keys, "User config");
+                super::deprecation::warn_unknown_fields::<UserConfig>(
+                    config_path,
+                    &unknown_keys,
+                    "User config",
+                );
             }
 
             builder = builder.add_source(File::from(config_path.clone()));
@@ -1203,15 +1207,16 @@ pub fn get_config_path() -> Option<PathBuf> {
 
 /// Find unknown keys in user config TOML content
 ///
-/// Returns a list of unrecognized top-level keys that will be silently ignored.
+/// Returns a map of unrecognized top-level keys (with their values) that will be ignored.
 /// Uses serde deserialization with flatten to automatically detect unknown fields.
-pub fn find_unknown_keys(contents: &str) -> Vec<String> {
+/// The values are included to allow checking if keys belong in the other config type.
+pub fn find_unknown_keys(contents: &str) -> std::collections::HashMap<String, toml::Value> {
     // Deserialize into UserConfig - unknown fields are captured in the `unknown` map
     let Ok(config) = toml::from_str::<UserConfig>(contents) else {
-        return vec![];
+        return std::collections::HashMap::new();
     };
 
-    config.unknown.into_keys().collect()
+    config.unknown
 }
 
 #[cfg(test)]
@@ -1261,8 +1266,8 @@ unknown-key = "value"
 another-unknown = 42
 "#;
         let keys = find_unknown_keys(content);
-        assert!(keys.contains(&"unknown-key".to_string()));
-        assert!(keys.contains(&"another-unknown".to_string()));
+        assert!(keys.contains_key("unknown-key"));
+        assert!(keys.contains_key("another-unknown"));
     }
 
     #[test]
