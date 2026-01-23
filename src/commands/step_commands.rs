@@ -194,7 +194,7 @@ pub fn handle_squash(
 
     if commit_count == 0 && has_staged {
         // Just staged changes, no commits - commit them directly (no squashing needed)
-        generator.commit_staged_changes(true, stage_mode)?;
+        generator.commit_staged_changes(&wt, true, true, stage_mode)?;
         return Ok(SquashResult::Squashed);
     }
 
@@ -1079,7 +1079,19 @@ pub fn step_relocate(
                     "{}",
                     progress_message(cformat!("Committing changes in <bold>{branch}</>..."))
                 );
-                commit_worktree_changes(&repo, &wt.path, &config)?;
+                // Stage all changes
+                worktree
+                    .run_command(&["add", "-A"])
+                    .context("Failed to stage changes")?;
+                // Commit using shared pipeline (no progress message - we already showed one)
+                let project_id = repo.project_identifier().ok();
+                let commit_config = config.commit_generation(project_id.as_deref());
+                super::commit::CommitGenerator::new(&commit_config).commit_staged_changes(
+                    &worktree,
+                    false, // show_progress - already showing "Committing changes in..."
+                    false, // show_no_squash_note
+                    super::commit::StageMode::None, // already staged above
+                )?;
             } else {
                 eprintln!(
                     "{}",
@@ -1420,50 +1432,6 @@ pub fn step_relocate(
             eprintln!("{}", info_message(msg));
         }
     }
-
-    Ok(())
-}
-/// Commit changes in a specific worktree using LLM-generated message.
-fn commit_worktree_changes(
-    repo: &Repository,
-    worktree_path: &Path,
-    config: &UserConfig,
-) -> anyhow::Result<()> {
-    use worktrunk::shell_exec::Cmd;
-
-    let project_id = repo.project_identifier().ok();
-    let commit_config = config.commit_generation(project_id.as_deref());
-    let generator = super::commit::CommitGenerator::new(&commit_config);
-
-    // Stage all changes - if is_dirty() was true, this must stage something
-    Cmd::new("git")
-        .args(["add", "-A"])
-        .current_dir(worktree_path)
-        .run()
-        .context("Failed to stage changes")?;
-
-    generator.emit_hint_if_needed();
-    let commit_message = crate::llm::generate_commit_message(&commit_config)?;
-
-    let formatted_message = generator.format_message_for_display(&commit_message);
-    eprintln!("{}", format_with_gutter(&formatted_message, None));
-
-    Cmd::new("git")
-        .args(["commit", "-m", &commit_message])
-        .current_dir(worktree_path)
-        .run()
-        .context("Failed to commit")?;
-
-    let commit_hash = Cmd::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .current_dir(worktree_path)
-        .run()?;
-    let commit_hash = String::from_utf8_lossy(&commit_hash.stdout)
-        .trim()
-        .to_string();
-
-    let msg = cformat!("Committed @ <dim>{commit_hash}</>");
-    eprintln!("{}", success_message(msg));
 
     Ok(())
 }

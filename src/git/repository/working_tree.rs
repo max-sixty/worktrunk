@@ -52,6 +52,11 @@ pub struct WorkingTree<'a> {
 }
 
 impl<'a> WorkingTree<'a> {
+    /// Get a reference to the repository this worktree belongs to.
+    pub fn repo(&self) -> &Repository {
+        self.repo
+    }
+
     /// Run a git command in this worktree and return stdout.
     pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
         let output = self.run_command_output(args)?;
