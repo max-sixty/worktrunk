@@ -1540,7 +1540,7 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     std::fs::create_dir_all(&cache_dir).unwrap();
 
     // Use the same sanitization as production code for cache filenames
-    let safe_branch = worktrunk::path::sanitize_for_unique_filename(branch);
+    let safe_branch = worktrunk::path::sanitize_for_filename(branch);
     let cache_file = cache_dir.join(format!("{safe_branch}.json"));
     std::fs::write(&cache_file, &cache_json).unwrap();
 }

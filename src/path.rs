@@ -106,10 +106,12 @@ pub fn format_path_for_display(path: &Path) -> String {
 /// Sanitize a string for use as a filename on all platforms.
 ///
 /// Replaces invalid characters and control characters with `-`, trims trailing
-/// dots/spaces (Windows), and prefixes reserved device names with `_`.
+/// dots/spaces (Windows), prefixes reserved device names with `_`, and appends
+/// a 3-character hash suffix for collision avoidance.
 ///
-/// For cache files where collision avoidance matters (e.g., `origin/feature` vs
-/// `origin-feature`), use [`sanitize_for_unique_filename`] instead.
+/// The hash ensures unique outputs for inputs that would otherwise collide
+/// (e.g., `origin/feature` and `origin-feature` both sanitize to `origin-feature`
+/// but get different hash suffixes).
 pub fn sanitize_for_filename(value: &str) -> String {
     let mut result: String = value
         .chars()
@@ -136,24 +138,10 @@ pub fn sanitize_for_filename(value: &str) -> String {
             && upper.chars().nth(3).is_some_and(|c| matches!(c, '1'..='9')));
 
     if is_reserved {
-        format!("_{result}")
+        result = format!("_{result}");
     } else if result.is_empty() {
-        "_empty".to_string()
-    } else {
-        result
+        result = "_empty".to_string();
     }
-}
-
-/// Sanitize a string for use as a unique filename on all platforms.
-///
-/// Like [`sanitize_for_filename`], but appends a 3-character hash suffix for
-/// collision avoidance. The hash is computed from the original input, ensuring
-/// unique outputs for inputs that would otherwise collide (e.g., `origin/feature`
-/// vs `origin-feature` both sanitize to `origin-feature` but get different hashes).
-///
-/// Use this for cache files where different inputs must produce different filenames.
-pub fn sanitize_for_unique_filename(value: &str) -> String {
-    let mut result = sanitize_for_filename(value);
 
     // Append hash suffix for collision avoidance (computed from original input)
     if !result.ends_with('-') {
@@ -274,34 +262,32 @@ mod tests {
 
     #[test]
     fn test_sanitize_for_filename_replaces_invalid_chars() {
-        assert_eq!(sanitize_for_filename("foo/bar"), "foo-bar");
-        assert_eq!(sanitize_for_filename("name:with?chars"), "name-with-chars");
+        assert!(sanitize_for_filename("foo/bar").starts_with("foo-bar-"));
+        assert!(sanitize_for_filename("name:with?chars").starts_with("name-with-chars-"));
     }
 
     #[test]
     fn test_sanitize_for_filename_trims_trailing_dots_and_spaces() {
-        assert_eq!(sanitize_for_filename("file. "), "file");
-        assert_eq!(sanitize_for_filename("file..."), "file");
+        assert!(sanitize_for_filename("file. ").starts_with("file-"));
+        assert!(sanitize_for_filename("file...").starts_with("file-"));
     }
 
     #[test]
     fn test_sanitize_for_filename_prefixes_reserved_names() {
-        assert_eq!(sanitize_for_filename("CON"), "_CON");
-        assert_eq!(sanitize_for_filename("com1"), "_com1");
+        assert!(sanitize_for_filename("CON").starts_with("_CON-"));
+        assert!(sanitize_for_filename("com1").starts_with("_com1-"));
     }
 
     #[test]
     fn test_sanitize_for_filename_handles_empty() {
-        assert_eq!(sanitize_for_filename(""), "_empty");
+        assert!(sanitize_for_filename("").starts_with("_empty-"));
     }
 
     #[test]
-    fn test_sanitize_for_unique_filename_avoids_collisions() {
-        use super::sanitize_for_unique_filename;
-
+    fn test_sanitize_for_filename_avoids_collisions() {
         // These would collide without the hash suffix
-        let a = sanitize_for_unique_filename("origin/feature");
-        let b = sanitize_for_unique_filename("origin-feature");
+        let a = sanitize_for_filename("origin/feature");
+        let b = sanitize_for_filename("origin-feature");
 
         assert_ne!(a, b, "collision: {a} == {b}");
         assert!(a.starts_with("origin-feature-"));
