@@ -724,7 +724,9 @@ impl std::fmt::Display for GitError {
                     error_message(cformat!(
                         "Cannot use <bold>--base</> with <bold>{syntax}{number}</>"
                     )),
-                    hint_message(format!("{name_plural} already have a base; remove --base"))
+                    hint_message(cformat!(
+                        "{name_plural} already have a base; remove <bright-black>--base</>"
+                    ))
                 )
             }
 
