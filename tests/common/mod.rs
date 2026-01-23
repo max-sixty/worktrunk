@@ -175,7 +175,7 @@ pub fn repo_with_remote(mut repo: TestRepo) -> TestRepo {
     repo
 }
 
-/// Repo with main branch available for merge operations.
+/// Repo with default branch available for merge operations.
 ///
 /// The primary worktree is already on main, so no separate worktree is needed.
 /// This fixture exists for compatibility with tests that expect it.
@@ -1535,9 +1535,9 @@ impl TestRepo {
         canonical_path
     }
 
-    /// Creates a worktree for the main branch (required for merge operations)
+    /// Creates a worktree for the default branch (required for merge operations)
     ///
-    /// This is a convenience method that creates a worktree for the main branch
+    /// This is a convenience method that creates a worktree for the default branch
     /// in the standard location expected by merge tests. Returns the path to the
     /// created worktree.
     ///
@@ -1745,7 +1745,7 @@ impl TestRepo {
     /// Switch the primary worktree to a different branch
     ///
     /// Creates a new branch and switches to it in the primary worktree.
-    /// This is useful for testing scenarios where the primary worktree is not on the main branch.
+    /// This is useful for testing scenarios where the primary worktree is not on the default branch.
     pub fn switch_primary_to(&self, branch: &str) {
         self.run_git(&["switch", "-c", branch]);
     }

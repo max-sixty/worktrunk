@@ -6,8 +6,11 @@
 //! - Text truncation with word boundaries
 //! - Terminal width detection
 
-use std::path::Path;
+use std::path::{Component, Path};
+
+use unicode_width::UnicodeWidthChar;
 use worktrunk::path::format_path_for_display;
+use worktrunk::styling::visual_width;
 use worktrunk::utils::get_now;
 
 /// Format timestamp as abbreviated relative time (e.g., "2h")
@@ -61,8 +64,6 @@ fn format_relative_time_impl(timestamp: i64, now: i64) -> String {
 /// - Sibling: `../sibling`
 /// - Unrelated paths fall back to `~/...` or absolute
 pub(crate) fn shorten_path(path: &Path, main_worktree_path: &Path) -> String {
-    use std::path::Component;
-
     // Same path = main worktree
     if path == main_worktree_path {
         return ".".to_string();
@@ -88,9 +89,6 @@ pub(crate) fn shorten_path(path: &Path, main_worktree_path: &Path) -> String {
 /// Truncates at character boundary (mid-word if needed) to fill the allocated
 /// column width exactly. This ensures consistent table output width.
 pub(crate) fn truncate_to_width(text: &str, max_width: usize) -> String {
-    use unicode_width::UnicodeWidthChar;
-    use worktrunk::styling::visual_width;
-
     if visual_width(text) <= max_width {
         return text.to_string();
     }

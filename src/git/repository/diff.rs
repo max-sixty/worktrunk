@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 
 use super::{DiffStats, LineDiff, Repository};
 
@@ -147,8 +147,6 @@ impl Repository {
     /// when multiple tasks need the same merge-base (e.g., parallel `wt list` tasks).
     /// The cache key is normalized (sorted) since merge-base(A, B) == merge-base(B, A).
     pub fn merge_base(&self, commit1: &str, commit2: &str) -> anyhow::Result<Option<String>> {
-        use anyhow::bail;
-
         // Normalize key order since merge-base is symmetric: merge-base(A, B) == merge-base(B, A)
         let key = if commit1 <= commit2 {
             (commit1.to_string(), commit2.to_string())

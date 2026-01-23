@@ -2,11 +2,13 @@
 //!
 //! Personal preferences and per-project approved commands, not checked into git.
 
-use config::{Case, Config, ConfigError, File};
-use fs2::FileExt;
-use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
 use std::sync::OnceLock;
+
+use config::{Case, Config, ConfigError, File};
+use fs2::FileExt;
+use serde::de;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::HooksConfig;
 
@@ -67,8 +69,6 @@ fn deserialize_string_or_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::
 where
     D: Deserializer<'de>,
 {
-    use serde::de;
-
     struct StringOrVec;
 
     impl<'de> de::Visitor<'de> for StringOrVec {
