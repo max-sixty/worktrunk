@@ -6,9 +6,11 @@
 //! - `clear_approvals` - Clear approved commands
 //! - `handle_hook_show` - Display configured hooks
 
+use std::collections::HashMap;
+use std::fmt::Write as _;
+
 use anyhow::Context;
 use color_print::cformat;
-use std::fmt::Write as _;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
 use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig};
@@ -18,6 +20,9 @@ use worktrunk::styling::{
     INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, hint_message,
     info_message, success_message,
 };
+
+use super::command_approval::approve_hooks_filtered;
+use super::command_executor::build_hook_context;
 
 use super::command_executor::CommandContext;
 use super::context::CommandEnv;
@@ -52,8 +57,6 @@ pub fn run_hook(
     name_filter: Option<&str>,
     custom_vars: &[(String, String)],
 ) -> anyhow::Result<()> {
-    use super::command_approval::approve_hooks_filtered;
-
     // Derive context from current environment (branch-optional for CI compatibility)
     let env = CommandEnv::for_action_branchless()?;
     let repo = &env.repo;
@@ -657,8 +660,6 @@ fn render_hook_commands(
 
 /// Expand a command template with context variables
 fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: HookType) -> String {
-    use super::command_executor::build_hook_context;
-
     // Build extra vars based on hook type (same logic as run_hook approval)
     let default_branch = ctx.repo.default_branch();
     let extra_vars: Vec<(&str, &str)> = match hook_type {
@@ -677,7 +678,7 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
         _ => Vec::new(),
     };
     let template_ctx = build_hook_context(ctx, &extra_vars);
-    let vars: std::collections::HashMap<&str, &str> = template_ctx
+    let vars: HashMap<&str, &str> = template_ctx
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
