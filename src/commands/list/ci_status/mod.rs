@@ -8,6 +8,7 @@ mod github;
 mod gitlab;
 mod platform;
 
+use anstyle::{AnsiColor, Color, Style};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use worktrunk::git::Repository;
 use worktrunk::shell_exec::Cmd;
@@ -176,8 +177,7 @@ impl CiStatus {
     /// - Conflicts: Yellow
     /// - NoCI: BrightBlack (dimmed)
     /// - Error: Yellow (warning color)
-    pub fn color(&self) -> anstyle::AnsiColor {
-        use anstyle::AnsiColor;
+    pub fn color(&self) -> AnsiColor {
         match self {
             Self::Passed => AnsiColor::Green,
             Self::Running => AnsiColor::Blue,
@@ -190,8 +190,7 @@ impl CiStatus {
 
 impl PrStatus {
     /// Get the style for this PR status (color + optional dimming for stale)
-    pub fn style(&self) -> anstyle::Style {
-        use anstyle::{Color, Style};
+    pub fn style(&self) -> Style {
         let style = Style::new().fg_color(Some(Color::Ansi(self.ci_status.color())));
         if self.is_stale { style.dimmed() } else { style }
     }

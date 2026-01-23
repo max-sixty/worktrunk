@@ -1,6 +1,9 @@
+use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+
+use anstyle::Style;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
 use worktrunk::styling::{
@@ -590,8 +593,6 @@ pub fn show_install_preview(
     completion_results: &[CompletionResult],
     cmd: &str,
 ) {
-    use anstyle::Style;
-
     let bold = Style::new().bold();
 
     // Show shell extension changes
@@ -663,8 +664,6 @@ pub fn show_uninstall_preview(
     results: &[UninstallResult],
     completion_results: &[CompletionUninstallResult],
 ) {
-    use anstyle::Style;
-
     let bold = Style::new().bold();
 
     for result in results {
@@ -751,7 +750,6 @@ pub fn prompt_for_install(
 
 /// Prompt user for yes/no confirmation (simple [y/N] prompt)
 fn prompt_yes_no() -> Result<bool, String> {
-    use anstyle::Style;
     use worktrunk::styling::eprint;
 
     let bold = Style::new().bold();
@@ -1080,8 +1078,7 @@ fn uninstall_from_file(
 
     // Remove matching lines and any immediately preceding blank line
     // (install adds "\n{line}\n", so we remove both the blank and the integration line)
-    let mut indices_to_remove: std::collections::HashSet<usize> =
-        integration_lines.iter().map(|(i, _)| *i).collect();
+    let mut indices_to_remove: HashSet<usize> = integration_lines.iter().map(|(i, _)| *i).collect();
     for &(i, _) in &integration_lines {
         if i > 0 && lines[i - 1].trim().is_empty() {
             indices_to_remove.insert(i - 1);
@@ -1117,8 +1114,6 @@ fn prompt_for_uninstall_confirmation(
     results: &[UninstallResult],
     completion_results: &[CompletionUninstallResult],
 ) -> Result<bool, String> {
-    use anstyle::Style;
-
     for result in results {
         let bold = Style::new().bold();
         let shell = result.shell;

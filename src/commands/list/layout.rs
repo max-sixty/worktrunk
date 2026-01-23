@@ -170,12 +170,14 @@
 //! - `fit_header()`: Ensures column width ≥ header width to prevent overflow
 //! - `try_allocate()`: Attempts to allocate space, returns 0 if insufficient
 
-use crate::display::get_terminal_width;
-use anstyle::Style;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+use anstyle::Style;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::styling::{ADDITION, DELETION, Stream, supports_hyperlinks};
+
+use crate::display::{get_terminal_width, shorten_path};
 
 use super::collect::{TaskKind, parse_port_from_url};
 use super::columns::{COLUMN_SPECS, ColumnKind, ColumnSpec, column_display_index};
@@ -850,10 +852,7 @@ pub fn calculate_layout_with_width(
     let path_data_width = items
         .iter()
         .filter_map(|item| item.worktree_path())
-        .map(|path| {
-            use crate::display::shorten_path;
-            shorten_path(path.as_path(), main_worktree_path).width()
-        })
+        .map(|path| shorten_path(path.as_path(), main_worktree_path).width())
         .max()
         .unwrap_or(0);
     let max_path_width = fit_header(ColumnKind::Path.header(), path_data_width);

@@ -17,8 +17,9 @@
 //! This ensures approval happens exactly once at the command entry point,
 //! eliminating the need to thread `auto_trust` through execution layers.
 
-use super::hook_filter::{HookSource, ParsedFilter};
-use super::project_config::{HookCommand, collect_commands_for_hooks};
+use std::io::{self, IsTerminal, Write};
+use std::path::Path;
+
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::UserConfig;
@@ -27,6 +28,9 @@ use worktrunk::styling::{
     INFO_SYMBOL, PROMPT_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_bash_with_gutter,
     hint_message, stderr, warning_message,
 };
+
+use super::hook_filter::{HookSource, ParsedFilter};
+use super::project_config::{HookCommand, collect_commands_for_hooks};
 
 /// Batch approval helper used when multiple commands are queued for execution.
 /// Returns `Ok(true)` when execution may continue, `Ok(false)` when the user
@@ -104,9 +108,6 @@ pub fn approve_command_batch(
 }
 
 fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> anyhow::Result<bool> {
-    use std::io::{self, IsTerminal, Write};
-    use std::path::Path;
-
     // Extract just the directory name for display
     let project_name = Path::new(project_id)
         .file_name()

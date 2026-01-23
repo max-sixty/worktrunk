@@ -97,12 +97,14 @@ mod tasks;
 mod types;
 
 use anyhow::Context;
+use std::sync::Arc;
+
+use anstyle::Style;
 use color_print::cformat;
 use crossbeam_channel as chan;
 use dunce::canonicalize;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use std::sync::Arc;
 use worktrunk::git::{Repository, WorktreeInfo};
 use worktrunk::styling::{
     INFO_SYMBOL, eprintln, format_with_gutter, hint_message, warning_message,
@@ -474,7 +476,6 @@ pub fn collect(
 
     // Create progressive table if showing progress
     let mut progressive_table = if show_progress {
-        use anstyle::Style;
         let dim = Style::new().dimmed();
 
         // Build skeleton rows for both worktrees and branches
@@ -713,7 +714,6 @@ pub fn collect(
 
             // Progressive mode only: update UI
             if let Some(ref mut table) = progressive_table {
-                use anstyle::Style;
                 let dim = Style::new().dimmed();
 
                 completed_results += 1;
