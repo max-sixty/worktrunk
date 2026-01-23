@@ -285,7 +285,7 @@ pub fn check_and_migrate(
 /// be valid in `C::Other`, returns that config's description.
 ///
 /// For example, `key_belongs_in::<ProjectConfig>("commit-generation", value)` returns
-/// `Some("user config (~/.config/worktrunk/config.toml)")`.
+/// `Some("user config")`.
 /// Returns `None` if the key is truly unknown (not valid in either config).
 pub fn key_belongs_in<C: WorktrunkConfig>(key: &str, value: &toml::Value) -> Option<&'static str> {
     C::Other::is_valid_key(key, value).then(C::Other::description)

@@ -60,7 +60,7 @@ impl WorktrunkConfig for UserConfig {
     }
 
     fn description() -> &'static str {
-        "user config (~/.config/worktrunk/config.toml)"
+        "user config"
     }
 }
 
@@ -72,7 +72,7 @@ impl WorktrunkConfig for ProjectConfig {
     }
 
     fn description() -> &'static str {
-        "project config (.config/wt.toml)"
+        "project config"
     }
 }
 

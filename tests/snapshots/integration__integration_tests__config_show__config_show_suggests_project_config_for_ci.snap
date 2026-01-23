@@ -36,7 +36,7 @@ exit_code: 0
 
 ----- stderr -----
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
-[33m▲[39m [33mKey [1mci[22m belongs in project config (.config/wt.toml) (will be ignored)[39m
+[33m▲[39m [33mKey [1mci[22m belongs in project config (will be ignored)[39m
 [107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 [107m [0m 
 [107m [0m [1m[36m[ci]

@@ -39,7 +39,7 @@ exit_code: 0
 [107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 
 [36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
-[33m▲[39m [33mKey [1mcommit-generation[22m belongs in user config (~/.config/worktrunk/config.toml) (will be ignored)[39m
+[33m▲[39m [33mKey [1mcommit-generation[22m belongs in user config (will be ignored)[39m
 [107m [0m [1m[36m[commit-generation]
 [107m [0m command = [32m"claude"
 
