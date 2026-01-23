@@ -345,27 +345,19 @@ Config keys use kebab-case ([2mworktree-path[0m), while env vars use SCREAMING
 
 For nested config sections, use double underscores to separate levels:
 
-            Config                   Environment Variable         
-   ───────────────────────── ──────────────────────────────────── 
-   worktree-path             WORKTRUNK_WORKTREE_PATH              
-   commit-generation.command WORKTRUNK_COMMIT_GENERATION__COMMAND 
-   commit-generation.args    WORKTRUNK_COMMIT_GENERATION__ARGS    
+            Config                   Environment Variable          
+   ───────────────────────── ───────────────────────────────────── 
+   worktree-path             WORKTRUNK_WORKTREE_PATH               
+   commit.generation.command WORKTRUNK_COMMIT__GENERATION__COMMAND 
+   commit.stage              WORKTRUNK_COMMIT__STAGE               
 
 Note the single underscore after [2mWORKTRUNK[0m and double underscores between nested keys.
-
-[32mArray values[0m
-
-Array config values like [2margs = ["-m", "claude-haiku"][0m can be specified as a single string in environment variables:
-
-  [2mexport WORKTRUNK_COMMIT_GENERATION__ARGS="-m claude-haiku"[0m
 
 [32mExample: CI/testing override[0m
 
 Override the LLM command in CI to use a mock:
 
-  [2mWORKTRUNK_COMMIT_GENERATION__COMMAND=echo \[0m
-  [2mWORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \[0m
-  [2m  wt merge[0m
+  [2mWORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge[0m
 
 [32mOther environment variables[0m
 

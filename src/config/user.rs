@@ -121,9 +121,8 @@ pub enum StageMode {
 /// worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
 ///
 /// # Commit generation configuration
-/// [commit-generation]
-/// command = "llm"  # Command to invoke for generating commit messages (e.g., "llm", "claude")
-/// args = ["-s"]    # Arguments to pass to the command
+/// [commit.generation]
+/// command = "llm -m claude-haiku-4.5"  # Shell command for generating commit messages
 ///
 /// # Per-project configuration
 /// [projects."github.com/user/repo"]
@@ -136,7 +135,7 @@ pub enum StageMode {
 /// - Windows: `%APPDATA%\worktrunk\config.toml`
 ///
 /// Environment variables can override config file settings using `WORKTRUNK_` prefix with
-/// `__` separator for nested fields (e.g., `WORKTRUNK_COMMIT_GENERATION__COMMAND`).
+/// `__` separator for nested fields (e.g., `WORKTRUNK_COMMIT__GENERATION__COMMAND`).
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UserConfig {
     #[serde(
@@ -319,7 +318,7 @@ pub struct UserProjectOverrides {
 
     /// **DEPRECATED**: Use `commit.generation` instead.
     ///
-    /// Per-project commit generation settings (overrides global [commit-generation])
+    /// Per-project commit generation settings (overrides global `[commit.generation]`)
     #[serde(
         default,
         rename = "commit-generation",

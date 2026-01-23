@@ -26,16 +26,15 @@ info:
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
-    WORKTRUNK_COMMIT_GENERATION__ARGS: "squash: combined commits"
-    WORKTRUNK_COMMIT_GENERATION__COMMAND: echo
+    WORKTRUNK_COMMIT_GENERATION__COMMAND: "cat >/dev/null && echo 'squash: combined commits'"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
     WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
@@ -43,7 +42,5 @@ exit_code: 1
 [36m◎[39m [36mSquashing 2 commits & tracked changes into a single commit [90m(3 files, [32m+3[39m[39m[90m)[39m...[39m
 [2m↳[22m [2mBackup created @ 91a335e[22m
 [36m◎[39m [36mGenerating squash commit message...[39m
-[31m✗[39m [31mCommit generation command failed[39m
-[107m [0m [31m✗[39m [31mLLM returned empty message[39m
-[2m○[22m Ran command:
-[107m [0m wt step squash --show-prompt | echo
+[107m [0m [1msquash: combined commits[22m
+[32m✓[39m [32mSquashed @ [HASH][39m

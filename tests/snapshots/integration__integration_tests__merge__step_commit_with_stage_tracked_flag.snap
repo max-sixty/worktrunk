@@ -25,21 +25,18 @@ info:
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
-    WORKTRUNK_COMMIT_GENERATION__ARGS: "fix: update tracked file"
-    WORKTRUNK_COMMIT_GENERATION__COMMAND: echo
+    WORKTRUNK_COMMIT_GENERATION__COMMAND: "cat >/dev/null && echo 'fix: update tracked file'"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
     WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
 [36m◎[39m [36mGenerating commit message and committing tracked changes... [90m(1 file, [32m+1[39m, [31m-1[39m[39m[90m)[39m[39m
-[31m✗[39m [31mCommit generation command failed[39m
-[107m [0m [31m✗[39m [31mLLM returned empty message[39m
-[2m○[22m Ran command:
-[107m [0m wt step commit --show-prompt | echo
+[107m [0m [1mfix: update tracked file[22m
+[32m✓[39m [32mCommitted changes @ [2m[HASH][22m[39m

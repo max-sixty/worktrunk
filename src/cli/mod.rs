@@ -1813,27 +1813,17 @@ For nested config sections, use double underscores to separate levels:
 | Config | Environment Variable |
 |--------|---------------------|
 | `worktree-path` | `WORKTRUNK_WORKTREE_PATH` |
-| `commit-generation.command` | `WORKTRUNK_COMMIT_GENERATION__COMMAND` |
-| `commit-generation.args` | `WORKTRUNK_COMMIT_GENERATION__ARGS` |
+| `commit.generation.command` | `WORKTRUNK_COMMIT__GENERATION__COMMAND` |
+| `commit.stage` | `WORKTRUNK_COMMIT__STAGE` |
 
 Note the single underscore after `WORKTRUNK` and double underscores between nested keys.
-
-### Array values
-
-Array config values like `args = ["-m", "claude-haiku"]` can be specified as a single string in environment variables:
-
-```console
-export WORKTRUNK_COMMIT_GENERATION__ARGS="-m claude-haiku"
-```
 
 ### Example: CI/testing override
 
 Override the LLM command in CI to use a mock:
 
 ```console
-WORKTRUNK_COMMIT_GENERATION__COMMAND=echo \
-WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
-  wt merge
+WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 ```
 
 ### Other environment variables
