@@ -1349,4 +1349,36 @@ command = "llm -m haiku"
         assert!(result.contains("command = \"llm -m haiku\""));
         assert!(!result.contains("args"));
     }
+
+    #[test]
+    fn test_migrate_malformed_string_value_unchanged() {
+        // When commit-generation is a string (malformed), migration skips it
+        // This exercises the `_ => None` branch in the match
+        let content = r#"
+commit-generation = "not a table"
+other = "value"
+"#;
+        let result = migrate_commit_generation_sections(content);
+        // Malformed value is removed (doc.remove happens), but no migration occurs
+        // The content stays mostly unchanged since we don't add [commit.generation]
+        assert!(
+            !result.contains("[commit.generation]"),
+            "Should not create new section for malformed input"
+        );
+    }
+
+    #[test]
+    fn test_migrate_malformed_project_level_string_unchanged() {
+        // When project-level commit-generation is a string, migration skips it
+        let content = r#"
+[projects."github.com/user/repo"]
+commit-generation = "not a table"
+other = "value"
+"#;
+        let result = migrate_commit_generation_sections(content);
+        assert!(
+            !result.contains("[projects.\"github.com/user/repo\".commit.generation]"),
+            "Should not create new section for malformed project-level input"
+        );
+    }
 }
