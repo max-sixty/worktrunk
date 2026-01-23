@@ -389,12 +389,6 @@ impl BranchRef {
         }
     }
 
-    /// Create a BranchRef for a branch without a worktree (legacy compatibility).
-    #[deprecated(note = "Use local_branch() or remote_branch() for clarity")]
-    pub fn branch_only(branch: &str, commit_sha: &str) -> Self {
-        Self::local_branch(branch, commit_sha)
-    }
-
     /// Get a working tree handle for this branch's worktree.
     ///
     /// Returns `Some(WorkingTree)` if this branch has a worktree path,
