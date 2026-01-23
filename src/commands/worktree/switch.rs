@@ -58,14 +58,7 @@ fn resolve_pr_ref(
     create: bool,
     base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
-    // --create and --base are invalid with pr: syntax
-    if create {
-        return Err(GitError::RefCreateConflict {
-            ref_type: RefType::Pr,
-            number: pr_number,
-        }
-        .into());
-    }
+    // --base is invalid with pr: syntax (check early, no network needed)
     if base.is_some() {
         return Err(GitError::RefBaseConflict {
             ref_type: RefType::Pr,
@@ -88,6 +81,16 @@ fn resolve_pr_ref(
         "{}",
         format_with_gutter(&format_ref_context(&pr_info), None)
     );
+
+    // --create is invalid with pr: syntax (check after fetch to show branch name)
+    if create {
+        return Err(GitError::RefCreateConflict {
+            ref_type: RefType::Pr,
+            number: pr_number,
+            branch: pr_info.head_ref_name.clone(),
+        }
+        .into());
+    }
 
     if pr_info.is_cross_repository {
         // Fork PR: check if branch already exists and is tracking this PR
@@ -216,14 +219,7 @@ fn resolve_mr_ref(
     create: bool,
     base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
-    // --create and --base are invalid with mr: syntax
-    if create {
-        return Err(GitError::RefCreateConflict {
-            ref_type: RefType::Mr,
-            number: mr_number,
-        }
-        .into());
-    }
+    // --base is invalid with mr: syntax (check early, no network needed)
     if base.is_some() {
         return Err(GitError::RefBaseConflict {
             ref_type: RefType::Mr,
@@ -246,6 +242,16 @@ fn resolve_mr_ref(
         "{}",
         format_with_gutter(&format_ref_context(&mr_info), None)
     );
+
+    // --create is invalid with mr: syntax (check after fetch to show branch name)
+    if create {
+        return Err(GitError::RefCreateConflict {
+            ref_type: RefType::Mr,
+            number: mr_number,
+            branch: mr_info.source_branch.clone(),
+        }
+        .into());
+    }
 
     if mr_info.is_cross_project {
         // Fork MR: check if branch already exists and is tracking this MR

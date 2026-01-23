@@ -221,6 +221,7 @@ pub enum GitError {
     RefCreateConflict {
         ref_type: RefType,
         number: u32,
+        branch: String,
     },
     /// --base flag used with pr:/mr: syntax (conflict - base is predetermined)
     RefBaseConflict {
@@ -689,17 +690,21 @@ impl std::fmt::Display for GitError {
                 )
             }
 
-            GitError::RefCreateConflict { ref_type, number } => {
+            GitError::RefCreateConflict {
+                ref_type,
+                number,
+                branch,
+            } => {
+                let name = ref_type.name();
                 let syntax = ref_type.syntax();
-                let name_plural = ref_type.name_plural();
                 write!(
                     f,
                     "{}\n{}",
                     error_message(cformat!(
-                        "Cannot use <bold>--create</> with <bold>{syntax}{number}</>"
+                        "Cannot create branch for <bold>{syntax}{number}</> — {name} already has branch <bold>{branch}</>"
                     )),
-                    hint_message(format!(
-                        "{name_plural} already have a branch; remove --create"
+                    hint_message(cformat!(
+                        "To switch to it: <bright-black>wt switch {syntax}{number}</>"
                     ))
                 )
             }

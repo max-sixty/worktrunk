@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/switch.rs
+assertion_line: 1451
 info:
   program: wt
   args:
@@ -36,5 +37,8 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mCannot use [1m--create[22m with [1mpr:101[22m[39m
-[2m↳[22m [2mPRs already have a branch; remove --create[22m
+[36m◎[39m [36mFetching PR #101...[39m
+[107m [0m [1mFix authentication bug in login flow[22m (#101)
+[107m [0m by @alice · open · [90mhttps://github.com/owner/test-repo/pull/101[39m
+[31m✗[39m [31mCannot create branch for [1mpr:101[22m — PR already has branch [1mfeature-auth[22m[39m
+[2m↳[22m [2mTo switch to it: [90mwt switch pr:101[39m[22m
