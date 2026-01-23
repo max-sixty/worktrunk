@@ -179,39 +179,51 @@ pub fn find_commit_generation_deprecations(content: &str) -> CommitGenerationDep
 
     let mut result = CommitGenerationDeprecations::default();
 
-    // Check if new [commit.generation] already exists (skip deprecation warning if so)
+    // Check if new [commit.generation] already exists as a valid table
+    // (skip deprecation warning if so)
     let has_new_section = doc
         .get("commit")
         .and_then(|c| c.as_table())
-        .is_some_and(|t| t.contains_key("generation"));
+        .and_then(|t| t.get("generation"))
+        .is_some_and(|g| g.is_table() || g.is_inline_table());
 
     // Check top-level [commit-generation] - only flag if non-empty and new section doesn't exist
-    if !has_new_section
-        && let Some(section) = doc.get("commit-generation")
-        && let Some(table) = section.as_table()
-        && !table.is_empty()
-    {
-        result.has_top_level = true;
-        result.has_args = table.contains_key("args");
+    // Handle both regular tables and inline tables
+    if !has_new_section && let Some(section) = doc.get("commit-generation") {
+        if let Some(table) = section.as_table() {
+            if !table.is_empty() {
+                result.has_top_level = true;
+                result.has_args = table.contains_key("args");
+            }
+        } else if let Some(inline) = section.as_inline_table()
+            && !inline.is_empty()
+        {
+            result.has_top_level = true;
+            result.has_args = inline.contains_key("args");
+        }
     }
 
     // Check [projects."...".commit-generation]
     if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
         for (project_key, project_value) in projects.iter() {
             if let Some(project_table) = project_value.as_table() {
-                // Check if this project has new section
+                // Check if this project has new section as a valid table
                 let has_new_project_section = project_table
                     .get("commit")
                     .and_then(|c| c.as_table())
-                    .is_some_and(|t| t.contains_key("generation"));
+                    .and_then(|t| t.get("generation"))
+                    .is_some_and(|g| g.is_table() || g.is_inline_table());
 
                 // Only flag if old section exists, is non-empty, and new doesn't exist
+                // Handle both regular tables and inline tables
                 if !has_new_project_section
                     && let Some(old_section) = project_table.get("commit-generation")
-                    && let Some(old_table) = old_section.as_table()
-                    && !old_table.is_empty()
                 {
-                    result.project_keys.push(project_key.to_string());
+                    let is_non_empty = old_section.as_table().is_some_and(|t| !t.is_empty())
+                        || old_section.as_inline_table().is_some_and(|t| !t.is_empty());
+                    if is_non_empty {
+                        result.project_keys.push(project_key.to_string());
+                    }
                 }
             }
         }
@@ -233,64 +245,83 @@ pub fn migrate_commit_generation_sections(content: &str) -> String {
 
     let mut modified = false;
 
-    // Check if new [commit.generation] already exists - if so, skip migration
+    // Check if new [commit.generation] already exists as a valid table - if so, skip migration
     // (new format takes precedence, don't overwrite it)
     let has_new_section = doc
         .get("commit")
         .and_then(|c| c.as_table())
-        .is_some_and(|t| t.contains_key("generation"));
+        .and_then(|t| t.get("generation"))
+        .is_some_and(|g| g.is_table() || g.is_inline_table());
 
     // Migrate top-level [commit-generation] → [commit.generation]
     // Only if new section doesn't already exist
-    if !has_new_section
-        && let Some(old_section) = doc.remove("commit-generation")
-        && let Ok(mut table) = old_section.into_table()
-    {
-        // Merge args into command if present
-        merge_args_into_command(&mut table);
+    // Handle both regular tables and inline tables
+    if !has_new_section && let Some(old_section) = doc.remove("commit-generation") {
+        // Convert to table - works for both regular tables and inline tables
+        let table_opt = match old_section {
+            toml_edit::Item::Table(t) => Some(t),
+            toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => Some(it.into_table()),
+            _ => None,
+        };
 
-        // Ensure [commit] section exists
-        if !doc.contains_key("commit") {
-            doc["commit"] = toml_edit::Item::Table(toml_edit::Table::new());
+        if let Some(mut table) = table_opt {
+            // Merge args into command if present
+            merge_args_into_command(&mut table);
+
+            // Ensure [commit] section exists
+            if !doc.contains_key("commit") {
+                doc["commit"] = toml_edit::Item::Table(toml_edit::Table::new());
+            }
+
+            // Move to [commit.generation]
+            if let Some(commit_table) = doc["commit"].as_table_mut() {
+                commit_table.insert("generation", toml_edit::Item::Table(table));
+            }
+
+            modified = true;
         }
-
-        // Move to [commit.generation]
-        if let Some(commit_table) = doc["commit"].as_table_mut() {
-            commit_table.insert("generation", toml_edit::Item::Table(table));
-        }
-
-        modified = true;
     }
 
     // Migrate [projects."...".commit-generation] → [projects."...".commit.generation]
     if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
         for (_project_key, project_value) in projects.iter_mut() {
             if let Some(project_table) = project_value.as_table_mut() {
-                // Check if new section already exists for this project
+                // Check if new section already exists as a valid table for this project
                 let has_new_project_section = project_table
                     .get("commit")
                     .and_then(|c| c.as_table())
-                    .is_some_and(|t| t.contains_key("generation"));
+                    .and_then(|t| t.get("generation"))
+                    .is_some_and(|g| g.is_table() || g.is_inline_table());
 
                 if !has_new_project_section
                     && let Some(old_section) = project_table.remove("commit-generation")
-                    && let Ok(mut table) = old_section.into_table()
                 {
-                    // Merge args into command if present
-                    merge_args_into_command(&mut table);
+                    // Convert to table - works for both regular tables and inline tables
+                    let table_opt = match old_section {
+                        toml_edit::Item::Table(t) => Some(t),
+                        toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => {
+                            Some(it.into_table())
+                        }
+                        _ => None,
+                    };
 
-                    // Ensure [projects."...".commit] section exists
-                    if !project_table.contains_key("commit") {
-                        project_table
-                            .insert("commit", toml_edit::Item::Table(toml_edit::Table::new()));
+                    if let Some(mut table) = table_opt {
+                        // Merge args into command if present
+                        merge_args_into_command(&mut table);
+
+                        // Ensure [projects."...".commit] section exists
+                        if !project_table.contains_key("commit") {
+                            project_table
+                                .insert("commit", toml_edit::Item::Table(toml_edit::Table::new()));
+                        }
+
+                        // Move to [projects."...".commit.generation]
+                        if let Some(commit_table) = project_table["commit"].as_table_mut() {
+                            commit_table.insert("generation", toml_edit::Item::Table(table));
+                        }
+
+                        modified = true;
                     }
-
-                    // Move to [projects."...".commit.generation]
-                    if let Some(commit_table) = project_table["commit"].as_table_mut() {
-                        commit_table.insert("generation", toml_edit::Item::Table(table));
-                    }
-
-                    modified = true;
                 }
             }
         }
@@ -307,17 +338,42 @@ pub fn migrate_commit_generation_sections(content: &str) -> String {
 ///
 /// Converts: command = "llm", args = ["-m", "haiku"]
 /// To: command = "llm -m haiku"
+///
+/// Only removes `args` if it can be successfully merged into `command`.
+/// Preserves `args` if:
+/// - `command` is missing or not a string
+/// - `args` is not an array
 fn merge_args_into_command(table: &mut toml_edit::Table) {
-    if let Some(args) = table.remove("args")
-        && let Some(args_array) = args.as_array()
-        && let Some(command) = table.get_mut("command").and_then(|c| c.as_value_mut())
-        && let Some(cmd_str) = command.as_str()
-    {
-        let args_str: Vec<&str> = args_array.iter().filter_map(|a| a.as_str()).collect();
-        if !args_str.is_empty() {
-            let new_command = format!("{} {}", cmd_str, shell_join(&args_str));
-            *command = toml_edit::Value::from(new_command);
-        }
+    // Validate preconditions before removing args
+    let can_merge = table.get("args").is_some_and(|a| a.as_array().is_some())
+        && table
+            .get("command")
+            .and_then(|c| c.as_value())
+            .is_some_and(|v| v.as_str().is_some());
+
+    if !can_merge {
+        return;
+    }
+
+    // Now safe to remove and merge
+    let args = table.remove("args").unwrap();
+    let args_array = args.as_array().unwrap();
+    let command = table
+        .get_mut("command")
+        .and_then(|c| c.as_value_mut())
+        .unwrap();
+    let cmd_str = command.as_str().unwrap();
+
+    // Filter to string args only (non-strings are dropped)
+    let args_str: Vec<&str> = args_array.iter().filter_map(|a| a.as_str()).collect();
+    if !args_str.is_empty() {
+        // Only add space if command is non-empty
+        let new_command = if cmd_str.is_empty() {
+            shell_join(&args_str)
+        } else {
+            format!("{} {}", cmd_str, shell_join(&args_str))
+        };
+        *command = toml_edit::Value::from(new_command);
     }
 }
 
@@ -1121,5 +1177,69 @@ args = ["-m", "haiku"]
             "Old section removed"
         );
         assert!(!step2.contains("args"), "Args field removed");
+    }
+
+    // Tests for inline table handling
+
+    #[test]
+    fn test_find_deprecations_inline_table_top_level() {
+        // Inline table format: commit-generation = { command = "llm" }
+        let content = r#"
+commit-generation = { command = "llm", args = ["-m", "haiku"] }
+"#;
+        let result = find_commit_generation_deprecations(content);
+        assert!(result.has_top_level, "Should detect inline table format");
+        assert!(result.has_args, "Should detect args in inline table");
+    }
+
+    #[test]
+    fn test_find_deprecations_inline_table_project_level() {
+        let content = r#"
+[projects."github.com/user/repo"]
+commit-generation = { command = "llm -m gpt-4" }
+"#;
+        let result = find_commit_generation_deprecations(content);
+        assert_eq!(
+            result.project_keys,
+            vec!["github.com/user/repo"],
+            "Should detect project-level inline table"
+        );
+    }
+
+    #[test]
+    fn test_migrate_inline_table_top_level() {
+        let content = r#"
+commit-generation = { command = "llm", args = ["-m", "haiku"] }
+"#;
+        let result = migrate_commit_generation_sections(content);
+        assert!(
+            result.contains("[commit.generation]") || result.contains("[commit]"),
+            "Should migrate inline table"
+        );
+        assert!(
+            result.contains("command = \"llm -m haiku\""),
+            "Should merge args into command"
+        );
+        assert!(
+            !result.contains("commit-generation"),
+            "Should remove old inline table"
+        );
+    }
+
+    #[test]
+    fn test_find_deprecations_malformed_generation_not_table() {
+        // If commit.generation is a string (malformed), should still warn about old format
+        let content = r#"
+[commit]
+generation = "not a table"
+
+[commit-generation]
+command = "llm -m haiku"
+"#;
+        let result = find_commit_generation_deprecations(content);
+        assert!(
+            result.has_top_level,
+            "Should flag deprecated section when new section is malformed"
+        );
     }
 }
