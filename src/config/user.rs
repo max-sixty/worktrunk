@@ -2378,4 +2378,58 @@ squash-template-file = "path/to/file"
         let err = result.unwrap_err().to_string();
         assert!(err.contains("mutually exclusive"), "{err}");
     }
+
+    // New format [commit.generation] validation tests
+
+    #[test]
+    fn test_validation_new_format_template_mutual_exclusivity() {
+        let content = r#"
+[commit.generation]
+template = "inline template"
+template-file = "path/to/file"
+"#;
+        let result = UserConfig::load_from_str(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("mutually exclusive"), "{err}");
+    }
+
+    #[test]
+    fn test_validation_new_format_squash_template_mutual_exclusivity() {
+        let content = r#"
+[commit.generation]
+squash-template = "inline template"
+squash-template-file = "path/to/file"
+"#;
+        let result = UserConfig::load_from_str(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("mutually exclusive"), "{err}");
+    }
+
+    #[test]
+    fn test_validation_new_format_project_template_mutual_exclusivity() {
+        let content = r#"
+[projects."github.com/user/repo".commit.generation]
+template = "inline template"
+template-file = "path/to/file"
+"#;
+        let result = UserConfig::load_from_str(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("mutually exclusive"), "{err}");
+    }
+
+    #[test]
+    fn test_validation_new_format_project_squash_template_mutual_exclusivity() {
+        let content = r#"
+[projects."github.com/user/repo".commit.generation]
+squash-template = "inline template"
+squash-template-file = "path/to/file"
+"#;
+        let result = UserConfig::load_from_str(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("mutually exclusive"), "{err}");
+    }
 }
