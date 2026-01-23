@@ -4,6 +4,9 @@
 //! shell config files (`.bashrc`, `.zshrc`, etc.) for eval/source lines
 //! that invoke `wt config shell init`.
 
+use std::collections::HashSet;
+use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use super::paths::{home_dir_required, powershell_profile_paths};
@@ -262,9 +265,6 @@ pub struct BypassAlias {
 
 /// Scan a single file for shell integration lines and potential false negatives.
 fn scan_file(path: &std::path::Path, cmd: &str) -> Option<FileDetectionResult> {
-    use std::fs;
-    use std::io::{BufRead, BufReader};
-
     let file = fs::File::open(path).ok()?;
     let reader = BufReader::new(file);
     let mut matched_lines = Vec::new();
@@ -394,8 +394,6 @@ fn detect_bypass_alias(line: &str, cmd: &str, line_number: usize) -> Option<Bypa
 ///
 /// Used by `wt config show` to provide debugging output.
 pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>, std::io::Error> {
-    use std::collections::HashSet;
-
     let home = home_dir_required()?;
     let mut results = Vec::new();
 

@@ -3,7 +3,7 @@
 //! For single-branch operations, see [`super::Branch`].
 //! This module contains multi-branch operations (listing, filtering, etc.).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::{BranchCategory, CompletionBranch, Repository};
 
@@ -195,7 +195,6 @@ impl Repository {
 
         // Group by branch name, collecting all remotes that have each branch.
         // Uses HashMap for grouping, then sorts by timestamp to preserve recency order.
-        use std::collections::HashMap;
         let mut branch_remotes: HashMap<String, (Vec<String>, i64)> = HashMap::new();
 
         for line in remote_output.lines() {

@@ -9,6 +9,8 @@ mod detection;
 mod paths;
 mod utils;
 
+use std::io::{BufRead, BufReader};
+
 use askama::Template;
 
 // Re-export public types and functions
@@ -124,8 +126,6 @@ impl Shell {
 
     /// Check if a file contains shell integration lines for the given command.
     fn file_has_integration(path: &std::path::Path, cmd: &str) -> Result<bool, std::io::Error> {
-        use std::io::{BufRead, BufReader};
-
         let file = std::fs::File::open(path)?;
         for line in BufReader::new(file).lines() {
             if is_shell_integration_line(&line?, cmd) {

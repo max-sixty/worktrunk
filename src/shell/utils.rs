@@ -3,6 +3,9 @@
 //! This module provides utilities for detecting the current shell, extracting
 //! shell names from paths, and probing shell configuration state.
 
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
 use super::Shell;
 
 /// Extract executable name from a path, stripping `.exe` on Windows.
@@ -81,9 +84,6 @@ pub fn current_shell() -> Option<Shell> {
 /// - `Some(false)` if compinit is NOT enabled
 /// - `None` if detection failed (zsh not installed, timeout, error)
 pub fn detect_zsh_compinit() -> Option<bool> {
-    use std::process::{Command, Stdio};
-    use std::time::{Duration, Instant};
-
     // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
     if std::env::var("WORKTRUNK_TEST_COMPINIT_CONFIGURED").is_ok() {
         return Some(true); // Assume compinit is configured
