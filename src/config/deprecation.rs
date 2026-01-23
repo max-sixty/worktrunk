@@ -917,6 +917,24 @@ approved-commands = [
         assert!(result.unwrap());
     }
 
+    #[test]
+    fn test_check_and_migrate_deduplicates_warnings() {
+        // Test that calling twice with same path skips the second warning
+        let content = r#"post-create = "{{ repo_root }}/script.sh""#;
+        // Use a unique path that won't collide with other tests
+        let unique_path = std::path::Path::new("/nonexistent/dedup_test_12345/config.toml");
+
+        // First call should process normally
+        let result1 = check_and_migrate(unique_path, content, true, "Test config", None);
+        assert!(result1.is_ok());
+        assert!(result1.unwrap());
+
+        // Second call with same path should early-return (hits the deduplication branch)
+        let result2 = check_and_migrate(unique_path, content, true, "Test config", None);
+        assert!(result2.is_ok());
+        assert!(result2.unwrap());
+    }
+
     // Tests for commit-generation section migration
 
     #[test]
@@ -1351,6 +1369,30 @@ command = "llm -m haiku"
     }
 
     #[test]
+    fn test_migrate_empty_command_with_args() {
+        // When command is empty string but args exist, args become the command
+        let content = r#"
+[commit-generation]
+command = ""
+args = ["-m", "haiku"]
+"#;
+        let result = migrate_commit_generation_sections(content);
+        assert!(
+            result.contains("[commit.generation]"),
+            "Section should be renamed"
+        );
+        // Empty command + args should produce just args as command
+        assert!(
+            result.contains("command = \"-m haiku\""),
+            "Empty command should be replaced with args"
+        );
+        assert!(
+            !result.contains("args"),
+            "Args field should be removed after merge"
+        );
+    }
+
+    #[test]
     fn test_migrate_malformed_string_value_unchanged() {
         // When commit-generation is a string (malformed), migration skips it
         // This exercises the `_ => None` branch in the match
@@ -1380,5 +1422,13 @@ other = "value"
             !result.contains("[projects.\"github.com/user/repo\".commit.generation]"),
             "Should not create new section for malformed project-level input"
         );
+    }
+
+    #[test]
+    fn test_migrate_invalid_toml_returns_unchanged() {
+        // When content is not valid TOML, return it unchanged
+        let content = "this is [not valid {toml";
+        let result = migrate_commit_generation_sections(content);
+        assert_eq!(result, content, "Invalid TOML should be returned unchanged");
     }
 }
