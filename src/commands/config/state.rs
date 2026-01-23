@@ -231,21 +231,21 @@ pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::
             }
 
             if available.is_empty() {
-                anyhow::bail!(
-                    "No log files found for branch '{}'. Run a background hook first.",
+                anyhow::bail!(cformat!(
+                    "No log files for branch <bold>{}</>. Run a background hook first.",
                     branch
-                );
+                ));
             } else {
                 let available_list = available.join(", ");
-                anyhow::bail!(
-                    "No log file matches '{}' for branch '{}'.\n\
-                     Expected: {}\n\
-                     Available: {}",
-                    hook_log.to_spec(),
-                    branch,
-                    expected_filename,
-                    available_list
+                let details = format!(
+                    "Expected: {}\nAvailable: {}",
+                    expected_filename, available_list
                 );
+                return Err(anyhow::anyhow!(details).context(cformat!(
+                    "No log file matches <bold>{}</> for branch <bold>{}</>",
+                    hook_log.to_spec(),
+                    branch
+                )));
             }
         }
     }

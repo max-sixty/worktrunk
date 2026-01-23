@@ -1,4 +1,5 @@
 use anyhow::Context;
+use color_print::cformat;
 use std::fs;
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
@@ -130,8 +131,8 @@ impl HookLog {
             // internal:op
             ["internal", op_str] => {
                 let op = InternalOp::from_str(op_str).map_err(|_| {
-                    format!(
-                        "Unknown internal operation '{}'. Valid operations: remove",
+                    cformat!(
+                        "Unknown internal operation: <bold>{}</>. Valid: remove",
                         op_str
                     )
                 })?;
@@ -140,12 +141,15 @@ impl HookLog {
             // source:hook-type:name
             [source_str, hook_type_str, name] => {
                 let source = HookSource::from_str(source_str).map_err(|_| {
-                    format!("Unknown source '{}'. Use 'user' or 'project'", source_str)
+                    cformat!(
+                        "Unknown source: <bold>{}</>. Valid: user, project",
+                        source_str
+                    )
                 })?;
                 let hook_type = HookType::from_str(hook_type_str).map_err(|_| {
                     let valid: Vec<_> = HookType::iter().map(|h| h.to_string()).collect();
-                    format!(
-                        "Unknown hook type '{}'. Valid types: {}",
+                    cformat!(
+                        "Unknown hook type: <bold>{}</>. Valid: {}",
                         hook_type_str,
                         valid.join(", ")
                     )
@@ -156,9 +160,8 @@ impl HookLog {
                     name: (*name).to_string(),
                 })
             }
-            _ => Err(format!(
-                "Invalid log spec '{}'. Use 'source:hook-type:name' (e.g., 'user:post-start:server') \
-                 or 'internal:op' (e.g., 'internal:remove')",
+            _ => Err(cformat!(
+                "Invalid log spec: <bold>{}</>. Format: source:hook-type:name or internal:op",
                 s
             )),
         }

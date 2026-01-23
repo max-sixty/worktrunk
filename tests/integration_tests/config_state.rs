@@ -1202,8 +1202,9 @@ fn test_state_logs_get_hook_not_found(repo: TestRepo) {
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
+    // Check key parts separately (ANSI bold codes may appear around values)
     assert!(
-        stderr.contains("No log file matches 'user:post-start:server'"),
+        stderr.contains("No log file matches") && stderr.contains("user:post-start:server"),
         "Expected spec echo in error: {}",
         stderr
     );
@@ -1254,8 +1255,8 @@ fn test_state_logs_get_hook_no_logs_for_branch(repo: TestRepo) {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("No log files found for branch"),
-        "Expected 'No log files found for branch' error: {}",
+        stderr.contains("No log files for branch"),
+        "Expected 'No log files for branch' error: {}",
         stderr
     );
 }
