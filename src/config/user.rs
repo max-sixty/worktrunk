@@ -288,9 +288,8 @@ impl Merge for CommitGenerationConfig {
 /// worktree-path = ".worktrees/{{ branch | sanitize }}"
 /// approved-commands = ["npm install", "npm test"]
 ///
-/// [projects."github.com/user/repo".commit-generation]
-/// command = "llm"
-/// args = ["-m", "gpt-4"]
+/// [projects."github.com/user/repo".commit.generation]
+/// command = "llm -m gpt-4"
 ///
 /// [projects."github.com/user/repo".list]
 /// full = true
@@ -611,7 +610,7 @@ impl UserConfig {
 
         // Add environment variables with WORKTRUNK prefix
         // - prefix_separator("_"): strip prefix with single underscore (WORKTRUNK_ → key)
-        // - separator("__"): double underscore for nested fields (COMMIT_GENERATION__COMMAND → commit-generation.command)
+        // - separator("__"): double underscore for nested fields (COMMIT__GENERATION__COMMAND → commit.generation.command)
         // - convert_case(Kebab): converts snake_case to kebab-case to match serde field names
         // Example: WORKTRUNK_WORKTREE_PATH → worktree-path
         builder = builder.add_source(
@@ -660,7 +659,8 @@ impl UserConfig {
                 }
             }
 
-            // Validate commit generation config
+            // Validate commit generation config (check both old and new locations)
+            // Old: [projects."...".commit-generation] (deprecated)
             if let Some(ref cg) = project_config.commit_generation {
                 if cg.template.is_some() && cg.template_file.is_some() {
                     return Err(ConfigError::Message(format!(
@@ -670,6 +670,21 @@ impl UserConfig {
                 if cg.squash_template.is_some() && cg.squash_template_file.is_some() {
                     return Err(ConfigError::Message(format!(
                         "projects.{project}.commit-generation.squash-template and squash-template-file are mutually exclusive"
+                    )));
+                }
+            }
+            // New: [projects."...".commit.generation]
+            if let Some(ref commit) = project_config.commit
+                && let Some(ref cg) = commit.generation
+            {
+                if cg.template.is_some() && cg.template_file.is_some() {
+                    return Err(ConfigError::Message(format!(
+                        "projects.{project}.commit.generation.template and template-file are mutually exclusive"
+                    )));
+                }
+                if cg.squash_template.is_some() && cg.squash_template_file.is_some() {
+                    return Err(ConfigError::Message(format!(
+                        "projects.{project}.commit.generation.squash-template and squash-template-file are mutually exclusive"
                     )));
                 }
             }
