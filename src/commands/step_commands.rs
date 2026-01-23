@@ -747,8 +747,9 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
 /// | Flag | Purpose |
 /// |------|---------|
 /// | `--dry-run` | Show what would be moved without moving |
-/// | `--commit` | Auto-commit dirty worktrees before relocating |
+/// | `--commit` | Auto-commit dirty worktrees with LLM-generated messages before relocating |
 /// | `--clobber` | Move non-worktree paths out of the way (`<path>.bak-<timestamp>`) |
+/// | `[branches...]` | Specific branches to relocate (default: all mismatched) |
 ///
 /// # Failure Cases
 ///
@@ -756,15 +757,12 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
 ///
 /// | Condition | Without Flag | With Flag |
 /// |-----------|--------------|-----------|
-/// | Dirty worktree | Skip | `--commit`: auto-commit, then move |
-/// | Locked worktree | Skip | Must `git worktree unlock` manually |
-/// | Non-worktree at target | Skip | `--clobber`: backup and move |
+/// | Dirty worktree | Skip with warning | `--commit`: auto-commit, then move |
+/// | Locked worktree | Skip with warning | User must `git worktree unlock` manually |
+/// | Non-worktree at target | Skip with warning | `--clobber`: move to `<path>.bak-<timestamp>` |
+/// | Main worktree with non-default branch | Special handling | Create new wt, switch main to default |
 ///
-/// Main worktree with non-default branch: creates new worktree at expected path, switches
-/// main back to default branch (can't use `git worktree move` on main worktree).
-///
-/// When worktrees occupy each other's target paths, the algorithm uses a temp location
-/// to break the dependency.
+/// **Swap/cycle scenarios are NOT failure cases** — they must be handled automatically.
 ///
 /// # Target Classification
 ///
@@ -774,7 +772,7 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
 /// |----------------|-------------|--------|
 /// | `Empty` | Target doesn't exist | Move directly |
 /// | `Worktree` | Target is another worktree we're relocating | Coordinate via dependency graph |
-/// | `Blocked` | Non-worktree exists at target | Skip or clobber |
+/// | `Blocked` | Target exists but is NOT a worktree we're moving | Skip or clobber |
 ///
 /// # Algorithm
 ///
@@ -806,25 +804,135 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
 ///    - After all others done, move from temp to final location
 /// ```
 ///
-/// # Example: Cycle Resolution
+/// # Scenarios
+///
+/// ## Simple Mismatch
+///
+/// ```text
+/// Before:  feature @ ~/wrong-location
+/// After:   feature @ ~/repo.feature
+/// ```
+///
+/// Direct move — target is empty.
+///
+/// ## Swap (2-cycle)
 ///
 /// ```text
 /// Before:
 ///   alpha @ repo.beta    (wants repo.alpha)
 ///   beta  @ repo.alpha   (wants repo.beta)
 ///
-/// Processing:
-///   1. Neither target is empty, so move alpha → .git/wt-relocate-tmp/alpha
-///   2. Move beta → repo.beta (target now empty)
-///   3. Move alpha from temp → repo.alpha
+/// Algorithm:
+///   1. Build graph: alpha→beta, beta→alpha (cycle)
+///   2. No ready nodes — break cycle
+///   3. Move alpha → .git/wt-relocate-tmp/alpha
+///   4. Now beta's target (repo.beta) is empty
+///   5. Move beta → repo.beta
+///   6. Move alpha from temp → repo.alpha
+///
+/// After:
+///   alpha @ repo.alpha ✓
+///   beta  @ repo.beta  ✓
+/// ```
+///
+/// ## Chain (3-cycle)
+///
+/// ```text
+/// Before:
+///   A @ repo.B   (wants repo.A)
+///   B @ repo.C   (wants repo.B)
+///   C @ repo.A   (wants repo.C)
+///
+/// Algorithm:
+///   1. Build graph: A→B→C→A (cycle)
+///   2. No ready nodes — break cycle by moving A to temp
+///   3. Now C's target (repo.A) is empty → move C
+///   4. Now B's target (repo.C) is empty → move B
+///   5. Move A from temp → repo.A
+///
+/// After:
+///   A @ repo.A ✓
+///   B @ repo.B ✓
+///   C @ repo.C ✓
+/// ```
+///
+/// ## Mixed: Some Ready, Some Cyclic
+///
+/// ```text
+/// Before:
+///   feature @ wrong-path     (wants repo.feature)     # target empty
+///   alpha   @ repo.beta      (wants repo.alpha)       # cycle with beta
+///   beta    @ repo.alpha     (wants repo.beta)        # cycle with alpha
+///
+/// Algorithm:
+///   1. feature's target is empty → move immediately
+///   2. alpha↔beta cycle → break with temp
+///   3. Move alpha → temp
+///   4. Move beta → repo.beta
+///   5. Move alpha → repo.alpha
+/// ```
+///
+/// ## Clobber: Non-worktree at Target
+///
+/// ```text
+/// Before:
+///   feature @ wrong-path
+///   repo.feature exists as regular directory (not a worktree)
+///
+/// Without --clobber:
+///   ▲ Skipping feature (target exists: ~/repo.feature)
+///
+/// With --clobber:
+///   1. Move ~/repo.feature → ~/repo.feature.bak-20250121-143022
+///   2. Move feature → ~/repo.feature
+///   ✓ Relocated feature (backed up existing ~/repo.feature)
+/// ```
+///
+/// ## Main Worktree
+///
+/// ```text
+/// Before:
+///   main worktree (repo root) has branch "feature" checked out
+///
+/// Algorithm:
+///   1. Cannot use `git worktree move` on main worktree
+///   2. Create new worktree: git worktree add repo.feature feature
+///   3. Switch main to default: git checkout main
+///   4. Result: feature now at repo.feature, main worktree on main branch
 /// ```
 ///
 /// # Temp Location
 ///
 /// Uses `.git/wt-relocate-tmp/` inside the main worktree's git directory:
-/// - Same filesystem (atomic moves)
-/// - Inside .git (invisible to user)
+/// - Guaranteed to be on same filesystem (for atomic moves)
+/// - Inside .git so not visible to user
 /// - Cleaned up after successful relocation
+///
+/// # Implementation Notes
+///
+/// 1. **Dependency graph**: Use `HashMap<PathBuf, Branch>` to map target paths to the worktree currently there
+/// 2. **Cycle detection**: Standard graph algorithm — if no nodes have in-degree 0, there's a cycle
+/// 3. **Temp location**: Create inside `.git/wt-relocate-tmp/` to ensure same filesystem
+/// 4. **Backup naming**: `<original>.bak-<YYYYMMDD-HHMMSS>` for uniqueness
+/// 5. **Atomicity**: Each move is atomic (`git worktree move`), but the overall operation is not — if interrupted, some worktrees may be in temp. Recovery: re-run `wt step relocate`
+///
+/// # Test Cases
+///
+/// 1. `test_relocate_no_mismatches` — all at correct locations
+/// 2. `test_relocate_single_mismatch` — simple case, target empty
+/// 3. `test_relocate_swap` — 2-cycle, both relocated successfully
+/// 4. `test_relocate_chain` — 3-cycle
+/// 5. `test_relocate_mixed_ready_and_cycle` — some ready, some cyclic
+/// 6. `test_relocate_clobber_directory` — non-worktree at target, --clobber moves it
+/// 7. `test_relocate_clobber_file` — file at target
+/// 8. `test_relocate_no_clobber_skips` — without --clobber, skips blocked
+/// 9. `test_relocate_dirty_without_commit` — skips dirty
+/// 10. `test_relocate_dirty_with_commit` — commits then moves
+/// 11. `test_relocate_locked_worktree` — always skipped
+/// 12. `test_relocate_main_worktree` — create + switch
+/// 13. `test_relocate_dry_run` — shows plan without executing
+/// 14. `test_relocate_specific_branches` — only relocate named branches
+/// 15. `test_relocate_commit_clobber_never_fails` — comprehensive test with all edge cases
 pub fn step_relocate(
     branches: Vec<String>,
     dry_run: bool,
