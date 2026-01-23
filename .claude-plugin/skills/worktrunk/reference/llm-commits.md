@@ -4,48 +4,34 @@ Worktrunk generates commit messages by building a templated prompt and piping it
 
 ## Setup
 
-### Option 1: Claude CLI
+Any command that reads a prompt from stdin and outputs a commit message works. Add to `~/.config/worktrunk/config.toml`:
 
-Easiest if you already have [Claude Code](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) installed:
-
-```bash
-$ wt config create
-```
-
-Add to `~/.config/worktrunk/config.toml`:
+### Claude Code
 
 ```toml
 [commit.generation]
-command = "MAX_THINKING_TOKENS=0 claude -p --model haiku --tools '' --disable-slash-commands --setting-sources '' --system-prompt=''"
+command = "claude -p --model haiku"
 ```
 
-### Option 2: llm
+See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
 
-[llm](https://llm.datasette.io/) from Simon Willison:
-
-```bash
-$ uv tool install -U llm
-$ llm install llm-anthropic
-$ llm keys set anthropic
-```
-
-Add to `~/.config/worktrunk/config.toml`:
+### llm
 
 ```toml
 [commit.generation]
 command = "llm -m claude-haiku-4.5"
 ```
 
-For OpenAI instead:
+Install with `uv tool install llm llm-anthropic && llm keys set anthropic`. See [llm docs](https://llm.datasette.io/).
 
-```bash
-$ llm keys set openai
-```
+### aichat
 
 ```toml
 [commit.generation]
-command = "llm -m gpt-4o-mini"
+command = "aichat -m claude:claude-haiku-4.5"
 ```
+
+See [aichat docs](https://github.com/sigoden/aichat).
 
 ## How it works
 
@@ -141,22 +127,6 @@ Templates use [minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/inde
 - **Whitespace control**: `{%- ... -%}` strips surrounding whitespace
 
 See `wt config create --help` for the full default templates.
-
-## Alternative tools
-
-Any command that reads a prompt from stdin and outputs a commit message works:
-
-```toml
-# aichat
-[commit.generation]
-command = "aichat -m claude:claude-haiku-4.5"
-
-# Custom script
-[commit.generation]
-command = "./scripts/generate-commit.sh"
-```
-
-See [llm documentation](https://llm.datasette.io/) and [aichat](https://github.com/sigoden/aichat).
 
 ## Fallback behavior
 
