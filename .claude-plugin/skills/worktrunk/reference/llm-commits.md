@@ -4,56 +4,52 @@ Worktrunk generates commit messages by building a templated prompt and piping it
 
 ## Setup
 
-### Install llm
+### Option 1: Claude CLI
 
-[llm](https://llm.datasette.io/) from Simon Willison is recommended:
-
-```bash
-$ uv tool install -U llm
-```
-
-### Configure an API key
-
-For Claude (recommended):
-
-```bash
-$ llm install llm-anthropic
-$ llm keys set anthropic
-```
-
-For OpenAI:
-
-```bash
-$ llm keys set openai
-```
-
-### Add to user config
-
-Create the config file if it doesn't exist:
+Easiest if you already have [Claude Code](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) installed:
 
 ```bash
 $ wt config create
 ```
 
-Then add the commit generation settings to `~/.config/worktrunk/config.toml`:
+Add to `~/.config/worktrunk/config.toml`:
 
 ```toml
-[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
+[commit.generation]
+command = "MAX_THINKING_TOKENS=0 claude -p --model haiku --tools '' --disable-slash-commands --setting-sources '' --system-prompt=''"
 ```
 
-Or for OpenAI:
+### Option 2: llm
+
+[llm](https://llm.datasette.io/) from Simon Willison:
+
+```bash
+$ uv tool install -U llm
+$ llm install llm-anthropic
+$ llm keys set anthropic
+```
+
+Add to `~/.config/worktrunk/config.toml`:
 
 ```toml
-[commit-generation]
-command = "llm"
-args = ["-m", "gpt-5-nano"]
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
+```
+
+For OpenAI instead:
+
+```bash
+$ llm keys set openai
+```
+
+```toml
+[commit.generation]
+command = "llm -m gpt-4o-mini"
 ```
 
 ## How it works
 
-When worktrunk needs a commit message, it builds a prompt from a template and pipes it to the configured LLM command. The default templates include the git diff and style guidance.
+When worktrunk needs a commit message, it builds a prompt from a template and pipes it to the configured command via shell (`sh -c`). Environment variables can be set inline in the command string.
 
 ## Usage
 
@@ -111,9 +107,8 @@ All variables are available in both templates:
 Override the defaults with inline templates or external files:
 
 ```toml
-[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
 
 template = """
 Write a commit message for this diff. One line, under 50 chars.
@@ -153,12 +148,11 @@ Any command that reads a prompt from stdin and outputs a commit message works:
 
 ```toml
 # aichat
-[commit-generation]
-command = "aichat"
-args = ["-m", "claude:claude-haiku-4.5"]
+[commit.generation]
+command = "aichat -m claude:claude-haiku-4.5"
 
 # Custom script
-[commit-generation]
+[commit.generation]
 command = "./scripts/generate-commit.sh"
 ```
 

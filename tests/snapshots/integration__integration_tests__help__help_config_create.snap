@@ -90,17 +90,15 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# Generate commit messages automatically during merge. Requires an external CLI tool. See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and template customization.[0m
   [2m#[0m
-  [2m# Using llm (https://github.com/simonw/llm) (install: `pip install llm llm-anthropic`):[0m
+  [2m# Using Claude CLI (https://docs.anthropic.com/en/docs/build-with-claude/claude-code):[0m
   [2m#[0m
-  [2m# [commit-generation][0m
-  [2m# command = "llm"[0m
-  [2m# args = ["-m", "claude-haiku-4.5"][0m
+  [2m# [commit.generation][0m
+  [2m# command = "MAX_THINKING_TOKENS=0 claude -p --model haiku --tools '' --disable-slash-commands --setting-sources '' --system-prompt=''"[0m
   [2m#[0m
-  [2m# Using aichat (https://github.com/sigoden/aichat):[0m
+  [2m# Using llm (https://github.com/simonw/llm) (install: `uv tool install llm llm-anthropic`):[0m
   [2m#[0m
-  [2m# [commit-generation][0m
-  [2m# command = "aichat"[0m
-  [2m# args = ["-m", "claude:claude-haiku-4.5"][0m
+  [2m# [commit.generation][0m
+  [2m# command = "llm -m claude-haiku-4.5"[0m
   [2m#[0m
   [2m# See Custom prompt templates (#custom-prompt-templates) for inline template options.[0m
   [2m#[0m
@@ -175,7 +173,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# Default template:[0m
   [2m#[0m
   [2m# <!-- DEFAULT_TEMPLATE_START -->[0m
-  [2m# [commit-generation][0m
+  [2m# [commit.generation][0m
   [2m# template = """[0m
   [2m# Write a commit message for the staged changes below.[0m
   [2m#[0m
@@ -218,7 +216,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# Default template:[0m
   [2m#[0m
   [2m# <!-- DEFAULT_SQUASH_TEMPLATE_START -->[0m
-  [2m# [commit-generation][0m
+  [2m# [commit.generation][0m
   [2m# squash-template = """[0m
   [2m# Combine these commits into a single commit message.[0m
   [2m#[0m

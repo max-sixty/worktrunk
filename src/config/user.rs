@@ -4,7 +4,7 @@
 
 use config::{Case, Config, ConfigError, File};
 use fs2::FileExt;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -59,45 +59,6 @@ fn acquire_config_lock(config_path: &std::path::Path) -> Result<std::fs::File, C
         .map_err(|e| ConfigError::Message(format!("Failed to acquire config lock: {e}")))?;
 
     Ok(file)
-}
-
-/// Deserialize a Vec<String> that can also accept a single String
-/// This enables setting array config fields via environment variables
-fn deserialize_string_or_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de;
-
-    struct StringOrVec;
-
-    impl<'de> de::Visitor<'de> for StringOrVec {
-        type Value = Vec<String>;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("string or array of strings")
-        }
-
-        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(vec![value.to_string()])
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: de::SeqAccess<'de>,
-        {
-            let mut vec = Vec::new();
-            while let Some(elem) = seq.next_element()? {
-                vec.push(elem);
-            }
-            Ok(vec)
-        }
-    }
-
-    deserializer.deserialize_any(StringOrVec)
 }
 
 #[cfg(not(test))]
@@ -185,8 +146,16 @@ pub struct UserConfig {
     )]
     pub(crate) worktree_path: Option<String>,
 
-    #[serde(default, rename = "commit-generation")]
-    pub commit_generation: CommitGenerationConfig,
+    /// **DEPRECATED**: Use `[commit.generation]` instead.
+    ///
+    /// This field is kept for backward compatibility. When both are set,
+    /// `commit.generation` takes precedence.
+    #[serde(
+        default,
+        rename = "commit-generation",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub commit_generation: Option<CommitGenerationConfig>,
 
     /// Per-project configuration (approved commands, etc.)
     /// Uses BTreeMap for deterministic serialization order and better diff readability
@@ -229,16 +198,20 @@ pub struct UserConfig {
 }
 
 /// Configuration for commit message generation
+///
+/// The command is a shell string executed via `sh -c`. Environment variables
+/// can be set inline (e.g., `MAX_THINKING_TOKENS=0 claude -p ...`).
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct CommitGenerationConfig {
-    /// Command to invoke for generating commit messages (e.g., "llm", "claude")
+    /// Shell command to invoke for generating commit messages
+    ///
+    /// Examples:
+    /// - `"llm -m claude-haiku-4.5"`
+    /// - `"MAX_THINKING_TOKENS=0 claude -p --model haiku"`
+    ///
+    /// The command receives the prompt via stdin and should output the commit message.
     #[serde(default)]
     pub command: Option<String>,
-
-    /// Arguments to pass to the command
-    /// Accepts either an array or a single string (for env var compatibility)
-    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
-    pub args: Vec<String>,
 
     /// Inline template for commit message prompt
     /// Available variables: {{ git_diff }}, {{ branch }}, {{ recent_commits }}, {{ repo }}
@@ -296,12 +269,6 @@ impl Merge for CommitGenerationConfig {
 
         Self {
             command: other.command.clone().or_else(|| self.command.clone()),
-            // For args: use other's if non-empty, else self's
-            args: if other.args.is_empty() {
-                self.args.clone()
-            } else {
-                other.args.clone()
-            },
             template,
             template_file,
             squash_template,
@@ -350,6 +317,8 @@ pub struct UserProjectOverrides {
     )]
     pub approved_commands: Vec<String>,
 
+    /// **DEPRECATED**: Use `commit.generation` instead.
+    ///
     /// Per-project commit generation settings (overrides global [commit-generation])
     #[serde(
         default,
@@ -429,12 +398,24 @@ pub struct CommitConfig {
     /// Values: "all", "tracked", "none"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stage: Option<StageMode>,
+
+    /// LLM commit message generation settings
+    ///
+    /// Nested under `[commit.generation]` in TOML.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<CommitGenerationConfig>,
 }
 
 impl Merge for CommitConfig {
     fn merge_with(&self, other: &Self) -> Self {
         Self {
             stage: other.stage.or(self.stage),
+            generation: match (&self.generation, &other.generation) {
+                (None, None) => None,
+                (Some(s), None) => Some(s.clone()),
+                (None, Some(o)) => Some(o.clone()),
+                (Some(s), Some(o)) => Some(s.merge_with(o)),
+            },
         }
     }
 }
@@ -525,14 +506,32 @@ impl UserConfig {
     ///
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
+    ///
+    /// Checks locations in order of precedence:
+    /// 1. `[commit.generation]` (new format)
+    /// 2. `[commit-generation]` (deprecated format)
+    /// 3. Per-project overrides
     pub fn commit_generation(&self, project: Option<&str>) -> CommitGenerationConfig {
-        let global = &self.commit_generation;
-        match project
-            .and_then(|p| self.projects.get(p))
-            .and_then(|c| c.commit_generation.as_ref())
-        {
-            Some(project_config) => global.merge_with(project_config),
-            None => global.clone(),
+        // Get global config: prefer new location, fall back to deprecated
+        let global = self
+            .commit
+            .as_ref()
+            .and_then(|c| c.generation.as_ref())
+            .or(self.commit_generation.as_ref())
+            .cloned()
+            .unwrap_or_default();
+
+        // Get project override (also checks both locations)
+        let project_config = project.and_then(|p| self.projects.get(p)).and_then(|c| {
+            c.commit
+                .as_ref()
+                .and_then(|cc| cc.generation.as_ref())
+                .or(c.commit_generation.as_ref())
+        });
+
+        match project_config {
+            Some(pc) => global.merge_with(pc),
+            None => global,
         }
     }
 
@@ -576,17 +575,10 @@ impl UserConfig {
     /// 2. Config file (see struct documentation for platform-specific paths)
     /// 3. Environment variables (WORKTRUNK_*)
     pub fn load() -> Result<Self, ConfigError> {
-        let defaults = Self::default();
-
         // Note: worktree-path has no default set here - it's handled by the getter
         // which returns the default when None. This allows us to distinguish
         // "user explicitly set this" from "using default".
-        let mut builder = Config::builder()
-            .set_default(
-                "commit-generation.command",
-                defaults.commit_generation.command.unwrap_or_default(),
-            )?
-            .set_default("commit-generation.args", defaults.commit_generation.args)?;
+        let mut builder = Config::builder();
 
         // Add config file if it exists
         let config_path = get_config_path();
@@ -604,6 +596,9 @@ impl UserConfig {
                     "User config",
                     None,
                 );
+
+                // Check for deprecated [commit-generation] section
+                warn_deprecated_commit_generation(&content);
 
                 // Warn about unknown fields in the config file
                 // (must check file content directly, not config.unknown, because
@@ -681,20 +676,17 @@ impl UserConfig {
             }
         }
 
-        // Validate commit generation config
-        if self.commit_generation.template.is_some()
-            && self.commit_generation.template_file.is_some()
-        {
+        // Validate commit generation config (check both old and new locations)
+        let commit_gen = self.commit_generation(None);
+        if commit_gen.template.is_some() && commit_gen.template_file.is_some() {
             return Err(ConfigError::Message(
-                "commit-generation.template and commit-generation.template-file are mutually exclusive".into(),
+                "commit.generation.template and commit.generation.template-file are mutually exclusive".into(),
             ));
         }
 
-        if self.commit_generation.squash_template.is_some()
-            && self.commit_generation.squash_template_file.is_some()
-        {
+        if commit_gen.squash_template.is_some() && commit_gen.squash_template_file.is_some() {
             return Err(ConfigError::Message(
-                "commit-generation.squash-template and commit-generation.squash-template-file are mutually exclusive".into(),
+                "commit.generation.squash-template and commit.generation.squash-template-file are mutually exclusive".into(),
             ));
         }
 
@@ -1113,12 +1105,25 @@ impl UserConfig {
                 doc["skip-shell-integration-prompt"] = toml_edit::value(true);
             }
 
-            // commit-generation section
-            doc["commit-generation"] = toml_edit::Item::Table(toml_edit::Table::new());
-            let commit_args: toml_edit::Array = self.commit_generation.args.iter().collect();
-            doc["commit-generation"]["args"] = toml_edit::value(commit_args);
-            if let Some(ref cmd) = self.commit_generation.command {
-                doc["commit-generation"]["command"] = toml_edit::value(cmd);
+            // commit.generation section (new format)
+            if let Some(ref commit) = self.commit
+                && let Some(ref generation) = commit.generation
+                && (generation.command.is_some() || generation.template.is_some())
+            {
+                doc["commit"] = toml_edit::Item::Table(toml_edit::Table::new());
+                doc["commit"]["generation"] = toml_edit::Item::Table(toml_edit::Table::new());
+                if let Some(ref cmd) = generation.command {
+                    doc["commit"]["generation"]["command"] = toml_edit::value(cmd);
+                }
+            }
+            // Also serialize deprecated commit_generation if present (for backward compat)
+            if let Some(ref generation) = self.commit_generation
+                && generation.command.is_some()
+            {
+                doc["commit-generation"] = toml_edit::Item::Table(toml_edit::Table::new());
+                if let Some(ref cmd) = generation.command {
+                    doc["commit-generation"]["command"] = toml_edit::value(cmd);
+                }
             }
 
             // projects section with multiline arrays
@@ -1202,6 +1207,50 @@ pub fn get_config_path() -> Option<PathBuf> {
 }
 
 /// Find unknown keys in user config TOML content
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Tracks whether deprecated commit-generation warning has been shown this process.
+static WARNED_COMMIT_GENERATION_DEPRECATED: AtomicBool = AtomicBool::new(false);
+
+/// Check for deprecated `[commit-generation]` section and warn if found.
+///
+/// The old format `[commit-generation]` is deprecated in favor of `[commit.generation]`.
+/// This function emits a one-time warning when the old format is detected.
+fn warn_deprecated_commit_generation(content: &str) {
+    // Parse to check if the deprecated section exists
+    let Ok(table) = content.parse::<toml::Table>() else {
+        return;
+    };
+
+    // Check if [commit-generation] exists and has content
+    let has_old_section = table.get("commit-generation").is_some_and(|v| {
+        v.as_table()
+            .is_some_and(|t| t.get("command").is_some() || t.get("template").is_some())
+    });
+
+    if !has_old_section {
+        return;
+    }
+
+    // Only warn once per process
+    if WARNED_COMMIT_GENERATION_DEPRECATED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+
+    // Check if already using new format
+    let has_new_section = table
+        .get("commit")
+        .is_some_and(|v| v.as_table().is_some_and(|t| t.get("generation").is_some()));
+
+    let message = if has_new_section {
+        "[commit-generation] is deprecated; [commit.generation] takes precedence"
+    } else {
+        "[commit-generation] is deprecated. Rename to [commit.generation]"
+    };
+
+    crate::styling::eprintln!("{}", crate::styling::warning_message(message));
+}
+
 ///
 /// Returns a list of unrecognized top-level keys that will be silently ignored.
 /// Uses serde deserialization with flatten to automatically detect unknown fields.
@@ -1504,7 +1553,7 @@ rename-tab = "echo 'switched'"
         assert!(config.list.is_none());
         assert!(config.commit.is_none());
         assert!(config.merge.is_none());
-        assert!(!config.commit_generation.is_configured());
+        assert!(config.commit_generation.is_none());
         assert!(!config.skip_shell_integration_prompt);
     }
 
@@ -1628,35 +1677,6 @@ rename-tab = "echo 'switched'"
     }
 
     #[test]
-    fn test_deserialize_string_or_vec_from_string() {
-        #[derive(serde::Deserialize)]
-        struct Test {
-            #[serde(deserialize_with = "deserialize_string_or_vec")]
-            args: Vec<String>,
-        }
-
-        let json = r#"{"args": "single"}"#;
-        let parsed: Test = serde_json::from_str(json).unwrap();
-        assert_eq!(parsed.args, vec!["single".to_string()]);
-    }
-
-    #[test]
-    fn test_deserialize_string_or_vec_from_array() {
-        #[derive(serde::Deserialize)]
-        struct Test {
-            #[serde(deserialize_with = "deserialize_string_or_vec")]
-            args: Vec<String>,
-        }
-
-        let json = r#"{"args": ["one", "two", "three"]}"#;
-        let parsed: Test = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            parsed.args,
-            vec!["one".to_string(), "two".to_string(), "three".to_string()]
-        );
-    }
-
-    #[test]
     fn test_merge_config_serde() {
         let config = MergeConfig {
             squash: Some(true),
@@ -1749,9 +1769,11 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     fn test_merge_commit_config() {
         let base = CommitConfig {
             stage: Some(StageMode::All),
+            generation: None,
         };
         let override_config = CommitConfig {
             stage: Some(StageMode::Tracked),
+            generation: None,
         };
 
         let merged = base.merge_with(&override_config);
@@ -1786,25 +1808,22 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     #[test]
     fn test_merge_commit_generation_config() {
         let base = CommitGenerationConfig {
-            command: Some("llm".to_string()),
-            args: vec!["-s".to_string()],
+            command: Some("llm -m claude-haiku-4.5".to_string()),
             template: None,
             template_file: Some("~/.config/template.txt".to_string()),
             squash_template: None,
             squash_template_file: None,
         };
         let override_config = CommitGenerationConfig {
-            command: Some("claude".to_string()),  // Override
-            args: vec![],                         // Empty = fall back to base
-            template: Some("custom".to_string()), // Override (was None)
-            template_file: None,                  // Fall back to base
+            command: Some("claude -p --model haiku".to_string()), // Override
+            template: Some("custom".to_string()),                 // Override (was None)
+            template_file: None,                                  // Fall back to base
             squash_template: None,
             squash_template_file: None,
         };
 
         let merged = base.merge_with(&override_config);
-        assert_eq!(merged.command, Some("claude".to_string()));
-        assert_eq!(merged.args, vec!["-s".to_string()]); // Base, since override was empty
+        assert_eq!(merged.command, Some("claude -p --model haiku".to_string()));
         assert_eq!(merged.template, Some("custom".to_string()));
         // When project sets template, template_file is cleared to maintain mutual exclusivity
         assert_eq!(merged.template_file, None);
@@ -1859,8 +1878,16 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
     #[test]
     fn test_effective_commit_generation_no_project() {
-        let mut config = UserConfig::default();
-        config.commit_generation.command = Some("global-llm".to_string());
+        let config = UserConfig {
+            commit: Some(CommitConfig {
+                stage: None,
+                generation: Some(CommitGenerationConfig {
+                    command: Some("global-llm".to_string()),
+                    ..Default::default()
+                }),
+            }),
+            ..Default::default()
+        };
 
         let effective = config.commit_generation(None);
         assert_eq!(effective.command, Some("global-llm".to_string()));
@@ -1868,17 +1895,26 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
     #[test]
     fn test_effective_commit_generation_with_project_override() {
-        let mut config = UserConfig::default();
-        config.commit_generation.command = Some("global-llm".to_string());
-        config.commit_generation.args = vec!["--global".to_string()];
+        let mut config = UserConfig {
+            commit: Some(CommitConfig {
+                stage: None,
+                generation: Some(CommitGenerationConfig {
+                    command: Some("global-llm".to_string()),
+                    ..Default::default()
+                }),
+            }),
+            ..Default::default()
+        };
 
         config.projects.insert(
             "github.com/user/repo".to_string(),
             UserProjectOverrides {
-                commit_generation: Some(CommitGenerationConfig {
-                    command: Some("project-llm".to_string()),
-                    args: vec!["--project".to_string()],
-                    ..Default::default()
+                commit: Some(CommitConfig {
+                    stage: None,
+                    generation: Some(CommitGenerationConfig {
+                        command: Some("project-llm".to_string()),
+                        ..Default::default()
+                    }),
                 }),
                 ..Default::default()
             },
@@ -1887,7 +1923,6 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
         // With project identifier, should merge project config
         let effective = config.commit_generation(Some("github.com/user/repo"));
         assert_eq!(effective.command, Some("project-llm".to_string()));
-        assert_eq!(effective.args, vec!["--project".to_string()]);
 
         // Without project or unknown project, should use global
         let effective = config.commit_generation(None);
@@ -1963,6 +1998,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
         let config = UserConfig {
             commit: Some(CommitConfig {
                 stage: Some(StageMode::Tracked),
+                generation: None,
             }),
             ..Default::default()
         };
@@ -1980,17 +2016,17 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
         let config = UserProjectOverrides {
             worktree_path: Some(".worktrees/{{ branch }}".to_string()),
             approved_commands: vec!["npm install".to_string()],
-            commit_generation: Some(CommitGenerationConfig {
-                command: Some("llm".to_string()),
-                args: vec!["-m".to_string(), "gpt-4".to_string()],
-                ..Default::default()
-            }),
+            commit_generation: None, // Deprecated field, use commit.generation instead
             list: Some(ListConfig {
                 full: Some(true),
                 ..Default::default()
             }),
             commit: Some(CommitConfig {
                 stage: Some(StageMode::Tracked),
+                generation: Some(CommitGenerationConfig {
+                    command: Some("llm -m gpt-4".to_string()),
+                    ..Default::default()
+                }),
             }),
             merge: Some(MergeConfig {
                 squash: Some(false),
@@ -2006,8 +2042,15 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
             Some(".worktrees/{{ branch }}".to_string())
         );
         assert_eq!(
-            parsed.commit_generation.as_ref().unwrap().command,
-            Some("llm".to_string())
+            parsed
+                .commit
+                .as_ref()
+                .unwrap()
+                .generation
+                .as_ref()
+                .unwrap()
+                .command,
+            Some("llm -m gpt-4".to_string())
         );
         assert_eq!(parsed.list.as_ref().unwrap().full, Some(true));
         assert_eq!(
@@ -2019,19 +2062,19 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
     #[test]
     fn test_full_config_with_per_project_sections_serde() {
+        // Test new format: [commit.generation] instead of [commit-generation]
         let content = r#"
 worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 
-[commit-generation]
-command = "llm"
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
 
 [projects."github.com/user/repo"]
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 approved-commands = ["npm install"]
 
-[projects."github.com/user/repo".commit-generation]
-command = "claude"
-args = ["--model", "opus"]
+[projects."github.com/user/repo".commit.generation]
+command = "claude -p --model opus"
 
 [projects."github.com/user/repo".list]
 full = true
@@ -2047,7 +2090,17 @@ squash = false
             config.worktree_path,
             Some("../{{ repo }}.{{ branch | sanitize }}".to_string())
         );
-        assert_eq!(config.commit_generation.command, Some("llm".to_string()));
+        assert_eq!(
+            config
+                .commit
+                .as_ref()
+                .unwrap()
+                .generation
+                .as_ref()
+                .unwrap()
+                .command,
+            Some("llm -m claude-haiku-4.5".to_string())
+        );
 
         // Project config
         let project = config.projects.get("github.com/user/repo").unwrap();
@@ -2056,22 +2109,87 @@ squash = false
             Some(".worktrees/{{ branch | sanitize }}".to_string())
         );
         assert_eq!(
-            project.commit_generation.as_ref().unwrap().command,
-            Some("claude".to_string())
-        );
-        assert_eq!(
-            project.commit_generation.as_ref().unwrap().args,
-            vec!["--model".to_string(), "opus".to_string()]
+            project
+                .commit
+                .as_ref()
+                .unwrap()
+                .generation
+                .as_ref()
+                .unwrap()
+                .command,
+            Some("claude -p --model opus".to_string())
         );
         assert_eq!(project.list.as_ref().unwrap().full, Some(true));
         assert_eq!(project.merge.as_ref().unwrap().squash, Some(false));
 
         // Effective config for project
         let effective_cg = config.commit_generation(Some("github.com/user/repo"));
-        assert_eq!(effective_cg.command, Some("claude".to_string()));
+        assert_eq!(
+            effective_cg.command,
+            Some("claude -p --model opus".to_string())
+        );
 
         let effective_merge = config.merge(Some("github.com/user/repo")).unwrap();
         assert_eq!(effective_merge.squash, Some(false));
+    }
+
+    #[test]
+    fn test_deprecated_commit_generation_format_serde() {
+        // Test old format: [commit-generation] is still parsed for backward compatibility
+        let content = r#"
+[commit-generation]
+command = "llm -m claude-haiku-4.5"
+
+[projects."github.com/user/repo".commit-generation]
+command = "claude -p --model opus"
+"#;
+
+        let config: UserConfig = toml::from_str(content).unwrap();
+
+        // Old format parsed into commit_generation field
+        assert_eq!(
+            config.commit_generation.as_ref().unwrap().command,
+            Some("llm -m claude-haiku-4.5".to_string())
+        );
+
+        // Project override uses deprecated field
+        let project = config.projects.get("github.com/user/repo").unwrap();
+        assert_eq!(
+            project.commit_generation.as_ref().unwrap().command,
+            Some("claude -p --model opus".to_string())
+        );
+
+        // Effective config uses the deprecated values
+        let effective_cg = config.commit_generation(Some("github.com/user/repo"));
+        assert_eq!(
+            effective_cg.command,
+            Some("claude -p --model opus".to_string())
+        );
+    }
+
+    #[test]
+    fn test_deprecated_commit_generation_with_args_field() {
+        // Test that old format with args field still parses (args is ignored)
+        // This ensures backward compatibility for users who haven't migrated yet
+        let content = r#"
+[commit-generation]
+command = "llm"
+args = ["-m", "claude-haiku-4.5"]
+"#;
+
+        let result: Result<UserConfig, _> = toml::from_str(content);
+        assert!(
+            result.is_ok(),
+            "Old format with args field should parse (args is ignored): {:?}",
+            result.err()
+        );
+
+        let config = result.unwrap();
+        // Command is parsed, args is ignored (struct no longer has args field)
+        assert_eq!(
+            config.commit_generation.as_ref().unwrap().command,
+            Some("llm".to_string())
+        );
     }
 
     // Validation tests

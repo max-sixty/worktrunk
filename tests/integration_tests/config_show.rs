@@ -465,9 +465,8 @@ fn test_config_show_full_command_not_found(mut repo: TestRepo, temp_home: TempDi
         &config_path,
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
-[commit-generation]
-command = "nonexistent-llm-command-12345"
-args = ["-m", "test-model"]
+[commit.generation]
+command = "nonexistent-llm-command-12345 -m test-model"
 "#,
     )
     .unwrap();

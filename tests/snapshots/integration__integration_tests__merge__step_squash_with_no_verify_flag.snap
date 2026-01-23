@@ -33,13 +33,15 @@ info:
     WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
 [2m○[22m Skipping pre-commit hooks (--no-verify)
 [36m◎[39m [36mSquashing 2 commits into a single commit [90m(3 files, [32m+3[39m[39m[90m)[39m...[39m
 [36m◎[39m [36mGenerating squash commit message...[39m
-[107m [0m [1msquash: combined commits[22m
-[32m✓[39m [32mSquashed @ [HASH][39m
+[31m✗[39m [31mCommit generation command failed[39m
+[107m [0m [31m✗[39m [31mLLM returned empty message[39m
+[2m○[22m Ran command:
+[107m [0m wt step squash --show-prompt | echo

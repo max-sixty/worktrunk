@@ -318,11 +318,10 @@ fn test_merge_squash_with_llm(mut repo_with_main_worktree: TestRepo) {
     );
 
     // Configure mock LLM command via config file
-    // Use sh to consume stdin and return a fixed message
+    // Use sh -c to consume stdin and return a fixed message
     let worktrunk_config = r#"
-[commit-generation]
-command = "sh"
-args = ["-c", "cat >/dev/null && echo 'feat: implement user authentication system'"]
+[commit.generation]
+command = "cat >/dev/null && echo 'feat: implement user authentication system'"
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
@@ -366,14 +365,13 @@ fn test_merge_squash_llm_error(mut repo_with_main_worktree: TestRepo) {
 
     // Configure LLM command via config file with command that will fail
     // This tests that:
-    // 1. The full command (with args) is shown in the error header
+    // 1. The full command is shown in the error header
     // 2. The error output appears in a gutter
     // Note: We consume stdin first to avoid race condition where stdin write fails
     // before stderr is captured (broken pipe if process exits before reading stdin)
     let worktrunk_config = r#"
-[commit-generation]
-command = "sh"
-args = ["-c", "cat > /dev/null; echo 'Error: connection refused' >&2 && exit 1"]
+[commit.generation]
+command = "cat > /dev/null; echo 'Error: connection refused' >&2 && exit 1"
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
@@ -486,11 +484,10 @@ fn test_merge_auto_commit_with_llm(mut repo_with_main_worktree: TestRepo) {
     std::fs::write(feature_wt.join("auth.txt"), "improved auth with validation").unwrap();
 
     // Configure mock LLM command via config file
-    // Use sh to consume stdin and return a fixed message (must consume stdin for cross-platform compatibility)
+    // Use sh -c to consume stdin and return a fixed message (must consume stdin for cross-platform compatibility)
     let worktrunk_config = r#"
-[commit-generation]
-command = "sh"
-args = ["-c", "cat >/dev/null && echo 'fix: improve auth validation logic'"]
+[commit.generation]
+command = "cat >/dev/null && echo 'fix: improve auth validation logic'"
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
@@ -512,11 +509,10 @@ fn test_merge_auto_commit_and_squash(repo_with_multi_commit_feature: TestRepo) {
     std::fs::write(feature_wt.join("file1.txt"), "updated content 1").unwrap();
 
     // Configure mock LLM command via config file
-    // Use sh to consume stdin and return a fixed message (must consume stdin for cross-platform compatibility)
+    // Use sh -c to consume stdin and return a fixed message (must consume stdin for cross-platform compatibility)
     let worktrunk_config = r#"
-[commit-generation]
-command = "sh"
-args = ["-c", "cat >/dev/null && echo 'fix: update file 1 content'"]
+[commit.generation]
+command = "cat >/dev/null && echo 'fix: update file 1 content'"
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
@@ -1078,7 +1074,7 @@ mod tests {
     let llm_path_str = llm_path.to_slash_lossy();
     let worktrunk_config = format!(
         r#"
-[commit-generation]
+[commit.generation]
 command = "{llm_path_str}"
 "#
     );

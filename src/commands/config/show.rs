@@ -268,15 +268,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let command_display = format!(
-        "{}{}",
-        commit_config.command.as_ref().unwrap(),
-        if commit_config.args.is_empty() {
-            String::new()
-        } else {
-            format!(" {}", commit_config.args.join(" "))
-        }
-    );
+    let command_display = commit_config.command.as_ref().unwrap().clone();
 
     match test_commit_generation(&commit_config) {
         Ok(message) => {

@@ -32,9 +32,6 @@ fn test_approval_saves_to_disk() {
     // Verify TOML structure
     let toml_content = fs::read_to_string(&config_path).unwrap();
     assert_snapshot!(toml_content, @r#"
-    [commit-generation]
-    args = []
-
     [projects."github.com/test/repo"]
     approved-commands = [
         "test command",
@@ -85,9 +82,6 @@ fn test_duplicate_approvals_not_saved_twice() {
     // Verify file contains only one entry
     let toml_content = fs::read_to_string(&config_path).unwrap();
     assert_snapshot!(toml_content, @r#"
-    [commit-generation]
-    args = []
-
     [projects."github.com/test/repo"]
     approved-commands = [
         "test",
@@ -134,9 +128,6 @@ fn test_multiple_project_approvals() {
     // Verify file structure
     let toml_content = fs::read_to_string(&config_path).unwrap();
     assert_snapshot!(toml_content, @r#"
-    [commit-generation]
-    args = []
-
     [projects."github.com/user1/repo1"]
     approved-commands = [
         "npm install",
@@ -218,10 +209,7 @@ fn test_yes_flag_does_not_save_approval() {
 
     // Load the config and verify it's still empty (no approvals added)
     let saved_config = fs::read_to_string(&config_path).unwrap();
-    assert_snapshot!(saved_config, @"
-    [commit-generation]
-    args = []
-    ");
+    assert_snapshot!(saved_config, @"");
 }
 
 #[test]
@@ -250,9 +238,6 @@ fn test_approval_saves_to_new_config_file() {
     // Verify content
     let content = fs::read_to_string(&config_path).unwrap();
     assert_snapshot!(content, @r#"
-    [commit-generation]
-    args = []
-
     [projects."github.com/test/nested"]
     approved-commands = [
         "test command",
@@ -275,9 +260,8 @@ fn test_saving_approval_preserves_toml_comments() {
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 # LLM commit generation settings
-[commit-generation]
-command = "llm"  # inline comment should also be preserved
-args = ["-s"]
+[commit.generation]
+command = "llm -m claude-haiku-4.5"  # inline comment should also be preserved
 
 # Per-project settings below
 "#;
@@ -656,12 +640,7 @@ fn test_skip_shell_integration_prompt_saves_to_disk() {
 
     // Verify TOML structure
     let toml_content = fs::read_to_string(&config_path).unwrap();
-    assert_snapshot!(toml_content, @"
-    skip-shell-integration-prompt = true
-
-    [commit-generation]
-    args = []
-    ");
+    assert_snapshot!(toml_content, @"skip-shell-integration-prompt = true");
 }
 
 #[test]
@@ -709,8 +688,8 @@ fn test_saving_through_symlink_preserves_symlink() {
     let initial_content = r#"# My dotfiles config
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
-[commit-generation]
-command = "llm"
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
 "#;
     fs::write(&target_path, initial_content).unwrap();
 

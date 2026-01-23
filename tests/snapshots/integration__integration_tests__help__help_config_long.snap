@@ -117,17 +117,15 @@ Controls where new worktrees are created. Paths are relative to the repository r
 
 Generate commit messages automatically during merge. Requires an external CLI tool. See LLM commits docs for setup and template customization.
 
-Using llm (install: [2mpip install llm llm-anthropic[0m):
+Using Claude CLI:
 
-  [2m[commit-generation][0m
-  [2mcommand = "llm"[0m
-  [2margs = ["-m", "claude-haiku-4.5"][0m
+  [2m[commit.generation][0m
+  [2mcommand = "MAX_THINKING_TOKENS=0 claude -p --model haiku --tools '' --disable-slash-commands --setting-sources '' --system-prompt=''"[0m
 
-Using aichat:
+Using llm (install: [2muv tool install llm llm-anthropic[0m):
 
-  [2m[commit-generation][0m
-  [2mcommand = "aichat"[0m
-  [2margs = ["-m", "claude:claude-haiku-4.5"][0m
+  [2m[commit.generation][0m
+  [2mcommand = "llm -m claude-haiku-4.5"[0m
 
 See Custom prompt templates for inline template options.
 
@@ -201,7 +199,7 @@ Available variables:
 
 Default template:
 
-  [2m[commit-generation][0m
+  [2m[commit.generation][0m
   [2mtemplate = """[0m
   [2mWrite a commit message for the staged changes below.[0m
   [2m[0m
@@ -242,7 +240,7 @@ Available variables (in addition to commit template variables):
 
 Default template:
 
-  [2m[commit-generation][0m
+  [2m[commit.generation][0m
   [2msquash-template = """[0m
   [2mCombine these commits into a single commit message.[0m
   [2m[0m

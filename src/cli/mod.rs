@@ -1545,20 +1545,18 @@ worktree-path = "../{{ branch | sanitize }}"
 
 Generate commit messages automatically during merge. Requires an external CLI tool. See [LLM commits docs](@/llm-commits.md) for setup and template customization.
 
-Using [llm](https://github.com/simonw/llm) (install: `pip install llm llm-anthropic`):
+Using [Claude CLI](https://docs.anthropic.com/en/docs/build-with-claude/claude-code):
 
 ```toml
-[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
+[commit.generation]
+command = "MAX_THINKING_TOKENS=0 claude -p --model haiku --tools '' --disable-slash-commands --setting-sources '' --system-prompt=''"
 ```
 
-Using [aichat](https://github.com/sigoden/aichat):
+Using [llm](https://github.com/simonw/llm) (install: `uv tool install llm llm-anthropic`):
 
 ```toml
-[commit-generation]
-command = "aichat"
-args = ["-m", "claude:claude-haiku-4.5"]
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
 ```
 
 See [Custom prompt templates](#custom-prompt-templates) for inline template options.
@@ -1645,7 +1643,7 @@ Default template:
 
 <!-- DEFAULT_TEMPLATE_START -->
 ```toml
-[commit-generation]
+[commit.generation]
 template = """
 Write a commit message for the staged changes below.
 
@@ -1690,7 +1688,7 @@ Default template:
 
 <!-- DEFAULT_SQUASH_TEMPLATE_START -->
 ```toml
-[commit-generation]
+[commit.generation]
 squash-template = """
 Combine these commits into a single commit message.
 
