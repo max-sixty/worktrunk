@@ -951,7 +951,7 @@ pub fn step_relocate(
     // An empty default branch would cause confusing "git checkout ''" errors
     if default_branch.is_empty() {
         anyhow::bail!(
-            "Cannot determine default branch. Set it with: git config worktrunk.default-branch <branch>"
+            "Cannot determine default branch; set with: git config worktrunk.default-branch main"
         );
     }
     let repo_path = repo.repo_path().to_path_buf();
@@ -980,6 +980,7 @@ pub fn step_relocate(
     // Find mismatched worktrees (worktrees not at their expected paths)
     // Handle template errors explicitly rather than silently dropping
     let mut mismatched: Vec<(worktrunk::git::WorktreeInfo, PathBuf)> = Vec::new();
+    let mut template_errors = 0;
     for wt in candidates {
         let Some(branch) = wt.branch.as_deref() else {
             continue; // Detached HEAD worktrees can't be relocated
@@ -997,16 +998,29 @@ pub fn step_relocate(
             }
             Err(e) => {
                 // Template expansion failed - warn user so they can fix config
-                eprintln!(
-                    "{}",
-                    warning_message(cformat!("Skipping <bold>{branch}</> (template error: {e})"))
-                );
+                // Use gutter for error details per output guidelines
+                let header = cformat!("Skipping <bold>{branch}</> due to template error:");
+                let detail = format_with_gutter(&e.to_string(), None);
+                eprintln!("{}\n{}", warning_message(header), detail);
+                template_errors += 1;
             }
         }
     }
 
     if mismatched.is_empty() {
-        eprintln!("{}", info_message("All worktrees are at expected paths"));
+        // Only say "all worktrees at expected paths" if nothing was skipped due to errors
+        if template_errors == 0 {
+            eprintln!("{}", info_message("All worktrees are at expected paths"));
+        } else {
+            eprintln!(
+                "{}",
+                info_message(format!(
+                    "No relocations performed; {} skipped due to template error{}",
+                    template_errors,
+                    if template_errors == 1 { "" } else { "s" }
+                ))
+            );
+        }
         return Ok(());
     }
 
@@ -1074,7 +1088,9 @@ pub fn step_relocate(
                 );
                 eprintln!(
                     "{}",
-                    hint_message("Use --commit to auto-commit changes before relocating",)
+                    hint_message(cformat!(
+                        "Use <bright-black>--commit</> to auto-commit changes before relocating"
+                    ))
                 );
                 skipped += 1;
                 continue;
@@ -1169,7 +1185,12 @@ pub fn step_relocate(
             let blocked = format_path_for_display(expected_path);
             let msg = cformat!("Skipping <bold>{branch}</> (target blocked: {blocked})");
             eprintln!("{}", warning_message(msg));
-            eprintln!("{}", hint_message("Use --clobber to backup blocking paths"));
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "Use <bright-black>--clobber</> to backup blocking paths"
+                ))
+            );
             blocked_by_non_worktree.insert(i);
             skipped += 1;
         }
@@ -1180,7 +1201,7 @@ pub fn step_relocate(
     let temp_dir = repo.git_common_dir().join("wt-relocate-tmp");
     let mut relocated = 0;
     let mut moved_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
-    let mut temp_relocated: Vec<(usize, PathBuf)> = Vec::new(); // (index, temp_path)
+    let mut temp_relocated: Vec<(usize, PathBuf, PathBuf)> = Vec::new(); // (index, temp_path, original_path)
 
     // Helper to check if a target is currently empty (not occupied by a pending worktree)
     // Returns None if the target is unexpectedly blocked (race condition or same-target conflict)
@@ -1346,7 +1367,7 @@ pub fn step_relocate(
                 let old_canonical = wt.path.canonicalize().unwrap_or_else(|_| wt.path.clone());
                 current_locations.remove(&old_canonical);
 
-                temp_relocated.push((i, temp_path.clone()));
+                temp_relocated.push((i, temp_path.clone(), wt.path.clone()));
                 moved_indices.insert(i);
             }
             None => break, // All done
@@ -1354,10 +1375,11 @@ pub fn step_relocate(
     }
 
     // Phase 5: Move temp-relocated worktrees to final destinations
-    for (i, temp_path) in temp_relocated {
+    for (i, temp_path, original_path) in temp_relocated {
         let (_, expected_path) = &pending[i];
         let branch = pending[i].0.branch.as_deref().unwrap();
 
+        let src_display = format_path_for_display(&original_path);
         let dest_display = format_path_for_display(expected_path);
 
         Cmd::new("git")
@@ -1368,7 +1390,7 @@ pub fn step_relocate(
             .run()
             .context("Failed to move worktree from temp to final location")?;
 
-        let msg = cformat!("Relocated <bold>{branch}</> → {dest_display}");
+        let msg = cformat!("Relocated <bold>{branch}</>: {src_display} → {dest_display}");
         eprintln!("{}", success_message(msg));
 
         // Note: Unlike direct moves, we don't update the shell directory here.

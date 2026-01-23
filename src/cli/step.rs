@@ -320,7 +320,7 @@ Note: This command is experimental and may change in future versions.
         args: Vec<String>,
     },
 
-    /// Move worktrees to expected paths
+    /// \[experimental\] Move worktrees to expected paths
     ///
     /// Relocates worktrees whose path doesn't match the `worktree-path` template.
     #[command(
@@ -369,6 +369,8 @@ With `--clobber`, non-worktree paths at target locations are moved to
 - **Locked** — unlock with `git worktree unlock`
 - **Target blocked** (without `--clobber`) — use `--clobber` to backup blocker
 - **Detached HEAD** — no branch to compute expected path
+
+Note: This command is experimental and may change in future versions.
 "#
     )]
     Relocate {

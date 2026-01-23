@@ -37,6 +37,6 @@ exit_code: 0
 ----- stderr -----
 [36m◎[39m [36mMoving [1mbeta[22m to temporary location...[39m
 [32m✓[39m [32mRelocated [1malpha[22m: _REPO_.beta → _REPO_.alpha[39m
-[32m✓[39m [32mRelocated [1mbeta[22m → _REPO_.beta[39m
+[32m✓[39m [32mRelocated [1mbeta[22m: _REPO_.alpha → _REPO_.beta[39m
 
 [32m✓[39m [32mRelocated 2 worktrees[39m

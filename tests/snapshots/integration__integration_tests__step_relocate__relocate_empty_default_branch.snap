@@ -35,4 +35,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mCannot determine default branch. Set it with: git config worktrunk.default-branch <branch>[39m
+[31m✗[39m [31mCannot determine default branch; set with: git config worktrunk.default-branch main[39m

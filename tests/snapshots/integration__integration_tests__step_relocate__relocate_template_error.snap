@@ -36,5 +36,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mSkipping [1mfeature[22m (template error: Failed to format worktree path: Template render error: undefined value (in worktree-path:1))[39m
-[2m○[22m All worktrees are at expected paths
+[33m▲[39m [33mSkipping [1mfeature[22m due to template error:[39m
+[107m [0m Failed to format worktree path: Template render error: undefined value (in worktree-path:1)
+[2m○[22m No relocations performed; 1 skipped due to template error

@@ -36,6 +36,6 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mSkipping [1mfeature[22m (uncommitted changes)[39m
-[2m↳[22m [2mUse --commit to auto-commit changes before relocating[22m
+[2m↳[22m [2mUse [90m--commit[39m to auto-commit changes before relocating[22m
 
 [2m○[22m Skipped 1 worktree
