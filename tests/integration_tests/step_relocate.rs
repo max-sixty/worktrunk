@@ -500,3 +500,63 @@ fn test_relocate_multiple(repo: TestRepo) {
         );
     }
 }
+
+/// Test that two worktrees targeting the same path doesn't panic
+///
+/// Before the fix, this would panic with "existing target must be a tracked worktree"
+/// because after the first worktree moved, the second would find an occupied target
+/// that wasn't in the tracking map.
+#[rstest]
+fn test_relocate_same_target_no_panic(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // Create two worktrees at non-standard locations
+    let wrong_path1 = parent.join("wrong-location-1");
+    let wrong_path2 = parent.join("wrong-location-2");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "alpha",
+        wrong_path1.to_str().unwrap(),
+    ]);
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "beta",
+        wrong_path2.to_str().unwrap(),
+    ]);
+
+    // Configure a template that maps BOTH branches to the same path
+    // This creates the "same target" scenario
+    let worktrunk_config = r#"
+worktree-path = "{{ repo }}.shared"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    // Relocate only alpha and beta (exclude any other branches from prior tests)
+    // Previously this would panic
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["relocate", "alpha", "beta"],
+        None
+    ));
+
+    // Verify first worktree moved to shared location
+    // Note: {{ repo }} in template uses repo NAME, so path is inside repo root
+    let shared_path = repo.root_path().join("repo.shared");
+    assert!(
+        shared_path.exists(),
+        "First worktree should be at shared path: {}",
+        shared_path.display()
+    );
+
+    // Second worktree should still be at its original location (skipped)
+    // It was skipped because the target was occupied after first moved there
+    assert!(
+        wrong_path1.exists() || wrong_path2.exists(),
+        "One worktree should remain at original location (skipped)"
+    );
+}

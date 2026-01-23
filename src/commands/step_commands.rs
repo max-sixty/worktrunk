@@ -838,6 +838,14 @@ pub fn step_relocate(
     let repo = Repository::current()?;
     let config = UserConfig::load()?;
     let default_branch = repo.default_branch().unwrap_or_default();
+
+    // Validate default branch early - needed for main worktree relocation
+    // An empty default branch would cause confusing "git checkout ''" errors
+    if default_branch.is_empty() {
+        anyhow::bail!(
+            "Cannot determine default branch. Set it with: git config worktrunk.default-branch <branch>"
+        );
+    }
     let repo_path = repo.repo_path().to_path_buf();
 
     // Get all worktrees, excluding prunable ones
@@ -1067,22 +1075,25 @@ pub fn step_relocate(
     let mut temp_relocated: Vec<(usize, PathBuf)> = Vec::new(); // (index, temp_path)
 
     // Helper to check if a target is currently empty (not occupied by a pending worktree)
+    // Returns None if the target is unexpectedly blocked (race condition or same-target conflict)
     let is_target_empty = |idx: usize,
                            pending: &[(worktrunk::git::WorktreeInfo, PathBuf)],
                            moved: &std::collections::HashSet<usize>,
                            current_locs: &std::collections::HashMap<PathBuf, usize>|
-     -> bool {
+     -> Option<bool> {
         let expected = &pending[idx].1;
         if !expected.exists() {
-            return true;
+            return Some(true);
         }
         let canonical = expected.canonicalize().unwrap_or_else(|_| expected.clone());
-        // If target exists, it must be a worktree we're tracking (non-worktree blockers
-        // were handled in phase 3 - either clobbered or added to blocked_by_non_worktree)
-        let occupant_idx = current_locs
+        // If target exists, check if it's a worktree we're tracking.
+        // It might NOT be tracked if:
+        // 1. Another worktree in this run just moved there (same-target conflict)
+        // 2. An external process created a path (TOCTOU race)
+        // In either case, return None so caller can treat as blocked rather than panicking.
+        current_locs
             .get(&canonical)
-            .expect("existing target must be a tracked worktree");
-        moved.contains(occupant_idx)
+            .map(|occupant_idx| moved.contains(occupant_idx))
     };
 
     // Process until all pending are moved or in temp
@@ -1095,7 +1106,28 @@ pub fn step_relocate(
                 continue;
             }
 
-            if is_target_empty(i, &pending, &moved_indices, &current_locations) {
+            // Check if target is empty - None means unexpectedly blocked
+            let target_empty =
+                match is_target_empty(i, &pending, &moved_indices, &current_locations) {
+                    Some(empty) => empty,
+                    None => {
+                        // Target is occupied by something not in our tracking map.
+                        // This can happen if:
+                        // 1. Another worktree in this run moved there (same-target conflict)
+                        // 2. External process created a path (TOCTOU race)
+                        // Skip this worktree rather than panicking.
+                        let branch = pending[i].0.branch.as_deref().unwrap();
+                        let blocked = format_path_for_display(&pending[i].1);
+                        let msg =
+                            cformat!("Skipping <bold>{branch}</> (target occupied: {blocked})");
+                        eprintln!("{}", warning_message(msg));
+                        blocked_by_non_worktree.insert(i);
+                        skipped += 1;
+                        continue;
+                    }
+                };
+
+            if target_empty {
                 let (wt, expected_path) = &pending[i];
                 let branch = wt.branch.as_deref().unwrap();
                 let is_main = paths_match(&wt.path, &repo_path);
@@ -1115,13 +1147,28 @@ pub fn step_relocate(
                         .run()
                         .context("Failed to checkout default branch")?;
 
-                    Cmd::new("git")
+                    // Try to create worktree; if it fails, rollback to original branch
+                    let add_result = Cmd::new("git")
                         .args(["worktree", "add"])
                         .arg(expected_path.to_string_lossy())
                         .arg(branch)
                         .context(branch)
-                        .run()
-                        .context("Failed to create worktree")?;
+                        .run();
+
+                    if let Err(e) = add_result {
+                        // Rollback: checkout the original branch to restore user context
+                        let rollback_msg =
+                            cformat!("Worktree creation failed, restoring <bold>{branch}</>...");
+                        eprintln!("{}", warning_message(rollback_msg));
+
+                        let _ = Cmd::new("git")
+                            .args(["checkout", branch])
+                            .current_dir(&repo_path)
+                            .context("main")
+                            .run(); // Best-effort rollback
+
+                        return Err(e).context("Failed to create worktree for main relocation");
+                    }
                 } else {
                     Cmd::new("git")
                         .args(["worktree", "move"])
