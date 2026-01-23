@@ -993,14 +993,8 @@ fn test_deprecated_variables_hint_clear_regenerates(repo: TestRepo, temp_home: T
     // Clear the hint
     {
         let mut cmd = repo.wt_command();
-        cmd.args([
-            "config",
-            "state",
-            "hints",
-            "clear",
-            "deprecated-project-config",
-        ])
-        .current_dir(repo.root_path());
+        cmd.args(["config", "state", "hints", "clear", "deprecated-config"])
+            .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         let output = cmd.output().unwrap();
         assert!(

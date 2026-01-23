@@ -595,9 +595,6 @@ impl UserConfig {
                     None,
                 );
 
-                // Check for deprecated [commit-generation] section
-                warn_deprecated_commit_generation(&content);
-
                 // Warn about unknown fields in the config file
                 // (must check file content directly, not config.unknown, because
                 // config.unknown includes env vars which shouldn't trigger warnings)
@@ -1224,51 +1221,7 @@ pub fn get_config_path() -> Option<PathBuf> {
     }
 }
 
-/// Find unknown keys in user config TOML content
-use std::sync::atomic::{AtomicBool, Ordering};
-
-/// Tracks whether deprecated commit-generation warning has been shown this process.
-static WARNED_COMMIT_GENERATION_DEPRECATED: AtomicBool = AtomicBool::new(false);
-
-/// Check for deprecated `[commit-generation]` section and warn if found.
-///
-/// The old format `[commit-generation]` is deprecated in favor of `[commit.generation]`.
-/// This function emits a one-time warning when the old format is detected.
-fn warn_deprecated_commit_generation(content: &str) {
-    // Parse to check if the deprecated section exists
-    let Ok(table) = content.parse::<toml::Table>() else {
-        return;
-    };
-
-    // Check if [commit-generation] exists and has content
-    let has_old_section = table.get("commit-generation").is_some_and(|v| {
-        v.as_table()
-            .is_some_and(|t| t.get("command").is_some() || t.get("template").is_some())
-    });
-
-    if !has_old_section {
-        return;
-    }
-
-    // Only warn once per process
-    if WARNED_COMMIT_GENERATION_DEPRECATED.swap(true, Ordering::Relaxed) {
-        return;
-    }
-
-    // Check if already using new format
-    let has_new_section = table
-        .get("commit")
-        .is_some_and(|v| v.as_table().is_some_and(|t| t.get("generation").is_some()));
-
-    let message = if has_new_section {
-        "[commit-generation] is deprecated; [commit.generation] takes precedence"
-    } else {
-        "[commit-generation] is deprecated. Rename to [commit.generation]"
-    };
-
-    crate::styling::eprintln!("{}", crate::styling::warning_message(message));
-}
-
+/// Find unknown keys in user config TOML content.
 ///
 /// Returns a map of unrecognized top-level keys (with their values) that will be ignored.
 /// Uses serde deserialization with flatten to automatically detect unknown fields.
