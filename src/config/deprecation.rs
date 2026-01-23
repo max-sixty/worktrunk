@@ -1242,4 +1242,61 @@ command = "llm -m haiku"
             "Should flag deprecated section when new section is malformed"
         );
     }
+
+    #[test]
+    fn test_migrate_inline_table_project_level() {
+        let content = r#"
+[projects."github.com/user/repo"]
+commit-generation = { command = "llm", args = ["-m", "gpt-4"] }
+"#;
+        let result = migrate_commit_generation_sections(content);
+        assert!(
+            result.contains("[projects.\"github.com/user/repo\".commit.generation]")
+                || result.contains("[projects.\"github.com/user/repo\".commit]"),
+            "Should migrate project-level inline table"
+        );
+        assert!(
+            result.contains("command = \"llm -m gpt-4\""),
+            "Should merge args into command"
+        );
+        assert!(
+            !result.contains("commit-generation"),
+            "Should remove old inline table"
+        );
+    }
+
+    #[test]
+    fn test_migrate_preserves_existing_commit_stage() {
+        // When [commit] section already exists with other fields, preserve them
+        let content = r#"
+[commit]
+stage = "all"
+
+[commit-generation]
+command = "llm -m haiku"
+"#;
+        let result = migrate_commit_generation_sections(content);
+        assert!(result.contains("stage = \"all\""), "Should preserve stage");
+        assert!(
+            result.contains("[commit.generation]"),
+            "Should add generation subsection"
+        );
+        assert!(
+            result.contains("command = \"llm -m haiku\""),
+            "Should migrate command"
+        );
+    }
+
+    #[test]
+    fn test_find_deprecations_empty_inline_table() {
+        // Empty inline table should not be flagged
+        let content = r#"
+commit-generation = {}
+"#;
+        let result = find_commit_generation_deprecations(content);
+        assert!(
+            !result.has_top_level,
+            "Should not flag empty inline table as deprecated"
+        );
+    }
 }
