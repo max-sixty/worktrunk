@@ -1543,23 +1543,9 @@ worktree-path = "../{{ branch | sanitize }}"
 
 ## LLM commit messages
 
-Generate commit messages automatically during merge. Requires an external CLI tool. See [LLM commits docs](@/llm-commits.md) for setup and template customization.
+Generate commit messages automatically during merge. Requires an external CLI tool.
 
-Using [Claude Code](https://docs.anthropic.com/en/docs/build-with-claude/claude-code):
-
-```toml
-[commit.generation]
-command = "MAX_THINKING_TOKENS=0 claude -p --model haiku --tools '' --disable-slash-commands --setting-sources '' --system-prompt=''"
-```
-
-Using [llm](https://github.com/simonw/llm) (install: `uv tool install llm llm-anthropic`):
-
-```toml
-[commit.generation]
-command = "llm -m claude-haiku-4.5"
-```
-
-See [Custom prompt templates](#custom-prompt-templates) for inline template options.
+See [LLM commits docs](@/llm-commits.md) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
 
 ## Commands
 
