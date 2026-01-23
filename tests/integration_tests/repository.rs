@@ -531,7 +531,7 @@ fn test_repo_path_in_submodule() {
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "git init failed for parent");
 
-    // Configure git user for commits
+    // Configure git user for commits and disable signing
     std::process::Command::new("git")
         .args(["config", "user.email", "test@example.com"])
         .current_dir(&parent_path)
@@ -539,6 +539,11 @@ fn test_repo_path_in_submodule() {
         .unwrap();
     std::process::Command::new("git")
         .args(["config", "user.name", "Test User"])
+        .current_dir(&parent_path)
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["config", "commit.gpgsign", "false"])
         .current_dir(&parent_path)
         .output()
         .unwrap();
@@ -572,7 +577,7 @@ fn test_repo_path_in_submodule() {
         "git init failed for submodule origin"
     );
 
-    // Configure git user for submodule
+    // Configure git user for submodule and disable signing
     std::process::Command::new("git")
         .args(["config", "user.email", "test@example.com"])
         .current_dir(&sub_origin_path)
@@ -580,6 +585,11 @@ fn test_repo_path_in_submodule() {
         .unwrap();
     std::process::Command::new("git")
         .args(["config", "user.name", "Test User"])
+        .current_dir(&sub_origin_path)
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["config", "commit.gpgsign", "false"])
         .current_dir(&sub_origin_path)
         .output()
         .unwrap();

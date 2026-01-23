@@ -484,21 +484,25 @@ fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
     let canonical_dest = canonicalize(dest).unwrap();
 
     // Fix gitdir files - fixture uses _git which we rename to .git
-    // Paths are relative so no absolute path replacement needed
+    // Git requires absolute paths in gitdir files, so we convert relative to absolute
     for wt in ["feature-a", "feature-b", "feature-c"] {
+        // Fix the worktree's .git file (points to main repo's worktrees dir)
         let gitdir_path = dest.join(format!("repo.{wt}/.git"));
         if gitdir_path.exists() {
-            let content = std::fs::read_to_string(&gitdir_path).unwrap();
-            let fixed = content.replace("_git", ".git");
-            std::fs::write(&gitdir_path, fixed).unwrap();
+            // Convert to absolute path: gitdir: {dest}/repo/.git/worktrees/repo.{wt}
+            let absolute_gitdir = format!(
+                "gitdir: {}/repo/.git/worktrees/repo.{wt}\n",
+                canonical_dest.display()
+            );
+            std::fs::write(&gitdir_path, absolute_gitdir).unwrap();
         }
 
-        // Fix main repo's worktree gitdir reference
+        // Fix main repo's worktree gitdir reference (points to worktree's .git file)
         let main_gitdir = dest.join(format!("repo/.git/worktrees/repo.{wt}/gitdir"));
         if main_gitdir.exists() {
-            let content = std::fs::read_to_string(&main_gitdir).unwrap();
-            let fixed = content.replace("_git", ".git");
-            std::fs::write(&main_gitdir, fixed).unwrap();
+            // Convert to absolute path: {dest}/repo.{wt}/.git
+            let absolute_path = format!("{}/repo.{wt}/.git\n", canonical_dest.display());
+            std::fs::write(&main_gitdir, absolute_path).unwrap();
         }
     }
 
