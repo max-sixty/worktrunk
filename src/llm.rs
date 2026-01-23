@@ -4,10 +4,42 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell_exec::Cmd;
+use worktrunk::shell_exec::{Cmd, ShellConfig};
 use worktrunk::styling::{eprintln, warning_message};
 
 use minijinja::Environment;
+
+/// Characters that require shell wrapping when used in a command.
+/// If a command contains any of these, it needs `sh -c '...'` to execute correctly.
+const SHELL_METACHARACTERS: &[char] = &[
+    '&', '|', ';', '<', '>', '$', '`', '\'', '"', '(', ')', '{', '}', '*', '?', '[', ']', '~', '!',
+    '\\',
+];
+
+/// Format a reproduction command, only wrapping with `sh -c` if needed.
+///
+/// Simple commands like `llm -m haiku` are shown as-is.
+/// Complex commands with shell syntax are wrapped: `sh -c 'complex && command'`
+///
+/// TODO: Consider using a shell escaping crate (e.g., `shell-escape`, `shlex`)
+/// instead of manual metacharacter detection and quote escaping.
+fn format_reproduction_command(base_cmd: &str, llm_command: &str) -> String {
+    let needs_shell = llm_command.contains(SHELL_METACHARACTERS)
+        || llm_command
+            .split_whitespace()
+            .next()
+            .is_some_and(|first| first.contains('='));
+
+    if needs_shell {
+        format!(
+            "{} | sh -c '{}'",
+            base_cmd,
+            llm_command.replace('\'', "'\\''")
+        )
+    } else {
+        format!("{} | {}", base_cmd, llm_command)
+    }
+}
 
 /// Track whether template-file deprecation warning has been shown this session
 static TEMPLATE_FILE_WARNING_SHOWN: AtomicBool = AtomicBool::new(false);
@@ -250,8 +282,9 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"Combine these commits into a single com
 
 /// Execute an LLM command with the given prompt via stdin.
 ///
-/// The command is a shell string executed via `sh -c`, allowing environment
-/// variables to be set inline (e.g., `MAX_THINKING_TOKENS=0 claude -p ...`).
+/// The command is a shell string executed via the platform shell (sh on Unix,
+/// Git Bash on Windows), allowing environment variables to be set inline
+/// (e.g., `MAX_THINKING_TOKENS=0 claude -p ...`).
 ///
 /// This is the canonical way to execute LLM commands in this codebase.
 /// All LLM execution should go through this function to maintain consistency.
@@ -262,15 +295,32 @@ fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result<String> {
         log::debug!("    {}", line);
     }
 
-    let output = Cmd::new("sh")
-        .args(["-c", command])
+    let shell = ShellConfig::get();
+    let output = Cmd::new(shell.executable.to_string_lossy())
+        .args(&shell.args)
+        .arg(command)
         .stdin_bytes(prompt)
         .run()
         .context("Failed to spawn LLM command")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("{}", stderr.trim());
+        let stderr = stderr.trim();
+        if stderr.is_empty() {
+            // Fall back to stdout or exit code when stderr is empty
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stdout = stdout.trim();
+            if stdout.is_empty() {
+                anyhow::bail!(
+                    "LLM command failed with exit code {}",
+                    output.status.code().unwrap_or(-1)
+                );
+            } else {
+                anyhow::bail!("{}", stdout);
+            }
+        } else {
+            anyhow::bail!("{}", stderr);
+        }
     }
 
     let message = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -413,7 +463,10 @@ pub(crate) fn generate_commit_message(
             worktrunk::git::GitError::LlmCommandFailed {
                 command: command.clone(),
                 error: e.to_string(),
-                reproduction_command: Some(format!("wt step commit --show-prompt | {command}")),
+                reproduction_command: Some(format_reproduction_command(
+                    "wt step commit --show-prompt",
+                    command,
+                )),
             }
             .into()
         });
@@ -529,7 +582,10 @@ pub(crate) fn generate_squash_message(
             worktrunk::git::GitError::LlmCommandFailed {
                 command: command.clone(),
                 error: e.to_string(),
-                reproduction_command: Some(format!("wt step squash --show-prompt | {command}")),
+                reproduction_command: Some(format_reproduction_command(
+                    "wt step squash --show-prompt",
+                    command,
+                )),
             }
             .into()
         });

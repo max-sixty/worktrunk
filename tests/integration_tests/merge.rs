@@ -346,7 +346,7 @@ fn test_merge_squash_llm_command_not_found(mut repo_with_main_worktree: TestRepo
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(repo, "merge", &["main"], Some(&feature_wt));
         cmd.env(
-            "WORKTRUNK_COMMIT_GENERATION__COMMAND",
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "nonexistent-llm-command",
         );
         cmd
@@ -540,7 +540,7 @@ fn test_merge_with_untracked_files(mut repo_with_main_worktree: TestRepo) {
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(repo, "merge", &["main"], Some(&feature_wt));
         cmd.env(
-            "WORKTRUNK_COMMIT_GENERATION__COMMAND",
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "cat >/dev/null && echo 'fix: commit changes'",
         );
         cmd
@@ -1485,7 +1485,7 @@ fn test_merge_squash_with_working_tree_creates_backup(mut repo_with_main_worktre
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(repo, "merge", &["main"], Some(&feature_wt));
         cmd.env(
-            "WORKTRUNK_COMMIT_GENERATION__COMMAND",
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "cat >/dev/null && echo 'fix: update files'",
         );
         cmd
@@ -1578,7 +1578,7 @@ fn test_step_squash_with_no_verify_flag(mut repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
         cmd.arg("squash").args(["--no-verify"]);
         cmd.env(
-            "WORKTRUNK_COMMIT_GENERATION__COMMAND",
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "cat >/dev/null && echo 'squash: combined commits'",
         );
         cmd
@@ -1604,7 +1604,7 @@ fn test_step_squash_with_stage_tracked_flag(mut repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
         cmd.arg("squash").args(["--stage=tracked"]);
         cmd.env(
-            "WORKTRUNK_COMMIT_GENERATION__COMMAND",
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "cat >/dev/null && echo 'squash: combined commits'",
         );
         cmd
@@ -1639,7 +1639,7 @@ fn test_step_squash_with_both_flags(mut repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
         cmd.arg("squash").args(["--no-verify", "--stage=tracked"]);
         cmd.env(
-            "WORKTRUNK_COMMIT_GENERATION__COMMAND",
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "cat >/dev/null && echo 'squash: combined commits'",
         );
         cmd
@@ -1693,7 +1693,7 @@ fn test_step_commit_with_no_verify_flag(repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
         cmd.arg("commit").args(["--no-verify"]);
         cmd.env(
-            "WORKTRUNK_COMMIT_GENERATION__COMMAND",
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "cat >/dev/null && echo 'feat: add file'",
         );
         cmd
@@ -1716,7 +1716,7 @@ fn test_step_commit_with_stage_tracked_flag(repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
         cmd.arg("commit").args(["--stage=tracked"]);
         cmd.env(
-            "WORKTRUNK_COMMIT_GENERATION__COMMAND",
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "cat >/dev/null && echo 'fix: update tracked file'",
         );
         cmd
@@ -1742,7 +1742,7 @@ fn test_step_commit_with_both_flags(repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
         cmd.arg("commit").args(["--no-verify", "--stage=tracked"]);
         cmd.env(
-            "WORKTRUNK_COMMIT_GENERATION__COMMAND",
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "cat >/dev/null && echo 'fix: update file'",
         );
         cmd

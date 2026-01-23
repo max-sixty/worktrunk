@@ -130,8 +130,9 @@ mod tests {
         let toml = toml::to_string(&config).unwrap();
         // worktree-path is not serialized when None (uses built-in default)
         assert!(!toml.contains("worktree-path"));
-        // commit and commit-generation are not serialized when None
-        assert!(!toml.contains("commit"));
+        // commit and commit-generation sections are not serialized when None
+        assert!(!toml.contains("[commit]"));
+        assert!(!toml.contains("[commit-generation]"));
     }
 
     #[test]
