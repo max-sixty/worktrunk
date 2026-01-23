@@ -560,3 +560,69 @@ worktree-path = "{{ repo }}.shared"
         "One worktree should remain at original location (skipped)"
     );
 }
+
+/// Test that template expansion errors are reported gracefully
+#[rstest]
+fn test_relocate_template_error(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // Create a worktree at a non-standard location
+    let wrong_path = parent.join("wrong-location");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        wrong_path.to_str().unwrap(),
+    ]);
+
+    // Configure an invalid template with a non-existent variable
+    let worktrunk_config = r#"
+worktree-path = "{{ nonexistent_variable }}"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    // Relocate should warn about template error and skip
+    // Filter to just "feature" to avoid noise from other worktrees
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["relocate", "feature"],
+        None
+    ));
+
+    // Verify the worktree was NOT moved (skipped due to template error)
+    assert!(
+        wrong_path.exists(),
+        "Worktree should not be moved when template fails: {}",
+        wrong_path.display()
+    );
+}
+
+/// Test that empty default branch is detected early with actionable error
+#[rstest]
+fn test_relocate_empty_default_branch(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // Create a worktree at a non-standard location
+    let wrong_path = parent.join("wrong-location");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        wrong_path.to_str().unwrap(),
+    ]);
+
+    // Set worktrunk.default-branch to a non-existent branch.
+    // The detection logic validates that configured branches exist locally,
+    // and returns None if they don't. This triggers the empty default branch error.
+    repo.run_git(&[
+        "config",
+        "worktrunk.default-branch",
+        "nonexistent-branch-xyz",
+    ]);
+
+    // Relocate should fail early with helpful error
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["relocate"], None));
+}
