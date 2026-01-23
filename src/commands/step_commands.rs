@@ -951,7 +951,7 @@ pub fn step_relocate(
     // An empty default branch would cause confusing "git checkout ''" errors
     if default_branch.is_empty() {
         anyhow::bail!(
-            "Cannot determine default branch; set with: git config worktrunk.default-branch main"
+            "Cannot determine default branch; set with: wt config state default-branch set main"
         );
     }
     let repo_path = repo.repo_path().to_path_buf();
