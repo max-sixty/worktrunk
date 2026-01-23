@@ -83,7 +83,7 @@ pub use deprecation::normalize_template_vars;
 pub use deprecation::{key_belongs_in, warn_unknown_fields};
 pub use expansion::{
     DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, expand_template, redact_credentials,
-    sanitize_branch_name, sanitize_db,
+    sanitize_branch_name, sanitize_db, short_hash,
 };
 pub use hooks::HooksConfig;
 pub use project::{

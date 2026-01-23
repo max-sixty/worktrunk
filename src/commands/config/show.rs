@@ -224,7 +224,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let project_config = repo.load_project_config().ok().flatten();
     let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
-    let platform = get_platform_for_repo(&repo, platform_override);
+    let platform = get_platform_for_repo(&repo, platform_override, None);
 
     match platform {
         Some(CiPlatform::GitHub) => {
