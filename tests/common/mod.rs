@@ -569,8 +569,6 @@ const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("CLICOLOR_FORCE", "1"),
     // Terminal width for PTY tests. configure_cli_command() overrides to 500 for longer paths.
     ("COLUMNS", "150"),
-    // Consistent terminal type for hyperlink detection via supports-hyperlinks crate
-    ("TERM", "alacritty"),
     // Deterministic locale settings
     ("LC_ALL", "C"),
     ("LANG", "C"),
@@ -580,6 +578,11 @@ const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     // Without this, slow CI triggers progress messages that don't appear on faster systems.
     ("WT_TEST_DELAYED_STREAM_MS", "-1"),
 ];
+
+// NOTE: TERM is intentionally NOT in STATIC_TEST_ENV_VARS because:
+// - configure_cli_command() sets TERM=alacritty for hyperlink detection testing
+// - PTY tests (especially skim-based select tests) need a TERM with valid terminfo
+// - macOS CI doesn't have alacritty terminfo, causing skim to fail
 
 /// Null device path, platform-appropriate.
 /// Use this for GIT_CONFIG_SYSTEM to disable system config in tests.
@@ -662,6 +665,7 @@ pub fn configure_completion_invocation_for_shell(cmd: &mut Command, words: &[&st
 /// share common variables via `STATIC_TEST_ENV_VARS`. Key differences:
 /// - This function uses COLUMNS=500 (wider for long macOS paths in error messages)
 /// - `test_env_vars()` uses COLUMNS=150 (narrower for PTY snapshot consistency)
+/// - This function sets TERM=alacritty; PTY tests don't (skim needs valid terminfo)
 /// - This function enables RUST_LOG=warn; PTY tests don't (too noisy in combined output)
 /// - This function clears host GIT_*/WORKTRUNK_* vars; PTY tests start with clean env
 pub fn configure_cli_command(cmd: &mut Command) {
@@ -691,6 +695,9 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // macOS temp paths (~80 chars) are much longer than Linux (~10 chars),
     // so error messages containing paths need room to avoid platform-specific line breaks.
     cmd.env("COLUMNS", "500");
+    // Set consistent terminal type for hyperlink detection via supports-hyperlinks crate.
+    // Not in STATIC_TEST_ENV_VARS because PTY tests need a TERM with valid terminfo.
+    cmd.env("TERM", "alacritty");
 
     // Pass through LLVM coverage profiling environment for subprocess coverage collection.
     // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record
