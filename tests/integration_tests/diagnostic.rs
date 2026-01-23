@@ -465,10 +465,12 @@ fn test_diagnostic_gh_hint_with_vv(mut repo: TestRepo) {
         .find(|line| line.contains("report a bug"))
         .expect("Should have hint about reporting a bug");
 
-    // Normalize the path in the hint (handles both raw paths and _REPO_ filtered paths)
-    let normalized = regex::Regex::new(r"'[^']*diagnostic\.md'")
+    // Normalize the path in the hint. The path may be:
+    // - Quoted on Windows (drive letter colon requires POSIX escaping): 'D:/a/.../diagnostic.md'
+    // - Unquoted on Unix (no special chars): _REPO_/.git/wt-logs/diagnostic.md
+    let normalized = regex::Regex::new(r"--web '?[^' \x1b]*diagnostic\.md'?")
         .unwrap()
-        .replace(hint_line, "'[DIAGNOSTIC_PATH]'");
+        .replace(hint_line, "--web [DIAGNOSTIC_PATH]");
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
