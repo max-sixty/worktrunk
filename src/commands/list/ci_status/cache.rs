@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use worktrunk::git::Repository;
-use worktrunk::path::sanitize_for_filename;
+use worktrunk::path::sanitize_for_unique_filename;
 
 use super::PrStatus;
 
@@ -69,7 +69,7 @@ impl CachedCiStatus {
     /// Get the cache file path for a branch.
     fn cache_file(repo: &Repository, branch: &str) -> PathBuf {
         let dir = Self::cache_dir(repo);
-        let safe_branch = sanitize_for_filename(branch);
+        let safe_branch = sanitize_for_unique_filename(branch);
         dir.join(format!("{safe_branch}.json"))
     }
 

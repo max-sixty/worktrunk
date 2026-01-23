@@ -106,11 +106,10 @@ pub fn format_path_for_display(path: &Path) -> String {
 /// Sanitize a string for use as a filename on all platforms.
 ///
 /// Replaces invalid characters and control characters with `-`, trims trailing
-/// dots/spaces (Windows), prefixes reserved device names with `_`, and appends
-/// a 3-character hash suffix for collision avoidance.
+/// dots/spaces (Windows), and prefixes reserved device names with `_`.
 ///
-/// The hash is computed from the original input, ensuring unique outputs for
-/// inputs that would otherwise collide (e.g., `origin/feature` vs `origin-feature`).
+/// For cache files where collision avoidance matters (e.g., `origin/feature` vs
+/// `origin-feature`), use [`sanitize_for_unique_filename`] instead.
 pub fn sanitize_for_filename(value: &str) -> String {
     let mut result: String = value
         .chars()
@@ -137,10 +136,24 @@ pub fn sanitize_for_filename(value: &str) -> String {
             && upper.chars().nth(3).is_some_and(|c| matches!(c, '1'..='9')));
 
     if is_reserved {
-        result = format!("_{result}");
+        format!("_{result}")
     } else if result.is_empty() {
-        result = "_empty".to_string();
+        "_empty".to_string()
+    } else {
+        result
     }
+}
+
+/// Sanitize a string for use as a unique filename on all platforms.
+///
+/// Like [`sanitize_for_filename`], but appends a 3-character hash suffix for
+/// collision avoidance. The hash is computed from the original input, ensuring
+/// unique outputs for inputs that would otherwise collide (e.g., `origin/feature`
+/// vs `origin-feature` both sanitize to `origin-feature` but get different hashes).
+///
+/// Use this for cache files where different inputs must produce different filenames.
+pub fn sanitize_for_unique_filename(value: &str) -> String {
+    let mut result = sanitize_for_filename(value);
 
     // Append hash suffix for collision avoidance (computed from original input)
     if !result.ends_with('-') {
@@ -261,63 +274,34 @@ mod tests {
 
     #[test]
     fn test_sanitize_for_filename_replaces_invalid_chars() {
-        let result = sanitize_for_filename("foo/bar");
-        assert!(
-            result.starts_with("foo-bar-"),
-            "expected 'foo-bar-' prefix, got {result}"
-        );
-
-        let result = sanitize_for_filename("name:with?chars");
-        assert!(
-            result.starts_with("name-with-chars-"),
-            "expected 'name-with-chars-' prefix, got {result}"
-        );
+        assert_eq!(sanitize_for_filename("foo/bar"), "foo-bar");
+        assert_eq!(sanitize_for_filename("name:with?chars"), "name-with-chars");
     }
 
     #[test]
     fn test_sanitize_for_filename_trims_trailing_dots_and_spaces() {
-        let result = sanitize_for_filename("file. ");
-        assert!(
-            result.starts_with("file-"),
-            "expected 'file-' prefix, got {result}"
-        );
-
-        let result = sanitize_for_filename("file...");
-        assert!(
-            result.starts_with("file-"),
-            "expected 'file-' prefix, got {result}"
-        );
+        assert_eq!(sanitize_for_filename("file. "), "file");
+        assert_eq!(sanitize_for_filename("file..."), "file");
     }
 
     #[test]
     fn test_sanitize_for_filename_prefixes_reserved_names() {
-        let result = sanitize_for_filename("CON");
-        assert!(
-            result.starts_with("_CON-"),
-            "expected '_CON-' prefix, got {result}"
-        );
-
-        let result = sanitize_for_filename("com1");
-        assert!(
-            result.starts_with("_com1-"),
-            "expected '_com1-' prefix, got {result}"
-        );
+        assert_eq!(sanitize_for_filename("CON"), "_CON");
+        assert_eq!(sanitize_for_filename("com1"), "_com1");
     }
 
     #[test]
     fn test_sanitize_for_filename_handles_empty() {
-        let result = sanitize_for_filename("");
-        assert!(
-            result.starts_with("_empty-"),
-            "expected '_empty-' prefix, got {result}"
-        );
+        assert_eq!(sanitize_for_filename(""), "_empty");
     }
 
     #[test]
-    fn test_sanitize_for_filename_avoids_collisions() {
+    fn test_sanitize_for_unique_filename_avoids_collisions() {
+        use super::sanitize_for_unique_filename;
+
         // These would collide without the hash suffix
-        let a = sanitize_for_filename("origin/feature");
-        let b = sanitize_for_filename("origin-feature");
+        let a = sanitize_for_unique_filename("origin/feature");
+        let b = sanitize_for_unique_filename("origin-feature");
 
         assert_ne!(a, b, "collision: {a} == {b}");
         assert!(a.starts_with("origin-feature-"));
