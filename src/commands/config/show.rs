@@ -317,6 +317,9 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Trigger deprecation warnings (runs on raw content before parsing, so works even for invalid configs)
+    let _ = UserConfig::load();
+
     // Read and display the file contents
     let contents = std::fs::read_to_string(&config_path).context("Failed to read config file")?;
 
@@ -401,6 +404,11 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     if !config_path.exists() {
         writeln!(out, "{}", hint_message("Not found"))?;
         return Ok(());
+    }
+
+    // Trigger deprecation warnings (runs on raw content before parsing, so works even for invalid configs)
+    if let Ok(repo) = Repository::current() {
+        let _ = repo.load_project_config();
     }
 
     // Read and display the file contents
