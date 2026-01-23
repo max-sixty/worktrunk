@@ -58,14 +58,11 @@ impl WorktreeInfo {
                             }
                             .into());
                         };
-                        // Ignore empty branch refs (can occur on some platforms)
-                        if !branch_ref.is_empty() {
-                            let branch = branch_ref
-                                .strip_prefix("refs/heads/")
-                                .unwrap_or(branch_ref)
-                                .to_string();
-                            wt.branch = Some(branch);
-                        }
+                        let branch = branch_ref
+                            .strip_prefix("refs/heads/")
+                            .unwrap_or(branch_ref)
+                            .to_string();
+                        wt.branch = Some(branch);
                     }
                     ("bare", Some(wt)) => {
                         wt.bare = true;
@@ -389,16 +386,5 @@ mod tests {
         let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
         // Should use the branch name as-is when no refs/heads/ prefix
         assert_eq!(wt.branch, Some("main".to_string()));
-    }
-
-    #[test]
-    fn test_parse_porcelain_list_empty_branch_ref() {
-        // Some platforms (macOS Sequoia) can output "branch " with empty ref
-        let output = "worktree /path/to/repo\nHEAD abc123\nbranch \n\n";
-        let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-        let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
-        // Empty branch ref should be treated as None (not detached, just no branch info)
-        assert_eq!(wt.branch, None);
-        assert!(!wt.detached);
     }
 }
