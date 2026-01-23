@@ -48,6 +48,7 @@ use ansi_str::AnsiStr;
 use anyhow::Context;
 use color_print::cformat;
 use minijinja::{Environment, context};
+use shell_escape::escape;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
@@ -245,14 +246,13 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
 
             // Only show gh command if gh is installed
             if is_gh_installed() {
-                // Escape single quotes for shell: 'it'\''s' -> it's
-                let path_str = path.to_string_lossy().replace('\'', "'\\''");
+                let path_str = escape(path.to_string_lossy());
                 // URL with prefilled body: ## Gist\n\n[Paste URL]\n\n## Description\n\n[Describe the issue]
                 let issue_url = "https://github.com/max-sixty/worktrunk/issues/new?body=%23%23%20Gist%0A%0A%5BPaste%20gist%20URL%5D%0A%0A%23%23%20Description%0A%0A%5BDescribe%20the%20issue%5D";
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "To report a bug, create a secret gist with <bright-black>gh gist create --web '{path_str}'</> and reference it from an issue at <bright-black>{issue_url}</>"
+                        "To report a bug, create a secret gist with <bright-black>gh gist create --web {path_str}</> and reference it from an issue at <bright-black>{issue_url}</>"
                     ))
                 );
             }
