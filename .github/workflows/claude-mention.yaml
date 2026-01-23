@@ -104,7 +104,11 @@ jobs:
             - 'cargo doc --no-deps' - Build documentation
 
             This project is a git worktree manager that integrates with shells (bash, zsh, fish).
-            Pay attention to shell integration, output formatting (anstyle), and snapshot tests."
+            Pay attention to shell integration, output formatting (anstyle), and snapshot tests.
+
+            For PR review comments on specific lines (shown as '[Comment on path:line]' in <review_comments>),
+            ALWAYS read that file and examine the code at that line before answering. The question is about
+            that specific code, not about the PR in general."
 
       - name: 📋 Upload Claude Code session logs
         if: always()
