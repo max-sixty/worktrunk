@@ -1,6 +1,7 @@
 use anyhow::Context;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 #[cfg(unix)]
 use std::process::Command;
 use std::process::Stdio;
@@ -108,8 +109,6 @@ impl HookLog {
     ///
     /// Returns an error if the format is invalid or unrecognized.
     pub fn parse(s: &str) -> Result<Self, String> {
-        use std::str::FromStr;
-
         let parts: Vec<&str> = s.split(':').collect();
 
         match parts.as_slice() {
@@ -144,13 +143,11 @@ impl HookLog {
 
 /// Parse a hook source from a string.
 fn parse_source(s: &str) -> Result<HookSource, String> {
-    use std::str::FromStr;
     HookSource::from_str(s).map_err(|_| format!("Unknown source '{}'. Use 'user' or 'project'", s))
 }
 
 /// Parse a hook type from a string.
 fn parse_hook_type(s: &str) -> Result<HookType, String> {
-    use std::str::FromStr;
     HookType::from_str(s).map_err(|_| {
         format!(
             "Unknown hook type '{}'. Valid types: post-create, post-start, post-switch, \

@@ -9,11 +9,14 @@ use std::path::PathBuf;
 use color_print::cformat;
 use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 use worktrunk::git::Repository;
-use worktrunk::path::format_path_for_display;
+use worktrunk::path::{format_path_for_display, sanitize_for_filename};
 use worktrunk::styling::{
     eprintln, format_heading, format_with_gutter, info_message, println, success_message,
     warning_message,
 };
+
+use crate::cli::OutputFormat;
+use crate::commands::process::HookLog;
 use worktrunk::utils::get_now;
 
 use super::super::list::ci_status::CachedCiStatus;
@@ -173,11 +176,6 @@ pub(super) fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::R
 /// - `source:hook-type:name` for hook commands (e.g., `user:post-start:server`)
 /// - `operation` for internal operations (e.g., `remove`)
 pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::Result<()> {
-    use worktrunk::path::sanitize_for_filename;
-    use worktrunk::styling::println;
-
-    use crate::commands::process::HookLog;
-
     let repo = Repository::current()?;
 
     match hook {
@@ -582,9 +580,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
 // ==================== State Show Commands ====================
 
 /// Handle the state get command (shows all state)
-pub fn handle_state_show(format: crate::cli::OutputFormat) -> anyhow::Result<()> {
-    use crate::cli::OutputFormat;
-
+pub fn handle_state_show(format: OutputFormat) -> anyhow::Result<()> {
     let repo = Repository::current()?;
 
     match format {
