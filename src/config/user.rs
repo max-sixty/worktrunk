@@ -1753,6 +1753,77 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     }
 
     #[test]
+    fn test_merge_commit_config_generation_base_only() {
+        // Base has generation, override doesn't - use base
+        let base = CommitConfig {
+            stage: None,
+            generation: Some(CommitGenerationConfig {
+                command: Some("base-llm".to_string()),
+                ..Default::default()
+            }),
+        };
+        let override_config = CommitConfig {
+            stage: None,
+            generation: None,
+        };
+
+        let merged = base.merge_with(&override_config);
+        assert_eq!(
+            merged.generation.as_ref().unwrap().command,
+            Some("base-llm".to_string())
+        );
+    }
+
+    #[test]
+    fn test_merge_commit_config_generation_override_only() {
+        // Override has generation, base doesn't - use override
+        let base = CommitConfig {
+            stage: None,
+            generation: None,
+        };
+        let override_config = CommitConfig {
+            stage: None,
+            generation: Some(CommitGenerationConfig {
+                command: Some("override-llm".to_string()),
+                ..Default::default()
+            }),
+        };
+
+        let merged = base.merge_with(&override_config);
+        assert_eq!(
+            merged.generation.as_ref().unwrap().command,
+            Some("override-llm".to_string())
+        );
+    }
+
+    #[test]
+    fn test_merge_commit_config_generation_both() {
+        // Both have generation - merge them
+        let base = CommitConfig {
+            stage: Some(StageMode::All),
+            generation: Some(CommitGenerationConfig {
+                command: Some("base-llm".to_string()),
+                template: Some("base-template".to_string()),
+                ..Default::default()
+            }),
+        };
+        let override_config = CommitConfig {
+            stage: None, // Will use base's stage
+            generation: Some(CommitGenerationConfig {
+                command: Some("override-llm".to_string()), // Override command
+                template: None,                            // Use base's template
+                ..Default::default()
+            }),
+        };
+
+        let merged = base.merge_with(&override_config);
+        assert_eq!(merged.stage, Some(StageMode::All));
+        let generation = merged.generation.as_ref().unwrap();
+        assert_eq!(generation.command, Some("override-llm".to_string()));
+        assert_eq!(generation.template, Some("base-template".to_string()));
+    }
+
+    #[test]
     fn test_merge_merge_config() {
         let base = MergeConfig {
             squash: Some(true),
@@ -1842,6 +1913,41 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
         let merged = global.merge_with(&project);
         assert_eq!(merged.template, Some("global template".to_string()));
         assert_eq!(merged.template_file, None);
+    }
+
+    #[test]
+    fn test_commit_generation_merge_squash_template_mutual_exclusivity() {
+        // Global has squash_template_file, project has squash_template
+        // Merged result should only have squash_template (project wins)
+        let global = CommitGenerationConfig {
+            squash_template_file: Some("~/.config/squash.txt".to_string()),
+            ..Default::default()
+        };
+        let project = CommitGenerationConfig {
+            squash_template: Some("inline squash".to_string()),
+            ..Default::default()
+        };
+
+        let merged = global.merge_with(&project);
+        assert_eq!(merged.squash_template, Some("inline squash".to_string()));
+        assert_eq!(merged.squash_template_file, None);
+
+        // Reverse: global has squash_template, project has squash_template_file
+        let global = CommitGenerationConfig {
+            squash_template: Some("global squash".to_string()),
+            ..Default::default()
+        };
+        let project = CommitGenerationConfig {
+            squash_template_file: Some("project-squash.txt".to_string()),
+            ..Default::default()
+        };
+
+        let merged = global.merge_with(&project);
+        assert_eq!(merged.squash_template, None);
+        assert_eq!(
+            merged.squash_template_file,
+            Some("project-squash.txt".to_string())
+        );
     }
 
     // =========================================================================
