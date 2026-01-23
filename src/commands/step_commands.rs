@@ -1034,18 +1034,17 @@ pub fn step_relocate(
                 if mismatched.len() == 1 { "" } else { "s" }
             ))
         );
-        eprintln!();
 
-        for (wt, expected_path) in &mismatched {
-            let branch = wt.branch.as_deref().unwrap();
-            let src_display = format_path_for_display(&wt.path);
-            let dest_display = format_path_for_display(expected_path);
-
-            eprintln!(
-                "{}",
-                cformat!("  <bold>{branch}</>: {src_display} → {dest_display}")
-            );
-        }
+        let preview_lines: Vec<String> = mismatched
+            .iter()
+            .map(|(wt, expected_path)| {
+                let branch = wt.branch.as_deref().unwrap();
+                let src_display = format_path_for_display(&wt.path);
+                let dest_display = format_path_for_display(expected_path);
+                cformat!("<bold>{branch}</>: {src_display} → {dest_display}")
+            })
+            .collect();
+        eprintln!("{}", format_with_gutter(&preview_lines.join("\n"), None));
         return Ok(());
     }
 
