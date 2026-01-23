@@ -48,9 +48,9 @@ const DEPRECATED_VARS: &[(&str, &str)] = &[
     ("main_worktree_path", "primary_worktree_path"),
 ];
 
-/// Top-level section keys that are deprecated and handled by warn_deprecated_sections_once.
-/// These are skipped in warn_unknown_fields to avoid duplicate warnings.
-const DEPRECATED_SECTION_KEYS: &[&str] = &["commit-generation"];
+/// Top-level section keys that are deprecated and handled separately.
+/// Callers should filter these out before calling `warn_unknown_fields` to avoid duplicate warnings.
+pub const DEPRECATED_SECTION_KEYS: &[&str] = &["commit-generation"];
 
 /// Normalize a template string by replacing deprecated variables with their canonical names.
 ///
@@ -601,10 +601,6 @@ pub fn warn_unknown_fields<C: WorktrunkConfig>(
     keys.sort();
 
     for key in keys {
-        // Skip deprecated section keys - they're already warned about by warn_deprecated_sections_once
-        if DEPRECATED_SECTION_KEYS.contains(&key.as_str()) {
-            continue;
-        }
         let value = &unknown_keys[key];
         if let Some(other_location) = key_belongs_in::<C>(key, value) {
             eprintln!(

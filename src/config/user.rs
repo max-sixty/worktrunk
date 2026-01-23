@@ -599,7 +599,12 @@ impl UserConfig {
                 // Warn about unknown fields in the config file
                 // (must check file content directly, not config.unknown, because
                 // config.unknown includes env vars which shouldn't trigger warnings)
-                let unknown_keys = find_unknown_keys(&content);
+                let unknown_keys: std::collections::HashMap<_, _> = find_unknown_keys(&content)
+                    .into_iter()
+                    .filter(|(k, _)| {
+                        !super::deprecation::DEPRECATED_SECTION_KEYS.contains(&k.as_str())
+                    })
+                    .collect();
                 super::deprecation::warn_unknown_fields::<UserConfig>(
                     config_path,
                     &unknown_keys,
