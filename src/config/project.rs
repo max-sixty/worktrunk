@@ -80,7 +80,7 @@ impl ProjectConfig {
 /// - `{{ branch }}` - Branch name (e.g., "feature/auth")
 /// - `{{ worktree_name }}` - Worktree directory name (e.g., "myproject.feature-auth")
 /// - `{{ worktree_path }}` - Absolute path to the worktree (e.g., "/path/to/myproject.feature-auth")
-/// - `{{ primary_worktree_path }}` - Main worktree path (or for bare repos, the default branch worktree)
+/// - `{{ primary_worktree_path }}` - Primary worktree path (main worktree for normal repos; default branch worktree for bare repos)
 /// - `{{ default_branch }}` - Default branch name (e.g., "main")
 /// - `{{ commit }}` - Current HEAD commit SHA (full 40-character hash)
 /// - `{{ short_commit }}` - Current HEAD commit SHA (short 7-character hash)
