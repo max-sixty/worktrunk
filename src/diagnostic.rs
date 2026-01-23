@@ -30,11 +30,8 @@
 //!
 //! # File Location
 //!
-//! Reports are written to `<git-common-dir>/wt-logs/diagnostic.md`:
-//! - Normal repos: `.git/wt-logs/diagnostic.md`
-//! - Bare repos: `<bare-repo>/wt-logs/diagnostic.md`
-//!
-//! Verbose logs go to `<git-common-dir>/wt-logs/verbose.log`.
+//! Reports are written to `<git-common-dir>/wt-logs/diagnostic.md` (typically
+//! `.git/wt-logs/diagnostic.md`). Verbose logs go to `verbose.log` in the same directory.
 //!
 //! # Usage
 //!

@@ -308,9 +308,7 @@ impl Repository {
 
     /// Get the directory where worktrunk background logs are stored.
     ///
-    /// Logs are centralized under the git common directory:
-    /// - Normal repos: `.git/wt-logs/`
-    /// - Bare repos: `<bare-repo>/wt-logs/`
+    /// Returns `<git-common-dir>/wt-logs/` (typically `.git/wt-logs/`).
     pub fn wt_logs_dir(&self) -> PathBuf {
         self.git_common_dir().join("wt-logs")
     }
