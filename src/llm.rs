@@ -1,4 +1,6 @@
 use anyhow::Context;
+use shell_escape::escape;
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
@@ -20,9 +22,6 @@ const SHELL_METACHARACTERS: &[char] = &[
 ///
 /// Simple commands like `llm -m haiku` are shown as-is.
 /// Complex commands with shell syntax are wrapped: `sh -c 'complex && command'`
-///
-/// TODO: Consider using a shell escaping crate (e.g., `shell-escape`, `shlex`)
-/// instead of manual metacharacter detection and quote escaping.
 fn format_reproduction_command(base_cmd: &str, llm_command: &str) -> String {
     let needs_shell = llm_command.contains(SHELL_METACHARACTERS)
         || llm_command
@@ -32,9 +31,9 @@ fn format_reproduction_command(base_cmd: &str, llm_command: &str) -> String {
 
     if needs_shell {
         format!(
-            "{} | sh -c '{}'",
+            "{} | sh -c {}",
             base_cmd,
-            llm_command.replace('\'', "'\\''")
+            escape(Cow::Borrowed(llm_command))
         )
     } else {
         format!("{} | {}", base_cmd, llm_command)
