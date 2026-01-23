@@ -60,6 +60,24 @@ $ llm keys set openai
 command = "llm -m gpt-4o-mini"
 ```
 
+### Option 3: aichat
+
+[aichat](https://github.com/sigoden/aichat) is another option:
+
+```toml
+[commit.generation]
+command = "aichat -m claude:claude-haiku-4.5"
+```
+
+### Custom scripts
+
+Any command that reads a prompt from stdin and outputs a commit message works:
+
+```toml
+[commit.generation]
+command = "./scripts/generate-commit.sh"
+```
+
 ## How it works
 
 When worktrunk needs a commit message, it builds a prompt from a template and pipes it to the configured command via shell (`sh -c`). Environment variables can be set inline in the command string.
@@ -154,22 +172,6 @@ Templates use [minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/inde
 - **Whitespace control**: `{%- ... -%}` strips surrounding whitespace
 
 See `wt config create --help` for the full default templates.
-
-## Alternative tools
-
-Any command that reads a prompt from stdin and outputs a commit message works:
-
-```toml
-# aichat
-[commit.generation]
-command = "aichat -m claude:claude-haiku-4.5"
-
-# Custom script
-[commit.generation]
-command = "./scripts/generate-commit.sh"
-```
-
-See [llm documentation](https://llm.datasette.io/) and [aichat](https://github.com/sigoden/aichat).
 
 ## Fallback behavior
 
