@@ -240,6 +240,83 @@ pub(crate) struct Cli {
     pub command: Option<Commands>,
 }
 
+/// Shared arguments for merge and sync commands
+#[derive(clap::Args)]
+pub(crate) struct MergeArgs {
+    /// Target branch
+    ///
+    /// Defaults to default branch.
+    #[arg(add = crate::completion::branch_value_completer())]
+    pub target: Option<String>,
+
+    /// Force commit squashing
+    #[arg(long, overrides_with = "no_squash", hide = true)]
+    pub squash: bool,
+
+    /// Skip commit squashing
+    #[arg(long = "no-squash", overrides_with = "squash")]
+    pub no_squash: bool,
+
+    /// Force commit and squash
+    #[arg(long, overrides_with = "no_commit", hide = true)]
+    pub commit: bool,
+
+    /// Skip commit and squash
+    #[arg(long = "no-commit", overrides_with = "commit")]
+    pub no_commit: bool,
+
+    /// Force rebasing onto target
+    #[arg(long, overrides_with = "no_rebase", hide = true)]
+    pub rebase: bool,
+
+    /// Skip rebase (fail if not already rebased)
+    #[arg(long = "no-rebase", overrides_with = "rebase")]
+    pub no_rebase: bool,
+
+    /// Force running hooks
+    #[arg(long, overrides_with = "no_verify", hide = true)]
+    pub verify: bool,
+
+    /// Skip hooks
+    #[arg(long = "no-verify", overrides_with = "verify")]
+    pub no_verify: bool,
+
+    /// Skip approval prompts
+    #[arg(short, long)]
+    pub yes: bool,
+
+    /// What to stage before committing [default: all]
+    #[arg(long)]
+    pub stage: Option<crate::commands::commit::StageMode>,
+}
+
+impl MergeArgs {
+    pub fn flag_pair_squash(&self) -> Option<bool> {
+        flag_pair(self.squash, self.no_squash)
+    }
+
+    pub fn flag_pair_commit(&self) -> Option<bool> {
+        flag_pair(self.commit, self.no_commit)
+    }
+
+    pub fn flag_pair_rebase(&self) -> Option<bool> {
+        flag_pair(self.rebase, self.no_rebase)
+    }
+
+    pub fn flag_pair_verify(&self) -> Option<bool> {
+        flag_pair(self.verify, self.no_verify)
+    }
+}
+
+/// Convert paired flags (--flag / --no-flag) to Option<bool>
+pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
+    match (positive, negative) {
+        (true, _) => Some(true),
+        (_, true) => Some(false),
+        _ => None,
+    }
+}
+
 #[derive(Subcommand)]
 pub(crate) enum Commands {
     /// Switch to a worktree
@@ -867,35 +944,8 @@ lint = "cargo clippy"
 "#
     )]
     Merge {
-        /// Target branch
-        ///
-        /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
-        target: Option<String>,
-
-        /// Force commit squashing
-        #[arg(long, overrides_with = "no_squash", hide = true)]
-        squash: bool,
-
-        /// Skip commit squashing
-        #[arg(long = "no-squash", overrides_with = "squash")]
-        no_squash: bool,
-
-        /// Force commit and squash
-        #[arg(long, overrides_with = "no_commit", hide = true)]
-        commit: bool,
-
-        /// Skip commit and squash
-        #[arg(long = "no-commit", overrides_with = "commit")]
-        no_commit: bool,
-
-        /// Force rebasing onto target
-        #[arg(long, overrides_with = "no_rebase", hide = true)]
-        rebase: bool,
-
-        /// Skip rebase (fail if not already rebased)
-        #[arg(long = "no-rebase", overrides_with = "rebase")]
-        no_rebase: bool,
+        #[command(flatten)]
+        args: MergeArgs,
 
         /// Force worktree removal after merge
         #[arg(long, overrides_with = "no_remove", hide = true)]
@@ -904,22 +954,6 @@ lint = "cargo clippy"
         /// Keep worktree after merge
         #[arg(long = "no-remove", overrides_with = "remove")]
         no_remove: bool,
-
-        /// Force running hooks
-        #[arg(long, overrides_with = "no_verify", hide = true)]
-        verify: bool,
-
-        /// Skip hooks
-        #[arg(long = "no-verify", overrides_with = "verify")]
-        no_verify: bool,
-
-        /// Skip approval prompts
-        #[arg(short, long)]
-        yes: bool,
-
-        /// What to stage before committing [default: all]
-        #[arg(long)]
-        stage: Option<crate::commands::commit::StageMode>,
     },
     /// Merge and keep the worktree (alias for `merge --no-remove`)
     ///
@@ -953,51 +987,8 @@ wt sync develop
 "#
     )]
     Sync {
-        /// Target branch
-        ///
-        /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
-        target: Option<String>,
-
-        /// Force commit squashing
-        #[arg(long, overrides_with = "no_squash", hide = true)]
-        squash: bool,
-
-        /// Skip commit squashing
-        #[arg(long = "no-squash", overrides_with = "squash")]
-        no_squash: bool,
-
-        /// Force commit and squash
-        #[arg(long, overrides_with = "no_commit", hide = true)]
-        commit: bool,
-
-        /// Skip commit and squash
-        #[arg(long = "no-commit", overrides_with = "commit")]
-        no_commit: bool,
-
-        /// Force rebasing onto target
-        #[arg(long, overrides_with = "no_rebase", hide = true)]
-        rebase: bool,
-
-        /// Skip rebase (fail if not already rebased)
-        #[arg(long = "no-rebase", overrides_with = "rebase")]
-        no_rebase: bool,
-
-        /// Force running hooks
-        #[arg(long, overrides_with = "no_verify", hide = true)]
-        verify: bool,
-
-        /// Skip hooks
-        #[arg(long = "no-verify", overrides_with = "verify")]
-        no_verify: bool,
-
-        /// Skip approval prompts
-        #[arg(short, long)]
-        yes: bool,
-
-        /// What to stage before committing [default: all]
-        #[arg(long)]
-        stage: Option<crate::commands::commit::StageMode>,
+        #[command(flatten)]
+        args: MergeArgs,
     },
     /// Interactive worktree selector
     ///

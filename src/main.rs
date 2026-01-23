@@ -50,7 +50,7 @@ use output::{execute_user_command, handle_remove_output, handle_switch_output};
 use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigShellCommand,
     DefaultBranchAction, HintsAction, HookCommand, ListSubcommand, LogsAction, MarkerAction,
-    PreviousBranchAction, StateCommand, StepCommand,
+    PreviousBranchAction, StateCommand, StepCommand, flag_pair,
 };
 use worktrunk::HookType;
 
@@ -1112,74 +1112,30 @@ fn main() {
                 }
             }),
         Commands::Merge {
-            target,
-            squash,
-            no_squash,
-            commit,
-            no_commit,
-            rebase,
-            no_rebase,
+            args,
             remove,
             no_remove,
-            verify,
-            no_verify,
-            yes,
-            stage,
-        } => {
-            // Convert paired flags to Option<bool>
-            fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
-                match (positive, negative) {
-                    (true, _) => Some(true),
-                    (_, true) => Some(false),
-                    _ => None,
-                }
-            }
-
-            // Pass CLI flags as options; handle_merge determines effective defaults
-            // using per-project config merged with global config
+        } => handle_merge(MergeOptions {
+            target: args.target.as_deref(),
+            squash: args.flag_pair_squash(),
+            commit: args.flag_pair_commit(),
+            rebase: args.flag_pair_rebase(),
+            remove: flag_pair(remove, no_remove),
+            verify: args.flag_pair_verify(),
+            yes: args.yes,
+            stage: args.stage,
+        }),
+        Commands::Sync { args } => {
+            // Sync is merge with remove=false
             handle_merge(MergeOptions {
-                target: target.as_deref(),
-                squash: flag_pair(squash, no_squash),
-                commit: flag_pair(commit, no_commit),
-                rebase: flag_pair(rebase, no_rebase),
-                remove: flag_pair(remove, no_remove),
-                verify: flag_pair(verify, no_verify),
-                yes,
-                stage,
-            })
-        }
-        Commands::Sync {
-            target,
-            squash,
-            no_squash,
-            commit,
-            no_commit,
-            rebase,
-            no_rebase,
-            verify,
-            no_verify,
-            yes,
-            stage,
-        } => {
-            // Convert paired flags to Option<bool>
-            fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
-                match (positive, negative) {
-                    (true, _) => Some(true),
-                    (_, true) => Some(false),
-                    _ => None,
-                }
-            }
-
-            // Sync is merge with --no-remove default
-            handle_merge(MergeOptions {
-                target: target.as_deref(),
-                squash: flag_pair(squash, no_squash),
-                commit: flag_pair(commit, no_commit),
-                rebase: flag_pair(rebase, no_rebase),
+                target: args.target.as_deref(),
+                squash: args.flag_pair_squash(),
+                commit: args.flag_pair_commit(),
+                rebase: args.flag_pair_rebase(),
                 remove: Some(false), // Key difference: sync keeps the worktree
-                verify: flag_pair(verify, no_verify),
-                yes,
-                stage,
+                verify: args.flag_pair_verify(),
+                yes: args.yes,
+                stage: args.stage,
             })
         }
     };
