@@ -467,4 +467,30 @@ mod tests {
         assert!(result.starts_with("(log truncated to last ~50KB)"));
         assert!(result.len() < 55 * 1024);
     }
+
+    #[test]
+    fn test_shell_escape_path_unix_style() {
+        // Unix paths with no special chars pass through unchanged
+        let path = Path::new("/home/user/project/.git/wt-logs/diagnostic.md");
+        let result = shell_escape_path(path);
+        assert_eq!(result, "/home/user/project/.git/wt-logs/diagnostic.md");
+    }
+
+    #[test]
+    fn test_shell_escape_path_windows_backslashes() {
+        // Windows backslashes are normalized to forward slashes
+        let path = Path::new(r"D:\a\worktrunk\.git\wt-logs\diagnostic.md");
+        let result = shell_escape_path(path);
+        // The colon in D: requires quoting in POSIX shells
+        assert!(result.contains("D:/a/worktrunk"));
+        assert!(!result.contains('\\'));
+    }
+
+    #[test]
+    fn test_shell_escape_path_special_chars() {
+        // Paths with spaces or special chars get quoted
+        let path = Path::new("/path/with spaces/file.md");
+        let result = shell_escape_path(path);
+        assert!(result.starts_with('\'') || result.contains("\\ "));
+    }
 }
