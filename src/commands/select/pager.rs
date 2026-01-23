@@ -2,6 +2,7 @@
 //!
 //! Handles detection and use of diff pagers (delta, bat, etc.) for preview windows.
 
+use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -136,7 +137,6 @@ pub(super) fn run_git_diff_with_pager(git_args: &[&str], pager_cmd: &str) -> Opt
     // Read output in a thread to avoid blocking
     let stdout = child.stdout.take()?;
     let reader_thread = std::thread::spawn(move || {
-        use std::io::Read;
         let mut stdout = stdout;
         let mut output = Vec::new();
         let _ = stdout.read_to_end(&mut output);

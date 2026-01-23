@@ -1,15 +1,24 @@
+use std::collections::{HashMap, HashSet};
+use std::io::Write;
+
 use anyhow::Context;
 use clap::FromArgMatches;
-use color_print::cformat;
+use clap::error::ErrorKind as ClapErrorKind;
+use color_print::{ceprintln, cformat};
 use std::process;
 use worktrunk::config::{UserConfig, expand_template, set_config_path};
-use worktrunk::git::{Repository, exit_code, set_base_path};
+use worktrunk::git::{Repository, ResolvedWorktree, exit_code, set_base_path};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::extract_filename_from_path;
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, hint_message, info_message, success_message,
     warning_message,
 };
+
+use commands::command_approval::approve_hooks;
+use commands::context::CommandEnv;
+use commands::list::progressive::RenderMode;
+use commands::worktree::RemoveResult;
 
 mod cli;
 mod commands;
@@ -37,8 +46,8 @@ use commands::command_executor::{CommandContext, build_hook_context};
 use commands::handle_select;
 use commands::worktree::{SwitchResult, handle_push};
 use commands::{
-    MergeOptions, OperationMode, RebaseResult, SquashResult, add_approvals, approve_hooks,
-    clear_approvals, execute_switch, handle_completions, handle_config_create, handle_config_show,
+    MergeOptions, OperationMode, RebaseResult, SquashResult, add_approvals, clear_approvals,
+    execute_switch, handle_completions, handle_config_create, handle_config_show,
     handle_configure_shell, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
     handle_list, handle_merge, handle_rebase, handle_remove, handle_remove_current,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
@@ -59,12 +68,9 @@ use worktrunk::HookType;
 /// For `wt switch` missing the branch argument, adds hints about shortcuts.
 /// For unrecognized subcommands that match nested commands, suggests the full path.
 fn enhance_and_exit_error(err: clap::Error) -> ! {
-    use clap::error::ErrorKind;
-    use color_print::ceprintln;
-
     // For unrecognized subcommands, check if they match a nested subcommand
     // e.g., `wt squash` -> suggest `wt step squash`
-    if err.kind() == ErrorKind::InvalidSubcommand
+    if err.kind() == ClapErrorKind::InvalidSubcommand
         && let Some(unknown) = err.get(clap::error::ContextKind::InvalidSubcommand)
     {
         let cmd = cli::build_command();
@@ -82,7 +88,7 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
     // Hints go to stderr, which is safe since stdout is reserved for data output.
     // Check for both "wt switch" and "wt.exe switch" (Windows)
     let err_str = format!("{err}");
-    let is_switch_missing_arg = err.kind() == ErrorKind::MissingRequiredArgument
+    let is_switch_missing_arg = err.kind() == ClapErrorKind::MissingRequiredArgument
         && (err_str.contains("wt switch") || err_str.contains("wt.exe switch"));
     if is_switch_missing_arg {
         ceprintln!(
@@ -176,8 +182,6 @@ fn main() {
 
     builder
         .format(|buf, record| {
-            use std::io::Write;
-
             let msg = record.args().to_string();
 
             // Map thread ID to a single character (a-z, then A-Z)
@@ -517,8 +521,6 @@ fn main() {
                         // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
                         // Shadow verify: if user declines approval, skip hooks but continue squash
                         let verify = if verify {
-                            use commands::command_approval::approve_hooks;
-                            use commands::context::CommandEnv;
                             let env = CommandEnv::for_action("squash")?;
                             let ctx = env.context(yes);
                             let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
@@ -697,8 +699,6 @@ fn main() {
                 commands::statusline::run(claude_code)
             }
             None => {
-                use commands::list::progressive::RenderMode;
-
                 // Load config and merge with CLI flags (CLI flags take precedence)
                 UserConfig::load()
                     .context("Failed to load config")
@@ -877,7 +877,7 @@ fn main() {
                         yes,
                     );
                     let template_vars = build_hook_context(&ctx, &extra_vars);
-                    let vars: std::collections::HashMap<&str, &str> = template_vars
+                    let vars: HashMap<&str, &str> = template_vars
                         .iter()
                         .map(|(k, v)| (k.as_str(), v.as_str()))
                         .collect();
@@ -947,7 +947,6 @@ fn main() {
                 // Helper: approve remove hooks using current worktree context
                 // Returns true if hooks should run (user approved)
                 let approve_remove = |yes: bool| -> anyhow::Result<bool> {
-                    use commands::context::CommandEnv;
                     let env = CommandEnv::for_action_branchless()?;
                     let ctx = env.context(yes);
                     let approved = approve_hooks(
@@ -975,9 +974,6 @@ fn main() {
 
                     handle_remove_output(&result, background, run_hooks)
                 } else {
-                    use commands::worktree::RemoveResult;
-                    use worktrunk::git::ResolvedWorktree;
-
                     // Multi-worktree removal: validate ALL first, then approve, then execute
                     // This supports partial success - some may fail validation while others succeed.
                     let current_worktree = repo
@@ -988,7 +984,7 @@ fn main() {
 
                     // Dedupe inputs to avoid redundant planning/execution
                     let branches: Vec<_> = {
-                        let mut seen = std::collections::HashSet::new();
+                        let mut seen = HashSet::new();
                         branches
                             .into_iter()
                             .filter(|b| seen.insert(b.clone()))

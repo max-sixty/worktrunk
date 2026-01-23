@@ -3,9 +3,12 @@
 //! Caches CI status in `.git/wt-cache/ci-status/<branch>.json` to avoid
 //! hitting API rate limits.
 
-use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
 use worktrunk::git::Repository;
 use worktrunk::path::sanitize_for_filename;
 
@@ -39,9 +42,6 @@ impl CachedCiStatus {
     /// Different directories get different TTLs [30, 60) seconds, which spreads
     /// out cache expirations when multiple statuslines run concurrently.
     pub(crate) fn ttl_for_repo(repo_root: &Path) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
         let mut hasher = DefaultHasher::new();
         // Hash the path bytes directly for consistent TTL across string representations
         repo_root.as_os_str().hash(&mut hasher);

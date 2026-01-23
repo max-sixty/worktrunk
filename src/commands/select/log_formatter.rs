@@ -3,9 +3,15 @@
 //! Functions for processing and formatting git log output with diffstats and dimming.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write;
 
+use ansi_str::AnsiStr;
+use unicode_width::UnicodeWidthStr;
 use worktrunk::git::{Repository, parse_numstat_line};
 use worktrunk::shell_exec::Cmd;
+use worktrunk::styling::{ADDITION, DELETION};
+
+use crate::display::format_relative_time_short;
 
 use super::super::list::layout::{DiffDisplayConfig, DiffVariant};
 
@@ -84,9 +90,6 @@ pub(super) fn process_log_with_dimming(
     log_output: &str,
     unique_commits: Option<&HashSet<String>>,
 ) -> (String, Vec<String>) {
-    use ansi_str::AnsiStr;
-    use std::fmt::Write;
-
     let dim = anstyle::Style::new().dimmed();
     let reset = anstyle::Reset;
 
@@ -152,7 +155,6 @@ pub(super) fn format_log_output(
     log_output: &str,
     stats: &HashMap<String, (usize, usize)>,
 ) -> String {
-    use crate::display::format_relative_time_short;
     format_log_output_with_formatter(log_output, stats, format_relative_time_short)
 }
 
@@ -167,9 +169,6 @@ pub(super) fn format_log_output_with_formatter<F>(
 where
     F: Fn(i64) -> String,
 {
-    use ansi_str::AnsiStr;
-    use unicode_width::UnicodeWidthStr;
-
     // First pass: find max display width of graph+hash prefix for alignment
     let max_prefix_width = log_output
         .lines()
@@ -247,10 +246,6 @@ pub(super) fn format_commit_line<F>(
 where
     F: Fn(i64) -> String,
 {
-    use ansi_str::AnsiStr;
-    use unicode_width::UnicodeWidthStr;
-    use worktrunk::styling::{ADDITION, DELETION};
-
     let dim_style = anstyle::Style::new().dimmed();
     let reset = anstyle::Reset;
 

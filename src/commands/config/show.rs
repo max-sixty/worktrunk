@@ -3,6 +3,7 @@
 //! Functions for displaying user config, project config, shell status,
 //! diagnostics, and runtime info.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
@@ -14,6 +15,7 @@ use worktrunk::config::{
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{Shell, scan_for_detection_details};
+use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
     error_message, format_bash_with_gutter, format_heading, format_toml, format_with_gutter,
     hint_message, info_message, success_message, warning_message,
@@ -22,6 +24,7 @@ use worktrunk::styling::{
 use super::state::require_user_config_path;
 use crate::cli::version_str;
 use crate::commands::configure_shell::{ConfigAction, scan_shell_configs};
+use crate::commands::list::ci_status::{CiPlatform, CiToolsStatus, get_platform_for_repo};
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
 use crate::output;
@@ -66,8 +69,6 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
 
 /// Check if Claude Code CLI is available
 fn is_claude_available() -> bool {
-    use worktrunk::shell_exec::Cmd;
-
     Cmd::new("claude")
         .arg("--version")
         .run()
@@ -99,8 +100,6 @@ fn is_plugin_installed() -> bool {
 
 /// Get the git version string (e.g., "2.47.1")
 fn get_git_version() -> Option<String> {
-    use worktrunk::shell_exec::Cmd;
-
     let output = Cmd::new("git").arg("--version").run().ok()?;
     if !output.status.success() {
         return None;
@@ -119,8 +118,6 @@ fn get_git_version() -> Option<String> {
 /// Returns true if compinit is NOT enabled (i.e., user needs to add it).
 /// Returns false if compinit is enabled or we can't determine (fail-safe: don't warn).
 fn check_zsh_compinit_missing() -> bool {
-    use worktrunk::shell_exec::Cmd;
-
     // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
     if std::env::var("WORKTRUNK_TEST_COMPINIT_CONFIGURED").is_ok() {
         return false; // Assume compinit is configured
@@ -216,8 +213,6 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
 
 /// Run full diagnostic checks (CI tools, commit generation) and render to buffer
 fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
-    use crate::commands::list::ci_status::{CiPlatform, CiToolsStatus, get_platform_for_repo};
-
     writeln!(out, "{}", format_heading("DIAGNOSTICS", None))?;
 
     // Check CI tool based on detected platform (with config override support)
@@ -356,9 +351,8 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
 /// Generic over `C`, the config type where the keys were found. When an unknown
 /// key belongs in `C::Other`, the warning includes a hint about where to move it.
 pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
-    unknown_keys: &std::collections::HashMap<String, toml::Value>,
+    unknown_keys: &HashMap<String, toml::Value>,
 ) -> String {
-    use std::fmt::Write;
     let mut out = String::new();
 
     // Sort keys for deterministic output order

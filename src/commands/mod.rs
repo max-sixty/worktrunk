@@ -21,7 +21,6 @@ pub(crate) mod statusline;
 pub(crate) mod step_commands;
 pub(crate) mod worktree;
 
-pub(crate) use command_approval::approve_hooks;
 pub(crate) use config::{
     handle_config_create, handle_config_show, handle_hints_clear, handle_hints_get,
     handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,

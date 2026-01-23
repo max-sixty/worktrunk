@@ -3,6 +3,9 @@
 //! Contains the `Task` trait interface and all 15 task implementations that
 //! compute various git operations for worktrees and branches.
 
+use std::net::{SocketAddr, TcpStream};
+use std::time::Duration;
+
 use worktrunk::git::{LineDiff, Repository};
 
 use super::super::ci_status::PrStatus;
@@ -616,9 +619,6 @@ impl Task for UrlStatusTask {
     const KIND: TaskKind = TaskKind::UrlStatus;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        use std::net::{SocketAddr, TcpStream};
-        use std::time::Duration;
-
         // URL already sent in spawning code; this task only checks port availability
         let Some(ref url) = ctx.item_url else {
             return Ok(TaskResult::UrlStatus {
