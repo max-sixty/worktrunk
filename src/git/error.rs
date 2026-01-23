@@ -85,6 +85,12 @@ pub trait RefContext {
     fn state(&self) -> &str;
     fn draft(&self) -> bool;
     fn url(&self) -> &str;
+
+    /// The source branch reference for display.
+    ///
+    /// For same-repo PRs/MRs: just the branch name (e.g., `feature-auth`)
+    /// For fork PRs/MRs: `owner:branch` format (e.g., `contributor:feature-fix`)
+    fn source_ref(&self) -> String;
 }
 
 /// Domain errors for git and worktree operations.

@@ -33,13 +33,14 @@ struct ResolvedTarget {
 /// Returns two lines for gutter formatting:
 /// ```text
 ///  ┃ Fix authentication bug in login flow (#101)
-///  ┃ by @alice · open · https://github.com/owner/repo/pull/101
+///  ┃ by @alice · open · feature-auth · https://github.com/owner/repo/pull/101
 /// ```
 fn format_ref_context(ctx: &impl RefContext) -> String {
     let mut status_parts = vec![format!("by @{}", ctx.author()), ctx.state().to_string()];
     if ctx.draft() {
         status_parts.push("draft".to_string());
     }
+    status_parts.push(ctx.source_ref());
     let status_line = status_parts.join(" · ");
 
     cformat!(
