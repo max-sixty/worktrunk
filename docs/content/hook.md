@@ -426,6 +426,7 @@ For copying dependencies and caches between worktrees, see [`wt step copy-ignore
 - [`wt merge`](@/merge.md) — Runs hooks automatically during merge
 - [`wt switch`](@/switch.md) — Runs post-create/post-start hooks on `--create`
 - [`wt config`](@/config.md) — Manage hook approvals
+- [`wt config state logs`](@/config.md#wt-config-state-logs) — Access background hook logs
 
 ## Command reference
 

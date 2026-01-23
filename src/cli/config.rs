@@ -691,9 +691,9 @@ wt config state marker clear --all
 
 #[derive(Subcommand)]
 pub enum LogsAction {
-    /// List background operation log files
+    /// Get log file paths
     #[command(
-        after_long_help = r#"Lists log files from background operations like post-start commands and worktree removal.
+        after_long_help = r#"Lists log files, or gets the path to a specific log.
 
 ## Examples
 

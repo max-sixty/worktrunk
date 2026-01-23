@@ -748,7 +748,7 @@ wt config state logs - Background operation logs
 Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>get</span></b>    List background operation log files
+  <b><span class=c>get</span></b>    Get log file paths
   <b><span class=c>clear</span></b>  Clear background operation logs
 
 <b><span class=g>Options:</span></b>
