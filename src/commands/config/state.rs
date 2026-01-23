@@ -226,11 +226,21 @@ pub fn handle_logs_get(hook: Option<String>, worktree: Option<String>) -> anyhow
                 (None, Some(name)) => {
                     // Just a name like "remove" or "server"
                     // First try exact match (e.g., "remove" → "{branch}-remove.log")
-                    candidates.push(format!("{}-{}.log", safe_branch, sanitize_for_filename(name)));
+                    candidates.push(format!(
+                        "{}-{}.log",
+                        safe_branch,
+                        sanitize_for_filename(name)
+                    ));
 
                     // Then try common hook types with this name
                     for source in ["user", "project"] {
-                        for hook_type in ["post-start", "post-create", "post-switch"] {
+                        for hook_type in [
+                            "post-start",
+                            "post-create",
+                            "post-switch",
+                            "pre-remove",
+                            "post-remove",
+                        ] {
                             candidates.push(format!(
                                 "{}-{}-{}-{}.log",
                                 safe_branch,
@@ -241,9 +251,9 @@ pub fn handle_logs_get(hook: Option<String>, worktree: Option<String>) -> anyhow
                         }
                     }
                 }
-                _ => {
-                    anyhow::bail!("Invalid hook specification. Use format: <hook-type>:<name> (e.g., post-start:server) or just <name> (e.g., remove)");
-                }
+                // These cases are unreachable: split_once always returns both parts when
+                // there's a separator, and we explicitly set (None, Some(...)) otherwise
+                (Some(_), None) | (None, None) => unreachable!(),
             }
 
             // Find matching log file

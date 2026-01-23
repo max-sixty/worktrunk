@@ -720,8 +720,8 @@ wt config state logs get --hook=post-start:server --worktree=feature
     Get {
         /// Get path for a specific hook log (e.g., "post-start:server", "remove")
         ///
-        /// Format: <hook-type>:<name> or just <hook-type> for hooks without names.
-        /// Hook types: post-start, remove, post-create, etc.
+        /// Format: <hook-type>:<name> (e.g., post-start:server) or just <name>
+        /// for simple operations (e.g., remove).
         #[arg(long)]
         hook: Option<String>,
 
