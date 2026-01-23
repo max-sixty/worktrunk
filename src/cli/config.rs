@@ -697,12 +697,38 @@ pub enum LogsAction {
 
 ## Examples
 
-List log files:
+List all log files:
 ```console
 wt config state logs
+```
+
+Get path to a specific log file:
+```console
+wt config state logs get --hook=post-start:server
+```
+
+Stream a hook's log output:
+```console
+tail -f "$(wt config state logs get --hook=post-start:server)"
+```
+
+Get log for a different worktree:
+```console
+wt config state logs get --hook=post-start:server --worktree=feature
 ```"#
     )]
-    Get,
+    Get {
+        /// Get path for a specific hook log (e.g., "post-start:server", "remove")
+        ///
+        /// Format: <hook-type>:<name> or just <hook-type> for hooks without names.
+        /// Hook types: post-start, remove, post-create, etc.
+        #[arg(long)]
+        hook: Option<String>,
+
+        /// Target worktree/branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        worktree: Option<String>,
+    },
 
     /// Clear background operation logs
     Clear,
