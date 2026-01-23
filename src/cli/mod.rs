@@ -921,6 +921,84 @@ lint = "cargo clippy"
         #[arg(long)]
         stage: Option<crate::commands::commit::StageMode>,
     },
+    /// Merge and keep the worktree (alias for `merge --no-remove`)
+    ///
+    /// Identical to `wt merge --no-remove`. Syncs your branch to target while preserving the worktree.
+    #[command(
+        after_long_help = r#"`wt sync` is shorthand for `wt merge --no-remove`. It runs the full merge pipeline but keeps the worktree for continued development.
+
+## Examples
+
+Sync to the default branch:
+
+```console
+wt sync
+```
+
+Sync to a different branch:
+
+```console
+wt sync develop
+```
+
+## Use cases
+
+- Integrate changes to main while continuing work on the feature
+- Keep a long-running feature branch in sync with main
+- Test that your changes merge cleanly without abandoning the worktree
+
+## See also
+
+- [`wt merge`](@/merge.md) — Full documentation of the merge pipeline
+"#
+    )]
+    Sync {
+        /// Target branch
+        ///
+        /// Defaults to default branch.
+        #[arg(add = crate::completion::branch_value_completer())]
+        target: Option<String>,
+
+        /// Force commit squashing
+        #[arg(long, overrides_with = "no_squash", hide = true)]
+        squash: bool,
+
+        /// Skip commit squashing
+        #[arg(long = "no-squash", overrides_with = "squash")]
+        no_squash: bool,
+
+        /// Force commit and squash
+        #[arg(long, overrides_with = "no_commit", hide = true)]
+        commit: bool,
+
+        /// Skip commit and squash
+        #[arg(long = "no-commit", overrides_with = "commit")]
+        no_commit: bool,
+
+        /// Force rebasing onto target
+        #[arg(long, overrides_with = "no_rebase", hide = true)]
+        rebase: bool,
+
+        /// Skip rebase (fail if not already rebased)
+        #[arg(long = "no-rebase", overrides_with = "rebase")]
+        no_rebase: bool,
+
+        /// Force running hooks
+        #[arg(long, overrides_with = "no_verify", hide = true)]
+        verify: bool,
+
+        /// Skip hooks
+        #[arg(long = "no-verify", overrides_with = "verify")]
+        no_verify: bool,
+
+        /// Skip approval prompts
+        #[arg(short, long)]
+        yes: bool,
+
+        /// What to stage before committing [default: all]
+        #[arg(long)]
+        stage: Option<crate::commands::commit::StageMode>,
+    },
     /// Interactive worktree selector
     ///
     /// Browse and switch worktrees with live preview.

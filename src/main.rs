@@ -1148,6 +1148,40 @@ fn main() {
                 stage,
             })
         }
+        Commands::Sync {
+            target,
+            squash,
+            no_squash,
+            commit,
+            no_commit,
+            rebase,
+            no_rebase,
+            verify,
+            no_verify,
+            yes,
+            stage,
+        } => {
+            // Convert paired flags to Option<bool>
+            fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
+                match (positive, negative) {
+                    (true, _) => Some(true),
+                    (_, true) => Some(false),
+                    _ => None,
+                }
+            }
+
+            // Sync is merge with --no-remove default
+            handle_merge(MergeOptions {
+                target: target.as_deref(),
+                squash: flag_pair(squash, no_squash),
+                commit: flag_pair(commit, no_commit),
+                rebase: flag_pair(rebase, no_rebase),
+                remove: Some(false), // Key difference: sync keeps the worktree
+                verify: flag_pair(verify, no_verify),
+                yes,
+                stage,
+            })
+        }
     };
 
     if let Err(e) = result {
