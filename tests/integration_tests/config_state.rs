@@ -1203,8 +1203,13 @@ fn test_state_logs_get_hook_not_found(repo: TestRepo) {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("No log file matches"),
-        "Expected 'No log file matches' error: {}",
+        stderr.contains("No log file matches 'user:post-start:server'"),
+        "Expected spec echo in error: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Expected: main-user-post-start-server.log"),
+        "Expected filename in error: {}",
         stderr
     );
     assert!(

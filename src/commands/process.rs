@@ -1,10 +1,11 @@
 use anyhow::Context;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 #[cfg(unix)]
 use std::process::Command;
 use std::process::Stdio;
+use std::str::FromStr;
+use strum::IntoEnumIterator;
 use worktrunk::git::{HookType, Repository};
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
 
@@ -96,6 +97,20 @@ impl HookLog {
         log_dir.join(self.filename(branch))
     }
 
+    /// Convert to CLI spec format (for error messages and roundtrip).
+    ///
+    /// Returns the format used by `parse()`: `source:hook-type:name` or `internal:op`.
+    pub fn to_spec(&self) -> String {
+        match self {
+            HookLog::Hook {
+                source,
+                hook_type,
+                name,
+            } => format!("{}:{}:{}", source, hook_type, name),
+            HookLog::Internal(op) => format!("internal:{}", op),
+        }
+    }
+
     /// Parse from CLI argument.
     ///
     /// # Formats
@@ -124,8 +139,17 @@ impl HookLog {
             }
             // source:hook-type:name
             [source_str, hook_type_str, name] => {
-                let source = parse_source(source_str)?;
-                let hook_type = parse_hook_type(hook_type_str)?;
+                let source = HookSource::from_str(source_str).map_err(|_| {
+                    format!("Unknown source '{}'. Use 'user' or 'project'", source_str)
+                })?;
+                let hook_type = HookType::from_str(hook_type_str).map_err(|_| {
+                    let valid: Vec<_> = HookType::iter().map(|h| h.to_string()).collect();
+                    format!(
+                        "Unknown hook type '{}'. Valid types: {}",
+                        hook_type_str,
+                        valid.join(", ")
+                    )
+                })?;
                 Ok(Self::Hook {
                     source,
                     hook_type,
@@ -139,22 +163,6 @@ impl HookLog {
             )),
         }
     }
-}
-
-/// Parse a hook source from a string.
-fn parse_source(s: &str) -> Result<HookSource, String> {
-    HookSource::from_str(s).map_err(|_| format!("Unknown source '{}'. Use 'user' or 'project'", s))
-}
-
-/// Parse a hook type from a string.
-fn parse_hook_type(s: &str) -> Result<HookType, String> {
-    HookType::from_str(s).map_err(|_| {
-        format!(
-            "Unknown hook type '{}'. Valid types: post-create, post-start, post-switch, \
-             pre-commit, pre-merge, post-merge, pre-remove, post-remove",
-            s
-        )
-    })
 }
 
 /// Get the separator needed before closing brace in POSIX shell command grouping.
@@ -622,5 +630,31 @@ mod tests {
         let created = HookLog::internal(InternalOp::Remove);
         let parsed = HookLog::parse("internal:remove").unwrap();
         assert_eq!(created.filename("main"), parsed.filename("main"));
+    }
+
+    #[test]
+    fn test_hook_log_to_spec_roundtrip() {
+        use worktrunk::git::HookType;
+
+        // Hook roundtrip: to_spec -> parse -> equals original
+        let original = HookLog::hook(HookSource::User, HookType::PostStart, "server");
+        let spec = original.to_spec();
+        assert_eq!(spec, "user:post-start:server");
+        let parsed = HookLog::parse(&spec).unwrap();
+        assert_eq!(original, parsed);
+
+        // Project hook
+        let original = HookLog::hook(HookSource::Project, HookType::PreMerge, "lint");
+        let spec = original.to_spec();
+        assert_eq!(spec, "project:pre-merge:lint");
+        let parsed = HookLog::parse(&spec).unwrap();
+        assert_eq!(original, parsed);
+
+        // Internal roundtrip
+        let original = HookLog::internal(InternalOp::Remove);
+        let spec = original.to_spec();
+        assert_eq!(spec, "internal:remove");
+        let parsed = HookLog::parse(&spec).unwrap();
+        assert_eq!(original, parsed);
     }
 }

@@ -174,7 +174,7 @@ pub(super) fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::R
 /// # Hook spec format
 ///
 /// - `source:hook-type:name` for hook commands (e.g., `user:post-start:server`)
-/// - `operation` for internal operations (e.g., `remove`)
+/// - `internal:op` for internal operations (e.g., `internal:remove`)
 pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::Result<()> {
     let repo = Repository::current()?;
 
@@ -217,7 +217,8 @@ pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::
                 return Ok(());
             }
 
-            // No match found - list available logs for this branch
+            // No match found - show expected filename and available files
+            let expected_filename = hook_log.filename(&branch);
             let safe_branch = sanitize_for_filename(&branch);
             let mut available = Vec::new();
             if let Ok(entries) = std::fs::read_dir(&log_dir) {
@@ -237,9 +238,12 @@ pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::
             } else {
                 let available_list = available.join(", ");
                 anyhow::bail!(
-                    "No log file matches '{}' for branch '{}'. Available: {}",
-                    hook_spec,
+                    "No log file matches '{}' for branch '{}'.\n\
+                     Expected: {}\n\
+                     Available: {}",
+                    hook_log.to_spec(),
                     branch,
+                    expected_filename,
                     available_list
                 );
             }
