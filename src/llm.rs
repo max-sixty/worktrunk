@@ -1370,4 +1370,41 @@ diff --git a/Cargo.lock b/Cargo.lock
         assert!(truncated.contains("line1"));
         assert!(truncated.contains("lines omitted"));
     }
+
+    #[test]
+    fn test_format_reproduction_command_simple() {
+        // Simple command without shell metacharacters - no wrapping needed
+        let result = format_reproduction_command("git diff", "llm -m haiku");
+        assert_eq!(result, "git diff | llm -m haiku");
+    }
+
+    #[test]
+    fn test_format_reproduction_command_with_env_var() {
+        // Command starting with env var assignment needs shell wrapping
+        let result = format_reproduction_command("git diff", "MAX_THINKING_TOKENS=0 claude -p");
+        assert!(result.contains("sh -c"));
+        assert!(result.contains("git diff |"));
+    }
+
+    #[test]
+    fn test_format_reproduction_command_with_metacharacters() {
+        // Commands with shell metacharacters need wrapping
+        let result = format_reproduction_command("git diff", "cmd1 && cmd2");
+        assert!(result.contains("sh -c"));
+    }
+
+    #[test]
+    fn test_is_lock_file_matches() {
+        assert!(is_lock_file("Cargo.lock"));
+        assert!(is_lock_file("package-lock.json"));
+        assert!(is_lock_file("yarn-lock.yaml"));
+        assert!(is_lock_file("terraform.lock.hcl"));
+    }
+
+    #[test]
+    fn test_is_lock_file_non_matches() {
+        assert!(!is_lock_file("main.rs"));
+        assert!(!is_lock_file("README.md"));
+        assert!(!is_lock_file("config.toml"));
+    }
 }
