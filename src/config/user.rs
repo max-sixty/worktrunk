@@ -2432,4 +2432,107 @@ squash-template-file = "path/to/file"
         let err = result.unwrap_err().to_string();
         assert!(err.contains("mutually exclusive"), "{err}");
     }
+
+    // =========================================================================
+    // save_to() tests
+    // =========================================================================
+
+    #[test]
+    fn test_save_to_new_file_with_commit_generation() {
+        // Test that save_to() creates a new file with commit.generation section
+        // This exercises the "create from scratch" branch when no existing file exists
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+
+        let config = UserConfig {
+            commit: Some(CommitConfig {
+                stage: None,
+                generation: Some(CommitGenerationConfig {
+                    command: Some("llm -m haiku".to_string()),
+                    ..Default::default()
+                }),
+            }),
+            ..Default::default()
+        };
+
+        config.save_to(&config_path).unwrap();
+
+        let saved = std::fs::read_to_string(&config_path).unwrap();
+        assert!(
+            saved.contains("[commit.generation]"),
+            "Should use new format: {saved}"
+        );
+        assert!(
+            saved.contains("command = \"llm -m haiku\""),
+            "Should contain command: {saved}"
+        );
+    }
+
+    #[test]
+    fn test_save_to_new_file_with_deprecated_commit_generation() {
+        // Test that save_to() serializes deprecated commit_generation field
+        // (for backward compat when loading old configs and re-saving)
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+
+        let config = UserConfig {
+            commit_generation: Some(CommitGenerationConfig {
+                command: Some("old-llm".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        config.save_to(&config_path).unwrap();
+
+        let saved = std::fs::read_to_string(&config_path).unwrap();
+        assert!(
+            saved.contains("[commit-generation]"),
+            "Should use deprecated format: {saved}"
+        );
+        assert!(
+            saved.contains("command = \"old-llm\""),
+            "Should contain command: {saved}"
+        );
+    }
+
+    #[test]
+    fn test_save_to_new_file_with_skip_shell_integration() {
+        // Test skip-shell-integration-prompt is only written when true
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+
+        let config = UserConfig {
+            skip_shell_integration_prompt: true,
+            ..Default::default()
+        };
+
+        config.save_to(&config_path).unwrap();
+
+        let saved = std::fs::read_to_string(&config_path).unwrap();
+        assert!(
+            saved.contains("skip-shell-integration-prompt = true"),
+            "Should contain flag: {saved}"
+        );
+    }
+
+    #[test]
+    fn test_save_to_new_file_with_worktree_path() {
+        // Test worktree-path is written when set
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+
+        let config = UserConfig {
+            worktree_path: Some("../{{ repo }}.{{ branch }}".to_string()),
+            ..Default::default()
+        };
+
+        config.save_to(&config_path).unwrap();
+
+        let saved = std::fs::read_to_string(&config_path).unwrap();
+        assert!(
+            saved.contains("worktree-path = \"../{{ repo }}.{{ branch }}\""),
+            "Should contain worktree-path: {saved}"
+        );
+    }
 }
