@@ -17,66 +17,34 @@ Worktrunk generates commit messages by building a templated prompt and piping it
 
 ## Setup
 
-### Option 1: Claude CLI
+Any command that reads a prompt from stdin and outputs a commit message works. Add to `~/.config/worktrunk/config.toml`:
 
-Easiest if you already have [Claude Code](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) installed:
-
-```bash
-$ wt config create
-```
-
-Add to `~/.config/worktrunk/config.toml`:
+### Claude Code
 
 ```toml
 [commit.generation]
-command = "MAX_THINKING_TOKENS=0 claude -p --model haiku --tools '' --disable-slash-commands --setting-sources '' --system-prompt=''"
+command = "claude -p --model haiku"
 ```
 
-### Option 2: llm
+See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
 
-[llm](https://llm.datasette.io/) from Simon Willison:
-
-```bash
-$ uv tool install -U llm
-$ llm install llm-anthropic
-$ llm keys set anthropic
-```
-
-Add to `~/.config/worktrunk/config.toml`:
+### llm
 
 ```toml
 [commit.generation]
 command = "llm -m claude-haiku-4.5"
 ```
 
-For OpenAI instead:
+Install with `uv tool install llm llm-anthropic && llm keys set anthropic`. See [llm docs](https://llm.datasette.io/).
 
-```bash
-$ llm keys set openai
-```
-
-```toml
-[commit.generation]
-command = "llm -m gpt-4o-mini"
-```
-
-### Option 3: aichat
-
-[aichat](https://github.com/sigoden/aichat) is another option:
+### aichat
 
 ```toml
 [commit.generation]
 command = "aichat -m claude:claude-haiku-4.5"
 ```
 
-### Custom scripts
-
-Any command that reads a prompt from stdin and outputs a commit message works:
-
-```toml
-[commit.generation]
-command = "./scripts/generate-commit.sh"
-```
+See [aichat docs](https://github.com/sigoden/aichat).
 
 ## How it works
 
