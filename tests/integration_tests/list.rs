@@ -405,6 +405,15 @@ fn test_list_with_remotes_and_full(#[from(repo_with_remote)] repo: TestRepo) {
     repo.push_branch("feature-remote");
     repo.run_git(&["branch", "-D", "feature-remote"]);
 
+    // Set a GitHub-style URL AFTER pushing so platform detection works
+    // This exercises the remote_hint path in get_platform_for_repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
     // Run with --full to trigger CiBranchName::from_branch_ref for remote branches
     // This exercises the is_remote=true code path even without gh/glab auth
     // (CI detection will return None, but the branch parsing is still covered)
