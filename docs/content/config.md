@@ -90,7 +90,7 @@ worktree-path = "../{{ branch | sanitize }}"
 
 Generate commit messages automatically during merge. Requires an external CLI tool. See [LLM commits docs](@/llm-commits.md) for setup and template customization.
 
-Using [Claude CLI](https://docs.anthropic.com/en/docs/build-with-claude/claude-code):
+Using [Claude Code](https://docs.anthropic.com/en/docs/build-with-claude/claude-code):
 
 ```toml
 [commit.generation]
