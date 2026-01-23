@@ -308,7 +308,7 @@ impl MergeArgs {
     }
 }
 
-/// Convert paired flags (--flag / --no-flag) to Option<bool>
+/// Convert paired flags (--flag / --no-flag) to `Option<bool>`
 pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
     match (positive, negative) {
         (true, _) => Some(true),

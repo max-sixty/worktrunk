@@ -6,6 +6,7 @@ switch
 list
 remove
 merge
+sync
 select
 step
 hook
