@@ -167,9 +167,16 @@ pub(super) fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::R
 ///
 /// When `hook` is None, lists all log files.
 /// When `hook` is Some, returns the path to the specific log file for that hook.
+///
+/// # Hook spec format
+///
+/// - `source:hook-type:name` for hook commands (e.g., `user:post-start:server`)
+/// - `operation` for internal operations (e.g., `remove`)
 pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::Result<()> {
     use worktrunk::path::sanitize_for_filename;
     use worktrunk::styling::println;
+
+    use crate::commands::process::HookLog;
 
     let repo = Repository::current()?;
 
@@ -192,87 +199,28 @@ pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::
             };
 
             let log_dir = repo.wt_logs_dir();
-            let safe_branch = sanitize_for_filename(&branch);
 
-            // Parse hook spec: "post-start:server" or "remove"
-            // Format: <hook-type>:<name> or just <name>
-            let (hook_type, hook_name) = if let Some((ht, name)) = hook_spec.split_once(':') {
-                (Some(ht), Some(name))
-            } else {
-                // Could be just "remove" or a hook name - we'll search for matching patterns
-                (None, Some(hook_spec.as_str()))
-            };
+            // Parse the hook spec using HookLog
+            let hook_log = HookLog::parse(&hook_spec).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-            // Build possible filename patterns to search for
-            let mut candidates = Vec::new();
-
-            match (hook_type, hook_name) {
-                (Some(ht), Some(name)) => {
-                    // Full spec like "post-start:server"
-                    // Try both user and project sources
-                    candidates.push(format!(
-                        "{}-user-{}-{}.log",
-                        safe_branch,
-                        sanitize_for_filename(ht),
-                        sanitize_for_filename(name)
-                    ));
-                    candidates.push(format!(
-                        "{}-project-{}-{}.log",
-                        safe_branch,
-                        sanitize_for_filename(ht),
-                        sanitize_for_filename(name)
-                    ));
-                }
-                (None, Some(name)) => {
-                    // Just a name like "remove" or "server"
-                    // First try exact match (e.g., "remove" → "{branch}-remove.log")
-                    candidates.push(format!(
-                        "{}-{}.log",
-                        safe_branch,
-                        sanitize_for_filename(name)
-                    ));
-
-                    // Then try common hook types with this name
-                    for source in ["user", "project"] {
-                        for hook_type in [
-                            "post-start",
-                            "post-create",
-                            "post-switch",
-                            "pre-remove",
-                            "post-remove",
-                        ] {
-                            candidates.push(format!(
-                                "{}-{}-{}-{}.log",
-                                safe_branch,
-                                source,
-                                hook_type,
-                                sanitize_for_filename(name)
-                            ));
-                        }
-                    }
-                }
-                // These cases are unreachable: split_once always returns both parts when
-                // there's a separator, and we explicitly set (None, Some(...)) otherwise
-                (Some(_), None) | (None, None) => unreachable!(),
-            }
-
-            // Find matching log file
+            // Check log directory exists
             if !log_dir.exists() {
                 anyhow::bail!(
                     "No log directory exists. Run a background hook first to create logs."
                 );
             }
 
-            for candidate in &candidates {
-                let log_path = log_dir.join(candidate);
-                if log_path.exists() {
-                    // Output just the path to stdout for easy piping
-                    println!("{}", log_path.display());
-                    return Ok(());
-                }
+            // Get the expected log path
+            let log_path = hook_log.path(&log_dir, &branch);
+
+            if log_path.exists() {
+                // Output just the path to stdout for easy piping
+                println!("{}", log_path.display());
+                return Ok(());
             }
 
             // No match found - list available logs for this branch
+            let safe_branch = sanitize_for_filename(&branch);
             let mut available = Vec::new();
             if let Ok(entries) = std::fs::read_dir(&log_dir) {
                 for entry in entries.filter_map(|e| e.ok()) {

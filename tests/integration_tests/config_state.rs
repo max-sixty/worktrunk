@@ -1127,7 +1127,8 @@ fn test_state_logs_get_hook_returns_path(repo: TestRepo) {
     let log_file = log_dir.join("main-user-post-start-server.log");
     std::fs::write(&log_file, "server output here").unwrap();
 
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=post-start:server"])
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1142,14 +1143,15 @@ fn test_state_logs_get_hook_returns_path(repo: TestRepo) {
 
 #[rstest]
 fn test_state_logs_get_hook_project_source(repo: TestRepo) {
-    // Test that project source logs are also found
+    // Test that project source logs are found with explicit format
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt-logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     let log_file = log_dir.join("main-project-post-start-build.log");
     std::fs::write(&log_file, "build output here").unwrap();
 
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=post-start:build"])
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=project:post-start:build"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1162,15 +1164,15 @@ fn test_state_logs_get_hook_project_source(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_state_logs_get_hook_simple_name(repo: TestRepo) {
-    // Test finding a log by simple name (e.g., "remove")
+fn test_state_logs_get_hook_internal_op(repo: TestRepo) {
+    // Test finding an internal operation log (e.g., "internal:remove")
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt-logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     let log_file = log_dir.join("main-remove.log");
     std::fs::write(&log_file, "remove output").unwrap();
 
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=remove"])
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=internal:remove"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1194,7 +1196,8 @@ fn test_state_logs_get_hook_not_found(repo: TestRepo) {
     )
     .unwrap();
 
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=post-start:server"])
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -1214,7 +1217,8 @@ fn test_state_logs_get_hook_not_found(repo: TestRepo) {
 #[rstest]
 fn test_state_logs_get_hook_no_logs_dir(repo: TestRepo) {
     // No log directory exists
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=post-start:server"])
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -1238,7 +1242,8 @@ fn test_state_logs_get_hook_no_logs_for_branch(repo: TestRepo) {
     )
     .unwrap();
 
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=post-start:server"])
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -1267,11 +1272,12 @@ fn test_state_logs_get_hook_with_branch_flag(repo: TestRepo) {
     )
     .unwrap();
 
+    // Use explicit format: source:hook-type:name
     let output = wt_state_cmd(
         &repo,
         "logs",
         "get",
-        &["--hook=post-start:dev", "--branch=feature"],
+        &["--hook=user:post-start:dev", "--branch=feature"],
     )
     .output()
     .unwrap();
@@ -1281,5 +1287,50 @@ fn test_state_logs_get_hook_with_branch_flag(repo: TestRepo) {
         stdout.contains("feature-user-post-start-dev.log"),
         "Expected log path in stdout: {}",
         stdout
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_invalid_format(repo: TestRepo) {
+    // Test invalid hook spec format (too many colons)
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=a:b:c:d"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Invalid log spec"),
+        "Expected 'Invalid log spec' error: {}",
+        stderr
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_invalid_source(repo: TestRepo) {
+    // Test invalid source
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=invalid:post-start:server"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Unknown source"),
+        "Expected 'Unknown source' error: {}",
+        stderr
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_invalid_hook_type(repo: TestRepo) {
+    // Test invalid hook type
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:invalid:server"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Unknown hook type"),
+        "Expected 'Unknown hook type' error: {}",
+        stderr
     );
 }

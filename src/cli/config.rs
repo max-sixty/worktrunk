@@ -702,26 +702,32 @@ List all log files:
 wt config state logs
 ```
 
-Get path to a specific log file:
+Get path to a specific hook log:
 ```console
-wt config state logs get --hook=post-start:server
+wt config state logs get --hook=user:post-start:server
 ```
 
 Stream a hook's log output:
 ```console
-tail -f "$(wt config state logs get --hook=post-start:server)"
+tail -f "$(wt config state logs get --hook=user:post-start:server)"
+```
+
+Get log for background worktree removal:
+```console
+wt config state logs get --hook=internal:remove
 ```
 
 Get log for a different branch:
 ```console
-wt config state logs get --hook=post-start:server --branch=feature
+wt config state logs get --hook=user:post-start:server --branch=feature
 ```"#
     )]
     Get {
-        /// Get path for a specific hook log (e.g., "post-start:server", "remove")
+        /// Get path for a specific log file
         ///
-        /// Format: <hook-type>:<name> (e.g., post-start:server) or just <name>
-        /// for simple operations (e.g., remove).
+        /// Format: source:hook-type:name (e.g., user:post-start:server) for
+        /// hook commands, or internal:op (e.g., internal:remove) for internal
+        /// operations.
         #[arg(long)]
         hook: Option<String>,
 
