@@ -37,7 +37,6 @@ exit_code: 0
 ----- stderr -----
 [33m▲[39m [33mProject config uses deprecated config sections: [commit-generation] → [commit.generation][39m
 [2m↳[22m [2mWrote migrated wt.toml.new; to apply: [90mmv -- _REPO_/.config/wt.toml.new _REPO_/.config/wt.toml[39m[22m
-[33m▲[39m [33mProject config has key [1mcommit-generation[22m which belongs in user config (will be ignored)[39m
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 

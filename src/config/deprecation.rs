@@ -602,6 +602,10 @@ pub fn warn_unknown_fields<C: WorktrunkConfig>(
     keys.sort();
 
     for key in keys {
+        // Skip deprecated section keys - they're already warned about by warn_deprecated_sections_once
+        if key == "commit-generation" {
+            continue;
+        }
         let value = &unknown_keys[key];
         if let Some(other_location) = key_belongs_in::<C>(key, value) {
             eprintln!(
