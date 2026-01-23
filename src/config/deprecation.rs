@@ -157,8 +157,6 @@ pub fn replace_deprecated_vars(content: &str) -> String {
 pub struct CommitGenerationDeprecations {
     /// Has top-level [commit-generation] section
     pub has_top_level: bool,
-    /// Has [commit-generation] with args field that needs merging
-    pub has_args: bool,
     /// Project keys that have deprecated [projects."...".commit-generation]
     pub project_keys: Vec<String>,
 }
@@ -174,7 +172,6 @@ impl CommitGenerationDeprecations {
 /// Returns information about:
 /// - Top-level [commit-generation] section
 /// - Project-level [projects."...".commit-generation] sections
-/// - Whether args field exists (needs merging into command)
 pub fn find_commit_generation_deprecations(content: &str) -> CommitGenerationDeprecations {
     let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
         return CommitGenerationDeprecations::default();
@@ -196,13 +193,11 @@ pub fn find_commit_generation_deprecations(content: &str) -> CommitGenerationDep
         if let Some(table) = section.as_table() {
             if !table.is_empty() {
                 result.has_top_level = true;
-                result.has_args = table.contains_key("args");
             }
         } else if let Some(inline) = section.as_inline_table()
             && !inline.is_empty()
         {
             result.has_top_level = true;
-            result.has_args = inline.contains_key("args");
         }
     }
 
@@ -962,20 +957,7 @@ command = "llm -m haiku"
 "#;
         let result = find_commit_generation_deprecations(content);
         assert!(result.has_top_level);
-        assert!(!result.has_args);
         assert!(result.project_keys.is_empty());
-    }
-
-    #[test]
-    fn test_find_commit_generation_deprecations_with_args() {
-        let content = r#"
-[commit-generation]
-command = "llm"
-args = ["-m", "haiku"]
-"#;
-        let result = find_commit_generation_deprecations(content);
-        assert!(result.has_top_level);
-        assert!(result.has_args);
     }
 
     #[test]
@@ -1210,11 +1192,10 @@ args = ["-m", "haiku"]
     fn test_find_deprecations_inline_table_top_level() {
         // Inline table format: commit-generation = { command = "llm" }
         let content = r#"
-commit-generation = { command = "llm", args = ["-m", "haiku"] }
+commit-generation = { command = "llm -m haiku" }
 "#;
         let result = find_commit_generation_deprecations(content);
         assert!(result.has_top_level, "Should detect inline table format");
-        assert!(result.has_args, "Should detect args in inline table");
     }
 
     #[test]
