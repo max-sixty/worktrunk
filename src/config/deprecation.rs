@@ -1299,4 +1299,54 @@ commit-generation = {}
             "Should not flag empty inline table as deprecated"
         );
     }
+
+    #[test]
+    fn test_migrate_args_without_command_preserved() {
+        // When args exists but command doesn't, args should be preserved
+        // (merge_args_into_command won't run without a command)
+        let content = r#"
+[commit-generation]
+args = ["-m", "haiku"]
+template = "some template"
+"#;
+        let result = migrate_commit_generation_sections(content);
+        assert!(
+            result.contains("[commit.generation]"),
+            "Section should be renamed"
+        );
+        // Args should be preserved since there's no command to merge into
+        assert!(
+            result.contains("args ="),
+            "Args should be preserved when no command exists"
+        );
+    }
+
+    #[test]
+    fn test_migrate_args_with_non_string_command() {
+        // When command is not a string (e.g., integer), args should be preserved
+        let content = r#"
+[commit-generation]
+command = 123
+args = ["-m", "haiku"]
+"#;
+        let result = migrate_commit_generation_sections(content);
+        // Args should be preserved since command is not a string
+        assert!(
+            result.contains("args ="),
+            "Args should be preserved when command is not a string"
+        );
+    }
+
+    #[test]
+    fn test_migrate_command_only_no_args() {
+        // When only command exists (no args), it should migrate cleanly
+        let content = r#"
+[commit-generation]
+command = "llm -m haiku"
+"#;
+        let result = migrate_commit_generation_sections(content);
+        assert!(result.contains("[commit.generation]"));
+        assert!(result.contains("command = \"llm -m haiku\""));
+        assert!(!result.contains("args"));
+    }
 }
