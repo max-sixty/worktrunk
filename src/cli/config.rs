@@ -712,9 +712,9 @@ Stream a hook's log output:
 tail -f "$(wt config state logs get --hook=post-start:server)"
 ```
 
-Get log for a different worktree:
+Get log for a different branch:
 ```console
-wt config state logs get --hook=post-start:server --worktree=feature
+wt config state logs get --hook=post-start:server --branch=feature
 ```"#
     )]
     Get {
@@ -725,9 +725,9 @@ wt config state logs get --hook=post-start:server --worktree=feature
         #[arg(long)]
         hook: Option<String>,
 
-        /// Target worktree/branch (defaults to current)
+        /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer())]
-        worktree: Option<String>,
+        branch: Option<String>,
     },
 
     /// Clear background operation logs

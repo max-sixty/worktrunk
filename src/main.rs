@@ -485,7 +485,7 @@ fn main() {
                     }
                 },
                 StateCommand::Logs { action } => match action {
-                    Some(LogsAction::Get { hook, worktree }) => handle_logs_get(hook, worktree),
+                    Some(LogsAction::Get { hook, branch }) => handle_logs_get(hook, branch),
                     None => handle_logs_get(None, None),
                     Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
                 },

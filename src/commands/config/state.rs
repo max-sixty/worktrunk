@@ -167,7 +167,7 @@ pub(super) fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::R
 ///
 /// When `hook` is None, lists all log files.
 /// When `hook` is Some, returns the path to the specific log file for that hook.
-pub fn handle_logs_get(hook: Option<String>, worktree: Option<String>) -> anyhow::Result<()> {
+pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::Result<()> {
     use worktrunk::path::sanitize_for_filename;
     use worktrunk::styling::println;
 
@@ -185,9 +185,9 @@ pub fn handle_logs_get(hook: Option<String>, worktree: Option<String>) -> anyhow
             }
         }
         Some(hook_spec) => {
-            // Get the branch for the worktree
-            let branch = match worktree {
-                Some(wt) => wt,
+            // Get the branch name
+            let branch = match branch {
+                Some(b) => b,
                 None => repo.require_current_branch("get log for current branch")?,
             };
 

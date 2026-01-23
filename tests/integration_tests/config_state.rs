@@ -1251,7 +1251,7 @@ fn test_state_logs_get_hook_no_logs_for_branch(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_state_logs_get_hook_with_worktree_flag(repo: TestRepo) {
+fn test_state_logs_get_hook_with_branch_flag(repo: TestRepo) {
     // Create log file for a different branch
     repo.git_command()
         .args(["branch", "feature"])
@@ -1271,7 +1271,7 @@ fn test_state_logs_get_hook_with_worktree_flag(repo: TestRepo) {
         &repo,
         "logs",
         "get",
-        &["--hook=post-start:dev", "--worktree=feature"],
+        &["--hook=post-start:dev", "--branch=feature"],
     )
     .output()
     .unwrap();
