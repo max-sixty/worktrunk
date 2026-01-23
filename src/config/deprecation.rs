@@ -11,16 +11,19 @@
 //! To regenerate a project config migration file, run `wt config state hints clear deprecated-project-config`.
 //! To regenerate a user config migration file, delete the existing `.new` file.
 
-use crate::config::WorktrunkConfig;
-use crate::styling::{eprintln, hint_message, warning_message};
-use color_print::cformat;
-use minijinja::Environment;
-use shell_escape::escape;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
+
+use color_print::cformat;
+use minijinja::Environment;
+use regex::Regex;
+use shell_escape::escape;
+
+use crate::config::WorktrunkConfig;
+use crate::styling::{eprintln, hint_message, warning_message};
 
 /// Tracks which config paths have already shown deprecation warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
@@ -51,8 +54,6 @@ const DEPRECATED_VARS: &[(&str, &str)] = &[
 ///
 /// Returns `Cow::Borrowed` if no replacements needed, avoiding allocation.
 pub fn normalize_template_vars(template: &str) -> Cow<'_, str> {
-    use regex::Regex;
-
     // Quick check: if none of the deprecated vars appear, return borrowed
     if !DEPRECATED_VARS
         .iter()
@@ -128,8 +129,6 @@ fn collect_strings_from_value(value: &toml::Value, strings: &mut Vec<String>) {
 
 /// Replace all deprecated variables with their new names
 pub fn replace_deprecated_vars(content: &str) -> String {
-    use regex::Regex;
-
     let strings = extract_template_strings(content);
     let mut result = content.to_string();
 

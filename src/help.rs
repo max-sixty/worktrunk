@@ -8,6 +8,8 @@
 use std::process;
 
 use ansi_str::AnsiStr;
+use clap::ColorChoice;
+use clap::error::ErrorKind;
 use worktrunk::styling::eprintln;
 
 use crate::cli;
@@ -27,9 +29,6 @@ use crate::cli;
 ///
 /// Returns `true` if help was handled (caller should exit), `false` to continue normal parsing.
 pub fn maybe_handle_help_with_pager() -> bool {
-    use clap::ColorChoice;
-    use clap::error::ErrorKind;
-
     let args: Vec<String> = std::env::args().collect();
 
     // --help uses pager, -h prints directly (git convention)
@@ -128,9 +127,6 @@ pub fn maybe_handle_help_with_pager() -> bool {
 /// If `width` is provided, wraps text at that width (for web docs); otherwise uses default.
 /// Always preserves ANSI color codes for HTML conversion.
 fn get_help_reference(command_path: &[&str], width: Option<usize>) -> String {
-    use clap::ColorChoice;
-    use clap::error::ErrorKind;
-
     // Build args: ["wt", "config", "create", "--help"]
     let mut args: Vec<String> = vec!["wt".to_string()];
     args.extend(command_path.iter().map(|s| s.to_string()));
@@ -230,8 +226,6 @@ fn strip_ansi_codes(s: &str) -> String {
 ///
 /// This is used to generate docs/content/merge.md etc from the source.
 fn handle_help_page(args: &[String]) {
-    use clap::ColorChoice;
-
     let mut cmd = cli::build_command();
     cmd = cmd.color(ColorChoice::Never);
 

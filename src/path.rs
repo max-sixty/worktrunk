@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
-use crate::shell_exec::Cmd;
+use crate::shell_exec::{Cmd, ShellConfig};
 
 /// Convert a path to POSIX format for Git Bash compatibility.
 ///
@@ -20,8 +20,6 @@ use crate::shell_exec::Cmd;
 /// - `/tmp/test/repo` → `/tmp/test/repo` (unchanged on Unix)
 #[cfg(windows)]
 pub fn to_posix_path(path: &str) -> String {
-    use crate::shell_exec::ShellConfig;
-
     let Some(cygpath) = find_cygpath_from_shell(ShellConfig::get()) else {
         return path.to_string();
     };

@@ -8,9 +8,12 @@
 //!
 //! See `wt hook --help` for available filters and functions.
 
+use std::borrow::Cow;
+
 use color_print::cformat;
 use minijinja::{Environment, UndefinedBehavior, Value};
 use regex::Regex;
+use shell_escape::escape;
 
 use crate::git::Repository;
 use crate::path::to_posix_path;
@@ -228,9 +231,6 @@ pub fn expand_template(
     repo: &Repository,
     name: &str,
 ) -> Result<String, String> {
-    use shell_escape::escape;
-    use std::borrow::Cow;
-
     // Build context map, optionally shell-escaping values
     let mut context = HashMap::new();
     for (key, value) in vars {
