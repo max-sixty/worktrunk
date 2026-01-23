@@ -1503,6 +1503,25 @@ wt config show
 <!-- USER_CONFIG_START -->
 ## Worktrunk User Configuration
 
+**Typical config file** (`~/.config/worktrunk/config.toml`):
+
+```toml
+# Where to create new worktrees (relative to repo root)
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+# LLM-generated commit messages (optional)
+[commit-generation]
+command = "llm"
+args = ["-m", "claude-haiku-4.5"]
+
+# Command defaults (all optional)
+[list]
+full = true
+
+[merge]
+squash = true
+```
+
 Create with `wt config create`.
 
 Location:
@@ -1726,20 +1745,26 @@ Combine these commits into a single commit message.
 
 ## Worktrunk Project Configuration
 
-The project config defines lifecycle hooks and project-specific settings. This file is checked into version control and shared across the team.
-
-Create `.config/wt.toml` in the repository root:
+**Typical config file** (`.config/wt.toml`):
 
 ```toml
+# Run after creating a new worktree
 [post-create]
 install = "npm ci"
 
+# Run before merging (must pass)
 [pre-merge]
 test = "npm test"
 lint = "npm run lint"
+
+# Dev server URL shown in `wt list` (optional)
+[list]
+url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-See [`wt hook`](@/hook.md) for complete documentation on hook types, execution order, template variables, and [JSON context](@/hook.md#json-context).
+The project config defines lifecycle hooks and project-specific settings. This file is checked into version control and shared across the team.
+
+Create with `wt config create --project`, or add `.config/wt.toml` manually. See [`wt hook`](@/hook.md) for complete documentation on hook types, execution order, template variables, and [JSON context](@/hook.md#json-context).
 
 ### Dev server URL
 
