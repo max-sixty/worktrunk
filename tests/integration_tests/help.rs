@@ -57,6 +57,8 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
 #[case("help_remove_long", "remove --help")]
 #[case("help_merge_short", "merge -h")]
 #[case("help_merge_long", "merge --help")]
+#[case("help_sync_short", "sync -h")]
+#[case("help_sync_long", "sync --help")]
 #[case("help_step_short", "step -h")]
 #[case("help_step_long", "step --help")]
 // Config subcommands (long help only - these are less frequently accessed)

@@ -109,9 +109,6 @@ Usage: <b><span class=c>wt merge</span></b> <span class=c>[OPTIONS]</span> <span
       <b><span class=c>--no-rebase</span></b>
           Skip rebase (fail if not already rebased)
 
-      <b><span class=c>--no-remove</span></b>
-          Keep worktree after merge
-
       <b><span class=c>--no-verify</span></b>
           Skip hooks
 
@@ -126,6 +123,9 @@ Usage: <b><span class=c>wt merge</span></b> <span class=c>[OPTIONS]</span> <span
             changes
           - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
           - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
+
+      <b><span class=c>--no-remove</span></b>
+          Keep worktree after merge
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

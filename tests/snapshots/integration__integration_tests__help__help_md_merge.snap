@@ -9,6 +9,8 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
@@ -42,9 +44,6 @@ Options:
       --no-rebase
           Skip rebase (fail if not already rebased)
 
-      --no-remove
-          Keep worktree after merge
-
       --no-verify
           Skip hooks
 
@@ -58,6 +57,9 @@ Options:
           - all:     Stage everything: untracked files + unstaged tracked changes
           - tracked: Stage tracked changes only (like git add -u)
           - none:    Stage nothing, commit only what's already in the index
+
+      --no-remove
+          Keep worktree after merge
 
   -h, --help
           Print help (see a summary with '-h')

@@ -111,6 +111,19 @@ fn test_merge_with_no_remove_flag(merge_scenario: (TestRepo, PathBuf)) {
 }
 
 #[rstest]
+fn test_sync_keeps_worktree(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+
+    // Sync is equivalent to merge --no-remove
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "sync",
+        &["main"],
+        Some(&feature_wt)
+    ));
+}
+
+#[rstest]
 fn test_merge_already_on_target(repo: TestRepo) {
     // Already on main branch (repo root)
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &[], None));
