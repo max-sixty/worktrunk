@@ -11,12 +11,13 @@
 //! To regenerate a project config migration file, run `wt config state hints clear deprecated-project-config`.
 //! To regenerate a user config migration file, delete the existing `.new` file.
 
+use crate::config::WorktrunkConfig;
 use crate::styling::{eprintln, hint_message, warning_message};
 use color_print::cformat;
 use minijinja::Environment;
 use shell_escape::escape;
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
@@ -278,14 +279,32 @@ pub fn check_and_migrate(
     Ok(true)
 }
 
+/// Returns the config location where this key belongs, if it's in the wrong config.
+///
+/// Generic over `C`, the config type where the key was found. If the key would
+/// be valid in `C::Other`, returns that config's description.
+///
+/// For example, `key_belongs_in::<ProjectConfig>("commit-generation", value)` returns
+/// `Some("user config")`.
+/// Returns `None` if the key is truly unknown (not valid in either config).
+pub fn key_belongs_in<C: WorktrunkConfig>(key: &str, value: &toml::Value) -> Option<&'static str> {
+    C::Other::is_valid_key(key, value).then(C::Other::description)
+}
+
 /// Warn about unknown fields in config file
 ///
-/// Emits a warning for each unknown field, deduplicated per path per process.
-/// Unlike deprecated vars, there's no migration file — the warning just repeats
-/// until the user removes or fixes the unknown field.
+/// Generic over `C`, the config type being loaded. Emits a warning for each
+/// unknown field, deduplicated per path per process.
+///
+/// When an unknown key belongs in the other config type (`C::Other`),
+/// the warning includes a hint about where to move it.
 ///
 /// The `label` is used in the warning message (e.g., "User config" or "Project config").
-pub fn warn_unknown_fields(path: &Path, unknown_keys: &[String], label: &str) {
+pub fn warn_unknown_fields<C: WorktrunkConfig>(
+    path: &Path,
+    unknown_keys: &HashMap<String, toml::Value>,
+    label: &str,
+) {
     if unknown_keys.is_empty() {
         return;
     }
@@ -300,23 +319,28 @@ pub fn warn_unknown_fields(path: &Path, unknown_keys: &[String], label: &str) {
         guard.insert(canonical_path);
     }
 
-    // Build inline list of unknown keys
-    let keys_display: Vec<String> = unknown_keys
-        .iter()
-        .map(|k| cformat!("<bold>{}</>", k))
-        .collect();
+    // Sort keys for deterministic output order
+    let mut keys: Vec<_> = unknown_keys.keys().collect();
+    keys.sort();
 
-    let warning = format!(
-        "{} has unknown {}: {} (will be ignored)",
-        label,
-        if unknown_keys.len() == 1 {
-            "field"
+    for key in keys {
+        let value = &unknown_keys[key];
+        if let Some(other_location) = key_belongs_in::<C>(key, value) {
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "{label} has key <bold>{key}</> which belongs in {other_location} (will be ignored)"
+                ))
+            );
         } else {
-            "fields"
-        },
-        keys_display.join(", ")
-    );
-    eprintln!("{}", warning_message(warning));
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "{label} has unknown field <bold>{key}</> (will be ignored)"
+                ))
+            );
+        }
+    }
 
     // Flush stderr to ensure output appears before any subsequent messages
     std::io::stderr().flush().ok();
