@@ -23,7 +23,10 @@ use regex::Regex;
 use shell_escape::escape;
 
 use crate::config::WorktrunkConfig;
-use crate::styling::{eprintln, hint_message, warning_message};
+use crate::shell_exec::Cmd;
+use crate::styling::{
+    eprintln, format_bash_with_gutter, format_with_gutter, hint_message, verbosity, warning_message,
+};
 
 /// Tracks which config paths have already shown deprecation warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
@@ -238,7 +241,7 @@ pub fn check_and_migrate(
                     let _ = repo.mark_hint_shown(HINT_DEPRECATED_PROJECT_CONFIG);
                 }
 
-                // Show just the filename in the message, full paths in the command
+                // Show just the filename in the message
                 let new_filename = new_path
                     .file_name()
                     .map(|n| n.to_string_lossy())
@@ -249,15 +252,59 @@ pub fn check_and_migrate(
                 let path_str = path.to_string_lossy();
                 let new_path_escaped = escape(Cow::Borrowed(new_path_str.as_ref()));
                 let path_escaped = escape(Cow::Borrowed(path_str.as_ref()));
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!(
-                        "Wrote migrated {}; to apply: <bright-black>mv -- {} {}</>",
-                        new_filename,
-                        new_path_escaped,
-                        path_escaped
-                    ))
-                );
+
+                // Show actual diff with -v, otherwise show commands to run
+                if verbosity() >= 1 {
+                    // Run git diff and show the output
+                    eprintln!(
+                        "{}",
+                        hint_message(cformat!("Wrote migrated <bold>{}</>:", new_filename))
+                    );
+                    if let Ok(output) = Cmd::new("git")
+                        .args(["diff", "--no-index", "--color=always"])
+                        .arg(path_str.as_ref())
+                        .arg(new_path_str.as_ref())
+                        .run()
+                    {
+                        // git diff --no-index exits 1 when files differ, which is expected
+                        let diff_output = String::from_utf8_lossy(&output.stdout);
+                        if !diff_output.is_empty() {
+                            eprintln!("{}", format_with_gutter(diff_output.trim_end(), None));
+                        }
+                    }
+                    eprintln!("{}", hint_message("To apply:"));
+                    eprintln!(
+                        "{}",
+                        format_bash_with_gutter(&format!(
+                            "mv -- {} {}",
+                            new_path_escaped, path_escaped
+                        ))
+                    );
+                } else {
+                    // Show commands in gutters
+                    eprintln!(
+                        "{}",
+                        hint_message(cformat!(
+                            "Wrote migrated <bold>{}</>. To preview:",
+                            new_filename
+                        ))
+                    );
+                    eprintln!(
+                        "{}",
+                        format_bash_with_gutter(&format!(
+                            "git diff --no-index {} {}",
+                            path_escaped, new_path_escaped
+                        ))
+                    );
+                    eprintln!("{}", hint_message("To apply:"));
+                    eprintln!(
+                        "{}",
+                        format_bash_with_gutter(&format!(
+                            "mv -- {} {}",
+                            new_path_escaped, path_escaped
+                        ))
+                    );
+                }
             }
             Err(e) => {
                 // Warn about write failure but don't block config loading

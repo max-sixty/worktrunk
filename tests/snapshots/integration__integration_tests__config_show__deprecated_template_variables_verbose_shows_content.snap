@@ -3,6 +3,7 @@ source: tests/integration_tests/config_show.rs
 info:
   program: wt
   args:
+    - "-v"
     - list
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
@@ -42,7 +43,21 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mUser config uses deprecated template variables: [2mrepo_root[22m → [1mrepo_path[22m, [2mworktree[22m → [1mworktree_path[22m, [2mmain_worktree[22m → [1mrepo[22m[39m
-[2m↳[22m [2mWrote migrated [1mtest-config.toml.new[22m. To preview:[22m
-[107m [0m [2m[0m[2m[34mgit[0m[2m diff [0m[2m[36m--no-index[0m[2m [TEST_CONFIG] [TEST_CONFIG_NEW]
+[2m↳[22m [2mWrote migrated [1mtest-config.toml.new[22m:[22m
+[107m [0m [1mdiff --git a[TEST_CONFIG] b[TEST_CONFIG_NEW][m
+[107m [0m [1mindex 89b3165..0643e7d 100644[m
+[107m [0m [1m--- a[TEST_CONFIG][m
+[107m [0m [1m+++ b[TEST_CONFIG_NEW][m
+[107m [0m [36m@@ -1,2 +1,2 @@[m
+[107m [0m [31m-worktree-path = "../{{ main_worktree }}.{{ branch }}"[m
+[107m [0m [31m-post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"[m
+[107m [0m [32m+[m[32mworktree-path = "../{{ repo }}.{{ branch }}"[m
+[107m [0m [32m+[m[32mpost-create = "ln -sf {{ repo_path }}/node_modules {{ worktree_path }}/node_modules"[m
 [2m↳[22m [2mTo apply:[22m
 [107m [0m [2m[0m[2m[34mmv[0m[2m [0m[2m[36m--[0m[2m [TEST_CONFIG_NEW] [TEST_CONFIG]
+[2m○[22m Expanding [1mworktree-path[22m
+[107m [0m ../{{ main_worktree }}.{{ branch }} [2m→[22m ../repo.feature-a
+[2m○[22m Expanding [1mworktree-path[22m
+[107m [0m ../{{ main_worktree }}.{{ branch }} [2m→[22m ../repo.feature-b
+[2m○[22m Expanding [1mworktree-path[22m
+[107m [0m ../{{ main_worktree }}.{{ branch }} [2m→[22m ../repo.feature-c

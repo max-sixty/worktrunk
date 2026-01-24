@@ -840,6 +840,31 @@ post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     );
 }
 
+/// With -v flag, the deprecation hint should also show the migrated content
+/// using TOML syntax highlighting
+#[rstest]
+fn test_deprecated_template_variables_verbose_shows_content(repo: TestRepo, temp_home: TempDir) {
+    // Write config with deprecated variables
+    let config_path = repo.test_config_path();
+    fs::write(
+        config_path,
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["-v", "list"]).current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// When a migration file has already been written, subsequent commands should:
 /// 1. Still show the deprecation warning
 /// 2. NOT overwrite the migration file
