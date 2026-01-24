@@ -2367,12 +2367,12 @@ fn setup_snapshot_settings_for_paths_with_home(
         r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+) b(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+)",
         "$1diff --git a$2 b$3",
     );
-    // Windows may have " --git a_REPO_" with leading space after ANSI reset (missing "diff").
-    // Use negative lookbehind to ensure we don't match after "diff".
-    // Match: ANSI reset + space + "--git a" pattern
+    // Windows may have "  --git a_REPO_" with leading spaces after ANSI reset (missing "diff" and bold).
+    // Match: ANSI reset + one or more spaces + "--git a" pattern
+    // Replace with: ANSI reset + space + bold + "diff --git a" to match Unix format
     settings.add_filter(
-        r"(\x1b\[0m) --git a(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)",
-        "$1 diff --git a$2",
+        r"(\x1b\[0m) +--git a(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)",
+        "$1 \x1b[1mdiff --git a$2",
     );
     // Windows may also omit --- a prefix on the source file line
     settings.add_filter(r"(--- )(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)", "$1a$2");
@@ -2522,10 +2522,13 @@ fn setup_snapshot_settings_for_paths_with_home(
             "$1diff --git a$2 b$3",
         );
 
-        // Pattern 3: Windows may have " --git a[path]" with leading space after ANSI (missing "diff").
-        // This happens when some ANSI/filter processing leaves a space where "diff" was.
-        // Match: ANSI reset + space + "--git a" pattern to avoid matching existing "diff --git".
-        settings.add_filter(r"(\x1b\[0m) --git a(\[TEMP_HOME\]/)", "$1 diff --git a$2");
+        // Pattern 3: Windows may have "  --git a[path]" with leading spaces after ANSI (missing "diff" and bold).
+        // Match: ANSI reset + one or more spaces + "--git a" pattern
+        // Replace with: ANSI reset + space + bold + "diff --git a" to match Unix format
+        settings.add_filter(
+            r"(\x1b\[0m) +--git a(\[TEMP_HOME\]/)",
+            "$1 \x1b[1mdiff --git a$2",
+        );
 
         // --- [TEMP_HOME]/... -> --- a[TEMP_HOME]/... (Unix has slash, remove it)
         settings.add_filter(r"(--- )a/(\[TEMP_HOME\]/)", "$1a$2");
