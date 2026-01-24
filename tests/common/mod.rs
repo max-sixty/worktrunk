@@ -2353,12 +2353,13 @@ fn setup_snapshot_settings_for_paths_with_home(
     );
 
     // Also strip quotes around bracket placeholders like [PROJECT_ID]
+    // NOTE: This filter runs BEFORE PROJECT_ID replacement, so it handles
+    // cases where ANSI codes appear between quotes and placeholders.
+    // A simpler post-replacement filter is added after PROJECT_ID filters.
     settings.add_filter(
         r"'(?:\x1b\[[0-9;]*m)*(\[[A-Z_]+\])(?:\x1b\[[0-9;]*m)*'",
         "$1",
     );
-    // Simple case: strip quotes around [PROJECT_ID] without ANSI codes
-    settings.add_filter(r"'\[PROJECT_ID\]'", "[PROJECT_ID]");
     // Also strip quotes around paths that include subdirectories (e.g., '_REPO_/.config/wt.toml')
     // On Windows, shell_escape quotes paths containing ':' so full paths get quoted.
     settings.add_filter(
@@ -2592,6 +2593,11 @@ fn setup_snapshot_settings_for_paths_with_home(
     // This catches paths like ~/wrong-path that don't follow the repo naming convention.
     // MUST come AFTER specific ~/repo patterns so they match first.
     settings.add_filter(r"~/[a-zA-Z0-9_-]+", "[PROJECT_ID]");
+
+    // Strip quotes around [PROJECT_ID] after replacement.
+    // On Windows, paths inside quotes get replaced but quotes remain: 'C:/...' -> '[PROJECT_ID]'
+    // This filter MUST come AFTER PROJECT_ID filters to clean up the result.
+    settings.add_filter(r"'\[PROJECT_ID\]'", "[PROJECT_ID]");
 
     // Normalize HOME temp directory in snapshots (stdout/stderr content)
     // Matches any temp directory path (without trailing filename)
