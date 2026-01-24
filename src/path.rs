@@ -1,3 +1,4 @@
+use path_slash::PathExt as _;
 use shell_escape::unix::escape;
 use std::borrow::Cow;
 use std::path::Path;
@@ -111,9 +112,7 @@ pub fn format_path_for_display(path: &Path) -> String {
         }
 
         // Build tilde path with forward slash (POSIX style, works everywhere)
-        let rest = stripped.to_string_lossy();
-        #[cfg(windows)]
-        let rest = rest.replace('\\', "/");
+        let rest = stripped.to_slash_lossy();
 
         // Only use tilde form if the rest doesn't need escaping
         // (tilde doesn't expand inside quotes)
