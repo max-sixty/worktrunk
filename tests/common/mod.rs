@@ -2405,22 +2405,35 @@ fn setup_snapshot_settings_for_paths_with_home(
     // We replace the full temp_home path prefix with [TEMP_HOME], so paths like
     // /tmp/.tmpABC/.config/worktrunk/config.toml become [TEMP_HOME]/.config/worktrunk/config.toml
     if let Some(temp_home) = temp_home {
+        // Get both the original path and the canonicalized path - they may differ on Windows
+        // due to short path names (e.g., RUNNER~1 vs runneradmin) or other normalization.
+        let temp_home_original = temp_home.to_string_lossy().replace('\\', "/");
         let temp_home_canonical =
             canonicalize(temp_home).unwrap_or_else(|_| temp_home.to_path_buf());
         let temp_home_str = temp_home_canonical.to_string_lossy().replace('\\', "/");
 
         // On Windows, paths may be quoted by shell_escape due to ':' in drive letters.
-        // Add filter for quoted paths first, then unquoted.
-        // The quotes version: 'C:/Users/.../Temp/.tmpXXX -> '[TEMP_HOME]
+        // Add filters for both quoted and unquoted variants, for both original and canonical paths.
         if temp_home_str.contains(':') {
-            // Handle quoted Windows paths - quote may appear before drive letter
+            // Quoted canonical path
             settings.add_filter(
                 &format!("'{}", regex::escape(&temp_home_str)),
                 "'[TEMP_HOME]",
             );
+            // Quoted original path (may differ from canonical)
+            if temp_home_original != temp_home_str {
+                settings.add_filter(
+                    &format!("'{}", regex::escape(&temp_home_original)),
+                    "'[TEMP_HOME]",
+                );
+            }
         }
-        // Unquoted version
+        // Unquoted canonical path
         settings.add_filter(&regex::escape(&temp_home_str), "[TEMP_HOME]");
+        // Unquoted original path (may differ from canonical)
+        if temp_home_original != temp_home_str {
+            settings.add_filter(&regex::escape(&temp_home_original), "[TEMP_HOME]");
+        }
 
         // On macOS, canonicalize returns /private/var/... but git diff output shows /var/...
         // Add both variants to catch all cases
