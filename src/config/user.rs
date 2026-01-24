@@ -2112,6 +2112,45 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     }
 
     #[test]
+    fn test_effective_select_with_project_override() {
+        // Test that OverridableConfig merge works correctly for select
+        let mut config = UserConfig {
+            overrides: OverridableConfig {
+                select: Some(SelectConfig {
+                    pager: Some("delta".to_string()),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectOverrides {
+                overrides: OverridableConfig {
+                    select: Some(SelectConfig {
+                        pager: Some("bat".to_string()),
+                    }),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        // Project override takes precedence
+        let effective = config.select(Some("github.com/user/repo")).unwrap();
+        assert_eq!(effective.pager, Some("bat".to_string()));
+
+        // No project override = use global
+        let effective = config.select(Some("github.com/other/repo")).unwrap();
+        assert_eq!(effective.pager, Some("delta".to_string()));
+
+        // No project = use global
+        let effective = config.select(None).unwrap();
+        assert_eq!(effective.pager, Some("delta".to_string()));
+    }
+
+    #[test]
     fn test_effective_commit_global_only() {
         // Only global config, no project config
         let config = UserConfig {
