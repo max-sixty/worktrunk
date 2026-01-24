@@ -2318,10 +2318,17 @@ fn setup_snapshot_settings_for_paths(
     // This pattern matches placeholders with optional suffixes and subpaths:
     // - '_REPO_' -> _REPO_
     // - '_REPO_.feat' -> _REPO_.feat
+    // - '_REPO_.name.bak.20250102-000000' -> _REPO_.name.bak.20250102-000000
     // - '_REPO_/.config/wt.toml' -> _REPO_/.config/wt.toml
     // - '_WORKTREE_A_/subpath' -> _WORKTREE_A_/subpath
     settings.add_filter(
-        r"'(?:\x1b\[[0-9;]*m)*(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?(?:/[^']*)?)(?:\x1b\[[0-9;]*m)*'",
+        r"'(?:\x1b\[[0-9;]*m)*(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_.-]+)?(?:/[^']*)?)(?:\x1b\[[0-9;]*m)*'",
+        "$1",
+    );
+
+    // Also strip quotes around bracket placeholders like [PROJECT_ID]
+    settings.add_filter(
+        r"'(?:\x1b\[[0-9;]*m)*(\[[A-Z_]+\])(?:\x1b\[[0-9;]*m)*'",
         "$1",
     );
 
