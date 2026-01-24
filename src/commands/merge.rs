@@ -45,6 +45,7 @@ fn collect_merge_commands(
     commit: bool,
     verify: bool,
     will_remove: bool,
+    squash_enabled: bool,
 ) -> anyhow::Result<(Vec<HookCommand>, String)> {
     let mut all_commands = Vec::new();
     let project_config = match repo.load_project_config()? {
@@ -52,10 +53,11 @@ fn collect_merge_commands(
         None => return Ok((all_commands, repo.project_identifier()?.to_string())),
     };
 
-    // Collect pre-commit commands if we'll commit (direct or via squash)
     let mut hooks = Vec::new();
 
-    if commit && verify && repo.current_worktree().is_dirty()? {
+    // Pre-commit hooks run when a commit will actually be created
+    let will_create_commit = repo.current_worktree().is_dirty()? || squash_enabled;
+    if commit && verify && will_create_commit {
         hooks.push(HookType::PreCommit);
     }
 
@@ -146,7 +148,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
 
     // Collect and approve all commands upfront for batch permission request
     let (all_commands, project_id) =
-        collect_merge_commands(repo, commit, verify, remove_effective)?;
+        collect_merge_commands(repo, commit, verify, remove_effective, squash_enabled)?;
 
     // Approve all commands in a single batch (shows templates, not expanded values)
     let approved = approve_command_batch(&all_commands, &project_id, config, yes, false)?;

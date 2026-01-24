@@ -93,9 +93,9 @@ pub use project::{
     find_unknown_keys as find_unknown_project_keys,
 };
 pub use user::{
-    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, StageMode, UserConfig,
-    UserProjectOverrides, find_unknown_keys as find_unknown_user_keys, get_config_path,
-    set_config_path,
+    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig, SelectConfig,
+    StageMode, UserConfig, UserProjectOverrides, find_unknown_keys as find_unknown_user_keys,
+    get_config_path, set_config_path,
 };
 
 #[cfg(test)]
@@ -140,7 +140,10 @@ mod tests {
     #[test]
     fn test_config_serialization_with_worktree_path() {
         let config = UserConfig {
-            worktree_path: Some("custom/{{ branch }}".to_string()),
+            overrides: OverridableConfig {
+                worktree_path: Some("custom/{{ branch }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let toml = toml::to_string(&config).unwrap();
@@ -152,7 +155,7 @@ mod tests {
     fn test_default_config() {
         let config = UserConfig::default();
         // worktree_path is None by default, but the getter returns the default
-        assert!(config.worktree_path.is_none());
+        assert!(config.overrides.worktree_path.is_none());
         assert_eq!(
             config.worktree_path(),
             "../{{ repo }}.{{ branch | sanitize }}"
@@ -166,7 +169,10 @@ mod tests {
     fn test_format_worktree_path() {
         let test = test_repo();
         let config = UserConfig {
-            worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
+            overrides: OverridableConfig {
+                worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
@@ -181,7 +187,10 @@ mod tests {
     fn test_format_worktree_path_custom_template() {
         let test = test_repo();
         let config = UserConfig {
-            worktree_path: Some("{{ main_worktree }}-{{ branch }}".to_string()),
+            overrides: OverridableConfig {
+                worktree_path: Some("{{ main_worktree }}-{{ branch }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
@@ -196,7 +205,10 @@ mod tests {
     fn test_format_worktree_path_only_branch() {
         let test = test_repo();
         let config = UserConfig {
-            worktree_path: Some(".worktrees/{{ main_worktree }}/{{ branch }}".to_string()),
+            overrides: OverridableConfig {
+                worktree_path: Some(".worktrees/{{ main_worktree }}/{{ branch }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
@@ -212,7 +224,10 @@ mod tests {
         let test = test_repo();
         // Use {{ branch | sanitize }} to replace slashes with dashes
         let config = UserConfig {
-            worktree_path: Some("{{ main_worktree }}.{{ branch | sanitize }}".to_string()),
+            overrides: OverridableConfig {
+                worktree_path: Some("{{ main_worktree }}.{{ branch | sanitize }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
@@ -227,9 +242,12 @@ mod tests {
     fn test_format_worktree_path_with_multiple_slashes() {
         let test = test_repo();
         let config = UserConfig {
-            worktree_path: Some(
-                ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
-            ),
+            overrides: OverridableConfig {
+                worktree_path: Some(
+                    ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
+                ),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
@@ -245,9 +263,12 @@ mod tests {
         let test = test_repo();
         // Windows-style path separators should also be sanitized
         let config = UserConfig {
-            worktree_path: Some(
-                ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
-            ),
+            overrides: OverridableConfig {
+                worktree_path: Some(
+                    ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
+                ),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
@@ -263,7 +284,10 @@ mod tests {
         let test = test_repo();
         // {{ branch }} without filter gives raw branch name
         let config = UserConfig {
-            worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
+            overrides: OverridableConfig {
+                worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
@@ -740,7 +764,11 @@ template-file = "~/file.txt"
         // The deserialization should succeed, but validation in load() would fail
         // Since we can't easily test load() without env vars, we verify the fields deserialize
         if let Ok(config) = config_result {
-            let generation = config.commit.as_ref().and_then(|c| c.generation.as_ref());
+            let generation = config
+                .overrides
+                .commit
+                .as_ref()
+                .and_then(|c| c.generation.as_ref());
             // Verify validation logic: both fields should not be Some
             let has_both = generation
                 .map(|g| g.template.is_some() && g.template_file.is_some())
@@ -770,7 +798,11 @@ squash-template-file = "~/file.txt"
         // The deserialization should succeed, but validation in load() would fail
         // Since we can't easily test load() without env vars, we verify the fields deserialize
         if let Ok(config) = config_result {
-            let generation = config.commit.as_ref().and_then(|c| c.generation.as_ref());
+            let generation = config
+                .overrides
+                .commit
+                .as_ref()
+                .and_then(|c| c.generation.as_ref());
             // Verify validation logic: both fields should not be Some
             let has_both = generation
                 .map(|g| g.squash_template.is_some() && g.squash_template_file.is_some())

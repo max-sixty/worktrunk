@@ -919,6 +919,42 @@ fn test_merge_pre_squash_command_failure(mut repo: TestRepo) {
     ));
 }
 
+/// Bug #3: Pre-commit hooks should be collected for approval when squashing,
+/// even if the worktree is clean (no uncommitted changes).
+///
+/// Scenario: Feature worktree has multiple commits to squash, but no dirty files.
+/// Without the fix, pre-commit hooks would run during squash without approval.
+/// With the fix, pre-commit hooks are collected upfront and approved.
+#[rstest]
+fn test_merge_pre_commit_collected_for_squash_clean_worktree(
+    repo_with_multi_commit_feature: TestRepo,
+) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = repo.worktrees["feature"].clone();
+
+    // Create project config in the FEATURE worktree (where merge runs)
+    // This ensures the config is visible when loading project config
+    let config_dir = feature_wt.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "pre-commit = \"echo 'Pre-commit from squash'\"",
+    )
+    .unwrap();
+    // Commit the config in the feature worktree
+    repo.run_git_in(&feature_wt, &["add", ".config/wt.toml"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add config"]);
+
+    // Feature worktree is CLEAN (no uncommitted changes) but has 3 commits to squash.
+    // Pre-commit should be collected and approved before squash runs.
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        repo,
+        "merge",
+        &["main", "--yes"],
+        Some(&feature_wt)
+    ));
+}
+
 #[rstest]
 fn test_merge_no_remote(#[from(repo_with_feature_worktree)] repo: TestRepo) {
     // Deliberately NOT calling setup_remote to test the error case

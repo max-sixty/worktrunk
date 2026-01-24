@@ -1,0 +1,60 @@
+---
+source: tests/integration_tests/merge.rs
+info:
+  program: wt
+  args:
+    - merge
+    - main
+    - "--yes"
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    PATH: "[PATH]"
+    RUST_LOG: warn
+    SHELL: ""
+    SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+[36m◎[39m [36mRunning pre-commit project hook:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Pre-commit from squash'[0m[2m
+[0mPre-commit from squash
+[36m◎[39m [36mSquashing 3 commits into a single commit [90m(3 files, [32m+3[39m[39m[90m)[39m...[39m
+[36m◎[39m [36mGenerating squash commit message...[39m
+[2m↳[22m [2mUsing fallback commit message. For LLM setup guide, run [90mwt config --help[39m[22m
+[107m [0m [1mSquash commits from main[22m
+[107m [0m 
+[107m [0m Combined commits:
+[107m [0m - feat: add file 1
+[107m [0m - feat: add file 2
+[107m [0m - Add config
+[32m✓[39m [32mSquashed @ [HASH][39m
+[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no rebase needed)[39m
+[107m [0m * [33m[HASH][m Squash commits from main
+[107m [0m  .config/wt.toml | 1 [32m+[m
+[107m [0m  file1.txt       | 1 [32m+[m
+[107m [0m  file2.txt       | 1 [32m+[m
+[107m [0m  3 files changed, 3 insertions(+)
+[32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 3 files, [32m+3[39m[39m[90m)[39m[39m
+[36m◎ Removing [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
+[33m▲[39m [33mCannot change directory — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

@@ -1617,24 +1617,31 @@ Pager behavior for `wt select` diff previews.
 # pager = "delta --paging=never"
 ```
 
-### Per-project settings (Experimental)
+### User project-specific settings
 
-Per-project settings are keyed by project identifier (e.g., `github.com/user/repo`).
-These contain approved hook commands plus optional overrides of global settings.
-Setting overrides (worktree-path, list, commit, merge) are new; approved-commands is stable.
+User config settings apply to all projects. [Project config](@/config.md#worktrunk-project-configuration) settings are shared with teammates. The `[projects]` table holds personal, project-specific settings like approved hook commands and worktree layout. Entries are keyed by project identifier (e.g., `github.com/user/repo`).
+
+#### Approved hook commands
+
+When a project hook runs for the first time, worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.
 
 ```toml
 [projects."github.com/user/repo"]
-# Approved hook commands (auto-populated when approving on first run)
 approved-commands = ["npm ci", "npm test"]
+```
 
-# Optional overrides (omit to use global settings)
+Auto-managed. To reset, delete the entry or run `wt hook approve --clear`.
+
+#### Setting overrides (Experimental)
+
+Override global settings for a specific project. Useful when one repo needs a different worktree layout or merge behavior.
+
+```toml
+[projects."github.com/user/repo"]
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 list.full = true
 merge.squash = false
 ```
-
-For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see [`wt hook` docs](@/hook.md).
 
 ### Custom prompt templates
 
