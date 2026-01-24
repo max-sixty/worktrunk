@@ -320,16 +320,22 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Check for deprecations with show_brief_warning=false to get full details
+    // Check for deprecations with show_brief_warning=false (silent mode)
     // User config is global, not tied to any repository
-    let _ = worktrunk::config::check_and_migrate(
+    if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         true,
         "User config",
         None,
-        false, // show full details, not brief warning
-    );
+        false, // silent mode - we'll format the output ourselves
+    ) {
+        // Add deprecation details to the output buffer
+        out.push_str(&worktrunk::config::format_deprecation_details(
+            &info,
+            &config_path,
+        ));
+    }
 
     // Validate config (syntax + schema) and warn if invalid
     if let Err(e) = toml::from_str::<UserConfig>(&contents) {
@@ -430,17 +436,23 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Check for deprecations with show_brief_warning=false to get full details
+    // Check for deprecations with show_brief_warning=false (silent mode)
     // Only show in main worktree (where .git is a directory)
     let is_main_worktree = repo_root.join(".git").is_dir();
-    let _ = worktrunk::config::check_and_migrate(
+    if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         is_main_worktree,
         "Project config",
         Some(&repo),
-        false, // show full details, not brief warning
-    );
+        false, // silent mode - we'll format the output ourselves
+    ) {
+        // Add deprecation details to the output buffer
+        out.push_str(&worktrunk::config::format_deprecation_details(
+            &info,
+            &config_path,
+        ));
+    }
 
     // Validate config (syntax + schema) and warn if invalid
     if let Err(e) = toml::from_str::<ProjectConfig>(&contents) {
