@@ -839,8 +839,8 @@ post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     );
 }
 
-/// With -v flag, the deprecation hint should also show the migrated content
-/// using TOML syntax highlighting
+/// With -v flag, the brief deprecation warning includes the mv command hint
+/// and template expansion logs are shown
 #[rstest]
 fn test_deprecated_template_variables_verbose_shows_content(repo: TestRepo, temp_home: TempDir) {
     // Write config with deprecated variables

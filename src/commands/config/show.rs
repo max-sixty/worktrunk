@@ -331,10 +331,7 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         false, // silent mode - we'll format the output ourselves
     ) {
         // Add deprecation details to the output buffer
-        out.push_str(&worktrunk::config::format_deprecation_details(
-            &info,
-            &config_path,
-        ));
+        out.push_str(&worktrunk::config::format_deprecation_details(&info));
     }
 
     // Validate config (syntax + schema) and warn if invalid
@@ -448,10 +445,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         false, // silent mode - we'll format the output ourselves
     ) {
         // Add deprecation details to the output buffer
-        out.push_str(&worktrunk::config::format_deprecation_details(
-            &info,
-            &config_path,
-        ));
+        out.push_str(&worktrunk::config::format_deprecation_details(&info));
     }
 
     // Validate config (syntax + schema) and warn if invalid

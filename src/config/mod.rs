@@ -78,6 +78,7 @@ impl WorktrunkConfig for ProjectConfig {
 
 // Re-export public types
 pub use commands::{Command, CommandConfig};
+pub use deprecation::DeprecationInfo;
 pub use deprecation::check_and_migrate;
 pub use deprecation::format_deprecation_details;
 pub use deprecation::normalize_template_vars;

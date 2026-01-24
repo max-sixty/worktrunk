@@ -403,6 +403,8 @@ pub struct DeprecationInfo {
     pub label: String,
     /// True if user deleted the migration file (show regenerate hint)
     pub user_deleted_migration: bool,
+    /// True if in a linked worktree (migration file written to main worktree only)
+    pub in_linked_worktree: bool,
 }
 
 impl DeprecationInfo {
@@ -478,6 +480,7 @@ pub fn check_and_migrate(
         commit_gen_deprecations: commit_gen_deprecations.clone(),
         label: label.to_string(),
         user_deleted_migration: should_skip_write,
+        in_linked_worktree: !warn_and_migrate,
     };
 
     // Skip warning entirely if not in main worktree (for project config)
@@ -490,7 +493,11 @@ pub fn check_and_migrate(
     {
         let mut guard = WARNED_DEPRECATED_PATHS.lock().unwrap();
         if guard.contains(&canonical_path) {
-            return Ok(Some(info)); // Already warned, skip
+            // Already warned, but still set migration_path if file exists
+            if new_path.exists() {
+                info.migration_path = Some(new_path);
+            }
+            return Ok(Some(info));
         }
         guard.insert(canonical_path.clone());
     }
@@ -507,15 +514,17 @@ pub fn check_and_migrate(
 
         // Still write migration file if needed
         if !should_skip_write {
-            write_migration_file(
+            let wrote_file = write_migration_file(
                 path,
                 content,
                 &new_path,
                 repo,
                 &deprecated_vars,
                 &commit_gen_deprecations,
-            )?;
-            info.migration_path = Some(new_path);
+            );
+            if wrote_file {
+                info.migration_path = Some(new_path);
+            }
         }
 
         std::io::stderr().flush().ok();
@@ -525,20 +534,23 @@ pub fn check_and_migrate(
     // Silent mode for `wt config show` - just write migration file and return info
     // The caller will use format_deprecation_details() to add output to its buffer
     if !should_skip_write {
-        write_migration_file_silent(
+        let wrote_file = write_migration_file_silent(
             content,
             &new_path,
             repo,
             &deprecated_vars,
             &commit_gen_deprecations,
-        )?;
-        info.migration_path = Some(new_path.clone());
+        );
+        if wrote_file {
+            info.migration_path = Some(new_path.clone());
+        }
     }
 
     Ok(Some(info))
 }
 
 /// Write migration file with all deprecation fixes applied (with stderr output)
+/// Returns true if file was written successfully, false otherwise.
 fn write_migration_file(
     path: &Path,
     content: &str,
@@ -546,14 +558,18 @@ fn write_migration_file(
     repo: Option<&crate::git::Repository>,
     deprecated_vars: &[(&'static str, &'static str)],
     commit_gen_deprecations: &CommitGenerationDeprecations,
-) -> anyhow::Result<()> {
-    write_migration_file_silent(
+) -> bool {
+    let wrote_file = write_migration_file_silent(
         content,
         new_path,
         repo,
         deprecated_vars,
         commit_gen_deprecations,
-    )?;
+    );
+
+    if !wrote_file {
+        return false;
+    }
 
     // Show just the filename in the message
     let new_filename = new_path
@@ -561,9 +577,9 @@ fn write_migration_file(
         .map(|n| n.to_string_lossy())
         .unwrap_or_default();
 
-    // Use forward slashes for cross-platform compatibility (works in Git Bash on Windows)
-    let new_path_str = new_path.to_string_lossy().replace('\\', "/");
-    let path_str = path.to_string_lossy().replace('\\', "/");
+    // Shell-escape paths for safe copy/paste
+    let new_path_str = escape(new_path.to_string_lossy().replace('\\', "/").into());
+    let path_str = escape(path.to_string_lossy().replace('\\', "/").into());
 
     eprintln!(
         "{}",
@@ -577,17 +593,18 @@ fn write_migration_file(
         format_bash_with_gutter(&format!("mv -- {} {}", new_path_str, path_str))
     );
 
-    Ok(())
+    true
 }
 
 /// Write migration file without any stderr output (for silent mode)
+/// Returns true if file was written successfully, false otherwise.
 fn write_migration_file_silent(
     content: &str,
     new_path: &Path,
     repo: Option<&crate::git::Repository>,
     deprecated_vars: &[(&'static str, &'static str)],
     commit_gen_deprecations: &CommitGenerationDeprecations,
-) -> anyhow::Result<()> {
+) -> bool {
     let has_deprecated_vars = !deprecated_vars.is_empty();
     let has_commit_gen_deprecations = !commit_gen_deprecations.is_empty();
 
@@ -603,7 +620,7 @@ fn write_migration_file_silent(
     if let Err(e) = std::fs::write(new_path, &new_content) {
         // Log write failure but don't block config loading
         log::warn!("Could not write migration file: {}", e);
-        return Ok(());
+        return false;
     }
 
     // Mark hint as shown for project config
@@ -611,7 +628,7 @@ fn write_migration_file_silent(
         let _ = repo.mark_hint_shown(HINT_DEPRECATED_CONFIG);
     }
 
-    Ok(())
+    true
 }
 
 /// Format the diff between original and migrated config files as a string
@@ -620,8 +637,9 @@ pub fn format_migration_diff(original_path: &Path, new_path: &Path) -> Option<St
     let path_str = original_path.to_string_lossy().replace('\\', "/");
 
     // Run git diff and return the formatted output
+    // Use -- to separate options from file paths (guards against filenames starting with -)
     if let Ok(output) = Cmd::new("git")
-        .args(["diff", "--no-index", "--color=always"])
+        .args(["diff", "--no-index", "--color=always", "--"])
         .arg(&path_str)
         .arg(&new_path_str)
         .run()
@@ -641,7 +659,7 @@ pub fn format_migration_diff(original_path: &Path, new_path: &Path) -> Option<St
 /// - Warning message listing deprecated patterns
 /// - Migration hint with apply command
 /// - Inline diff showing the changes
-pub fn format_deprecation_details(info: &DeprecationInfo, config_path: &Path) -> String {
+pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
     use std::fmt::Write;
     let mut out = String::new();
 
@@ -691,8 +709,9 @@ pub fn format_deprecation_details(info: &DeprecationInfo, config_path: &Path) ->
             .file_name()
             .map(|n| n.to_string_lossy())
             .unwrap_or_default();
-        let new_path_str = new_path.to_string_lossy().replace('\\', "/");
-        let path_str = config_path.to_string_lossy().replace('\\', "/");
+        // Shell-escape paths for safe copy/paste
+        let new_path_str = escape(new_path.to_string_lossy().replace('\\', "/").into());
+        let path_str = escape(info.config_path.to_string_lossy().replace('\\', "/").into());
 
         let _ = writeln!(
             out,
@@ -709,9 +728,18 @@ pub fn format_deprecation_details(info: &DeprecationInfo, config_path: &Path) ->
         );
 
         // Inline diff
-        if let Some(diff) = format_migration_diff(config_path, new_path) {
+        if let Some(diff) = format_migration_diff(&info.config_path, new_path) {
             let _ = writeln!(out, "{}", diff);
         }
+    } else if info.in_linked_worktree {
+        // In linked worktree - migration file is written to main worktree
+        let _ = writeln!(
+            out,
+            "{}",
+            hint_message(
+                "Run <bright-black>wt config show</> from main worktree to generate migration file",
+            )
+        );
     } else if info.user_deleted_migration {
         // User deleted the migration file - show how to regenerate
         let _ = writeln!(
