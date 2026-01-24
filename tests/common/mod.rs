@@ -2367,10 +2367,23 @@ fn setup_snapshot_settings_for_paths_with_home(
         r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+) b(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+)",
         "$1diff --git a$2 b$3",
     );
+    // Windows may have " --git a_REPO_" with leading space after ANSI reset (missing "diff").
+    // Use negative lookbehind to ensure we don't match after "diff".
+    // Match: ANSI reset + space + "--git a" pattern
+    settings.add_filter(
+        r"(\x1b\[0m) --git a(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)",
+        "$1 diff --git a$2",
+    );
     // Windows may also omit --- a prefix on the source file line
     settings.add_filter(r"(--- )(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)", "$1a$2");
     // Windows may also omit +++ b prefix on the destination file line
     settings.add_filter(r"(\+\+\+ )(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)", "$1b$2");
+    // Windows may output bare path for --- line: \x1b[1m_REPO_/...\x1b[m (no "--- a")
+    // Add the missing "--- a" prefix.
+    settings.add_filter(
+        r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\x1b]+\.toml)(\x1b\[m)",
+        "$1--- a$2$3",
+    );
 
     // Normalize syntax highlighting around placeholders.
     // Bash syntax highlighters may split tokens differently on different platforms.
@@ -2508,6 +2521,11 @@ fn setup_snapshot_settings_for_paths_with_home(
             r"(\x1b\[1m)(\[TEMP_HOME\]/[^\s]+) b(\[TEMP_HOME\]/[^\s]+)",
             "$1diff --git a$2 b$3",
         );
+
+        // Pattern 3: Windows may have " --git a[path]" with leading space after ANSI (missing "diff").
+        // This happens when some ANSI/filter processing leaves a space where "diff" was.
+        // Match: ANSI reset + space + "--git a" pattern to avoid matching existing "diff --git".
+        settings.add_filter(r"(\x1b\[0m) --git a(\[TEMP_HOME\]/)", "$1 diff --git a$2");
 
         // --- [TEMP_HOME]/... -> --- a[TEMP_HOME]/... (Unix has slash, remove it)
         settings.add_filter(r"(--- )a/(\[TEMP_HOME\]/)", "$1a$2");
