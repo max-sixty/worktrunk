@@ -53,6 +53,9 @@ exit_code: 0
 [2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
 [2m○[22m [2mSkipped fish; ~/.config/fish/functions not found[22m
 
+[36mCLAUDE CODE[39m
+[2m○[22m [1mclaude[22m CLI not installed
+
 [36mDIAGNOSTICS[39m
 [2m↳[22m [2mCI status requires GitHub or GitLab remote[22m
 [31m✗[39m [31mCommit generation failed ([1mnonexistent-llm-command-12345 -m test-model[22m)[39m
@@ -64,5 +67,4 @@ exit_code: 0
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m
 [2m○[22m git: [1m[VERSION][22m
-[2m↳[22m [2mClaude Code plugin not installed ([1mclaude[22m not found)[22m
 [2m○[22m Hyperlinks: [1minactive[22m

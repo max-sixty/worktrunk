@@ -1207,7 +1207,8 @@ fn test_config_show_shell_integration_active(mut repo: TestRepo, temp_home: Temp
 fn test_config_show_plugin_installed(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic output
     repo.setup_mock_ci_tools_unauthenticated();
-    // Setup plugin as installed in Claude Code
+    // Setup mock claude CLI and plugin as installed
+    repo.setup_mock_claude_installed();
     TestRepo::setup_plugin_installed(temp_home.path());
 
     // Create global config
@@ -1238,6 +1239,37 @@ fn test_config_show_claude_available_plugin_not_installed(mut repo: TestRepo, te
     repo.setup_mock_ci_tools_unauthenticated();
     // Setup mock claude as available (but plugin not installed)
     repo.setup_mock_claude_installed();
+
+    // Create global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_config_show_statusline_configured(mut repo: TestRepo, temp_home: TempDir) {
+    // Setup mock gh/glab for deterministic output
+    repo.setup_mock_ci_tools_unauthenticated();
+    // Setup mock claude CLI, plugin, AND statusline
+    repo.setup_mock_claude_installed();
+    TestRepo::setup_plugin_installed(temp_home.path());
+    TestRepo::setup_statusline_configured(temp_home.path());
 
     // Create global config
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");

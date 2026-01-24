@@ -1834,6 +1834,20 @@ impl TestRepo {
         .unwrap();
     }
 
+    /// Setup the statusline as configured in Claude Code settings
+    ///
+    /// Creates the settings.json file with the wt statusline command.
+    /// The temp_home must already be set up (via set_temp_home_env on the command).
+    pub fn setup_statusline_configured(temp_home: &std::path::Path) {
+        let claude_dir = temp_home.join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(
+            claude_dir.join("settings.json"),
+            r#"{"statusLine":{"type":"command","command":"wt list statusline --claude-code"}}"#,
+        )
+        .unwrap();
+    }
+
     /// Setup mock `gh` that returns configurable PR/CI data
     ///
     /// Use this for testing CI status parsing code. The mock returns JSON data
