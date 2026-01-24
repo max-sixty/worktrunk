@@ -964,6 +964,24 @@ impl UserConfig {
         array
     }
 
+    /// Recursively convert inline tables to standard tables for readability.
+    ///
+    /// `toml_edit::ser::to_document` creates inline tables for simple structures,
+    /// but we prefer standard `[table]` format for config files.
+    fn expand_inline_tables(table: &mut toml_edit::Table) {
+        let keys: Vec<_> = table.iter().map(|(k, _)| k.to_string()).collect();
+        for key in keys {
+            let item = table.get_mut(&key).unwrap();
+            if let Some(inline) = item.as_inline_table() {
+                let mut new_table = inline.clone().into_table();
+                Self::expand_inline_tables(&mut new_table);
+                *item = toml_edit::Item::Table(new_table);
+            } else if let Some(t) = item.as_table_mut() {
+                Self::expand_inline_tables(t);
+            }
+        }
+    }
+
     /// Serialize a per-project config section (commit-generation, list, commit, merge).
     ///
     /// If the config is Some, serializes it as a nested table. If None, removes the section.
@@ -987,27 +1005,6 @@ impl UserConfig {
             }
         } else if let Some(project_table) = projects[project_id].as_table_mut() {
             project_table.remove(section_name);
-        }
-    }
-
-    /// Serialize a nested config section into a table.
-    ///
-    /// If the config is Some, serializes it as a nested table. If None, does nothing.
-    /// Used when creating a new file from scratch.
-    fn serialize_nested_config<T: Serialize>(
-        table: &mut toml_edit::Table,
-        section_name: &str,
-        config: Option<&T>,
-    ) {
-        if let Some(cfg) = config
-            && let Ok(toml_value) = toml::to_string(cfg)
-            && let Ok(parsed) = toml_value.parse::<toml_edit::DocumentMut>()
-        {
-            let mut nested = toml_edit::Table::new();
-            for (k, v) in parsed.iter() {
-                nested[k] = v.clone();
-            }
-            table[section_name] = toml_edit::Item::Table(nested);
         }
     }
 
@@ -1104,65 +1101,28 @@ impl UserConfig {
 
             doc.to_string()
         } else {
-            // No existing file, create from scratch using toml_edit for consistent formatting
-            let mut doc = toml_edit::DocumentMut::new();
+            // No existing file: serialize struct directly, then post-process formatting
+            let mut doc = toml_edit::ser::to_document(&self)
+                .map_err(|e| ConfigError::Message(format!("Serialization error: {e}")))?;
 
-            // Only write worktree-path if explicitly set (not the default)
-            if let Some(ref path) = self.worktree_path {
-                doc["worktree-path"] = toml_edit::value(path);
-            }
+            // Convert inline tables to standard tables for readability
+            Self::expand_inline_tables(doc.as_table_mut());
 
-            // skip-shell-integration-prompt (only if true)
-            if self.skip_shell_integration_prompt {
-                doc["skip-shell-integration-prompt"] = toml_edit::value(true);
-            }
-
-            // commit-generation section
-            doc["commit-generation"] = toml_edit::Item::Table(toml_edit::Table::new());
-            let commit_args: toml_edit::Array = self.commit_generation.args.iter().collect();
-            doc["commit-generation"]["args"] = toml_edit::value(commit_args);
-            if let Some(ref cmd) = self.commit_generation.command {
-                doc["commit-generation"]["command"] = toml_edit::value(cmd);
-            }
-
-            // projects section with multiline arrays
-            if !self.projects.is_empty() {
-                let mut projects_table = toml_edit::Table::new();
-                projects_table.set_implicit(true); // Don't emit [projects] header
-                for (project_id, project_config) in &self.projects {
-                    let mut table = toml_edit::Table::new();
-
-                    // worktree-path (only if set)
-                    if let Some(ref path) = project_config.worktree_path {
-                        table["worktree-path"] = toml_edit::value(path);
+            // Post-process: format approved-commands as multiline arrays for readability
+            if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+                projects.set_implicit(true); // Don't emit [projects] header
+                for (_, project) in projects.iter_mut() {
+                    if let Some(arr) = project
+                        .get_mut("approved-commands")
+                        .and_then(|a| a.as_array_mut())
+                    {
+                        for item in arr.iter_mut() {
+                            item.decor_mut().set_prefix("\n    ");
+                        }
+                        arr.set_trailing("\n");
+                        arr.set_trailing_comma(true);
                     }
-
-                    // approved-commands
-                    let commands =
-                        Self::format_multiline_array(project_config.approved_commands.iter());
-                    table["approved-commands"] = toml_edit::value(commands);
-
-                    // Per-project nested config sections
-                    Self::serialize_nested_config(
-                        &mut table,
-                        "commit-generation",
-                        project_config.commit_generation.as_ref(),
-                    );
-                    Self::serialize_nested_config(&mut table, "list", project_config.list.as_ref());
-                    Self::serialize_nested_config(
-                        &mut table,
-                        "commit",
-                        project_config.commit.as_ref(),
-                    );
-                    Self::serialize_nested_config(
-                        &mut table,
-                        "merge",
-                        project_config.merge.as_ref(),
-                    );
-
-                    projects_table[project_id] = toml_edit::Item::Table(table);
                 }
-                doc["projects"] = toml_edit::Item::Table(projects_table);
             }
 
             doc.to_string()
