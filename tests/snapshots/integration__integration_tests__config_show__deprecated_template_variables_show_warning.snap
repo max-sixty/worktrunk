@@ -41,5 +41,6 @@ exit_code: 0
 [2m○[22m [2mShowing 4 worktrees, 3 ahead
 
 ----- stderr -----
-[33m▲[39m [33mUser config uses deprecated template variables: [2mrepo_root[22m → [1mrepo_path[22m, [2mworktree[22m → [1mworktree_path[22m, [2mmain_worktree[22m → [1mrepo[22m[39m
-[2m↳[22m [2mWrote migrated test-config.toml.new; to apply: [90mmv -- [TEST_CONFIG_NEW] [TEST_CONFIG][39m[22m
+[33m▲[39m [33mUser config has deprecated settings. To see details, run [90mwt config show[39m[39m
+[2m↳[22m [2mWrote migrated [1mtest-config.toml.new[22m. To apply:[22m
+[107m [0m [2m[0m[2m[34mmv[0m[2m [0m[2m[36m--[0m[2m [TEST_CONFIG_NEW] [TEST_CONFIG]

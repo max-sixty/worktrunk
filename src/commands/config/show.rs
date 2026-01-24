@@ -45,6 +45,10 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     // Render shell integration status
     render_shell_status(&mut show_output)?;
 
+    // Render Claude Code status
+    show_output.push('\n');
+    render_claude_code_status(&mut show_output)?;
+
     // Run full diagnostic checks if requested (includes slow network calls)
     if full {
         show_output.push('\n');
@@ -76,16 +80,19 @@ fn is_claude_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Check if the worktrunk plugin is installed in Claude Code
-fn is_plugin_installed() -> bool {
+/// Get the home directory for Claude Code config detection
+fn get_home_dir() -> Option<PathBuf> {
     // Try HOME/USERPROFILE env vars first (for tests and explicit overrides), then fall back to dirs
-    let home = std::env::var("HOME")
+    std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .ok()
         .map(PathBuf::from)
-        .or_else(dirs::home_dir);
+        .or_else(dirs::home_dir)
+}
 
-    let Some(home) = home else {
+/// Check if the worktrunk plugin is installed in Claude Code
+fn is_plugin_installed() -> bool {
+    let Some(home) = get_home_dir() else {
         return false;
     };
 
@@ -96,6 +103,24 @@ fn is_plugin_installed() -> bool {
 
     // Look for "worktrunk@worktrunk" in the plugins object
     content.contains("\"worktrunk@worktrunk\"")
+}
+
+/// Check if the statusline is configured in Claude Code settings
+fn is_statusline_configured() -> bool {
+    let Some(home) = get_home_dir() else {
+        return false;
+    };
+
+    let settings_file = home.join(".claude/settings.json");
+    let Ok(content) = std::fs::read_to_string(&settings_file) else {
+        return false;
+    };
+
+    // Check if statusLine is configured with a wt command
+    // Match "wt " at a word boundary in command context to avoid false positives
+    // from unrelated JSON keys containing "wt" (e.g., "fontWeight", "tabWidth")
+    content.contains("\"statusLine\"")
+        && (content.contains("\"wt ") || content.contains(": \"wt ") || content.contains(":\"wt "))
 }
 
 /// Get the git version string (e.g., "2.47.1")
@@ -149,7 +174,53 @@ fn check_zsh_compinit_missing() -> bool {
 
 // ==================== Render Functions ====================
 
-/// Render OTHER section (version, Claude plugin, hyperlinks)
+/// Render CLAUDE CODE section (plugin and statusline status)
+fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
+    let claude_available = is_claude_available();
+
+    writeln!(out, "{}", format_heading("CLAUDE CODE", None))?;
+
+    if !claude_available {
+        writeln!(
+            out,
+            "{}",
+            info_message(cformat!("<bold>claude</> CLI not installed"))
+        )?;
+        return Ok(());
+    }
+
+    // Plugin status
+    let plugin_installed = is_plugin_installed();
+    if plugin_installed {
+        writeln!(out, "{}", success_message("Plugin installed"))?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            hint_message("Plugin not installed. To install, run:")
+        )?;
+        let install_commands = "claude plugin marketplace add max-sixty/worktrunk\nclaude plugin install worktrunk@worktrunk";
+        writeln!(out, "{}", format_bash_with_gutter(install_commands))?;
+    }
+
+    // Statusline status
+    let statusline_configured = is_statusline_configured();
+    if statusline_configured {
+        writeln!(out, "{}", success_message("Statusline configured"))?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            hint_message(
+                "Statusline not configured. See https://worktrunk.dev/claude-code/#statusline"
+            )
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Render OTHER section (version, hyperlinks)
 fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
     let cmd = crate::binary_name();
     let version = version_str();
@@ -167,30 +238,6 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
             out,
             "{}",
             info_message(cformat!("git: <bold>{git_version}</>"))
-        )?;
-    }
-
-    // Claude Code plugin status
-    let plugin_installed = is_plugin_installed();
-    let claude_available = is_claude_available();
-
-    if plugin_installed {
-        writeln!(out, "{}", success_message("Claude Code plugin installed"))?;
-    } else if claude_available {
-        writeln!(
-            out,
-            "{}",
-            hint_message("Claude Code plugin not installed. To install, run:")
-        )?;
-        let install_commands = "claude plugin marketplace add max-sixty/worktrunk\nclaude plugin install worktrunk@worktrunk";
-        writeln!(out, "{}", format_bash_with_gutter(install_commands))?;
-    } else {
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "Claude Code plugin not installed (<bold>claude</> not found)"
-            ))
         )?;
     }
 
@@ -312,15 +359,26 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Trigger deprecation warnings (runs on raw content before parsing, so works even for invalid configs)
-    let _ = UserConfig::load();
-
     // Read and display the file contents
     let contents = std::fs::read_to_string(&config_path).context("Failed to read config file")?;
 
     if contents.trim().is_empty() {
         writeln!(out, "{}", hint_message("Empty file (using defaults)"))?;
         return Ok(());
+    }
+
+    // Check for deprecations with show_brief_warning=false (silent mode)
+    // User config is global, not tied to any repository
+    if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
+        &config_path,
+        &contents,
+        true,
+        "User config",
+        None,
+        false, // silent mode - we'll format the output ourselves
+    ) {
+        // Add deprecation details to the output buffer
+        out.push_str(&worktrunk::config::format_deprecation_details(&info));
     }
 
     // Validate config (syntax + schema) and warn if invalid
@@ -369,7 +427,21 @@ pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
 
 fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     // Try to get current repository root
-    let repo_root = match Repository::current().and_then(|repo| repo.current_worktree().root()) {
+    let repo = match Repository::current() {
+        Ok(repo) => repo,
+        Err(_) => {
+            writeln!(
+                out,
+                "{}",
+                cformat!(
+                    "<dim>{}</>",
+                    format_heading("PROJECT CONFIG", Some("Not in a git repository"))
+                )
+            )?;
+            return Ok(());
+        }
+    };
+    let repo_root = match repo.current_worktree().root() {
         Ok(root) => root,
         Err(_) => {
             writeln!(
@@ -400,17 +472,27 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Trigger deprecation warnings (runs on raw content before parsing, so works even for invalid configs)
-    if let Ok(repo) = Repository::current() {
-        let _ = repo.load_project_config();
-    }
-
     // Read and display the file contents
     let contents = std::fs::read_to_string(&config_path).context("Failed to read config file")?;
 
     if contents.trim().is_empty() {
         writeln!(out, "{}", hint_message("Empty file"))?;
         return Ok(());
+    }
+
+    // Check for deprecations with show_brief_warning=false (silent mode)
+    // Only show in main worktree (where .git is a directory)
+    let is_main_worktree = repo_root.join(".git").is_dir();
+    if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
+        &config_path,
+        &contents,
+        is_main_worktree,
+        "Project config",
+        Some(&repo),
+        false, // silent mode - we'll format the output ourselves
+    ) {
+        // Add deprecation details to the output buffer
+        out.push_str(&worktrunk::config::format_deprecation_details(&info));
     }
 
     // Validate config (syntax + schema) and warn if invalid

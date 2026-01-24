@@ -1834,6 +1834,20 @@ impl TestRepo {
         .unwrap();
     }
 
+    /// Setup the statusline as configured in Claude Code settings
+    ///
+    /// Creates the settings.json file with the wt statusline command.
+    /// The temp_home must already be set up (via set_temp_home_env on the command).
+    pub fn setup_statusline_configured(temp_home: &std::path::Path) {
+        let claude_dir = temp_home.join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(
+            claude_dir.join("settings.json"),
+            r#"{"statusLine":{"type":"command","command":"wt list statusline --claude-code"}}"#,
+        )
+        .unwrap();
+    }
+
     /// Setup mock `gh` that returns configurable PR/CI data
     ///
     /// Use this for testing CI status parsing code. The mock returns JSON data
@@ -2225,7 +2239,14 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
 /// This extracts the common settings configuration while allowing the
 /// `assert_cmd_snapshot!` macro to remain in test files for correct module path capture.
 pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
-    setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees)
+    setup_snapshot_settings_impl(repo.root_path(), None)
+}
+
+/// Internal implementation that optionally includes temp_home filter.
+/// The temp_home filter MUST be added before PROJECT_ID filters to take precedence.
+fn setup_snapshot_settings_impl(root: &Path, temp_home: Option<&Path>) -> insta::Settings {
+    let worktrees = HashMap::new(); // Caller doesn't need worktree filters
+    setup_snapshot_settings_for_paths_with_home(root, &worktrees, temp_home)
 }
 
 /// Full snapshot settings - path filters AND ANSI cleanup.
@@ -2235,7 +2256,26 @@ fn setup_snapshot_settings_for_paths(
     root: &Path,
     worktrees: &HashMap<String, PathBuf>,
 ) -> insta::Settings {
-    let mut settings = insta::Settings::clone_current();
+    setup_snapshot_settings_for_paths_with_home(root, worktrees, None)
+}
+
+/// Internal implementation with optional temp_home support.
+///
+/// When `temp_home` is provided, we create fresh settings rather than cloning current settings.
+/// This is critical because TestRepo's snapshot guard may have already added PROJECT_ID filters,
+/// and cloning would inherit those filters which would be applied BEFORE our TEMP_HOME filter.
+fn setup_snapshot_settings_for_paths_with_home(
+    root: &Path,
+    worktrees: &HashMap<String, PathBuf>,
+    temp_home: Option<&Path>,
+) -> insta::Settings {
+    // When temp_home is provided, start fresh to ensure TEMP_HOME filter is applied before
+    // any inherited PROJECT_ID filters. Otherwise, clone current settings for consistency.
+    let mut settings = if temp_home.is_some() {
+        insta::Settings::new()
+    } else {
+        insta::Settings::clone_current()
+    };
     settings.set_snapshot_path("../snapshots");
 
     // Normalize project root path (for test fixtures)
@@ -2327,9 +2367,51 @@ fn setup_snapshot_settings_for_paths(
     );
 
     // Also strip quotes around bracket placeholders like [PROJECT_ID]
+    // NOTE: This filter runs BEFORE PROJECT_ID replacement, so it handles
+    // cases where ANSI codes appear between quotes and placeholders.
+    // A simpler post-replacement filter is added after PROJECT_ID filters.
     settings.add_filter(
         r"'(?:\x1b\[[0-9;]*m)*(\[[A-Z_]+\])(?:\x1b\[[0-9;]*m)*'",
         "$1",
+    );
+    // Also strip quotes around paths that include subdirectories (e.g., '_REPO_/.config/wt.toml')
+    // On Windows, shell_escape quotes paths containing ':' so full paths get quoted.
+    settings.add_filter(
+        r"'(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?/[^']+)'",
+        "$1",
+    );
+    // Normalize git diff header prefixes: a/_REPO_ -> a_REPO_, b/_REPO_ -> b_REPO_
+    // On Windows, git diff --no-index with absolute paths produces a/C:/... which becomes a/_REPO_
+    // On Unix, relative paths produce a/repo/... which becomes a_REPO_
+    // Note: [TEMP_HOME] filters are added later, after TEMP_HOME replacement happens.
+    settings.add_filter(r"(diff --git )a/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1a$2");
+    settings.add_filter(r" b/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", " b$1");
+    settings.add_filter(r"(--- )a/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1a$2");
+    settings.add_filter(r"(\+\+\+ )b/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1b$2");
+
+    // Windows git diff may produce headers without "diff --git a" prefix.
+    // Pattern: _REPO_/path1 b_REPO_/path2 (just paths with b prefix for second)
+    // Match bold ANSI + _REPO_ path + space + b + _REPO_ path
+    settings.add_filter(
+        r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+) b(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+)",
+        "$1diff --git a$2 b$3",
+    );
+    // Windows may have "  --git a_REPO_" with leading spaces after ANSI reset (missing "diff" and bold).
+    // Match: ANSI reset + one or more spaces + "--git a" pattern
+    // Replace with: ANSI reset + space + bold + "diff --git a" to match Unix format
+    settings.add_filter(
+        r"(\x1b\[0m) +--git a(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)",
+        "$1 \x1b[1mdiff --git a$2",
+    );
+    // Windows may also omit --- a prefix on the source file line
+    settings.add_filter(r"(--- )(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)", "$1a$2");
+    // Windows may also omit +++ b prefix on the destination file line
+    settings.add_filter(r"(\+\+\+ )(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)", "$1b$2");
+    // Windows may output bare path for --- line: \x1b[1m_REPO_/...\x1b[m (no "--- a")
+    // Add the missing "--- a" prefix.
+    settings.add_filter(
+        r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\x1b]+\.toml)(\x1b\[m)",
+        "$1--- a$2$3",
     );
 
     // Normalize syntax highlighting around placeholders.
@@ -2341,6 +2423,15 @@ fn setup_snapshot_settings_for_paths(
     settings.add_filter(
         r"\x1b\[2m \x1b\[0m\x1b\[2m(?:\x1b\[32m)?(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?)(?:\x1b\[0m)?\x1b\[2m \x1b\[0m",
         "\x1b[2m $1 \x1b[0m",
+    );
+
+    // Strip green ANSI highlighting from _REPO_ paths.
+    // On Windows, tree-sitter may highlight paths with green (\x1b[32m) even when not quoted.
+    // Example: \x1b[0m\x1b[2m\x1b[32m_REPO_/.config/wt.toml\x1b[0m\x1b[2m
+    // Strip ANSI codes before/after the path when green highlighting is present.
+    settings.add_filter(
+        r"(?:\x1b\[\d+m)*\x1b\[32m(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:/[^\x1b\s]+)?)(?:\x1b\[\d+m)*",
+        "$1",
     );
 
     // Normalize WORKTRUNK_CONFIG_PATH temp paths in stdout/stderr output
@@ -2356,6 +2447,14 @@ fn setup_snapshot_settings_for_paths(
         r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-config\.toml'?",
         "[TEST_CONFIG]",
     );
+    // Strip ANSI codes that may wrap [TEST_CONFIG*] placeholders.
+    // On Windows, tree-sitter may add ANSI codes around paths even without quotes.
+    // Example: \x1b[0m\x1b[2m[TEST_CONFIG_NEW]\x1b[2m
+    // Match: optional ANSI codes + [TEST_CONFIG...] + optional ANSI codes -> just the placeholder
+    settings.add_filter(
+        r"(?:\x1b\[\d+m)+(\[TEST_CONFIG(?:_NEW)?\])(?:\x1b\[\d+m)+",
+        "$1",
+    );
 
     // Normalize GIT_CONFIG_GLOBAL temp paths
     // (?:[A-Z]:)? handles Windows drive letters
@@ -2363,6 +2462,123 @@ fn setup_snapshot_settings_for_paths(
         r"(?:[A-Z]:)?/[^\s]+/\.tmp[^/]+/test-gitconfig",
         "[TEST_GIT_CONFIG]",
     );
+
+    // TEMP_HOME filter MUST come before PROJECT_ID filters to take precedence.
+    // Otherwise, paths like /tmp/.tmpXXX/.config/worktrunk/config.toml would match
+    // the PROJECT_ID filter first.
+    //
+    // We replace the full temp_home path prefix with [TEMP_HOME], so paths like
+    // /tmp/.tmpABC/.config/worktrunk/config.toml become [TEMP_HOME]/.config/worktrunk/config.toml
+    if let Some(temp_home) = temp_home {
+        // Get both the original path and the canonicalized path - they may differ on Windows
+        // due to short path names (e.g., RUNNER~1 vs runneradmin) or other normalization.
+        let temp_home_original = temp_home.to_string_lossy().replace('\\', "/");
+        let temp_home_canonical =
+            canonicalize(temp_home).unwrap_or_else(|_| temp_home.to_path_buf());
+        let temp_home_str = temp_home_canonical.to_string_lossy().replace('\\', "/");
+
+        // On Windows, paths may be quoted by shell_escape due to ':' in drive letters.
+        // Add filters for both quoted and unquoted variants, for both original and canonical paths.
+        if temp_home_str.contains(':') {
+            // Quoted canonical path
+            settings.add_filter(
+                &format!("'{}", regex::escape(&temp_home_str)),
+                "'[TEMP_HOME]",
+            );
+            // Quoted original path (may differ from canonical)
+            if temp_home_original != temp_home_str {
+                settings.add_filter(
+                    &format!("'{}", regex::escape(&temp_home_original)),
+                    "'[TEMP_HOME]",
+                );
+            }
+        }
+        // Unquoted canonical path
+        settings.add_filter(&regex::escape(&temp_home_str), "[TEMP_HOME]");
+        // Unquoted original path (may differ from canonical)
+        if temp_home_original != temp_home_str {
+            settings.add_filter(&regex::escape(&temp_home_original), "[TEMP_HOME]");
+        }
+
+        // On macOS, canonicalize returns /private/var/... but git diff output shows /var/...
+        // Add both variants to catch all cases
+        if temp_home_str.starts_with("/private/") {
+            let without_private = &temp_home_str["/private".len()..];
+            settings.add_filter(&regex::escape(without_private), "[TEMP_HOME]");
+        }
+
+        // [TEMP_HOME] post-processing filters - must run AFTER the replacement above.
+
+        // Strip ANSI sequences immediately before [TEMP_HOME] paths.
+        // On Windows, tree-sitter highlights paths with green (\x1b[32m) inside mv commands.
+        // The output has: ...code (space) code code [TEMP_HOME]/path code code...
+        // We strip ONLY the codes between space and [TEMP_HOME], keeping codes elsewhere.
+        // Pattern: (space)(ANSI codes)(optional quote)([TEMP_HOME]) -> (space)(quote)([TEMP_HOME])
+        // The optional quote handles Windows where paths may be quoted: 'C:/...'
+        settings.add_filter(r"( )(?:\x1b\[[0-9;]*m)+('?)(\[TEMP_HOME\]/)", "$1$2$3");
+        // Strip trailing ANSI codes after [TEMP_HOME] paths.
+        // Match path followed by one or more ANSI codes.
+        settings.add_filter(r"(\[TEMP_HOME\]/[^\x1b\s]+)(?:\x1b\[[0-9;]*m)+", "$1");
+
+        // Strip quotes around [TEMP_HOME] paths (Windows shell_escape quotes paths with ':')
+        // Also handles git diff quoted format which lacks a/b prefixes.
+        settings.add_filter(r"'\[TEMP_HOME\](/[^']+)'", "[TEMP_HOME]$1");
+
+        // Normalize git diff header prefixes for [TEMP_HOME]:
+        // Unix: a/[TEMP_HOME] -> a[TEMP_HOME], b/[TEMP_HOME] -> b[TEMP_HOME]
+        settings.add_filter(r"(diff --git )a/(\[TEMP_HOME\])", "$1a$2");
+        settings.add_filter(r" b/(\[TEMP_HOME\])", " b$1");
+        settings.add_filter(r"(--- )a/(\[TEMP_HOME\])", "$1a$2");
+        settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\])", "$1b$2");
+
+        // Windows git diff uses different format for absolute paths.
+        // After quote stripping, the diff header may or may not have "diff --git " prefix,
+        // and may or may not have a/b prefixes. Normalize to Unix format.
+
+        // Pattern 1: Has "diff --git " but no a/b prefixes
+        // diff --git [TEMP_HOME]/a [TEMP_HOME]/b -> diff --git a[TEMP_HOME]/a b[TEMP_HOME]/b
+        settings.add_filter(
+            r"(diff --git )(\[TEMP_HOME\]/[^\s]+) (\[TEMP_HOME\]/)",
+            "$1a$2 b$3",
+        );
+
+        // Pattern 2: Windows git diff header with only b prefix present.
+        // Windows git diff --no-index may produce: path1 bpath2 (without diff --git a)
+        // After path replacement: [TEMP_HOME]/a b[TEMP_HOME]/b
+        // Add the full header format to match Unix.
+        settings.add_filter(
+            r"(\x1b\[1m)(\[TEMP_HOME\]/[^\s]+) b(\[TEMP_HOME\]/[^\s]+)",
+            "$1diff --git a$2 b$3",
+        );
+
+        // Pattern 3: Windows may have "  --git a[path]" with leading spaces after ANSI (missing "diff" and bold).
+        // Match: ANSI reset + one or more spaces + "--git a" pattern
+        // Replace with: ANSI reset + space + bold + "diff --git a" to match Unix format
+        settings.add_filter(
+            r"(\x1b\[0m) +--git a(\[TEMP_HOME\]/)",
+            "$1 \x1b[1mdiff --git a$2",
+        );
+
+        // --- [TEMP_HOME]/... -> --- a[TEMP_HOME]/... (Unix has slash, remove it)
+        settings.add_filter(r"(--- )a/(\[TEMP_HOME\]/)", "$1a$2");
+        // --- [TEMP_HOME]/... -> --- a[TEMP_HOME]/... (Windows: add missing a prefix)
+        settings.add_filter(r"(--- )(\[TEMP_HOME\]/)", "$1a$2");
+
+        // +++ [TEMP_HOME]/... -> +++ b[TEMP_HOME]/... (Unix has slash, remove it)
+        settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\]/)", "$1b$2");
+        // +++ [TEMP_HOME]/... -> +++ b[TEMP_HOME]/... (Windows: add missing b prefix)
+        settings.add_filter(r"(\+\+\+ )(\[TEMP_HOME\]/)", "$1b$2");
+
+        // Windows git diff may have bare path without --- prefix at all.
+        // Match: bold ANSI + bare [TEMP_HOME] path that's NOT preceded by diff/---/+++
+        // This catches the case where git outputs just the path on its own line.
+        // Look for standalone [TEMP_HOME]/...config.toml (trailing ANSI codes may be stripped).
+        // Use negative lookbehind (not supported) - instead match newline + gutter + bold.
+        settings.add_filter(
+            r"(\x1b\[1m)(\[TEMP_HOME\]/[^\s\x1b]+\.toml)(\x1b\[m|\n|$)",
+            "$1--- a$2$3",
+        );
+    }
 
     // Normalize temp directory paths in project identifiers (approval prompts)
     // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]
@@ -2379,12 +2595,23 @@ fn setup_snapshot_settings_for_paths(
         r"[A-Z]:/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/[^)'\s\x1b]+",
         "[PROJECT_ID]",
     );
+    // Windows quoted paths: shell_escape quotes paths containing ':' (drive letter)
+    // Example: 'C:/Users/user/AppData/Local/Temp/.tmpXXXXXX/repo/.config/wt.toml' -> [PROJECT_ID]
+    settings.add_filter(
+        r"'[A-Z]:/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/[^']+'",
+        "[PROJECT_ID]",
+    );
 
     // Generic tilde-prefixed paths that aren't repo or worktree paths.
     // On CI, HOME is a temp directory, so paths under HOME become ~/something.
     // This catches paths like ~/wrong-path that don't follow the repo naming convention.
     // MUST come AFTER specific ~/repo patterns so they match first.
     settings.add_filter(r"~/[a-zA-Z0-9_-]+", "[PROJECT_ID]");
+
+    // Strip quotes around [PROJECT_ID] after replacement.
+    // On Windows, paths inside quotes get replaced but quotes remain: 'C:/...' -> '[PROJECT_ID]'
+    // This filter MUST come AFTER PROJECT_ID filters to clean up the result.
+    settings.add_filter(r"'\[PROJECT_ID\]'", "[PROJECT_ID]");
 
     // Normalize HOME temp directory in snapshots (stdout/stderr content)
     // Matches any temp directory path (without trailing filename)
@@ -2516,13 +2743,12 @@ fn setup_snapshot_settings_for_paths(
 ///
 /// This extends `setup_snapshot_settings` by adding a filter for the temporary home directory.
 /// Use this for tests that need both a TestRepo and a temporary home (for user config testing).
+///
+/// IMPORTANT: The temp_home filter is passed to setup_snapshot_settings_impl so it gets added
+/// BEFORE the generic [PROJECT_ID] filters. Otherwise, paths like /tmp/.tmpXXX/.config/worktrunk/config.toml
+/// would match [PROJECT_ID] first.
 pub fn setup_snapshot_settings_with_home(repo: &TestRepo, temp_home: &TempDir) -> insta::Settings {
-    let mut settings = setup_snapshot_settings(repo);
-    settings.add_filter(
-        &regex::escape(&temp_home.path().to_string_lossy()),
-        "[TEMP_HOME]",
-    );
-    settings
+    setup_snapshot_settings_impl(repo.root_path(), Some(temp_home.path()))
 }
 
 /// Create configured insta Settings for snapshot tests with only a temporary home directory
