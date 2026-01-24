@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.18.2
+
+### Improved
+
+- **PR/MR context display**: `wt switch pr:N` and `mr:N` now show PR/MR details (title, author, state, URL) after fetching. ([#782](https://github.com/max-sixty/worktrunk/pull/782))
+
+- **Fork PR branch conflicts**: When a fork PR's branch name conflicts with an existing local branch (e.g., contributor opens PR from their `main`), worktrunk now creates a prefixed branch like `contributor/main` instead of failing. Closes [#714](https://github.com/max-sixty/worktrunk/issues/714). (thanks @vimtor for reporting)
+
+### Fixed
+
+- **Help output formatting**: Fixed double blank lines appearing after demo comments in help output. ([#795](https://github.com/max-sixty/worktrunk/pull/795))
+
+- **Error handling reliability**: Replaced fragile string-based error parsing with structured approaches for git stash, GitHub CLI, and GitLab CLI operations. ([#787](https://github.com/max-sixty/worktrunk/pull/787))
+
+### Documentation
+
+- **ci-status help text**: Improved clarity of the ci-status configuration documentation. ([#794](https://github.com/max-sixty/worktrunk/pull/794))
+
+- **wt remove help text**: Simplified short description and added documentation for `pre-remove` and `post-remove` hooks. ([#792](https://github.com/max-sixty/worktrunk/pull/792))
+
+- **Subcommand documentation**: Fixed generated website docs for subcommands (like `wt step copy-ignored`, `wt config state`) to include their short descriptions. ([#793](https://github.com/max-sixty/worktrunk/pull/793))
+
 ## 0.18.1
 
 ### Fixed
@@ -301,7 +323,7 @@
 - **`wt step copy-ignored`**: Copy gitignored files listed in `.worktreeinclude` between worktrees. Useful for syncing `.env` files, IDE settings, and build caches to new worktrees via post-create hooks. Uses COW (reflink) copying for efficient handling of large directories. Matches Claude Code Desktop's worktree file syncing behavior.
 - **`--foreground` flag**: Debug background hooks by running them in the foreground. Available on `wt hook post-start`, `wt hook post-switch`, and `wt remove`. Replaces the deprecated `--no-background` flag.
 - **`--var` flag for hooks**: Override template variables when running hooks manually, e.g., `wt hook post-create --var target=main`.
-- **`[ci] platform` config**: Explicitly set CI platform (`github` or `gitlab`) for GitHub Enterprise or self-hosted GitLab where URL-based detection fails.
+- **`ci.platform` config**: Explicitly set CI platform (`github` or `gitlab`) for GitHub Enterprise or self-hosted GitLab where URL-based detection fails.
 - **Upstream diff in `wt select`**: Tab 4 shows ahead/behind diff vs upstream tracking branch (remote⇅), matching the column in `wt list`.
 - **`{{ base }}` and `{{ base_worktree_path }}` variables**: New template variables for creation hooks (post-create, post-start, post-switch) to access the base branch name and worktree path.
 - **`-vv` diagnostic reports**: Double-verbose flag writes a diagnostic report to `.git/wt-logs/diagnostic.md` with environment info, configs, and logs for easy bug reporting.

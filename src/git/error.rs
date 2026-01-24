@@ -85,6 +85,12 @@ pub trait RefContext {
     fn state(&self) -> &str;
     fn draft(&self) -> bool;
     fn url(&self) -> &str;
+
+    /// The source branch reference for display.
+    ///
+    /// For same-repo PRs/MRs: just the branch name (e.g., `feature-auth`)
+    /// For fork PRs/MRs: `owner:branch` format (e.g., `contributor:feature-fix`)
+    fn source_ref(&self) -> String;
 }
 
 /// Domain errors for git and worktree operations.
@@ -221,6 +227,7 @@ pub enum GitError {
     RefCreateConflict {
         ref_type: RefType,
         number: u32,
+        branch: String,
     },
     /// --base flag used with pr:/mr: syntax (conflict - base is predetermined)
     RefBaseConflict {
@@ -689,17 +696,21 @@ impl std::fmt::Display for GitError {
                 )
             }
 
-            GitError::RefCreateConflict { ref_type, number } => {
+            GitError::RefCreateConflict {
+                ref_type,
+                number,
+                branch,
+            } => {
+                let name = ref_type.name();
                 let syntax = ref_type.syntax();
-                let name_plural = ref_type.name_plural();
                 write!(
                     f,
                     "{}\n{}",
                     error_message(cformat!(
-                        "Cannot use <bold>--create</> with <bold>{syntax}{number}</>"
+                        "Cannot create branch for <bold>{syntax}{number}</> — {name} already has branch <bold>{branch}</>"
                     )),
-                    hint_message(format!(
-                        "{name_plural} already have a branch; remove --create"
+                    hint_message(cformat!(
+                        "To switch to it: <bright-black>wt switch {syntax}{number}</>"
                     ))
                 )
             }
@@ -713,7 +724,9 @@ impl std::fmt::Display for GitError {
                     error_message(cformat!(
                         "Cannot use <bold>--base</> with <bold>{syntax}{number}</>"
                     )),
-                    hint_message(format!("{name_plural} already have a base; remove --base"))
+                    hint_message(cformat!(
+                        "{name_plural} already have a base; remove <bright-black>--base</>"
+                    ))
                 )
             }
 

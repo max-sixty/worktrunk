@@ -3,6 +3,7 @@
 //! Functions for displaying user config, project config, shell status,
 //! diagnostics, and runtime info.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
@@ -14,6 +15,7 @@ use worktrunk::config::{
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{Shell, scan_for_detection_details};
+use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
     error_message, format_bash_with_gutter, format_heading, format_toml, format_with_gutter,
     hint_message, info_message, success_message, warning_message,
@@ -22,6 +24,7 @@ use worktrunk::styling::{
 use super::state::require_user_config_path;
 use crate::cli::version_str;
 use crate::commands::configure_shell::{ConfigAction, scan_shell_configs};
+use crate::commands::list::ci_status::{CiPlatform, CiToolsStatus, get_platform_for_repo};
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
 use crate::output;
@@ -66,8 +69,6 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
 
 /// Check if Claude Code CLI is available
 fn is_claude_available() -> bool {
-    use worktrunk::shell_exec::Cmd;
-
     Cmd::new("claude")
         .arg("--version")
         .run()
@@ -99,8 +100,6 @@ fn is_plugin_installed() -> bool {
 
 /// Get the git version string (e.g., "2.47.1")
 fn get_git_version() -> Option<String> {
-    use worktrunk::shell_exec::Cmd;
-
     let output = Cmd::new("git").arg("--version").run().ok()?;
     if !output.status.success() {
         return None;
@@ -119,8 +118,6 @@ fn get_git_version() -> Option<String> {
 /// Returns true if compinit is NOT enabled (i.e., user needs to add it).
 /// Returns false if compinit is enabled or we can't determine (fail-safe: don't warn).
 fn check_zsh_compinit_missing() -> bool {
-    use worktrunk::shell_exec::Cmd;
-
     // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
     if std::env::var("WORKTRUNK_TEST_COMPINIT_CONFIGURED").is_ok() {
         return false; // Assume compinit is configured
@@ -216,15 +213,13 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
 
 /// Run full diagnostic checks (CI tools, commit generation) and render to buffer
 fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
-    use crate::commands::list::ci_status::{CiPlatform, CiToolsStatus, get_platform_for_repo};
-
     writeln!(out, "{}", format_heading("DIAGNOSTICS", None))?;
 
     // Check CI tool based on detected platform (with config override support)
     let repo = Repository::current()?;
     let project_config = repo.load_project_config().ok().flatten();
     let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
-    let platform = get_platform_for_repo(&repo, platform_override);
+    let platform = get_platform_for_repo(&repo, platform_override, None);
 
     match platform {
         Some(CiPlatform::GitHub) => {
@@ -268,15 +263,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let command_display = format!(
-        "{}{}",
-        commit_config.command.as_ref().unwrap(),
-        if commit_config.args.is_empty() {
-            String::new()
-        } else {
-            format!(" {}", commit_config.args.join(" "))
-        }
-    );
+    let command_display = commit_config.command.as_ref().unwrap().clone();
 
     match test_commit_generation(&commit_config) {
         Ok(message) => {
@@ -325,6 +312,9 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Trigger deprecation warnings (runs on raw content before parsing, so works even for invalid configs)
+    let _ = UserConfig::load();
+
     // Read and display the file contents
     let contents = std::fs::read_to_string(&config_path).context("Failed to read config file")?;
 
@@ -340,7 +330,9 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
         // Only check for unknown keys if config is valid
-        warn_unknown_keys(out, &find_unknown_user_keys(&contents))?;
+        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
+            &contents,
+        )));
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)
@@ -349,16 +341,30 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Write warnings for any unknown config keys
-pub(super) fn warn_unknown_keys(out: &mut String, unknown_keys: &[String]) -> anyhow::Result<()> {
-    for key in unknown_keys {
-        writeln!(
-            out,
-            "{}",
-            warning_message(cformat!("Unknown key <bold>{key}</> will be ignored"))
-        )?;
+/// Format warnings for any unknown config keys.
+///
+/// Generic over `C`, the config type where the keys were found. When an unknown
+/// key belongs in `C::Other`, the warning includes a hint about where to move it.
+pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
+    unknown_keys: &HashMap<String, toml::Value>,
+) -> String {
+    let mut out = String::new();
+
+    // Sort keys for deterministic output order
+    let mut keys: Vec<_> = unknown_keys.keys().collect();
+    keys.sort();
+
+    for key in keys {
+        let value = &unknown_keys[key];
+        let msg = match worktrunk::config::key_belongs_in::<C>(key, value) {
+            Some(location) => {
+                cformat!("Key <bold>{key}</> belongs in {location} (will be ignored)")
+            }
+            None => cformat!("Unknown key <bold>{key}</> will be ignored"),
+        };
+        let _ = writeln!(out, "{}", warning_message(msg));
     }
-    Ok(())
+    out
 }
 
 fn render_project_config(out: &mut String) -> anyhow::Result<()> {
@@ -394,6 +400,11 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Trigger deprecation warnings (runs on raw content before parsing, so works even for invalid configs)
+    if let Ok(repo) = Repository::current() {
+        let _ = repo.load_project_config();
+    }
+
     // Read and display the file contents
     let contents = std::fs::read_to_string(&config_path).context("Failed to read config file")?;
 
@@ -409,7 +420,9 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
         // Only check for unknown keys if config is valid
-        warn_unknown_keys(out, &find_unknown_project_keys(&contents))?;
+        out.push_str(&warn_unknown_keys::<ProjectConfig>(
+            &find_unknown_project_keys(&contents),
+        ));
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)

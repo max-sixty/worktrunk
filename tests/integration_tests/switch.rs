@@ -1416,10 +1416,38 @@ fn configure_mock_gh_env(cmd: &mut std::process::Command, mock_bin: &Path) {
 
 /// Test that --create flag conflicts with pr: syntax
 #[rstest]
-fn test_switch_pr_create_conflict(repo: TestRepo) {
+fn test_switch_pr_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitHub-style so PR resolution works
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // Mock gh to return PR info (we fetch before checking --create to show branch name)
+    let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_create_conflict", cmd);
     });
 }
@@ -2320,10 +2348,25 @@ fn configure_mock_glab_env(cmd: &mut std::process::Command, mock_bin: &Path) {
 
 /// Test that --create flag conflicts with mr: syntax
 #[rstest]
-fn test_switch_mr_create_conflict(repo: TestRepo) {
+fn test_switch_mr_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
+    // Mock glab to return MR info (we fetch before checking --create to show branch name)
+    let glab_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "author": {"username": "alice"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature-auth",
+        "source_project_id": 123,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/101"
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "mr:101"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_create_conflict", cmd);
     });
 }

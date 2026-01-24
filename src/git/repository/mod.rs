@@ -16,9 +16,15 @@
 //! - `config.rs` - Git config, hints, markers, and default branch detection
 //! - `integration.rs` - Integration detection (same commit, ancestor, trees match)
 
-use crate::shell_exec::Cmd;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, OnceLock};
+use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use crate::shell_exec::Cmd;
 
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
@@ -308,8 +314,7 @@ impl Repository {
 
     /// Get the directory where worktrunk background logs are stored.
     ///
-    /// Logs are centralized under the main worktree's git directory:
-    /// `.git/wt-logs/`.
+    /// Returns `<git-common-dir>/wt-logs/` (typically `.git/wt-logs/`).
     pub fn wt_logs_dir(&self) -> PathBuf {
         self.git_common_dir().join("wt-logs")
     }
@@ -565,13 +570,6 @@ impl Repository {
         delay_ms: i64,
         progress_message: Option<String>,
     ) -> anyhow::Result<()> {
-        use std::io::{BufRead, BufReader, Write};
-        use std::process::Stdio;
-        use std::sync::Mutex;
-        use std::sync::atomic::{AtomicBool, Ordering};
-        use std::thread;
-        use std::time::{Duration, Instant};
-
         // Allow tests to override delay threshold (-1 to disable, 0 for immediate)
         let delay_ms = std::env::var("WT_TEST_DELAYED_STREAM_MS")
             .ok()

@@ -7,9 +7,11 @@ mod log_formatter;
 mod pager;
 mod preview;
 
+use std::io::{IsTerminal, stderr};
 use std::sync::Arc;
 
 use anyhow::Context;
+use crossterm::{execute, terminal};
 use skim::prelude::*;
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
@@ -26,8 +28,6 @@ pub fn handle_select(
     show_remotes: bool,
     config: &UserConfig,
 ) -> anyhow::Result<()> {
-    use std::io::IsTerminal;
-
     // Select requires an interactive terminal for the TUI
     if !std::io::stdin().is_terminal() {
         anyhow::bail!("wt select requires an interactive terminal");
@@ -223,8 +223,6 @@ pub fn handle_select(
 
         // Clear the terminal screen after skim exits to prevent artifacts
         // Use stderr for terminal control - stdout is reserved for data output
-        use crossterm::{execute, terminal};
-        use std::io::stderr;
         execute!(stderr(), terminal::Clear(terminal::ClearType::All))?;
         execute!(stderr(), crossterm::cursor::MoveTo(0, 0))?;
 

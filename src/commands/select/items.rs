@@ -9,6 +9,7 @@ use std::sync::Arc;
 use color_print::cformat;
 use skim::prelude::*;
 use worktrunk::git::Repository;
+use worktrunk::styling::INFO_SYMBOL;
 
 use super::super::list::model::ListItem;
 use super::log_formatter::{
@@ -153,8 +154,6 @@ impl WorktreeSkimItem {
     /// Render Tab 1: Working tree preview (uncommitted changes vs HEAD)
     /// Matches `wt list` "HEAD±" column
     fn render_working_tree_preview(&self, width: usize) -> String {
-        use worktrunk::styling::INFO_SYMBOL;
-
         let Some(wt_info) = self.item.worktree_data() else {
             // Branch without worktree - selecting will create one
             let branch = self.item.branch_name();
@@ -176,8 +175,6 @@ impl WorktreeSkimItem {
     /// Render Tab 3: Branch diff preview (line diffs in commits ahead of default branch)
     /// Matches `wt list` "main…± (--full)" column
     fn render_branch_diff_preview(&self, width: usize) -> String {
-        use worktrunk::styling::INFO_SYMBOL;
-
         let branch = self.item.branch_name();
         let Ok(repo) = Repository::current() else {
             return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of main\n");
@@ -204,8 +201,6 @@ impl WorktreeSkimItem {
     /// Render Tab 4: Upstream diff preview (ahead/behind vs tracking branch)
     /// Matches `wt list` "Remote⇅" column
     fn render_upstream_diff_preview(&self, width: usize) -> String {
-        use worktrunk::styling::INFO_SYMBOL;
-
         let branch = self.item.branch_name();
 
         // Check if this branch has an upstream tracking branch
@@ -261,7 +256,6 @@ impl WorktreeSkimItem {
 
     /// Render Tab 2: Log preview
     fn render_log_preview(&self, width: usize, height: usize) -> String {
-        use worktrunk::styling::INFO_SYMBOL;
         // Minimum preview width to show timestamps (adds ~7 chars: space + 4-char time + space)
         // Note: preview is typically 50% of terminal width, so 50 = 100-col terminal
         const TIMESTAMP_WIDTH_THRESHOLD: usize = 50;

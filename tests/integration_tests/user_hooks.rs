@@ -649,7 +649,7 @@ capture = "echo 'branch={{ branch }} worktree_path={{ worktree_path }} worktree_
         .parent()
         .unwrap()
         .join("postremove_vars.txt");
-    crate::common::wait_for_file(&vars_file);
+    crate::common::wait_for_file_content(&vars_file);
 
     let content = std::fs::read_to_string(&vars_file).unwrap();
 
@@ -769,16 +769,12 @@ cleanup = "echo 'POST_REMOVE_DURING_MERGE' > ../merge_postremove_marker.txt"
         .parent()
         .unwrap()
         .join("merge_postremove_marker.txt");
-    crate::common::wait_for_file(&marker_file);
+    crate::common::wait_for_file_content(&marker_file);
 
-    assert!(
-        marker_file.exists(),
-        "Post-remove hook should run during wt merge"
-    );
     let contents = fs::read_to_string(&marker_file).unwrap();
     assert!(
         contents.contains("POST_REMOVE_DURING_MERGE"),
-        "Marker file should contain expected content"
+        "Post-remove hook should run during wt merge with expected content"
     );
 }
 
@@ -1191,9 +1187,9 @@ fn test_standalone_hook_post_remove(repo: TestRepo) {
         "wt hook post-remove should succeed (spawns in background)"
     );
 
-    // Wait for background hook to complete
+    // Wait for background hook to complete and write content
     let marker = repo.root_path().join("hook_ran.txt");
-    crate::common::wait_for_file(&marker);
+    crate::common::wait_for_file_content(&marker);
     let content = fs::read_to_string(&marker).unwrap();
     assert!(content.contains("STANDALONE_POST_REMOVE"));
 }

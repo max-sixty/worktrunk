@@ -1232,7 +1232,7 @@ Hooks can use template variables that expand at runtime:
 | `{{ branch }}` | Branch name |
 | `{{ worktree_name }}` | Worktree directory name |
 | `{{ worktree_path }}` | Absolute worktree path |
-| `{{ primary_worktree_path }}` | Main worktree path (for bare repos: default branch worktree) |
+| `{{ primary_worktree_path }}` | Primary worktree path (main worktree for normal repos; default branch worktree for bare repos) |
 | `{{ default_branch }}` | Default branch name |
 | `{{ commit }}` | Full HEAD commit SHA |
 | `{{ short_commit }}` | Short HEAD commit SHA (7 chars) |
@@ -1452,6 +1452,7 @@ For copying dependencies and caches between worktrees, see [`wt step copy-ignore
 - [`wt merge`](@/merge.md) — Runs hooks automatically during merge
 - [`wt switch`](@/switch.md) — Runs post-create/post-start hooks on `--create`
 - [`wt config`](@/config.md) — Manage hook approvals
+- [`wt config state logs`](@/config.md#wt-config-state-logs) — Access background hook logs
 
 <!-- subdoc: approvals -->
 "#
@@ -1498,6 +1499,28 @@ wt config show
 | **User config** | `~/.config/worktrunk/config.toml` | Worktree path template, LLM commit configs, etc | ✗ |
 | **Project config** | `.config/wt.toml` | Project hooks, dev server URL | ✓ |
 
+**User config** — personal preferences:
+
+```toml
+# ~/.config/worktrunk/config.toml
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+
+[commit-generation]
+command = "llm"
+args = ["-m", "claude-haiku-4.5"]
+```
+
+**Project config** — shared team settings:
+
+```toml
+# .config/wt.toml
+[post-create]
+deps = "npm ci"
+
+[pre-merge]
+test = "npm test"
+```
+
 ---
 
 <!-- USER_CONFIG_START -->
@@ -1543,25 +1566,9 @@ worktree-path = "../{{ branch | sanitize }}"
 
 ## LLM commit messages
 
-Generate commit messages automatically during merge. Requires an external CLI tool. See [LLM commits docs](@/llm-commits.md) for setup and template customization.
+Generate commit messages automatically during merge. Requires an external CLI tool.
 
-Using [llm](https://github.com/simonw/llm) (install: `pip install llm llm-anthropic`):
-
-```toml
-[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
-```
-
-Using [aichat](https://github.com/sigoden/aichat):
-
-```toml
-[commit-generation]
-command = "aichat"
-args = ["-m", "claude:claude-haiku-4.5"]
-```
-
-See [Custom prompt templates](#custom-prompt-templates) for inline template options.
+See [LLM commits docs](@/llm-commits.md) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
 
 ## Commands
 
@@ -1645,7 +1652,7 @@ Default template:
 
 <!-- DEFAULT_TEMPLATE_START -->
 ```toml
-[commit-generation]
+[commit.generation]
 template = """
 Write a commit message for the staged changes below.
 
@@ -1690,7 +1697,7 @@ Default template:
 
 <!-- DEFAULT_SQUASH_TEMPLATE_START -->
 ```toml
-[commit-generation]
+[commit.generation]
 squash-template = """
 Combine these commits into a single commit message.
 
@@ -1815,27 +1822,17 @@ For nested config sections, use double underscores to separate levels:
 | Config | Environment Variable |
 |--------|---------------------|
 | `worktree-path` | `WORKTRUNK_WORKTREE_PATH` |
-| `commit-generation.command` | `WORKTRUNK_COMMIT_GENERATION__COMMAND` |
-| `commit-generation.args` | `WORKTRUNK_COMMIT_GENERATION__ARGS` |
+| `commit.generation.command` | `WORKTRUNK_COMMIT__GENERATION__COMMAND` |
+| `commit.stage` | `WORKTRUNK_COMMIT__STAGE` |
 
 Note the single underscore after `WORKTRUNK` and double underscores between nested keys.
-
-### Array values
-
-Array config values like `args = ["-m", "claude-haiku"]` can be specified as a single string in environment variables:
-
-```console
-export WORKTRUNK_COMMIT_GENERATION__ARGS="-m claude-haiku"
-```
 
 ### Example: CI/testing override
 
 Override the LLM command in CI to use a mock:
 
 ```console
-WORKTRUNK_COMMIT_GENERATION__COMMAND=echo \
-WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
-  wt merge
+WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 ```
 
 ### Other environment variables

@@ -64,6 +64,7 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
+          model: opus
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Use bot token so pushed commits trigger CI workflows
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
@@ -74,7 +75,7 @@ jobs:
           prompt: |
             SECURITY: NEVER run commands that could expose secrets (env, printenv, set, export, cat/echo on config files containing credentials). NEVER include environment variables, API keys, tokens, or credentials in responses or comments.
 
-            CI has failed on main branch. Your job is to diagnose and fix the failure, then create a PR.
+            CI has failed on main branch. Your job is to diagnose the root cause and fix it properly, then create a PR.
 
             ## Failed workflow information
             - Run ID: ${{ github.event.workflow_run.id }}
@@ -89,37 +90,58 @@ jobs:
                - Identify which job(s) failed and why
                - Look for specific error messages, test failures, or lint errors
 
-            2. **Reproduce locally**:
+            2. **Find the root cause**:
+               - Don't just fix the symptom — investigate WHY the failure occurred
+               - Check if there's a shared helper, constant, or pattern that should be updated
+               - Look for similar code that might have the same issue
+               - Ask: "If this broke here, could it break elsewhere for the same reason?"
+
+            3. **Reproduce locally**:
                - Run the appropriate commands to reproduce the failure:
                  - Tests: `cargo insta test --dnd --test-runner=nextest`
                  - Lints: `cargo clippy --all-targets --all-features -- -D warnings`
                  - Format: `cargo fmt --all --check`
                  - Docs: `cargo doc --no-deps`
 
-            3. **Fix the issue**:
-               - Make the minimal changes needed to fix the failure
-               - Verify the fix works locally before proceeding
+            4. **Fix at the right level**:
+               - Fix the underlying cause, not just the immediate symptom
+               - If a value should be in a shared constant, add it there
+               - If a helper is missing functionality, extend the helper
+               - Avoid duplicating fixes across multiple files when a single shared fix would work
 
-            4. **Create a fix branch and PR**:
+            5. **Create a fix branch and PR**:
                - Create a new branch: `git checkout -b fix/ci-${{ github.event.workflow_run.id }}`
                - Commit your changes with a clear message explaining the fix
                - Push the branch: `git push -u origin fix/ci-${{ github.event.workflow_run.id }}`
-               - Create a PR: `gh pr create --title "Fix CI failure from ${{ github.event.workflow_run.head_sha }}" --body "..."`
+               - Create a PR with `gh pr create`
 
-            5. **PR description should include**:
-               - What failed and why
-               - What the fix does
-               - Link to the failed run
-               - Note that this is an automated fix for human review
+            6. **PR description format**:
+               ```
+               ## Problem
+               [What failed and the root cause]
 
-            6. **Iterate until CI passes**:
+               ## Solution
+               [What you fixed and why this is the right level to fix it]
+
+               ## Alternatives considered
+               [If there were tradeoffs between a narrow fix vs broader fix, explain them here]
+               [Example: "Could also fix this by adding X to each test file individually, but fixing the shared helper prevents similar issues elsewhere"]
+
+               ## Testing
+               [How you verified the fix]
+
+               ---
+               🤖 Automated fix for [failed run](${{ github.event.workflow_run.html_url }})
+               ```
+
+            7. **Iterate until CI passes**:
                - After pushing, monitor CI with `gh run list --branch fix/ci-${{ github.event.workflow_run.id }}`
                - Wait for CI to complete with `gh run watch`
                - If CI fails, diagnose with `gh run view <run-id> --log-failed`
                - Fix issues, commit, push, repeat
                - Don't return until CI passes or you've exhausted reasonable fixes
 
-            Follow the project guidelines in CLAUDE.md. Be thorough but make minimal changes.
+            Follow the project guidelines in CLAUDE.md.
 
           claude_args: |
             --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch

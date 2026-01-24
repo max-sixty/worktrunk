@@ -40,4 +40,4 @@ exit_code: 1
 [31m✗[39m [31mCommit generation command failed[39m
 [107m [0m Error: connection refused
 [2m○[22m Ran command:
-[107m [0m wt step squash --show-prompt | sh -c cat > /dev/null; echo 'Error: connection refused' >&2 && exit 1
+[107m [0m wt step squash --show-prompt | sh -c 'cat > /dev/null; echo '/''Error: connection refused'/'' >&2 && exit 1'

@@ -35,6 +35,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
+[33m▲[39m [33mProject config has unknown field [1mpost-merge-command[22m (will be ignored)[39m
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 

@@ -24,7 +24,7 @@ info:
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
-    WORKTRUNK_COMMIT_GENERATION__COMMAND: nonexistent-llm-command
+    WORKTRUNK_COMMIT__GENERATION__COMMAND: nonexistent-llm-command
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
@@ -39,6 +39,6 @@ exit_code: 1
 [36m◎[39m [36mSquashing 2 commits into a single commit [90m(2 files, [32m+2[39m[39m[90m)[39m...[39m
 [36m◎[39m [36mGenerating squash commit message...[39m
 [31m✗[39m [31mCommit generation command failed[39m
-[107m [0m Failed to spawn LLM command
+[107m [0m sh: nonexistent-llm-command: command not found
 [2m○[22m Ran command:
 [107m [0m wt step squash --show-prompt | nonexistent-llm-command

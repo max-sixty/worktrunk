@@ -5,7 +5,6 @@ info:
   args:
     - config
     - show
-    - "--full"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -36,14 +35,15 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
+[33m▲[39m [33mProject config uses deprecated config sections: [commit-generation] → [commit.generation][39m
+[2m↳[22m [2mWrote migrated wt.toml.new; to apply: [90mmv -- _REPO_/.config/wt.toml.new _REPO_/.config/wt.toml[39m[22m
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
-[107m [0m 
-[107m [0m [1m[36m[commit.generation]
-[107m [0m command = [32m"nonexistent-llm-command-12345 -m test-model"
 
 [36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
-[2m↳[22m [2mNot found[22m
+[33m▲[39m [33mKey [1mcommit-generation[22m belongs in user config (will be ignored)[39m
+[107m [0m [1m[36m[commit-generation]
+[107m [0m command = [32m"claude"
 
 [36mSHELL INTEGRATION[39m
 [33m▲[39m [33mShell integration not active[39m
@@ -52,14 +52,6 @@ exit_code: 0
 [2m○[22m [2mSkipped bash; ~/.bashrc not found[22m
 [2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
 [2m○[22m [2mSkipped fish; ~/.config/fish/functions not found[22m
-
-[36mDIAGNOSTICS[39m
-[2m↳[22m [2mCI status requires GitHub or GitLab remote[22m
-[31m✗[39m [31mCommit generation failed ([1mnonexistent-llm-command-12345 -m test-model[22m)[39m
-[107m [0m [31m✗[39m [31mCommit generation command failed[39m
-[107m [0m [107m [0m sh: nonexistent-llm-command-12345: command not found
-[107m [0m [2m○[22m Ran command:
-[107m [0m [107m [0m nonexistent-llm-command-12345 -m test-model
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m

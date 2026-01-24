@@ -1,6 +1,6 @@
 use crate::common::{
     BareRepoTest, TestRepo, TestRepoBase, canonicalize, configure_directive_file, directive_file,
-    repo, setup_temp_snapshot_settings, wait_for, wait_for_file, wt_command,
+    repo, setup_temp_snapshot_settings, wait_for, wait_for_file_count, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -416,13 +416,34 @@ fn test_bare_repo_background_logs_location() {
 
     // Wait for background process to create log file (poll instead of fixed sleep)
     // The key test is that the path is correct, not that content was written (background processes are flaky in tests)
-    let log_path = test.bare_repo_path().join("wt-logs/feature-remove.log");
-    wait_for_file(&log_path);
+    // Log filename has hash suffix: feature-<hash>-remove-<hash>.log
+    let log_dir = test.bare_repo_path().join("wt-logs");
+    wait_for_file_count(&log_dir, "log", 1);
+
+    // Verify the log file matches expected pattern (feature-*-remove-*.log)
+    let log_files: Vec<_> = std::fs::read_dir(&log_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.starts_with("feature-") && name.contains("-remove-") && name.ends_with(".log")
+        })
+        .collect();
+    assert_eq!(
+        log_files.len(),
+        1,
+        "Expected exactly one feature-*-remove-*.log file, found: {:?}",
+        log_files
+    );
 
     // Verify it's NOT in the worktree's .git directory (which doesn't exist for linked worktrees)
-    let wrong_path = main_worktree.join(".git/wt-logs/feature-remove.log");
+    let wrong_dir = main_worktree.join(".git/wt-logs");
     assert!(
-        !wrong_path.exists(),
+        !wrong_dir.exists()
+            || std::fs::read_dir(&wrong_dir)
+                .map(|d| d.count())
+                .unwrap_or(0)
+                == 0,
         "Log should NOT be in worktree's .git directory"
     );
 }

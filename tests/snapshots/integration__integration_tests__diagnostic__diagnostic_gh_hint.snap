@@ -2,4 +2,4 @@
 source: tests/integration_tests/diagnostic.rs
 expression: normalized
 ---
-[2m↳[22m [2mTo report a bug, create a secret gist with [90mgh gist create --web '[DIAGNOSTIC_PATH]'[39m and reference it from an issue at [90mhttps://github.com/max-sixty/worktrunk/issues/new?body=%23%23%20Gist%0A%0A%5BPaste%20gist%20URL%5D%0A%0A%23%23%20Description%0A%0A%5BDescribe%20the%20issue%5D[39m[22m
+[2m↳[22m [2mTo report a bug, create a secret gist with [90mgh gist create --web [DIAGNOSTIC_PATH][39m and reference it from an issue at [90mhttps://github.com/max-sixty/worktrunk/issues/new?body=%23%23%20Gist%0A%0A%5BPaste%20gist%20URL%5D%0A%0A%23%23%20Description%0A%0A%5BDescribe%20the%20issue%5D[39m[22m

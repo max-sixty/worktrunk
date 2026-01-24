@@ -365,6 +365,104 @@ fn test_config_show_warns_unknown_user_keys(mut repo: TestRepo, temp_home: TempD
     });
 }
 
+/// Tests that loading a config with a truly unknown key (not valid in either config type)
+/// emits a warning during config loading (not just config show).
+#[rstest]
+fn test_unknown_project_key_warning_during_load(repo: TestRepo, temp_home: TempDir) {
+    // Create project config with truly unknown key (not valid in either config type)
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "[invalid-section-name]\nkey = \"value\"",
+    )
+    .unwrap();
+
+    // Run `wt list` which loads project config via ProjectConfig::load()
+    // This triggers warn_unknown_fields (different from warn_unknown_keys used by config show)
+    let mut cmd = repo.wt_command();
+    cmd.arg("list").current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "Command should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("has unknown field"),
+        "Expected unknown field warning during config load, got: {stderr}"
+    );
+}
+
+/// Tests that when a user-config-only key (commit-generation) appears in project config,
+/// the warning suggests moving it to user config.
+#[rstest]
+fn test_config_show_suggests_user_config_for_commit_generation(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // Create empty global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"",
+    )
+    .unwrap();
+
+    // Create project config with commit-generation (which belongs in user config)
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "[commit-generation]\ncommand = \"claude\"",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Tests that when a project-config-only key (ci) appears in user config,
+/// the warning suggests moving it to project config.
+#[rstest]
+fn test_config_show_suggests_project_config_for_ci(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // Create global config with ci section (which belongs in project config)
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n\n[ci]\nplatform = \"github\"",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[rstest]
 fn test_config_show_invalid_user_toml(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
@@ -465,9 +563,8 @@ fn test_config_show_full_command_not_found(mut repo: TestRepo, temp_home: TempDi
         &config_path,
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
-[commit-generation]
-command = "nonexistent-llm-command-12345"
-args = ["-m", "test-model"]
+[commit.generation]
+command = "nonexistent-llm-command-12345 -m test-model"
 "#,
     )
     .unwrap();
@@ -896,14 +993,8 @@ fn test_deprecated_variables_hint_clear_regenerates(repo: TestRepo, temp_home: T
     // Clear the hint
     {
         let mut cmd = repo.wt_command();
-        cmd.args([
-            "config",
-            "state",
-            "hints",
-            "clear",
-            "deprecated-project-config",
-        ])
-        .current_dir(repo.root_path());
+        cmd.args(["config", "state", "hints", "clear", "deprecated-config"])
+            .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         let output = cmd.output().unwrap();
         assert!(
@@ -1143,4 +1234,103 @@ fn test_config_show_claude_available_plugin_not_installed(mut repo: TestRepo, te
 
         assert_cmd_snapshot!(cmd);
     });
+}
+
+/// Test that deprecated [commit-generation] section shows warning and creates migration file
+#[rstest]
+fn test_deprecated_commit_generation_section_shows_warning(repo: TestRepo, temp_home: TempDir) {
+    // Write user config with deprecated [commit-generation] section
+    let config_path = repo.test_config_path();
+    fs::write(
+        config_path,
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[commit-generation]
+command = "llm"
+args = ["-m", "haiku"]
+"#,
+    )
+    .unwrap();
+
+    // Use `wt list` which loads config through UserConfig::load() and triggers deprecation check
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify migration file was created (config.toml -> config.toml.new)
+    let migration_file = config_path.with_extension("toml.new");
+    assert!(
+        migration_file.exists(),
+        "Migration file should be created at {:?}",
+        migration_file
+    );
+
+    // Verify migration file has correct transformations
+    let migrated_content = fs::read_to_string(&migration_file).unwrap();
+    assert!(
+        migrated_content.contains("[commit.generation]"),
+        "Migration should rename [commit-generation] to [commit.generation]"
+    );
+    assert!(
+        migrated_content.contains("command = \"llm -m haiku\""),
+        "Migration should merge args into command"
+    );
+    assert!(
+        !migrated_content.contains("[commit-generation]"),
+        "Migration should remove old section name"
+    );
+    assert!(
+        !migrated_content.contains("args ="),
+        "Migration should remove args field"
+    );
+}
+
+/// Test that deprecated project-level [projects."...".commit-generation] shows warning
+#[rstest]
+fn test_deprecated_commit_generation_project_level_shows_warning(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Write user config with deprecated project-level commit-generation
+    let config_path = repo.test_config_path();
+    fs::write(
+        config_path,
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[projects."github.com/example/repo".commit-generation]
+command = "llm -m gpt-4"
+"#,
+    )
+    .unwrap();
+
+    // Use `wt list` which loads config through UserConfig::load() and triggers deprecation check
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify migration file was created and has correct transformations
+    let migration_file = config_path.with_extension("toml.new");
+    assert!(
+        migration_file.exists(),
+        "Migration file should be created at {:?}",
+        migration_file
+    );
+
+    let migrated_content = fs::read_to_string(&migration_file).unwrap();
+    assert!(
+        migrated_content.contains("[projects.\"github.com/example/repo\".commit.generation]"),
+        "Migration should rename project-level section"
+    );
 }
