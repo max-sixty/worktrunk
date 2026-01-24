@@ -439,5 +439,4 @@ mod tests {
         assert!(result.starts_with("(log truncated to last ~50KB)"));
         assert!(result.len() < 55 * 1024);
     }
-
 }

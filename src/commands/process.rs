@@ -535,14 +535,15 @@ mod tests {
     fn test_hook_log_hook_suffix() {
         use worktrunk::git::HookType;
 
+        // Hook names are sanitized with hash suffix for collision avoidance
         let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
-        assert_eq!(log.suffix(), "user-post-start-server");
+        assert!(log.suffix().starts_with("user-post-start-server-"));
 
         let log = HookLog::hook(HookSource::Project, HookType::PostCreate, "build");
-        assert_eq!(log.suffix(), "project-post-create-build");
+        assert!(log.suffix().starts_with("project-post-create-build-"));
 
         let log = HookLog::hook(HookSource::User, HookType::PreRemove, "cleanup");
-        assert_eq!(log.suffix(), "user-pre-remove-cleanup");
+        assert!(log.suffix().starts_with("user-pre-remove-cleanup-"));
     }
 
     #[test]
@@ -556,23 +557,31 @@ mod tests {
         use worktrunk::git::HookType;
 
         let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
-        assert_eq!(log.filename("main"), "main-user-post-start-server.log");
-        assert_eq!(
-            log.filename("feature/auth"),
-            "feature-auth-user-post-start-server.log"
-        );
+        // Branch and hook name are sanitized with hash suffixes
+        let filename = log.filename("main");
+        assert!(filename.starts_with("main-"));
+        assert!(filename.contains("-user-post-start-server-"));
+        assert!(filename.ends_with(".log"));
+
+        let filename = log.filename("feature/auth");
+        assert!(filename.starts_with("feature-auth-"));
+        assert!(filename.contains("-user-post-start-server-"));
+        assert!(filename.ends_with(".log"));
 
         let log = HookLog::internal(InternalOp::Remove);
-        assert_eq!(log.filename("main"), "main-remove.log");
+        let filename = log.filename("main");
+        assert!(filename.starts_with("main-"));
+        assert!(filename.ends_with("-remove.log"));
     }
 
     #[test]
     fn test_hook_log_parse_hook() {
         let log = HookLog::parse("user:post-start:server").unwrap();
-        assert_eq!(log.suffix(), "user-post-start-server");
+        // Hook name is sanitized with hash suffix
+        assert!(log.suffix().starts_with("user-post-start-server-"));
 
         let log = HookLog::parse("project:post-create:build").unwrap();
-        assert_eq!(log.suffix(), "project-post-create-build");
+        assert!(log.suffix().starts_with("project-post-create-build-"));
     }
 
     #[test]
