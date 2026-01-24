@@ -5,9 +5,9 @@ use std::path::Path;
 
 use crate::config::short_hash;
 #[cfg(windows)]
-use std::path::PathBuf;
-#[cfg(windows)]
 use crate::shell_exec::{Cmd, ShellConfig};
+#[cfg(windows)]
+use std::path::PathBuf;
 
 /// Convert a path to POSIX format for Git Bash compatibility.
 ///
