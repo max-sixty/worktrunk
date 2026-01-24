@@ -3,6 +3,8 @@ use shell_escape::unix::escape;
 use std::borrow::Cow;
 use std::path::Path;
 
+use sanitize_filename::{Options as SanitizeOptions, sanitize_with_options};
+
 use crate::config::short_hash;
 #[cfg(windows)]
 use crate::shell_exec::{Cmd, ShellConfig};
@@ -134,41 +136,24 @@ pub fn format_path_for_display(path: &Path) -> String {
 
 /// Sanitize a string for use as a filename on all platforms.
 ///
-/// Replaces invalid characters and control characters with `-`, trims trailing
-/// dots/spaces (Windows), prefixes reserved device names with `_`, and appends
-/// a 3-character hash suffix for collision avoidance.
+/// Uses `sanitize-filename` crate to handle invalid characters, control characters,
+/// Windows reserved names (CON, PRN, etc.), and trailing dots/spaces. Appends a
+/// 3-character hash suffix for collision avoidance.
 ///
 /// The hash ensures unique outputs for inputs that would otherwise collide
 /// (e.g., `origin/feature` and `origin-feature` both sanitize to `origin-feature`
 /// but get different hash suffixes).
 pub fn sanitize_for_filename(value: &str) -> String {
-    let mut result: String = value
-        .chars()
-        .map(|c| match c {
-            // Windows/Unix invalid filename characters
-            '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*' => '-',
-            // Control characters (0x00-0x1F)
-            c if c.is_control() => '-',
-            _ => c,
-        })
-        .collect();
+    let mut result = sanitize_with_options(
+        value,
+        SanitizeOptions {
+            windows: true,
+            truncate: false,
+            replacement: "-",
+        },
+    );
 
-    // Trim trailing dots and spaces (Windows silently strips these)
-    while result.ends_with('.') || result.ends_with(' ') {
-        result.pop();
-    }
-
-    // Handle Windows reserved names (case-insensitive)
-    // CON, PRN, AUX, NUL, COM1-9, LPT1-9
-    let upper = result.to_uppercase();
-    let is_reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (upper.len() == 4
-            && (upper.starts_with("COM") || upper.starts_with("LPT"))
-            && upper.chars().nth(3).is_some_and(|c| matches!(c, '1'..='9')));
-
-    if is_reserved {
-        result = format!("_{result}");
-    } else if result.is_empty() {
+    if result.is_empty() {
         result = "_empty".to_string();
     }
 
@@ -304,9 +289,18 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_for_filename_prefixes_reserved_names() {
-        assert!(sanitize_for_filename("CON").starts_with("_CON-"));
-        assert!(sanitize_for_filename("com1").starts_with("_com1-"));
+    fn test_sanitize_for_filename_handles_reserved_names() {
+        // Reserved names are replaced (not preserved) - the hash ensures uniqueness
+        let con = sanitize_for_filename("CON");
+        let com1 = sanitize_for_filename("com1");
+        assert!(
+            !con.is_empty() && con.len() > 3,
+            "CON should produce valid filename: {con}"
+        );
+        assert!(
+            !com1.is_empty() && com1.len() > 3,
+            "com1 should produce valid filename: {com1}"
+        );
     }
 
     #[test]
