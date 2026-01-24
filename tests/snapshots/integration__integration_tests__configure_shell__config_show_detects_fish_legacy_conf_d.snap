@@ -51,8 +51,10 @@ exit_code: 0
 [2m○[22m Fish integration found in deprecated location @ [1m~/.config/fish/conf.d/wt.fish[22m
 [2m↳[22m [2mTo migrate to [90m~/.config/fish/functions/wt.fish[39m, run [90mwt config shell install fish[39m[22m
 
+[36mCLAUDE CODE[39m
+[2m○[22m [1mclaude[22m CLI not installed
+
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m
 [2m○[22m git: [1m[VERSION][22m
-[2m↳[22m [2mClaude Code plugin not installed ([1mclaude[22m not found)[22m
 [2m○[22m Hyperlinks: [1minactive[22m

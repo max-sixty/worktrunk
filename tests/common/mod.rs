@@ -175,7 +175,7 @@ pub fn repo_with_remote(mut repo: TestRepo) -> TestRepo {
     repo
 }
 
-/// Repo with main branch available for merge operations.
+/// Repo with default branch available for merge operations.
 ///
 /// The primary worktree is already on main, so no separate worktree is needed.
 /// This fixture exists for compatibility with tests that expect it.
@@ -557,6 +557,33 @@ pub const TEST_EPOCH: u64 = 1735776000;
 /// Generous to avoid flakiness under CI load; exponential backoff means fast tests when things work.
 const BG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
+/// Static environment variables shared by all test isolation helpers.
+///
+/// These are used by both `configure_cli_command()` (for Command-based tests)
+/// and `TestRepo::test_env_vars()` (for PTY tests). Adding a variable here
+/// ensures consistency across both test infrastructure paths.
+///
+/// NOTE: Path-dependent variables (HOME, WORKTRUNK_CONFIG_PATH, GIT_CONFIG_*)
+/// are NOT included here because they depend on the TestRepo instance.
+const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
+    ("CLICOLOR_FORCE", "1"),
+    // Terminal width for PTY tests. configure_cli_command() overrides to 500 for longer paths.
+    ("COLUMNS", "150"),
+    // Deterministic locale settings
+    ("LC_ALL", "C"),
+    ("LANG", "C"),
+    // Skip URL health checks to avoid flaky tests from random local processes
+    ("WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK", "1"),
+    // Disable delayed streaming for deterministic output across platforms.
+    // Without this, slow CI triggers progress messages that don't appear on faster systems.
+    ("WT_TEST_DELAYED_STREAM_MS", "-1"),
+];
+
+// NOTE: TERM is intentionally NOT in STATIC_TEST_ENV_VARS because:
+// - configure_cli_command() sets TERM=alacritty for hyperlink detection testing
+// - PTY tests (especially skim-based select tests) need a TERM with valid terminfo
+// - macOS CI doesn't have alacritty terminfo, causing skim to fail
+
 /// Null device path, platform-appropriate.
 /// Use this for GIT_CONFIG_SYSTEM to disable system config in tests.
 #[cfg(windows)]
@@ -631,6 +658,16 @@ pub fn configure_completion_invocation_for_shell(cmd: &mut Command, words: &[&st
 /// This helper mirrors the environment preparation performed by `wt_command`
 /// and is intended for cases where tests need to construct the command manually
 /// (e.g., to execute shell pipelines).
+///
+/// ## Related: `TestRepo::test_env_vars()`
+///
+/// PTY tests use `test_env_vars()` which returns env vars as a Vec. Both functions
+/// share common variables via `STATIC_TEST_ENV_VARS`. Key differences:
+/// - This function uses COLUMNS=500 (wider for long macOS paths in error messages)
+/// - `test_env_vars()` uses COLUMNS=150 (narrower for PTY snapshot consistency)
+/// - This function sets TERM=alacritty; PTY tests don't (skim needs valid terminfo)
+/// - This function enables RUST_LOG=warn; PTY tests don't (too noisy in combined output)
+/// - This function clears host GIT_*/WORKTRUNK_* vars; PTY tests start with clean env
 pub fn configure_cli_command(cmd: &mut Command) {
     for (key, _) in std::env::vars() {
         if key.starts_with("GIT_") || key.starts_with("WORKTRUNK_") {
@@ -645,22 +682,22 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // Remove $SHELL to avoid platform-dependent diagnostic output (macOS has /bin/zsh,
     // Linux has /bin/bash). Tests that need SHELL should set it explicitly.
     cmd.env_remove("SHELL");
-    cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
-    // Use wide terminal to prevent wrapping differences across platforms.
+    // Enable warn-level logging so diagnostics show up in test failures
+    cmd.env("RUST_LOG", "warn");
+
+    // Apply shared static env vars (see STATIC_TEST_ENV_VARS)
+    for &(key, value) in STATIC_TEST_ENV_VARS {
+        cmd.env(key, value);
+    }
+
+    // Override COLUMNS to 500 (wider than STATIC_TEST_ENV_VARS default) for long paths.
     // macOS temp paths (~80 chars) are much longer than Linux (~10 chars),
     // so error messages containing paths need room to avoid platform-specific line breaks.
     cmd.env("COLUMNS", "500");
-    // Set consistent terminal type for hyperlink detection via supports-hyperlinks crate
+    // Set consistent terminal type for hyperlink detection via supports-hyperlinks crate.
+    // Not in STATIC_TEST_ENV_VARS because PTY tests need a TERM with valid terminfo.
     cmd.env("TERM", "alacritty");
-    // Enable warn-level logging so diagnostics show up in test failures
-    cmd.env("RUST_LOG", "warn");
-    // Skip URL health checks to avoid flaky tests from random local processes
-    cmd.env("WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK", "1");
-    // Disable delayed streaming for deterministic output across platforms.
-    // Without this, slow Windows CI triggers progress messages that don't appear on faster systems.
-    // Tests that need streaming (e.g., test_switch_create_shows_progress_when_forced) can override.
-    cmd.env("WT_TEST_DELAYED_STREAM_MS", "-1");
 
     // Pass through LLVM coverage profiling environment for subprocess coverage collection.
     // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record
@@ -1061,15 +1098,25 @@ impl TestRepo {
         configure_git_cmd(cmd, &self.git_config_path);
     }
 
-    /// Get standard test environment variables as a vector
+    /// Get standard test environment variables as a vector.
     ///
     /// This is useful for PTY tests and other cases where you need environment variables
     /// as a vector rather than setting them on a Command.
+    ///
+    /// ## Related: `configure_cli_command()`
+    ///
+    /// Command-based tests use `configure_cli_command()`. Both functions share common
+    /// variables via `STATIC_TEST_ENV_VARS`. See that function's docs for differences.
     #[cfg_attr(windows, allow(dead_code))] // Used only by unix PTY tests
     pub fn test_env_vars(&self) -> Vec<(String, String)> {
-        vec![
-            ("CLICOLOR_FORCE".to_string(), "1".to_string()),
-            ("COLUMNS".to_string(), "150".to_string()),
+        // Start with shared static env vars
+        let mut vars: Vec<(String, String)> = STATIC_TEST_ENV_VARS
+            .iter()
+            .map(|&(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+
+        // Add path-dependent variables specific to this TestRepo
+        vars.extend([
             (
                 "GIT_CONFIG_GLOBAL".to_string(),
                 self.git_config_path.display().to_string(),
@@ -1091,14 +1138,14 @@ impl TestRepo {
                 "XDG_CONFIG_HOME".to_string(),
                 self.home_path().join(".config").display().to_string(),
             ),
-            ("LC_ALL".to_string(), "C".to_string()),
-            ("LANG".to_string(), "C".to_string()),
             ("WT_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
             (
                 "WORKTRUNK_CONFIG_PATH".to_string(),
                 self.test_config_path().display().to_string(),
             ),
-        ]
+        ]);
+
+        vars
     }
 
     /// Configure shell integration for test environment.
@@ -1482,9 +1529,9 @@ impl TestRepo {
         canonical_path
     }
 
-    /// Creates a worktree for the main branch (required for merge operations)
+    /// Creates a worktree for the default branch (required for merge operations)
     ///
-    /// This is a convenience method that creates a worktree for the main branch
+    /// This is a convenience method that creates a worktree for the default branch
     /// in the standard location expected by merge tests. Returns the path to the
     /// created worktree.
     ///
@@ -1692,7 +1739,7 @@ impl TestRepo {
     /// Switch the primary worktree to a different branch
     ///
     /// Creates a new branch and switches to it in the primary worktree.
-    /// This is useful for testing scenarios where the primary worktree is not on the main branch.
+    /// This is useful for testing scenarios where the primary worktree is not on the default branch.
     pub fn switch_primary_to(&self, branch: &str) {
         self.run_git(&["switch", "-c", branch]);
     }
@@ -1783,6 +1830,20 @@ impl TestRepo {
         std::fs::write(
             plugins_dir.join("installed_plugins.json"),
             r#"{"version":2,"plugins":{"worktrunk@worktrunk":[{"scope":"user"}]}}"#,
+        )
+        .unwrap();
+    }
+
+    /// Setup the statusline as configured in Claude Code settings
+    ///
+    /// Creates the settings.json file with the wt statusline command.
+    /// The temp_home must already be set up (via set_temp_home_env on the command).
+    pub fn setup_statusline_configured(temp_home: &std::path::Path) {
+        let claude_dir = temp_home.join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(
+            claude_dir.join("settings.json"),
+            r#"{"statusLine":{"type":"command","command":"wt list statusline --claude-code"}}"#,
         )
         .unwrap();
     }
@@ -2178,7 +2239,14 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
 /// This extracts the common settings configuration while allowing the
 /// `assert_cmd_snapshot!` macro to remain in test files for correct module path capture.
 pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
-    setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees)
+    setup_snapshot_settings_impl(repo.root_path(), None)
+}
+
+/// Internal implementation that optionally includes temp_home filter.
+/// The temp_home filter MUST be added before PROJECT_ID filters to take precedence.
+fn setup_snapshot_settings_impl(root: &Path, temp_home: Option<&Path>) -> insta::Settings {
+    let worktrees = HashMap::new(); // Caller doesn't need worktree filters
+    setup_snapshot_settings_for_paths_with_home(root, &worktrees, temp_home)
 }
 
 /// Full snapshot settings - path filters AND ANSI cleanup.
@@ -2188,7 +2256,26 @@ fn setup_snapshot_settings_for_paths(
     root: &Path,
     worktrees: &HashMap<String, PathBuf>,
 ) -> insta::Settings {
-    let mut settings = insta::Settings::clone_current();
+    setup_snapshot_settings_for_paths_with_home(root, worktrees, None)
+}
+
+/// Internal implementation with optional temp_home support.
+///
+/// When `temp_home` is provided, we create fresh settings rather than cloning current settings.
+/// This is critical because TestRepo's snapshot guard may have already added PROJECT_ID filters,
+/// and cloning would inherit those filters which would be applied BEFORE our TEMP_HOME filter.
+fn setup_snapshot_settings_for_paths_with_home(
+    root: &Path,
+    worktrees: &HashMap<String, PathBuf>,
+    temp_home: Option<&Path>,
+) -> insta::Settings {
+    // When temp_home is provided, start fresh to ensure TEMP_HOME filter is applied before
+    // any inherited PROJECT_ID filters. Otherwise, clone current settings for consistency.
+    let mut settings = if temp_home.is_some() {
+        insta::Settings::new()
+    } else {
+        insta::Settings::clone_current()
+    };
     settings.set_snapshot_path("../snapshots");
 
     // Normalize project root path (for test fixtures)
@@ -2266,11 +2353,65 @@ fn setup_snapshot_settings_for_paths(
     );
 
     // Final cleanup: strip any remaining quotes around placeholders.
-    // shell_escape may quote paths, and ANSI codes may appear between quotes and content.
-    // This unified pattern matches all placeholder types: _REPO_, _REPO_.suffix, _WORKTREE_X_
+    // shell_escape may quote paths containing ~ (Windows short path notation like RUNNER~1).
+    // ANSI codes may appear between quotes and content.
+    // This pattern matches placeholders with optional suffixes and subpaths:
+    // - '_REPO_' -> _REPO_
+    // - '_REPO_.feat' -> _REPO_.feat
+    // - '_REPO_.name.bak.20250102-000000' -> _REPO_.name.bak.20250102-000000
+    // - '_REPO_/.config/wt.toml' -> _REPO_/.config/wt.toml
+    // - '_WORKTREE_A_/subpath' -> _WORKTREE_A_/subpath
     settings.add_filter(
-        r"'(?:\x1b\[[0-9;]*m)*(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?)(?:\x1b\[[0-9;]*m)*'",
+        r"'(?:\x1b\[[0-9;]*m)*(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_.-]+)?(?:/[^']*)?)(?:\x1b\[[0-9;]*m)*'",
         "$1",
+    );
+
+    // Also strip quotes around bracket placeholders like [PROJECT_ID]
+    // NOTE: This filter runs BEFORE PROJECT_ID replacement, so it handles
+    // cases where ANSI codes appear between quotes and placeholders.
+    // A simpler post-replacement filter is added after PROJECT_ID filters.
+    settings.add_filter(
+        r"'(?:\x1b\[[0-9;]*m)*(\[[A-Z_]+\])(?:\x1b\[[0-9;]*m)*'",
+        "$1",
+    );
+    // Also strip quotes around paths that include subdirectories (e.g., '_REPO_/.config/wt.toml')
+    // On Windows, shell_escape quotes paths containing ':' so full paths get quoted.
+    settings.add_filter(
+        r"'(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?/[^']+)'",
+        "$1",
+    );
+    // Normalize git diff header prefixes: a/_REPO_ -> a_REPO_, b/_REPO_ -> b_REPO_
+    // On Windows, git diff --no-index with absolute paths produces a/C:/... which becomes a/_REPO_
+    // On Unix, relative paths produce a/repo/... which becomes a_REPO_
+    // Note: [TEMP_HOME] filters are added later, after TEMP_HOME replacement happens.
+    settings.add_filter(r"(diff --git )a/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1a$2");
+    settings.add_filter(r" b/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", " b$1");
+    settings.add_filter(r"(--- )a/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1a$2");
+    settings.add_filter(r"(\+\+\+ )b/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1b$2");
+
+    // Windows git diff may produce headers without "diff --git a" prefix.
+    // Pattern: _REPO_/path1 b_REPO_/path2 (just paths with b prefix for second)
+    // Match bold ANSI + _REPO_ path + space + b + _REPO_ path
+    settings.add_filter(
+        r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+) b(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+)",
+        "$1diff --git a$2 b$3",
+    );
+    // Windows may have "  --git a_REPO_" with leading spaces after ANSI reset (missing "diff" and bold).
+    // Match: ANSI reset + one or more spaces + "--git a" pattern
+    // Replace with: ANSI reset + space + bold + "diff --git a" to match Unix format
+    settings.add_filter(
+        r"(\x1b\[0m) +--git a(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)",
+        "$1 \x1b[1mdiff --git a$2",
+    );
+    // Windows may also omit --- a prefix on the source file line
+    settings.add_filter(r"(--- )(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)", "$1a$2");
+    // Windows may also omit +++ b prefix on the destination file line
+    settings.add_filter(r"(\+\+\+ )(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)", "$1b$2");
+    // Windows may output bare path for --- line: \x1b[1m_REPO_/...\x1b[m (no "--- a")
+    // Add the missing "--- a" prefix.
+    settings.add_filter(
+        r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\x1b]+\.toml)(\x1b\[m)",
+        "$1--- a$2$3",
     );
 
     // Normalize syntax highlighting around placeholders.
@@ -2282,6 +2423,15 @@ fn setup_snapshot_settings_for_paths(
     settings.add_filter(
         r"\x1b\[2m \x1b\[0m\x1b\[2m(?:\x1b\[32m)?(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?)(?:\x1b\[0m)?\x1b\[2m \x1b\[0m",
         "\x1b[2m $1 \x1b[0m",
+    );
+
+    // Strip green ANSI highlighting from _REPO_ paths.
+    // On Windows, tree-sitter may highlight paths with green (\x1b[32m) even when not quoted.
+    // Example: \x1b[0m\x1b[2m\x1b[32m_REPO_/.config/wt.toml\x1b[0m\x1b[2m
+    // Strip ANSI codes before/after the path when green highlighting is present.
+    settings.add_filter(
+        r"(?:\x1b\[\d+m)*\x1b\[32m(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:/[^\x1b\s]+)?)(?:\x1b\[\d+m)*",
+        "$1",
     );
 
     // Normalize WORKTRUNK_CONFIG_PATH temp paths in stdout/stderr output
@@ -2297,6 +2447,14 @@ fn setup_snapshot_settings_for_paths(
         r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-config\.toml'?",
         "[TEST_CONFIG]",
     );
+    // Strip ANSI codes that may wrap [TEST_CONFIG*] placeholders.
+    // On Windows, tree-sitter may add ANSI codes around paths even without quotes.
+    // Example: \x1b[0m\x1b[2m[TEST_CONFIG_NEW]\x1b[2m
+    // Match: optional ANSI codes + [TEST_CONFIG...] + optional ANSI codes -> just the placeholder
+    settings.add_filter(
+        r"(?:\x1b\[\d+m)+(\[TEST_CONFIG(?:_NEW)?\])(?:\x1b\[\d+m)+",
+        "$1",
+    );
 
     // Normalize GIT_CONFIG_GLOBAL temp paths
     // (?:[A-Z]:)? handles Windows drive letters
@@ -2304,6 +2462,123 @@ fn setup_snapshot_settings_for_paths(
         r"(?:[A-Z]:)?/[^\s]+/\.tmp[^/]+/test-gitconfig",
         "[TEST_GIT_CONFIG]",
     );
+
+    // TEMP_HOME filter MUST come before PROJECT_ID filters to take precedence.
+    // Otherwise, paths like /tmp/.tmpXXX/.config/worktrunk/config.toml would match
+    // the PROJECT_ID filter first.
+    //
+    // We replace the full temp_home path prefix with [TEMP_HOME], so paths like
+    // /tmp/.tmpABC/.config/worktrunk/config.toml become [TEMP_HOME]/.config/worktrunk/config.toml
+    if let Some(temp_home) = temp_home {
+        // Get both the original path and the canonicalized path - they may differ on Windows
+        // due to short path names (e.g., RUNNER~1 vs runneradmin) or other normalization.
+        let temp_home_original = temp_home.to_string_lossy().replace('\\', "/");
+        let temp_home_canonical =
+            canonicalize(temp_home).unwrap_or_else(|_| temp_home.to_path_buf());
+        let temp_home_str = temp_home_canonical.to_string_lossy().replace('\\', "/");
+
+        // On Windows, paths may be quoted by shell_escape due to ':' in drive letters.
+        // Add filters for both quoted and unquoted variants, for both original and canonical paths.
+        if temp_home_str.contains(':') {
+            // Quoted canonical path
+            settings.add_filter(
+                &format!("'{}", regex::escape(&temp_home_str)),
+                "'[TEMP_HOME]",
+            );
+            // Quoted original path (may differ from canonical)
+            if temp_home_original != temp_home_str {
+                settings.add_filter(
+                    &format!("'{}", regex::escape(&temp_home_original)),
+                    "'[TEMP_HOME]",
+                );
+            }
+        }
+        // Unquoted canonical path
+        settings.add_filter(&regex::escape(&temp_home_str), "[TEMP_HOME]");
+        // Unquoted original path (may differ from canonical)
+        if temp_home_original != temp_home_str {
+            settings.add_filter(&regex::escape(&temp_home_original), "[TEMP_HOME]");
+        }
+
+        // On macOS, canonicalize returns /private/var/... but git diff output shows /var/...
+        // Add both variants to catch all cases
+        if temp_home_str.starts_with("/private/") {
+            let without_private = &temp_home_str["/private".len()..];
+            settings.add_filter(&regex::escape(without_private), "[TEMP_HOME]");
+        }
+
+        // [TEMP_HOME] post-processing filters - must run AFTER the replacement above.
+
+        // Strip ANSI sequences immediately before [TEMP_HOME] paths.
+        // On Windows, tree-sitter highlights paths with green (\x1b[32m) inside mv commands.
+        // The output has: ...code (space) code code [TEMP_HOME]/path code code...
+        // We strip ONLY the codes between space and [TEMP_HOME], keeping codes elsewhere.
+        // Pattern: (space)(ANSI codes)(optional quote)([TEMP_HOME]) -> (space)(quote)([TEMP_HOME])
+        // The optional quote handles Windows where paths may be quoted: 'C:/...'
+        settings.add_filter(r"( )(?:\x1b\[[0-9;]*m)+('?)(\[TEMP_HOME\]/)", "$1$2$3");
+        // Strip trailing ANSI codes after [TEMP_HOME] paths.
+        // Match path followed by one or more ANSI codes.
+        settings.add_filter(r"(\[TEMP_HOME\]/[^\x1b\s]+)(?:\x1b\[[0-9;]*m)+", "$1");
+
+        // Strip quotes around [TEMP_HOME] paths (Windows shell_escape quotes paths with ':')
+        // Also handles git diff quoted format which lacks a/b prefixes.
+        settings.add_filter(r"'\[TEMP_HOME\](/[^']+)'", "[TEMP_HOME]$1");
+
+        // Normalize git diff header prefixes for [TEMP_HOME]:
+        // Unix: a/[TEMP_HOME] -> a[TEMP_HOME], b/[TEMP_HOME] -> b[TEMP_HOME]
+        settings.add_filter(r"(diff --git )a/(\[TEMP_HOME\])", "$1a$2");
+        settings.add_filter(r" b/(\[TEMP_HOME\])", " b$1");
+        settings.add_filter(r"(--- )a/(\[TEMP_HOME\])", "$1a$2");
+        settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\])", "$1b$2");
+
+        // Windows git diff uses different format for absolute paths.
+        // After quote stripping, the diff header may or may not have "diff --git " prefix,
+        // and may or may not have a/b prefixes. Normalize to Unix format.
+
+        // Pattern 1: Has "diff --git " but no a/b prefixes
+        // diff --git [TEMP_HOME]/a [TEMP_HOME]/b -> diff --git a[TEMP_HOME]/a b[TEMP_HOME]/b
+        settings.add_filter(
+            r"(diff --git )(\[TEMP_HOME\]/[^\s]+) (\[TEMP_HOME\]/)",
+            "$1a$2 b$3",
+        );
+
+        // Pattern 2: Windows git diff header with only b prefix present.
+        // Windows git diff --no-index may produce: path1 bpath2 (without diff --git a)
+        // After path replacement: [TEMP_HOME]/a b[TEMP_HOME]/b
+        // Add the full header format to match Unix.
+        settings.add_filter(
+            r"(\x1b\[1m)(\[TEMP_HOME\]/[^\s]+) b(\[TEMP_HOME\]/[^\s]+)",
+            "$1diff --git a$2 b$3",
+        );
+
+        // Pattern 3: Windows may have "  --git a[path]" with leading spaces after ANSI (missing "diff" and bold).
+        // Match: ANSI reset + one or more spaces + "--git a" pattern
+        // Replace with: ANSI reset + space + bold + "diff --git a" to match Unix format
+        settings.add_filter(
+            r"(\x1b\[0m) +--git a(\[TEMP_HOME\]/)",
+            "$1 \x1b[1mdiff --git a$2",
+        );
+
+        // --- [TEMP_HOME]/... -> --- a[TEMP_HOME]/... (Unix has slash, remove it)
+        settings.add_filter(r"(--- )a/(\[TEMP_HOME\]/)", "$1a$2");
+        // --- [TEMP_HOME]/... -> --- a[TEMP_HOME]/... (Windows: add missing a prefix)
+        settings.add_filter(r"(--- )(\[TEMP_HOME\]/)", "$1a$2");
+
+        // +++ [TEMP_HOME]/... -> +++ b[TEMP_HOME]/... (Unix has slash, remove it)
+        settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\]/)", "$1b$2");
+        // +++ [TEMP_HOME]/... -> +++ b[TEMP_HOME]/... (Windows: add missing b prefix)
+        settings.add_filter(r"(\+\+\+ )(\[TEMP_HOME\]/)", "$1b$2");
+
+        // Windows git diff may have bare path without --- prefix at all.
+        // Match: bold ANSI + bare [TEMP_HOME] path that's NOT preceded by diff/---/+++
+        // This catches the case where git outputs just the path on its own line.
+        // Look for standalone [TEMP_HOME]/...config.toml (trailing ANSI codes may be stripped).
+        // Use negative lookbehind (not supported) - instead match newline + gutter + bold.
+        settings.add_filter(
+            r"(\x1b\[1m)(\[TEMP_HOME\]/[^\s\x1b]+\.toml)(\x1b\[m|\n|$)",
+            "$1--- a$2$3",
+        );
+    }
 
     // Normalize temp directory paths in project identifiers (approval prompts)
     // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]
@@ -2320,12 +2595,23 @@ fn setup_snapshot_settings_for_paths(
         r"[A-Z]:/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/[^)'\s\x1b]+",
         "[PROJECT_ID]",
     );
+    // Windows quoted paths: shell_escape quotes paths containing ':' (drive letter)
+    // Example: 'C:/Users/user/AppData/Local/Temp/.tmpXXXXXX/repo/.config/wt.toml' -> [PROJECT_ID]
+    settings.add_filter(
+        r"'[A-Z]:/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/[^']+'",
+        "[PROJECT_ID]",
+    );
 
     // Generic tilde-prefixed paths that aren't repo or worktree paths.
     // On CI, HOME is a temp directory, so paths under HOME become ~/something.
     // This catches paths like ~/wrong-path that don't follow the repo naming convention.
     // MUST come AFTER specific ~/repo patterns so they match first.
     settings.add_filter(r"~/[a-zA-Z0-9_-]+", "[PROJECT_ID]");
+
+    // Strip quotes around [PROJECT_ID] after replacement.
+    // On Windows, paths inside quotes get replaced but quotes remain: 'C:/...' -> '[PROJECT_ID]'
+    // This filter MUST come AFTER PROJECT_ID filters to clean up the result.
+    settings.add_filter(r"'\[PROJECT_ID\]'", "[PROJECT_ID]");
 
     // Normalize HOME temp directory in snapshots (stdout/stderr content)
     // Matches any temp directory path (without trailing filename)
@@ -2457,13 +2743,12 @@ fn setup_snapshot_settings_for_paths(
 ///
 /// This extends `setup_snapshot_settings` by adding a filter for the temporary home directory.
 /// Use this for tests that need both a TestRepo and a temporary home (for user config testing).
+///
+/// IMPORTANT: The temp_home filter is passed to setup_snapshot_settings_impl so it gets added
+/// BEFORE the generic [PROJECT_ID] filters. Otherwise, paths like /tmp/.tmpXXX/.config/worktrunk/config.toml
+/// would match [PROJECT_ID] first.
 pub fn setup_snapshot_settings_with_home(repo: &TestRepo, temp_home: &TempDir) -> insta::Settings {
-    let mut settings = setup_snapshot_settings(repo);
-    settings.add_filter(
-        &regex::escape(&temp_home.path().to_string_lossy()),
-        "[TEMP_HOME]",
-    );
-    settings
+    setup_snapshot_settings_impl(repo.root_path(), Some(temp_home.path()))
 }
 
 /// Create configured insta Settings for snapshot tests with only a temporary home directory

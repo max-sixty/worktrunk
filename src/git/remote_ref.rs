@@ -110,6 +110,6 @@
 //! ## --create Conflict
 //!
 //! ```text
-//! ✗ Cannot use --create with pr:101
-//! ↳ PRs already have a branch; remove --create
+//! ✗ Cannot create branch for pr:101 — PR already has branch feature-auth
+//! ↳ To switch to it: wt switch pr:101
 //! ```

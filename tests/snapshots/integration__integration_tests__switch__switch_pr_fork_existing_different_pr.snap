@@ -37,7 +37,7 @@ exit_code: 0
 ----- stderr -----
 [36m◎[39m [36mFetching PR #42...[39m
 [107m [0m [1mAdd feature fix for edge case[22m (#42)
-[107m [0m by @contributor · open · [90mhttps://github.com/owner/test-repo/pull/42[39m
+[107m [0m by @contributor · open · contributor:feature-fix · [90mhttps://github.com/owner/test-repo/pull/42[39m
 [33m▲[39m [33mUsing prefixed branch name [1mcontributor/feature-fix[22m due to name conflict[39m
 [2m↳[22m [2mPush to fork is not supported with prefixed branches; feedback welcome at https://github.com/max-sixty/worktrunk/issues/714[22m
 [32m✓[39m [32mCreated branch [1mcontributor/feature-fix[22m (tracking [1mPR #42[22m) and worktree @ [1m_REPO_.contributor-feature-fix[22m[39m

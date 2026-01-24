@@ -38,21 +38,9 @@
 #
 # ## LLM commit messages
 #
-# Generate commit messages automatically during merge. Requires an external CLI tool. See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and template customization.
+# Generate commit messages automatically during merge. Requires an external CLI tool.
 #
-# Using llm (https://github.com/simonw/llm) (install: `pip install llm llm-anthropic`):
-#
-# [commit-generation]
-# command = "llm"
-# args = ["-m", "claude-haiku-4.5"]
-#
-# Using aichat (https://github.com/sigoden/aichat):
-#
-# [commit-generation]
-# command = "aichat"
-# args = ["-m", "claude:claude-haiku-4.5"]
-#
-# See Custom prompt templates (#custom-prompt-templates) for inline template options.
+# See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (#custom-prompt-templates) for template customization.
 #
 # ## Commands
 #
@@ -93,22 +81,33 @@
 # # Example:
 # # pager = "delta --paging=never"
 #
-# ### Per-project settings (Experimental)
+# ### User project-specific settings
 #
-# Per-project settings are keyed by project identifier (e.g., `github.com/user/repo`).
-# These contain approved hook commands plus optional overrides of global settings.
-# Setting overrides (worktree-path, list, commit, merge) are new; approved-commands is stable.
+# For context:
+#
+# - Project config (https://worktrunk.dev/config.md#worktrunk-project-configuration/) settings are shared with teammates.
+# - User configs generally apply to all projects.
+# - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.
+#
+# Entries are keyed by project identifier (e.g., `github.com/user/repo`).
+#
+# #### Approved hook commands
+#
+# When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.
 #
 # [projects."github.com/user/repo"]
-# # Approved hook commands (auto-populated when approving on first run)
 # approved-commands = ["npm ci", "npm test"]
 #
-# # Optional overrides (omit to use global settings)
+# To reset, delete the entry or run `wt hook approvals clear`.
+#
+# #### Setting overrides (Experimental)
+#
+# Override global settings for a specific project. Useful when one repo needs a different worktree layout or merge behavior.
+#
+# [projects."github.com/user/repo"]
 # worktree-path = ".worktrees/{{ branch | sanitize }}"
 # list.full = true
 # merge.squash = false
-#
-# For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see `wt hook` docs (https://worktrunk.dev/hook/).
 #
 # ### Custom prompt templates
 #
@@ -125,7 +124,7 @@
 # Default template:
 #
 # <!-- DEFAULT_TEMPLATE_START -->
-# [commit-generation]
+# [commit.generation]
 # template = """
 # Write a commit message for the staged changes below.
 #
@@ -168,7 +167,7 @@
 # Default template:
 #
 # <!-- DEFAULT_SQUASH_TEMPLATE_START -->
-# [commit-generation]
+# [commit.generation]
 # squash-template = """
 # Combine these commits into a single commit message.
 #

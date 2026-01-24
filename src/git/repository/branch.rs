@@ -1,5 +1,7 @@
 //! Branch - a handle for branch-specific git operations.
 
+use crate::git::GitRemoteUrl;
+
 use super::Repository;
 
 /// A handle for running git commands on a specific branch.
@@ -175,7 +177,6 @@ impl<'a> Branch<'a> {
     /// Returns the push remote URL if configured and pointing to GitHub,
     /// otherwise returns `None`.
     pub fn github_push_url(&self) -> Option<String> {
-        use crate::git::GitRemoteUrl;
         let url = self.push_remote_url()?;
         let parsed = GitRemoteUrl::parse(&url)?;
         parsed.is_github().then_some(url)

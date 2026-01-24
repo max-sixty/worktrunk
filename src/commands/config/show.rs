@@ -3,6 +3,7 @@
 //! Functions for displaying user config, project config, shell status,
 //! diagnostics, and runtime info.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
@@ -14,6 +15,7 @@ use worktrunk::config::{
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{Shell, scan_for_detection_details};
+use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
     error_message, format_bash_with_gutter, format_heading, format_toml, format_with_gutter,
     hint_message, info_message, success_message, warning_message,
@@ -22,6 +24,7 @@ use worktrunk::styling::{
 use super::state::require_user_config_path;
 use crate::cli::version_str;
 use crate::commands::configure_shell::{ConfigAction, scan_shell_configs};
+use crate::commands::list::ci_status::{CiPlatform, CiToolsStatus, get_platform_for_repo};
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
 use crate::output;
@@ -41,6 +44,10 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
 
     // Render shell integration status
     render_shell_status(&mut show_output)?;
+
+    // Render Claude Code status
+    show_output.push('\n');
+    render_claude_code_status(&mut show_output)?;
 
     // Run full diagnostic checks if requested (includes slow network calls)
     if full {
@@ -66,8 +73,6 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
 
 /// Check if Claude Code CLI is available
 fn is_claude_available() -> bool {
-    use worktrunk::shell_exec::Cmd;
-
     Cmd::new("claude")
         .arg("--version")
         .run()
@@ -75,16 +80,19 @@ fn is_claude_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Check if the worktrunk plugin is installed in Claude Code
-fn is_plugin_installed() -> bool {
+/// Get the home directory for Claude Code config detection
+fn get_home_dir() -> Option<PathBuf> {
     // Try HOME/USERPROFILE env vars first (for tests and explicit overrides), then fall back to dirs
-    let home = std::env::var("HOME")
+    std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .ok()
         .map(PathBuf::from)
-        .or_else(dirs::home_dir);
+        .or_else(dirs::home_dir)
+}
 
-    let Some(home) = home else {
+/// Check if the worktrunk plugin is installed in Claude Code
+fn is_plugin_installed() -> bool {
+    let Some(home) = get_home_dir() else {
         return false;
     };
 
@@ -97,10 +105,26 @@ fn is_plugin_installed() -> bool {
     content.contains("\"worktrunk@worktrunk\"")
 }
 
+/// Check if the statusline is configured in Claude Code settings
+fn is_statusline_configured() -> bool {
+    let Some(home) = get_home_dir() else {
+        return false;
+    };
+
+    let settings_file = home.join(".claude/settings.json");
+    let Ok(content) = std::fs::read_to_string(&settings_file) else {
+        return false;
+    };
+
+    // Check if statusLine is configured with a wt command
+    // Match "wt " at a word boundary in command context to avoid false positives
+    // from unrelated JSON keys containing "wt" (e.g., "fontWeight", "tabWidth")
+    content.contains("\"statusLine\"")
+        && (content.contains("\"wt ") || content.contains(": \"wt ") || content.contains(":\"wt "))
+}
+
 /// Get the git version string (e.g., "2.47.1")
 fn get_git_version() -> Option<String> {
-    use worktrunk::shell_exec::Cmd;
-
     let output = Cmd::new("git").arg("--version").run().ok()?;
     if !output.status.success() {
         return None;
@@ -119,8 +143,6 @@ fn get_git_version() -> Option<String> {
 /// Returns true if compinit is NOT enabled (i.e., user needs to add it).
 /// Returns false if compinit is enabled or we can't determine (fail-safe: don't warn).
 fn check_zsh_compinit_missing() -> bool {
-    use worktrunk::shell_exec::Cmd;
-
     // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
     if std::env::var("WORKTRUNK_TEST_COMPINIT_CONFIGURED").is_ok() {
         return false; // Assume compinit is configured
@@ -152,7 +174,53 @@ fn check_zsh_compinit_missing() -> bool {
 
 // ==================== Render Functions ====================
 
-/// Render OTHER section (version, Claude plugin, hyperlinks)
+/// Render CLAUDE CODE section (plugin and statusline status)
+fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
+    let claude_available = is_claude_available();
+
+    writeln!(out, "{}", format_heading("CLAUDE CODE", None))?;
+
+    if !claude_available {
+        writeln!(
+            out,
+            "{}",
+            info_message(cformat!("<bold>claude</> CLI not installed"))
+        )?;
+        return Ok(());
+    }
+
+    // Plugin status
+    let plugin_installed = is_plugin_installed();
+    if plugin_installed {
+        writeln!(out, "{}", success_message("Plugin installed"))?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            hint_message("Plugin not installed. To install, run:")
+        )?;
+        let install_commands = "claude plugin marketplace add max-sixty/worktrunk\nclaude plugin install worktrunk@worktrunk";
+        writeln!(out, "{}", format_bash_with_gutter(install_commands))?;
+    }
+
+    // Statusline status
+    let statusline_configured = is_statusline_configured();
+    if statusline_configured {
+        writeln!(out, "{}", success_message("Statusline configured"))?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            hint_message(
+                "Statusline not configured. See https://worktrunk.dev/claude-code/#statusline"
+            )
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Render OTHER section (version, hyperlinks)
 fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
     let cmd = crate::binary_name();
     let version = version_str();
@@ -170,30 +238,6 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
             out,
             "{}",
             info_message(cformat!("git: <bold>{git_version}</>"))
-        )?;
-    }
-
-    // Claude Code plugin status
-    let plugin_installed = is_plugin_installed();
-    let claude_available = is_claude_available();
-
-    if plugin_installed {
-        writeln!(out, "{}", success_message("Claude Code plugin installed"))?;
-    } else if claude_available {
-        writeln!(
-            out,
-            "{}",
-            hint_message("Claude Code plugin not installed. To install, run:")
-        )?;
-        let install_commands = "claude plugin marketplace add max-sixty/worktrunk\nclaude plugin install worktrunk@worktrunk";
-        writeln!(out, "{}", format_bash_with_gutter(install_commands))?;
-    } else {
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "Claude Code plugin not installed (<bold>claude</> not found)"
-            ))
         )?;
     }
 
@@ -216,15 +260,13 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
 
 /// Run full diagnostic checks (CI tools, commit generation) and render to buffer
 fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
-    use crate::commands::list::ci_status::{CiPlatform, CiToolsStatus, get_platform_for_repo};
-
     writeln!(out, "{}", format_heading("DIAGNOSTICS", None))?;
 
     // Check CI tool based on detected platform (with config override support)
     let repo = Repository::current()?;
     let project_config = repo.load_project_config().ok().flatten();
     let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
-    let platform = get_platform_for_repo(&repo, platform_override);
+    let platform = get_platform_for_repo(&repo, platform_override, None);
 
     match platform {
         Some(CiPlatform::GitHub) => {
@@ -268,15 +310,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let command_display = format!(
-        "{}{}",
-        commit_config.command.as_ref().unwrap(),
-        if commit_config.args.is_empty() {
-            String::new()
-        } else {
-            format!(" {}", commit_config.args.join(" "))
-        }
-    );
+    let command_display = commit_config.command.as_ref().unwrap().clone();
 
     match test_commit_generation(&commit_config) {
         Ok(message) => {
@@ -333,6 +367,20 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Check for deprecations with show_brief_warning=false (silent mode)
+    // User config is global, not tied to any repository
+    if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
+        &config_path,
+        &contents,
+        true,
+        "User config",
+        None,
+        false, // silent mode - we'll format the output ourselves
+    ) {
+        // Add deprecation details to the output buffer
+        out.push_str(&worktrunk::config::format_deprecation_details(&info));
+    }
+
     // Validate config (syntax + schema) and warn if invalid
     if let Err(e) = toml::from_str::<UserConfig>(&contents) {
         // Use gutter for error details to avoid markup interpretation of user content
@@ -340,7 +388,9 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
         // Only check for unknown keys if config is valid
-        warn_unknown_keys(out, &find_unknown_user_keys(&contents))?;
+        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
+            &contents,
+        )));
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)
@@ -349,21 +399,49 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Write warnings for any unknown config keys
-pub(super) fn warn_unknown_keys(out: &mut String, unknown_keys: &[String]) -> anyhow::Result<()> {
-    for key in unknown_keys {
-        writeln!(
-            out,
-            "{}",
-            warning_message(cformat!("Unknown key <bold>{key}</> will be ignored"))
-        )?;
+/// Format warnings for any unknown config keys.
+///
+/// Generic over `C`, the config type where the keys were found. When an unknown
+/// key belongs in `C::Other`, the warning includes a hint about where to move it.
+pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
+    unknown_keys: &HashMap<String, toml::Value>,
+) -> String {
+    let mut out = String::new();
+
+    // Sort keys for deterministic output order
+    let mut keys: Vec<_> = unknown_keys.keys().collect();
+    keys.sort();
+
+    for key in keys {
+        let value = &unknown_keys[key];
+        let msg = match worktrunk::config::key_belongs_in::<C>(key, value) {
+            Some(location) => {
+                cformat!("Key <bold>{key}</> belongs in {location} (will be ignored)")
+            }
+            None => cformat!("Unknown key <bold>{key}</> will be ignored"),
+        };
+        let _ = writeln!(out, "{}", warning_message(msg));
     }
-    Ok(())
+    out
 }
 
 fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     // Try to get current repository root
-    let repo_root = match Repository::current().and_then(|repo| repo.current_worktree().root()) {
+    let repo = match Repository::current() {
+        Ok(repo) => repo,
+        Err(_) => {
+            writeln!(
+                out,
+                "{}",
+                cformat!(
+                    "<dim>{}</>",
+                    format_heading("PROJECT CONFIG", Some("Not in a git repository"))
+                )
+            )?;
+            return Ok(());
+        }
+    };
+    let repo_root = match repo.current_worktree().root() {
         Ok(root) => root,
         Err(_) => {
             writeln!(
@@ -402,6 +480,21 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Check for deprecations with show_brief_warning=false (silent mode)
+    // Only show in main worktree (where .git is a directory)
+    let is_main_worktree = repo_root.join(".git").is_dir();
+    if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
+        &config_path,
+        &contents,
+        is_main_worktree,
+        "Project config",
+        Some(&repo),
+        false, // silent mode - we'll format the output ourselves
+    ) {
+        // Add deprecation details to the output buffer
+        out.push_str(&worktrunk::config::format_deprecation_details(&info));
+    }
+
     // Validate config (syntax + schema) and warn if invalid
     if let Err(e) = toml::from_str::<ProjectConfig>(&contents) {
         // Use gutter for error details to avoid markup interpretation of user content
@@ -409,7 +502,9 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
         // Only check for unknown keys if config is valid
-        warn_unknown_keys(out, &find_unknown_project_keys(&contents))?;
+        out.push_str(&warn_unknown_keys::<ProjectConfig>(
+            &find_unknown_project_keys(&contents),
+        ));
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)

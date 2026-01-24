@@ -30,8 +30,8 @@
 //!
 //! # File Location
 //!
-//! Reports are written to `.git/wt-logs/diagnostic.md` in the main worktree.
-//! Verbose logs go to `.git/wt-logs/verbose.log`.
+//! Reports are written to `<git-common-dir>/wt-logs/diagnostic.md` (typically
+//! `.git/wt-logs/diagnostic.md`). Verbose logs go to `verbose.log` in the same directory.
 //!
 //! # Usage
 //!
@@ -171,7 +171,10 @@ impl DiagnosticReport {
     }
 
     /// Write the diagnostic report to a file.
-    fn write_file(&self, repo: &Repository) -> Option<PathBuf> {
+    ///
+    /// Called from `write_if_verbose()` when verbose >= 2.
+    /// Returns the path if successful, None if write failed.
+    pub fn write_diagnostic_file(&self, repo: &Repository) -> Option<PathBuf> {
         let log_dir = repo.wt_logs_dir();
         std::fs::create_dir_all(&log_dir).ok()?;
 
@@ -179,14 +182,6 @@ impl DiagnosticReport {
         std::fs::write(&path, &self.content).ok()?;
 
         Some(path)
-    }
-
-    /// Write the diagnostic report to a file (for -vv flag).
-    ///
-    /// Called from `write_if_verbose()` when verbose >= 2.
-    /// Returns the path if successful, None if write failed.
-    pub fn write_diagnostic_file(&self, repo: &Repository) -> Option<PathBuf> {
-        self.write_file(repo)
     }
 }
 
@@ -245,14 +240,13 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
 
             // Only show gh command if gh is installed
             if is_gh_installed() {
-                // Escape single quotes for shell: 'it'\''s' -> it's
-                let path_str = path.to_string_lossy().replace('\'', "'\\''");
+                let path_str = format_path_for_display(&path);
                 // URL with prefilled body: ## Gist\n\n[Paste URL]\n\n## Description\n\n[Describe the issue]
                 let issue_url = "https://github.com/max-sixty/worktrunk/issues/new?body=%23%23%20Gist%0A%0A%5BPaste%20gist%20URL%5D%0A%0A%23%23%20Description%0A%0A%5BDescribe%20the%20issue%5D";
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "To report a bug, create a secret gist with <bright-black>gh gist create --web '{path_str}'</> and reference it from an issue at <bright-black>{issue_url}</>"
+                        "To report a bug, create a secret gist with <bright-black>gh gist create --web {path_str}</> and reference it from an issue at <bright-black>{issue_url}</>"
                     ))
                 );
             }

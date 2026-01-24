@@ -80,7 +80,7 @@ impl ProjectConfig {
 /// - `{{ branch }}` - Branch name (e.g., "feature/auth")
 /// - `{{ worktree_name }}` - Worktree directory name (e.g., "myproject.feature-auth")
 /// - `{{ worktree_path }}` - Absolute path to the worktree (e.g., "/path/to/myproject.feature-auth")
-/// - `{{ primary_worktree_path }}` - Main worktree path (or for bare repos, the default branch worktree)
+/// - `{{ primary_worktree_path }}` - Primary worktree path (main worktree for normal repos; default branch worktree for bare repos)
 /// - `{{ default_branch }}` - Default branch name (e.g., "main")
 /// - `{{ commit }}` - Current HEAD commit SHA (full 40-character hash)
 /// - `{{ short_commit }}` - Current HEAD commit SHA (short 7-character hash)
@@ -110,7 +110,7 @@ pub struct ProjectConfig {
 
     /// Captures unknown fields for validation warnings
     #[serde(flatten, default, skip_serializing)]
-    unknown: std::collections::HashMap<String, toml::Value>,
+    pub unknown: std::collections::HashMap<String, toml::Value>,
 }
 
 impl ProjectConfig {
@@ -139,6 +139,7 @@ impl ProjectConfig {
         // Check for deprecated template variables and create migration file if needed
         // Only write migration file in main worktree (where .git is a directory)
         // Linked worktrees have .git as a file pointing to the main worktree
+        // Use show_brief_warning=true to emit a brief pointer to `wt config show`
         let is_main_worktree = repo_root.join(".git").is_dir();
         let repo_for_hints = if write_hints { Some(repo) } else { None };
         let _ = super::deprecation::check_and_migrate(
@@ -147,12 +148,20 @@ impl ProjectConfig {
             is_main_worktree,
             "Project config",
             repo_for_hints,
+            true, // show_brief_warning
         );
 
         // Warn about unknown fields (only in main worktree where it's actionable)
         if is_main_worktree {
-            let unknown_keys = find_unknown_keys(&contents);
-            super::deprecation::warn_unknown_fields(&config_path, &unknown_keys, "Project config");
+            let unknown_keys: std::collections::HashMap<_, _> = find_unknown_keys(&contents)
+                .into_iter()
+                .filter(|(k, _)| !super::deprecation::DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
+                .collect();
+            super::deprecation::warn_unknown_fields::<ProjectConfig>(
+                &config_path,
+                &unknown_keys,
+                "Project config",
+            );
         }
 
         let config: ProjectConfig = toml::from_str(&contents)
@@ -164,15 +173,16 @@ impl ProjectConfig {
 
 /// Find unknown keys in project config TOML content
 ///
-/// Returns a list of unrecognized top-level keys that will be silently ignored.
+/// Returns a map of unrecognized top-level keys (with their values) that will be ignored.
 /// Uses serde deserialization with flatten to automatically detect unknown fields.
-pub fn find_unknown_keys(contents: &str) -> Vec<String> {
+/// The values are included to allow checking if keys belong in the other config type.
+pub fn find_unknown_keys(contents: &str) -> std::collections::HashMap<String, toml::Value> {
     // Deserialize into ProjectConfig - unknown fields are captured in the `unknown` map
     let Ok(config) = toml::from_str::<ProjectConfig>(contents) else {
-        return vec![];
+        return std::collections::HashMap::new();
     };
 
-    config.unknown.into_keys().collect()
+    config.unknown
 }
 
 #[cfg(test)]
@@ -389,7 +399,7 @@ unknown-key = "value"
 "#;
         let keys = find_unknown_keys(contents);
         assert_eq!(keys.len(), 1);
-        assert!(keys.contains(&"unknown-key".to_string()));
+        assert!(keys.contains_key("unknown-key"));
     }
 
     #[test]
@@ -401,8 +411,8 @@ post-create = "npm install"
 "#;
         let keys = find_unknown_keys(contents);
         assert_eq!(keys.len(), 2);
-        assert!(keys.contains(&"foo".to_string()));
-        assert!(keys.contains(&"baz".to_string()));
+        assert!(keys.contains_key("foo"));
+        assert!(keys.contains_key("baz"));
     }
 
     // ============================================================================
