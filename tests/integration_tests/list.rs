@@ -399,6 +399,83 @@ fn test_list_with_remotes_filters_tracked_branches(#[from(repo_with_remote)] rep
 }
 
 #[rstest]
+fn test_list_with_remotes_and_full(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create remote-only branches (no local tracking)
+    repo.create_branch("feature-remote");
+    repo.push_branch("feature-remote");
+    repo.run_git(&["branch", "-D", "feature-remote"]);
+
+    // Set a GitHub-style URL AFTER pushing so platform detection works
+    // This exercises the remote_hint path in get_platform_for_repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // Run with --full to trigger CiBranchName::from_branch_ref for remote branches
+    // This exercises the is_remote=true code path even without gh/glab auth
+    // (CI detection will return None, but the branch parsing is still covered)
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.args(["--remotes", "--full"]);
+        cmd
+    });
+}
+
+#[rstest]
+fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a remote-tracking ref for a non-existent remote to exercise the
+    // fallback path in CiBranchName::from_branch_ref (lines 64-75)
+    // This simulates a ref that remains after a remote is deleted
+    let head_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap()
+        .stdout;
+    let head_sha = String::from_utf8_lossy(&head_sha);
+    let head_sha = head_sha.trim();
+    repo.run_git(&[
+        "update-ref",
+        "refs/remotes/deleted-remote/orphaned-branch",
+        head_sha,
+    ]);
+
+    // Verify the ref exists but the remote doesn't
+    let remotes = repo.git_command().args(["remote"]).output().unwrap().stdout;
+    let remotes = String::from_utf8_lossy(&remotes);
+    assert!(
+        !remotes.contains("deleted-remote"),
+        "deleted-remote should not exist"
+    );
+
+    // Run with --remotes --full to trigger the fallback path
+    // The orphaned ref should be parsed using split_once('/') as fallback
+    // Note: We don't use snapshot testing here because the spinner character
+    // in stderr is non-deterministic (timing-dependent)
+    let output = repo
+        .wt_command()
+        .args(["list", "--remotes", "--full"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "command should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("deleted-remote/orphaned-branch"),
+        "should show orphaned remote branch in output: {stdout}"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown remote 'deleted-remote'"),
+        "should warn about unknown remote: {stderr}"
+    );
+}
+
+#[rstest]
 fn test_list_json_with_display_fields(mut repo: TestRepo) {
     repo.commit("Initial commit on main");
 
@@ -1539,11 +1616,8 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     let cache_dir = git_path.join("wt-cache").join("ci-status");
     std::fs::create_dir_all(&cache_dir).unwrap();
 
-    // Sanitize branch name for filename (replace / and \ with -)
-    let safe_branch: String = branch
-        .chars()
-        .map(|c| if c == '/' || c == '\\' { '-' } else { c })
-        .collect();
+    // Use the same sanitization as production code for cache filenames
+    let safe_branch = worktrunk::path::sanitize_for_filename(branch);
     let cache_file = cache_dir.join(format!("{safe_branch}.json"));
     std::fs::write(&cache_file, &cache_json).unwrap();
 }

@@ -6,8 +6,8 @@ use serde::Deserialize;
 use worktrunk::git::{GitRemoteUrl, Repository, parse_remote_owner};
 
 use super::{
-    CiSource, CiStatus, MAX_PRS_TO_FETCH, PrStatus, is_retriable_error, non_interactive_cmd,
-    parse_json,
+    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrStatus, is_retriable_error,
+    non_interactive_cmd, parse_json,
 };
 
 /// Get the owner and repo name from any GitHub remote.
@@ -42,26 +42,42 @@ fn get_github_owner_repo(repo: &Repository) -> Option<(String, String)> {
 /// - Fork workflows (PRs from your fork to upstream)
 /// - Organization repos (PRs from org branches)
 /// - Multiple users with same branch name
-pub(super) fn detect_github(repo: &Repository, branch: &str, local_head: &str) -> Option<PrStatus> {
+/// - Remote-only branches (e.g., "origin/feature")
+pub(super) fn detect_github(
+    repo: &Repository,
+    branch: &CiBranchName,
+    local_head: &str,
+) -> Option<PrStatus> {
     let repo_root = repo.current_worktree().root().ok()?;
 
     // Get the owner of the branch's push remote for filtering PRs by source repository.
-    // Uses @{push} which resolves through pushRemote → remote.pushDefault → tracking remote.
-    let branch_owner = repo
-        .branch(branch)
-        .github_push_url()
-        .and_then(|url| parse_remote_owner(&url));
-    if branch_owner.is_none() {
+    // For local branches: uses @{push} which resolves through pushRemote → remote.pushDefault → tracking remote.
+    // For remote branches: use the remote's URL directly (the branch IS on that remote).
+    let branch_owner = if let Some(remote_name) = &branch.remote {
+        // Remote branch - get owner from the remote's URL
+        repo.remote_url(remote_name)
+            .and_then(|url| parse_remote_owner(&url))
+    } else {
+        // Local branch - use existing push remote resolution
+        repo.branch(&branch.name)
+            .github_push_url()
+            .and_then(|url| parse_remote_owner(&url))
+    };
+
+    let Some(branch_owner) = branch_owner else {
         log::debug!(
             "Branch {} has no GitHub push remote; skipping PR-based CI detection",
-            branch
+            branch.full_name
         );
         return None;
-    }
+    };
 
     // Use `gh pr list --head` instead of `gh pr view` to handle numeric branch names correctly.
     // When branch name is all digits (e.g., "4315"), `gh pr view` interprets it as a PR number,
     // but `gh pr list --head` correctly treats it as a branch name.
+    //
+    // IMPORTANT: Use the bare branch name (branch.name), not the full remote ref.
+    // `gh pr list --head origin/feature` won't find anything - it needs just "feature".
     //
     // We fetch up to MAX_PRS_TO_FETCH PRs to handle branch name collisions, then filter
     // client-side by headRepositoryOwner to find PRs from our fork.
@@ -70,7 +86,7 @@ pub(super) fn detect_github(repo: &Repository, branch: &str, local_head: &str) -
             "pr",
             "list",
             "--head",
-            branch,
+            &branch.name, // Use bare branch name, not "origin/feature"
             "--state",
             "open",
             "--limit",
@@ -83,7 +99,11 @@ pub(super) fn detect_github(repo: &Repository, branch: &str, local_head: &str) -
     {
         Ok(output) => output,
         Err(e) => {
-            log::warn!("gh pr list failed to execute for branch {}: {}", branch, e);
+            log::warn!(
+                "gh pr list failed to execute for branch {}: {}",
+                branch.full_name,
+                e
+            );
             return None;
         }
     };
@@ -97,24 +117,23 @@ pub(super) fn detect_github(repo: &Repository, branch: &str, local_head: &str) -
     }
 
     // gh pr list returns an array - find the first PR from our origin
-    let pr_list: Vec<GitHubPrInfo> = parse_json(&output.stdout, "gh pr list", branch)?;
+    let pr_list: Vec<GitHubPrInfo> = parse_json(&output.stdout, "gh pr list", &branch.full_name)?;
 
     // Filter to PRs from our origin (case-insensitive comparison for GitHub usernames).
     // If headRepositoryOwner is missing (older GH CLI, Enterprise, or permissions),
     // treat it as a potential match to avoid false negatives.
-    let owner = branch_owner.as_ref().unwrap(); // Safe: returned early if None
     let pr_info = pr_list.iter().find(|pr| {
         pr.head_repository_owner
             .as_ref()
-            .map(|h| h.login.eq_ignore_ascii_case(owner))
+            .map(|h| h.login.eq_ignore_ascii_case(&branch_owner))
             .unwrap_or(true) // Missing owner field = potential match
     });
     if pr_info.is_none() && !pr_list.is_empty() {
         log::debug!(
             "Found {} PRs for branch {} but none from owner {}",
             pr_list.len(),
-            branch,
-            owner
+            branch.full_name,
+            branch_owner
         );
     }
     let pr_info = pr_info?;

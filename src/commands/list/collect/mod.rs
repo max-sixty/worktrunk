@@ -620,28 +620,24 @@ pub fn collect(
     let repo_clone = repo.clone();
 
     // Prepare branch data if needed (before moving into closure)
-    let branch_data: Vec<(usize, String, String)> = if show_branches || show_remotes {
-        let mut all_branches = Vec::new();
-        if show_branches {
-            all_branches.extend(
-                branches_without_worktrees
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, (name, sha))| (branch_start_idx + idx, name.clone(), sha.clone())),
-            );
-        }
-        if show_remotes {
-            all_branches.extend(
-                remote_branches
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, (name, sha))| (remote_start_idx + idx, name.clone(), sha.clone())),
-            );
-        }
-        all_branches
-    } else {
-        Vec::new()
-    };
+    // Tuple: (item_idx, branch_name, commit_sha, is_remote)
+    let branch_data: Vec<(usize, String, String, bool)> =
+        if show_branches || show_remotes {
+            let mut all_branches = Vec::new();
+            if show_branches {
+                all_branches.extend(branches_without_worktrees.iter().enumerate().map(
+                    |(idx, (name, sha))| (branch_start_idx + idx, name.clone(), sha.clone(), false),
+                ));
+            }
+            if show_remotes {
+                all_branches.extend(remote_branches.iter().enumerate().map(
+                    |(idx, (name, sha))| (remote_start_idx + idx, name.clone(), sha.clone(), true),
+                ));
+            }
+            all_branches
+        } else {
+            Vec::new()
+        };
 
     worktrunk::shell_exec::trace_instant("Spawning worker thread");
     std::thread::spawn(move || {
@@ -662,12 +658,13 @@ pub fn collect(
         }
 
         // Branch work items (local + remote)
-        for (item_idx, branch_name, commit_sha) in &branch_data {
+        for (item_idx, branch_name, commit_sha, is_remote) in &branch_data {
             all_work_items.extend(work_items_for_branch(
                 &repo_clone,
                 branch_name,
                 commit_sha,
                 *item_idx,
+                *is_remote,
                 &options,
                 &expected_results_clone,
             ));

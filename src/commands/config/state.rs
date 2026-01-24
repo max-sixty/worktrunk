@@ -16,7 +16,7 @@ use worktrunk::styling::{
 };
 use worktrunk::utils::get_now;
 
-use super::super::list::ci_status::CachedCiStatus;
+use super::super::list::ci_status::{CachedCiStatus, CiBranchName};
 use crate::display::format_relative_time_short;
 use crate::help_pager::show_help_in_pager;
 
@@ -198,6 +198,17 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
                 None => repo.require_current_branch("get ci-status for current branch")?,
             };
 
+            // Determine if this is a remote ref by checking git refs directly.
+            // This is authoritative - we check actual refs, not guessing from name.
+            let is_remote = repo
+                .run_command(&[
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/remotes/{}", branch_name),
+                ])
+                .is_ok();
+
             // Get the HEAD commit for this branch
             let head = repo
                 .run_command(&["rev-parse", &branch_name])
@@ -212,13 +223,8 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
                 .into());
             }
 
-            let has_upstream = repo
-                .branch(&branch_name)
-                .upstream()
-                .ok()
-                .flatten()
-                .is_some();
-            let ci_status = PrStatus::detect(&repo, &branch_name, &head, has_upstream)
+            let ci_branch = CiBranchName::from_branch_ref(&branch_name, is_remote, &repo);
+            let ci_status = PrStatus::detect(&repo, &ci_branch, &head)
                 .map_or(super::super::list::ci_status::CiStatus::NoCI, |s| {
                     s.ci_status
                 });
