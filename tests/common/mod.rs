@@ -2578,6 +2578,12 @@ fn setup_snapshot_settings_for_paths_with_home(
         r"[A-Z]:/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/[^)'\s\x1b]+",
         "[PROJECT_ID]",
     );
+    // Windows quoted paths: shell_escape quotes paths containing ':' (drive letter)
+    // Example: 'C:/Users/user/AppData/Local/Temp/.tmpXXXXXX/repo/.config/wt.toml' -> [PROJECT_ID]
+    settings.add_filter(
+        r"'[A-Z]:/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/[^']+'",
+        "[PROJECT_ID]",
+    );
 
     // Generic tilde-prefixed paths that aren't repo or worktree paths.
     // On CI, HOME is a temp directory, so paths under HOME become ~/something.
