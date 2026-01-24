@@ -188,7 +188,7 @@ pub fn handle_list(
         None // --full disables timeout for complete data collection
     } else {
         config
-            .overrides
+            .configs
             .list
             .as_ref()
             .and_then(|l| l.timeout_ms)

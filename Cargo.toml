@@ -119,6 +119,7 @@ ignore = "0.4"
 reflink-copy = "0.1"
 dashmap = "6.1.0"
 fs2 = "0.4.3"
+schemars = { version = "1.2.0", features = ["derive"] }
 
 [target.'cfg(unix)'.dependencies]
 skim = "0.20"

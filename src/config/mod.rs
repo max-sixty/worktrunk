@@ -56,11 +56,24 @@ impl WorktrunkConfig for UserConfig {
     type Other = ProjectConfig;
 
     fn unknown(&self) -> &HashMap<String, toml::Value> {
-        &self.unknown
+        // UserConfig uses explicit key validation instead of serde HashMap catchall
+        // (which doesn't work with nested flattens). Return empty map; use
+        // find_unknown_user_keys() for actual unknown key detection.
+        static EMPTY: std::sync::OnceLock<HashMap<String, toml::Value>> =
+            std::sync::OnceLock::new();
+        EMPTY.get_or_init(HashMap::new)
     }
 
     fn description() -> &'static str {
         "user config"
+    }
+
+    fn is_valid_key(key: &str, _value: &toml::Value) -> bool {
+        // Use keys derived from JsonSchema (cached for efficiency)
+        use std::sync::OnceLock;
+        static VALID_KEYS: OnceLock<Vec<String>> = OnceLock::new();
+        let valid_keys = VALID_KEYS.get_or_init(user::valid_user_config_keys);
+        valid_keys.iter().any(|k| k == key)
     }
 }
 
@@ -138,7 +151,7 @@ mod tests {
     #[test]
     fn test_config_serialization_with_worktree_path() {
         let config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 worktree_path: Some("custom/{{ branch }}".to_string()),
                 ..Default::default()
             },
@@ -153,7 +166,7 @@ mod tests {
     fn test_default_config() {
         let config = UserConfig::default();
         // worktree_path is None by default, but the getter returns the default
-        assert!(config.overrides.worktree_path.is_none());
+        assert!(config.configs.worktree_path.is_none());
         assert_eq!(
             config.worktree_path(),
             "../{{ repo }}.{{ branch | sanitize }}"
@@ -167,7 +180,7 @@ mod tests {
     fn test_format_worktree_path() {
         let test = test_repo();
         let config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
                 ..Default::default()
             },
@@ -185,7 +198,7 @@ mod tests {
     fn test_format_worktree_path_custom_template() {
         let test = test_repo();
         let config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 worktree_path: Some("{{ main_worktree }}-{{ branch }}".to_string()),
                 ..Default::default()
             },
@@ -203,7 +216,7 @@ mod tests {
     fn test_format_worktree_path_only_branch() {
         let test = test_repo();
         let config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 worktree_path: Some(".worktrees/{{ main_worktree }}/{{ branch }}".to_string()),
                 ..Default::default()
             },
@@ -222,7 +235,7 @@ mod tests {
         let test = test_repo();
         // Use {{ branch | sanitize }} to replace slashes with dashes
         let config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 worktree_path: Some("{{ main_worktree }}.{{ branch | sanitize }}".to_string()),
                 ..Default::default()
             },
@@ -240,7 +253,7 @@ mod tests {
     fn test_format_worktree_path_with_multiple_slashes() {
         let test = test_repo();
         let config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 worktree_path: Some(
                     ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
                 ),
@@ -261,7 +274,7 @@ mod tests {
         let test = test_repo();
         // Windows-style path separators should also be sanitized
         let config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 worktree_path: Some(
                     ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
                 ),
@@ -282,7 +295,7 @@ mod tests {
         let test = test_repo();
         // {{ branch }} without filter gives raw branch name
         let config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
                 ..Default::default()
             },
@@ -763,7 +776,7 @@ template-file = "~/file.txt"
         // Since we can't easily test load() without env vars, we verify the fields deserialize
         if let Ok(config) = config_result {
             let generation = config
-                .overrides
+                .configs
                 .commit
                 .as_ref()
                 .and_then(|c| c.generation.as_ref());
@@ -797,7 +810,7 @@ squash-template-file = "~/file.txt"
         // Since we can't easily test load() without env vars, we verify the fields deserialize
         if let Ok(config) = config_result {
             let generation = config
-                .overrides
+                .configs
                 .commit
                 .as_ref()
                 .and_then(|c| c.generation.as_ref());
@@ -892,6 +905,7 @@ lint = "cargo clippy"
 
         // Check post-create
         let post_create = config
+            .configs
             .hooks
             .post_create
             .expect("post-create should be present");
@@ -900,7 +914,11 @@ lint = "cargo clippy"
         assert_eq!(commands[0].name.as_deref(), Some("log"));
 
         // Check pre-merge (multiple commands preserve order)
-        let pre_merge = config.hooks.pre_merge.expect("pre-merge should be present");
+        let pre_merge = config
+            .configs
+            .hooks
+            .pre_merge
+            .expect("pre-merge should be present");
         let commands = pre_merge.commands();
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].name.as_deref(), Some("test"));
@@ -916,6 +934,7 @@ post-create = "npm install"
         let config: UserConfig = toml::from_str(toml_str).unwrap();
 
         let post_create = config
+            .configs
             .hooks
             .post_create
             .expect("post-create should be present");

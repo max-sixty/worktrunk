@@ -149,7 +149,8 @@ impl<'a> CommitGenerator<'a> {
 impl CommitOptions<'_> {
     pub fn commit(self) -> anyhow::Result<()> {
         let project_config = self.ctx.repo.load_project_config()?;
-        let user_hooks_exist = self.ctx.config.hooks.pre_commit.is_some();
+        let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
+        let user_hooks_exist = user_hooks.pre_commit.is_some();
         let project_hooks_exist = project_config
             .as_ref()
             .map(|c| c.hooks.pre_commit.is_some())
@@ -174,7 +175,7 @@ impl CommitOptions<'_> {
             // Run pre-commit hooks (user first, then project)
             super::hooks::run_hook_with_filter(
                 self.ctx,
-                self.ctx.config.hooks.pre_commit.as_ref(),
+                user_hooks.pre_commit.as_ref(),
                 project_config
                     .as_ref()
                     .and_then(|c| c.hooks.pre_commit.as_ref()),

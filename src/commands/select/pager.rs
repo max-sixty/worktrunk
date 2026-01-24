@@ -36,7 +36,7 @@ pub(super) fn get_diff_pager() -> Option<&'static String> {
             // Check user config first for explicit pager override
             // When set, use exactly as specified (no auto-detection)
             if let Ok(config) = UserConfig::load()
-                && let Some(select_config) = config.overrides.select
+                && let Some(select_config) = config.configs.select
                 && let Some(pager) = select_config.pager
                 && !pager.trim().is_empty()
             {
@@ -81,7 +81,7 @@ pub(super) fn pager_needs_paging_disabled(pager_cmd: &str) -> bool {
 pub(super) fn has_explicit_pager_config() -> bool {
     UserConfig::load()
         .ok()
-        .and_then(|config| config.overrides.select)
+        .and_then(|config| config.configs.select)
         .and_then(|select| select.pager)
         .is_some_and(|p| !p.trim().is_empty())
 }
