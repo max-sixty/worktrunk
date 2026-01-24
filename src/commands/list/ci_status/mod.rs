@@ -9,6 +9,7 @@ mod gitlab;
 mod platform;
 
 use anstyle::{AnsiColor, Color, Style};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use worktrunk::git::Repository;
 use worktrunk::shell_exec::Cmd;
@@ -227,7 +228,9 @@ pub enum CiStatus {
 /// Source of CI status (PR/MR vs branch workflow)
 ///
 /// Serialized to JSON as "pr" or "branch" for programmatic consumers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr, JsonSchema,
+)]
 #[strum(serialize_all = "kebab-case")]
 pub enum CiSource {
     /// Pull request or merge request

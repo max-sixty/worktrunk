@@ -760,11 +760,11 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
 /// Generic over `C`, the config type where the key was found. If the key would
 /// be valid in `C::Other`, returns that config's description.
 ///
-/// For example, `key_belongs_in::<ProjectConfig>("commit-generation", value)` returns
+/// For example, `key_belongs_in::<ProjectConfig>("commit-generation")` returns
 /// `Some("user config")`.
 /// Returns `None` if the key is truly unknown (not valid in either config).
-pub fn key_belongs_in<C: WorktrunkConfig>(key: &str, value: &toml::Value) -> Option<&'static str> {
-    C::Other::is_valid_key(key, value).then(C::Other::description)
+pub fn key_belongs_in<C: WorktrunkConfig>(key: &str) -> Option<&'static str> {
+    C::Other::is_valid_key(key).then(C::Other::description)
 }
 
 /// Warn about unknown fields in config file
@@ -800,8 +800,7 @@ pub fn warn_unknown_fields<C: WorktrunkConfig>(
     keys.sort();
 
     for key in keys {
-        let value = &unknown_keys[key];
-        if let Some(other_location) = key_belongs_in::<C>(key, value) {
+        if let Some(other_location) = key_belongs_in::<C>(key) {
             eprintln!(
                 "{}",
                 warning_message(cformat!(

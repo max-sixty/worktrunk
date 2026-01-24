@@ -17,6 +17,7 @@
 
 use std::path::PathBuf;
 
+use schemars::JsonSchema;
 use serde::Serialize;
 use worktrunk::git::LineDiff;
 
@@ -24,7 +25,7 @@ use super::ci_status::{CiSource, PrStatus};
 use super::model::{ItemKind, ListItem, UpstreamStatus};
 
 /// JSON output for a single list item
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonItem {
     /// Branch name, null for detached HEAD
     pub branch: Option<String>,
@@ -100,7 +101,7 @@ pub struct JsonItem {
 }
 
 /// Commit information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonCommit {
     /// Full commit SHA
     pub sha: String,
@@ -116,7 +117,7 @@ pub struct JsonCommit {
 }
 
 /// Working tree state
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonWorkingTree {
     /// Has staged files (+)
     pub staged: bool,
@@ -139,7 +140,7 @@ pub struct JsonWorkingTree {
 }
 
 /// Line diff statistics
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonDiff {
     pub added: usize,
     pub deleted: usize,
@@ -155,7 +156,7 @@ impl From<LineDiff> for JsonDiff {
 }
 
 /// Relationship to default branch
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonMain {
     /// Commits ahead of default branch
     pub ahead: usize,
@@ -169,7 +170,7 @@ pub struct JsonMain {
 }
 
 /// Relationship to remote tracking branch
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonRemote {
     /// Remote name (e.g., "origin")
     pub name: String,
@@ -185,7 +186,7 @@ pub struct JsonRemote {
 }
 
 /// Worktree-specific state
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonWorktree {
     /// Worktree state: "branch_worktree_mismatch", "prunable", "locked" (absent when normal)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -200,7 +201,7 @@ pub struct JsonWorktree {
 }
 
 /// CI status from PR or branch workflow
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonCi {
     /// CI status: "passed", "running", "failed", "conflicts", "no-ci", "error"
     pub status: &'static str,
