@@ -165,7 +165,7 @@ let output = Cmd::new("gh")
     .run()?;  // no context for standalone tools
 ```
 
-Never use `cmd.output()` directly. `Cmd` provides debug logging (`$ git status [worktree-name]`) and timing traces (`[wt-trace] cmd="..." dur=12.3ms ok=true`).
+Never use `cmd.output()` directly. `Cmd` provides debug logging (`$ git status [worktree-name]`) and timing traces (`[wt-trace] cmd="..." dur_us=12300 ok=true`).
 
 For git commands, prefer `Repository::run_command()` which wraps `Cmd` with worktree context.
 

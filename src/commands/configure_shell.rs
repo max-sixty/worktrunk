@@ -7,7 +7,7 @@ use anstyle::Style;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
 use worktrunk::styling::{
-    INFO_SYMBOL, PROMPT_SYMBOL, SUCCESS_SYMBOL, eprintln, format_bash_with_gutter,
+    INFO_SYMBOL, PROMPT_SYMBOL, SUCCESS_SYMBOL, eprint, eprintln, format_bash_with_gutter,
     format_with_gutter, warning_message,
 };
 
@@ -750,8 +750,6 @@ pub fn prompt_for_install(
 
 /// Prompt user for yes/no confirmation (simple [y/N] prompt)
 fn prompt_yes_no() -> Result<bool, String> {
-    use worktrunk::styling::eprint;
-
     let bold = Style::new().bold();
     eprint!("{PROMPT_SYMBOL} Proceed? {bold}[y/N]{bold:#} ");
     io::stderr().flush().map_err(|e| e.to_string())?;

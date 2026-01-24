@@ -139,6 +139,7 @@ impl ProjectConfig {
         // Check for deprecated template variables and create migration file if needed
         // Only write migration file in main worktree (where .git is a directory)
         // Linked worktrees have .git as a file pointing to the main worktree
+        // Use show_brief_warning=true to emit a brief pointer to `wt config show`
         let is_main_worktree = repo_root.join(".git").is_dir();
         let repo_for_hints = if write_hints { Some(repo) } else { None };
         let _ = super::deprecation::check_and_migrate(
@@ -147,11 +148,15 @@ impl ProjectConfig {
             is_main_worktree,
             "Project config",
             repo_for_hints,
+            true, // show_brief_warning
         );
 
         // Warn about unknown fields (only in main worktree where it's actionable)
         if is_main_worktree {
-            let unknown_keys = find_unknown_keys(&contents);
+            let unknown_keys: std::collections::HashMap<_, _> = find_unknown_keys(&contents)
+                .into_iter()
+                .filter(|(k, _)| !super::deprecation::DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
+                .collect();
             super::deprecation::warn_unknown_fields::<ProjectConfig>(
                 &config_path,
                 &unknown_keys,

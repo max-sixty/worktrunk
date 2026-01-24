@@ -14,6 +14,89 @@ use worktrunk::git::Repository;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::utils::get_now;
 
+/// A parsed branch name for CI status detection.
+///
+/// CI tools like `gh` and `glab` expect bare branch names (e.g., `"feature"`),
+/// not remote-prefixed refs (e.g., `"origin/feature"`). This type holds
+/// parsed branch components:
+/// 1. `name` - bare branch name for CI tool API calls
+/// 2. `remote` - remote name for URL lookups (if remote branch)
+/// 3. `full_name` - original name for cache keys
+#[derive(Debug, Clone)]
+pub struct CiBranchName {
+    /// The original full name (e.g., "origin/feature" or "feature")
+    pub full_name: String,
+    /// For remote branches: the remote name (e.g., "origin")
+    pub remote: Option<String>,
+    /// The bare branch name (e.g., "feature")
+    pub name: String,
+}
+
+impl CiBranchName {
+    /// Create from a branch name with authoritative `is_remote` flag.
+    ///
+    /// For remote branches (e.g., "origin/feature"), extracts the remote name
+    /// and bare branch name by finding the matching remote prefix.
+    /// For local branches, the name is already bare.
+    ///
+    /// The `is_remote` flag should come from an authoritative source:
+    /// - `BranchRef::is_remote` (from collection phase)
+    /// - `git show-ref --verify refs/remotes/<branch>` (for CLI input)
+    pub fn from_branch_ref(branch: &str, is_remote: bool, repo: &Repository) -> Self {
+        if is_remote {
+            // Remote branch - find the remote prefix to extract bare name
+            for (remote_name, _) in repo.all_remote_urls() {
+                let prefix = format!("{}/", remote_name);
+                if let Some(name) = branch.strip_prefix(&prefix) {
+                    log::debug!(
+                        "Remote branch {} -> remote={}, name={}",
+                        branch,
+                        remote_name,
+                        name
+                    );
+                    return Self {
+                        full_name: branch.to_string(),
+                        remote: Some(remote_name),
+                        name: name.to_string(),
+                    };
+                }
+            }
+            // Fallback: couldn't find matching remote, use first segment as remote
+            if let Some((remote, name)) = branch.split_once('/') {
+                log::warn!(
+                    "Remote branch {} has unknown remote '{}', using as-is",
+                    branch,
+                    remote
+                );
+                return Self {
+                    full_name: branch.to_string(),
+                    remote: Some(remote.to_string()),
+                    name: name.to_string(),
+                };
+            }
+        }
+        // Local branch - name is already bare
+        Self {
+            full_name: branch.to_string(),
+            remote: None,
+            name: branch.to_string(),
+        }
+    }
+
+    /// Returns true if this is a remote branch reference.
+    pub fn is_remote(&self) -> bool {
+        self.remote.is_some()
+    }
+
+    /// Check if this branch has upstream (remote tracking) configured.
+    ///
+    /// Remote branches inherently "have upstream" since they ARE the upstream.
+    /// Local branches need tracking config to have upstream.
+    pub fn has_upstream(&self, repo: &Repository) -> bool {
+        self.is_remote() || repo.branch(&self.name).upstream().ok().flatten().is_some()
+    }
+}
+
 // Re-export public types
 pub(crate) use cache::CachedCiStatus;
 pub use platform::{CiPlatform, get_platform_for_repo};
@@ -255,24 +338,21 @@ impl PrStatus {
     /// repos are properly detected.
     ///
     /// # Arguments
-    /// * `has_upstream` - Whether the branch has upstream tracking configured.
-    ///   PR/MR detection always runs. Workflow/pipeline fallback only runs if true.
-    pub fn detect(
-        repo: &Repository,
-        branch: &str,
-        local_head: &str,
-        has_upstream: bool,
-    ) -> Option<Self> {
+    /// * `branch` - The parsed branch name (may be local or remote).
+    /// * `local_head` - The commit SHA to check CI status for.
+    pub fn detect(repo: &Repository, branch: &CiBranchName, local_head: &str) -> Option<Self> {
+        let has_upstream = branch.has_upstream(repo);
         let repo_path = repo.current_worktree().root().ok()?;
 
         // Check cache first to avoid hitting API rate limits
+        // Use full_name as cache key to distinguish local "feature" from remote "origin/feature"
         let now_secs = get_now();
 
-        if let Some(cached) = CachedCiStatus::read(repo, branch) {
+        if let Some(cached) = CachedCiStatus::read(repo, &branch.full_name) {
             if cached.is_valid(local_head, now_secs, &repo_path) {
                 log::debug!(
                     "Using cached CI status for {} (age={}s, ttl={}s, status={:?})",
-                    branch,
+                    branch.full_name,
                     now_secs - cached.checked_at,
                     CachedCiStatus::ttl_for_repo(&repo_path),
                     cached.status.as_ref().map(|s| &s.ci_status)
@@ -281,7 +361,7 @@ impl PrStatus {
             }
             log::debug!(
                 "Cache expired for {} (age={}s, ttl={}s, head_match={})",
-                branch,
+                branch.full_name,
                 now_secs - cached.checked_at,
                 CachedCiStatus::ttl_for_repo(&repo_path),
                 cached.head == local_head
@@ -297,7 +377,7 @@ impl PrStatus {
             checked_at: now_secs,
             head: local_head.to_string(),
         };
-        cached.write(repo, branch);
+        cached.write(repo, &branch.full_name);
 
         status
     }
@@ -310,7 +390,7 @@ impl PrStatus {
     /// PR/MR detection always runs. Workflow/pipeline fallback only runs if `has_upstream`.
     fn detect_uncached(
         repo: &Repository,
-        branch: &str,
+        branch: &CiBranchName,
         local_head: &str,
         has_upstream: bool,
     ) -> Option<Self> {
@@ -318,8 +398,9 @@ impl PrStatus {
         let project_config = repo.load_project_config().ok().flatten();
         let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
 
-        // Determine platform (config override or URL detection)
-        let platform = get_platform_for_repo(repo, platform_override);
+        // Determine platform (config override, branch's remote, or any remote URL)
+        // For remote branches, use their specific remote to get the correct platform
+        let platform = get_platform_for_repo(repo, platform_override, branch.remote.as_deref());
 
         match platform {
             Some(p) => p.detect_ci(repo, branch, local_head, has_upstream),

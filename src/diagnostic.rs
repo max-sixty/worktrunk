@@ -42,14 +42,12 @@
 //! eprintln!("{}", hint_message(issue_hint()));
 //! ```
 //!
-use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use ansi_str::AnsiStr;
 use anyhow::Context;
 use color_print::cformat;
 use minijinja::{Environment, context};
-use shell_escape::unix::escape as posix_escape;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
@@ -57,27 +55,6 @@ use worktrunk::styling::{eprintln, hint_message, info_message, warning_message};
 
 use crate::cli::version_str;
 use crate::output;
-
-/// Shell-escape a path for use in POSIX shell commands.
-///
-/// This is used for hints like `gh gist create --web <path>` that users copy/paste.
-/// We use POSIX escaping because:
-/// - `gh` is a cross-platform CLI that accepts POSIX-style paths on all platforms
-/// - Users on Windows typically use Git Bash or similar POSIX-compatible shells
-/// - The `shell_escape` crate's platform-specific escaping produces different output
-///   on Windows (cmd.exe style) vs Unix (POSIX style), causing snapshot test failures
-///
-/// We normalize Windows backslashes to forward slashes for consistent output.
-fn shell_escape_path(path: &Path) -> Cow<'_, str> {
-    let path_str = path.to_string_lossy();
-    // Normalize Windows backslashes to forward slashes for consistent POSIX-style paths
-    let normalized = if path_str.contains('\\') {
-        Cow::Owned(path_str.replace('\\', "/"))
-    } else {
-        path_str
-    };
-    posix_escape(normalized)
-}
 
 /// Markdown template for the diagnostic report.
 ///
@@ -263,7 +240,7 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
 
             // Only show gh command if gh is installed
             if is_gh_installed() {
-                let path_str = shell_escape_path(&path);
+                let path_str = format_path_for_display(&path);
                 // URL with prefilled body: ## Gist\n\n[Paste URL]\n\n## Description\n\n[Describe the issue]
                 let issue_url = "https://github.com/max-sixty/worktrunk/issues/new?body=%23%23%20Gist%0A%0A%5BPaste%20gist%20URL%5D%0A%0A%23%23%20Description%0A%0A%5BDescribe%20the%20issue%5D";
                 eprintln!(
@@ -461,31 +438,5 @@ mod tests {
         let result = truncate_log(&content);
         assert!(result.starts_with("(log truncated to last ~50KB)"));
         assert!(result.len() < 55 * 1024);
-    }
-
-    #[test]
-    fn test_shell_escape_path_unix_style() {
-        // Unix paths with no special chars pass through unchanged
-        let path = Path::new("/home/user/project/.git/wt-logs/diagnostic.md");
-        let result = shell_escape_path(path);
-        assert_eq!(result, "/home/user/project/.git/wt-logs/diagnostic.md");
-    }
-
-    #[test]
-    fn test_shell_escape_path_windows_backslashes() {
-        // Windows backslashes are normalized to forward slashes
-        let path = Path::new(r"D:\a\worktrunk\.git\wt-logs\diagnostic.md");
-        let result = shell_escape_path(path);
-        // The colon in D: requires quoting in POSIX shells
-        assert!(result.contains("D:/a/worktrunk"));
-        assert!(!result.contains('\\'));
-    }
-
-    #[test]
-    fn test_shell_escape_path_special_chars() {
-        // Paths with spaces or special chars get quoted
-        let path = Path::new("/path/with spaces/file.md");
-        let result = shell_escape_path(path);
-        assert!(result.starts_with('\'') || result.contains("\\ "));
     }
 }

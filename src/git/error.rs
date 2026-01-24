@@ -402,10 +402,7 @@ impl std::fmt::Display for GitError {
                         "there's a detached worktree at the expected path <bold>{path_display}</>"
                     )
                 };
-                // Use actual path for command (not display path with ~, which won't expand in single quotes)
-                let path_str = path.to_string_lossy();
-                let path_escaped = escape(Cow::Borrowed(path_str.as_ref()));
-                let command = format!("cd {path_escaped} && git switch {branch}");
+                let command = format!("cd {path_display} && git switch {branch}");
                 write!(
                     f,
                     "{}\n{}",
@@ -422,8 +419,6 @@ impl std::fmt::Display for GitError {
                 create,
             } => {
                 let path_display = format_path_for_display(path);
-                let path_str = path.to_string_lossy();
-                let path_escaped = escape(Cow::Borrowed(path_str.as_ref()));
                 let flags: &[&str] = if *create {
                     &["--create", "--clobber"]
                 } else {
@@ -437,7 +432,7 @@ impl std::fmt::Display for GitError {
                         "Directory already exists: <bold>{path_display}</>"
                     )),
                     hint_message(cformat!(
-                        "To remove manually, run <bright-black>rm -rf {path_escaped}</>; to overwrite (with backup), run <bright-black>{switch_cmd}</>"
+                        "To remove manually, run <bright-black>rm -rf {path_display}</>; to overwrite (with backup), run <bright-black>{switch_cmd}</>"
                     ))
                 )
             }

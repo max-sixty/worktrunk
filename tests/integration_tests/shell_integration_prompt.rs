@@ -64,8 +64,10 @@ fn test_switch_with_active_shell_integration_no_prompt(repo: TestRepo) {
 fn test_switch_with_skip_prompt_flag(repo: TestRepo) {
     // Set the skip flag in config
     let config_path = repo.test_config_path();
-    let mut config = UserConfig::default();
-    config.skip_shell_integration_prompt = true;
+    let config = UserConfig {
+        skip_shell_integration_prompt: true,
+        ..Default::default()
+    };
     config.save_to(config_path).unwrap();
 
     let output = repo

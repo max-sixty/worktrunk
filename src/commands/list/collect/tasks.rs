@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use worktrunk::git::{LineDiff, Repository};
 
-use super::super::ci_status::PrStatus;
+use super::super::ci_status::{CiBranchName, PrStatus};
 use super::super::model::{
     ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus,
     WorkingTreeStatus,
@@ -589,6 +589,10 @@ impl Task for UpstreamTask {
 /// Always checks for open PRs/MRs regardless of upstream tracking.
 /// For branch workflow/pipeline fallback (no PR), requires upstream tracking
 /// to prevent false matches from similarly-named branches on the remote.
+///
+/// Remote branches (e.g., "origin/feature") are treated as having upstream
+/// by definition - they ARE the upstream. This enables workflow/pipeline
+/// fallback for remote-only branches shown via `wt list --remotes`.
 pub struct CiStatusTask;
 
 impl Task for CiStatusTask {
@@ -597,8 +601,10 @@ impl Task for CiStatusTask {
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         let repo = &ctx.repo;
         let pr_status = ctx.branch_ref.branch.as_deref().and_then(|branch| {
-            let has_upstream = repo.branch(branch).upstream().ok().flatten().is_some();
-            PrStatus::detect(repo, branch, &ctx.branch_ref.commit_sha, has_upstream)
+            // Use from_branch_ref with the authoritative is_remote flag
+            // rather than guessing from the branch name
+            let ci_branch = CiBranchName::from_branch_ref(branch, ctx.branch_ref.is_remote, repo);
+            PrStatus::detect(repo, &ci_branch, &ctx.branch_ref.commit_sha)
         });
 
         Ok(TaskResult::CiStatus {

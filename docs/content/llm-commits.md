@@ -17,56 +17,38 @@ Worktrunk generates commit messages by building a templated prompt and piping it
 
 ## Setup
 
-### Install llm
+Any command that reads a prompt from stdin and outputs a commit message works. Add to `~/.config/worktrunk/config.toml`:
 
-[llm](https://llm.datasette.io/) from Simon Willison is recommended:
-
-```bash
-$ uv tool install -U llm
-```
-
-### Configure an API key
-
-For Claude (recommended):
-
-```bash
-$ llm install llm-anthropic
-$ llm keys set anthropic
-```
-
-For OpenAI:
-
-```bash
-$ llm keys set openai
-```
-
-### Add to user config
-
-Create the config file if it doesn't exist:
-
-```bash
-$ wt config create
-```
-
-Then add the commit generation settings to `~/.config/worktrunk/config.toml`:
+### Claude Code
 
 ```toml
-[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
+[commit.generation]
+command = "claude -p --model haiku"
 ```
 
-Or for OpenAI:
+See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
+
+### llm
 
 ```toml
-[commit-generation]
-command = "llm"
-args = ["-m", "gpt-5-nano"]
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
 ```
+
+Install with `uv tool install llm llm-anthropic && llm keys set anthropic`. See [llm docs](https://llm.datasette.io/).
+
+### aichat
+
+```toml
+[commit.generation]
+command = "aichat -m claude:claude-haiku-4.5"
+```
+
+See [aichat docs](https://github.com/sigoden/aichat).
 
 ## How it works
 
-When worktrunk needs a commit message, it builds a prompt from a template and pipes it to the configured LLM command. The default templates include the git diff and style guidance.
+When worktrunk needs a commit message, it builds a prompt from a template and pipes it to the configured command via shell (`sh -c`). Environment variables can be set inline in the command string.
 
 ## Usage
 
@@ -124,9 +106,8 @@ All variables are available in both templates:
 Override the defaults with inline templates or external files:
 
 ```toml
-[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
 
 template = """
 Write a commit message for this diff. One line, under 50 chars.
@@ -159,23 +140,6 @@ Templates use [minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/inde
 - **Whitespace control**: `{%- ... -%}` strips surrounding whitespace
 
 See `wt config create --help` for the full default templates.
-
-## Alternative tools
-
-Any command that reads a prompt from stdin and outputs a commit message works:
-
-```toml
-# aichat
-[commit-generation]
-command = "aichat"
-args = ["-m", "claude:claude-haiku-4.5"]
-
-# Custom script
-[commit-generation]
-command = "./scripts/generate-commit.sh"
-```
-
-See [llm documentation](https://llm.datasette.io/) and [aichat](https://github.com/sigoden/aichat).
 
 ## Fallback behavior
 

@@ -78,12 +78,14 @@ impl WorktrunkConfig for ProjectConfig {
 
 // Re-export public types
 pub use commands::{Command, CommandConfig};
-pub use deprecation::check_and_migrate as check_deprecated_vars;
+pub use deprecation::DeprecationInfo;
+pub use deprecation::check_and_migrate;
+pub use deprecation::format_deprecation_details;
 pub use deprecation::normalize_template_vars;
-pub use deprecation::{key_belongs_in, warn_unknown_fields};
+pub use deprecation::{DEPRECATED_SECTION_KEYS, key_belongs_in, warn_unknown_fields};
 pub use expansion::{
     DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, expand_template, redact_credentials,
-    sanitize_branch_name, sanitize_db,
+    sanitize_branch_name, sanitize_db, short_hash,
 };
 pub use hooks::HooksConfig;
 pub use project::{
@@ -91,9 +93,9 @@ pub use project::{
     find_unknown_keys as find_unknown_project_keys,
 };
 pub use user::{
-    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, StageMode, UserConfig,
-    UserProjectOverrides, find_unknown_keys as find_unknown_user_keys, get_config_path,
-    set_config_path,
+    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig, SelectConfig,
+    StageMode, UserConfig, UserProjectOverrides, find_unknown_keys as find_unknown_user_keys,
+    get_config_path, set_config_path,
 };
 
 #[cfg(test)]
@@ -130,13 +132,18 @@ mod tests {
         let toml = toml::to_string(&config).unwrap();
         // worktree-path is not serialized when None (uses built-in default)
         assert!(!toml.contains("worktree-path"));
-        assert!(toml.contains("commit-generation"));
+        // commit and commit-generation sections are not serialized when None
+        assert!(!toml.contains("[commit]"));
+        assert!(!toml.contains("[commit-generation]"));
     }
 
     #[test]
     fn test_config_serialization_with_worktree_path() {
         let config = UserConfig {
-            worktree_path: Some("custom/{{ branch }}".to_string()),
+            overrides: OverridableConfig {
+                worktree_path: Some("custom/{{ branch }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let toml = toml::to_string(&config).unwrap();
@@ -148,12 +155,13 @@ mod tests {
     fn test_default_config() {
         let config = UserConfig::default();
         // worktree_path is None by default, but the getter returns the default
-        assert!(config.worktree_path.is_none());
+        assert!(config.overrides.worktree_path.is_none());
         assert_eq!(
             config.worktree_path(),
             "../{{ repo }}.{{ branch | sanitize }}"
         );
-        assert_eq!(config.commit_generation.command, None);
+        // commit_generation is None by default
+        assert!(config.commit_generation.is_none());
         assert!(config.projects.is_empty());
     }
 
@@ -161,7 +169,10 @@ mod tests {
     fn test_format_worktree_path() {
         let test = test_repo();
         let config = UserConfig {
-            worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
+            overrides: OverridableConfig {
+                worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
@@ -176,7 +187,10 @@ mod tests {
     fn test_format_worktree_path_custom_template() {
         let test = test_repo();
         let config = UserConfig {
-            worktree_path: Some("{{ main_worktree }}-{{ branch }}".to_string()),
+            overrides: OverridableConfig {
+                worktree_path: Some("{{ main_worktree }}-{{ branch }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
@@ -191,7 +205,10 @@ mod tests {
     fn test_format_worktree_path_only_branch() {
         let test = test_repo();
         let config = UserConfig {
-            worktree_path: Some(".worktrees/{{ main_worktree }}/{{ branch }}".to_string()),
+            overrides: OverridableConfig {
+                worktree_path: Some(".worktrees/{{ main_worktree }}/{{ branch }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
@@ -207,7 +224,10 @@ mod tests {
         let test = test_repo();
         // Use {{ branch | sanitize }} to replace slashes with dashes
         let config = UserConfig {
-            worktree_path: Some("{{ main_worktree }}.{{ branch | sanitize }}".to_string()),
+            overrides: OverridableConfig {
+                worktree_path: Some("{{ main_worktree }}.{{ branch | sanitize }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
@@ -222,9 +242,12 @@ mod tests {
     fn test_format_worktree_path_with_multiple_slashes() {
         let test = test_repo();
         let config = UserConfig {
-            worktree_path: Some(
-                ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
-            ),
+            overrides: OverridableConfig {
+                worktree_path: Some(
+                    ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
+                ),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
@@ -240,9 +263,12 @@ mod tests {
         let test = test_repo();
         // Windows-style path separators should also be sanitized
         let config = UserConfig {
-            worktree_path: Some(
-                ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
-            ),
+            overrides: OverridableConfig {
+                worktree_path: Some(
+                    ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
+                ),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
@@ -258,7 +284,10 @@ mod tests {
         let test = test_repo();
         // {{ branch }} without filter gives raw branch name
         let config = UserConfig {
-            worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
+            overrides: OverridableConfig {
+                worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
@@ -723,7 +752,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let toml_content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
-[commit-generation]
+[commit.generation]
 command = "llm"
 template = "inline template"
 template-file = "~/file.txt"
@@ -735,9 +764,15 @@ template-file = "~/file.txt"
         // The deserialization should succeed, but validation in load() would fail
         // Since we can't easily test load() without env vars, we verify the fields deserialize
         if let Ok(config) = config_result {
+            let generation = config
+                .overrides
+                .commit
+                .as_ref()
+                .and_then(|c| c.generation.as_ref());
             // Verify validation logic: both fields should not be Some
-            let has_both = config.commit_generation.template.is_some()
-                && config.commit_generation.template_file.is_some();
+            let has_both = generation
+                .map(|g| g.template.is_some() && g.template_file.is_some())
+                .unwrap_or(false);
             assert!(
                 has_both,
                 "Config should have both template fields set for this test"
@@ -751,7 +786,7 @@ template-file = "~/file.txt"
         let toml_content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
-[commit-generation]
+[commit.generation]
 command = "llm"
 squash-template = "inline template"
 squash-template-file = "~/file.txt"
@@ -763,9 +798,15 @@ squash-template-file = "~/file.txt"
         // The deserialization should succeed, but validation in load() would fail
         // Since we can't easily test load() without env vars, we verify the fields deserialize
         if let Ok(config) = config_result {
+            let generation = config
+                .overrides
+                .commit
+                .as_ref()
+                .and_then(|c| c.generation.as_ref());
             // Verify validation logic: both fields should not be Some
-            let has_both = config.commit_generation.squash_template.is_some()
-                && config.commit_generation.squash_template_file.is_some();
+            let has_both = generation
+                .map(|g| g.squash_template.is_some() && g.squash_template_file.is_some())
+                .unwrap_or(false);
             assert!(
                 has_both,
                 "Config should have both squash template fields set for this test"
@@ -776,8 +817,7 @@ squash-template-file = "~/file.txt"
     #[test]
     fn test_commit_generation_config_serialization() {
         let config = CommitGenerationConfig {
-            command: Some("llm".to_string()),
-            args: vec!["-m".to_string(), "model".to_string()],
+            command: Some("llm -m model".to_string()),
             template: Some("template content".to_string()),
             template_file: None,
             squash_template: None,
@@ -785,7 +825,7 @@ squash-template-file = "~/file.txt"
         };
 
         let toml = toml::to_string(&config).unwrap();
-        assert!(toml.contains("llm"));
+        assert!(toml.contains("llm -m model"));
         assert!(toml.contains("template"));
     }
 

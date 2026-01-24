@@ -19,12 +19,12 @@ fn wt_perf_bin() -> std::path::PathBuf {
 /// Test that the binary produces Chrome Trace Format JSON for sample trace input.
 #[test]
 fn test_wt_perf_trace_from_stdin() {
-    let sample_trace = r#"[wt-trace] ts=1000000 tid=1 cmd="git status" dur=10.0ms ok=true
-[wt-trace] ts=1010000 tid=1 cmd="git status" dur=15.0ms ok=true
-[wt-trace] ts=1025000 tid=1 cmd="git diff" dur=100.0ms ok=true
+    let sample_trace = r#"[wt-trace] ts=1000000 tid=1 cmd="git status" dur_us=10000 ok=true
+[wt-trace] ts=1010000 tid=1 cmd="git status" dur_us=15000 ok=true
+[wt-trace] ts=1025000 tid=1 cmd="git diff" dur_us=100000 ok=true
 [wt-trace] ts=1025000 tid=2 event="Showed skeleton"
-[wt-trace] ts=1125000 tid=1 cmd="git merge-base HEAD main" dur=500.0ms ok=true
-[wt-trace] ts=1625000 tid=1 cmd="gh pr list" dur=200.0ms ok=true"#;
+[wt-trace] ts=1125000 tid=1 cmd="git merge-base HEAD main" dur_us=500000 ok=true
+[wt-trace] ts=1625000 tid=1 cmd="gh pr list" dur_us=200000 ok=true"#;
 
     let mut child = Command::new(wt_perf_bin())
         .arg("trace")
@@ -127,10 +127,10 @@ fn test_wt_perf_trace_from_file() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
     let log_file = temp_dir.path().join("trace.log");
 
-    let sample_trace = r#"[wt-trace] ts=1000000 tid=1 cmd="git rev-parse" dur=5.0ms ok=true
-[wt-trace] ts=1005000 tid=1 cmd="git status" dur=10.0ms ok=true
+    let sample_trace = r#"[wt-trace] ts=1000000 tid=1 cmd="git rev-parse" dur_us=5000 ok=true
+[wt-trace] ts=1005000 tid=1 cmd="git status" dur_us=10000 ok=true
 [wt-trace] ts=1015000 tid=1 event="Skeleton displayed"
-[wt-trace] ts=1015000 tid=2 cmd="git diff" dur=50.0ms ok=true"#;
+[wt-trace] ts=1015000 tid=2 cmd="git diff" dur_us=50000 ok=true"#;
 
     std::fs::write(&log_file, sample_trace).expect("Failed to write sample log");
 

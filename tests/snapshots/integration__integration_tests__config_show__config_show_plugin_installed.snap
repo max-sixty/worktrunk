@@ -49,8 +49,11 @@ exit_code: 0
 [2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
 [2m○[22m [2mSkipped fish; ~/.config/fish/functions not found[22m
 
+[36mCLAUDE CODE[39m
+[32m✓[39m [32mPlugin installed[39m
+[2m↳[22m [2mStatusline not configured. See https://worktrunk.dev/claude-code/#statusline[22m
+
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m
 [2m○[22m git: [1m[VERSION][22m
-[32m✓[39m [32mClaude Code plugin installed[39m
 [2m○[22m Hyperlinks: [1minactive[22m

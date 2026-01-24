@@ -340,7 +340,8 @@ pub enum HookType {
 /// # Construction
 ///
 /// - From a worktree: `BranchRef::from(&worktree_info)`
-/// - For a branch-only item: `BranchRef::branch_only("feature", "abc123")`
+/// - For a local branch: `BranchRef::local_branch("feature", "abc123")`
+/// - For a remote branch: `BranchRef::remote_branch("origin/feature", "abc123")`
 ///
 /// # Working Tree Access
 ///
@@ -348,7 +349,7 @@ pub enum HookType {
 /// which returns `Some(WorkingTree)` only when this ref has a worktree path.
 #[derive(Debug, Clone)]
 pub struct BranchRef {
-    /// Branch name (e.g., "main", "feature/auth").
+    /// Branch name (e.g., "main", "feature/auth", "origin/feature").
     /// None for detached HEAD.
     pub branch: Option<String>,
     /// Commit SHA this branch/worktree points to.
@@ -356,17 +357,35 @@ pub struct BranchRef {
     /// Path to worktree, if this branch has one.
     /// None for branch-only items (remote branches, local branches without worktrees).
     pub worktree_path: Option<PathBuf>,
+    /// True if this is a remote-tracking ref (e.g., "origin/feature").
+    /// Remote branches inherently exist on the remote and don't need push config.
+    // TODO(full-refs): Consider refactoring to store full refs (e.g., "refs/remotes/origin/feature"
+    // or "refs/heads/feature") instead of short names + is_remote flag. Full refs are self-describing
+    // and unambiguous, but would require changes throughout the codebase and user input resolution.
+    pub is_remote: bool,
 }
 
 impl BranchRef {
-    /// Create a BranchRef for a branch without a worktree.
-    ///
-    /// Used for remote-only branches or local branches that don't have a worktree.
-    pub fn branch_only(branch: &str, commit_sha: &str) -> Self {
+    /// Create a BranchRef for a local branch without a worktree.
+    pub fn local_branch(branch: &str, commit_sha: &str) -> Self {
         Self {
             branch: Some(branch.to_string()),
             commit_sha: commit_sha.to_string(),
             worktree_path: None,
+            is_remote: false,
+        }
+    }
+
+    /// Create a BranchRef for a remote-tracking branch.
+    ///
+    /// Remote branches (e.g., "origin/feature") are refs under refs/remotes/.
+    /// They inherently exist on the remote and don't need upstream tracking config.
+    pub fn remote_branch(branch: &str, commit_sha: &str) -> Self {
+        Self {
+            branch: Some(branch.to_string()),
+            commit_sha: commit_sha.to_string(),
+            worktree_path: None,
+            is_remote: true,
         }
     }
 
@@ -392,6 +411,7 @@ impl From<&WorktreeInfo> for BranchRef {
             branch: wt.branch.clone(),
             commit_sha: wt.head.clone(),
             worktree_path: Some(wt.path.clone()),
+            is_remote: false, // Worktrees are always local
         }
     }
 }
@@ -637,16 +657,29 @@ mod tests {
             Some(PathBuf::from("/repo.feature"))
         );
         assert!(branch_ref.has_worktree());
+        assert!(!branch_ref.is_remote); // Worktrees are always local
     }
 
     #[test]
-    fn test_branch_ref_branch_only() {
-        let branch_ref = BranchRef::branch_only("feature", "abc123");
+    fn test_branch_ref_local_branch() {
+        let branch_ref = BranchRef::local_branch("feature", "abc123");
 
         assert_eq!(branch_ref.branch, Some("feature".to_string()));
         assert_eq!(branch_ref.commit_sha, "abc123");
         assert_eq!(branch_ref.worktree_path, None);
         assert!(!branch_ref.has_worktree());
+        assert!(!branch_ref.is_remote);
+    }
+
+    #[test]
+    fn test_branch_ref_remote_branch() {
+        let branch_ref = BranchRef::remote_branch("origin/feature", "abc123");
+
+        assert_eq!(branch_ref.branch, Some("origin/feature".to_string()));
+        assert_eq!(branch_ref.commit_sha, "abc123");
+        assert_eq!(branch_ref.worktree_path, None);
+        assert!(!branch_ref.has_worktree());
+        assert!(branch_ref.is_remote);
     }
 
     #[test]
