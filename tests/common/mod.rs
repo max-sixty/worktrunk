@@ -2445,9 +2445,13 @@ fn setup_snapshot_settings_for_paths_with_home(
 
         // Strip ANSI codes that may wrap [TEMP_HOME] paths.
         // On Windows, shell_escape quotes paths containing ':', and tree-sitter highlights quoted
-        // strings in green (\x1b[32m). After path replacement, these codes remain around the path.
-        // Pattern: ANSI escape + [TEMP_HOME]/path + ANSI reset -> just the path
-        settings.add_filter(r"\x1b\[\d+m(\[TEMP_HOME\]/[^\x1b\s]+)\x1b\[0m", "$1");
+        // strings in green (\x1b[32m) combined with dim (\x1b[2m). After path replacement,
+        // these codes remain around the path. Match one or more ANSI codes before/after.
+        // Pattern: ANSI codes + [TEMP_HOME]/path + ANSI codes -> just the path
+        settings.add_filter(
+            r"(?:\x1b\[\d+m)+(\[TEMP_HOME\]/[^\x1b\s]+)(?:\x1b\[\d+m)+",
+            "$1",
+        );
 
         // Strip quotes around [TEMP_HOME] paths (Windows shell_escape quotes paths with ':')
         // Also handles git diff quoted format which lacks a/b prefixes.
@@ -2460,13 +2464,26 @@ fn setup_snapshot_settings_for_paths_with_home(
         settings.add_filter(r"(--- )a/(\[TEMP_HOME\])", "$1a$2");
         settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\])", "$1b$2");
 
-        // Windows git diff uses quoted format without a/b prefixes for absolute paths.
-        // Add the prefixes to match Unix format.
+        // Windows git diff uses different format for absolute paths.
+        // After quote stripping, the diff header may or may not have "diff --git " prefix,
+        // and may or may not have a/b prefixes. Normalize to Unix format.
+
+        // Pattern 1: Has "diff --git " but no a/b prefixes
         // diff --git [TEMP_HOME]/a [TEMP_HOME]/b -> diff --git a[TEMP_HOME]/a b[TEMP_HOME]/b
         settings.add_filter(
             r"(diff --git )(\[TEMP_HOME\]/[^\s]+) (\[TEMP_HOME\]/)",
             "$1a$2 b$3",
         );
+
+        // Pattern 2: Windows may strip "diff --git " entirely, leaving just paths.
+        // Match a line starting with [TEMP_HOME] followed by another [TEMP_HOME] path.
+        // Look for this pattern right after bold ANSI code (git diff header style).
+        // [TEMP_HOME]/a [TEMP_HOME]/b -> diff --git a[TEMP_HOME]/a b[TEMP_HOME]/b
+        settings.add_filter(
+            r"(\x1b\[1m)(\[TEMP_HOME\]/[^\s]+) (\[TEMP_HOME\]/[^\s]+)",
+            "$1diff --git a$2 b$3",
+        );
+
         // --- [TEMP_HOME]/... -> --- a[TEMP_HOME]/...
         settings.add_filter(r"(--- )(\[TEMP_HOME\]/)", "$1a$2");
         // +++ [TEMP_HOME]/... -> +++ b[TEMP_HOME]/...
