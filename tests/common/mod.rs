@@ -2481,14 +2481,16 @@ fn setup_snapshot_settings_for_paths_with_home(
         // [TEMP_HOME] post-processing filters - must run AFTER the replacement above.
 
         // Strip ANSI sequences around [TEMP_HOME] paths.
-        // On Windows, tree-sitter highlights paths with multiple ANSI codes (reset+dim+green).
-        // Example: \x1b[0m\x1b[2m\x1b[32m[TEMP_HOME]/...config.toml\x1b[0m\x1b[2m
-        // We need to strip these sequences from around the replaced path.
-        // Match: optional ANSI codes + [TEMP_HOME] path + optional trailing ANSI codes
-        // Only strip if we see the green code (\x1b[32m) which indicates syntax highlighting.
+        // On Windows, tree-sitter highlights paths with green (\x1b[32m]) inside mv commands.
+        // Example: \x1b[2m \x1b[0m\x1b[2m\x1b[32m[TEMP_HOME]/a.toml\x1b[0m\x1b[2m \x1b[0m\x1b[2m\x1b[32m[TEMP_HOME]/b.toml\x1b[0m\x1b[2m
+        // We need to strip all these sequences to get: \x1b[2m [TEMP_HOME]/a.toml [TEMP_HOME]/b.toml
+        //
+        // Pattern: (space)(ANSI codes)(green)([TEMP_HOME]/path)(trailing ANSI codes)
+        // The space before the path has trailing ANSI codes that we need to remove.
+        // Only match when green code (\x1b[32m) is present to avoid over-matching.
         settings.add_filter(
-            r"(?:\x1b\[\d+m)*\x1b\[32m(\[TEMP_HOME\]/[^\x1b]+)(?:\x1b\[\d+m)*",
-            "$1",
+            r"( )(?:\x1b\[\d+m)+\x1b\[32m(\[TEMP_HOME\]/[^\x1b]+)(?:\x1b\[\d+m)*",
+            "$1$2",
         );
 
         // Strip quotes around [TEMP_HOME] paths (Windows shell_escape quotes paths with ':')
