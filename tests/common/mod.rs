@@ -2443,15 +2443,11 @@ fn setup_snapshot_settings_for_paths_with_home(
 
         // [TEMP_HOME] post-processing filters - must run AFTER the replacement above.
 
-        // Strip ANSI codes that may wrap [TEMP_HOME] paths.
+        // Strip green ANSI highlighting from [TEMP_HOME] paths.
         // On Windows, shell_escape quotes paths containing ':', and tree-sitter highlights quoted
-        // strings in green (\x1b[32m) combined with dim (\x1b[2m). After path replacement,
-        // these codes remain around the path. Match one or more ANSI codes before/after.
-        // Pattern: ANSI codes + [TEMP_HOME]/path + ANSI codes -> just the path
-        settings.add_filter(
-            r"(?:\x1b\[\d+m)+(\[TEMP_HOME\]/[^\x1b\s]+)(?:\x1b\[\d+m)+",
-            "$1",
-        );
+        // strings in green (\x1b[32m). After path replacement, green codes remain around the path.
+        // Remove the green start code immediately before [TEMP_HOME] and reset code after.
+        settings.add_filter(r"\x1b\[32m(\[TEMP_HOME\]/[^\x1b]+)\x1b\[0m", "$1");
 
         // Strip quotes around [TEMP_HOME] paths (Windows shell_escape quotes paths with ':')
         // Also handles git diff quoted format which lacks a/b prefixes.
@@ -2475,19 +2471,33 @@ fn setup_snapshot_settings_for_paths_with_home(
             "$1a$2 b$3",
         );
 
-        // Pattern 2: Windows may strip "diff --git " entirely, leaving just paths.
-        // Match a line starting with [TEMP_HOME] followed by another [TEMP_HOME] path.
-        // Look for this pattern right after bold ANSI code (git diff header style).
-        // [TEMP_HOME]/a [TEMP_HOME]/b -> diff --git a[TEMP_HOME]/a b[TEMP_HOME]/b
+        // Pattern 2: Windows git diff header with only b prefix present.
+        // Windows git diff --no-index may produce: path1 bpath2 (without diff --git a)
+        // After path replacement: [TEMP_HOME]/a b[TEMP_HOME]/b
+        // Add the full header format to match Unix.
         settings.add_filter(
-            r"(\x1b\[1m)(\[TEMP_HOME\]/[^\s]+) (\[TEMP_HOME\]/[^\s]+)",
+            r"(\x1b\[1m)(\[TEMP_HOME\]/[^\s]+) b(\[TEMP_HOME\]/[^\s]+)",
             "$1diff --git a$2 b$3",
         );
 
-        // --- [TEMP_HOME]/... -> --- a[TEMP_HOME]/...
+        // --- [TEMP_HOME]/... -> --- a[TEMP_HOME]/... (Unix has slash, remove it)
+        settings.add_filter(r"(--- )a/(\[TEMP_HOME\]/)", "$1a$2");
+        // --- [TEMP_HOME]/... -> --- a[TEMP_HOME]/... (Windows: add missing a prefix)
         settings.add_filter(r"(--- )(\[TEMP_HOME\]/)", "$1a$2");
-        // +++ [TEMP_HOME]/... -> +++ b[TEMP_HOME]/...
+
+        // +++ [TEMP_HOME]/... -> +++ b[TEMP_HOME]/... (Unix has slash, remove it)
+        settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\]/)", "$1b$2");
+        // +++ [TEMP_HOME]/... -> +++ b[TEMP_HOME]/... (Windows: add missing b prefix)
         settings.add_filter(r"(\+\+\+ )(\[TEMP_HOME\]/)", "$1b$2");
+
+        // Windows git diff may have bare path without --- prefix at all.
+        // Match: bold ANSI + bare [TEMP_HOME] path that's NOT preceded by diff/---/+++
+        // This catches the case where git outputs just the path on its own line.
+        // Look for standalone [TEMP_HOME]/...config.toml followed by ANSI reset.
+        settings.add_filter(
+            r"(\x1b\[1m)(\[TEMP_HOME\]/[^\x1b]+\.toml)(\x1b\[m)",
+            "$1--- a$2$3",
+        );
     }
 
     // Normalize temp directory paths in project identifiers (approval prompts)
