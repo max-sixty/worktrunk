@@ -329,27 +329,60 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn format_path_home_path_with_spaces_quotes() {
-        use shell_escape::escape;
-        use std::borrow::Cow;
+    fn format_path_for_display_escaping() {
+        use insta::assert_snapshot;
 
         let Some(home) = home_dir() else {
             return;
         };
 
-        let path = home.join("my workspace").join("repo");
-        let formatted = format_path_for_display(&path);
-        // Falls back to quoted absolute path when escaping needed
-        let abs_path = path.display().to_string();
-        let expected = escape(Cow::Borrowed(&abs_path)).into_owned();
-        assert_eq!(formatted, expected);
-    }
+        // Build test cases: (input_path, expected_pattern)
+        // For home paths, we normalize output by replacing actual result with description
+        let mut lines = Vec::new();
 
-    #[test]
-    #[cfg(unix)]
-    fn format_path_non_home_with_spaces_quotes() {
-        let path = PathBuf::from("/tmp/my repo");
-        let formatted = format_path_for_display(&path);
-        assert_eq!(formatted, "'/tmp/my repo'");
+        // Non-home paths - predictable across machines
+        for path_str in [
+            "/tmp/repo",
+            "/tmp/my repo",
+            "/tmp/file;rm -rf",
+            "/tmp/test'quote",
+        ] {
+            let path = PathBuf::from(path_str);
+            lines.push(format!("{} => {}", path_str, format_path_for_display(&path)));
+        }
+
+        // Home-relative paths - normalize by showing ~/... pattern
+        let home_cases = [
+            "workspace/repo",      // simple -> ~/workspace/repo
+            "my workspace/repo",   // spaces -> quoted absolute
+            "project's/repo",      // quote -> quoted absolute
+        ];
+
+        for suffix in home_cases {
+            let path = home.join(suffix);
+            let result = format_path_for_display(&path);
+
+            let display = if result.starts_with('\'') {
+                // Quoted absolute path - normalize for snapshot
+                "QUOTED_ABSOLUTE".to_string()
+            } else {
+                result
+            };
+            lines.push(format!("$HOME/{} => {}", suffix, display));
+        }
+
+        // Home directory itself
+        lines.push(format!("$HOME => {}", format_path_for_display(&home)));
+
+        assert_snapshot!(lines.join("\n"), @r"
+        /tmp/repo => /tmp/repo
+        /tmp/my repo => '/tmp/my repo'
+        /tmp/file;rm -rf => '/tmp/file;rm -rf'
+        /tmp/test'quote => '/tmp/test'\''quote'
+        $HOME/workspace/repo => ~/workspace/repo
+        $HOME/my workspace/repo => QUOTED_ABSOLUTE
+        $HOME/project's/repo => QUOTED_ABSOLUTE
+        $HOME => ~
+        ");
     }
 }
