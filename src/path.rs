@@ -1,6 +1,6 @@
-use shell_escape::escape;
+use shell_escape::unix::escape;
 use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::config::short_hash;
 #[cfg(windows)]
@@ -93,45 +93,42 @@ fn needs_shell_escaping(s: &str) -> bool {
 /// Replaces home directory prefix with `~` when safe for shell use. Falls back to
 /// quoted absolute path when escaping is needed (to avoid tilde-in-quotes issues).
 ///
-/// # Examples (Unix)
+/// Uses POSIX shell escaping since all our hints target POSIX-compatible shells
+/// (bash, zsh, fish, and Git Bash on Windows).
+///
+/// # Examples
 /// - `/Users/alex/repo` → `~/repo` (no escaping needed)
 /// - `/Users/alex/my repo` → `'/Users/alex/my repo'` (needs quoting, use original)
 /// - `/tmp/repo` → `/tmp/repo` (no escaping needed)
 /// - `/tmp/my repo` → `'/tmp/my repo'` (needs quoting)
 pub fn format_path_for_display(path: &Path) -> String {
     // Try to use tilde for home directory paths
-    let display = if let Some(home) = home_dir()
+    if let Some(home) = home_dir()
         && let Ok(stripped) = path.strip_prefix(&home)
     {
         if stripped.as_os_str().is_empty() {
             return "~".to_string();
         }
 
-        let mut display_path = PathBuf::from("~");
-        display_path.push(stripped);
-        display_path.display().to_string()
-    } else {
-        path.display().to_string()
-    };
+        // Build tilde path with forward slash (POSIX style, works everywhere)
+        let rest = stripped.to_string_lossy();
+        #[cfg(windows)]
+        let rest = rest.replace('\\', "/");
 
-    // Handle both Unix (~/) and Windows (~\) path separators
-    let rest = display
-        .strip_prefix("~/")
-        .or_else(|| display.strip_prefix("~\\"));
-
-    if let Some(rest) = rest {
-        // Check if the path part (after ~/ or ~\) needs escaping
-        if !needs_shell_escaping(rest) {
-            return display;
+        // Only use tilde form if the rest doesn't need escaping
+        // (tilde doesn't expand inside quotes)
+        if !needs_shell_escaping(&rest) {
+            return format!("~/{rest}");
         }
-    } else if !needs_shell_escaping(&display) {
-        // Non-home path that doesn't need escaping
-        return display;
     }
 
-    // Escaping needed - use original path (which is absolute for typical callers)
+    // Non-home path or escaping needed - use original with POSIX quoting
     let original = path.display().to_string();
-    escape(Cow::Borrowed(&original)).into_owned()
+    if needs_shell_escaping(&original) {
+        escape(Cow::Borrowed(&original)).into_owned()
+    } else {
+        original
+    }
 }
 
 /// Sanitize a string for use as a filename on all platforms.
@@ -348,14 +345,18 @@ mod tests {
             "/tmp/test'quote",
         ] {
             let path = PathBuf::from(path_str);
-            lines.push(format!("{} => {}", path_str, format_path_for_display(&path)));
+            lines.push(format!(
+                "{} => {}",
+                path_str,
+                format_path_for_display(&path)
+            ));
         }
 
         // Home-relative paths - normalize by showing ~/... pattern
         let home_cases = [
-            "workspace/repo",      // simple -> ~/workspace/repo
-            "my workspace/repo",   // spaces -> quoted absolute
-            "project's/repo",      // quote -> quoted absolute
+            "workspace/repo",    // simple -> ~/workspace/repo
+            "my workspace/repo", // spaces -> quoted absolute
+            "project's/repo",    // quote -> quoted absolute
         ];
 
         for suffix in home_cases {
