@@ -969,7 +969,7 @@ fn test_config_source_templates_are_in_sync() {
             // Format as markdown code block
             let replacement = format!(
                 r#"{prefix}```toml
-[commit-generation]
+[commit.generation]
 {key} = """
 {template}
 """

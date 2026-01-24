@@ -80,7 +80,7 @@ impl WorktrunkConfig for ProjectConfig {
 pub use commands::{Command, CommandConfig};
 pub use deprecation::check_and_migrate as check_deprecated_vars;
 pub use deprecation::normalize_template_vars;
-pub use deprecation::{key_belongs_in, warn_unknown_fields};
+pub use deprecation::{DEPRECATED_SECTION_KEYS, key_belongs_in, warn_unknown_fields};
 pub use expansion::{
     DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, expand_template, redact_credentials,
     sanitize_branch_name, sanitize_db, short_hash,
@@ -130,7 +130,9 @@ mod tests {
         let toml = toml::to_string(&config).unwrap();
         // worktree-path is not serialized when None (uses built-in default)
         assert!(!toml.contains("worktree-path"));
-        assert!(toml.contains("commit-generation"));
+        // commit and commit-generation sections are not serialized when None
+        assert!(!toml.contains("[commit]"));
+        assert!(!toml.contains("[commit-generation]"));
     }
 
     #[test]
@@ -153,7 +155,8 @@ mod tests {
             config.worktree_path(),
             "../{{ repo }}.{{ branch | sanitize }}"
         );
-        assert_eq!(config.commit_generation.command, None);
+        // commit_generation is None by default
+        assert!(config.commit_generation.is_none());
         assert!(config.projects.is_empty());
     }
 
@@ -723,7 +726,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let toml_content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
-[commit-generation]
+[commit.generation]
 command = "llm"
 template = "inline template"
 template-file = "~/file.txt"
@@ -735,9 +738,11 @@ template-file = "~/file.txt"
         // The deserialization should succeed, but validation in load() would fail
         // Since we can't easily test load() without env vars, we verify the fields deserialize
         if let Ok(config) = config_result {
+            let generation = config.commit.as_ref().and_then(|c| c.generation.as_ref());
             // Verify validation logic: both fields should not be Some
-            let has_both = config.commit_generation.template.is_some()
-                && config.commit_generation.template_file.is_some();
+            let has_both = generation
+                .map(|g| g.template.is_some() && g.template_file.is_some())
+                .unwrap_or(false);
             assert!(
                 has_both,
                 "Config should have both template fields set for this test"
@@ -751,7 +756,7 @@ template-file = "~/file.txt"
         let toml_content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
-[commit-generation]
+[commit.generation]
 command = "llm"
 squash-template = "inline template"
 squash-template-file = "~/file.txt"
@@ -763,9 +768,11 @@ squash-template-file = "~/file.txt"
         // The deserialization should succeed, but validation in load() would fail
         // Since we can't easily test load() without env vars, we verify the fields deserialize
         if let Ok(config) = config_result {
+            let generation = config.commit.as_ref().and_then(|c| c.generation.as_ref());
             // Verify validation logic: both fields should not be Some
-            let has_both = config.commit_generation.squash_template.is_some()
-                && config.commit_generation.squash_template_file.is_some();
+            let has_both = generation
+                .map(|g| g.squash_template.is_some() && g.squash_template_file.is_some())
+                .unwrap_or(false);
             assert!(
                 has_both,
                 "Config should have both squash template fields set for this test"
@@ -776,8 +783,7 @@ squash-template-file = "~/file.txt"
     #[test]
     fn test_commit_generation_config_serialization() {
         let config = CommitGenerationConfig {
-            command: Some("llm".to_string()),
-            args: vec!["-m".to_string(), "model".to_string()],
+            command: Some("llm -m model".to_string()),
             template: Some("template content".to_string()),
             template_file: None,
             squash_template: None,
@@ -785,7 +791,7 @@ squash-template-file = "~/file.txt"
         };
 
         let toml = toml::to_string(&config).unwrap();
-        assert!(toml.contains("llm"));
+        assert!(toml.contains("llm -m model"));
         assert!(toml.contains("template"));
     }
 

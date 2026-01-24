@@ -9,11 +9,14 @@ use std::path::PathBuf;
 use color_print::cformat;
 use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 use worktrunk::git::Repository;
-use worktrunk::path::format_path_for_display;
+use worktrunk::path::{format_path_for_display, sanitize_for_filename};
 use worktrunk::styling::{
     eprintln, format_heading, format_with_gutter, info_message, println, success_message,
     warning_message,
 };
+
+use crate::cli::OutputFormat;
+use crate::commands::process::HookLog;
 use worktrunk::utils::get_now;
 
 use super::super::list::ci_status::{CachedCiStatus, CiBranchName};
@@ -157,6 +160,95 @@ pub(super) fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::R
 
     let rendered = crate::md_help::render_markdown_table(&table);
     write!(out, "{}", rendered.trim_end())?;
+
+    Ok(())
+}
+
+// ==================== Logs Get Command ====================
+
+/// Handle the logs get command
+///
+/// When `hook` is None, lists all log files.
+/// When `hook` is Some, returns the path to the specific log file for that hook.
+///
+/// # Hook spec format
+///
+/// - `source:hook-type:name` for hook commands (e.g., `user:post-start:server`)
+/// - `internal:op` for internal operations (e.g., `internal:remove`)
+pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+
+    match hook {
+        None => {
+            // No hook specified, show all log files (existing behavior)
+            let mut out = String::new();
+            render_log_files(&mut out, &repo)?;
+
+            // Display through pager (fall back to stderr if pager unavailable)
+            if show_help_in_pager(&out, true).is_err() {
+                eprintln!("{}", out);
+            }
+        }
+        Some(hook_spec) => {
+            // Get the branch name
+            let branch = match branch {
+                Some(b) => b,
+                None => repo.require_current_branch("get log for current branch")?,
+            };
+
+            let log_dir = repo.wt_logs_dir();
+
+            // Parse the hook spec using HookLog
+            let hook_log = HookLog::parse(&hook_spec).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+            // Check log directory exists
+            if !log_dir.exists() {
+                anyhow::bail!(
+                    "No log directory exists. Run a background hook first to create logs."
+                );
+            }
+
+            // Get the expected log path
+            let log_path = hook_log.path(&log_dir, &branch);
+
+            if log_path.exists() {
+                // Output just the path to stdout for easy piping
+                println!("{}", log_path.display());
+                return Ok(());
+            }
+
+            // No match found - show expected filename and available files
+            let expected_filename = hook_log.filename(&branch);
+            let safe_branch = sanitize_for_filename(&branch);
+            let mut available = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(&log_dir) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with(&format!("{}-", safe_branch)) && name.ends_with(".log") {
+                        available.push(name);
+                    }
+                }
+            }
+
+            if available.is_empty() {
+                anyhow::bail!(cformat!(
+                    "No log files for branch <bold>{}</>. Run a background hook first.",
+                    branch
+                ));
+            } else {
+                let available_list = available.join(", ");
+                let details = format!(
+                    "Expected: {}\nAvailable: {}",
+                    expected_filename, available_list
+                );
+                return Err(anyhow::anyhow!(details).context(cformat!(
+                    "No log file matches <bold>{}</> for branch <bold>{}</>",
+                    hook_log.to_spec(),
+                    branch
+                )));
+            }
+        }
+    }
 
     Ok(())
 }
@@ -498,9 +590,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
 // ==================== State Show Commands ====================
 
 /// Handle the state get command (shows all state)
-pub fn handle_state_show(format: crate::cli::OutputFormat) -> anyhow::Result<()> {
-    use crate::cli::OutputFormat;
-
+pub fn handle_state_show(format: OutputFormat) -> anyhow::Result<()> {
     let repo = Repository::current()?;
 
     match format {

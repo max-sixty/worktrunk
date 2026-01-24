@@ -563,9 +563,8 @@ fn test_config_show_full_command_not_found(mut repo: TestRepo, temp_home: TempDi
         &config_path,
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
-[commit-generation]
-command = "nonexistent-llm-command-12345"
-args = ["-m", "test-model"]
+[commit.generation]
+command = "nonexistent-llm-command-12345 -m test-model"
 "#,
     )
     .unwrap();
@@ -994,14 +993,8 @@ fn test_deprecated_variables_hint_clear_regenerates(repo: TestRepo, temp_home: T
     // Clear the hint
     {
         let mut cmd = repo.wt_command();
-        cmd.args([
-            "config",
-            "state",
-            "hints",
-            "clear",
-            "deprecated-project-config",
-        ])
-        .current_dir(repo.root_path());
+        cmd.args(["config", "state", "hints", "clear", "deprecated-config"])
+            .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         let output = cmd.output().unwrap();
         assert!(
@@ -1241,4 +1234,103 @@ fn test_config_show_claude_available_plugin_not_installed(mut repo: TestRepo, te
 
         assert_cmd_snapshot!(cmd);
     });
+}
+
+/// Test that deprecated [commit-generation] section shows warning and creates migration file
+#[rstest]
+fn test_deprecated_commit_generation_section_shows_warning(repo: TestRepo, temp_home: TempDir) {
+    // Write user config with deprecated [commit-generation] section
+    let config_path = repo.test_config_path();
+    fs::write(
+        config_path,
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[commit-generation]
+command = "llm"
+args = ["-m", "haiku"]
+"#,
+    )
+    .unwrap();
+
+    // Use `wt list` which loads config through UserConfig::load() and triggers deprecation check
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify migration file was created (config.toml -> config.toml.new)
+    let migration_file = config_path.with_extension("toml.new");
+    assert!(
+        migration_file.exists(),
+        "Migration file should be created at {:?}",
+        migration_file
+    );
+
+    // Verify migration file has correct transformations
+    let migrated_content = fs::read_to_string(&migration_file).unwrap();
+    assert!(
+        migrated_content.contains("[commit.generation]"),
+        "Migration should rename [commit-generation] to [commit.generation]"
+    );
+    assert!(
+        migrated_content.contains("command = \"llm -m haiku\""),
+        "Migration should merge args into command"
+    );
+    assert!(
+        !migrated_content.contains("[commit-generation]"),
+        "Migration should remove old section name"
+    );
+    assert!(
+        !migrated_content.contains("args ="),
+        "Migration should remove args field"
+    );
+}
+
+/// Test that deprecated project-level [projects."...".commit-generation] shows warning
+#[rstest]
+fn test_deprecated_commit_generation_project_level_shows_warning(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Write user config with deprecated project-level commit-generation
+    let config_path = repo.test_config_path();
+    fs::write(
+        config_path,
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[projects."github.com/example/repo".commit-generation]
+command = "llm -m gpt-4"
+"#,
+    )
+    .unwrap();
+
+    // Use `wt list` which loads config through UserConfig::load() and triggers deprecation check
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify migration file was created and has correct transformations
+    let migration_file = config_path.with_extension("toml.new");
+    assert!(
+        migration_file.exists(),
+        "Migration file should be created at {:?}",
+        migration_file
+    );
+
+    let migrated_content = fs::read_to_string(&migration_file).unwrap();
+    assert!(
+        migrated_content.contains("[projects.\"github.com/example/repo\".commit.generation]"),
+        "Migration should rename project-level section"
+    );
 }

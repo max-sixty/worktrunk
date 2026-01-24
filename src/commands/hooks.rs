@@ -10,7 +10,7 @@ use worktrunk::styling::{
 };
 
 use super::command_executor::{CommandContext, PreparedCommand, prepare_commands};
-use crate::commands::process::spawn_detached;
+use crate::commands::process::{HookLog, spawn_detached};
 use crate::output::execute_command_in_worktree;
 
 /// A prepared command with its source information.
@@ -183,8 +183,6 @@ pub fn spawn_hook_commands_background(
         eprintln!("{}", progress_message(message));
     }
 
-    let operation_prefix = hook_type.to_string();
-
     // Track index for unnamed commands to prevent log collisions
     let mut unnamed_index = 0usize;
 
@@ -201,16 +199,15 @@ pub fn spawn_hook_commands_background(
                 format!("cmd-{idx}")
             }
         };
-        // Include source in operation name to prevent log file collisions between
-        // user and project hooks with the same name
-        let operation = format!("{}-{}-{}", cmd.source, operation_prefix, name);
+        // Use HookLog for consistent log file naming
+        let hook_log = HookLog::hook(cmd.source, hook_type, &name);
 
         if let Err(err) = spawn_detached(
             ctx.repo,
             ctx.worktree_path,
             &cmd.prepared.expanded,
             ctx.branch_or_head(),
-            &operation,
+            &hook_log,
             Some(&cmd.prepared.context_json),
         ) {
             let err_msg = err.to_string();

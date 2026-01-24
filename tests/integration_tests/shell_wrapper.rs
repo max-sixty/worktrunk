@@ -2445,7 +2445,7 @@ def refresh_token(token: str) -> Optional[Dict]:
         let worktrunk_config = format!(
             r#"worktree-path = "../repo.{{{{ branch }}}}"
 
-[commit-generation]
+[commit.generation]
 command = "{}"
 "#,
             llm_path.display()

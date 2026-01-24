@@ -691,18 +691,50 @@ wt config state marker clear --all
 
 #[derive(Subcommand)]
 pub enum LogsAction {
-    /// List background operation log files
+    /// Get log file paths
     #[command(
-        after_long_help = r#"Lists log files from background operations like post-start commands and worktree removal.
+        after_long_help = r#"Lists log files, or gets the path to a specific log.
 
 ## Examples
 
-List log files:
+List all log files:
 ```console
 wt config state logs
+```
+
+Get path to a specific hook log:
+```console
+wt config state logs get --hook=user:post-start:server
+```
+
+Stream a hook's log output:
+```console
+tail -f "$(wt config state logs get --hook=user:post-start:server)"
+```
+
+Get log for background worktree removal:
+```console
+wt config state logs get --hook=internal:remove
+```
+
+Get log for a different branch:
+```console
+wt config state logs get --hook=user:post-start:server --branch=feature
 ```"#
     )]
-    Get,
+    Get {
+        /// Get path for a specific log file
+        ///
+        /// Format: source:hook-type:name (e.g., user:post-start:server) for
+        /// hook commands, or internal:op (e.g., internal:remove) for internal
+        /// operations.
+        #[arg(long)]
+        hook: Option<String>,
+
+        /// Target branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        branch: Option<String>,
+    },
 
     /// Clear background operation logs
     Clear,
