@@ -42,4 +42,7 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mUser config uses deprecated config sections: [projects."github.com/example/repo".commit-generation] → [projects."github.com/example/repo".commit.generation][39m
-[2m↳[22m [2mWrote migrated test-config.toml.new; to apply: [90mmv -- [TEST_CONFIG_NEW] [TEST_CONFIG][39m[22m
+[2m↳[22m [2mWrote migrated [1mtest-config.toml.new[22m. To preview:[22m
+[107m [0m [2m[0m[2m[34mgit[0m[2m diff [0m[2m[36m--no-index[0m[2m [TEST_CONFIG] [TEST_CONFIG_NEW]
+[2m↳[22m [2mTo apply:[22m
+[107m [0m [2m[0m[2m[34mmv[0m[2m [0m[2m[36m--[0m[2m [TEST_CONFIG_NEW] [TEST_CONFIG]
