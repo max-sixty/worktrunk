@@ -2357,6 +2357,8 @@ fn setup_snapshot_settings_for_paths_with_home(
         r"'(?:\x1b\[[0-9;]*m)*(\[[A-Z_]+\])(?:\x1b\[[0-9;]*m)*'",
         "$1",
     );
+    // Simple case: strip quotes around [PROJECT_ID] without ANSI codes
+    settings.add_filter(r"'\[PROJECT_ID\]'", "[PROJECT_ID]");
     // Also strip quotes around paths that include subdirectories (e.g., '_REPO_/.config/wt.toml')
     // On Windows, shell_escape quotes paths containing ':' so full paths get quoted.
     settings.add_filter(
