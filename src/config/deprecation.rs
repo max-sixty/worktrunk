@@ -507,7 +507,7 @@ pub fn check_and_migrate(
         eprintln!(
             "{}",
             warning_message(cformat!(
-                "{} has deprecated settings. Run <bright-black>wt config show</> for details.",
+                "{} has deprecated settings. To see details, run <bright-black>wt config show</>",
                 label
             ))
         );
@@ -737,7 +737,7 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
             out,
             "{}",
             hint_message(
-                "Run <bright-black>wt config show</> from main worktree to generate migration file",
+                "To generate migration file, run <bright-black>wt config show</> from main worktree",
             )
         );
     } else if info.user_deleted_migration {
