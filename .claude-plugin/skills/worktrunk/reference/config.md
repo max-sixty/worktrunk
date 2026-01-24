@@ -155,18 +155,24 @@ Pager behavior for `wt select` diff previews.
 
 ### User project-specific settings
 
-User config settings apply to all projects. [Project config](https://worktrunk.dev/config/#worktrunk-project-configuration) settings are shared with teammates. The `[projects]` table holds personal, project-specific settings like approved hook commands and worktree layout. Entries are keyed by project identifier (e.g., `github.com/user/repo`).
+For context:
+
+- [Project config](https://worktrunk.dev/config/#worktrunk-project-configuration) settings are shared with teammates.
+- User configs generally apply to all projects.
+- User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.
+
+Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
 #### Approved hook commands
 
-When a project hook runs for the first time, worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.
+When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.
 
 ```toml
 [projects."github.com/user/repo"]
 approved-commands = ["npm ci", "npm test"]
 ```
 
-Auto-managed. To reset, delete the entry or run `wt hook approve --clear`.
+To reset, delete the entry or run `wt hook approvals clear`.
 
 #### Setting overrides (Experimental)
 
