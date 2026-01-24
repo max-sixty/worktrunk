@@ -133,22 +133,27 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# # Example:[0m
   [2m# # pager = "delta --paging=never"[0m
   [2m#[0m
-  [2m# ### Per-project settings (Experimental)[0m
+  [2m# ### User project-specific settings[0m
   [2m#[0m
-  [2m# Per-project settings are keyed by project identifier (e.g., `github.com/user/repo`).[0m
-  [2m# These contain approved hook commands plus optional overrides of global settings.[0m
-  [2m# Setting overrides (worktree-path, list, commit, merge) are new; approved-commands is stable.[0m
+  [2m# User config settings apply to all projects. Project config (https://worktrunk.dev/config.md#worktrunk-project-configuration/) settings are shared with teammates. The `[projects]` table holds personal, project-specific settings like approved hook commands and worktree layout. Entries are keyed by project identifier (e.g., `github.com/user/repo`).[0m
+  [2m#[0m
+  [2m# #### Approved hook commands[0m
+  [2m#[0m
+  [2m# When a project hook runs for the first time, worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.[0m
   [2m#[0m
   [2m# [projects."github.com/user/repo"][0m
-  [2m# # Approved hook commands (auto-populated when approving on first run)[0m
   [2m# approved-commands = ["npm ci", "npm test"][0m
   [2m#[0m
-  [2m# # Optional overrides (omit to use global settings)[0m
+  [2m# Auto-managed. To reset, delete the entry or run `wt hook approve --clear`.[0m
+  [2m#[0m
+  [2m# #### Setting overrides (Experimental)[0m
+  [2m#[0m
+  [2m# Override global settings for a specific project. Useful when one repo needs a different worktree layout or merge behavior.[0m
+  [2m#[0m
+  [2m# [projects."github.com/user/repo"][0m
   [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
   [2m# list.full = true[0m
   [2m# merge.squash = false[0m
-  [2m#[0m
-  [2m# For project-specific hooks (post-create, post-start, pre-merge, etc.), use a project config at `<repo>/.config/wt.toml`. Run `wt config create --project` to create one, or see `wt hook` docs (https://worktrunk.dev/hook/).[0m
   [2m#[0m
   [2m# ### Custom prompt templates[0m
   [2m#[0m

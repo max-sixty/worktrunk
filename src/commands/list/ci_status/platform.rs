@@ -3,9 +3,31 @@
 //! Determines whether a repository uses GitHub or GitLab based on
 //! project config override or remote URL detection.
 
+use std::sync::OnceLock;
+
 use worktrunk::git::{GitRemoteUrl, Repository};
 
 use super::{CiBranchName, PrStatus, github, gitlab, tool_available};
+
+/// Cached CI tool availability.
+static CI_TOOLS: OnceLock<CiToolsAvailable> = OnceLock::new();
+
+/// Cached availability of CI CLI tools (`gh`, `glab`).
+///
+/// Probed once on first access via `--version` check.
+struct CiToolsAvailable {
+    gh: bool,
+    glab: bool,
+}
+
+impl CiToolsAvailable {
+    fn get() -> &'static Self {
+        CI_TOOLS.get_or_init(|| Self {
+            gh: tool_available("gh", &["--version"]),
+            glab: tool_available("glab", &["--version"]),
+        })
+    }
+}
 
 /// CI platform detected from project config override or remote URL.
 ///
@@ -20,11 +42,11 @@ pub enum CiPlatform {
 }
 
 impl CiPlatform {
-    /// Check if the CLI tool for this platform is available.
+    /// Check if the CLI tool for this platform is available (cached).
     fn is_tool_available(self) -> bool {
         match self {
-            Self::GitHub => tool_available("gh", &["--version"]),
-            Self::GitLab => tool_available("glab", &["--version"]),
+            Self::GitHub => CiToolsAvailable::get().gh,
+            Self::GitLab => CiToolsAvailable::get().glab,
         }
     }
 

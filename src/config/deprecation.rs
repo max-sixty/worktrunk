@@ -25,6 +25,7 @@ use regex::Regex;
 use shell_escape::unix::escape;
 
 use crate::config::WorktrunkConfig;
+use crate::path::format_path_for_display;
 use crate::styling::{eprintln, hint_message, warning_message};
 
 /// Tracks which config paths have already shown deprecation warnings this process.
@@ -516,23 +517,21 @@ pub fn check_and_migrate(
                     let _ = repo.mark_hint_shown(HINT_DEPRECATED_CONFIG);
                 }
 
-                // Show just the filename in the message, full paths in the command
+                // Show just the filename in the message, tilde paths when safe in the command
                 let new_filename = new_path
                     .file_name()
                     .map(|n| n.to_string_lossy())
                     .unwrap_or_default();
 
-                // Use forward slashes for cross-platform compatibility (works in Git Bash on Windows)
-                // Don't shell-escape since config paths rarely have special characters
-                let new_path_str = new_path.to_string_lossy().replace('\\', "/");
-                let path_str = path.to_string_lossy().replace('\\', "/");
+                let new_path_display = format_path_for_display(&new_path);
+                let path_display = format_path_for_display(path);
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
                         "Wrote migrated {}; to apply: <bright-black>mv -- {} {}</>",
                         new_filename,
-                        new_path_str,
-                        path_str
+                        new_path_display,
+                        path_display
                     ))
                 );
             }
