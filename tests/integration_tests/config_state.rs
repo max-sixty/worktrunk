@@ -2,6 +2,7 @@ use crate::common::{TEST_EPOCH, TestRepo, repo, wt_command};
 use insta::assert_snapshot;
 use rstest::rstest;
 use std::process::Command;
+use worktrunk::path::sanitize_for_filename;
 
 /// Settings for `wt config state get` snapshots (normalizes log paths)
 fn state_get_settings() -> insta::Settings {
@@ -1124,7 +1125,12 @@ fn test_state_logs_get_hook_returns_path(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt-logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    let log_file = log_dir.join("main-user-post-start-server.log");
+
+    // Compute sanitized filename (branch and hook name both get sanitized)
+    let safe_branch = sanitize_for_filename("main");
+    let safe_hook = sanitize_for_filename("server");
+    let log_filename = format!("{}-user-post-start-{}.log", safe_branch, safe_hook);
+    let log_file = log_dir.join(&log_filename);
     std::fs::write(&log_file, "server output here").unwrap();
 
     // Use explicit format: source:hook-type:name
@@ -1135,8 +1141,9 @@ fn test_state_logs_get_hook_returns_path(repo: TestRepo) {
     // The path should be printed to stdout for piping
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("main-user-post-start-server.log"),
-        "Expected log path in stdout: {}",
+        stdout.contains(&log_filename),
+        "Expected log path containing {} in stdout: {}",
+        log_filename,
         stdout
     );
 }
@@ -1147,7 +1154,12 @@ fn test_state_logs_get_hook_project_source(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt-logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    let log_file = log_dir.join("main-project-post-start-build.log");
+
+    // Compute sanitized filename (branch and hook name both get sanitized)
+    let safe_branch = sanitize_for_filename("main");
+    let safe_hook = sanitize_for_filename("build");
+    let log_filename = format!("{}-project-post-start-{}.log", safe_branch, safe_hook);
+    let log_file = log_dir.join(&log_filename);
     std::fs::write(&log_file, "build output here").unwrap();
 
     // Use explicit format: source:hook-type:name
@@ -1157,8 +1169,9 @@ fn test_state_logs_get_hook_project_source(repo: TestRepo) {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("main-project-post-start-build.log"),
-        "Expected log path in stdout: {}",
+        stdout.contains(&log_filename),
+        "Expected log path containing {} in stdout: {}",
+        log_filename,
         stdout
     );
 }
@@ -1169,7 +1182,11 @@ fn test_state_logs_get_hook_internal_op(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt-logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    let log_file = log_dir.join("main-remove.log");
+
+    // Internal operations only sanitize the branch name (not the operation name)
+    let safe_branch = sanitize_for_filename("main");
+    let log_filename = format!("{}-remove.log", safe_branch);
+    let log_file = log_dir.join(&log_filename);
     std::fs::write(&log_file, "remove output").unwrap();
 
     let output = wt_state_cmd(&repo, "logs", "get", &["--hook=internal:remove"])
@@ -1178,8 +1195,9 @@ fn test_state_logs_get_hook_internal_op(repo: TestRepo) {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("main-remove.log"),
-        "Expected log path in stdout: {}",
+        stdout.contains(&log_filename),
+        "Expected log path containing {} in stdout: {}",
+        log_filename,
         stdout
     );
 }
@@ -1190,11 +1208,12 @@ fn test_state_logs_get_hook_not_found(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt-logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(
-        log_dir.join("main-user-post-start-other.log"),
-        "other output",
-    )
-    .unwrap();
+
+    // Create a different log file (not the one we're looking for)
+    let safe_branch = sanitize_for_filename("main");
+    let safe_hook = sanitize_for_filename("other");
+    let other_log = format!("{}-user-post-start-{}.log", safe_branch, safe_hook);
+    std::fs::write(log_dir.join(&other_log), "other output").unwrap();
 
     // Use explicit format: source:hook-type:name
     let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
@@ -1208,9 +1227,10 @@ fn test_state_logs_get_hook_not_found(repo: TestRepo) {
         "Expected spec echo in error: {}",
         stderr
     );
+    // The expected filename will contain sanitized names with hashes
     assert!(
-        stderr.contains("Expected: main-user-post-start-server.log"),
-        "Expected filename in error: {}",
+        stderr.contains("Expected:") && stderr.contains("user-post-start"),
+        "Expected filename pattern in error: {}",
         stderr
     );
     assert!(
@@ -1242,11 +1262,12 @@ fn test_state_logs_get_hook_no_logs_for_branch(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt-logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(
-        log_dir.join("other-branch-user-post-start-server.log"),
-        "other output",
-    )
-    .unwrap();
+
+    // Create log for a different branch
+    let safe_branch = sanitize_for_filename("other-branch");
+    let safe_hook = sanitize_for_filename("server");
+    let other_log = format!("{}-user-post-start-{}.log", safe_branch, safe_hook);
+    std::fs::write(log_dir.join(&other_log), "other output").unwrap();
 
     // Use explicit format: source:hook-type:name
     let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
@@ -1272,11 +1293,12 @@ fn test_state_logs_get_hook_with_branch_flag(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt-logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(
-        log_dir.join("feature-user-post-start-dev.log"),
-        "dev output",
-    )
-    .unwrap();
+
+    // Compute sanitized filename for feature branch
+    let safe_branch = sanitize_for_filename("feature");
+    let safe_hook = sanitize_for_filename("dev");
+    let log_filename = format!("{}-user-post-start-{}.log", safe_branch, safe_hook);
+    std::fs::write(log_dir.join(&log_filename), "dev output").unwrap();
 
     // Use explicit format: source:hook-type:name
     let output = wt_state_cmd(
@@ -1290,8 +1312,9 @@ fn test_state_logs_get_hook_with_branch_flag(repo: TestRepo) {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("feature-user-post-start-dev.log"),
-        "Expected log path in stdout: {}",
+        stdout.contains(&log_filename),
+        "Expected log path containing {} in stdout: {}",
+        log_filename,
         stdout
     );
 }
