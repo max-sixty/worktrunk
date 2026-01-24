@@ -82,6 +82,43 @@ impl super::RefContext for MrInfo {
     fn url(&self) -> &str {
         &self.url
     }
+    fn source_ref(&self) -> String {
+        if self.is_cross_project {
+            // Try to extract owner from source project URL
+            let owner = self
+                .source_project_http_url
+                .as_ref()
+                .or(self.source_project_ssh_url.as_ref())
+                .and_then(|url| extract_owner_from_url(url));
+            match owner {
+                Some(owner) => format!("{}:{}", owner, self.source_branch),
+                None => self.source_branch.clone(),
+            }
+        } else {
+            self.source_branch.clone()
+        }
+    }
+}
+
+/// Extract owner from a git URL.
+///
+/// Handles both SSH (`git@gitlab.com:owner/repo.git`) and HTTPS
+/// (`https://gitlab.com/owner/repo.git`) formats.
+fn extract_owner_from_url(url: &str) -> Option<String> {
+    // SSH format: git@gitlab.com:owner/repo.git
+    if let Some(path) = url.strip_prefix("git@").and_then(|s| s.split(':').nth(1)) {
+        return path.split('/').next().map(|s| s.to_string());
+    }
+    // HTTPS format: https://gitlab.com/owner/repo.git
+    // After stripping prefix: "gitlab.com/owner/repo.git"
+    // nth(1) skips the host and returns the owner
+    if let Some(path) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+    {
+        return path.split('/').nth(1).map(|s| s.to_string());
+    }
+    None
 }
 
 /// Raw JSON response from `glab api projects/:id/merge_requests/<number>`.
@@ -577,5 +614,102 @@ mod tests {
         // When no target URLs are available, returns None
         let url = target_remote_url(&mr);
         assert_eq!(url, None);
+    }
+
+    #[test]
+    fn test_extract_owner_from_url_ssh() {
+        assert_eq!(
+            extract_owner_from_url("git@gitlab.com:owner/repo.git"),
+            Some("owner".to_string())
+        );
+        assert_eq!(
+            extract_owner_from_url("git@gitlab.example.com:org/repo.git"),
+            Some("org".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_owner_from_url_https() {
+        assert_eq!(
+            extract_owner_from_url("https://gitlab.com/owner/repo.git"),
+            Some("owner".to_string())
+        );
+        assert_eq!(
+            extract_owner_from_url("http://gitlab.com/owner/repo.git"),
+            Some("owner".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_owner_from_url_invalid() {
+        assert_eq!(extract_owner_from_url("invalid-url"), None);
+        assert_eq!(extract_owner_from_url(""), None);
+    }
+
+    #[test]
+    fn test_source_ref_same_project() {
+        let mr = MrInfo {
+            number: 101,
+            title: "Fix bug".to_string(),
+            author: "alice".to_string(),
+            state: "opened".to_string(),
+            draft: false,
+            source_branch: "feature-auth".to_string(),
+            source_project_id: 123,
+            target_project_id: 123,
+            source_project_ssh_url: None,
+            source_project_http_url: None,
+            target_project_ssh_url: None,
+            target_project_http_url: None,
+            is_cross_project: false,
+            url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
+        };
+        use crate::git::RefContext;
+        assert_eq!(mr.source_ref(), "feature-auth");
+    }
+
+    #[test]
+    fn test_source_ref_cross_project() {
+        let mr = MrInfo {
+            number: 101,
+            title: "Fix bug".to_string(),
+            author: "contributor".to_string(),
+            state: "opened".to_string(),
+            draft: false,
+            source_branch: "feature-fix".to_string(),
+            source_project_id: 456,
+            target_project_id: 123,
+            source_project_ssh_url: Some("git@gitlab.com:contributor/repo.git".to_string()),
+            source_project_http_url: Some("https://gitlab.com/contributor/repo.git".to_string()),
+            target_project_ssh_url: None,
+            target_project_http_url: None,
+            is_cross_project: true,
+            url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
+        };
+        use crate::git::RefContext;
+        assert_eq!(mr.source_ref(), "contributor:feature-fix");
+    }
+
+    #[test]
+    fn test_source_ref_cross_project_no_url() {
+        // When URL parsing fails, falls back to just the branch name
+        let mr = MrInfo {
+            number: 101,
+            title: "Fix bug".to_string(),
+            author: "contributor".to_string(),
+            state: "opened".to_string(),
+            draft: false,
+            source_branch: "feature-fix".to_string(),
+            source_project_id: 456,
+            target_project_id: 123,
+            source_project_ssh_url: None,
+            source_project_http_url: None,
+            target_project_ssh_url: None,
+            target_project_http_url: None,
+            is_cross_project: true,
+            url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
+        };
+        use crate::git::RefContext;
+        assert_eq!(mr.source_ref(), "feature-fix");
     }
 }

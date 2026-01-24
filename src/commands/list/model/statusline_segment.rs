@@ -3,6 +3,9 @@
 //! [`StatuslineSegment`] provides a way to format statusline output with
 //! priority-based truncation when space is limited.
 
+use ansi_str::AnsiStr;
+use unicode_width::UnicodeWidthStr;
+
 use crate::commands::list::columns::ColumnKind;
 
 /// A segment of statusline output with priority for smart truncation.
@@ -46,8 +49,6 @@ impl StatuslineSegment {
 
     /// Get the visible width of this segment (strips ANSI codes).
     pub fn width(&self) -> usize {
-        use ansi_str::AnsiStr;
-        use unicode_width::UnicodeWidthStr;
         self.content.ansi_strip().width()
     }
 

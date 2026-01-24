@@ -2,6 +2,24 @@ use crate::common::{TEST_EPOCH, TestRepo, repo, wt_command};
 use insta::assert_snapshot;
 use rstest::rstest;
 use std::process::Command;
+use worktrunk::path::sanitize_for_filename;
+
+/// Generate a hook log filename matching the format from `commands::process::HookLog`.
+///
+/// Format: `{branch}-{source}-{hook_type}-{name}.log` where branch and name are sanitized.
+fn hook_log_filename(branch: &str, source: &str, hook_type: &str, name: &str) -> String {
+    let safe_branch = sanitize_for_filename(branch);
+    let safe_name = sanitize_for_filename(name);
+    format!("{safe_branch}-{source}-{hook_type}-{safe_name}.log")
+}
+
+/// Generate an internal operation log filename.
+///
+/// Format: `{branch}-{op}.log` where branch is sanitized.
+fn internal_log_filename(branch: &str, op: &str) -> String {
+    let safe_branch = sanitize_for_filename(branch);
+    format!("{safe_branch}-{op}.log")
+}
 
 /// Settings for `wt config state get` snapshots (normalizes log paths)
 fn state_get_settings() -> insta::Settings {
@@ -1112,4 +1130,227 @@ fn test_state_hints_clear_specific_not_set(repo: TestRepo) {
         .unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m Hint [1mnonexistent[22m was not set");
+}
+
+// ============================================================================
+// logs get --hook
+// ============================================================================
+
+#[rstest]
+fn test_state_logs_get_hook_returns_path(repo: TestRepo) {
+    // Create wt-logs directory with a post-start log file
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let filename = hook_log_filename("main", "user", "post-start", "server");
+    let log_file = log_dir.join(&filename);
+    std::fs::write(&log_file, "server output here").unwrap();
+
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    // The path should be printed to stdout for piping
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&filename),
+        "Expected log path in stdout: {}",
+        stdout
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_project_source(repo: TestRepo) {
+    // Test that project source logs are found with explicit format
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let filename = hook_log_filename("main", "project", "post-start", "build");
+    let log_file = log_dir.join(&filename);
+    std::fs::write(&log_file, "build output here").unwrap();
+
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=project:post-start:build"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&filename),
+        "Expected log path in stdout: {}",
+        stdout
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_internal_op(repo: TestRepo) {
+    // Test finding an internal operation log (e.g., "internal:remove")
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let filename = internal_log_filename("main", "remove");
+    let log_file = log_dir.join(&filename);
+    std::fs::write(&log_file, "remove output").unwrap();
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=internal:remove"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&filename),
+        "Expected log path in stdout: {}",
+        stdout
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_not_found(repo: TestRepo) {
+    // Create wt-logs directory with some log files but not the requested one
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let other_filename = hook_log_filename("main", "user", "post-start", "other");
+    std::fs::write(log_dir.join(&other_filename), "other output").unwrap();
+
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Check key parts separately (ANSI bold codes may appear around values)
+    assert!(
+        stderr.contains("No log file matches") && stderr.contains("user:post-start:server"),
+        "Expected spec echo in error: {}",
+        stderr
+    );
+    // The expected filename now includes hash suffixes
+    let expected_filename = hook_log_filename("main", "user", "post-start", "server");
+    assert!(
+        stderr.contains(&format!("Expected: {expected_filename}")),
+        "Expected filename in error: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Available:"),
+        "Expected list of available logs: {}",
+        stderr
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_no_logs_dir(repo: TestRepo) {
+    // No log directory exists
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No log directory exists"),
+        "Expected 'No log directory exists' error: {}",
+        stderr
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_no_logs_for_branch(repo: TestRepo) {
+    // Create wt-logs directory with logs for different branch
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let other_branch_filename = hook_log_filename("other-branch", "user", "post-start", "server");
+    std::fs::write(log_dir.join(&other_branch_filename), "other output").unwrap();
+
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No log files for branch"),
+        "Expected 'No log files for branch' error: {}",
+        stderr
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_with_branch_flag(repo: TestRepo) {
+    // Create log file for a different branch
+    repo.git_command()
+        .args(["branch", "feature"])
+        .status()
+        .unwrap();
+
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let filename = hook_log_filename("feature", "user", "post-start", "dev");
+    std::fs::write(log_dir.join(&filename), "dev output").unwrap();
+
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(
+        &repo,
+        "logs",
+        "get",
+        &["--hook=user:post-start:dev", "--branch=feature"],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&filename),
+        "Expected log path in stdout: {}",
+        stdout
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_invalid_format(repo: TestRepo) {
+    // Test invalid hook spec format (too many colons)
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=a:b:c:d"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Invalid log spec"),
+        "Expected 'Invalid log spec' error: {}",
+        stderr
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_invalid_source(repo: TestRepo) {
+    // Test invalid source
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=invalid:post-start:server"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Unknown source"),
+        "Expected 'Unknown source' error: {}",
+        stderr
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_invalid_hook_type(repo: TestRepo) {
+    // Test invalid hook type
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:invalid:server"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Unknown hook type"),
+        "Expected 'Unknown hook type' error: {}",
+        stderr
+    );
 }

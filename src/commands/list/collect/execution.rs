@@ -235,19 +235,28 @@ pub fn work_items_for_worktree(
 /// branch. Branches have fewer tasks than worktrees (no working tree operations).
 ///
 /// The `repo` parameter is cloned into each TaskContext, sharing its cache via Arc.
+/// The `is_remote` flag indicates whether this is a remote-tracking branch (e.g., "origin/feature")
+/// vs a local branch. This is known definitively at collection time and avoids guessing later.
 pub fn work_items_for_branch(
     repo: &Repository,
     branch_name: &str,
     commit_sha: &str,
     item_idx: usize,
+    is_remote: bool,
     options: &CollectOptions,
     expected_results: &Arc<ExpectedResults>,
 ) -> Vec<WorkItem> {
     let skip = &options.skip_tasks;
 
+    let branch_ref = if is_remote {
+        BranchRef::remote_branch(branch_name, commit_sha)
+    } else {
+        BranchRef::local_branch(branch_name, commit_sha)
+    };
+
     let ctx = TaskContext {
         repo: repo.clone(),
-        branch_ref: BranchRef::branch_only(branch_name, commit_sha),
+        branch_ref,
         item_idx,
         item_url: None, // Branches without worktrees don't have URLs
     };

@@ -206,7 +206,9 @@ fn main() {
                 eprintln!("No trace entries found in input.");
                 eprintln!();
                 eprintln!("Trace lines should look like:");
-                eprintln!("  [wt-trace] ts=1234567890 tid=3 cmd=\"git status\" dur=12.3ms ok=true");
+                eprintln!(
+                    "  [wt-trace] ts=1234567890 tid=3 cmd=\"git status\" dur_us=12300 ok=true"
+                );
                 eprintln!("  [wt-trace] ts=1234567890 tid=3 event=\"Showed skeleton\"");
                 eprintln!();
                 eprintln!("To capture traces, run with RUST_LOG=debug:");

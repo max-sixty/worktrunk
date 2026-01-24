@@ -12,13 +12,16 @@ pub use create::handle_config_create;
 pub use hints::{handle_hints_clear, handle_hints_get};
 pub use show::handle_config_show;
 pub use state::{
-    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
-    handle_state_show,
+    handle_logs_get, handle_state_clear, handle_state_clear_all, handle_state_get,
+    handle_state_set, handle_state_show,
 };
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::path::PathBuf;
+
+    use worktrunk::config::{ProjectConfig, UserConfig};
 
     use super::create::comment_out_config;
     use super::show::{render_ci_tool_status, warn_unknown_keys};
@@ -118,27 +121,68 @@ mod tests {
 
     #[test]
     fn test_warn_unknown_keys_empty() {
-        let mut out = String::new();
-        warn_unknown_keys(&mut out, &[]).unwrap();
+        let out = warn_unknown_keys::<UserConfig>(&HashMap::new());
         assert!(out.is_empty());
     }
 
     #[test]
     fn test_warn_unknown_keys_single() {
-        let mut out = String::new();
-        warn_unknown_keys(&mut out, &["unknown-key".to_string()]).unwrap();
+        let mut unknown = HashMap::new();
+        unknown.insert(
+            "unknown-key".to_string(),
+            toml::Value::String("value".to_string()),
+        );
+        let out = warn_unknown_keys::<UserConfig>(&unknown);
         assert!(out.contains("unknown-key"));
-        assert!(out.contains("Unknown key"));
+        assert!(out.contains("Unknown"));
     }
 
     #[test]
     fn test_warn_unknown_keys_multiple() {
-        let mut out = String::new();
-        warn_unknown_keys(&mut out, &["key1".to_string(), "key2".to_string()]).unwrap();
+        let mut unknown = HashMap::new();
+        unknown.insert(
+            "key1".to_string(),
+            toml::Value::String("value1".to_string()),
+        );
+        unknown.insert(
+            "key2".to_string(),
+            toml::Value::String("value2".to_string()),
+        );
+        let out = warn_unknown_keys::<UserConfig>(&unknown);
         assert!(out.contains("key1"));
         assert!(out.contains("key2"));
-        // Should have two separate warning lines
-        assert_eq!(out.matches("Unknown key").count(), 2);
+    }
+
+    #[test]
+    fn test_warn_unknown_keys_suggests_other_config() {
+        // Test: commit-generation in project config should suggest user config
+        let mut unknown = HashMap::new();
+        // Build a commit-generation table value
+        let mut inner = toml::map::Map::new();
+        inner.insert(
+            "command".to_string(),
+            toml::Value::String("claude".to_string()),
+        );
+        unknown.insert("commit-generation".to_string(), toml::Value::Table(inner));
+        let out = warn_unknown_keys::<ProjectConfig>(&unknown);
+        assert!(
+            out.contains("user config"),
+            "Should suggest user config for commit-generation in project config: {out}"
+        );
+
+        // Test: ci in user config should suggest project config
+        let mut unknown = HashMap::new();
+        let mut inner = toml::map::Map::new();
+        inner.insert(
+            "platform".to_string(),
+            toml::Value::String("github".to_string()),
+        );
+        unknown.insert("ci".to_string(), toml::Value::Table(inner));
+        let out = warn_unknown_keys::<UserConfig>(&unknown);
+        assert!(
+            out.contains("project config"),
+            "Should suggest project config for ci in user config: {out}"
+        );
     }
 
     // ==================== render_ci_tool_status tests ====================

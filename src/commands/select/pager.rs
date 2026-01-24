@@ -2,6 +2,7 @@
 //!
 //! Handles detection and use of diff pagers (delta, bat, etc.) for preview windows.
 
+use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -35,7 +36,7 @@ pub(super) fn get_diff_pager() -> Option<&'static String> {
             // Check user config first for explicit pager override
             // When set, use exactly as specified (no auto-detection)
             if let Ok(config) = UserConfig::load()
-                && let Some(select_config) = config.select
+                && let Some(select_config) = config.overrides.select
                 && let Some(pager) = select_config.pager
                 && !pager.trim().is_empty()
             {
@@ -80,7 +81,7 @@ pub(super) fn pager_needs_paging_disabled(pager_cmd: &str) -> bool {
 pub(super) fn has_explicit_pager_config() -> bool {
     UserConfig::load()
         .ok()
-        .and_then(|config| config.select)
+        .and_then(|config| config.overrides.select)
         .and_then(|select| select.pager)
         .is_some_and(|p| !p.trim().is_empty())
 }
@@ -136,7 +137,6 @@ pub(super) fn run_git_diff_with_pager(git_args: &[&str], pager_cmd: &str) -> Opt
     // Read output in a thread to avoid blocking
     let stdout = child.stdout.take()?;
     let reader_thread = std::thread::spawn(move || {
-        use std::io::Read;
         let mut stdout = stdout;
         let mut output = Vec::new();
         let _ = stdout.read_to_end(&mut output);

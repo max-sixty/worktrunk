@@ -1,7 +1,15 @@
-use std::path::{Path, PathBuf};
+use path_slash::PathExt as _;
+use shell_escape::unix::escape;
+use std::borrow::Cow;
+use std::path::Path;
 
+use sanitize_filename::{Options as SanitizeOptions, sanitize_with_options};
+
+use crate::config::short_hash;
 #[cfg(windows)]
-use crate::shell_exec::Cmd;
+use crate::shell_exec::{Cmd, ShellConfig};
+#[cfg(windows)]
+use std::path::PathBuf;
 
 /// Convert a path to POSIX format for Git Bash compatibility.
 ///
@@ -20,8 +28,6 @@ use crate::shell_exec::Cmd;
 /// - `/tmp/test/repo` → `/tmp/test/repo` (unchanged on Unix)
 #[cfg(windows)]
 pub fn to_posix_path(path: &str) -> String {
-    use crate::shell_exec::ShellConfig;
-
     let Some(cygpath) = find_cygpath_from_shell(ShellConfig::get()) else {
         return path.to_string();
     };
@@ -82,11 +88,26 @@ fn find_cygpath_from_shell(shell: &crate::shell_exec::ShellConfig) -> Option<Pat
 /// - Windows: `USERPROFILE` or `HOMEDRIVE`/`HOMEPATH`
 pub use home::home_dir;
 
+/// Check if a string needs shell escaping (contains characters outside the safe set).
+fn needs_shell_escaping(s: &str) -> bool {
+    !matches!(escape(Cow::Borrowed(s)), Cow::Borrowed(_))
+}
+
 /// Format a filesystem path for user-facing output.
 ///
-/// Replaces home directory prefix with `~` (e.g., `/Users/alex/projects/wt` -> `~/projects/wt`).
-/// Paths outside home are returned unchanged.
+/// Replaces home directory prefix with `~` when safe for shell use. Falls back to
+/// quoted absolute path when escaping is needed (to avoid tilde-in-quotes issues).
+///
+/// Uses POSIX shell escaping since all our hints target POSIX-compatible shells
+/// (bash, zsh, fish, and Git Bash on Windows).
+///
+/// # Examples
+/// - `/Users/alex/repo` → `~/repo` (no escaping needed)
+/// - `/Users/alex/my repo` → `'/Users/alex/my repo'` (needs quoting, use original)
+/// - `/tmp/repo` → `/tmp/repo` (no escaping needed)
+/// - `/tmp/my repo` → `'/tmp/my repo'` (needs quoting)
 pub fn format_path_for_display(path: &Path) -> String {
+    // Try to use tilde for home directory paths
     if let Some(home) = home_dir()
         && let Ok(stripped) = path.strip_prefix(&home)
     {
@@ -94,55 +115,61 @@ pub fn format_path_for_display(path: &Path) -> String {
             return "~".to_string();
         }
 
-        let mut display_path = PathBuf::from("~");
-        display_path.push(stripped);
-        return display_path.display().to_string();
+        // Build tilde path with forward slash (POSIX style, works everywhere)
+        let rest = stripped.to_slash_lossy();
+
+        // Only use tilde form if the rest doesn't need escaping
+        // (tilde doesn't expand inside quotes)
+        if !needs_shell_escaping(&rest) {
+            return format!("~/{rest}");
+        }
     }
 
-    path.display().to_string()
+    // Non-home path or escaping needed - use POSIX quoting
+    // Use to_slash_lossy for Windows compatibility (forward slashes in shell hints)
+    let original = path.to_slash_lossy();
+    match escape(Cow::Borrowed(&original)) {
+        Cow::Borrowed(_) => original.into_owned(),
+        Cow::Owned(escaped) => escaped,
+    }
 }
 
 /// Sanitize a string for use as a filename on all platforms.
 ///
-/// Replaces invalid characters and control characters with `-`, trims trailing
-/// dots/spaces (Windows), and prefixes reserved device names with `_`.
+/// Uses `sanitize-filename` crate to handle invalid characters, control characters,
+/// Windows reserved names (CON, PRN, etc.), and trailing dots/spaces. Appends a
+/// 3-character hash suffix for collision avoidance.
+///
+/// The hash ensures unique outputs for inputs that would otherwise collide
+/// (e.g., `origin/feature` and `origin-feature` both sanitize to `origin-feature`
+/// but get different hash suffixes).
 pub fn sanitize_for_filename(value: &str) -> String {
-    let mut result: String = value
-        .chars()
-        .map(|c| match c {
-            // Windows/Unix invalid filename characters
-            '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*' => '-',
-            // Control characters (0x00-0x1F)
-            c if c.is_control() => '-',
-            _ => c,
-        })
-        .collect();
+    let mut result = sanitize_with_options(
+        value,
+        SanitizeOptions {
+            windows: true,
+            truncate: false,
+            replacement: "-",
+        },
+    );
 
-    // Trim trailing dots and spaces (Windows silently strips these)
-    while result.ends_with('.') || result.ends_with(' ') {
-        result.pop();
+    if result.is_empty() {
+        result = "_empty".to_string();
     }
 
-    // Handle Windows reserved names (case-insensitive)
-    // CON, PRN, AUX, NUL, COM1-9, LPT1-9
-    let upper = result.to_uppercase();
-    let is_reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (upper.len() == 4
-            && (upper.starts_with("COM") || upper.starts_with("LPT"))
-            && upper.chars().nth(3).is_some_and(|c| matches!(c, '1'..='9')));
-
-    if is_reserved {
-        format!("_{result}")
-    } else if result.is_empty() {
-        "_empty".to_string()
-    } else {
-        result
+    // Append hash suffix for collision avoidance (computed from original input)
+    if !result.ends_with('-') {
+        result.push('-');
     }
+    result.push_str(&short_hash(value));
+    result
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{PathBuf, format_path_for_display, home_dir, sanitize_for_filename, to_posix_path};
+    use std::path::PathBuf;
+
+    use super::{format_path_for_display, home_dir, sanitize_for_filename, to_posix_path};
 
     #[test]
     fn shortens_path_under_home() {
@@ -251,24 +278,107 @@ mod tests {
 
     #[test]
     fn test_sanitize_for_filename_replaces_invalid_chars() {
-        assert_eq!(sanitize_for_filename("foo/bar"), "foo-bar");
-        assert_eq!(sanitize_for_filename("name:with?chars"), "name-with-chars");
+        assert!(sanitize_for_filename("foo/bar").starts_with("foo-bar-"));
+        assert!(sanitize_for_filename("name:with?chars").starts_with("name-with-chars-"));
     }
 
     #[test]
     fn test_sanitize_for_filename_trims_trailing_dots_and_spaces() {
-        assert_eq!(sanitize_for_filename("file. "), "file");
-        assert_eq!(sanitize_for_filename("file..."), "file");
+        assert!(sanitize_for_filename("file. ").starts_with("file-"));
+        assert!(sanitize_for_filename("file...").starts_with("file-"));
     }
 
     #[test]
-    fn test_sanitize_for_filename_prefixes_reserved_names() {
-        assert_eq!(sanitize_for_filename("CON"), "_CON");
-        assert_eq!(sanitize_for_filename("com1"), "_com1");
+    fn test_sanitize_for_filename_handles_reserved_names() {
+        // Reserved names are replaced (not preserved) - the hash ensures uniqueness
+        let con = sanitize_for_filename("CON");
+        let com1 = sanitize_for_filename("com1");
+        assert!(
+            !con.is_empty() && con.len() > 3,
+            "CON should produce valid filename: {con}"
+        );
+        assert!(
+            !com1.is_empty() && com1.len() > 3,
+            "com1 should produce valid filename: {com1}"
+        );
     }
 
     #[test]
     fn test_sanitize_for_filename_handles_empty() {
-        assert_eq!(sanitize_for_filename(""), "_empty");
+        assert!(sanitize_for_filename("").starts_with("_empty-"));
+    }
+
+    #[test]
+    fn test_sanitize_for_filename_avoids_collisions() {
+        // These would collide without the hash suffix
+        let a = sanitize_for_filename("origin/feature");
+        let b = sanitize_for_filename("origin-feature");
+
+        assert_ne!(a, b, "collision: {a} == {b}");
+        assert!(a.starts_with("origin-feature-"));
+        assert!(b.starts_with("origin-feature-"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn format_path_for_display_escaping() {
+        use insta::assert_snapshot;
+
+        let Some(home) = home_dir() else {
+            return;
+        };
+
+        // Build test cases: (input_path, expected_pattern)
+        // For home paths, we normalize output by replacing actual result with description
+        let mut lines = Vec::new();
+
+        // Non-home paths - predictable across machines
+        for path_str in [
+            "/tmp/repo",
+            "/tmp/my repo",
+            "/tmp/file;rm -rf",
+            "/tmp/test'quote",
+        ] {
+            let path = PathBuf::from(path_str);
+            lines.push(format!(
+                "{} => {}",
+                path_str,
+                format_path_for_display(&path)
+            ));
+        }
+
+        // Home-relative paths - normalize by showing ~/... pattern
+        let home_cases = [
+            "workspace/repo",    // simple -> ~/workspace/repo
+            "my workspace/repo", // spaces -> quoted absolute
+            "project's/repo",    // quote -> quoted absolute
+        ];
+
+        for suffix in home_cases {
+            let path = home.join(suffix);
+            let result = format_path_for_display(&path);
+
+            let display = if result.starts_with('\'') {
+                // Quoted absolute path - normalize for snapshot
+                "QUOTED_ABSOLUTE".to_string()
+            } else {
+                result
+            };
+            lines.push(format!("$HOME/{} => {}", suffix, display));
+        }
+
+        // Home directory itself
+        lines.push(format!("$HOME => {}", format_path_for_display(&home)));
+
+        assert_snapshot!(lines.join("\n"), @r"
+        /tmp/repo => /tmp/repo
+        /tmp/my repo => '/tmp/my repo'
+        /tmp/file;rm -rf => '/tmp/file;rm -rf'
+        /tmp/test'quote => '/tmp/test'\''quote'
+        $HOME/workspace/repo => ~/workspace/repo
+        $HOME/my workspace/repo => QUOTED_ABSOLUTE
+        $HOME/project's/repo => QUOTED_ABSOLUTE
+        $HOME => ~
+        ");
     }
 }

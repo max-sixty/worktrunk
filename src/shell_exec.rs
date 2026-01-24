@@ -8,11 +8,13 @@
 //! On Windows, Git for Windows must be installed — this is nearly universal among
 //! Windows developers since git itself is required.
 
+use std::io::{ErrorKind, Read, Write};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Instant;
 
+use crate::git::{GitError, WorktrunkError};
 use crate::sync::Semaphore;
 
 /// Semaphore to limit concurrent command execution.
@@ -253,9 +255,6 @@ fn run_with_timeout_impl(
     cmd: &mut Command,
     timeout: std::time::Duration,
 ) -> std::io::Result<std::process::Output> {
-    use std::io::{ErrorKind, Read};
-    use std::process::Stdio;
-
     // Spawn process with piped stdout/stderr
     let mut child = cmd
         .stdin(Stdio::null())
@@ -523,9 +522,6 @@ impl Cmd {
     /// Panics if called on a shell-wrapped command (created via `Cmd::shell()`).
     /// Shell commands must use `.stream()` because they need TTY preservation.
     pub fn run(self) -> std::io::Result<std::process::Output> {
-        use std::io::Write;
-        use std::process::Stdio;
-
         assert!(
             !self.shell_wrap,
             "Cmd::shell() commands must use .stream(), not .run()"
@@ -668,8 +664,6 @@ impl Cmd {
     ///
     /// Returns error if command exits with non-zero status.
     pub fn stream(self) -> anyhow::Result<()> {
-        use crate::git::{GitError, WorktrunkError};
-        use std::io::Write;
         #[cfg(unix)]
         use {
             signal_hook::consts::{SIGINT, SIGTERM},

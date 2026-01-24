@@ -8,10 +8,13 @@
 //! - `step_copy_ignored` - Copy gitignored files matching .worktreeinclude
 //! - `handle_promote` - Put a branch into the main worktree
 
+use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
+use ignore::gitignore::GitignoreBuilder;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
@@ -20,10 +23,12 @@ use worktrunk::styling::{
     warning_message,
 };
 
-use super::commit::{CommitGenerator, CommitOptions};
+use super::command_approval::approve_hooks;
+use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, run_hook_with_filter};
 use super::repository_ext::RepositoryCliExt;
+use worktrunk::shell_exec::Cmd;
 
 /// Handle `wt step commit` command
 ///
@@ -31,11 +36,9 @@ use super::repository_ext::RepositoryCliExt;
 pub fn step_commit(
     yes: bool,
     no_verify: bool,
-    stage: Option<super::commit::StageMode>,
+    stage: Option<StageMode>,
     show_prompt: bool,
 ) -> anyhow::Result<()> {
-    use super::command_approval::approve_hooks;
-
     // Handle --show-prompt early: just build and output the prompt
     if show_prompt {
         let repo = worktrunk::git::Repository::current()?;
@@ -77,7 +80,7 @@ pub fn step_commit(
     options.stage_mode = stage_mode;
     options.show_no_squash_note = false;
     // Only warn about untracked if we're staging all
-    options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
+    options.warn_about_untracked = stage_mode == StageMode::All;
 
     options.commit()
 }
@@ -104,10 +107,8 @@ pub fn handle_squash(
     target: Option<&str>,
     yes: bool,
     skip_pre_commit: bool,
-    stage: Option<super::commit::StageMode>,
+    stage: Option<StageMode>,
 ) -> anyhow::Result<SquashResult> {
-    use super::commit::StageMode;
-
     let env = CommandEnv::for_action("squash")?;
     let repo = &env.repo;
     // Squash requires being on a branch (can't squash in detached HEAD)
@@ -222,7 +223,7 @@ pub fn handle_squash(
 
     let with_changes = if has_staged {
         match stage_mode {
-            super::commit::StageMode::Tracked => " & tracked changes",
+            StageMode::Tracked => " & tracked changes",
             _ => " & working tree changes",
         }
     } else {
@@ -459,9 +460,6 @@ pub fn step_copy_ignored(
     to: Option<&str>,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    use ignore::gitignore::GitignoreBuilder;
-    use std::fs;
-
     let repo = Repository::current()?;
 
     // Resolve source and destination worktree paths
@@ -630,8 +628,6 @@ fn list_ignored_entries(
     worktree_path: &Path,
     context: &str,
 ) -> anyhow::Result<Vec<(std::path::PathBuf, bool)>> {
-    use worktrunk::shell_exec::Cmd;
-
     let output = Cmd::new("git")
         .args([
             "ls-files",
@@ -692,9 +688,6 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
 ///
 /// Used as fallback when atomic directory clone isn't available or fails.
 fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
-    use std::fs;
-    use std::io::ErrorKind;
-
     fs::create_dir_all(dest)?;
 
     for entry in fs::read_dir(src)? {

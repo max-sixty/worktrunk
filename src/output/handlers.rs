@@ -1,16 +1,19 @@
 //! Output handlers for worktree operations using the global output context
 
-use color_print::cformat;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use worktrunk::styling::stderr;
+use std::process::Stdio;
+
+use color_print::cformat;
+use worktrunk::shell_exec::Cmd;
+use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 
 use crate::commands::branch_deletion::{
     BranchDeletionOutcome, BranchDeletionResult, delete_branch_if_safe,
 };
 use crate::commands::command_executor::CommandContext;
 use crate::commands::execute_pre_remove_commands;
-use crate::commands::process::{build_remove_command, spawn_detached};
+use crate::commands::process::{HookLog, InternalOp, build_remove_command, spawn_detached};
 use crate::commands::worktree::{BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult};
 use worktrunk::config::UserConfig;
 use worktrunk::git::GitError;
@@ -467,8 +470,6 @@ pub fn handle_switch_output(
 /// `display_path` is shown when the user's shell won't be in the worktree directory
 /// (shell integration not active). This helps users understand where the command runs.
 pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyhow::Result<()> {
-    use worktrunk::styling::format_bash_with_gutter;
-
     // Show what command is being executed (section header + gutter content)
     // Include path when user's shell won't be there (shell integration not active)
     let header = match display_path {
@@ -916,7 +917,7 @@ fn handle_removed_worktree_output(
                 main_path,
                 &remove_command,
                 "detached",
-                "remove",
+                &HookLog::internal(InternalOp::Remove),
                 None,
             )?;
         } else {
@@ -979,7 +980,7 @@ fn handle_removed_worktree_output(
             main_path,
             &remove_command,
             branch_name,
-            "remove",
+            &HookLog::internal(InternalOp::Remove),
             None,
         )?;
 
@@ -1077,10 +1078,6 @@ pub fn execute_command_in_worktree(
     command: &str,
     stdin_content: Option<&str>,
 ) -> anyhow::Result<()> {
-    use std::io::Write;
-    use worktrunk::shell_exec::Cmd;
-    use worktrunk::styling::{eprint, stderr};
-
     // Flush stdout before executing command to ensure all our messages appear
     // before the child process output
     stderr().flush()?;
@@ -1092,7 +1089,6 @@ pub fn execute_command_in_worktree(
     stderr().flush().ok(); // Ignore flush errors - reset is best-effort, command execution should proceed
 
     // Execute with stdout→stderr redirect for deterministic ordering
-    use std::process::Stdio;
     let mut cmd = Cmd::shell(command)
         .current_dir(worktree_path)
         .stdout(Stdio::from(std::io::stderr()))
