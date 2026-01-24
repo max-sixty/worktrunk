@@ -2246,12 +2246,22 @@ fn setup_snapshot_settings_for_paths(
 }
 
 /// Internal implementation with optional temp_home support.
+///
+/// When `temp_home` is provided, we create fresh settings rather than cloning current settings.
+/// This is critical because TestRepo's snapshot guard may have already added PROJECT_ID filters,
+/// and cloning would inherit those filters which would be applied BEFORE our TEMP_HOME filter.
 fn setup_snapshot_settings_for_paths_with_home(
     root: &Path,
     worktrees: &HashMap<String, PathBuf>,
     temp_home: Option<&Path>,
 ) -> insta::Settings {
-    let mut settings = insta::Settings::clone_current();
+    // When temp_home is provided, start fresh to ensure TEMP_HOME filter is applied before
+    // any inherited PROJECT_ID filters. Otherwise, clone current settings for consistency.
+    let mut settings = if temp_home.is_some() {
+        insta::Settings::new()
+    } else {
+        insta::Settings::clone_current()
+    };
     settings.set_snapshot_path("../snapshots");
 
     // Normalize project root path (for test fixtures)
@@ -2371,10 +2381,14 @@ fn setup_snapshot_settings_for_paths_with_home(
     // TEMP_HOME filter MUST come before PROJECT_ID filters to take precedence.
     // Otherwise, paths like /tmp/.tmpXXX/.config/worktrunk/config.toml would match
     // the PROJECT_ID filter first.
+    //
+    // We replace the full temp_home path prefix with [TEMP_HOME], so paths like
+    // /tmp/.tmpABC/.config/worktrunk/config.toml become [TEMP_HOME]/.config/worktrunk/config.toml
     if let Some(temp_home) = temp_home {
         let temp_home_canonical =
             canonicalize(temp_home).unwrap_or_else(|_| temp_home.to_path_buf());
         let temp_home_str = temp_home_canonical.to_string_lossy().replace('\\', "/");
+        // Use exact path match (not prefix) since we want [TEMP_HOME] to appear as the base
         settings.add_filter(&regex::escape(&temp_home_str), "[TEMP_HOME]");
 
         // On macOS, canonicalize returns /private/var/... but git diff output shows /var/...
