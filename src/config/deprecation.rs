@@ -22,7 +22,7 @@ use std::sync::{LazyLock, Mutex};
 use color_print::cformat;
 use minijinja::Environment;
 use regex::Regex;
-use shell_escape::escape;
+use shell_escape::unix::escape;
 
 use crate::config::WorktrunkConfig;
 use crate::styling::{eprintln, hint_message, warning_message};
