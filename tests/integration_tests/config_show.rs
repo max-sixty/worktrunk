@@ -1403,9 +1403,12 @@ post-create = "ln -sf {{ repo_root }}/node_modules"
 /// show how to regenerate it (via `wt config state hints clear deprecated-config`).
 #[rstest]
 fn test_config_show_user_deleted_migration_shows_regenerate_hint(
-    repo: TestRepo,
+    mut repo: TestRepo,
     temp_home: TempDir,
 ) {
+    // Setup mock gh/glab/claude for deterministic output
+    repo.setup_mock_ci_tools_unauthenticated();
+
     // Write project config with deprecated variables
     let project_config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&project_config_dir).unwrap();
@@ -1441,6 +1444,7 @@ fn test_config_show_user_deleted_migration_shows_regenerate_hint(
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
 
@@ -1460,9 +1464,12 @@ fn test_config_show_user_deleted_migration_shows_regenerate_hint(
 /// show a hint to run `wt config show` from the main worktree.
 #[rstest]
 fn test_config_show_from_linked_worktree_shows_main_worktree_hint(
-    repo: TestRepo,
+    mut repo: TestRepo,
     temp_home: TempDir,
 ) {
+    // Setup mock gh/glab/claude for deterministic output
+    repo.setup_mock_ci_tools_unauthenticated();
+
     // Write project config with deprecated variables
     let project_config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&project_config_dir).unwrap();
@@ -1489,6 +1496,7 @@ fn test_config_show_from_linked_worktree_shows_main_worktree_hint(
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(&feature_path);
         set_temp_home_env(&mut cmd, temp_home.path());
 
