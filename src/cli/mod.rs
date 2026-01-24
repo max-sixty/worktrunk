@@ -1498,6 +1498,28 @@ wt config show
 | **User config** | `~/.config/worktrunk/config.toml` | Worktree path template, LLM commit configs, etc | ✗ |
 | **Project config** | `.config/wt.toml` | Project hooks, dev server URL | ✓ |
 
+**User config** — personal preferences:
+
+```toml
+# ~/.config/worktrunk/config.toml
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+
+[commit-generation]
+command = "llm"
+args = ["-m", "claude-haiku-4.5"]
+```
+
+**Project config** — shared team settings:
+
+```toml
+# .config/wt.toml
+[post-create]
+deps = "npm ci"
+
+[pre-merge]
+test = "npm test"
+```
+
 ---
 
 <!-- USER_CONFIG_START -->
