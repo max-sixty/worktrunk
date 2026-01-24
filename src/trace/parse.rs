@@ -16,7 +16,7 @@
 //! enable concurrency analysis and Chrome Trace Format export for visualizing
 //! thread utilization in tools like chrome://tracing or Perfetto.
 //!
-//! Both `dur_us` (microseconds, preferred) and `dur` (milliseconds, legacy) are supported.
+//! Duration is specified in microseconds via `dur_us`.
 
 use std::time::Duration;
 
@@ -79,8 +79,8 @@ impl TraceEntry {
 /// Returns `None` if the line doesn't match the expected format.
 /// The `[wt-trace]` marker can appear anywhere in the line (to handle log prefixes).
 ///
-/// Supports two formats:
-/// - Command events: `cmd="..." dur=...ms ok=true/false` or `err="..."`
+/// Supports two entry types:
+/// - Command events: `cmd="..." dur_us=... ok=true/false` or `err="..."`
 /// - Instant events: `event="..."`
 fn parse_line(line: &str) -> Option<TraceEntry> {
     // Find the [wt-trace] marker anywhere in the line
@@ -130,14 +130,7 @@ fn parse_line(line: &str) -> Option<TraceEntry> {
             "context" => context = Some(value.to_string()),
             "cmd" => command = Some(value.to_string()),
             "event" => event = Some(value.to_string()),
-            "dur" => {
-                // Parse "123.4ms" (legacy format)
-                let ms_str = value.strip_suffix("ms")?;
-                let ms: f64 = ms_str.parse().ok()?;
-                duration = Some(Duration::from_secs_f64(ms / 1000.0));
-            }
             "dur_us" => {
-                // Parse microseconds (new format, no precision loss)
                 let us: u64 = value.parse().ok()?;
                 duration = Some(Duration::from_micros(us));
             }
@@ -192,7 +185,7 @@ mod tests {
 
     #[test]
     fn test_parse_basic() {
-        let line = r#"[wt-trace] cmd="git status" dur=12.3ms ok=true"#;
+        let line = r#"[wt-trace] cmd="git status" dur_us=12300 ok=true"#;
         let entry = parse_line(line).unwrap();
 
         assert_eq!(entry.context, None);
@@ -203,14 +196,14 @@ mod tests {
             panic!("expected command");
         };
         assert_eq!(command, "git status");
-        assert_eq!(*duration, Duration::from_secs_f64(0.0123));
+        assert_eq!(*duration, Duration::from_micros(12300));
         assert!(entry.is_success());
     }
 
     #[test]
     fn test_parse_with_context() {
         let line =
-            r#"[wt-trace] context=main cmd="git merge-base HEAD origin/main" dur=45.2ms ok=true"#;
+            r#"[wt-trace] context=main cmd="git merge-base HEAD origin/main" dur_us=45200 ok=true"#;
         let entry = parse_line(line).unwrap();
 
         assert_eq!(entry.context, Some("main".to_string()));
@@ -222,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_parse_error() {
-        let line = r#"[wt-trace] cmd="git rev-list" dur=100.0ms err="fatal: bad revision""#;
+        let line = r#"[wt-trace] cmd="git rev-list" dur_us=100000 err="fatal: bad revision""#;
         let entry = parse_line(line).unwrap();
 
         assert!(!entry.is_success());
@@ -234,7 +227,7 @@ mod tests {
 
     #[test]
     fn test_parse_ok_false() {
-        let line = r#"[wt-trace] cmd="git diff" dur=5.0ms ok=false"#;
+        let line = r#"[wt-trace] cmd="git diff" dur_us=5000 ok=false"#;
         let entry = parse_line(line).unwrap();
 
         assert!(!entry.is_success());
@@ -256,7 +249,7 @@ mod tests {
     #[test]
     fn test_parse_with_log_prefix() {
         // Real output has thread ID prefix like "[a] "
-        let line = r#"[a] [wt-trace] cmd="git status" dur=5.0ms ok=true"#;
+        let line = r#"[a] [wt-trace] cmd="git status" dur_us=5000 ok=true"#;
         let entry = parse_line(line).unwrap();
         assert!(matches!(
             &entry.kind,
@@ -268,7 +261,7 @@ mod tests {
     fn test_parse_unknown_keys_ignored() {
         // Unknown keys should be ignored for forward compatibility
         let line =
-            r#"[wt-trace] future_field=xyz cmd="git status" dur=5.0ms ok=true extra=ignored"#;
+            r#"[wt-trace] future_field=xyz cmd="git status" dur_us=5000 ok=true extra=ignored"#;
         let entry = parse_line(line).unwrap();
         assert!(matches!(
             &entry.kind,
@@ -280,7 +273,7 @@ mod tests {
     #[test]
     fn test_parse_trailing_whitespace() {
         // Trailing whitespace should be handled (exercises trim_start + break)
-        let line = "[wt-trace] cmd=\"git status\" dur=5.0ms ok=true   ";
+        let line = "[wt-trace] cmd=\"git status\" dur_us=5000 ok=true   ";
         let entry = parse_line(line).unwrap();
         assert!(matches!(
             &entry.kind,
@@ -292,9 +285,9 @@ mod tests {
     fn test_parse_lines() {
         let input = r#"
 DEBUG some other log
-[wt-trace] cmd="git status" dur=10.0ms ok=true
+[wt-trace] cmd="git status" dur_us=10000 ok=true
 more noise
-[wt-trace] cmd="git diff" dur=20.0ms ok=true
+[wt-trace] cmd="git diff" dur_us=20000 ok=true
 "#;
         let entries = parse_lines(input);
         assert_eq!(entries.len(), 2);
@@ -310,7 +303,7 @@ more noise
 
     #[test]
     fn test_parse_with_timestamp_and_thread_id() {
-        let line = r#"[wt-trace] ts=1736600000000000 tid=5 context=feature cmd="git status" dur=12.3ms ok=true"#;
+        let line = r#"[wt-trace] ts=1736600000000000 tid=5 context=feature cmd="git status" dur_us=12300 ok=true"#;
         let entry = parse_line(line).unwrap();
 
         assert_eq!(entry.start_time_us, Some(1736600000000000));
@@ -325,8 +318,8 @@ more noise
 
     #[test]
     fn test_parse_without_timestamp_and_thread_id() {
-        // Old format traces (without ts/tid) should still parse with None values
-        let line = r#"[wt-trace] cmd="git status" dur=12.3ms ok=true"#;
+        // Traces without ts/tid should parse with None values
+        let line = r#"[wt-trace] cmd="git status" dur_us=12300 ok=true"#;
         let entry = parse_line(line).unwrap();
 
         assert_eq!(entry.start_time_us, None);
@@ -340,23 +333,11 @@ more noise
     #[test]
     fn test_parse_partial_new_fields() {
         // Only ts provided, no tid
-        let line = r#"[wt-trace] ts=1736600000000000 cmd="git status" dur=12.3ms ok=true"#;
+        let line = r#"[wt-trace] ts=1736600000000000 cmd="git status" dur_us=12300 ok=true"#;
         let entry = parse_line(line).unwrap();
 
         assert_eq!(entry.start_time_us, Some(1736600000000000));
         assert_eq!(entry.thread_id, None);
-    }
-
-    #[test]
-    fn test_parse_dur_us_format() {
-        // New format with microseconds (no precision loss)
-        let line = r#"[wt-trace] ts=1234567 tid=3 cmd="git status" dur_us=12345 ok=true"#;
-        let entry = parse_line(line).unwrap();
-
-        let TraceEntryKind::Command { duration, .. } = &entry.kind else {
-            panic!("expected command");
-        };
-        assert_eq!(*duration, Duration::from_micros(12345));
     }
 
     // ========================================================================
@@ -407,9 +388,9 @@ more noise
     fn test_parse_lines_mixed() {
         let input = r#"
 [wt-trace] event="Started"
-[wt-trace] cmd="git status" dur=10.0ms ok=true
+[wt-trace] cmd="git status" dur_us=10000 ok=true
 [wt-trace] event="Showed skeleton"
-[wt-trace] cmd="git diff" dur=20.0ms ok=true
+[wt-trace] cmd="git diff" dur_us=20000 ok=true
 [wt-trace] event="Done"
 "#;
         let entries = parse_lines(input);

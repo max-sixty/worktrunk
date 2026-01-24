@@ -35,6 +35,28 @@ wt config show
 | **User config** | `~/.config/worktrunk/config.toml` | Worktree path template, LLM commit configs, etc | ✗ |
 | **Project config** | `.config/wt.toml` | Project hooks, dev server URL | ✓ |
 
+**User config** — personal preferences:
+
+```toml
+# ~/.config/worktrunk/config.toml
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+
+[commit-generation]
+command = "llm"
+args = ["-m", "claude-haiku-4.5"]
+```
+
+**Project config** — shared team settings:
+
+```toml
+# .config/wt.toml
+[post-create]
+deps = "npm ci"
+
+[pre-merge]
+test = "npm test"
+```
+
 ---
 
 <!-- USER_CONFIG_START -->
@@ -80,25 +102,9 @@ worktree-path = "../{{ branch | sanitize }}"
 
 ## LLM commit messages
 
-Generate commit messages automatically during merge. Requires an external CLI tool. See [LLM commits docs](https://worktrunk.dev/llm-commits/) for setup and template customization.
+Generate commit messages automatically during merge. Requires an external CLI tool.
 
-Using [llm](https://github.com/simonw/llm) (install: `pip install llm llm-anthropic`):
-
-```toml
-[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
-```
-
-Using [aichat](https://github.com/sigoden/aichat):
-
-```toml
-[commit-generation]
-command = "aichat"
-args = ["-m", "claude:claude-haiku-4.5"]
-```
-
-See [Custom prompt templates](#custom-prompt-templates) for inline template options.
+See [LLM commits docs](https://worktrunk.dev/llm-commits/) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
 
 ## Commands
 
@@ -182,7 +188,7 @@ Default template:
 
 <!-- DEFAULT_TEMPLATE_START -->
 ```toml
-[commit-generation]
+[commit.generation]
 template = """
 Write a commit message for the staged changes below.
 
@@ -227,7 +233,7 @@ Default template:
 
 <!-- DEFAULT_SQUASH_TEMPLATE_START -->
 ```toml
-[commit-generation]
+[commit.generation]
 squash-template = """
 Combine these commits into a single commit message.
 
@@ -352,27 +358,17 @@ For nested config sections, use double underscores to separate levels:
 | Config | Environment Variable |
 |--------|---------------------|
 | `worktree-path` | `WORKTRUNK_WORKTREE_PATH` |
-| `commit-generation.command` | `WORKTRUNK_COMMIT_GENERATION__COMMAND` |
-| `commit-generation.args` | `WORKTRUNK_COMMIT_GENERATION__ARGS` |
+| `commit.generation.command` | `WORKTRUNK_COMMIT__GENERATION__COMMAND` |
+| `commit.stage` | `WORKTRUNK_COMMIT__STAGE` |
 
 Note the single underscore after `WORKTRUNK` and double underscores between nested keys.
-
-### Array values
-
-Array config values like `args = ["-m", "claude-haiku"]` can be specified as a single string in environment variables:
-
-```bash
-export WORKTRUNK_COMMIT_GENERATION__ARGS="-m claude-haiku"
-```
 
 ### Example: CI/testing override
 
 Override the LLM command in CI to use a mock:
 
 ```bash
-WORKTRUNK_COMMIT_GENERATION__COMMAND=echo \
-WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
-  wt merge
+WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 ```
 
 ### Other environment variables
@@ -748,7 +744,7 @@ wt config state logs - Background operation logs
 Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>get</span></b>    List background operation log files
+  <b><span class=c>get</span></b>    Get log file paths
   <b><span class=c>clear</span></b>  Clear background operation logs
 
 <b><span class=g>Options:</span></b>

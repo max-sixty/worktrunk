@@ -5,7 +5,7 @@
 
 use worktrunk::git::{GitRemoteUrl, Repository};
 
-use super::{PrStatus, github, gitlab, tool_available};
+use super::{CiBranchName, PrStatus, github, gitlab, tool_available};
 
 /// CI platform detected from project config override or remote URL.
 ///
@@ -29,7 +29,12 @@ impl CiPlatform {
     }
 
     /// Detect CI status from PR/MR.
-    fn detect_pr_mr(self, repo: &Repository, branch: &str, local_head: &str) -> Option<PrStatus> {
+    fn detect_pr_mr(
+        self,
+        repo: &Repository,
+        branch: &CiBranchName,
+        local_head: &str,
+    ) -> Option<PrStatus> {
         match self {
             Self::GitHub => github::detect_github(repo, branch, local_head),
             Self::GitLab => gitlab::detect_gitlab(repo, branch, local_head),
@@ -37,10 +42,16 @@ impl CiPlatform {
     }
 
     /// Detect CI status from branch workflow/pipeline (fallback when no PR/MR).
-    fn detect_branch(self, repo: &Repository, branch: &str, local_head: &str) -> Option<PrStatus> {
+    fn detect_branch(
+        self,
+        repo: &Repository,
+        branch: &CiBranchName,
+        local_head: &str,
+    ) -> Option<PrStatus> {
         match self {
             Self::GitHub => github::detect_github_commit_checks(repo, local_head),
-            Self::GitLab => gitlab::detect_gitlab_pipeline(branch, local_head),
+            // GitLab pipeline uses the bare branch name (not "origin/feature")
+            Self::GitLab => gitlab::detect_gitlab_pipeline(&branch.name, local_head),
         }
     }
 
@@ -50,7 +61,7 @@ impl CiPlatform {
     pub(super) fn detect_ci(
         self,
         repo: &Repository,
-        branch: &str,
+        branch: &CiBranchName,
         local_head: &str,
         has_upstream: bool,
     ) -> Option<PrStatus> {
@@ -81,14 +92,19 @@ pub fn detect_platform_from_url(url: &str) -> Option<CiPlatform> {
     }
 }
 
-/// Get the CI platform for a repository.
+/// Get the CI platform for a repository, optionally prioritizing a specific remote.
 ///
-/// If `platform_override` is provided (from project config `ci.platform`),
-/// uses that value directly. Otherwise, searches all remote URLs for a
-/// supported platform (GitHub or GitLab).
+/// Priority order:
+/// 1. Project config `ci.platform` override (if provided)
+/// 2. The specific remote's URL (if `remote_hint` is provided)
+/// 3. Any remote URL that matches a known platform
+///
+/// For remote branches, pass the branch's remote as `remote_hint` to ensure
+/// the correct platform is detected in mixed-remote repos (e.g., GitHub + GitLab).
 pub fn get_platform_for_repo(
     repo: &Repository,
     platform_override: Option<&str>,
+    remote_hint: Option<&str>,
 ) -> Option<CiPlatform> {
     // Config override takes precedence
     if let Some(platform_str) = platform_override {
@@ -100,6 +116,19 @@ pub fn get_platform_for_repo(
             "Invalid CI platform in config: '{}'. Expected 'github' or 'gitlab'.",
             platform_str
         );
+    }
+
+    // If we have a specific remote hint (e.g., from a remote branch), use that first
+    if let Some(remote_name) = remote_hint
+        && let Some(url) = repo.remote_url(remote_name)
+        && let Some(platform) = detect_platform_from_url(&url)
+    {
+        log::debug!(
+            "Detected CI platform {} from remote '{}' (hint)",
+            platform,
+            remote_name
+        );
+        return Some(platform);
     }
 
     // Search all remotes for a supported platform

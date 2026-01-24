@@ -13,7 +13,7 @@ use crate::commands::branch_deletion::{
 };
 use crate::commands::command_executor::CommandContext;
 use crate::commands::execute_pre_remove_commands;
-use crate::commands::process::{build_remove_command, spawn_detached};
+use crate::commands::process::{HookLog, InternalOp, build_remove_command, spawn_detached};
 use crate::commands::worktree::{BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult};
 use worktrunk::config::UserConfig;
 use worktrunk::git::GitError;
@@ -917,7 +917,7 @@ fn handle_removed_worktree_output(
                 main_path,
                 &remove_command,
                 "detached",
-                "remove",
+                &HookLog::internal(InternalOp::Remove),
                 None,
             )?;
         } else {
@@ -980,7 +980,7 @@ fn handle_removed_worktree_output(
             main_path,
             &remove_command,
             branch_name,
-            "remove",
+            &HookLog::internal(InternalOp::Remove),
             None,
         )?;
 

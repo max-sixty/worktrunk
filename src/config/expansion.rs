@@ -159,7 +159,8 @@ pub fn sanitize_db(s: &str) -> String {
 /// Generate a 3-character hash suffix from a string.
 ///
 /// Uses base36 (0-9, a-z) for a compact representation with 46,656 unique values.
-fn short_hash(s: &str) -> String {
+/// Used by `sanitize_db` and `sanitize_for_filename` to avoid collisions.
+pub fn short_hash(s: &str) -> String {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     s.hash(&mut h);
     let hash = h.finish();

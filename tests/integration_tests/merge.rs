@@ -318,11 +318,10 @@ fn test_merge_squash_with_llm(mut repo_with_main_worktree: TestRepo) {
     );
 
     // Configure mock LLM command via config file
-    // Use sh to consume stdin and return a fixed message
+    // Use sh -c to consume stdin and return a fixed message
     let worktrunk_config = r#"
-[commit-generation]
-command = "sh"
-args = ["-c", "cat >/dev/null && echo 'feat: implement user authentication system'"]
+[commit.generation]
+command = "cat >/dev/null && echo 'feat: implement user authentication system'"
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
@@ -347,7 +346,7 @@ fn test_merge_squash_llm_command_not_found(mut repo_with_main_worktree: TestRepo
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(repo, "merge", &["main"], Some(&feature_wt));
         cmd.env(
-            "WORKTRUNK_COMMIT_GENERATION__COMMAND",
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "nonexistent-llm-command",
         );
         cmd
@@ -366,14 +365,13 @@ fn test_merge_squash_llm_error(mut repo_with_main_worktree: TestRepo) {
 
     // Configure LLM command via config file with command that will fail
     // This tests that:
-    // 1. The full command (with args) is shown in the error header
+    // 1. The full command is shown in the error header
     // 2. The error output appears in a gutter
     // Note: We consume stdin first to avoid race condition where stdin write fails
     // before stderr is captured (broken pipe if process exits before reading stdin)
     let worktrunk_config = r#"
-[commit-generation]
-command = "sh"
-args = ["-c", "cat > /dev/null; echo 'Error: connection refused' >&2 && exit 1"]
+[commit.generation]
+command = "cat > /dev/null; echo 'Error: connection refused' >&2 && exit 1"
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
@@ -486,11 +484,10 @@ fn test_merge_auto_commit_with_llm(mut repo_with_main_worktree: TestRepo) {
     std::fs::write(feature_wt.join("auth.txt"), "improved auth with validation").unwrap();
 
     // Configure mock LLM command via config file
-    // Use sh to consume stdin and return a fixed message (must consume stdin for cross-platform compatibility)
+    // Use sh -c to consume stdin and return a fixed message (must consume stdin for cross-platform compatibility)
     let worktrunk_config = r#"
-[commit-generation]
-command = "sh"
-args = ["-c", "cat >/dev/null && echo 'fix: improve auth validation logic'"]
+[commit.generation]
+command = "cat >/dev/null && echo 'fix: improve auth validation logic'"
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
@@ -512,11 +509,10 @@ fn test_merge_auto_commit_and_squash(repo_with_multi_commit_feature: TestRepo) {
     std::fs::write(feature_wt.join("file1.txt"), "updated content 1").unwrap();
 
     // Configure mock LLM command via config file
-    // Use sh to consume stdin and return a fixed message (must consume stdin for cross-platform compatibility)
+    // Use sh -c to consume stdin and return a fixed message (must consume stdin for cross-platform compatibility)
     let worktrunk_config = r#"
-[commit-generation]
-command = "sh"
-args = ["-c", "cat >/dev/null && echo 'fix: update file 1 content'"]
+[commit.generation]
+command = "cat >/dev/null && echo 'fix: update file 1 content'"
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
@@ -543,12 +539,10 @@ fn test_merge_with_untracked_files(mut repo_with_main_worktree: TestRepo) {
     // Merge - should show warning about untracked files
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(repo, "merge", &["main"], Some(&feature_wt));
-        for (key, value) in &[
-            ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
-            ("WORKTRUNK_COMMIT_GENERATION__ARGS", "fix: commit changes"),
-        ] {
-            cmd.env(key, value);
-        }
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'fix: commit changes'",
+        );
         cmd
     });
 }
@@ -1078,7 +1072,7 @@ mod tests {
     let llm_path_str = llm_path.to_slash_lossy();
     let worktrunk_config = format!(
         r#"
-[commit-generation]
+[commit.generation]
 command = "{llm_path_str}"
 "#
     );
@@ -1490,12 +1484,10 @@ fn test_merge_squash_with_working_tree_creates_backup(mut repo_with_main_worktre
     // This should create a backup before squashing because there are uncommitted changes
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(repo, "merge", &["main"], Some(&feature_wt));
-        for (key, value) in &[
-            ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
-            ("WORKTRUNK_COMMIT_GENERATION__ARGS", "fix: update files"),
-        ] {
-            cmd.env(key, value);
-        }
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'fix: update files'",
+        );
         cmd
     });
 
@@ -1585,15 +1577,10 @@ fn test_step_squash_with_no_verify_flag(mut repo: TestRepo) {
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
         cmd.arg("squash").args(["--no-verify"]);
-        for (key, value) in &[
-            ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
-            (
-                "WORKTRUNK_COMMIT_GENERATION__ARGS",
-                "squash: combined commits",
-            ),
-        ] {
-            cmd.env(key, value);
-        }
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'squash: combined commits'",
+        );
         cmd
     });
 }
@@ -1616,15 +1603,10 @@ fn test_step_squash_with_stage_tracked_flag(mut repo: TestRepo) {
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
         cmd.arg("squash").args(["--stage=tracked"]);
-        for (key, value) in &[
-            ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
-            (
-                "WORKTRUNK_COMMIT_GENERATION__ARGS",
-                "squash: combined commits",
-            ),
-        ] {
-            cmd.env(key, value);
-        }
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'squash: combined commits'",
+        );
         cmd
     });
 }
@@ -1656,15 +1638,10 @@ fn test_step_squash_with_both_flags(mut repo: TestRepo) {
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
         cmd.arg("squash").args(["--no-verify", "--stage=tracked"]);
-        for (key, value) in &[
-            ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
-            (
-                "WORKTRUNK_COMMIT_GENERATION__ARGS",
-                "squash: combined commits",
-            ),
-        ] {
-            cmd.env(key, value);
-        }
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'squash: combined commits'",
+        );
         cmd
     });
 }
@@ -1715,12 +1692,10 @@ fn test_step_commit_with_no_verify_flag(repo: TestRepo) {
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
         cmd.arg("commit").args(["--no-verify"]);
-        for (key, value) in &[
-            ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
-            ("WORKTRUNK_COMMIT_GENERATION__ARGS", "feat: add file"),
-        ] {
-            cmd.env(key, value);
-        }
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: add file'",
+        );
         cmd
     });
 }
@@ -1740,15 +1715,10 @@ fn test_step_commit_with_stage_tracked_flag(repo: TestRepo) {
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
         cmd.arg("commit").args(["--stage=tracked"]);
-        for (key, value) in &[
-            ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
-            (
-                "WORKTRUNK_COMMIT_GENERATION__ARGS",
-                "fix: update tracked file",
-            ),
-        ] {
-            cmd.env(key, value);
-        }
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'fix: update tracked file'",
+        );
         cmd
     });
 }
@@ -1771,12 +1741,10 @@ fn test_step_commit_with_both_flags(repo: TestRepo) {
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
         cmd.arg("commit").args(["--no-verify", "--stage=tracked"]);
-        for (key, value) in &[
-            ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
-            ("WORKTRUNK_COMMIT_GENERATION__ARGS", "fix: update file"),
-        ] {
-            cmd.env(key, value);
-        }
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'fix: update file'",
+        );
         cmd
     });
 }
@@ -1784,18 +1752,10 @@ fn test_step_commit_with_both_flags(repo: TestRepo) {
 #[rstest]
 fn test_step_commit_nothing_to_commit(repo: TestRepo) {
     // No changes made - commit should fail with "nothing to commit"
+    // This test doesn't need LLM config since commit fails before generation
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
         cmd.arg("commit").args(["--stage=none"]);
-        for (key, value) in &[
-            ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
-            (
-                "WORKTRUNK_COMMIT_GENERATION__ARGS",
-                "feat: this should fail",
-            ),
-        ] {
-            cmd.env(key, value);
-        }
         cmd
     });
 }

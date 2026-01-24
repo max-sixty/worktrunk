@@ -151,7 +151,10 @@ impl ProjectConfig {
 
         // Warn about unknown fields (only in main worktree where it's actionable)
         if is_main_worktree {
-            let unknown_keys = find_unknown_keys(&contents);
+            let unknown_keys: std::collections::HashMap<_, _> = find_unknown_keys(&contents)
+                .into_iter()
+                .filter(|(k, _)| !super::deprecation::DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
+                .collect();
             super::deprecation::warn_unknown_fields::<ProjectConfig>(
                 &config_path,
                 &unknown_keys,
