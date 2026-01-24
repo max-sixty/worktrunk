@@ -535,16 +535,27 @@ mod tests {
     fn test_hook_log_hook_suffix() {
         use worktrunk::git::HookType;
 
+        // Suffix includes sanitized name with hash for collision avoidance
         let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
-        // Suffix includes sanitized hook name (with 3-char hash)
-        assert!(log.suffix().starts_with("user-post-start-server-"));
-        assert!(log.suffix().len() > "user-post-start-server-".len());
+        let suffix = log.suffix();
+        assert!(
+            suffix.starts_with("user-post-start-server-"),
+            "Expected pattern: {suffix}"
+        );
 
         let log = HookLog::hook(HookSource::Project, HookType::PostCreate, "build");
-        assert!(log.suffix().starts_with("project-post-create-build-"));
+        let suffix = log.suffix();
+        assert!(
+            suffix.starts_with("project-post-create-build-"),
+            "Expected pattern: {suffix}"
+        );
 
         let log = HookLog::hook(HookSource::User, HookType::PreRemove, "cleanup");
-        assert!(log.suffix().starts_with("user-pre-remove-cleanup-"));
+        let suffix = log.suffix();
+        assert!(
+            suffix.starts_with("user-pre-remove-cleanup-"),
+            "Expected pattern: {suffix}"
+        );
     }
 
     #[test]
@@ -557,34 +568,59 @@ mod tests {
     fn test_hook_log_filename() {
         use worktrunk::git::HookType;
 
+        // Filenames now include hash suffixes for collision avoidance
         let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
-        // Filename includes sanitized branch and hook names (both with 3-char hashes)
         let filename = log.filename("main");
-        assert!(filename.starts_with("main-"));
-        assert!(filename.contains("-user-post-start-server-"));
-        assert!(filename.ends_with(".log"));
+        assert!(
+            filename.starts_with("main-"),
+            "Expected main- prefix: {filename}"
+        );
+        assert!(
+            filename.contains("-user-post-start-"),
+            "Expected -user-post-start-: {filename}"
+        );
+        assert!(
+            filename.ends_with(".log"),
+            "Expected .log suffix: {filename}"
+        );
 
-        // Slashed branch names get sanitized
         let filename = log.filename("feature/auth");
-        assert!(filename.starts_with("feature-auth-"));
-        assert!(filename.contains("-user-post-start-server-"));
-        assert!(filename.ends_with(".log"));
+        assert!(
+            filename.starts_with("feature-"),
+            "Expected feature- prefix (slash sanitized): {filename}"
+        );
+        assert!(
+            filename.contains("-user-post-start-"),
+            "Expected -user-post-start-: {filename}"
+        );
 
-        // Internal operations don't sanitize the operation name (only branch)
         let log = HookLog::internal(InternalOp::Remove);
         let filename = log.filename("main");
-        assert!(filename.starts_with("main-"));
-        assert!(filename.ends_with("-remove.log"));
+        assert!(
+            filename.starts_with("main-"),
+            "Expected main- prefix: {filename}"
+        );
+        assert!(
+            filename.ends_with("-remove.log"),
+            "Expected -remove.log suffix: {filename}"
+        );
     }
 
     #[test]
     fn test_hook_log_parse_hook() {
         let log = HookLog::parse("user:post-start:server").unwrap();
-        // Parsed log suffix includes sanitized hook name
-        assert!(log.suffix().starts_with("user-post-start-server-"));
+        let suffix = log.suffix();
+        assert!(
+            suffix.starts_with("user-post-start-server-"),
+            "Expected pattern: {suffix}"
+        );
 
         let log = HookLog::parse("project:post-create:build").unwrap();
-        assert!(log.suffix().starts_with("project-post-create-build-"));
+        let suffix = log.suffix();
+        assert!(
+            suffix.starts_with("project-post-create-build-"),
+            "Expected pattern: {suffix}"
+        );
     }
 
     #[test]

@@ -416,28 +416,25 @@ fn test_bare_repo_background_logs_location() {
 
     // Wait for background process to create log file (poll instead of fixed sleep)
     // The key test is that the path is correct, not that content was written (background processes are flaky in tests)
-    // Log filename format: {sanitized_branch}-remove.log
-    // Branch names are sanitized with a 3-char hash suffix, so "feature" becomes "feature-xxx-remove.log"
+    // Log filename has hash suffix: feature-<hash>-remove-<hash>.log
     let log_dir = test.bare_repo_path().join("wt-logs");
     wait_for_file_count(&log_dir, "log", 1);
 
     // Verify the log file matches expected pattern (feature-*-remove.log)
-    // The pattern accounts for the hash suffix added by sanitize_for_filename
+    // Format: {branch_with_hash}-{op}.log (internal ops don't have hash on suffix)
     let log_files: Vec<_> = std::fs::read_dir(&log_dir)
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            // Matches: feature-{3-char-hash}-remove.log
             name.starts_with("feature-") && name.ends_with("-remove.log")
         })
         .collect();
-
     assert_eq!(
         log_files.len(),
         1,
-        "Expected exactly one feature-*-remove.log file in {:?}",
-        log_dir
+        "Expected exactly one feature-*-remove.log file, found: {:?}",
+        log_files
     );
 
     // Verify it's NOT in the worktree's .git directory (which doesn't exist for linked worktrees)
