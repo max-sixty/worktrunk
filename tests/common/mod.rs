@@ -2351,20 +2351,14 @@ fn setup_snapshot_settings_for_paths_with_home(
         r"'(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?/[^']+)'",
         "$1",
     );
-    // Also strip quotes around [TEMP_HOME] paths
-    settings.add_filter(r"'\[TEMP_HOME\](/[^']+)'", "[TEMP_HOME]$1");
     // Normalize git diff header prefixes: a/_REPO_ -> a_REPO_, b/_REPO_ -> b_REPO_
     // On Windows, git diff --no-index with absolute paths produces a/C:/... which becomes a/_REPO_
     // On Unix, relative paths produce a/repo/... which becomes a_REPO_
+    // Note: [TEMP_HOME] filters are added later, after TEMP_HOME replacement happens.
     settings.add_filter(r"(diff --git )a/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1a$2");
     settings.add_filter(r" b/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", " b$1");
     settings.add_filter(r"(--- )a/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1a$2");
     settings.add_filter(r"(\+\+\+ )b/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1b$2");
-    // Same for [TEMP_HOME]
-    settings.add_filter(r"(diff --git )a/(\[TEMP_HOME\])", "$1a$2");
-    settings.add_filter(r" b/(\[TEMP_HOME\])", " b$1");
-    settings.add_filter(r"(--- )a/(\[TEMP_HOME\])", "$1a$2");
-    settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\])", "$1b$2");
 
     // Normalize syntax highlighting around placeholders.
     // Bash syntax highlighters may split tokens differently on different platforms.
@@ -2441,6 +2435,17 @@ fn setup_snapshot_settings_for_paths_with_home(
             let without_private = &temp_home_str["/private".len()..];
             settings.add_filter(&regex::escape(without_private), "[TEMP_HOME]");
         }
+
+        // [TEMP_HOME] post-processing filters - must run AFTER the replacement above.
+        // Strip quotes around [TEMP_HOME] paths (Windows shell_escape quotes paths with ':')
+        settings.add_filter(r"'\[TEMP_HOME\](/[^']+)'", "[TEMP_HOME]$1");
+
+        // Normalize git diff header prefixes for [TEMP_HOME]:
+        // a/[TEMP_HOME] -> a[TEMP_HOME], b/[TEMP_HOME] -> b[TEMP_HOME]
+        settings.add_filter(r"(diff --git )a/(\[TEMP_HOME\])", "$1a$2");
+        settings.add_filter(r" b/(\[TEMP_HOME\])", " b$1");
+        settings.add_filter(r"(--- )a/(\[TEMP_HOME\])", "$1a$2");
+        settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\])", "$1b$2");
     }
 
     // Normalize temp directory paths in project identifiers (approval prompts)
