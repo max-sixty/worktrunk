@@ -2442,15 +2442,35 @@ fn setup_snapshot_settings_for_paths_with_home(
         }
 
         // [TEMP_HOME] post-processing filters - must run AFTER the replacement above.
+
+        // Strip ANSI codes that may wrap [TEMP_HOME] paths.
+        // On Windows, shell_escape quotes paths containing ':', and tree-sitter highlights quoted
+        // strings in green (\x1b[32m). After path replacement, these codes remain around the path.
+        // Pattern: ANSI escape + [TEMP_HOME]/path + ANSI reset -> just the path
+        settings.add_filter(r"\x1b\[\d+m(\[TEMP_HOME\]/[^\x1b\s]+)\x1b\[0m", "$1");
+
         // Strip quotes around [TEMP_HOME] paths (Windows shell_escape quotes paths with ':')
+        // Also handles git diff quoted format which lacks a/b prefixes.
         settings.add_filter(r"'\[TEMP_HOME\](/[^']+)'", "[TEMP_HOME]$1");
 
         // Normalize git diff header prefixes for [TEMP_HOME]:
-        // a/[TEMP_HOME] -> a[TEMP_HOME], b/[TEMP_HOME] -> b[TEMP_HOME]
+        // Unix: a/[TEMP_HOME] -> a[TEMP_HOME], b/[TEMP_HOME] -> b[TEMP_HOME]
         settings.add_filter(r"(diff --git )a/(\[TEMP_HOME\])", "$1a$2");
         settings.add_filter(r" b/(\[TEMP_HOME\])", " b$1");
         settings.add_filter(r"(--- )a/(\[TEMP_HOME\])", "$1a$2");
         settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\])", "$1b$2");
+
+        // Windows git diff uses quoted format without a/b prefixes for absolute paths.
+        // Add the prefixes to match Unix format.
+        // diff --git [TEMP_HOME]/a [TEMP_HOME]/b -> diff --git a[TEMP_HOME]/a b[TEMP_HOME]/b
+        settings.add_filter(
+            r"(diff --git )(\[TEMP_HOME\]/[^\s]+) (\[TEMP_HOME\]/)",
+            "$1a$2 b$3",
+        );
+        // --- [TEMP_HOME]/... -> --- a[TEMP_HOME]/...
+        settings.add_filter(r"(--- )(\[TEMP_HOME\]/)", "$1a$2");
+        // +++ [TEMP_HOME]/... -> +++ b[TEMP_HOME]/...
+        settings.add_filter(r"(\+\+\+ )(\[TEMP_HOME\]/)", "$1b$2");
     }
 
     // Normalize temp directory paths in project identifiers (approval prompts)
