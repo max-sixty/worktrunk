@@ -522,19 +522,17 @@ pub fn check_and_migrate(
                     .map(|n| n.to_string_lossy())
                     .unwrap_or_default();
 
-                // Shell-escape paths for safe copy-paste
                 // Use forward slashes for cross-platform compatibility (works in Git Bash on Windows)
+                // Don't shell-escape since config paths rarely have special characters
                 let new_path_str = new_path.to_string_lossy().replace('\\', "/");
                 let path_str = path.to_string_lossy().replace('\\', "/");
-                let new_path_escaped = escape(Cow::Borrowed(&new_path_str));
-                let path_escaped = escape(Cow::Borrowed(&path_str));
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
                         "Wrote migrated {}; to apply: <bright-black>mv -- {} {}</>",
                         new_filename,
-                        new_path_escaped,
-                        path_escaped
+                        new_path_str,
+                        path_str
                     ))
                 );
             }
