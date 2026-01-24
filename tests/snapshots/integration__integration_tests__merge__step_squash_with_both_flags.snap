@@ -26,7 +26,7 @@ info:
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
-    WORKTRUNK_COMMIT_GENERATION__COMMAND: "cat >/dev/null && echo 'squash: combined commits'"
+    WORKTRUNK_COMMIT__GENERATION__COMMAND: "cat >/dev/null && echo 'squash: combined commits'"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
