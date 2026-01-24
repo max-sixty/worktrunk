@@ -2360,6 +2360,18 @@ fn setup_snapshot_settings_for_paths_with_home(
     settings.add_filter(r"(--- )a/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1a$2");
     settings.add_filter(r"(\+\+\+ )b/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1b$2");
 
+    // Windows git diff may produce headers without "diff --git a" prefix.
+    // Pattern: _REPO_/path1 b_REPO_/path2 (just paths with b prefix for second)
+    // Match bold ANSI + _REPO_ path + space + b + _REPO_ path
+    settings.add_filter(
+        r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+) b(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+)",
+        "$1diff --git a$2 b$3",
+    );
+    // Windows may also omit --- a prefix on the source file line
+    settings.add_filter(r"(--- )(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)", "$1a$2");
+    // Windows may also omit +++ b prefix on the destination file line
+    settings.add_filter(r"(\+\+\+ )(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)", "$1b$2");
+
     // Normalize syntax highlighting around placeholders.
     // Bash syntax highlighters may split tokens differently on different platforms.
     // Linux CI produces: [2m [0m[2m[32m_REPO_[0m[2m [0m (space, green path, space as separate spans)
@@ -2369,6 +2381,15 @@ fn setup_snapshot_settings_for_paths_with_home(
     settings.add_filter(
         r"\x1b\[2m \x1b\[0m\x1b\[2m(?:\x1b\[32m)?(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?)(?:\x1b\[0m)?\x1b\[2m \x1b\[0m",
         "\x1b[2m $1 \x1b[0m",
+    );
+
+    // Strip green ANSI highlighting from _REPO_ paths.
+    // On Windows, tree-sitter may highlight paths with green (\x1b[32m) even when not quoted.
+    // Example: \x1b[0m\x1b[2m\x1b[32m_REPO_/.config/wt.toml\x1b[0m\x1b[2m
+    // Strip ANSI codes before/after the path when green highlighting is present.
+    settings.add_filter(
+        r"(?:\x1b\[\d+m)*\x1b\[32m(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:/[^\x1b\s]+)?)(?:\x1b\[\d+m)*",
+        "$1",
     );
 
     // Normalize WORKTRUNK_CONFIG_PATH temp paths in stdout/stderr output
@@ -2385,10 +2406,13 @@ fn setup_snapshot_settings_for_paths_with_home(
         "[TEST_CONFIG]",
     );
     // Strip ANSI codes that may wrap [TEST_CONFIG*] placeholders.
-    // On Windows, shell_escape quotes paths with ':', and tree-sitter highlights quoted strings
-    // (green = \x1b[32m). After path replacement, these codes remain around the placeholder.
-    // Pattern: optional ANSI escape + [TEST_CONFIG...] + optional ANSI reset -> just the placeholder
-    settings.add_filter(r"\x1b\[\d+m(\[TEST_CONFIG(?:_NEW)?\])\x1b\[0m", "$1");
+    // On Windows, tree-sitter may add ANSI codes around paths even without quotes.
+    // Example: \x1b[0m\x1b[2m[TEST_CONFIG_NEW]\x1b[2m
+    // Match: optional ANSI codes + [TEST_CONFIG...] + optional ANSI codes -> just the placeholder
+    settings.add_filter(
+        r"(?:\x1b\[\d+m)+(\[TEST_CONFIG(?:_NEW)?\])(?:\x1b\[\d+m)+",
+        "$1",
+    );
 
     // Normalize GIT_CONFIG_GLOBAL temp paths
     // (?:[A-Z]:)? handles Windows drive letters
@@ -2443,11 +2467,16 @@ fn setup_snapshot_settings_for_paths_with_home(
 
         // [TEMP_HOME] post-processing filters - must run AFTER the replacement above.
 
-        // Strip green ANSI highlighting from [TEMP_HOME] paths.
-        // On Windows, shell_escape quotes paths containing ':', and tree-sitter highlights quoted
-        // strings in green (\x1b[32m). After path replacement, green codes remain around the path.
-        // Remove the green start code immediately before [TEMP_HOME] and reset code after.
-        settings.add_filter(r"\x1b\[32m(\[TEMP_HOME\]/[^\x1b]+)\x1b\[0m", "$1");
+        // Strip ANSI sequences around [TEMP_HOME] paths.
+        // On Windows, tree-sitter highlights paths with multiple ANSI codes (reset+dim+green).
+        // Example: \x1b[0m\x1b[2m\x1b[32m[TEMP_HOME]/...config.toml\x1b[0m\x1b[2m
+        // We need to strip these sequences from around the replaced path.
+        // Match: optional ANSI codes + [TEMP_HOME] path + optional trailing ANSI codes
+        // Only strip if we see the green code (\x1b[32m) which indicates syntax highlighting.
+        settings.add_filter(
+            r"(?:\x1b\[\d+m)*\x1b\[32m(\[TEMP_HOME\]/[^\x1b]+)(?:\x1b\[\d+m)*",
+            "$1",
+        );
 
         // Strip quotes around [TEMP_HOME] paths (Windows shell_escape quotes paths with ':')
         // Also handles git diff quoted format which lacks a/b prefixes.
