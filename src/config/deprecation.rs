@@ -523,10 +523,11 @@ pub fn check_and_migrate(
                     .unwrap_or_default();
 
                 // Shell-escape paths for safe copy-paste
-                let new_path_str = new_path.to_string_lossy();
-                let path_str = path.to_string_lossy();
-                let new_path_escaped = escape(Cow::Borrowed(new_path_str.as_ref()));
-                let path_escaped = escape(Cow::Borrowed(path_str.as_ref()));
+                // Use forward slashes for cross-platform compatibility (works in Git Bash on Windows)
+                let new_path_str = new_path.to_string_lossy().replace('\\', "/");
+                let path_str = path.to_string_lossy().replace('\\', "/");
+                let new_path_escaped = escape(Cow::Borrowed(&new_path_str));
+                let path_escaped = escape(Cow::Borrowed(&path_str));
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
