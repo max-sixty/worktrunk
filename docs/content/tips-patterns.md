@@ -289,6 +289,22 @@ url = "http://{{ branch | sanitize }}.{{ repo }}.lvh.me:8080"
 3. `lvh.me` is a public domain with wildcard DNS — `*.lvh.me` resolves to `127.0.0.1`
 4. Visiting `http://feature-auth.myproject.lvh.me:8080`: Caddy matches the subdomain and proxies to the dev server
 
+## Monitor hook logs
+
+Follow background hook output in real-time:
+
+```bash
+tail -f "$(wt config state logs get --hook=user:post-start:server)"
+```
+
+The `--hook` format is `source:hook-type:name` — e.g., `project:post-start:build` for project-defined hooks. Use `wt config state logs get` to list all available logs.
+
+Create an alias for frequent use:
+
+```bash
+alias wtlog='f() { tail -f "$(wt config state logs get --hook="$1")"; }; f'
+```
+
 ## Bare repository layout
 
 An alternative to the default sibling layout (`myproject.feature/`) uses a bare repository with worktrees as subdirectories:
