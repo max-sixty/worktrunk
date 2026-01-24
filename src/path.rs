@@ -83,12 +83,24 @@ fn find_cygpath_from_shell(shell: &crate::shell_exec::ShellConfig) -> Option<Pat
 /// - Windows: `USERPROFILE` or `HOMEDRIVE`/`HOMEPATH`
 pub use home::home_dir;
 
+/// Check if a string needs shell escaping (contains characters outside the safe set).
+fn needs_shell_escaping(s: &str) -> bool {
+    !matches!(escape(Cow::Borrowed(s)), Cow::Borrowed(_))
+}
+
 /// Format a filesystem path for user-facing output.
 ///
-/// Replaces home directory prefix with `~` (e.g., `/Users/alex/projects/wt` -> `~/projects/wt`).
-/// Paths outside home are returned unchanged.
+/// Replaces home directory prefix with `~` when safe for shell use. Falls back to
+/// quoted absolute path when escaping is needed (to avoid tilde-in-quotes issues).
+///
+/// # Examples (Unix)
+/// - `/Users/alex/repo` → `~/repo` (no escaping needed)
+/// - `/Users/alex/my repo` → `'/Users/alex/my repo'` (needs quoting, use original)
+/// - `/tmp/repo` → `/tmp/repo` (no escaping needed)
+/// - `/tmp/my repo` → `'/tmp/my repo'` (needs quoting)
 pub fn format_path_for_display(path: &Path) -> String {
-    if let Some(home) = home_dir()
+    // Try to use tilde for home directory paths
+    let display = if let Some(home) = home_dir()
         && let Ok(stripped) = path.strip_prefix(&home)
     {
         if stripped.as_os_str().is_empty() {
@@ -97,34 +109,10 @@ pub fn format_path_for_display(path: &Path) -> String {
 
         let mut display_path = PathBuf::from("~");
         display_path.push(stripped);
-        return display_path.display().to_string();
-    }
-
-    path.display().to_string()
-}
-
-/// Check if a string needs shell escaping (contains characters outside the safe set).
-fn needs_shell_escaping(s: &str) -> bool {
-    !matches!(escape(Cow::Borrowed(s)), Cow::Borrowed(_))
-}
-
-/// Escape a path for use in shell commands, preserving tilde expansion.
-///
-/// Uses [`format_path_for_display`] to show `~` for home directory paths, but only
-/// when no shell escaping is needed. Falls back to the original path (quoted) when
-/// escaping is required (to avoid tilde-in-quotes issues).
-///
-/// # Examples (Unix)
-/// - `/Users/alex/repo` → `~/repo` (no escaping needed)
-/// - `/Users/alex/my repo` → `'/Users/alex/my repo'` (needs quoting, use original)
-/// - `/tmp/repo` → `/tmp/repo` (no escaping needed)
-/// - `/tmp/my repo` → `'/tmp/my repo'` (needs quoting)
-pub fn escape_path_for_shell(path: &Path) -> String {
-    let display = format_path_for_display(path);
-
-    if display == "~" {
-        return display;
-    }
+        display_path.display().to_string()
+    } else {
+        path.display().to_string()
+    };
 
     // Handle both Unix (~/) and Windows (~\) path separators
     let rest = display
@@ -198,10 +186,7 @@ pub fn sanitize_for_filename(value: &str) -> String {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{
-        escape_path_for_shell, format_path_for_display, home_dir, sanitize_for_filename,
-        to_posix_path,
-    };
+    use super::{format_path_for_display, home_dir, sanitize_for_filename, to_posix_path};
 
     #[test]
     fn shortens_path_under_home() {
@@ -344,19 +329,7 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn escape_path_simple_home_path() {
-        let Some(home) = home_dir() else {
-            return;
-        };
-
-        let path = home.join("workspace").join("repo");
-        let escaped = escape_path_for_shell(&path);
-        assert_eq!(escaped, "~/workspace/repo");
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn escape_path_home_path_with_spaces() {
+    fn format_path_home_path_with_spaces_quotes() {
         use shell_escape::escape;
         use std::borrow::Cow;
 
@@ -365,35 +338,18 @@ mod tests {
         };
 
         let path = home.join("my workspace").join("repo");
-        let escaped = escape_path_for_shell(&path);
+        let formatted = format_path_for_display(&path);
         // Falls back to quoted absolute path when escaping needed
         let abs_path = path.display().to_string();
         let expected = escape(Cow::Borrowed(&abs_path)).into_owned();
-        assert_eq!(escaped, expected);
+        assert_eq!(formatted, expected);
     }
 
     #[test]
     #[cfg(unix)]
-    fn escape_path_non_home_simple() {
-        let path = PathBuf::from("/tmp/repo");
-        let escaped = escape_path_for_shell(&path);
-        assert_eq!(escaped, "/tmp/repo");
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn escape_path_non_home_with_spaces() {
+    fn format_path_non_home_with_spaces_quotes() {
         let path = PathBuf::from("/tmp/my repo");
-        let escaped = escape_path_for_shell(&path);
-        assert_eq!(escaped, "'/tmp/my repo'");
-    }
-
-    #[test]
-    fn escape_path_home_directory_alone() {
-        let Some(home) = home_dir() else {
-            return;
-        };
-        let escaped = escape_path_for_shell(&home);
-        assert_eq!(escaped, "~");
+        let formatted = format_path_for_display(&path);
+        assert_eq!(formatted, "'/tmp/my repo'");
     }
 }

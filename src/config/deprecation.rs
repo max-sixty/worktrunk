@@ -22,7 +22,7 @@ use minijinja::Environment;
 use regex::Regex;
 
 use crate::config::WorktrunkConfig;
-use crate::path::escape_path_for_shell;
+use crate::path::format_path_for_display;
 use crate::styling::{eprintln, hint_message, warning_message};
 
 /// Tracks which config paths have already shown deprecation warnings this process.
@@ -244,15 +244,15 @@ pub fn check_and_migrate(
                     .map(|n| n.to_string_lossy())
                     .unwrap_or_default();
 
-                let new_path_escaped = escape_path_for_shell(&new_path);
-                let path_escaped = escape_path_for_shell(path);
+                let new_path_display = format_path_for_display(&new_path);
+                let path_display = format_path_for_display(path);
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
                         "Wrote migrated {}; to apply: <bright-black>mv -- {} {}</>",
                         new_filename,
-                        new_path_escaped,
-                        path_escaped
+                        new_path_display,
+                        path_display
                     ))
                 );
             }

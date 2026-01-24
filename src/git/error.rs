@@ -16,7 +16,7 @@ use color_print::{cformat, cwrite};
 use shell_escape::escape;
 
 use super::HookType;
-use crate::path::{escape_path_for_shell, format_path_for_display};
+use crate::path::format_path_for_display;
 use crate::styling::{
     ERROR_SYMBOL, HINT_SYMBOL, error_message, format_with_gutter, hint_message, info_message,
     suggest_command,
@@ -402,8 +402,7 @@ impl std::fmt::Display for GitError {
                         "there's a detached worktree at the expected path <bold>{path_display}</>"
                     )
                 };
-                let path_escaped = escape_path_for_shell(path);
-                let command = format!("cd {path_escaped} && git switch {branch}");
+                let command = format!("cd {path_display} && git switch {branch}");
                 write!(
                     f,
                     "{}\n{}",
@@ -420,7 +419,6 @@ impl std::fmt::Display for GitError {
                 create,
             } => {
                 let path_display = format_path_for_display(path);
-                let path_escaped = escape_path_for_shell(path);
                 let flags: &[&str] = if *create {
                     &["--create", "--clobber"]
                 } else {
@@ -434,7 +432,7 @@ impl std::fmt::Display for GitError {
                         "Directory already exists: <bold>{path_display}</>"
                     )),
                     hint_message(cformat!(
-                        "To remove manually, run <bright-black>rm -rf {path_escaped}</>; to overwrite (with backup), run <bright-black>{switch_cmd}</>"
+                        "To remove manually, run <bright-black>rm -rf {path_display}</>; to overwrite (with backup), run <bright-black>{switch_cmd}</>"
                     ))
                 )
             }
