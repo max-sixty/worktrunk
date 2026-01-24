@@ -2,5 +2,6 @@
 source: tests/integration_tests/configure_shell.rs
 expression: "output.trim_start_matches('\\n')"
 ---
-❯ Install shell integration? [y/N/?] n
+
+❯ Install shell integration? [y/N/?] 
 ✗ Cancelled by user
