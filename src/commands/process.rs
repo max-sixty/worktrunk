@@ -535,14 +535,27 @@ mod tests {
     fn test_hook_log_hook_suffix() {
         use worktrunk::git::HookType;
 
+        // Suffix includes sanitized name with hash for collision avoidance
         let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
-        assert_eq!(log.suffix(), "user-post-start-server");
+        let suffix = log.suffix();
+        assert!(
+            suffix.starts_with("user-post-start-server-"),
+            "Expected pattern: {suffix}"
+        );
 
         let log = HookLog::hook(HookSource::Project, HookType::PostCreate, "build");
-        assert_eq!(log.suffix(), "project-post-create-build");
+        let suffix = log.suffix();
+        assert!(
+            suffix.starts_with("project-post-create-build-"),
+            "Expected pattern: {suffix}"
+        );
 
         let log = HookLog::hook(HookSource::User, HookType::PreRemove, "cleanup");
-        assert_eq!(log.suffix(), "user-pre-remove-cleanup");
+        let suffix = log.suffix();
+        assert!(
+            suffix.starts_with("user-pre-remove-cleanup-"),
+            "Expected pattern: {suffix}"
+        );
     }
 
     #[test]
@@ -555,24 +568,59 @@ mod tests {
     fn test_hook_log_filename() {
         use worktrunk::git::HookType;
 
+        // Filenames now include hash suffixes for collision avoidance
         let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
-        assert_eq!(log.filename("main"), "main-user-post-start-server.log");
-        assert_eq!(
-            log.filename("feature/auth"),
-            "feature-auth-user-post-start-server.log"
+        let filename = log.filename("main");
+        assert!(
+            filename.starts_with("main-"),
+            "Expected main- prefix: {filename}"
+        );
+        assert!(
+            filename.contains("-user-post-start-"),
+            "Expected -user-post-start-: {filename}"
+        );
+        assert!(
+            filename.ends_with(".log"),
+            "Expected .log suffix: {filename}"
+        );
+
+        let filename = log.filename("feature/auth");
+        assert!(
+            filename.starts_with("feature-"),
+            "Expected feature- prefix (slash sanitized): {filename}"
+        );
+        assert!(
+            filename.contains("-user-post-start-"),
+            "Expected -user-post-start-: {filename}"
         );
 
         let log = HookLog::internal(InternalOp::Remove);
-        assert_eq!(log.filename("main"), "main-remove.log");
+        let filename = log.filename("main");
+        assert!(
+            filename.starts_with("main-"),
+            "Expected main- prefix: {filename}"
+        );
+        assert!(
+            filename.ends_with("-remove.log"),
+            "Expected -remove.log suffix: {filename}"
+        );
     }
 
     #[test]
     fn test_hook_log_parse_hook() {
         let log = HookLog::parse("user:post-start:server").unwrap();
-        assert_eq!(log.suffix(), "user-post-start-server");
+        let suffix = log.suffix();
+        assert!(
+            suffix.starts_with("user-post-start-server-"),
+            "Expected pattern: {suffix}"
+        );
 
         let log = HookLog::parse("project:post-create:build").unwrap();
-        assert_eq!(log.suffix(), "project-post-create-build");
+        let suffix = log.suffix();
+        assert!(
+            suffix.starts_with("project-post-create-build-"),
+            "Expected pattern: {suffix}"
+        );
     }
 
     #[test]

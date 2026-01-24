@@ -420,19 +420,20 @@ fn test_bare_repo_background_logs_location() {
     let log_dir = test.bare_repo_path().join("wt-logs");
     wait_for_file_count(&log_dir, "log", 1);
 
-    // Verify the log file matches expected pattern (feature-*-remove-*.log)
+    // Verify the log file matches expected pattern (feature-*-remove.log)
+    // Format: {branch_with_hash}-{op}.log (internal ops don't have hash on suffix)
     let log_files: Vec<_> = std::fs::read_dir(&log_dir)
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            name.starts_with("feature-") && name.contains("-remove-") && name.ends_with(".log")
+            name.starts_with("feature-") && name.ends_with("-remove.log")
         })
         .collect();
     assert_eq!(
         log_files.len(),
         1,
-        "Expected exactly one feature-*-remove-*.log file, found: {:?}",
+        "Expected exactly one feature-*-remove.log file, found: {:?}",
         log_files
     );
 
