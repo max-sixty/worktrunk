@@ -2384,6 +2384,11 @@ fn setup_snapshot_settings_for_paths_with_home(
         r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-config\.toml'?",
         "[TEST_CONFIG]",
     );
+    // Strip ANSI codes that may wrap [TEST_CONFIG*] placeholders.
+    // On Windows, shell_escape quotes paths with ':', and tree-sitter highlights quoted strings
+    // (green = \x1b[32m). After path replacement, these codes remain around the placeholder.
+    // Pattern: optional ANSI escape + [TEST_CONFIG...] + optional ANSI reset -> just the placeholder
+    settings.add_filter(r"\x1b\[\d+m(\[TEST_CONFIG(?:_NEW)?\])\x1b\[0m", "$1");
 
     // Normalize GIT_CONFIG_GLOBAL temp paths
     // (?:[A-Z]:)? handles Windows drive letters
