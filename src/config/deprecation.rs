@@ -27,7 +27,7 @@ use shell_escape::unix::escape;
 use crate::config::WorktrunkConfig;
 use crate::shell_exec::Cmd;
 use crate::styling::{
-    eprintln, format_bash_with_gutter, format_with_gutter, hint_message, verbosity, warning_message,
+    eprintln, format_bash_with_gutter, format_with_gutter, hint_message, warning_message,
 };
 
 /// Tracks which config paths have already shown deprecation warnings this process.
@@ -156,7 +156,7 @@ pub fn replace_deprecated_vars(content: &str) -> String {
 }
 
 /// Information about deprecated commit-generation sections found in config
-#[derive(Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CommitGenerationDeprecations {
     /// Has top-level [commit-generation] section
     pub has_top_level: bool,
@@ -386,6 +386,30 @@ fn shell_join(args: &[&str]) -> String {
         .join(" ")
 }
 
+/// Information about deprecated config patterns that were found.
+///
+/// Used by `wt config show` to display full deprecation details including inline diff.
+#[derive(Debug)]
+pub struct DeprecationInfo {
+    /// Path to the config file with deprecations
+    pub config_path: PathBuf,
+    /// Path to the generated migration file (if written)
+    pub migration_path: Option<PathBuf>,
+    /// Deprecated template variables found: (old_name, new_name)
+    pub deprecated_vars: Vec<(&'static str, &'static str)>,
+    /// Deprecated commit-generation sections found
+    pub commit_gen_deprecations: CommitGenerationDeprecations,
+    /// Label for this config (e.g., "User config", "Project config")
+    pub label: String,
+}
+
+impl DeprecationInfo {
+    /// Returns true if any deprecations were found
+    pub fn has_deprecations(&self) -> bool {
+        !self.deprecated_vars.is_empty() || !self.commit_gen_deprecations.is_empty()
+    }
+}
+
 /// Check config content for deprecated patterns and optionally create migration file
 ///
 /// Detects and migrates:
@@ -406,16 +430,20 @@ fn shell_join(args: &[&str]) -> String {
 /// (global, not repo-specific), pass `None` and the function will check if the `.new`
 /// file already exists instead.
 ///
+/// When `show_brief_warning` is true, only a brief pointer to `wt config show` is emitted
+/// instead of full deprecation details. Use this for commands other than `config show`.
+///
 /// Warnings are deduplicated per path per process.
 ///
-/// Returns Ok(true) if any deprecations were found, Ok(false) otherwise.
+/// Returns `Ok(Some(info))` if deprecations were found, `Ok(None)` otherwise.
 pub fn check_and_migrate(
     path: &Path,
     content: &str,
     warn_and_migrate: bool,
     label: &str,
     repo: Option<&crate::git::Repository>,
-) -> anyhow::Result<bool> {
+    show_brief_warning: bool,
+) -> anyhow::Result<Option<DeprecationInfo>> {
     // Detect all deprecation types
     let deprecated_vars = find_deprecated_vars(content);
     let commit_gen_deprecations = find_commit_generation_deprecations(content);
@@ -424,22 +452,7 @@ pub fn check_and_migrate(
     let has_commit_gen_deprecations = !commit_gen_deprecations.is_empty();
 
     if !has_deprecated_vars && !has_commit_gen_deprecations {
-        return Ok(false);
-    }
-
-    // Skip warning entirely if not in main worktree (for project config)
-    if !warn_and_migrate {
-        return Ok(true);
-    }
-
-    // Deduplicate warnings per path per process
-    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    {
-        let mut guard = WARNED_DEPRECATED_PATHS.lock().unwrap();
-        if guard.contains(&canonical_path) {
-            return Ok(true); // Already warned, skip
-        }
-        guard.insert(canonical_path.clone());
+        return Ok(None);
     }
 
     // Build the .new path: "config.toml" -> "config.toml.new"
@@ -448,6 +461,30 @@ pub fn check_and_migrate(
         path.extension().unwrap_or_default().to_string_lossy()
     ));
 
+    // Build deprecation info for return
+    let mut info = DeprecationInfo {
+        config_path: path.to_path_buf(),
+        migration_path: None,
+        deprecated_vars: deprecated_vars.clone(),
+        commit_gen_deprecations: commit_gen_deprecations.clone(),
+        label: label.to_string(),
+    };
+
+    // Skip warning entirely if not in main worktree (for project config)
+    if !warn_and_migrate {
+        return Ok(Some(info));
+    }
+
+    // Deduplicate warnings per path per process
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    {
+        let mut guard = WARNED_DEPRECATED_PATHS.lock().unwrap();
+        if guard.contains(&canonical_path) {
+            return Ok(Some(info)); // Already warned, skip
+        }
+        guard.insert(canonical_path.clone());
+    }
+
     // Check if we should skip writing the migration file
     // - Always regenerate if .new file exists (user kept it, so overwrite with fresh version)
     // - For project config: skip if hint shown AND .new doesn't exist (user deleted it)
@@ -455,6 +492,34 @@ pub fn check_and_migrate(
     let should_skip_write =
         !new_path.exists() && repo.is_some_and(|r| r.has_shown_hint(HINT_DEPRECATED_CONFIG));
 
+    // For brief warnings (non-config-show commands), just show a pointer
+    if show_brief_warning {
+        eprintln!(
+            "{}",
+            warning_message(cformat!(
+                "{} has deprecated settings. Run <bright-black>wt config show</> for details.",
+                label
+            ))
+        );
+
+        // Still write migration file if needed
+        if !should_skip_write {
+            write_migration_file(
+                path,
+                content,
+                &new_path,
+                repo,
+                &deprecated_vars,
+                &commit_gen_deprecations,
+            )?;
+            info.migration_path = Some(new_path);
+        }
+
+        std::io::stderr().flush().ok();
+        return Ok(Some(info));
+    }
+
+    // Full warning output for `wt config show`
     // Emit warnings for each deprecation type
     if has_deprecated_vars {
         let var_list: Vec<String> = deprecated_vars
@@ -503,96 +568,109 @@ pub fn check_and_migrate(
             ))
         );
     } else {
-        // Apply all migrations to generate new content
-        let mut new_content = content.to_string();
-        if has_deprecated_vars {
-            new_content = replace_deprecated_vars(&new_content);
-        }
-        if has_commit_gen_deprecations {
-            new_content = migrate_commit_generation_sections(&new_content);
-        }
+        write_migration_file(
+            path,
+            content,
+            &new_path,
+            repo,
+            &deprecated_vars,
+            &commit_gen_deprecations,
+        )?;
+        info.migration_path = Some(new_path.clone());
 
-        match std::fs::write(&new_path, &new_content) {
-            Ok(()) => {
-                // Mark hint as shown for project config
-                if let Some(repo) = repo {
-                    let _ = repo.mark_hint_shown(HINT_DEPRECATED_CONFIG);
-                }
-
-                // Show just the filename in the message
-                let new_filename = new_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy())
-                    .unwrap_or_default();
-
-                // Use forward slashes for cross-platform compatibility (works in Git Bash on Windows)
-                let new_path_str = new_path.to_string_lossy().replace('\\', "/");
-                let path_str = path.to_string_lossy().replace('\\', "/");
-
-                // Show actual diff with -v, otherwise show commands to run
-                if verbosity() >= 1 {
-                    // Run git diff and show the output
-                    eprintln!(
-                        "{}",
-                        hint_message(cformat!("Wrote migrated <bold>{}</>:", new_filename))
-                    );
-                    if let Ok(output) = Cmd::new("git")
-                        .args(["diff", "--no-index", "--color=always"])
-                        .arg(&path_str)
-                        .arg(&new_path_str)
-                        .run()
-                    {
-                        // git diff --no-index exits 1 when files differ, which is expected
-                        let diff_output = String::from_utf8_lossy(&output.stdout);
-                        if !diff_output.is_empty() {
-                            eprintln!("{}", format_with_gutter(diff_output.trim_end(), None));
-                        }
-                    }
-                    eprintln!("{}", hint_message("To apply:"));
-                    eprintln!(
-                        "{}",
-                        format_bash_with_gutter(&format!("mv -- {} {}", new_path_str, path_str))
-                    );
-                } else {
-                    // Show commands in gutters
-                    eprintln!(
-                        "{}",
-                        hint_message(cformat!(
-                            "Wrote migrated <bold>{}</>. To preview:",
-                            new_filename
-                        ))
-                    );
-                    eprintln!(
-                        "{}",
-                        format_bash_with_gutter(&format!(
-                            "git diff --no-index {} {}",
-                            path_str, new_path_str
-                        ))
-                    );
-                    eprintln!("{}", hint_message("To apply:"));
-                    eprintln!(
-                        "{}",
-                        format_bash_with_gutter(&format!("mv -- {} {}", new_path_str, path_str))
-                    );
-                }
-            }
-            Err(e) => {
-                // Warn about write failure but don't block config loading
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!(
-                        "Could not write migration file: <bright-black>{}</>",
-                        e
-                    ))
-                );
-            }
-        }
+        // Show the inline diff
+        display_migration_diff(path, &new_path);
     }
 
     // Flush stderr to ensure output appears before any subsequent messages
     std::io::stderr().flush().ok();
 
-    Ok(true)
+    Ok(Some(info))
+}
+
+/// Write migration file with all deprecation fixes applied
+fn write_migration_file(
+    path: &Path,
+    content: &str,
+    new_path: &Path,
+    repo: Option<&crate::git::Repository>,
+    deprecated_vars: &[(&'static str, &'static str)],
+    commit_gen_deprecations: &CommitGenerationDeprecations,
+) -> anyhow::Result<()> {
+    let has_deprecated_vars = !deprecated_vars.is_empty();
+    let has_commit_gen_deprecations = !commit_gen_deprecations.is_empty();
+
+    // Apply all migrations to generate new content
+    let mut new_content = content.to_string();
+    if has_deprecated_vars {
+        new_content = replace_deprecated_vars(&new_content);
+    }
+    if has_commit_gen_deprecations {
+        new_content = migrate_commit_generation_sections(&new_content);
+    }
+
+    match std::fs::write(new_path, &new_content) {
+        Ok(()) => {
+            // Mark hint as shown for project config
+            if let Some(repo) = repo {
+                let _ = repo.mark_hint_shown(HINT_DEPRECATED_CONFIG);
+            }
+        }
+        Err(e) => {
+            // Warn about write failure but don't block config loading
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "Could not write migration file: <bright-black>{}</>",
+                    e
+                ))
+            );
+        }
+    }
+
+    // Show just the filename in the message
+    let new_filename = new_path
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_default();
+
+    // Use forward slashes for cross-platform compatibility (works in Git Bash on Windows)
+    let new_path_str = new_path.to_string_lossy().replace('\\', "/");
+    let path_str = path.to_string_lossy().replace('\\', "/");
+
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "Wrote migrated <bold>{}</>. To apply:",
+            new_filename
+        ))
+    );
+    eprintln!(
+        "{}",
+        format_bash_with_gutter(&format!("mv -- {} {}", new_path_str, path_str))
+    );
+
+    Ok(())
+}
+
+/// Display the diff between original and migrated config files
+pub fn display_migration_diff(original_path: &Path, new_path: &Path) {
+    let new_path_str = new_path.to_string_lossy().replace('\\', "/");
+    let path_str = original_path.to_string_lossy().replace('\\', "/");
+
+    // Run git diff and show the output
+    if let Ok(output) = Cmd::new("git")
+        .args(["diff", "--no-index", "--color=always"])
+        .arg(&path_str)
+        .arg(&new_path_str)
+        .run()
+    {
+        // git diff --no-index exits 1 when files differ, which is expected
+        let diff_output = String::from_utf8_lossy(&output.stdout);
+        if !diff_output.is_empty() {
+            eprintln!("{}", format_with_gutter(diff_output.trim_end(), None));
+        }
+    }
 }
 
 /// Returns the config location where this key belongs, if it's in the wrong config.
@@ -948,10 +1026,11 @@ approved-commands = [
         let content = r#"post-create = "{{ repo_root }}/script.sh""#;
         let non_existent_path = std::path::Path::new("/nonexistent/dir/config.toml");
 
-        // Should return Ok(true) even if write fails - the function logs error but doesn't fail
-        let result = check_and_migrate(non_existent_path, content, true, "Test config", None);
+        // Should return Ok(Some(_)) even if write fails - the function logs error but doesn't fail
+        let result =
+            check_and_migrate(non_existent_path, content, true, "Test config", None, false);
         assert!(result.is_ok());
-        assert!(result.unwrap());
+        assert!(result.unwrap().is_some());
     }
 
     #[test]
@@ -962,14 +1041,14 @@ approved-commands = [
         let unique_path = std::path::Path::new("/nonexistent/dedup_test_12345/config.toml");
 
         // First call should process normally
-        let result1 = check_and_migrate(unique_path, content, true, "Test config", None);
+        let result1 = check_and_migrate(unique_path, content, true, "Test config", None, false);
         assert!(result1.is_ok());
-        assert!(result1.unwrap());
+        assert!(result1.unwrap().is_some());
 
         // Second call with same path should early-return (hits the deduplication branch)
-        let result2 = check_and_migrate(unique_path, content, true, "Test config", None);
+        let result2 = check_and_migrate(unique_path, content, true, "Test config", None, false);
         assert!(result2.is_ok());
-        assert!(result2.unwrap());
+        assert!(result2.unwrap().is_some());
     }
 
     // Tests for commit-generation section migration

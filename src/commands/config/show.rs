@@ -312,9 +312,6 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Trigger deprecation warnings (runs on raw content before parsing, so works even for invalid configs)
-    let _ = UserConfig::load();
-
     // Read and display the file contents
     let contents = std::fs::read_to_string(&config_path).context("Failed to read config file")?;
 
@@ -322,6 +319,17 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", hint_message("Empty file (using defaults)"))?;
         return Ok(());
     }
+
+    // Check for deprecations with show_brief_warning=false to get full details
+    // User config is global, not tied to any repository
+    let _ = worktrunk::config::check_and_migrate(
+        &config_path,
+        &contents,
+        true,
+        "User config",
+        None,
+        false, // show full details, not brief warning
+    );
 
     // Validate config (syntax + schema) and warn if invalid
     if let Err(e) = toml::from_str::<UserConfig>(&contents) {
@@ -369,7 +377,21 @@ pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
 
 fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     // Try to get current repository root
-    let repo_root = match Repository::current().and_then(|repo| repo.current_worktree().root()) {
+    let repo = match Repository::current() {
+        Ok(repo) => repo,
+        Err(_) => {
+            writeln!(
+                out,
+                "{}",
+                cformat!(
+                    "<dim>{}</>",
+                    format_heading("PROJECT CONFIG", Some("Not in a git repository"))
+                )
+            )?;
+            return Ok(());
+        }
+    };
+    let repo_root = match repo.current_worktree().root() {
         Ok(root) => root,
         Err(_) => {
             writeln!(
@@ -400,11 +422,6 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Trigger deprecation warnings (runs on raw content before parsing, so works even for invalid configs)
-    if let Ok(repo) = Repository::current() {
-        let _ = repo.load_project_config();
-    }
-
     // Read and display the file contents
     let contents = std::fs::read_to_string(&config_path).context("Failed to read config file")?;
 
@@ -412,6 +429,18 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", hint_message("Empty file"))?;
         return Ok(());
     }
+
+    // Check for deprecations with show_brief_warning=false to get full details
+    // Only show in main worktree (where .git is a directory)
+    let is_main_worktree = repo_root.join(".git").is_dir();
+    let _ = worktrunk::config::check_and_migrate(
+        &config_path,
+        &contents,
+        is_main_worktree,
+        "Project config",
+        Some(&repo),
+        false, // show full details, not brief warning
+    );
 
     // Validate config (syntax + schema) and warn if invalid
     if let Err(e) = toml::from_str::<ProjectConfig>(&contents) {

@@ -41,5 +41,4 @@ exit_code: 0
 [2m○[22m [2mShowing 4 worktrees, 1 with changes, 3 ahead
 
 ----- stderr -----
-[33m▲[39m [33mProject config uses deprecated template variables: [2mmain_worktree[22m → [1mrepo[22m[39m
-[2m↳[22m [2mTo regenerate, rerun after [90mwt config state hints clear deprecated-config[39m[22m
+[33m▲[39m [33mProject config has deprecated settings. Run [90mwt config show[39m for details.[39m

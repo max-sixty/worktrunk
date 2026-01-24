@@ -78,7 +78,7 @@ impl WorktrunkConfig for ProjectConfig {
 
 // Re-export public types
 pub use commands::{Command, CommandConfig};
-pub use deprecation::check_and_migrate as check_deprecated_vars;
+pub use deprecation::check_and_migrate;
 pub use deprecation::normalize_template_vars;
 pub use deprecation::{DEPRECATED_SECTION_KEYS, key_belongs_in, warn_unknown_fields};
 pub use expansion::{

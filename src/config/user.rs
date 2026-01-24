@@ -587,6 +587,7 @@ impl UserConfig {
             // Check for deprecated template variables and create migration file if needed
             // User config always gets migration file (it's global, not worktree-specific)
             // Pass None for repo since user config is global and not tied to any repository
+            // Use show_brief_warning=true to emit a brief pointer to `wt config show`
             if let Ok(content) = std::fs::read_to_string(config_path) {
                 let _ = super::deprecation::check_and_migrate(
                     config_path,
@@ -594,6 +595,7 @@ impl UserConfig {
                     true,
                     "User config",
                     None,
+                    true, // show_brief_warning
                 );
 
                 // Warn about unknown fields in the config file
