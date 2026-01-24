@@ -12,8 +12,8 @@ pub use create::handle_config_create;
 pub use hints::{handle_hints_clear, handle_hints_get};
 pub use show::handle_config_show;
 pub use state::{
-    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
-    handle_state_show,
+    handle_logs_get, handle_state_clear, handle_state_clear_all, handle_state_get,
+    handle_state_set, handle_state_show,
 };
 
 #[cfg(test)]

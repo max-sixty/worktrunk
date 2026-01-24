@@ -11,6 +11,8 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
@@ -29,7 +31,7 @@ wt config state logs - Background operation logs
 Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
 [1m[32mCommands:[0m
-  [1m[36mget[0m    List background operation log files
+  [1m[36mget[0m    Get log file paths
   [1m[36mclear[0m  Clear background operation logs
 
 [1m[32mOptions:[0m

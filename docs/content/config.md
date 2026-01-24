@@ -43,6 +43,28 @@ wt config show
 | **User config** | `~/.config/worktrunk/config.toml` | Worktree path template, LLM commit configs, etc | ✗ |
 | **Project config** | `.config/wt.toml` | Project hooks, dev server URL | ✓ |
 
+**User config** — personal preferences:
+
+```toml
+# ~/.config/worktrunk/config.toml
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+
+[commit-generation]
+command = "llm"
+args = ["-m", "claude-haiku-4.5"]
+```
+
+**Project config** — shared team settings:
+
+```toml
+# .config/wt.toml
+[post-create]
+deps = "npm ci"
+
+[pre-merge]
+test = "npm test"
+```
+
 ---
 
 <!-- USER_CONFIG_START -->
@@ -743,7 +765,7 @@ wt config state logs - Background operation logs
 Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>get</span></b>    List background operation log files
+  <b><span class=c>get</span></b>    Get log file paths
   <b><span class=c>clear</span></b>  Clear background operation logs
 
 <b><span class=g>Options:</span></b>

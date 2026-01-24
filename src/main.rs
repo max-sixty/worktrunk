@@ -49,10 +49,11 @@ use commands::{
     MergeOptions, OperationMode, RebaseResult, SquashResult, add_approvals, clear_approvals,
     execute_switch, handle_completions, handle_config_create, handle_config_show,
     handle_configure_shell, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
-    handle_list, handle_merge, handle_rebase, handle_remove, handle_remove_current,
-    handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
-    handle_state_set, handle_state_show, handle_unconfigure_shell, plan_switch,
-    resolve_worktree_arg, run_hook, step_commit, step_copy_ignored, step_for_each,
+    handle_list, handle_logs_get, handle_merge, handle_rebase, handle_remove,
+    handle_remove_current, handle_show_theme, handle_squash, handle_state_clear,
+    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show,
+    handle_unconfigure_shell, plan_switch, resolve_worktree_arg, run_hook, step_commit,
+    step_copy_ignored, step_for_each,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
@@ -488,7 +489,8 @@ fn main() {
                     }
                 },
                 StateCommand::Logs { action } => match action {
-                    Some(LogsAction::Get) | None => handle_state_get("logs", None),
+                    Some(LogsAction::Get { hook, branch }) => handle_logs_get(hook, branch),
+                    None => handle_logs_get(None, None),
                     Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
                 },
                 StateCommand::Hints { action } => match action {

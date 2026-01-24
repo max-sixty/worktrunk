@@ -1,11 +1,172 @@
 use anyhow::Context;
+use color_print::cformat;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::process::Command;
 use std::process::Stdio;
-use worktrunk::git::Repository;
+use std::str::FromStr;
+use strum::IntoEnumIterator;
+use worktrunk::git::{HookType, Repository};
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
+
+use crate::commands::hook_filter::HookSource;
+
+// ==================== Hook Log Specification ====================
+
+/// Internal worktrunk operations that produce log files.
+///
+/// These are operations performed by worktrunk itself (not user-defined hooks).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString, strum::Display)]
+#[strum(serialize_all = "kebab-case")]
+pub enum InternalOp {
+    /// Background worktree removal (`wt remove` in background mode)
+    Remove,
+}
+
+/// Specification for a hook log file.
+///
+/// This is the single source of truth for hook log file naming.
+/// Used by both log creation (in `spawn_detached`) and log lookup (in `handle_logs_get`).
+///
+/// # Log file naming
+///
+/// Hook commands produce logs named: `{branch}-{source}-{hook_type}-{name}.log`
+/// - Example: `feature-user-post-start-server.log`
+///
+/// Internal operations produce logs named: `{branch}-{op}.log`
+/// - Example: `feature-remove.log`
+///
+/// # CLI format for lookup
+///
+/// The first segment determines the log type:
+/// - `user:hook-type:name` → User hook (e.g., `user:post-start:server`)
+/// - `project:hook-type:name` → Project hook (e.g., `project:post-create:build`)
+/// - `internal:op` → Internal operation (e.g., `internal:remove`)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HookLog {
+    /// Hook command log: `{branch}-{source}-{hook_type}-{name}.log`
+    Hook {
+        source: HookSource,
+        hook_type: HookType,
+        name: String,
+    },
+    /// Internal operation log: `{branch}-{op}.log`
+    Internal(InternalOp),
+}
+
+impl HookLog {
+    /// Create a hook command log specification.
+    pub fn hook(source: HookSource, hook_type: HookType, name: impl Into<String>) -> Self {
+        Self::Hook {
+            source,
+            hook_type,
+            name: name.into(),
+        }
+    }
+
+    /// Create an internal operation log specification.
+    pub fn internal(op: InternalOp) -> Self {
+        Self::Internal(op)
+    }
+
+    /// Generate the suffix (without branch) for the log filename.
+    ///
+    /// This is what gets appended after `{branch}-` in the log filename.
+    pub fn suffix(&self) -> String {
+        match self {
+            HookLog::Hook {
+                source,
+                hook_type,
+                name,
+            } => {
+                // HookSource uses #[strum(serialize_all = "kebab-case")] which produces lowercase
+                format!("{}-{}-{}", source, hook_type, sanitize_for_filename(name))
+            }
+            HookLog::Internal(op) => op.to_string(),
+        }
+    }
+
+    /// Generate full log filename for a branch.
+    pub fn filename(&self, branch: &str) -> String {
+        let safe_branch = sanitize_for_filename(branch);
+        format!("{}-{}.log", safe_branch, self.suffix())
+    }
+
+    /// Generate full log path for a branch in the given log directory.
+    pub fn path(&self, log_dir: &Path, branch: &str) -> PathBuf {
+        log_dir.join(self.filename(branch))
+    }
+
+    /// Convert to CLI spec format (for error messages and roundtrip).
+    ///
+    /// Returns the format used by `parse()`: `source:hook-type:name` or `internal:op`.
+    pub fn to_spec(&self) -> String {
+        match self {
+            HookLog::Hook {
+                source,
+                hook_type,
+                name,
+            } => format!("{}:{}:{}", source, hook_type, name),
+            HookLog::Internal(op) => format!("internal:{}", op),
+        }
+    }
+
+    /// Parse from CLI argument.
+    ///
+    /// # Formats
+    ///
+    /// The first segment determines the type:
+    /// - `user:hook-type:name` → User hook log
+    /// - `project:hook-type:name` → Project hook log
+    /// - `internal:op` → Internal operation log
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the format is invalid or unrecognized.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        let parts: Vec<&str> = s.split(':').collect();
+
+        match parts.as_slice() {
+            // internal:op
+            ["internal", op_str] => {
+                let op = InternalOp::from_str(op_str).map_err(|_| {
+                    cformat!(
+                        "Unknown internal operation: <bold>{}</>. Valid: remove",
+                        op_str
+                    )
+                })?;
+                Ok(Self::Internal(op))
+            }
+            // source:hook-type:name
+            [source_str, hook_type_str, name] => {
+                let source = HookSource::from_str(source_str).map_err(|_| {
+                    cformat!(
+                        "Unknown source: <bold>{}</>. Valid: user, project",
+                        source_str
+                    )
+                })?;
+                let hook_type = HookType::from_str(hook_type_str).map_err(|_| {
+                    let valid: Vec<_> = HookType::iter().map(|h| h.to_string()).collect();
+                    cformat!(
+                        "Unknown hook type: <bold>{}</>. Valid: {}",
+                        hook_type_str,
+                        valid.join(", ")
+                    )
+                })?;
+                Ok(Self::Hook {
+                    source,
+                    hook_type,
+                    name: (*name).to_string(),
+                })
+            }
+            _ => Err(cformat!(
+                "Invalid log spec: <bold>{}</>. Format: source:hook-type:name or internal:op",
+                s
+            )),
+        }
+    }
+}
 
 /// Get the separator needed before closing brace in POSIX shell command grouping.
 /// Returns empty string if command already ends with newline or semicolon.
@@ -30,7 +191,7 @@ fn posix_command_separator(command: &str) -> &'static str {
 /// * `worktree_path` - Working directory for the command
 /// * `command` - Shell command to execute
 /// * `branch` - Branch name for log organization
-/// * `name` - Operation identifier (e.g., "post-start-npm", "remove")
+/// * `hook_log` - Log specification (determines the log filename)
 /// * `context_json` - Optional JSON context to pipe to command's stdin
 ///
 /// # Returns
@@ -40,7 +201,7 @@ pub fn spawn_detached(
     worktree_path: &Path,
     command: &str,
     branch: &str,
-    name: &str,
+    hook_log: &HookLog,
     context_json: Option<&str>,
 ) -> anyhow::Result<std::path::PathBuf> {
     // Create log directory in the common git directory
@@ -52,11 +213,8 @@ pub fn spawn_detached(
         )
     })?;
 
-    // Generate log filename (no timestamp - overwrites on each run)
-    // Format: {branch}-{name}.log (e.g., "feature-post-start-npm.log", "bugfix-remove.log")
-    let safe_branch = sanitize_for_filename(branch);
-    let safe_name = sanitize_for_filename(name);
-    let log_path = log_dir.join(format!("{}-{}.log", safe_branch, safe_name));
+    // Generate log path using the HookLog specification
+    let log_path = hook_log.path(&log_dir, branch);
 
     // Create log file
     let log_file = fs::File::create(&log_path).with_context(|| {
@@ -67,10 +225,9 @@ pub fn spawn_detached(
     })?;
 
     log::debug!(
-        "$ {} (detached, logging to {}-{}.log)",
+        "$ {} (detached, logging to {})",
         command,
-        safe_branch,
-        safe_name
+        log_path.file_name().unwrap_or_default().to_string_lossy()
     );
 
     #[cfg(unix)]
@@ -372,5 +529,136 @@ mod tests {
         let special_path = PathBuf::from("/tmp/test worktree");
         let cmd = build_remove_command(&special_path, Some("feature/branch"), false);
         assert!(cmd.contains("worktree remove"));
+    }
+
+    #[test]
+    fn test_hook_log_hook_suffix() {
+        use worktrunk::git::HookType;
+
+        let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
+        assert_eq!(log.suffix(), "user-post-start-server");
+
+        let log = HookLog::hook(HookSource::Project, HookType::PostCreate, "build");
+        assert_eq!(log.suffix(), "project-post-create-build");
+
+        let log = HookLog::hook(HookSource::User, HookType::PreRemove, "cleanup");
+        assert_eq!(log.suffix(), "user-pre-remove-cleanup");
+    }
+
+    #[test]
+    fn test_hook_log_internal_suffix() {
+        let log = HookLog::internal(InternalOp::Remove);
+        assert_eq!(log.suffix(), "remove");
+    }
+
+    #[test]
+    fn test_hook_log_filename() {
+        use worktrunk::git::HookType;
+
+        let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
+        assert_eq!(log.filename("main"), "main-user-post-start-server.log");
+        assert_eq!(
+            log.filename("feature/auth"),
+            "feature-auth-user-post-start-server.log"
+        );
+
+        let log = HookLog::internal(InternalOp::Remove);
+        assert_eq!(log.filename("main"), "main-remove.log");
+    }
+
+    #[test]
+    fn test_hook_log_parse_hook() {
+        let log = HookLog::parse("user:post-start:server").unwrap();
+        assert_eq!(log.suffix(), "user-post-start-server");
+
+        let log = HookLog::parse("project:post-create:build").unwrap();
+        assert_eq!(log.suffix(), "project-post-create-build");
+    }
+
+    #[test]
+    fn test_hook_log_parse_internal() {
+        let log = HookLog::parse("internal:remove").unwrap();
+        assert_eq!(log, HookLog::Internal(InternalOp::Remove));
+        assert_eq!(log.suffix(), "remove");
+    }
+
+    #[test]
+    fn test_hook_log_parse_invalid_source() {
+        let result = HookLog::parse("invalid:post-start:server");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown source"));
+    }
+
+    #[test]
+    fn test_hook_log_parse_invalid_hook_type() {
+        let result = HookLog::parse("user:invalid-hook:server");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown hook type"));
+    }
+
+    #[test]
+    fn test_hook_log_parse_invalid_internal_op() {
+        let result = HookLog::parse("internal:unknown");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown internal operation"));
+    }
+
+    #[test]
+    fn test_hook_log_parse_invalid_format() {
+        // Too many colons
+        let result = HookLog::parse("user:post-start:server:extra");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid log spec"));
+
+        // Single word (not valid anymore)
+        let result = HookLog::parse("remove");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid log spec"));
+
+        // Two colons but not internal:op
+        let result = HookLog::parse("foo:bar");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_hook_log_roundtrip() {
+        // What gets created should match what gets looked up
+        use worktrunk::git::HookType;
+
+        // Hook: create the same way hooks.rs does, parse the same way state.rs does
+        let created = HookLog::hook(HookSource::User, HookType::PostStart, "server");
+        let parsed = HookLog::parse("user:post-start:server").unwrap();
+        assert_eq!(created.filename("main"), parsed.filename("main"));
+
+        // Internal: create the same way handlers.rs does, parse from CLI
+        let created = HookLog::internal(InternalOp::Remove);
+        let parsed = HookLog::parse("internal:remove").unwrap();
+        assert_eq!(created.filename("main"), parsed.filename("main"));
+    }
+
+    #[test]
+    fn test_hook_log_to_spec_roundtrip() {
+        use worktrunk::git::HookType;
+
+        // Hook roundtrip: to_spec -> parse -> equals original
+        let original = HookLog::hook(HookSource::User, HookType::PostStart, "server");
+        let spec = original.to_spec();
+        assert_eq!(spec, "user:post-start:server");
+        let parsed = HookLog::parse(&spec).unwrap();
+        assert_eq!(original, parsed);
+
+        // Project hook
+        let original = HookLog::hook(HookSource::Project, HookType::PreMerge, "lint");
+        let spec = original.to_spec();
+        assert_eq!(spec, "project:pre-merge:lint");
+        let parsed = HookLog::parse(&spec).unwrap();
+        assert_eq!(original, parsed);
+
+        // Internal roundtrip
+        let original = HookLog::internal(InternalOp::Remove);
+        let spec = original.to_spec();
+        assert_eq!(spec, "internal:remove");
+        let parsed = HookLog::parse(&spec).unwrap();
+        assert_eq!(original, parsed);
     }
 }
