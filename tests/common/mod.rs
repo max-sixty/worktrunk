@@ -2345,6 +2345,26 @@ fn setup_snapshot_settings_for_paths_with_home(
         r"'(?:\x1b\[[0-9;]*m)*(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?)(?:\x1b\[[0-9;]*m)*'",
         "$1",
     );
+    // Also strip quotes around paths that include subdirectories (e.g., '_REPO_/.config/wt.toml')
+    // On Windows, shell_escape quotes paths containing ':' so full paths get quoted.
+    settings.add_filter(
+        r"'(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?/[^']+)'",
+        "$1",
+    );
+    // Also strip quotes around [TEMP_HOME] paths
+    settings.add_filter(r"'\[TEMP_HOME\](/[^']+)'", "[TEMP_HOME]$1");
+    // Normalize git diff header prefixes: a/_REPO_ -> a_REPO_, b/_REPO_ -> b_REPO_
+    // On Windows, git diff --no-index with absolute paths produces a/C:/... which becomes a/_REPO_
+    // On Unix, relative paths produce a/repo/... which becomes a_REPO_
+    settings.add_filter(r"(diff --git )a/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1a$2");
+    settings.add_filter(r" b/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", " b$1");
+    settings.add_filter(r"(--- )a/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1a$2");
+    settings.add_filter(r"(\+\+\+ )b/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1b$2");
+    // Same for [TEMP_HOME]
+    settings.add_filter(r"(diff --git )a/(\[TEMP_HOME\])", "$1a$2");
+    settings.add_filter(r" b/(\[TEMP_HOME\])", " b$1");
+    settings.add_filter(r"(--- )a/(\[TEMP_HOME\])", "$1a$2");
+    settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\])", "$1b$2");
 
     // Normalize syntax highlighting around placeholders.
     // Bash syntax highlighters may split tokens differently on different platforms.
