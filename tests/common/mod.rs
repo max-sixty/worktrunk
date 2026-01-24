@@ -2480,18 +2480,16 @@ fn setup_snapshot_settings_for_paths_with_home(
 
         // [TEMP_HOME] post-processing filters - must run AFTER the replacement above.
 
-        // Strip ANSI sequences around [TEMP_HOME] paths.
-        // On Windows, tree-sitter highlights paths with green (\x1b[32m]) inside mv commands.
-        // The ANSI codes wrap both the spaces AND the paths:
-        //   \x1b[0m\x1b[2m (space) \x1b[0m\x1b[2m\x1b[32m[TEMP_HOME]/a.toml\x1b[0m\x1b[2m ...
-        // We need to strip codes before the space, keep the space, strip codes after, keep the path.
-        //
-        // Pattern: (ANSI codes before space)(space)(ANSI codes after space)(green)(path)(trailing ANSI)
-        // Only match when green code (\x1b[32m) is present to avoid over-matching.
-        settings.add_filter(
-            r"(?:\x1b\[\d+m)*( )(?:\x1b\[\d+m)+\x1b\[32m(\[TEMP_HOME\]/[^\x1b]+)(?:\x1b\[\d+m)*",
-            "$1$2",
-        );
+        // Strip ANSI sequences immediately before [TEMP_HOME] paths.
+        // On Windows, tree-sitter highlights paths with green (\x1b[32m) inside mv commands.
+        // The output has: ...code (space) code code [TEMP_HOME]/path code code...
+        // We strip ONLY the codes between space and [TEMP_HOME], keeping codes elsewhere.
+        // Pattern: (space)(ANSI codes)(optional quote)([TEMP_HOME]) -> (space)(quote)([TEMP_HOME])
+        // The optional quote handles Windows where paths may be quoted: 'C:/...'
+        settings.add_filter(r"( )(?:\x1b\[[0-9;]*m)+('?)(\[TEMP_HOME\]/)", "$1$2$3");
+        // Strip trailing ANSI codes after [TEMP_HOME] paths.
+        // Match path followed by one or more ANSI codes.
+        settings.add_filter(r"(\[TEMP_HOME\]/[^\x1b\s]+)(?:\x1b\[[0-9;]*m)+", "$1");
 
         // Strip quotes around [TEMP_HOME] paths (Windows shell_escape quotes paths with ':')
         // Also handles git diff quoted format which lacks a/b prefixes.
@@ -2545,9 +2543,10 @@ fn setup_snapshot_settings_for_paths_with_home(
         // Windows git diff may have bare path without --- prefix at all.
         // Match: bold ANSI + bare [TEMP_HOME] path that's NOT preceded by diff/---/+++
         // This catches the case where git outputs just the path on its own line.
-        // Look for standalone [TEMP_HOME]/...config.toml followed by ANSI reset.
+        // Look for standalone [TEMP_HOME]/...config.toml (trailing ANSI codes may be stripped).
+        // Use negative lookbehind (not supported) - instead match newline + gutter + bold.
         settings.add_filter(
-            r"(\x1b\[1m)(\[TEMP_HOME\]/[^\x1b]+\.toml)(\x1b\[m)",
+            r"(\x1b\[1m)(\[TEMP_HOME\]/[^\s\x1b]+\.toml)(\x1b\[m|\n|$)",
             "$1--- a$2$3",
         );
     }

@@ -39,10 +39,10 @@ exit_code: 0
 [33m▲[39m [33mUser config uses deprecated template variables: [2mrepo_root[22m → [1mrepo_path[22m, [2mmain_worktree[22m → [1mrepo[22m[39m
 [2m↳[22m [2mWrote migrated [1mconfig.toml.new[22m. To apply:[22m
 [107m [0m [2m[0m[2m[34mmv[0m[2m [0m[2m[36m--[0m[2m [TEMP_HOME]/.config/worktrunk/config.toml.new [TEMP_HOME]/.config/worktrunk/config.toml
-[107m [0m [1mdiff --git a[TEMP_HOME]/.config/worktrunk/config.toml b[TEMP_HOME]/.config/worktrunk/config.toml.new[m
+[107m [0m [1mdiff --git a[TEMP_HOME]/.config/worktrunk/config.toml b[TEMP_HOME]/.config/worktrunk/config.toml.new
 [107m [0m [1mindex d95d100..ceb381d 100644[m
-[107m [0m [1m--- a[TEMP_HOME]/.config/worktrunk/config.toml[m
-[107m [0m [1m+++ b[TEMP_HOME]/.config/worktrunk/config.toml.new[m
+[107m [0m [1m--- a[TEMP_HOME]/.config/worktrunk/config.toml
+[107m [0m [1m+++ b[TEMP_HOME]/.config/worktrunk/config.toml.new
 [107m [0m [36m@@ -1,2 +1,2 @@[m
 [107m [0m [31m-worktree-path = "../{{ main_worktree }}.{{ branch }}"[m
 [107m [0m [31m-post-create = "ln -sf {{ repo_root }}/node_modules"[m
