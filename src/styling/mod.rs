@@ -20,6 +20,9 @@ mod hyperlink;
 mod line;
 mod suggest;
 
+use ansi_str::AnsiStr;
+use unicode_width::UnicodeWidthStr;
+
 // Re-exports from anstream (auto-detecting output)
 pub use anstream::{eprint, eprintln, print, println, stderr, stdout};
 
@@ -96,8 +99,6 @@ pub fn get_terminal_width() -> usize {
 ///
 /// Uses unicode-width for proper handling of wide characters (CJK, emoji).
 pub fn visual_width(s: &str) -> usize {
-    use ansi_str::AnsiStr;
-    use unicode_width::UnicodeWidthStr;
     s.ansi_strip().width()
 }
 

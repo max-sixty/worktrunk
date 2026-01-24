@@ -4,6 +4,8 @@
 //! - `drain_results()` - drain channel and apply results to items
 //! - `apply_default()` - apply defaults for failed tasks
 
+use std::time::{Duration, Instant};
+
 use crossbeam_channel as chan;
 use worktrunk::git::LineDiff;
 
@@ -111,8 +113,6 @@ pub(super) fn drain_results(
     expected_results: &ExpectedResults,
     mut on_result: impl FnMut(usize, &mut ListItem, &StatusContext),
 ) -> DrainOutcome {
-    use std::time::{Duration, Instant};
-
     // Deadline for the entire drain operation (30 seconds should be more than enough)
     let deadline = Instant::now() + Duration::from_secs(30);
 

@@ -19,8 +19,8 @@ use std::path::Path;
 use worktrunk::git::Repository;
 
 use super::{
-    CiSource, CiStatus, MAX_PRS_TO_FETCH, PrStatus, is_retriable_error, non_interactive_cmd,
-    parse_json,
+    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrStatus, is_retriable_error,
+    non_interactive_cmd, parse_json,
 };
 
 /// Get the GitLab project ID for a repository.
@@ -68,7 +68,11 @@ fn get_gitlab_project_id(repo: &Repository) -> Option<u64> {
 /// 1. Get the current project ID via `glab repo view`
 /// 2. Fetch all open MRs with matching branch name (up to 20)
 /// 3. Filter client-side by comparing `source_project_id` to our project ID
-pub(super) fn detect_gitlab(repo: &Repository, branch: &str, local_head: &str) -> Option<PrStatus> {
+pub(super) fn detect_gitlab(
+    repo: &Repository,
+    branch: &CiBranchName,
+    local_head: &str,
+) -> Option<PrStatus> {
     let repo_root = repo.current_worktree().root().ok()?;
 
     // Get current project ID for filtering
@@ -78,6 +82,8 @@ pub(super) fn detect_gitlab(repo: &Repository, branch: &str, local_head: &str) -
     }
 
     // Fetch MRs with matching source branch.
+    // IMPORTANT: Use the bare branch name (branch.name), not the full remote ref.
+    // `glab mr list --source-branch origin/feature` won't find anything - it needs just "feature".
     // Note: glab mr list returns open MRs by default, no --state flag needed.
     // We filter client-side by source_project_id (numeric project ID comparison).
     let output = match non_interactive_cmd("glab")
@@ -85,7 +91,7 @@ pub(super) fn detect_gitlab(repo: &Repository, branch: &str, local_head: &str) -
             "mr",
             "list",
             "--source-branch",
-            branch,
+            &branch.name, // Use bare branch name, not "origin/feature"
             &format!("--per-page={}", MAX_PRS_TO_FETCH),
             "--output",
             "json",
@@ -97,7 +103,7 @@ pub(super) fn detect_gitlab(repo: &Repository, branch: &str, local_head: &str) -
         Err(e) => {
             log::warn!(
                 "glab mr list failed to execute for branch {}: {}",
-                branch,
+                branch.full_name,
                 e
             );
             return None;
@@ -116,7 +122,8 @@ pub(super) fn detect_gitlab(repo: &Repository, branch: &str, local_head: &str) -
 
     // Step 1: Parse mr list output to find matching MR.
     // Note: glab mr list does NOT return head_pipeline/pipeline fields.
-    let mr_list: Vec<GitLabMrListEntry> = parse_json(&output.stdout, "glab mr list", branch)?;
+    let mr_list: Vec<GitLabMrListEntry> =
+        parse_json(&output.stdout, "glab mr list", &branch.full_name)?;
 
     // Filter to MRs from our project (numeric project ID comparison)
     let mr_entry = if let Some(proj_id) = project_id {
@@ -127,7 +134,7 @@ pub(super) fn detect_gitlab(repo: &Repository, branch: &str, local_head: &str) -
             log::debug!(
                 "Found {} MRs for branch {} but none from project ID {}",
                 mr_list.len(),
-                branch,
+                branch.full_name,
                 proj_id
             );
         }
@@ -137,7 +144,7 @@ pub(super) fn detect_gitlab(repo: &Repository, branch: &str, local_head: &str) -
         log::debug!(
             "No project ID for {}, using first MR for branch {}",
             repo_root.display(),
-            branch
+            branch.full_name
         );
         mr_list.first()
     }?;

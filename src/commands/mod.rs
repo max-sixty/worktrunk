@@ -21,7 +21,6 @@ pub(crate) mod statusline;
 pub(crate) mod step_commands;
 pub(crate) mod worktree;
 
-pub(crate) use command_approval::approve_hooks;
 pub(crate) use config::{
     handle_config_create, handle_config_show, handle_hints_clear, handle_hints_get,
     handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
@@ -49,14 +48,15 @@ pub(crate) use worktree::{
 // Re-export Shell from the canonical location
 pub(crate) use worktrunk::shell::Shell;
 
+use color_print::cformat;
+use worktrunk::styling::{eprintln, format_with_gutter};
+
 /// Format command execution label with optional command name.
 ///
 /// Examples:
 /// - `format_command_label("post-create", Some("install"))` → `"Running post-create install"` (with bold)
 /// - `format_command_label("post-create", None)` → `"Running post-create"`
 pub(crate) fn format_command_label(command_type: &str, name: Option<&str>) -> String {
-    use color_print::cformat;
-
     match name {
         Some(name) => cformat!("Running {command_type} <bold>{name}</>"),
         None => format!("Running {command_type}"),
@@ -72,8 +72,6 @@ pub(crate) fn format_command_label(command_type: &str, name: Option<&str>) -> St
 /// * `repo` - The repository to query
 /// * `range` - The commit range to diff (e.g., "HEAD~1..HEAD" or "main..HEAD")
 pub(crate) fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> anyhow::Result<()> {
-    use worktrunk::styling::{eprintln, format_with_gutter};
-
     let term_width = crate::display::get_terminal_width();
     let stat_width = term_width.saturating_sub(worktrunk::styling::GUTTER_OVERHEAD);
     let diff_stat = repo

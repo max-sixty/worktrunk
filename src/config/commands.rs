@@ -4,6 +4,7 @@
 //! of worktree and merge operations.
 
 use indexmap::IndexMap;
+use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 
 /// Represents a command with its template and optionally expanded form
@@ -97,8 +98,6 @@ impl Serialize for CommandConfig {
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeMap;
-
         // If single unnamed command, serialize as string
         if self.commands.len() == 1 && self.commands[0].name.is_none() {
             return self.commands[0].template.serialize(serializer);

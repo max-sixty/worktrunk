@@ -38,4 +38,4 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mCannot use [1m--base[22m with [1mmr:101[22m[39m
-[2m↳[22m [2mMRs already have a base; remove --base[22m
+[2m↳[22m [2mMRs already have a base; remove [90m--base[39m[22m

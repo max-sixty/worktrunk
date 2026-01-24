@@ -6,12 +6,14 @@
 //! This command reuses the data collection infrastructure from `wt list`,
 //! avoiding duplication of git operations.
 
-use anyhow::{Context, Result};
 use std::env;
-use std::io::{self, Read};
-use std::path::Path;
+use std::io::{self, IsTerminal, Read};
+use std::path::{Component, Path};
+
+use ansi_str::AnsiStr;
+use anyhow::{Context, Result};
 use worktrunk::git::Repository;
-use worktrunk::styling::{get_terminal_width, truncate_visible};
+use worktrunk::styling::{fix_dim_after_color_reset, get_terminal_width, truncate_visible};
 
 use super::list::{self, CollectOptions, StatuslineSegment};
 
@@ -65,8 +67,6 @@ impl ClaudeCodeContext {
     /// Try to read and parse Claude Code context from stdin.
     /// Returns None if stdin is a terminal or not valid JSON.
     fn from_stdin() -> Option<Self> {
-        use std::io::IsTerminal;
-
         if io::stdin().is_terminal() {
             return None;
         }
@@ -84,8 +84,6 @@ impl ClaudeCodeContext {
 /// - `/home/user` -> `~`
 /// - `/tmp/test` -> `/t/test`
 fn format_directory_fish_style(path: &Path) -> String {
-    use std::path::Component;
-
     // Replace home directory prefix with ~
     let (suffix, tilde_prefix) = worktrunk::path::home_dir()
         .and_then(|home| path.strip_prefix(&home).ok().map(|s| (s, true)))
@@ -203,7 +201,6 @@ pub fn run(claude_code: bool) -> Result<()> {
     // Join and apply final truncation as fallback
     let output = StatuslineSegment::join(&fitted_segments);
 
-    use worktrunk::styling::fix_dim_after_color_reset;
     let reset = anstyle::Reset;
     let output = fix_dim_after_color_reset(&output);
     let output = truncate_visible(&format!("{reset} {output}"), max_width);
@@ -216,7 +213,6 @@ pub fn run(claude_code: bool) -> Result<()> {
 /// Filter out branch segment if directory already shows it via worktrunk template.
 fn filter_redundant_branch(segments: Vec<StatuslineSegment>, dir: &str) -> Vec<StatuslineSegment> {
     use super::list::columns::ColumnKind;
-    use ansi_str::AnsiStr;
 
     // Find the branch segment by its column kind (not priority, which could be shared)
     if let Some(branch_seg) = segments.iter().find(|s| s.kind == Some(ColumnKind::Branch)) {
@@ -445,7 +441,6 @@ mod tests {
     #[test]
     fn test_statusline_truncation() {
         use color_print::cformat;
-        use worktrunk::styling::truncate_visible;
 
         // Simulate a long statusline with styled content
         let long_line =

@@ -132,10 +132,16 @@ pub(crate) mod render;
 mod spacing_test;
 
 // Layout is calculated in collect.rs
+use std::collections::HashSet;
+
+use anstyle::Style;
 use anyhow::Context;
 use model::{ListData, ListItem};
 use progressive::RenderMode;
 use worktrunk::git::Repository;
+use worktrunk::styling::INFO_SYMBOL;
+
+use collect::TaskKind;
 
 // Re-export for statusline and other consumers
 pub use collect::{CollectOptions, build_worktree_item, populate_item};
@@ -149,14 +155,12 @@ pub fn handle_list(
     render_mode: RenderMode,
     config: &worktrunk::config::UserConfig,
 ) -> anyhow::Result<()> {
-    use collect::TaskKind;
-
     let repo = Repository::current()?;
 
     // Build skip set based on flags
     // Without --full: skip expensive operations (BranchDiff, CiStatus, WorkingTreeConflicts)
-    let skip_tasks: std::collections::HashSet<TaskKind> = if show_full {
-        std::collections::HashSet::new() // Compute everything
+    let skip_tasks: HashSet<TaskKind> = if show_full {
+        HashSet::new() // Compute everything
     } else {
         [
             TaskKind::BranchDiff,
@@ -318,9 +322,6 @@ pub(crate) fn format_summary_message(
     error_count: usize,
     timed_out_count: usize,
 ) -> String {
-    use anstyle::Style;
-    use worktrunk::styling::INFO_SYMBOL;
-
     let metrics = SummaryMetrics::from_items(items);
     let dim = Style::new().dimmed();
     let summary = metrics

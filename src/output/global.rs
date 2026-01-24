@@ -19,11 +19,16 @@
 
 use std::fs::OpenOptions;
 use std::io::{self, Write};
-use std::path::Path;
-use std::path::PathBuf;
 #[cfg(unix)]
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
+
+#[cfg(not(unix))]
+use worktrunk::git::WorktrunkError;
+#[cfg(not(unix))]
+use worktrunk::shell_exec::Cmd;
 use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 #[cfg(unix)]
 use worktrunk::shell_exec::ShellConfig;
@@ -156,8 +161,6 @@ pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
 /// Execute a command in the given directory (Unix: exec, non-Unix: spawn)
 #[cfg(unix)]
 fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result<()> {
-    use std::os::unix::process::CommandExt;
-
     let exec_dir = target_dir.unwrap_or_else(|| Path::new("."));
     let shell = ShellConfig::get();
 
@@ -184,9 +187,6 @@ fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result
 /// Execute a command in the given directory (non-Unix: spawn and wait)
 #[cfg(not(unix))]
 fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result<()> {
-    use std::process::Stdio;
-    use worktrunk::git::WorktrunkError;
-    use worktrunk::shell_exec::Cmd;
     let mut cmd = Cmd::shell(&command).stdin(Stdio::inherit());
     if let Some(dir) = target_dir {
         cmd = cmd.current_dir(dir);

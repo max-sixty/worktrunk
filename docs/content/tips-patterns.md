@@ -296,7 +296,7 @@ An alternative to the default sibling layout (`myproject.feature/`) uses a bare 
 ```
 myproject/
 ├── .git/       # bare repository
-├── main/       # main branch
+├── main/       # default branch
 ├── feature/    # feature branch
 └── bugfix/     # bugfix branch
 ```

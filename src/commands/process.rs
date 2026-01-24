@@ -272,49 +272,50 @@ mod tests {
 
     #[test]
     fn test_sanitize_for_filename() {
-        // Path separators
-        assert_eq!(sanitize_for_filename("feature/branch"), "feature-branch");
-        assert_eq!(sanitize_for_filename("feature\\branch"), "feature-branch");
+        // Path separators (hash suffix appended)
+        assert!(sanitize_for_filename("feature/branch").starts_with("feature-branch-"));
+        assert!(sanitize_for_filename("feature\\branch").starts_with("feature-branch-"));
 
         // Windows-illegal characters
-        assert_eq!(sanitize_for_filename("bug:123"), "bug-123");
-        assert_eq!(sanitize_for_filename("fix<angle>"), "fix-angle-");
-        assert_eq!(sanitize_for_filename("fix|pipe"), "fix-pipe");
-        assert_eq!(sanitize_for_filename("fix?question"), "fix-question");
-        assert_eq!(sanitize_for_filename("fix*wildcard"), "fix-wildcard");
-        assert_eq!(sanitize_for_filename("fix\"quotes\""), "fix-quotes-");
+        assert!(sanitize_for_filename("bug:123").starts_with("bug-123-"));
+        assert!(sanitize_for_filename("fix<angle>").starts_with("fix-angle-"));
+        assert!(sanitize_for_filename("fix|pipe").starts_with("fix-pipe-"));
+        assert!(sanitize_for_filename("fix?question").starts_with("fix-question-"));
+        assert!(sanitize_for_filename("fix*wildcard").starts_with("fix-wildcard-"));
+        assert!(sanitize_for_filename("fix\"quotes\"").starts_with("fix-quotes-"));
 
         // Multiple special characters
-        assert_eq!(
-            sanitize_for_filename("a/b\\c<d>e:f\"g|h?i*j"),
-            "a-b-c-d-e-f-g-h-i-j"
-        );
+        assert!(sanitize_for_filename("a/b\\c<d>e:f\"g|h?i*j").starts_with("a-b-c-d-e-f-g-h-i-j-"));
 
-        // Already safe
-        assert_eq!(sanitize_for_filename("normal-branch"), "normal-branch");
-        assert_eq!(
-            sanitize_for_filename("branch_with_underscore"),
-            "branch_with_underscore"
+        // Already safe (still gets hash suffix)
+        assert!(sanitize_for_filename("normal-branch").starts_with("normal-branch-"));
+        assert!(
+            sanitize_for_filename("branch_with_underscore").starts_with("branch_with_underscore-")
         );
 
         // Windows reserved device names (must be prefixed to avoid conflicts)
-        assert_eq!(sanitize_for_filename("CON"), "_CON");
-        assert_eq!(sanitize_for_filename("con"), "_con");
-        assert_eq!(sanitize_for_filename("PRN"), "_PRN");
-        assert_eq!(sanitize_for_filename("AUX"), "_AUX");
-        assert_eq!(sanitize_for_filename("NUL"), "_NUL");
-        assert_eq!(sanitize_for_filename("COM1"), "_COM1");
-        assert_eq!(sanitize_for_filename("com9"), "_com9");
-        assert_eq!(sanitize_for_filename("LPT1"), "_LPT1");
-        assert_eq!(sanitize_for_filename("lpt9"), "_lpt9");
+        assert!(sanitize_for_filename("CON").starts_with("_CON-"));
+        assert!(sanitize_for_filename("con").starts_with("_con-"));
+        assert!(sanitize_for_filename("PRN").starts_with("_PRN-"));
+        assert!(sanitize_for_filename("AUX").starts_with("_AUX-"));
+        assert!(sanitize_for_filename("NUL").starts_with("_NUL-"));
+        assert!(sanitize_for_filename("COM1").starts_with("_COM1-"));
+        assert!(sanitize_for_filename("com9").starts_with("_com9-"));
+        assert!(sanitize_for_filename("LPT1").starts_with("_LPT1-"));
+        assert!(sanitize_for_filename("lpt9").starts_with("_lpt9-"));
 
         // COM0/LPT0 are NOT reserved (only 1-9 are)
-        assert_eq!(sanitize_for_filename("COM0"), "COM0");
-        assert_eq!(sanitize_for_filename("LPT0"), "LPT0");
+        assert!(sanitize_for_filename("COM0").starts_with("COM0-"));
+        assert!(sanitize_for_filename("LPT0").starts_with("LPT0-"));
 
         // Longer names are fine
-        assert_eq!(sanitize_for_filename("CONSOLE"), "CONSOLE");
-        assert_eq!(sanitize_for_filename("COM10"), "COM10");
+        assert!(sanitize_for_filename("CONSOLE").starts_with("CONSOLE-"));
+        assert!(sanitize_for_filename("COM10").starts_with("COM10-"));
+
+        // Collision avoidance: different inputs produce different outputs
+        let a = sanitize_for_filename("feature/x");
+        let b = sanitize_for_filename("feature-x");
+        assert_ne!(a, b, "should not collide: {a} vs {b}");
     }
 
     #[test]

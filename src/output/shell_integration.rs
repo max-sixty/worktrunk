@@ -58,12 +58,19 @@
 //!
 //! Note: The git subcommand case (`ran git wt; ...`) is handled separately via [`crate::is_git_subcommand`].
 
-use color_print::cformat;
+use std::io::IsTerminal;
 
+use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{Shell, current_shell, extract_filename_from_path};
-use worktrunk::styling::{eprintln, hint_message};
+use worktrunk::styling::{
+    eprintln, format_bash_with_gutter, hint_message, info_message, success_message, warning_message,
+};
+
+use crate::commands::configure_shell::{
+    ConfigAction, handle_configure_shell, prompt_for_install, scan_shell_configs,
+};
 
 /// Shell integration install hint message.
 // TODO(hints-count): After showing this hint 5+ times, suggest `wt config show` for diagnostics.
@@ -206,11 +213,6 @@ pub fn print_skipped_shells(
 pub fn print_shell_install_result(
     scan_result: &crate::commands::configure_shell::ScanResult,
 ) -> anyhow::Result<()> {
-    use crate::commands::configure_shell::ConfigAction;
-    use worktrunk::styling::{
-        format_bash_with_gutter, info_message, success_message, warning_message,
-    };
-
     // Count shells that became (more) configured
     let shells_configured_count = scan_result
         .configured
@@ -362,12 +364,6 @@ pub fn prompt_shell_integration(
     binary_name: &str,
     skip_prompt: bool,
 ) -> anyhow::Result<bool> {
-    use crate::commands::configure_shell::{
-        ConfigAction, handle_configure_shell, prompt_for_install, scan_shell_configs,
-    };
-    use std::io::IsTerminal;
-    use worktrunk::shell::current_shell;
-
     // Skip when running as git subcommand - shell integration can't help there
     // (running through git prevents cd, so the shell wrapper won't intercept)
     // The git subcommand warning is already shown by the caller
