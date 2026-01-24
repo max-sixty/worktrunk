@@ -180,16 +180,22 @@ Pager behavior for [2mwt select[0m diff previews.
 
 [32mUser project-specific settings[0m
 
-User config settings apply to all projects. Project config settings are shared with teammates. The [2m[projects][0m table holds personal, project-specific settings like approved hook commands and worktree layout. Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m).
+For context:
+
+- Project config settings are shared with teammates.
+- User configs generally apply to all projects.
+- User configs _also_ has a [2m[projects][0m table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.
+
+Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m).
 
 [1mApproved hook commands[0m
 
-When a project hook runs for the first time, worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.
+When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.
 
   [2m[projects."github.com/user/repo"][0m
   [2mapproved-commands = ["npm ci", "npm test"][0m
 
-Auto-managed. To reset, delete the entry or run [2mwt hook approve --clear[0m.
+To reset, delete the entry or run [2mwt hook approvals clear[0m.
 
 [1mSetting overrides (Experimental)[0m
 

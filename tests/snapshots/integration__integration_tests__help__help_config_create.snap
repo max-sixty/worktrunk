@@ -135,16 +135,22 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# ### User project-specific settings[0m
   [2m#[0m
-  [2m# User config settings apply to all projects. Project config (https://worktrunk.dev/config.md#worktrunk-project-configuration/) settings are shared with teammates. The `[projects]` table holds personal, project-specific settings like approved hook commands and worktree layout. Entries are keyed by project identifier (e.g., `github.com/user/repo`).[0m
+  [2m# For context:[0m
+  [2m#[0m
+  [2m# - Project config (https://worktrunk.dev/config.md#worktrunk-project-configuration/) settings are shared with teammates.[0m
+  [2m# - User configs generally apply to all projects.[0m
+  [2m# - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.[0m
+  [2m#[0m
+  [2m# Entries are keyed by project identifier (e.g., `github.com/user/repo`).[0m
   [2m#[0m
   [2m# #### Approved hook commands[0m
   [2m#[0m
-  [2m# When a project hook runs for the first time, worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.[0m
+  [2m# When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.[0m
   [2m#[0m
   [2m# [projects."github.com/user/repo"][0m
   [2m# approved-commands = ["npm ci", "npm test"][0m
   [2m#[0m
-  [2m# Auto-managed. To reset, delete the entry or run `wt hook approve --clear`.[0m
+  [2m# To reset, delete the entry or run `wt hook approvals clear`.[0m
   [2m#[0m
   [2m# #### Setting overrides (Experimental)[0m
   [2m#[0m
