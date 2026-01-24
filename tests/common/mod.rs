@@ -2225,7 +2225,14 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
 /// This extracts the common settings configuration while allowing the
 /// `assert_cmd_snapshot!` macro to remain in test files for correct module path capture.
 pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
-    setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees)
+    setup_snapshot_settings_impl(repo.root_path(), None)
+}
+
+/// Internal implementation that optionally includes temp_home filter.
+/// The temp_home filter MUST be added before PROJECT_ID filters to take precedence.
+fn setup_snapshot_settings_impl(root: &Path, temp_home: Option<&Path>) -> insta::Settings {
+    let worktrees = HashMap::new(); // Caller doesn't need worktree filters
+    setup_snapshot_settings_for_paths_with_home(root, &worktrees, temp_home)
 }
 
 /// Full snapshot settings - path filters AND ANSI cleanup.
@@ -2234,6 +2241,15 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
 fn setup_snapshot_settings_for_paths(
     root: &Path,
     worktrees: &HashMap<String, PathBuf>,
+) -> insta::Settings {
+    setup_snapshot_settings_for_paths_with_home(root, worktrees, None)
+}
+
+/// Internal implementation with optional temp_home support.
+fn setup_snapshot_settings_for_paths_with_home(
+    root: &Path,
+    worktrees: &HashMap<String, PathBuf>,
+    temp_home: Option<&Path>,
 ) -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
@@ -2351,6 +2367,23 @@ fn setup_snapshot_settings_for_paths(
         r"(?:[A-Z]:)?/[^\s]+/\.tmp[^/]+/test-gitconfig",
         "[TEST_GIT_CONFIG]",
     );
+
+    // TEMP_HOME filter MUST come before PROJECT_ID filters to take precedence.
+    // Otherwise, paths like /tmp/.tmpXXX/.config/worktrunk/config.toml would match
+    // the PROJECT_ID filter first.
+    if let Some(temp_home) = temp_home {
+        let temp_home_canonical =
+            canonicalize(temp_home).unwrap_or_else(|_| temp_home.to_path_buf());
+        let temp_home_str = temp_home_canonical.to_string_lossy().replace('\\', "/");
+        settings.add_filter(&regex::escape(&temp_home_str), "[TEMP_HOME]");
+
+        // On macOS, canonicalize returns /private/var/... but git diff output shows /var/...
+        // Add both variants to catch all cases
+        if temp_home_str.starts_with("/private/") {
+            let without_private = &temp_home_str["/private".len()..];
+            settings.add_filter(&regex::escape(without_private), "[TEMP_HOME]");
+        }
+    }
 
     // Normalize temp directory paths in project identifiers (approval prompts)
     // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]
@@ -2504,13 +2537,12 @@ fn setup_snapshot_settings_for_paths(
 ///
 /// This extends `setup_snapshot_settings` by adding a filter for the temporary home directory.
 /// Use this for tests that need both a TestRepo and a temporary home (for user config testing).
+///
+/// IMPORTANT: The temp_home filter is passed to setup_snapshot_settings_impl so it gets added
+/// BEFORE the generic [PROJECT_ID] filters. Otherwise, paths like /tmp/.tmpXXX/.config/worktrunk/config.toml
+/// would match [PROJECT_ID] first.
 pub fn setup_snapshot_settings_with_home(repo: &TestRepo, temp_home: &TempDir) -> insta::Settings {
-    let mut settings = setup_snapshot_settings(repo);
-    settings.add_filter(
-        &regex::escape(&temp_home.path().to_string_lossy()),
-        "[TEMP_HOME]",
-    );
-    settings
+    setup_snapshot_settings_impl(repo.root_path(), Some(temp_home.path()))
 }
 
 /// Create configured insta Settings for snapshot tests with only a temporary home directory
