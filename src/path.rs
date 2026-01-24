@@ -5,6 +5,8 @@ use std::path::Path;
 
 use crate::config::short_hash;
 #[cfg(windows)]
+use std::path::PathBuf;
+#[cfg(windows)]
 use crate::shell_exec::{Cmd, ShellConfig};
 
 /// Convert a path to POSIX format for Git Bash compatibility.
@@ -121,12 +123,12 @@ pub fn format_path_for_display(path: &Path) -> String {
         }
     }
 
-    // Non-home path or escaping needed - use original with POSIX quoting
-    let original = path.display().to_string();
-    if needs_shell_escaping(&original) {
-        escape(Cow::Borrowed(&original)).into_owned()
-    } else {
-        original
+    // Non-home path or escaping needed - use POSIX quoting
+    // Use to_slash_lossy for Windows compatibility (forward slashes in shell hints)
+    let original = path.to_slash_lossy();
+    match escape(Cow::Borrowed(&original)) {
+        Cow::Borrowed(_) => original.into_owned(),
+        Cow::Owned(escaped) => escaped,
     }
 }
 
