@@ -536,13 +536,15 @@ mod tests {
         use worktrunk::git::HookType;
 
         let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
-        assert_eq!(log.suffix(), "user-post-start-server");
+        // Suffix includes sanitized hook name (with 3-char hash)
+        assert!(log.suffix().starts_with("user-post-start-server-"));
+        assert!(log.suffix().len() > "user-post-start-server-".len());
 
         let log = HookLog::hook(HookSource::Project, HookType::PostCreate, "build");
-        assert_eq!(log.suffix(), "project-post-create-build");
+        assert!(log.suffix().starts_with("project-post-create-build-"));
 
         let log = HookLog::hook(HookSource::User, HookType::PreRemove, "cleanup");
-        assert_eq!(log.suffix(), "user-pre-remove-cleanup");
+        assert!(log.suffix().starts_with("user-pre-remove-cleanup-"));
     }
 
     #[test]
@@ -556,23 +558,33 @@ mod tests {
         use worktrunk::git::HookType;
 
         let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
-        assert_eq!(log.filename("main"), "main-user-post-start-server.log");
-        assert_eq!(
-            log.filename("feature/auth"),
-            "feature-auth-user-post-start-server.log"
-        );
+        // Filename includes sanitized branch and hook names (both with 3-char hashes)
+        let filename = log.filename("main");
+        assert!(filename.starts_with("main-"));
+        assert!(filename.contains("-user-post-start-server-"));
+        assert!(filename.ends_with(".log"));
 
+        // Slashed branch names get sanitized
+        let filename = log.filename("feature/auth");
+        assert!(filename.starts_with("feature-auth-"));
+        assert!(filename.contains("-user-post-start-server-"));
+        assert!(filename.ends_with(".log"));
+
+        // Internal operations don't sanitize the operation name (only branch)
         let log = HookLog::internal(InternalOp::Remove);
-        assert_eq!(log.filename("main"), "main-remove.log");
+        let filename = log.filename("main");
+        assert!(filename.starts_with("main-"));
+        assert!(filename.ends_with("-remove.log"));
     }
 
     #[test]
     fn test_hook_log_parse_hook() {
         let log = HookLog::parse("user:post-start:server").unwrap();
-        assert_eq!(log.suffix(), "user-post-start-server");
+        // Parsed log suffix includes sanitized hook name
+        assert!(log.suffix().starts_with("user-post-start-server-"));
 
         let log = HookLog::parse("project:post-create:build").unwrap();
-        assert_eq!(log.suffix(), "project-post-create-build");
+        assert!(log.suffix().starts_with("project-post-create-build-"));
     }
 
     #[test]
