@@ -2408,7 +2408,18 @@ fn setup_snapshot_settings_for_paths_with_home(
         let temp_home_canonical =
             canonicalize(temp_home).unwrap_or_else(|_| temp_home.to_path_buf());
         let temp_home_str = temp_home_canonical.to_string_lossy().replace('\\', "/");
-        // Use exact path match (not prefix) since we want [TEMP_HOME] to appear as the base
+
+        // On Windows, paths may be quoted by shell_escape due to ':' in drive letters.
+        // Add filter for quoted paths first, then unquoted.
+        // The quotes version: 'C:/Users/.../Temp/.tmpXXX -> '[TEMP_HOME]
+        if temp_home_str.contains(':') {
+            // Handle quoted Windows paths - quote may appear before drive letter
+            settings.add_filter(
+                &format!("'{}", regex::escape(&temp_home_str)),
+                "'[TEMP_HOME]",
+            );
+        }
+        // Unquoted version
         settings.add_filter(&regex::escape(&temp_home_str), "[TEMP_HOME]");
 
         // On macOS, canonicalize returns /private/var/... but git diff output shows /var/...
