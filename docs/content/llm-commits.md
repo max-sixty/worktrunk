@@ -46,6 +46,15 @@ command = "aichat -m claude:claude-haiku-4.5"
 
 See [aichat docs](https://github.com/sigoden/aichat).
 
+### Codex
+
+```toml
+[commit.generation]
+command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' --sandbox read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+```
+
+Uses `gpt-5.1-codex-mini` (the smallest/fastest Codex model) with low reasoning effort. The `--json` output is parsed with `jq` to extract the message. Install with `npm install -g @openai/codex`. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
+
 ## How it works
 
 When worktrunk needs a commit message, it builds a prompt from a template and pipes it to the configured command via shell (`sh -c`). Environment variables can be set inline in the command string.
