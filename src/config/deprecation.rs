@@ -736,9 +736,9 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            hint_message(
+            hint_message(cformat!(
                 "To generate migration file, run <bright-black>wt config show</> from main worktree",
-            )
+            ))
         );
     } else if info.user_deleted_migration {
         // User deleted the migration file - show how to regenerate

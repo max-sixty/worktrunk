@@ -1396,3 +1396,144 @@ post-create = "ln -sf {{ repo_root }}/node_modules"
         migration_file
     );
 }
+
+/// Test that `wt config show` shows regenerate hint when user deleted migration file
+///
+/// When the hint is set but migration file doesn't exist, `wt config show` should
+/// show how to regenerate it (via `wt config state hints clear deprecated-config`).
+#[rstest]
+fn test_config_show_user_deleted_migration_shows_regenerate_hint(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Write project config with deprecated variables
+    let project_config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&project_config_dir).unwrap();
+    let project_config_path = project_config_dir.join("wt.toml");
+    fs::write(
+        &project_config_path,
+        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
+"#,
+    )
+    .unwrap();
+
+    // First run with wt list - creates migration file and sets hint
+    {
+        let mut cmd = repo.wt_command();
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "First run should succeed: {:?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let migration_file = project_config_path.with_extension("toml.new");
+    assert!(migration_file.exists(), "Migration file should be created");
+
+    // Delete the migration file (simulating user doesn't want it)
+    fs::remove_file(&migration_file).unwrap();
+
+    // Run wt config show - should show regenerate hint
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Migration file should NOT be recreated (hint is set)
+    assert!(
+        !migration_file.exists(),
+        "Migration file should not be recreated when hint is set"
+    );
+}
+
+/// Test that `wt config show` from linked worktree shows hint to run from main worktree
+///
+/// When project config has deprecations and you run from a linked worktree, it should
+/// show a hint to run `wt config show` from the main worktree.
+#[rstest]
+fn test_config_show_from_linked_worktree_shows_main_worktree_hint(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Write project config with deprecated variables
+    let project_config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&project_config_dir).unwrap();
+    fs::write(
+        project_config_dir.join("wt.toml"),
+        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
+"#,
+    )
+    .unwrap();
+    repo.commit("Add deprecated project config");
+
+    // Create a linked worktree using git directly
+    let feature_path = repo.root_path().parent().unwrap().join("feature-test");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        feature_path.to_str().unwrap(),
+        "-b",
+        "feature-test",
+    ]);
+
+    // Run wt config show from the linked worktree
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(&feature_path);
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test that `wt config show` displays project-level commit-generation deprecations
+#[rstest]
+fn test_config_show_displays_project_commit_generation_deprecations(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // Write user config with deprecated project-level commit-generation
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    let config_path = global_config_dir.join("config.toml");
+    fs::write(
+        &config_path,
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[projects."github.com/example/repo".commit-generation]
+command = "llm -m gpt-4"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify migration file was created
+    let migration_file = config_path.with_extension("toml.new");
+    assert!(
+        migration_file.exists(),
+        "Migration file should be created at {:?}",
+        migration_file
+    );
+}
