@@ -649,8 +649,16 @@ fn test_repo_path_in_submodule() {
 
     // Also verify that git_common_dir is in the parent's .git/modules/ (confirming this is a real submodule)
     let git_common_dir = repository.git_common_dir();
+    // Use components() to check path structure (works on both Unix and Windows)
+    let components: Vec<_> = git_common_dir.components().collect();
+    let has_git_modules = components.windows(2).any(|pair| {
+        matches!(
+            (pair[0].as_os_str().to_str(), pair[1].as_os_str().to_str()),
+            (Some(".git"), Some("modules"))
+        )
+    });
     assert!(
-        git_common_dir.to_string_lossy().contains(".git/modules"),
+        has_git_modules,
         "git_common_dir should be in parent's .git/modules/ for a submodule, got: {:?}",
         git_common_dir
     );
