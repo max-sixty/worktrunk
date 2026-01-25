@@ -37,6 +37,14 @@ Use consistent terminology in documentation, help text, and code comments:
 - **default branch** — the branch (main, master, etc.), not "main branch"
 - **target** — the destination for merge/rebase/push (e.g., "merge target"). Don't use "target" to mean worktrees — say "worktree" or "worktrees"
 
+## Skills
+
+Check `.claude/skills/` for available skills and load those relevant to your task.
+
+Key skills:
+
+- **`writing-user-outputs`** — Required when modifying user-facing messages, hints, warnings, errors, or any terminal output formatting. Documents ANSI color nesting rules, message patterns, and output system architecture.
+
 ## Testing
 
 ### Running Tests

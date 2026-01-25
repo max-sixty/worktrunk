@@ -864,10 +864,11 @@ post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     });
 }
 
-/// When a migration file has already been written, subsequent commands should:
-/// 1. Still show the deprecation warning
-/// 2. NOT overwrite the migration file
-/// 3. Show a hint about how to regenerate the migration file
+/// When a migration file has already been written, subsequent `wt list` runs should:
+/// 1. Still show a brief deprecation warning
+/// 2. NOT write or overwrite the migration file (skip write since hint is set)
+///
+/// The file remains available for the user. If they want a fresh one, `wt config show` regenerates.
 #[rstest]
 fn test_deprecated_template_variables_hint_deduplication(repo: TestRepo, temp_home: TempDir) {
     // Write project config with deprecated variables
@@ -904,8 +905,7 @@ fn test_deprecated_template_variables_hint_deduplication(repo: TestRepo, temp_ho
 
     let original_content = fs::read_to_string(&migration_file).unwrap();
 
-    // Second run - if .new exists, we always regenerate (overwrite)
-    // This ensures users always have a fresh migration file
+    // Second run - hint is set, so wt list shows brief warning and skips writing
     {
         let mut cmd = repo.wt_command();
         cmd.arg("list").current_dir(repo.root_path());
@@ -918,22 +918,31 @@ fn test_deprecated_template_variables_hint_deduplication(repo: TestRepo, temp_ho
             stderr
         );
         assert!(
-            stderr.contains("Wrote migrated"),
-            "Second run should regenerate migration file, got: {stderr}"
+            stderr.contains("deprecated settings"),
+            "Second run should show brief warning, got: {stderr}"
+        );
+        assert!(
+            !stderr.contains("Wrote migrated"),
+            "Second run should NOT write migration file (hint is set), got: {stderr}"
         );
     }
 
-    // Content should be the same (same input produces same output)
+    // Content should be unchanged (wt list didn't touch it)
     let current_content = fs::read_to_string(&migration_file).unwrap();
     assert_eq!(
         original_content, current_content,
-        "Regenerated content should be the same"
+        "Migration file should be unchanged by second wt list run"
     );
 }
 
-/// This tests the skip-write path for project config
+/// This tests the skip-write path for project config with non-config-show commands.
+///
+/// Migration file write is deduplicated based on file existence:
+/// - First run: file doesn't exist → write it
+/// - Second run: file exists → skip write, show brief warning only
+/// Users can run `wt config show` to force regeneration.
 #[rstest]
-fn test_deprecated_config_deleted_shows_regenerate_hint(repo: TestRepo, temp_home: TempDir) {
+fn test_wt_list_skips_migration_file_after_first_write(repo: TestRepo, temp_home: TempDir) {
     // Write project config with deprecated variables
     // Use deprecated variable main_worktree (should be repo) in a valid project config field
     let project_config_dir = repo.root_path().join(".config");
@@ -946,7 +955,7 @@ fn test_deprecated_config_deleted_shows_regenerate_hint(repo: TestRepo, temp_hom
     )
     .unwrap();
 
-    // First run - creates migration file and sets hint
+    // First run - creates migration file
     {
         let mut cmd = repo.wt_command();
         cmd.arg("list").current_dir(repo.root_path());
@@ -962,10 +971,7 @@ fn test_deprecated_config_deleted_shows_regenerate_hint(repo: TestRepo, temp_hom
     let migration_file = project_config_path.with_extension("toml.new");
     assert!(migration_file.exists());
 
-    // Delete the migration file (user doesn't want it)
-    fs::remove_file(&migration_file).unwrap();
-
-    // Second run - .new doesn't exist but hint is set → skip write, show clear hint
+    // Second run - file exists → skip write, show brief warning only
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
@@ -976,15 +982,16 @@ fn test_deprecated_config_deleted_shows_regenerate_hint(repo: TestRepo, temp_hom
         assert_cmd_snapshot!(cmd);
     });
 
-    // Migration file should NOT exist (we skipped writing)
+    // Migration file still exists (not deleted or overwritten)
     assert!(
-        !migration_file.exists(),
-        "Migration file should not be recreated when hint is set"
+        migration_file.exists(),
+        "Migration file should still exist after second run"
     );
 }
 
+/// Migration file is regenerated when deleted (file-existence based deduplication).
 #[rstest]
-fn test_deprecated_variables_hint_clear_regenerates(repo: TestRepo, temp_home: TempDir) {
+fn test_deleted_migration_file_regenerated(repo: TestRepo, temp_home: TempDir) {
     // Write project config with deprecated variables
     let project_config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&project_config_dir).unwrap();
@@ -996,7 +1003,7 @@ fn test_deprecated_variables_hint_clear_regenerates(repo: TestRepo, temp_home: T
     )
     .unwrap();
 
-    // First run - creates migration file and sets hint
+    // First run - creates migration file
     {
         let mut cmd = repo.wt_command();
         cmd.arg("list").current_dir(repo.root_path());
@@ -1015,21 +1022,7 @@ fn test_deprecated_variables_hint_clear_regenerates(repo: TestRepo, temp_home: T
     // Delete the migration file to simulate user having applied and removed it
     fs::remove_file(&migration_file).unwrap();
 
-    // Clear the hint
-    {
-        let mut cmd = repo.wt_command();
-        cmd.args(["config", "state", "hints", "clear", "deprecated-config"])
-            .current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(
-            output.status.success(),
-            "Hint clear should succeed: {:?}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    // Third run - should create migration file again
+    // Second run - should recreate migration file since it doesn't exist
     {
         let mut cmd = repo.wt_command();
         cmd.arg("list").current_dir(repo.root_path());
@@ -1037,20 +1030,110 @@ fn test_deprecated_variables_hint_clear_regenerates(repo: TestRepo, temp_home: T
         let output = cmd.output().unwrap();
         assert!(
             output.status.success(),
-            "Third run should succeed: {:?}",
+            "Second run should succeed: {:?}",
             String::from_utf8_lossy(&output.stderr)
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             stderr.contains("Wrote migrated"),
-            "After clearing hint, should write migration file again, got: {stderr}"
+            "Should write migration file when it doesn't exist, got: {stderr}"
         );
     }
 
     // Migration file should exist again
     assert!(
         migration_file.exists(),
-        "Migration file should be regenerated after clearing hint"
+        "Migration file should be regenerated after deletion"
+    );
+}
+
+/// When a user fixes their deprecated config, the hint should be cleared automatically.
+/// This ensures that future deprecations (introduced months later) get full treatment.
+#[rstest]
+fn test_fixing_deprecated_config_clears_hint_for_future_deprecations(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Write project config with deprecated variable
+    let project_config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&project_config_dir).unwrap();
+    let project_config_path = project_config_dir.join("wt.toml");
+    fs::write(
+        &project_config_path,
+        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
+"#,
+    )
+    .unwrap();
+
+    // First run - creates migration file and sets hint
+    {
+        let mut cmd = repo.wt_command();
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        let output = cmd.output().unwrap();
+        assert!(output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("Wrote migrated"),
+            "First run should write migration file"
+        );
+    }
+
+    // User fixes the config (removes deprecation)
+    fs::write(
+        &project_config_path,
+        r#"post-create = "ln -sf {{ repo }}/node_modules"
+"#,
+    )
+    .unwrap();
+
+    // Clean up migration file
+    let migration_file = project_config_path.with_extension("toml.new");
+    if migration_file.exists() {
+        fs::remove_file(&migration_file).unwrap();
+    }
+
+    // Second run with fixed config - hint should be cleared
+    {
+        let mut cmd = repo.wt_command();
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        let output = cmd.output().unwrap();
+        assert!(output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("deprecated"),
+            "No deprecation warning for fixed config"
+        );
+    }
+
+    // Months later, a NEW deprecation is introduced - user adds a different deprecated variable
+    fs::write(
+        &project_config_path,
+        r#"post-create = "cd {{ worktree }} && npm install"
+"#,
+    )
+    .unwrap();
+
+    // Third run with new deprecation - should get FULL warning (not just brief)
+    // because hint was cleared when config was clean
+    {
+        let mut cmd = repo.wt_command();
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        let output = cmd.output().unwrap();
+        assert!(output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("Wrote migrated"),
+            "New deprecation should get full treatment with file write, got: {stderr}"
+        );
+    }
+
+    // Migration file should exist for the new deprecation
+    assert!(
+        migration_file.exists(),
+        "Migration file should be created for new deprecation"
     );
 }
 
@@ -1113,9 +1196,9 @@ fn test_deprecated_project_config_silent_in_feature_worktree(repo: TestRepo, tem
     }
 }
 
-/// User config has no repo context, so hint deduplication is based on file existence.
-/// When the .new file already exists, subsequent runs should show a hint about deleting
-/// the file to regenerate (not about clearing a git config hint).
+/// User config migration file write is deduplicated based on file existence.
+/// First run creates the migration file. Subsequent runs skip the write
+/// if the file already exists (brief warning only, pointing to `wt config show`).
 #[rstest]
 fn test_user_config_deprecated_variables_deduplication(repo: TestRepo, temp_home: TempDir) {
     // Write user config with deprecated variables using the test config path
@@ -1147,8 +1230,8 @@ fn test_user_config_deprecated_variables_deduplication(repo: TestRepo, temp_home
     let migration_file = user_config_path.with_extension("toml.new");
     assert!(migration_file.exists());
 
-    // Second run - user config always regenerates (overwrites .new file)
-    // Should still show "Wrote migrated" since we overwrite existing .new files
+    // Second run - hint is already marked shown, skip file write
+    // Should show brief warning only, NOT regenerate the file
     {
         let mut cmd = repo.wt_command();
         cmd.arg("list").current_dir(repo.root_path());
@@ -1160,13 +1243,18 @@ fn test_user_config_deprecated_variables_deduplication(repo: TestRepo, temp_home
             "Second run should succeed: {:?}",
             stderr
         );
+        // Should show brief warning (deprecated settings) but NOT write file
         assert!(
-            stderr.contains("Wrote migrated"),
-            "Second run should regenerate migration file, got: {stderr}"
+            stderr.contains("User config has deprecated settings"),
+            "Second run should show brief warning, got: {stderr}"
+        );
+        assert!(
+            !stderr.contains("Wrote migrated"),
+            "Second run should NOT regenerate migration file (hint already shown), got: {stderr}"
         );
     }
 
-    // Verify migration file still exists
+    // Verify migration file still exists (from first run)
     assert!(migration_file.exists());
 }
 
@@ -1429,15 +1517,12 @@ post-create = "ln -sf {{ repo_root }}/node_modules"
     );
 }
 
-/// Test that `wt config show` shows regenerate hint when user deleted migration file
+/// Test that `wt config show` always regenerates migration file
 ///
-/// When the hint is set but migration file doesn't exist, `wt config show` should
-/// show how to regenerate it (via `wt config state hints clear deprecated-config`).
+/// Even if the user deleted the migration file previously, `wt config show`
+/// should always regenerate it (unlike other commands which skip after first write).
 #[rstest]
-fn test_config_show_user_deleted_migration_shows_regenerate_hint(
-    mut repo: TestRepo,
-    temp_home: TempDir,
-) {
+fn test_config_show_always_regenerates_migration_file(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab/claude for deterministic output
     repo.setup_mock_ci_tools_unauthenticated();
 
@@ -1468,10 +1553,10 @@ fn test_config_show_user_deleted_migration_shows_regenerate_hint(
     let migration_file = project_config_path.with_extension("toml.new");
     assert!(migration_file.exists(), "Migration file should be created");
 
-    // Delete the migration file (simulating user doesn't want it)
+    // Delete the migration file (simulating user applied it or doesn't want it)
     fs::remove_file(&migration_file).unwrap();
 
-    // Run wt config show - should show regenerate hint
+    // Run wt config show - should regenerate migration file
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
@@ -1483,10 +1568,17 @@ fn test_config_show_user_deleted_migration_shows_regenerate_hint(
         assert_cmd_snapshot!(cmd);
     });
 
-    // Migration file should NOT be recreated (hint is set)
+    // Migration file SHOULD be regenerated by wt config show
     assert!(
-        !migration_file.exists(),
-        "Migration file should not be recreated when hint is set"
+        migration_file.exists(),
+        "Migration file should be regenerated by wt config show"
+    );
+
+    // Verify the regenerated file has the correct content
+    let migrated_content = fs::read_to_string(&migration_file).unwrap();
+    assert!(
+        migrated_content.contains("{{ repo }}"),
+        "Migration should replace main_worktree with repo"
     );
 }
 

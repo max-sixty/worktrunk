@@ -148,7 +148,7 @@ build = "cargo build --release"
 
 ### User hooks
 
-Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval.
+Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval. For repository-specific user hooks, see [setting overrides](@/config.md#setting-overrides-experimental).
 
 ```toml
 # ~/.config/worktrunk/config.toml
@@ -166,9 +166,9 @@ User hooks support the same hook types and template variables as project hooks.
 | Aspect | Project hooks | User hooks |
 |--------|--------------|------------|
 | Location | `.config/wt.toml` | `~/.config/worktrunk/config.toml` |
-| Scope | Single repository | All repositories |
+| Scope | Single repository | All repositories (or per-project) |
 | Approval | Required | Not required |
-| Execution order | After user hooks | Before project hooks |
+| Execution order | After user hooks | Global first, then per-project |
 
 Skip hooks with `--no-verify`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
 
@@ -176,24 +176,6 @@ Skip hooks with `--no-verify`. To run a specific hook when user and project both
 - Personal notifications or logging
 - Editor/IDE integration
 - Repository-agnostic setup tasks
-- Filtering by repository using JSON context
-
-**Filtering by repository:**
-
-User hooks receive JSON context on stdin, enabling repository-specific behavior:
-
-```toml
-# ~/.config/worktrunk/config.toml
-[post-create]
-gitlab-setup = """
-python3 -c '
-import json, sys, subprocess
-ctx = json.load(sys.stdin)
-if "gitlab" in ctx.get("remote", ""):
-    subprocess.run(["glab", "mr", "create", "--fill"])
-'
-"""
-```
 
 ### Template variables
 
@@ -267,12 +249,14 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 
 ### JSON context
 
-Hooks also receive context as JSON on stdin, enabling hooks in any language:
+Hooks receive context as JSON on stdin, enabling complex logic that templates can't express:
 
 ```python
-import json, sys
+import json, sys, subprocess
 ctx = json.load(sys.stdin)
-print(f"Setting up {ctx['repo']} on branch {ctx['branch']}")
+# Run extra setup for feature branches on backend repos
+if ctx['branch'].startswith('feature/') and 'backend' in ctx['repo']:
+    subprocess.run(['make', 'seed-db'])
 ```
 
 The JSON includes all template variables plus `hook_type` and `hook_name`.

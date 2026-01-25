@@ -319,9 +319,10 @@ pub fn run_pre_merge_commands(
     // Combine target with any custom vars (custom vars take precedence, added last)
     let mut vars = vec![("target", target_branch)];
     vars.extend_from_slice(extra_vars);
+    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
     run_hook_with_filter(
         ctx,
-        ctx.config.hooks.pre_merge.as_ref(),
+        user_hooks.pre_merge.as_ref(),
         project_config.hooks.pre_merge.as_ref(),
         HookType::PreMerge,
         &vars,
@@ -352,9 +353,10 @@ pub fn execute_post_merge_commands(
     // Combine target with any custom vars (custom vars take precedence, added last)
     let mut vars = vec![("target", target_branch)];
     vars.extend_from_slice(extra_vars);
+    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
     run_hook_with_filter(
         ctx,
-        ctx.config.hooks.post_merge.as_ref(),
+        user_hooks.post_merge.as_ref(),
         project_config
             .as_ref()
             .and_then(|c| c.hooks.post_merge.as_ref()),
@@ -382,10 +384,11 @@ pub fn execute_pre_remove_commands(
     extra_vars: &[(&str, &str)],
 ) -> anyhow::Result<()> {
     let project_config = ctx.repo.load_project_config()?;
+    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
 
     run_hook_with_filter(
         ctx,
-        ctx.config.hooks.pre_remove.as_ref(),
+        user_hooks.pre_remove.as_ref(),
         project_config
             .as_ref()
             .and_then(|c| c.hooks.pre_remove.as_ref()),

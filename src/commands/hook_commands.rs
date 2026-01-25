@@ -95,10 +95,13 @@ pub fn run_hook(
         Ok(())
     }
 
+    // Get effective user hooks (global + per-project merged)
+    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
+
     // Execute the hook based on type
     match hook_type {
         HookType::PostCreate => {
-            let user_config = ctx.config.hooks.post_create.as_ref();
+            let user_config = user_hooks.post_create.as_ref();
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_create.as_ref());
@@ -116,7 +119,7 @@ pub fn run_hook(
             )
         }
         HookType::PostStart => {
-            let user_config = ctx.config.hooks.post_start.as_ref();
+            let user_config = user_hooks.post_start.as_ref();
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_start.as_ref());
@@ -155,7 +158,7 @@ pub fn run_hook(
             }
         }
         HookType::PostSwitch => {
-            let user_config = ctx.config.hooks.post_switch.as_ref();
+            let user_config = user_hooks.post_switch.as_ref();
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_switch.as_ref());
@@ -194,7 +197,7 @@ pub fn run_hook(
             }
         }
         HookType::PreCommit => {
-            let user_config = ctx.config.hooks.pre_commit.as_ref();
+            let user_config = user_hooks.pre_commit.as_ref();
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.pre_commit.as_ref());
@@ -253,7 +256,7 @@ pub fn run_hook(
             )
         }
         HookType::PostRemove => {
-            let user_config = ctx.config.hooks.post_remove.as_ref();
+            let user_config = user_hooks.post_remove.as_ref();
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_remove.as_ref());
@@ -512,16 +515,18 @@ fn render_user_hooks(
         )
     )?;
 
-    // Collect all user hooks
+    // Collect all user hooks (global hooks from the user config file)
+    // Note: uses overrides.hooks for display, not the merged hooks() accessor
+    let user_hooks = &config.configs.hooks;
     let hooks = [
-        (HookType::PostCreate, &config.hooks.post_create),
-        (HookType::PostStart, &config.hooks.post_start),
-        (HookType::PostSwitch, &config.hooks.post_switch),
-        (HookType::PreCommit, &config.hooks.pre_commit),
-        (HookType::PreMerge, &config.hooks.pre_merge),
-        (HookType::PostMerge, &config.hooks.post_merge),
-        (HookType::PreRemove, &config.hooks.pre_remove),
-        (HookType::PostRemove, &config.hooks.post_remove),
+        (HookType::PostCreate, &user_hooks.post_create),
+        (HookType::PostStart, &user_hooks.post_start),
+        (HookType::PostSwitch, &user_hooks.post_switch),
+        (HookType::PreCommit, &user_hooks.pre_commit),
+        (HookType::PreMerge, &user_hooks.pre_merge),
+        (HookType::PostMerge, &user_hooks.post_merge),
+        (HookType::PreRemove, &user_hooks.pre_remove),
+        (HookType::PostRemove, &user_hooks.post_remove),
     ];
 
     let mut has_any = false;

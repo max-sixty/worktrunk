@@ -4,6 +4,7 @@
 //! of worktree and merge operations.
 
 use indexmap::IndexMap;
+use schemars::JsonSchema;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 
@@ -60,6 +61,15 @@ impl CommandConfig {
     pub fn commands(&self) -> &[Command] {
         &self.commands
     }
+
+    /// Merge two configs by appending commands (base commands first, then overlay).
+    ///
+    /// Used for per-project hook overrides where both global and project hooks run.
+    pub fn merge_append(&self, other: &Self) -> Self {
+        let mut commands = self.commands.clone();
+        commands.extend(other.commands.iter().cloned());
+        Self { commands }
+    }
 }
 
 // Custom deserialization to handle 2 TOML formats
@@ -89,6 +99,24 @@ impl<'de> Deserialize<'de> for CommandConfig {
             }
         };
         Ok(CommandConfig { commands })
+    }
+}
+
+// JsonSchema for CommandConfig - describes the two TOML formats
+impl JsonSchema for CommandConfig {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "CommandConfig".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // CommandConfig accepts either a string or an object with string values
+        // We just need this for schema generation, not validation
+        schemars::json_schema!({
+            "oneOf": [
+                { "type": "string" },
+                { "type": "object", "additionalProperties": { "type": "string" } }
+            ]
+        })
     }
 }
 
@@ -327,5 +355,48 @@ third = "echo 3"
             commands: vec![Command::new(None, "test".to_string())],
         };
         assert_eq!(config1, config2);
+    }
+
+    #[test]
+    fn test_command_config_merge_append() {
+        let base = CommandConfig {
+            commands: vec![
+                Command::new(None, "echo base1".to_string()),
+                Command::new(Some("named".to_string()), "echo base2".to_string()),
+            ],
+        };
+        let overlay = CommandConfig {
+            commands: vec![Command::new(None, "echo overlay".to_string())],
+        };
+
+        let merged = base.merge_append(&overlay);
+        assert_eq!(merged.commands.len(), 3);
+        assert_eq!(merged.commands[0].template, "echo base1");
+        assert_eq!(merged.commands[1].template, "echo base2");
+        assert_eq!(merged.commands[2].template, "echo overlay");
+    }
+
+    #[test]
+    fn test_command_config_merge_append_empty_base() {
+        let base = CommandConfig { commands: vec![] };
+        let overlay = CommandConfig {
+            commands: vec![Command::new(None, "echo overlay".to_string())],
+        };
+
+        let merged = base.merge_append(&overlay);
+        assert_eq!(merged.commands.len(), 1);
+        assert_eq!(merged.commands[0].template, "echo overlay");
+    }
+
+    #[test]
+    fn test_command_config_merge_append_empty_overlay() {
+        let base = CommandConfig {
+            commands: vec![Command::new(None, "echo base".to_string())],
+        };
+        let overlay = CommandConfig { commands: vec![] };
+
+        let merged = base.merge_append(&overlay);
+        assert_eq!(merged.commands.len(), 1);
+        assert_eq!(merged.commands[0].template, "echo base");
     }
 }

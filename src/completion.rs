@@ -260,8 +260,9 @@ fn complete_hook_commands() -> Vec<CompletionCandidate> {
         };
 
     // Load user config and add user hook names
+    // Uses overrides.hooks for completion (global hooks from user config file)
     if let Ok(user_config) = UserConfig::load()
-        && let Some(config) = user_config.hooks.get(hook_type)
+        && let Some(config) = user_config.configs.hooks.get(hook_type)
     {
         add_named_commands(&mut candidates, config);
     }
