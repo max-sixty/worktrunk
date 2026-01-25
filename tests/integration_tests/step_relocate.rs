@@ -235,9 +235,8 @@ fn test_relocate_dirty_with_commit(repo: TestRepo) {
 
     // Configure mock LLM command via config file
     let worktrunk_config = r#"
-[commit-generation]
-command = "sh"
-args = ["-c", "cat >/dev/null && echo 'chore: auto-commit before relocate'"]
+[commit.generation]
+command = "cat >/dev/null && echo 'chore: auto-commit before relocate'"
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
