@@ -10,8 +10,8 @@ pager = "test-pager --custom-flag"
 
     let config: UserConfig = toml::from_str(config_content).unwrap();
 
-    assert!(config.overrides.select.is_some());
-    let select = config.overrides.select.unwrap();
+    assert!(config.configs.select.is_some());
+    let select = config.configs.select.unwrap();
     assert_eq!(select.pager, Some("test-pager --custom-flag".to_string()));
 }
 
@@ -25,8 +25,8 @@ pager = ""
 
     let config: UserConfig = toml::from_str(config_content).unwrap();
 
-    assert!(config.overrides.select.is_some());
-    let select = config.overrides.select.unwrap();
+    assert!(config.configs.select.is_some());
+    let select = config.configs.select.unwrap();
     assert_eq!(select.pager, Some("".to_string()));
 }
 
@@ -39,5 +39,5 @@ full = true
 "#;
 
     let config: UserConfig = toml::from_str(config_content).unwrap();
-    assert!(config.overrides.select.is_none());
+    assert!(config.configs.select.is_none());
 }

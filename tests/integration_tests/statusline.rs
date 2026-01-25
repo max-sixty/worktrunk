@@ -201,6 +201,85 @@ fn test_statusline_claude_code_with_model(repo: TestRepo) {
     });
 }
 
+// --- Context Gauge Tests ---
+
+#[rstest]
+fn test_statusline_claude_code_with_context_gauge(repo: TestRepo) {
+    let escaped_path = escape_path_for_json(repo.root_path());
+    let json = format!(
+        r#"{{
+            "workspace": {{"current_dir": "{escaped_path}"}},
+            "model": {{"display_name": "Opus"}},
+            "context_window": {{"used_percentage": 42}}
+        }}"#,
+    );
+
+    let output = run_statusline(&repo, &["--claude-code"], Some(&json));
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus  🌕 42%");
+    });
+}
+
+#[rstest]
+fn test_statusline_claude_code_context_gauge_low(repo: TestRepo) {
+    let escaped_path = escape_path_for_json(repo.root_path());
+    let json = format!(
+        r#"{{
+            "workspace": {{"current_dir": "{escaped_path}"}},
+            "model": {{"display_name": "Opus"}},
+            "context_window": {{"used_percentage": 5}}
+        }}"#,
+    );
+
+    let output = run_statusline(&repo, &["--claude-code"], Some(&json));
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus  🌕 5%");
+    });
+}
+
+#[rstest]
+fn test_statusline_claude_code_context_gauge_high(repo: TestRepo) {
+    let escaped_path = escape_path_for_json(repo.root_path());
+    let json = format!(
+        r#"{{
+            "workspace": {{"current_dir": "{escaped_path}"}},
+            "model": {{"display_name": "Opus"}},
+            "context_window": {{"used_percentage": 98}}
+        }}"#,
+    );
+
+    let output = run_statusline(&repo, &["--claude-code"], Some(&json));
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus  🌑 98%");
+    });
+}
+
+#[rstest]
+fn test_statusline_claude_code_missing_context_window(repo: TestRepo) {
+    // When context_window is missing, no gauge should be displayed
+    let escaped_path = escape_path_for_json(repo.root_path());
+    let json = format!(
+        r#"{{
+            "workspace": {{"current_dir": "{escaped_path}"}},
+            "model": {{"display_name": "Opus"}}
+        }}"#,
+    );
+
+    let output = run_statusline(&repo, &["--claude-code"], Some(&json));
+    claude_code_snapshot_settings().bind(|| {
+        // No gauge symbol (○◔◑◕●) should appear
+        assert!(
+            !output.contains('○')
+                && !output.contains('◔')
+                && !output.contains('◑')
+                && !output.contains('◕')
+                && !output.contains('●'),
+            "No gauge should appear when context_window is missing: {output}"
+        );
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus");
+    });
+}
+
 // --- Directive Mode Tests ---
 // Note: With the new WORKTRUNK_DIRECTIVE_FILE architecture, data output (like statusline)
 // still goes to stdout. The directive file is only used for shell directives like

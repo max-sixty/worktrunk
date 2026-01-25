@@ -432,6 +432,73 @@ fn test_remove_force_with_force_delete(mut repo: TestRepo) {
     ));
 }
 
+/// Regression test for issue #839: untracked files not deleted on Windows.
+/// Verifies the worktree directory is actually removed, not just that the command succeeds.
+#[rstest]
+fn test_remove_force_actually_deletes_directory_with_untracked(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-untracked-delete");
+
+    // Make a commit so the branch is ahead of main (unmerged)
+    repo.git_command()
+        .args(["commit", "--allow-empty", "-m", "feature commit"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+
+    // Create untracked files (the scenario from issue #839)
+    std::fs::write(worktree_path.join("untracked.txt"), "untracked content").unwrap();
+    std::fs::create_dir_all(worktree_path.join("untracked_dir")).unwrap();
+    std::fs::write(
+        worktree_path.join("untracked_dir/nested.txt"),
+        "nested untracked",
+    )
+    .unwrap();
+
+    // Verify worktree exists before removal
+    assert!(
+        worktree_path.exists(),
+        "Worktree should exist before removal"
+    );
+
+    // Remove with --force -D (the flags from issue #839)
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "--force",
+            "-D",
+            "--foreground",
+            "feature-untracked-delete",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove --force -D should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The critical assertion: directory must actually be gone
+    assert!(
+        !worktree_path.exists(),
+        "Worktree directory should be deleted after `wt remove --force -D`, but it still exists"
+    );
+
+    // Verify branch is also deleted
+    let branch_list = repo
+        .git_command()
+        .args(["branch", "--list", "feature-untracked-delete"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&branch_list.stdout)
+            .trim()
+            .is_empty(),
+        "Branch should be deleted with -D flag"
+    );
+}
+
 #[rstest]
 fn test_remove_multiple_worktrees(mut repo: TestRepo) {
     // Create three worktrees

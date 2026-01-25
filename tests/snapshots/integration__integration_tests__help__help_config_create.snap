@@ -154,12 +154,13 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# #### Setting overrides (Experimental)[0m
   [2m#[0m
-  [2m# Override global settings for a specific project. Useful when one repo needs a different worktree layout or merge behavior.[0m
+  [2m# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run.[0m
   [2m#[0m
   [2m# [projects."github.com/user/repo"][0m
   [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
   [2m# list.full = true[0m
   [2m# merge.squash = false[0m
+  [2m# post-create.env = "cp .env.example .env"[0m
   [2m#[0m
   [2m# ### Custom prompt templates[0m
   [2m#[0m

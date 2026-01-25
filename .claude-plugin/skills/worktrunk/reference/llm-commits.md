@@ -10,10 +10,10 @@ Any command that reads a prompt from stdin and outputs a commit message works. A
 
 ```toml
 [commit.generation]
-command = "claude -p --model haiku"
+command = "MAX_THINKING_TOKENS=0 claude -p --model haiku --tools '' --disable-slash-commands --setting-sources '' --system-prompt ''"
 ```
 
-See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
+The flags disable tools, skills, settings, and system prompt for fast text-only output. See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
 
 ### llm
 
@@ -32,6 +32,15 @@ command = "aichat -m claude:claude-haiku-4.5"
 ```
 
 See [aichat docs](https://github.com/sigoden/aichat).
+
+### Codex
+
+```toml
+[commit.generation]
+command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' --sandbox read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+```
+
+Uses the fast mini model with low reasoning effort. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
 
 ## How it works
 
