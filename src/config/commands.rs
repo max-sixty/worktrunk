@@ -131,11 +131,33 @@ impl Serialize for CommandConfig {
             return self.commands[0].template.serialize(serializer);
         }
 
-        // Serialize as named map (all commands from Named format have names)
+        // Serialize as named map, generating unique keys as needed
         let mut map = serializer.serialize_map(Some(self.commands.len()))?;
+        let mut used_keys = std::collections::HashSet::new();
+        let mut unnamed_counter = 1u32;
+
         for cmd in &self.commands {
-            let key = cmd.name.as_ref().unwrap();
-            map.serialize_entry(key, &cmd.template)?;
+            let key = if let Some(name) = &cmd.name {
+                // Named command - use name, deduplicating if necessary
+                let mut candidate = name.clone();
+                let mut suffix = 2u32;
+                while used_keys.contains(&candidate) {
+                    candidate = format!("{name}-{suffix}");
+                    suffix += 1;
+                }
+                candidate
+            } else {
+                // Unnamed command - generate numbered key
+                let mut candidate = format!("{unnamed_counter}");
+                while used_keys.contains(&candidate) {
+                    unnamed_counter += 1;
+                    candidate = format!("{unnamed_counter}");
+                }
+                unnamed_counter += 1;
+                candidate
+            };
+            used_keys.insert(key.clone());
+            map.serialize_entry(&key, &cmd.template)?;
         }
         map.end()
     }
@@ -398,5 +420,158 @@ third = "echo 3"
         let merged = base.merge_append(&overlay);
         assert_eq!(merged.commands.len(), 1);
         assert_eq!(merged.commands[0].template, "echo base");
+    }
+
+    // ============================================================================
+    // Serialization Edge Cases (merged configs)
+    // ============================================================================
+
+    /// Serializing a merged config with mixed named/unnamed commands generates
+    /// unique keys for unnamed commands.
+    #[test]
+    fn test_serialize_mixed_named_unnamed_generates_keys() {
+        #[derive(Debug, Serialize, Deserialize)]
+        struct Wrapper {
+            cmd: CommandConfig,
+        }
+
+        // Global has unnamed, per-project has named
+        let global = CommandConfig {
+            commands: vec![Command::new(None, "npm install".to_string())],
+        };
+        let per_project = CommandConfig {
+            commands: vec![Command::new(
+                Some("setup".to_string()),
+                "echo setup".to_string(),
+            )],
+        };
+
+        let merged = global.merge_append(&per_project);
+
+        // Serialization succeeds with generated key for unnamed command
+        let wrapper = Wrapper { cmd: merged };
+        let serialized = toml::to_string(&wrapper).unwrap();
+
+        // Unnamed command gets key "1", named command keeps "setup"
+        assert!(serialized.contains("1 = \"npm install\""), "{serialized}");
+        assert!(
+            serialized.contains("setup = \"echo setup\""),
+            "{serialized}"
+        );
+
+        // Round-trip works (though names are now different)
+        let deserialized: Wrapper = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.cmd.commands().len(), 2);
+    }
+
+    /// Duplicate named commands after merge get deduplicated keys during serialization.
+    #[test]
+    fn test_serialize_duplicate_names_deduplicates() {
+        #[derive(Debug, Serialize, Deserialize)]
+        struct Wrapper {
+            cmd: CommandConfig,
+        }
+
+        // Both global and per-project define a command named "build"
+        let global = CommandConfig {
+            commands: vec![Command::new(
+                Some("build".to_string()),
+                "cargo build".to_string(),
+            )],
+        };
+        let per_project = CommandConfig {
+            commands: vec![Command::new(
+                Some("build".to_string()),
+                "npm run build".to_string(),
+            )],
+        };
+
+        let merged = global.merge_append(&per_project);
+        assert_eq!(merged.commands.len(), 2, "merge should keep both commands");
+
+        // Serialization produces valid TOML with deduplicated keys
+        let wrapper = Wrapper { cmd: merged };
+        let serialized = toml::to_string(&wrapper).unwrap();
+
+        // First "build" keeps name, second gets deduplicated to "build-2"
+        assert!(
+            serialized.contains("build = \"cargo build\""),
+            "{serialized}"
+        );
+        assert!(
+            serialized.contains("build-2 = \"npm run build\""),
+            "{serialized}"
+        );
+
+        // Round-trip works
+        let deserialized: Wrapper = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.cmd.commands().len(), 2);
+        assert_eq!(deserialized.cmd.commands()[0].template, "cargo build");
+        assert_eq!(deserialized.cmd.commands()[1].template, "npm run build");
+    }
+
+    /// Multiple unnamed commands get sequential numbered keys.
+    #[test]
+    fn test_serialize_multiple_unnamed_generates_sequential_keys() {
+        #[derive(Debug, Serialize, Deserialize)]
+        struct Wrapper {
+            cmd: CommandConfig,
+        }
+
+        let config = CommandConfig {
+            commands: vec![
+                Command::new(None, "echo first".to_string()),
+                Command::new(None, "echo second".to_string()),
+                Command::new(None, "echo third".to_string()),
+            ],
+        };
+
+        let wrapper = Wrapper { cmd: config };
+        let serialized = toml::to_string(&wrapper).unwrap();
+
+        assert!(serialized.contains("1 = \"echo first\""), "{serialized}");
+        assert!(serialized.contains("2 = \"echo second\""), "{serialized}");
+        assert!(serialized.contains("3 = \"echo third\""), "{serialized}");
+
+        // Round-trip preserves all commands
+        let deserialized: Wrapper = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.cmd.commands().len(), 3);
+    }
+
+    /// Duplicate names with interleaved other keys get correct suffixes.
+    /// Regression test: using set size for suffix would produce "build-3" instead of "build-2".
+    #[test]
+    fn test_serialize_duplicate_names_with_interleaved_keys() {
+        #[derive(Debug, Serialize, Deserialize)]
+        struct Wrapper {
+            cmd: CommandConfig,
+        }
+
+        // ["build", "test", "build"] should produce ["build", "test", "build-2"]
+        let config = CommandConfig {
+            commands: vec![
+                Command::new(Some("build".to_string()), "cargo build".to_string()),
+                Command::new(Some("test".to_string()), "cargo test".to_string()),
+                Command::new(Some("build".to_string()), "npm run build".to_string()),
+            ],
+        };
+
+        let wrapper = Wrapper { cmd: config };
+        let serialized = toml::to_string(&wrapper).unwrap();
+
+        // First "build" keeps name, second gets "-2" suffix (not "-3")
+        assert!(
+            serialized.contains("build = \"cargo build\""),
+            "{serialized}"
+        );
+        assert!(serialized.contains("test = \"cargo test\""), "{serialized}");
+        assert!(
+            serialized.contains("build-2 = \"npm run build\""),
+            "second 'build' should be 'build-2', not 'build-3': {serialized}"
+        );
+
+        // Round-trip works
+        let deserialized: Wrapper = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.cmd.commands().len(), 3);
     }
 }

@@ -2905,4 +2905,138 @@ squash-template-file = "path/to/file"
             result.err()
         );
     }
+
+    // =========================================================================
+    // Hooks Serialization Edge Cases (merged configs)
+    // =========================================================================
+
+    /// Merging string-format global hooks with table-format per-project hooks
+    /// produces serializable output with generated keys for unnamed commands.
+    #[test]
+    fn test_hooks_merge_mixed_formats_serializes_with_generated_keys() {
+        // Global uses string format (unnamed command)
+        let global_hooks = parse_hooks(r#"post-start = "npm install""#);
+
+        // Per-project uses table format (named commands)
+        let project_hooks = parse_hooks(
+            r#"
+[post-start]
+setup = "echo setup"
+"#,
+        );
+
+        // Create config with both
+        let mut config = UserConfig {
+            configs: OverridableConfig {
+                hooks: global_hooks,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectOverrides {
+                overrides: OverridableConfig {
+                    hooks: project_hooks,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        // Get merged hooks
+        let effective = config.hooks(Some("github.com/user/repo"));
+        let post_start = effective.post_start.as_ref().unwrap();
+        let commands = post_start.commands();
+
+        // Verify merge happened correctly
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].name, None); // Global is unnamed
+        assert_eq!(commands[1].name, Some("setup".to_string())); // Project is named
+
+        // Serialization succeeds with generated key for unnamed command
+        let serialized = toml::to_string(&effective).unwrap();
+        assert!(
+            serialized.contains("1 = \"npm install\""),
+            "unnamed command should get key '1': {serialized}"
+        );
+        assert!(
+            serialized.contains("setup = \"echo setup\""),
+            "named command should keep its name: {serialized}"
+        );
+
+        // Round-trip works
+        let result: Result<HooksConfig, _> = toml::from_str(&serialized);
+        assert!(result.is_ok(), "serialized hooks should be valid TOML");
+    }
+
+    /// When global and per-project both use table format with the same command name,
+    /// serialization produces valid TOML with deduplicated keys.
+    #[test]
+    fn test_hooks_merge_duplicate_names_serializes_with_deduplicated_keys() {
+        // Both global and per-project define "test" command
+        let global_hooks = parse_hooks(
+            r#"
+[post-start]
+test = "cargo test"
+"#,
+        );
+
+        let project_hooks = parse_hooks(
+            r#"
+[post-start]
+test = "npm test"
+"#,
+        );
+
+        // Create config with both
+        let mut config = UserConfig {
+            configs: OverridableConfig {
+                hooks: global_hooks,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectOverrides {
+                overrides: OverridableConfig {
+                    hooks: project_hooks,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        // Get merged hooks
+        let effective = config.hooks(Some("github.com/user/repo"));
+        let post_start = effective.post_start.as_ref().unwrap();
+        let commands = post_start.commands();
+
+        // Both commands are present (both should run)
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].template, "cargo test");
+        assert_eq!(commands[1].template, "npm test");
+
+        // Serialization produces valid TOML with deduplicated keys
+        let serialized = toml::to_string(&effective).unwrap();
+
+        // First "test" keeps its name, second gets deduplicated
+        assert!(
+            serialized.contains("test = \"cargo test\""),
+            "first test should keep name: {serialized}"
+        );
+        assert!(
+            serialized.contains("test-2 = \"npm test\""),
+            "second test should be deduplicated: {serialized}"
+        );
+
+        // Round-trip works
+        let result: Result<HooksConfig, _> = toml::from_str(&serialized);
+        assert!(result.is_ok(), "serialized hooks should be valid TOML");
+        let roundtrip = result.unwrap();
+        assert_eq!(roundtrip.post_start.unwrap().commands().len(), 2);
+    }
 }
