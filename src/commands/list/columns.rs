@@ -80,17 +80,20 @@ impl ColumnSpec {
 }
 
 /// Static registry of all possible columns in display order.
+///
+/// Note: base_priority determines truncation order (lower = kept longer),
+/// which is independent of display order (position in array).
 pub const COLUMN_SPECS: &[ColumnSpec] = &[
     ColumnSpec::new(ColumnKind::Gutter, 0, None),
     ColumnSpec::new(ColumnKind::Branch, 1, None),
     ColumnSpec::new(ColumnKind::Status, 2, None),
     ColumnSpec::new(ColumnKind::WorkingDiff, 3, None),
     ColumnSpec::new(ColumnKind::AheadBehind, 4, None),
-    ColumnSpec::new(ColumnKind::BranchDiff, 5, Some(TaskKind::BranchDiff)),
-    ColumnSpec::new(ColumnKind::Path, 6, None),
-    ColumnSpec::new(ColumnKind::Upstream, 7, None),
-    ColumnSpec::new(ColumnKind::Url, 8, Some(TaskKind::UrlStatus)),
-    ColumnSpec::new(ColumnKind::CiStatus, 9, Some(TaskKind::CiStatus)),
+    ColumnSpec::new(ColumnKind::BranchDiff, 6, Some(TaskKind::BranchDiff)),
+    ColumnSpec::new(ColumnKind::Path, 7, None),
+    ColumnSpec::new(ColumnKind::Upstream, 8, None),
+    ColumnSpec::new(ColumnKind::Url, 9, Some(TaskKind::UrlStatus)),
+    ColumnSpec::new(ColumnKind::CiStatus, 5, Some(TaskKind::CiStatus)),
     ColumnSpec::new(ColumnKind::Commit, 10, None),
     ColumnSpec::new(ColumnKind::Time, 11, None),
     ColumnSpec::new(ColumnKind::Message, 12, None),
