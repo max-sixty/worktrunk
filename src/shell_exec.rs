@@ -39,6 +39,8 @@ fn max_concurrent_commands() -> usize {
     std::env::var("WORKTRUNK_MAX_CONCURRENT_COMMANDS")
         .ok()
         .and_then(|s| s.parse().ok())
+        // 0 = no limit (use usize::MAX as effectively unlimited)
+        .map(|n: usize| if n == 0 { usize::MAX } else { n })
         .unwrap_or(DEFAULT_CONCURRENT_COMMANDS)
 }
 
@@ -889,6 +891,17 @@ fn forward_signal_with_escalation(pgid: i32, sig: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_max_concurrent_commands_defaults() {
+        // When no env var is set, default should be used
+        assert!(max_concurrent_commands() >= 1, "Default should be >= 1");
+        assert_eq!(
+            max_concurrent_commands(),
+            DEFAULT_CONCURRENT_COMMANDS,
+            "Without env var, should use default"
+        );
+    }
 
     #[test]
     fn test_shell_config_is_available() {
