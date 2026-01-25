@@ -93,6 +93,15 @@ impl<'de> Deserialize<'de> for CommandConfig {
             }
             CommandConfigToml::Named(map) => {
                 // IndexMap preserves insertion order from TOML
+                // Validate hook names don't contain colons (would break log spec parsing)
+                for name in map.keys() {
+                    if name.contains(':') {
+                        return Err(serde::de::Error::custom(format!(
+                            "hook name '{}' cannot contain colons",
+                            name
+                        )));
+                    }
+                }
                 map.into_iter()
                     .map(|(name, template)| Command::new(Some(name), template))
                     .collect()
@@ -131,11 +140,19 @@ impl Serialize for CommandConfig {
             return self.commands[0].template.serialize(serializer);
         }
 
-        // Serialize as named map (all commands from Named format have names)
+        // Serialize as named map. Auto-generate names for unnamed commands
+        // (can happen when merging unnamed global hooks with named project hooks).
         let mut map = serializer.serialize_map(Some(self.commands.len()))?;
+        let mut unnamed_counter = 0u32;
         for cmd in &self.commands {
-            let key = cmd.name.as_ref().unwrap();
-            map.serialize_entry(key, &cmd.template)?;
+            let key = match &cmd.name {
+                Some(name) => name.clone(),
+                None => {
+                    unnamed_counter += 1;
+                    format!("_{}", unnamed_counter)
+                }
+            };
+            map.serialize_entry(&key, &cmd.template)?;
         }
         map.end()
     }
@@ -239,6 +256,30 @@ third = "echo 3"
         assert_eq!(commands[0].name, Some("first".to_string()));
         assert_eq!(commands[1].name, Some("second".to_string()));
         assert_eq!(commands[2].name, Some("third".to_string()));
+    }
+
+    #[test]
+    fn test_deserialize_rejects_colons_in_name() {
+        // Hook names cannot contain colons (would break log spec parsing)
+        let toml_str = r#"
+[command]
+"my:server" = "npm start"
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            #[serde(rename = "command")]
+            _command: CommandConfig,
+        }
+
+        let result: Result<Wrapper, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("cannot contain colons"),
+            "Expected colon rejection error: {}",
+            err
+        );
     }
 
     // ============================================================================
@@ -398,5 +439,41 @@ third = "echo 3"
         let merged = base.merge_append(&overlay);
         assert_eq!(merged.commands.len(), 1);
         assert_eq!(merged.commands[0].template, "echo base");
+    }
+
+    #[test]
+    fn test_serialize_mixed_named_unnamed_commands() {
+        // When merging unnamed global hooks with named project hooks,
+        // the result has both named and unnamed commands. Serialization
+        // must handle this without panicking.
+        #[derive(Serialize)]
+        struct Wrapper {
+            cmd: CommandConfig,
+        }
+
+        // Simulate merge of unnamed global + named project
+        let global = CommandConfig {
+            commands: vec![Command::new(None, "echo global".to_string())],
+        };
+        let project = CommandConfig {
+            commands: vec![Command::new(
+                Some("build".to_string()),
+                "cargo build".to_string(),
+            )],
+        };
+        let merged = global.merge_append(&project);
+
+        // This should NOT panic
+        let wrapper = Wrapper { cmd: merged };
+        let result = toml::to_string(&wrapper);
+
+        // Should succeed and contain both commands
+        assert!(result.is_ok(), "Serialization panicked or failed");
+        let serialized = result.unwrap();
+        assert!(serialized.contains("echo global"), "Missing global command");
+        assert!(
+            serialized.contains("cargo build"),
+            "Missing project command"
+        );
     }
 }

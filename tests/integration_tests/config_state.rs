@@ -1312,8 +1312,8 @@ fn test_state_logs_get_hook_with_branch_flag(repo: TestRepo) {
 
 #[rstest]
 fn test_state_logs_get_hook_invalid_format(repo: TestRepo) {
-    // Test invalid hook spec format (too many colons)
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=a:b:c:d"])
+    // Test invalid hook spec format (missing required segments)
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -1321,6 +1321,21 @@ fn test_state_logs_get_hook_invalid_format(repo: TestRepo) {
     assert!(
         stderr.contains("Invalid log spec"),
         "Expected 'Invalid log spec' error: {}",
+        stderr
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_rejects_colons_in_name(repo: TestRepo) {
+    // Hook names cannot contain colons (makes parsing ambiguous)
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:my:server"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Invalid log spec"),
+        "Colons in hook names should be rejected: {}",
         stderr
     );
 }
