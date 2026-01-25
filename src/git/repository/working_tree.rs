@@ -123,53 +123,14 @@ impl<'a> WorkingTree<'a> {
     /// Check if the working tree has uncommitted changes.
     ///
     /// Note: This does NOT detect files hidden via `git update-index --assume-unchanged`
-    /// or `--skip-worktree`. Use [`has_hidden_changes()`](Self::has_hidden_changes) to
-    /// check for those.
+    /// or `--skip-worktree`. We intentionally skip that check because:
+    /// 1. Detecting hidden files requires `git ls-files -v` which lists ALL tracked files
+    /// 2. On large repos (70k+ files), this adds noticeable latency to every clean check
+    /// 3. Users who use skip-worktree are power users who understand the implications
+    /// 4. A warning wouldn't prevent data loss anyway — it's informational only
     pub fn is_dirty(&self) -> anyhow::Result<bool> {
         let stdout = self.run_command(&["status", "--porcelain"])?;
         Ok(!stdout.trim().is_empty())
-    }
-
-    /// Check for files hidden from `git status` via assume-unchanged or skip-worktree.
-    ///
-    /// Returns a list of file paths that have the assume-unchanged or skip-worktree
-    /// bit set. These files are hidden from `git status --porcelain` and could have
-    /// local modifications that would be silently lost during checkout/rebase operations.
-    ///
-    /// The returned list contains tuples of (file_path, hidden_type) where hidden_type
-    /// is either "assume-unchanged" or "skip-worktree".
-    pub fn hidden_files(&self) -> anyhow::Result<Vec<(String, &'static str)>> {
-        let stdout = self.run_command(&["ls-files", "-v"])?;
-        let mut hidden = Vec::new();
-
-        for line in stdout.lines() {
-            if line.is_empty() {
-                continue;
-            }
-            // Format: <flag><space><path>
-            // Lowercase letters = assume-unchanged (h = cached, but assume-unchanged)
-            // 'S' = skip-worktree
-            let flag = line.chars().next();
-            let path = line.get(2..).unwrap_or("");
-
-            match flag {
-                Some('S') => hidden.push((path.to_string(), "skip-worktree")),
-                Some(c) if c.is_ascii_lowercase() => {
-                    hidden.push((path.to_string(), "assume-unchanged"))
-                }
-                _ => {}
-            }
-        }
-
-        Ok(hidden)
-    }
-
-    /// Check if there are any files with hidden changes (assume-unchanged or skip-worktree).
-    ///
-    /// This is a convenience method that returns `true` if any files are hidden.
-    /// For the list of specific files, use [`hidden_files()`](Self::hidden_files).
-    pub fn has_hidden_changes(&self) -> anyhow::Result<bool> {
-        Ok(!self.hidden_files()?.is_empty())
     }
 
     /// Get the root directory of this worktree (top-level of the working tree).
@@ -241,7 +202,6 @@ impl<'a> WorkingTree<'a> {
     /// Ensure this worktree is clean (no uncommitted changes).
     ///
     /// Returns an error if there are uncommitted changes.
-    /// Also warns (but does not block) if files are hidden via assume-unchanged or skip-worktree.
     /// - `action` describes what was blocked (e.g., "remove worktree").
     /// - `branch` identifies which branch for multi-worktree operations.
     /// - `force_hint` when true, the error hint mentions `--force` as an alternative.
@@ -260,46 +220,6 @@ impl<'a> WorkingTree<'a> {
             .into());
         }
 
-        // Warn about hidden files that won't be detected by is_dirty()
-        self.warn_about_hidden_files()?;
-
-        Ok(())
-    }
-
-    /// Emit a warning to stderr if there are files hidden via assume-unchanged or skip-worktree.
-    ///
-    /// These files are hidden from `git status --porcelain` and could have local modifications
-    /// that may be silently overwritten during checkout/rebase operations.
-    fn warn_about_hidden_files(&self) -> anyhow::Result<()> {
-        let hidden = self.hidden_files()?;
-        if hidden.is_empty() {
-            return Ok(());
-        }
-
-        use crate::styling::warning_message;
-
-        // Count by type
-        let skip_worktree_count = hidden.iter().filter(|(_, t)| *t == "skip-worktree").count();
-        let assume_unchanged_count = hidden.len() - skip_worktree_count;
-
-        let msg = if skip_worktree_count > 0 && assume_unchanged_count > 0 {
-            format!(
-                "{} file(s) hidden via skip-worktree, {} via assume-unchanged — local changes may be lost",
-                skip_worktree_count, assume_unchanged_count
-            )
-        } else if skip_worktree_count > 0 {
-            format!(
-                "{} file(s) hidden via skip-worktree — local changes may be lost",
-                skip_worktree_count
-            )
-        } else {
-            format!(
-                "{} file(s) hidden via assume-unchanged — local changes may be lost",
-                assume_unchanged_count
-            )
-        };
-
-        eprintln!("{}", warning_message(msg));
         Ok(())
     }
 

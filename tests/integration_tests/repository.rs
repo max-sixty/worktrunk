@@ -721,93 +721,18 @@ fn test_branch_caches_result() {
 }
 
 // =============================================================================
-// hidden_files() tests (Bug fix: is_dirty() misses skip-worktree files)
+// is_dirty() behavior tests
 // =============================================================================
 
 #[test]
-fn test_hidden_files_empty_when_no_special_flags() {
-    let repo = TestRepo::new();
-    let root = repo.root_path().to_path_buf();
-    let repository = Repository::at(&root).unwrap();
-    let wt = repository.worktree_at(&root);
-
-    let hidden = wt.hidden_files().unwrap();
-    assert!(hidden.is_empty(), "No files should be hidden by default");
-}
-
-#[test]
-fn test_hidden_files_detects_skip_worktree() {
-    let repo = TestRepo::new();
-    let root = repo.root_path().to_path_buf();
-
-    // Create a file and commit it
-    let file_path = root.join("config.local");
-    fs::write(&file_path, "initial content").unwrap();
-    repo.run_git(&["add", "config.local"]);
-    repo.run_git(&["commit", "-m", "add config.local"]);
-
-    // Mark it with skip-worktree
-    repo.run_git(&["update-index", "--skip-worktree", "config.local"]);
-
-    let repository = Repository::at(&root).unwrap();
-    let wt = repository.worktree_at(&root);
-
-    let hidden = wt.hidden_files().unwrap();
-    assert_eq!(hidden.len(), 1, "Should detect one hidden file");
-    assert_eq!(hidden[0].0, "config.local");
-    assert_eq!(hidden[0].1, "skip-worktree");
-}
-
-#[test]
-fn test_hidden_files_detects_assume_unchanged() {
-    let repo = TestRepo::new();
-    let root = repo.root_path().to_path_buf();
-
-    // Create a file and commit it
-    let file_path = root.join("settings.json");
-    fs::write(&file_path, "{}").unwrap();
-    repo.run_git(&["add", "settings.json"]);
-    repo.run_git(&["commit", "-m", "add settings.json"]);
-
-    // Mark it with assume-unchanged
-    repo.run_git(&["update-index", "--assume-unchanged", "settings.json"]);
-
-    let repository = Repository::at(&root).unwrap();
-    let wt = repository.worktree_at(&root);
-
-    let hidden = wt.hidden_files().unwrap();
-    assert_eq!(hidden.len(), 1, "Should detect one hidden file");
-    assert_eq!(hidden[0].0, "settings.json");
-    assert_eq!(hidden[0].1, "assume-unchanged");
-}
-
-#[test]
-fn test_has_hidden_changes() {
-    let repo = TestRepo::new();
-    let root = repo.root_path().to_path_buf();
-
-    // Initially no hidden changes
-    let repository = Repository::at(&root).unwrap();
-    let wt = repository.worktree_at(&root);
-    assert!(!wt.has_hidden_changes().unwrap());
-
-    // Create and commit a file
-    let file_path = root.join("hidden.txt");
-    fs::write(&file_path, "content").unwrap();
-    repo.run_git(&["add", "hidden.txt"]);
-    repo.run_git(&["commit", "-m", "add hidden.txt"]);
-
-    // Mark with skip-worktree
-    repo.run_git(&["update-index", "--skip-worktree", "hidden.txt"]);
-
-    // Fresh repository to avoid cache
-    let repository = Repository::at(&root).unwrap();
-    let wt = repository.worktree_at(&root);
-    assert!(wt.has_hidden_changes().unwrap());
-}
-
-#[test]
 fn test_is_dirty_does_not_detect_skip_worktree_changes() {
+    // This test documents a known limitation: is_dirty() uses `git status --porcelain`
+    // which doesn't show files hidden via --skip-worktree or --assume-unchanged.
+    //
+    // We intentionally don't check for these because:
+    // 1. Detecting them requires `git ls-files -v` which lists ALL tracked files
+    // 2. On large repos (70k+ files), this adds noticeable latency to every clean check
+    // 3. Users who use skip-worktree are power users who understand the implications
     let repo = TestRepo::new();
     let root = repo.root_path().to_path_buf();
 
@@ -824,15 +749,9 @@ fn test_is_dirty_does_not_detect_skip_worktree_changes() {
     let repository = Repository::at(&root).unwrap();
     let wt = repository.worktree_at(&root);
 
-    // is_dirty() should return false (this is the documented limitation)
+    // is_dirty() returns false — this is documented behavior, not a bug
     assert!(
         !wt.is_dirty().unwrap(),
         "is_dirty() does not detect skip-worktree changes by design"
-    );
-
-    // But hidden_files() should detect the file
-    assert!(
-        wt.has_hidden_changes().unwrap(),
-        "has_hidden_changes() should detect skip-worktree files"
     );
 }

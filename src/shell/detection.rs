@@ -142,10 +142,11 @@ fn has_init_pattern_with_prefix_check(line: &str, cmd: &str) -> bool {
 
             // Check what precedes the match
             if is_valid_command_position(line, absolute_pos, &cmd_in_line) {
-                // Must be in an execution context
+                // Must be in an execution context (eval, source, dot command, PowerShell, etc.)
                 if line.contains("eval")
                     || line.contains("source")
-                    || is_dot_source_command(line)
+                    || line.contains(". <(")  // POSIX dot command with process substitution
+                    || line.contains(". =(")  // zsh dot command with =() substitution
                     || line.contains("Invoke-Expression")
                     || line.contains("iex")
                     || line.contains("if ")
@@ -160,27 +161,6 @@ fn has_init_pattern_with_prefix_check(line: &str, cmd: &str) -> bool {
     }
 
     false
-}
-
-/// Check if line uses the POSIX `.` (dot) command for sourcing.
-///
-/// The `.` command is equivalent to `source` in POSIX shells. We check for patterns like:
-/// - `. <(cmd)` — process substitution
-/// - `. =(cmd)` — zsh-specific substitution
-///
-/// We need to be careful not to match `.` in other contexts (paths, etc.).
-fn is_dot_source_command(line: &str) -> bool {
-    // Look for `. ` followed by `<(` or `=(` (process/zsh substitution)
-    // This handles: `. <(wt config shell init bash)` and `. =(wt config shell init zsh)`
-    let trimmed = line.trim_start();
-    if trimmed.starts_with(". <(") || trimmed.starts_with(". =(") {
-        return true;
-    }
-    // Also check for dot after semicolon or other command separator
-    line.contains("; . <(")
-        || line.contains("; . =(")
-        || line.contains("&& . <(")
-        || line.contains("&& . =(")
 }
 
 /// Check if the command at `pos` is a valid standalone command, not part of another command.
