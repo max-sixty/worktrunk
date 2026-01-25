@@ -140,8 +140,9 @@ impl Serialize for CommandConfig {
             return self.commands[0].template.serialize(serializer);
         }
 
-        // Serialize as named map. Auto-generate names for unnamed commands
-        // (can happen when merging unnamed global hooks with named project hooks).
+        // Serialize as named map. Generate keys for unnamed commands (can happen
+        // when merging unnamed global hooks with named project hooks, though
+        // merged configs are only used for execution, never serialized in production).
         let mut map = serializer.serialize_map(Some(self.commands.len()))?;
         let mut unnamed_counter = 0u32;
         for cmd in &self.commands {
@@ -149,7 +150,7 @@ impl Serialize for CommandConfig {
                 Some(name) => name.clone(),
                 None => {
                     unnamed_counter += 1;
-                    format!("_{}", unnamed_counter)
+                    format!("_{unnamed_counter}")
                 }
             };
             map.serialize_entry(&key, &cmd.template)?;
@@ -441,39 +442,40 @@ third = "echo 3"
         assert_eq!(merged.commands[0].template, "echo base");
     }
 
+    // ============================================================================
+    // Serialization Edge Cases (merged configs)
+    // ============================================================================
+    //
+    // Note: Merged configs (from merge_append) are only used for execution,
+    // never serialized in production. These tests verify serialization doesn't
+    // panic, but round-trip fidelity isn't required.
+
+    /// Serializing a merged config with mixed named/unnamed commands doesn't panic.
     #[test]
-    fn test_serialize_mixed_named_unnamed_commands() {
-        // When merging unnamed global hooks with named project hooks,
-        // the result has both named and unnamed commands. Serialization
-        // must handle this without panicking.
+    fn test_serialize_mixed_named_unnamed_succeeds() {
         #[derive(Serialize)]
         struct Wrapper {
             cmd: CommandConfig,
         }
 
-        // Simulate merge of unnamed global + named project
+        // Simulate merge of unnamed global + named project hooks
         let global = CommandConfig {
-            commands: vec![Command::new(None, "echo global".to_string())],
+            commands: vec![Command::new(None, "npm install".to_string())],
         };
-        let project = CommandConfig {
+        let per_project = CommandConfig {
             commands: vec![Command::new(
-                Some("build".to_string()),
-                "cargo build".to_string(),
+                Some("setup".to_string()),
+                "echo setup".to_string(),
             )],
         };
-        let merged = global.merge_append(&project);
 
-        // This should NOT panic
+        let merged = global.merge_append(&per_project);
+        assert_eq!(merged.commands.len(), 2);
+
+        // Should not panic - generates "_1" for unnamed command
         let wrapper = Wrapper { cmd: merged };
-        let result = toml::to_string(&wrapper);
-
-        // Should succeed and contain both commands
-        assert!(result.is_ok(), "Serialization panicked or failed");
-        let serialized = result.unwrap();
-        assert!(serialized.contains("echo global"), "Missing global command");
-        assert!(
-            serialized.contains("cargo build"),
-            "Missing project command"
-        );
+        let serialized = toml::to_string(&wrapper).unwrap();
+        assert!(serialized.contains("npm install"), "{serialized}");
+        assert!(serialized.contains("echo setup"), "{serialized}");
     }
 }

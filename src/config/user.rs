@@ -2905,4 +2905,98 @@ squash-template-file = "path/to/file"
             result.err()
         );
     }
+
+    // =========================================================================
+    // Hooks Merge Behavior Tests
+    // =========================================================================
+    //
+    // Note: Merged configs are only used for execution, never serialized in
+    // production. These tests verify merge semantics for execution order.
+
+    /// Merging string-format global hooks with table-format per-project hooks
+    /// preserves both and maintains correct execution order.
+    #[test]
+    fn test_hooks_merge_mixed_formats_preserves_order() {
+        // Global uses string format (unnamed command)
+        let global_hooks = parse_hooks(r#"post-start = "npm install""#);
+
+        // Per-project uses table format (named commands)
+        let project_hooks = parse_hooks(
+            r#"
+[post-start]
+setup = "echo setup"
+"#,
+        );
+
+        let mut config = UserConfig {
+            configs: OverridableConfig {
+                hooks: global_hooks,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectOverrides {
+                overrides: OverridableConfig {
+                    hooks: project_hooks,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        // Verify merge preserves order: global first, then project
+        let effective = config.hooks(Some("github.com/user/repo"));
+        let commands = effective.post_start.as_ref().unwrap().commands();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].template, "npm install"); // Global first
+        assert_eq!(commands[1].template, "echo setup"); // Project second
+    }
+
+    /// When global and per-project both define same hook type, both run in order.
+    #[test]
+    fn test_hooks_merge_same_names_both_run() {
+        // Both define "test" command - both should execute
+        let global_hooks = parse_hooks(
+            r#"
+[post-start]
+test = "cargo test"
+"#,
+        );
+
+        let project_hooks = parse_hooks(
+            r#"
+[post-start]
+test = "npm test"
+"#,
+        );
+
+        let mut config = UserConfig {
+            configs: OverridableConfig {
+                hooks: global_hooks,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectOverrides {
+                overrides: OverridableConfig {
+                    hooks: project_hooks,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        // Both commands present, global first
+        let effective = config.hooks(Some("github.com/user/repo"));
+        let commands = effective.post_start.as_ref().unwrap().commands();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].template, "cargo test");
+        assert_eq!(commands[1].template, "npm test");
+    }
 }
