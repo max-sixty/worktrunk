@@ -9,6 +9,8 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
@@ -118,7 +120,7 @@ The CI column shows GitHub/GitLab pipeline status:
    ⚠ yellow  Fetch error (rate limit, network) 
    (blank)   No upstream or no PR/MR           
 
-CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank. Results are cached for 30-60 seconds; use [2mwt config state[0m to view or clear.
+CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches (visible with [2m--remotes[0m) get CI status detection. Results are cached for 30-60 seconds; use [2mwt config state[0m to view or clear.
 
 [1m[32mStatus symbols[0m
 

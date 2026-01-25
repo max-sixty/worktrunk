@@ -9,6 +9,7 @@ use dunce::canonicalize;
 use normalize_path::NormalizePath;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{GitError, Repository, ResolvedWorktree};
+use worktrunk::path::format_path_for_display;
 
 use super::types::OperationMode;
 
@@ -91,12 +92,17 @@ pub fn compute_worktree_path(
 
     let repo_name = repo_root
         .file_name()
-        .ok_or_else(|| anyhow::anyhow!("Repository path has no filename: {}", repo_root.display()))?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Repository path has no filename: {}",
+                format_path_for_display(repo_root)
+            )
+        })?
         .to_str()
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "Repository path contains invalid UTF-8: {}",
-                repo_root.display()
+                format_path_for_display(repo_root)
             )
         })?;
 
@@ -233,9 +239,12 @@ pub(super) fn generate_backup_path(
     path: &std::path::Path,
     suffix: &str,
 ) -> anyhow::Result<PathBuf> {
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| anyhow::anyhow!("Cannot generate backup path for {}", path.display()))?;
+    let file_name = path.file_name().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Cannot generate backup path for {}",
+            format_path_for_display(path)
+        )
+    })?;
 
     if path.extension().is_none() {
         // Path has no extension (e.g., /repo/feature)

@@ -97,22 +97,9 @@ See [`wt merge`](@/merge.md) and [`wt step`](@/step.md) for full documentation.
 
 Worktrunk uses [minijinja](https://docs.rs/minijinja/) templates (Jinja2-like syntax) to build prompts. There are sensible defaults, but templates are fully customizable.
 
-### Template variables
-
-All variables are available in both templates:
-
-| Variable | Description |
-|----------|-------------|
-| `{{ git_diff }}` | The diff (staged changes or combined diff for squash) |
-| `{{ branch }}` | Current branch name |
-| `{{ recent_commits }}` | Recent commit subjects (for style reference) |
-| `{{ repo }}` | Repository name |
-| `{{ commits }}` | Commit messages being squashed (chronological order) |
-| `{{ target_branch }}` | Branch being merged into |
-
 ### Custom templates
 
-Override the defaults with inline templates or external files:
+Override the defaults with inline templates:
 
 ```toml
 [commit.generation]
@@ -136,6 +123,18 @@ Diff:
 {{ git_diff }}
 """
 ```
+
+### Template variables
+
+| Variable | Description |
+|----------|-------------|
+| `{{ git_diff }}` | The diff (staged changes or combined diff for squash) |
+| `{{ git_diff_stat }}` | Diff statistics (files changed, insertions, deletions) |
+| `{{ branch }}` | Current branch name |
+| `{{ repo }}` | Repository name |
+| `{{ recent_commits }}` | Recent commit subjects (for style reference) |
+| `{{ commits }}` | Commits being squashed (squash template only) |
+| `{{ target_branch }}` | Merge target branch (squash template only) |
 
 ### Template syntax
 

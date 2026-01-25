@@ -49,9 +49,8 @@ wt config show
 # ~/.config/worktrunk/config.toml
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 
-[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
 ```
 
 **Project config** — shared team settings:
@@ -289,44 +288,25 @@ Combine these commits into a single commit message.
 
 ---
 
-## Worktrunk Project Configuration
+## Project configuration
 
-The project config defines lifecycle hooks and project-specific settings. This file is checked into version control and shared across the team.
+Project config (`.config/wt.toml`) defines lifecycle hooks and project-specific settings. This file is checked into version control and shared with the team. Create with `wt config create --project`.
 
-Create `.config/wt.toml` in the repository root:
+See [`wt hook`](@/hook.md) for hook types, execution order, template variables, and examples.
 
-```toml
-[post-create]
-install = "npm ci"
-
-[pre-merge]
-test = "npm test"
-lint = "npm run lint"
-```
-
-See [`wt hook`](@/hook.md) for complete documentation on hook types, execution order, template variables, and [JSON context](@/hook.md#json-context).
-
-### Dev server URL
-
-The `[list]` section adds a URL column to `wt list`:
+### Non-hook settings
 
 ```toml
+# .config/wt.toml
+
+# URL column in wt list (dimmed when port not listening)
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
-```
 
-URLs are dimmed when the port isn't listening.
-
-### CI platform override
-
-The `[ci]` section overrides CI platform detection for GitHub Enterprise or self-hosted GitLab with custom domains:
-
-```toml
+# Override CI platform detection for self-hosted instances
 [ci]
 platform = "github"  # or "gitlab"
 ```
-
-By default, the platform is detected from the remote URL. Use this when URL detection fails (e.g., `git.mycompany.com` instead of `github.mycompany.com`).
 
 ---
 
