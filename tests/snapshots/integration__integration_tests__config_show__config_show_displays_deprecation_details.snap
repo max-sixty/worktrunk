@@ -49,6 +49,7 @@ exit_code: 0
 [107m [0m [31m-post-create = "ln -sf {{ repo_root }}/node_modules"[m
 [107m [0m [32m+[m[32mworktree-path = "../{{ repo }}.{{ branch }}"[m
 [107m [0m [32m+[m[32mpost-create = "ln -sf {{ repo_path }}/node_modules"[m
+[2m○[22m Current config:
 [107m [0m worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"
 [107m [0m post-create = [32m"ln -sf {{ repo_root }}/node_modules"
 
