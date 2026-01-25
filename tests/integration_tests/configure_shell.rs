@@ -1572,8 +1572,8 @@ mod pty_tests {
         add_pty_filters(&mut settings);
 
         // Remove echoed user input at end of prompt line (PTY echo timing varies).
-        // The prompt ends with [y/N/?][22m and then the echoed input appears.
-        settings.add_filter(r"(\[y/N/\?\]\x1b\[22m) [yn]", "$1 ");
+        // The prompt ends with [y/N/?] (possibly with ANSI codes) and then the echoed input appears.
+        settings.add_filter(r"(\[y/N/\?\](?:\x1b\[22m)?) [yn]", "$1 ");
 
         // Remove standalone echoed input lines (just y or n on their own line)
         settings.add_filter(r"^[yn]\n", "");
