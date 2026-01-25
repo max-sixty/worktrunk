@@ -35,7 +35,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36mDEPRECATIONS[39m
+[36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [33m▲[39m [33mUser config uses deprecated config sections: [projects."github.com/example/repo".commit-generation] → [projects."github.com/example/repo".commit.generation][39m
 [2m↳[22m [2mWrote migrated [90mconfig.toml.new[39m. To apply:[22m
 [107m [0m [2m[0m[2m[34mmv[0m[2m [0m[2m[36m--[0m[2m [TEMP_HOME]/.config/worktrunk/config.toml.new [TEMP_HOME]/.config/worktrunk/config.toml
@@ -50,8 +50,6 @@ exit_code: 0
 [107m [0m [31m-[projects."github.com/example/repo".commit-generation][m
 [107m [0m [32m+[m[32m[projects."github.com/example/repo".commit.generation][m
 [107m [0m  command = "llm -m gpt-4"[m
-
-[36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 [107m [0m 
 [107m [0m [1m[36m[projects."github.com/example/repo".commit-generation]

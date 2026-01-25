@@ -615,25 +615,23 @@ cformat!("{ERROR_SYMBOL} <red>Branch <bold>{branch}</> not found</>")
 
 Never quote commands or branch names. Use styling to make them stand out:
 
-- **`<bold>`** for commands in normal/colored messages (info, success, warning,
-  error, progress)
-- **`<bright-black>`** for commands in dim messages (hints). Technical reason:
-  `</bold>` emits `[22m` which resets both bold AND dim, breaking the hint's
-  dim styling.
+- **In normal font context**: Use `<bold>` for commands and branches
+- **In hints**: Use `<bright-black>` for commands and data values (paths,
+  branches). Avoid `<bold>` inside hints — the closing `[22m` resets both bold
+  AND dim, so text after `</bold>` loses dim styling.
 
 ```rust
-// GOOD - bold in normal context (info, warning, error, success, progress)
-output::print(info_message(cformat!("To continue, run <bold>wt merge</>")))?;
-output::print(warning_message(cformat!("gh not authenticated; run <bold>gh auth login</>")))?;
+// GOOD - bold in normal context
+output::print(info_message(cformat!("Use <bold>wt merge</> to continue")))?;
 
-// GOOD - bright-black for commands in hints (dim context)
-output::print(hint_message(cformat!("To see worktrees, run <bright-black>wt list</>")))?;
+// GOOD - bright-black for commands in hints
+output::print(hint_message(cformat!("Run <bright-black>wt list</> to see worktrees")))?;
 
 // GOOD - plain hint without commands
 output::print(hint_message("No changes to commit"))?;
 
 // BAD - quoted commands
-output::print(hint_message("To see worktrees, run 'wt list'"))?;
+output::print(hint_message("Run 'wt list' to see worktrees"))?;
 ```
 
 ## Design Principles

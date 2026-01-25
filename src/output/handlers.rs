@@ -608,11 +608,11 @@ fn spawn_post_remove_hooks(
     if !verify {
         return Ok(());
     }
-    // Use run_from_path for discovery since the original worktree is removed
-    let repo = Repository::at(run_from_path)?;
     let Ok(config) = UserConfig::load() else {
         return Ok(());
     };
+    // Use run_from_path for discovery since the original worktree is removed
+    let repo = Repository::at(run_from_path)?;
     // Context uses run_from_path for execution, but we pass removed worktree
     // info as extra_vars so template variables reflect the removed worktree
     let ctx = CommandContext::new(
@@ -642,12 +642,12 @@ fn spawn_post_switch_after_remove(
     if !verify || !changed_directory {
         return Ok(());
     }
-    // Use main_path for discovery since we're called after the original worktree
-    // is removed (cwd may no longer exist).
-    let repo = Repository::at(main_path)?;
     let Ok(config) = UserConfig::load() else {
         return Ok(());
     };
+    // Use main_path for discovery since we're called after the original worktree
+    // is removed (cwd may no longer exist).
+    let repo = Repository::at(main_path)?;
     let dest_branch = repo.worktree_at(main_path).branch()?;
     let ctx = CommandContext::new(
         &repo,
