@@ -111,6 +111,50 @@ Alternatively, disable Windows Terminal's alias (Settings → Privacy & security
 paru worktrunk-bin && wt config shell install
 ```
 
+## Quick start
+
+Create a worktree for a new feature:
+
+```bash
+~/repo $ wt switch --create feature-auth
+~/repo.feature-auth $
+```
+
+Work on your changes. Check all worktrees with [`wt list`](https://worktrunk.dev/list/):
+
+```bash
+~/repo.feature-auth $ wt list
+  main          ~/repo
+* feature-auth  ~/repo.feature-auth
+```
+
+When done, either:
+
+**PR workflow** — push, create the PR, merge via GitHub/GitLab, then clean up:
+
+```bash
+~/repo.feature-auth $ git push -u origin feature-auth
+~/repo.feature-auth $ gh pr create
+~/repo.feature-auth $ wt remove        # after PR is merged
+```
+
+**Local merge** — squash, rebase onto main, fast-forward merge, clean up:
+
+```bash
+~/repo.feature-auth $ wt merge
+~/repo $
+```
+
+For parallel agents, create multiple worktrees and run an agent in each:
+
+```bash
+~/repo $ wt switch -c feature-a -x claude
+~/repo $ wt switch -c feature-b -x claude    # in another terminal
+~/repo $ wt switch -c feature-c -x claude    # and another
+```
+
+The `-x` flag runs a command after switching. Configure [post-start hooks](https://worktrunk.dev/hook/) to automate setup.
+
 ## Next steps
 
 - Learn the core commands: [`wt switch`](https://worktrunk.dev/switch/), [`wt list`](https://worktrunk.dev/list/), [`wt merge`](https://worktrunk.dev/merge/), [`wt remove`](https://worktrunk.dev/remove/)
