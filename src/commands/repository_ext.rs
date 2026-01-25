@@ -10,9 +10,7 @@ use worktrunk::git::{
     GitError, IntegrationReason, Repository, parse_porcelain_z, parse_untracked_files,
 };
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{
-    eprintln, format_with_gutter, hint_message, progress_message, warning_message,
-};
+use worktrunk::styling::{eprintln, format_with_gutter, progress_message, warning_message};
 
 /// Target for worktree removal.
 #[derive(Debug)]
@@ -414,57 +412,25 @@ impl StashData {
             ))
         );
 
-        let result = Repository::current().ok().and_then(|repo| {
-            repo.worktree_at(&self.path)
-                .run_command(&["stash", "pop", &self.stash_ref])
-                .ok()
-        });
+        // Don't use --quiet so git shows conflicts if any
+        let success = Repository::current()
+            .ok()
+            .and_then(|repo| {
+                repo.worktree_at(&self.path)
+                    .run_command(&["stash", "pop", &self.stash_ref])
+                    .ok()
+            })
+            .is_some();
 
-        if result.is_none() {
-            // Failed to restore stash — check if conflicts were the cause
-            let conflicting_files = Repository::current()
-                .ok()
-                .and_then(|repo| {
-                    repo.worktree_at(&self.path)
-                        .run_command(&["diff", "--name-only", "--diff-filter=U"])
-                        .ok()
-                })
-                .map(|s| {
-                    s.lines()
-                        .filter(|l| !l.is_empty())
-                        .map(String::from)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-
-            let path_display = format_path_for_display(&self.path);
-            if conflicting_files.is_empty() {
-                // No conflicts detected — show generic failure with recovery info
-                eprintln!(
-                    "{}",
-                    warning_message(cformat!(
-                        "Failed to restore stash <bold>{stash_ref}</>; run <bold>git stash pop {stash_ref}</> in <bold>{path_display}</>",
-                        stash_ref = self.stash_ref,
-                    ))
-                );
-            } else {
-                // Conflicts detected — show conflicting files
-                eprintln!(
-                    "{}",
-                    warning_message(cformat!(
-                        "Stash restore conflicts in <bold>{path_display}</>"
-                    ))
-                );
-                let joined_files = conflicting_files.join("\n");
-                eprintln!("{}", format_with_gutter(&joined_files, None));
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!(
-                        "Resolve conflicts and commit, or run <bright-black>git stash drop {stash_ref}</> to discard the stash",
-                        stash_ref = self.stash_ref,
-                    ))
-                );
-            }
+        if !success {
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "Failed to restore stash <bold>{stash_ref}</>; run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
+                    stash_ref = self.stash_ref,
+                    path = format_path_for_display(&self.path),
+                ))
+            );
         }
     }
 }
