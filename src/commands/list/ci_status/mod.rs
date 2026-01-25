@@ -379,6 +379,7 @@ impl PrStatus {
             status: status.clone(),
             checked_at: now_secs,
             head: local_head.to_string(),
+            branch: branch.full_name.clone(),
         };
         cached.write(repo, &branch.full_name);
 

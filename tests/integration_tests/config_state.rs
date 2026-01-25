@@ -609,7 +609,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     write_ci_cache(
         &repo,
         "feature",
-        r#"{"checked_at":1704067200,"head":"abc123"}"#,
+        r#"{"checked_at":1704067200,"head":"abc123","branch":"feature"}"#,
     );
 
     // Logs
@@ -699,7 +699,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
         ),
     );
 
@@ -707,14 +707,16 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
         &repo,
         "bugfix",
         &format!(
-            r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":true}},"checked_at":{TEST_EPOCH},"head":"111222333444555"}}"#
+            r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":true}},"checked_at":{TEST_EPOCH},"head":"111222333444555","branch":"bugfix"}}"#
         ),
     );
 
     write_ci_cache(
         &repo,
         "main",
-        &format!(r#"{{"status":null,"checked_at":{TEST_EPOCH},"head":"deadbeef12345678"}}"#),
+        &format!(
+            r#"{{"status":null,"checked_at":{TEST_EPOCH},"head":"deadbeef12345678","branch":"main"}}"#
+        ),
     );
 
     let output = wt_state_get_cmd(&repo).output().unwrap();
@@ -755,7 +757,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
         ),
     );
 
@@ -812,7 +814,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
         ),
     );
 
@@ -885,14 +887,14 @@ fn test_state_clear_ci_status_all_with_entries(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
         ),
     );
     write_ci_cache(
         &repo,
         "bugfix",
         &format!(
-            r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"def67890"}}"#
+            r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"def67890","branch":"bugfix"}}"#
         ),
     );
 
@@ -910,7 +912,7 @@ fn test_state_clear_ci_status_all_single_entry(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
         ),
     );
 
