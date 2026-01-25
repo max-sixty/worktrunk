@@ -259,6 +259,9 @@ fn complete_hook_commands() -> Vec<CompletionCandidate> {
             );
         };
 
+    // Get repo context for config loading (optional since we're in completion)
+    let repo = Repository::current().ok();
+
     // Load user config and add user hook names
     // Uses overrides.hooks for completion (global hooks from user config file)
     if let Ok(user_config) = UserConfig::load()
@@ -269,8 +272,8 @@ fn complete_hook_commands() -> Vec<CompletionCandidate> {
 
     // Load project config and add project hook names
     // Pass write_hints=false to avoid side effects during completion
-    if let Ok(repo) = Repository::current()
-        && let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
+    if let Some(ref repo) = repo
+        && let Ok(Some(project_config)) = ProjectConfig::load(repo, false)
         && let Some(config) = project_config.hooks.get(hook_type)
     {
         add_named_commands(&mut candidates, config);

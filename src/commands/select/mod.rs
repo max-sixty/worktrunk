@@ -213,9 +213,9 @@ pub fn handle_select(
         // (output() returns the worktree path for existing worktrees, branch name otherwise)
         let identifier = selected.output().to_string();
 
-        // Load config
-        let config = UserConfig::load().context("Failed to load config")?;
+        // Load config and repo
         let repo = Repository::current().context("Failed to switch worktree")?;
+        let config = UserConfig::load().context("Failed to load config")?;
 
         // Switch to the selected worktree (no creation, no approval prompts)
         let plan = plan_switch(&repo, &identifier, false, None, false, &config)?;

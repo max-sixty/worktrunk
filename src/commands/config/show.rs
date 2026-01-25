@@ -34,13 +34,30 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     // Build the complete output as a string
     let mut show_output = String::new();
 
-    // Render user config
-    render_user_config(&mut show_output)?;
+    // Collect deprecation info from both configs first
+    let mut deprecations = Vec::new();
+
+    // Try to get current repository early (needed for user config hint tracking)
+    // User config hints are tracked per-repo because that's where git config lives.
+    // This means the hint shows once per repo the user works in, which is acceptable.
+    let repo = Repository::current().ok();
+
+    // Render user config (collects deprecation info)
+    render_user_config(&mut show_output, &mut deprecations, repo.as_ref())?;
     show_output.push('\n');
 
-    // Render project config if in a git repository
-    render_project_config(&mut show_output)?;
+    // Render project config if in a git repository (collects deprecation info)
+    render_project_config(&mut show_output, &mut deprecations)?;
     show_output.push('\n');
+
+    // If there are deprecations, render them in a dedicated section at the top
+    // We build the deprecations section separately and prepend it
+    if !deprecations.is_empty() {
+        let mut deprecation_output = String::new();
+        render_deprecations_section(&mut deprecation_output, &deprecations)?;
+        deprecation_output.push('\n');
+        show_output = deprecation_output + &show_output;
+    }
 
     // Render shell integration status
     render_shell_status(&mut show_output)?;
@@ -174,6 +191,20 @@ fn check_zsh_compinit_missing() -> bool {
 
 // ==================== Render Functions ====================
 
+/// Render DEPRECATIONS section with all deprecation details
+fn render_deprecations_section(
+    out: &mut String,
+    deprecations: &[worktrunk::config::DeprecationInfo],
+) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("DEPRECATIONS", None))?;
+
+    for info in deprecations {
+        out.push_str(&worktrunk::config::format_deprecation_details(info));
+    }
+
+    Ok(())
+}
+
 /// Render CLAUDE CODE section (plugin and statusline status)
 fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
     let claude_available = is_claude_available();
@@ -299,10 +330,9 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     }
 
     // Test commit generation - use effective config for current project
+    let repo = Repository::current().ok();
     let config = UserConfig::load()?;
-    let project_id = Repository::current()
-        .ok()
-        .and_then(|r| r.project_identifier().ok());
+    let project_id = repo.as_ref().and_then(|r| r.project_identifier().ok());
     let commit_config = config.commit_generation(project_id.as_deref());
 
     if !commit_config.is_configured() {
@@ -338,7 +368,11 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn render_user_config(out: &mut String) -> anyhow::Result<()> {
+fn render_user_config(
+    out: &mut String,
+    deprecations: &mut Vec<worktrunk::config::DeprecationInfo>,
+    repo: Option<&Repository>,
+) -> anyhow::Result<()> {
     let config_path = require_user_config_path()?;
 
     writeln!(
@@ -368,17 +402,18 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
     }
 
     // Check for deprecations with show_brief_warning=false (silent mode)
-    // User config is global, not tied to any repository
+    // User config is global but hint tracking uses the current repo (if available).
+    // TODO: User config hints show once per repo since hint is in repo's git config.
+    // Collect deprecation info for the dedicated section (don't render inline)
     if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         true,
         "User config",
-        None,
-        false, // silent mode - we'll format the output ourselves
+        repo,
+        false, // silent mode — deprecations rendered in dedicated section, not inline
     ) {
-        // Add deprecation details to the output buffer
-        out.push_str(&worktrunk::config::format_deprecation_details(&info));
+        deprecations.push(info);
     }
 
     // Validate config (syntax + schema) and warn if invalid
@@ -424,7 +459,10 @@ pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
     out
 }
 
-fn render_project_config(out: &mut String) -> anyhow::Result<()> {
+fn render_project_config(
+    out: &mut String,
+    deprecations: &mut Vec<worktrunk::config::DeprecationInfo>,
+) -> anyhow::Result<()> {
     // Try to get current repository root
     let repo = match Repository::current() {
         Ok(repo) => repo,
@@ -481,6 +519,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
 
     // Check for deprecations with show_brief_warning=false (silent mode)
     // Only show in main worktree (where .git is a directory)
+    // Collect deprecation info for the dedicated section (don't render inline)
     let is_main_worktree = repo_root.join(".git").is_dir();
     if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
         &config_path,
@@ -488,10 +527,9 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         is_main_worktree,
         "Project config",
         Some(&repo),
-        false, // silent mode - we'll format the output ourselves
+        false, // silent mode — deprecations rendered in dedicated section, not inline
     ) {
-        // Add deprecation details to the output buffer
-        out.push_str(&worktrunk::config::format_deprecation_details(&info));
+        deprecations.push(info);
     }
 
     // Validate config (syntax + schema) and warn if invalid

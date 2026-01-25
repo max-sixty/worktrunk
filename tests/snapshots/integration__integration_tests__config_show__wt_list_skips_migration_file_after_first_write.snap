@@ -41,4 +41,4 @@ exit_code: 0
 [2m○[22m [2mShowing 4 worktrees, 1 with changes, 3 ahead
 
 ----- stderr -----
-[33m▲[39m [33mProject config has deprecated settings. To see details, run [90mwt config show[39m[39m
+[33m▲[39m [33mProject config has deprecated settings. To see details, run [1mwt config show[22m[39m

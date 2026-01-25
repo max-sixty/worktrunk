@@ -656,13 +656,12 @@ fn main() {
         },
         #[cfg(unix)]
         Commands::Select { branches, remotes } => {
+            let repo = Repository::current().ok();
             UserConfig::load()
                 .context("Failed to load config")
                 .and_then(|config| {
                     // Get project ID for per-project config lookup
-                    let project_id = Repository::current()
-                        .ok()
-                        .and_then(|r| r.project_identifier().ok());
+                    let project_id = repo.as_ref().and_then(|r| r.project_identifier().ok());
 
                     // Get effective list config (merges project-specific with global)
                     let (show_branches_config, show_remotes_config) = config
@@ -702,13 +701,12 @@ fn main() {
             }
             None => {
                 // Load config and merge with CLI flags (CLI flags take precedence)
+                let repo = Repository::current().ok();
                 UserConfig::load()
                     .context("Failed to load config")
                     .and_then(|config| {
                         // Get project ID for per-project config lookup
-                        let project_id = Repository::current()
-                            .ok()
-                            .and_then(|r| r.project_identifier().ok());
+                        let project_id = repo.as_ref().and_then(|r| r.project_identifier().ok());
 
                         // Get effective list config (merges project-specific with global)
                         let (show_branches_config, show_remotes_config, show_full_config) = config
@@ -754,166 +752,196 @@ fn main() {
             yes,
             clobber,
             verify,
-        } => UserConfig::load()
-            .context("Failed to load config")
-            .and_then(|mut config| {
-                let repo = Repository::current().context("Failed to switch worktree")?;
+        } => Repository::current()
+            .context("Failed to switch worktree")
+            .and_then(|repo| {
+                UserConfig::load()
+                    .context("Failed to load config")
+                    .and_then(|mut config| {
+                        // Validate FIRST (before approval) - fails fast if branch doesn't exist, etc.
+                        let plan =
+                            plan_switch(&repo, &branch, create, base.as_deref(), clobber, &config)?;
 
-                // Validate FIRST (before approval) - fails fast if branch doesn't exist, etc.
-                let plan = plan_switch(&repo, &branch, create, base.as_deref(), clobber, &config)?;
-
-                // "Approve at the Gate": collect and approve hooks upfront
-                // This ensures approval happens once at the command entry point
-                // If user declines, skip hooks but continue with worktree operation
-                let approved = if verify {
-                    let ctx = CommandContext::new(
-                        &repo,
-                        &config,
-                        Some(plan.branch()),
-                        plan.worktree_path(),
-                        yes,
-                    );
-                    // Approve different hooks based on whether we're creating or switching
-                    if plan.is_create() {
-                        approve_hooks(
-                            &ctx,
-                            &[
-                                HookType::PostCreate,
-                                HookType::PostStart,
-                                HookType::PostSwitch,
-                            ],
-                        )?
-                    } else {
-                        // When switching to existing, only post-switch needs approval
-                        approve_hooks(&ctx, &[HookType::PostSwitch])?
-                    }
-                } else {
-                    true // --no-verify: skip all hooks
-                };
-
-                // Skip hooks if --no-verify or user declined approval
-                let skip_hooks = !verify || !approved;
-
-                // Show message if user declined approval
-                if !approved {
-                    eprintln!(
-                        "{}",
-                        info_message(if plan.is_create() {
-                            "Commands declined, continuing worktree creation"
+                        // "Approve at the Gate": collect and approve hooks upfront
+                        // This ensures approval happens once at the command entry point
+                        // If user declines, skip hooks but continue with worktree operation
+                        let approved = if verify {
+                            let ctx = CommandContext::new(
+                                &repo,
+                                &config,
+                                Some(plan.branch()),
+                                plan.worktree_path(),
+                                yes,
+                            );
+                            // Approve different hooks based on whether we're creating or switching
+                            if plan.is_create() {
+                                approve_hooks(
+                                    &ctx,
+                                    &[
+                                        HookType::PostCreate,
+                                        HookType::PostStart,
+                                        HookType::PostSwitch,
+                                    ],
+                                )?
+                            } else {
+                                // When switching to existing, only post-switch needs approval
+                                approve_hooks(&ctx, &[HookType::PostSwitch])?
+                            }
                         } else {
-                            "Commands declined"
-                        })
-                    );
-                }
+                            true // --no-verify: skip all hooks
+                        };
 
-                // Execute the validated plan
-                let (result, branch_info) = execute_switch(&repo, plan, &config, yes, skip_hooks)?;
+                        // Skip hooks if --no-verify or user declined approval
+                        let skip_hooks = !verify || !approved;
 
-                // Show success message (temporal locality: immediately after worktree operation)
-                // Returns path to display in hooks when user's shell won't be in the worktree
-                // Also shows worktree-path hint on first --create (before shell integration warning)
-                let hooks_display_path = handle_switch_output(&result, &branch_info)?;
+                        // Show message if user declined approval
+                        if !approved {
+                            eprintln!(
+                                "{}",
+                                info_message(if plan.is_create() {
+                                    "Commands declined, continuing worktree creation"
+                                } else {
+                                    "Commands declined"
+                                })
+                            );
+                        }
 
-                // Offer shell integration if not already installed/active
-                // (only shows prompt/hint when shell integration isn't working)
-                // With --execute: show hints only (don't interrupt with prompt)
-                // Best-effort: don't fail switch if offer fails
-                if !output::is_shell_integration_active() {
-                    let skip_prompt = execute.is_some();
-                    let _ =
-                        output::prompt_shell_integration(&mut config, &binary_name(), skip_prompt);
-                }
+                        // Execute the validated plan
+                        let (result, branch_info) =
+                            execute_switch(&repo, plan, &config, yes, skip_hooks)?;
 
-                // Build extra vars for base branch context (used by both hooks and --execute)
-                // "base" is the branch we branched from when creating a new worktree.
-                // For existing worktrees, there's no base concept.
-                let (base_branch, base_worktree_path): (Option<&str>, Option<&str>) = match &result
-                {
-                    SwitchResult::Created {
-                        base_branch,
-                        base_worktree_path,
-                        ..
-                    } => (base_branch.as_deref(), base_worktree_path.as_deref()),
-                    SwitchResult::Existing { .. } | SwitchResult::AlreadyAt(_) => (None, None),
-                };
-                let extra_vars: Vec<(&str, &str)> = [
-                    base_branch.map(|b| ("base", b)),
-                    base_worktree_path.map(|p| ("base_worktree_path", p)),
-                ]
-                .into_iter()
-                .flatten()
-                .collect();
+                        // Show success message (temporal locality: immediately after worktree operation)
+                        // Returns path to display in hooks when user's shell won't be in the worktree
+                        // Also shows worktree-path hint on first --create (before shell integration warning)
+                        let hooks_display_path = handle_switch_output(&result, &branch_info)?;
 
-                // Spawn background hooks after success message
-                // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
-                // - post-start: runs only when creating a NEW worktree
-                if !skip_hooks {
-                    let repo = Repository::current()?;
-                    let ctx = CommandContext::new(
-                        &repo,
-                        &config,
-                        Some(&branch_info.branch),
-                        result.path(),
-                        yes,
-                    );
+                        // Offer shell integration if not already installed/active
+                        // (only shows prompt/hint when shell integration isn't working)
+                        // With --execute: show hints only (don't interrupt with prompt)
+                        // Best-effort: don't fail switch if offer fails
+                        if !output::is_shell_integration_active() {
+                            let skip_prompt = execute.is_some();
+                            let _ = output::prompt_shell_integration(
+                                &mut config,
+                                &binary_name(),
+                                skip_prompt,
+                            );
+                        }
 
-                    // Post-switch runs first (immediate "I'm here" signal)
-                    ctx.spawn_post_switch_commands(&extra_vars, hooks_display_path.as_deref())?;
-
-                    // Post-start runs only on creation (setup tasks)
-                    if matches!(&result, SwitchResult::Created { .. }) {
-                        ctx.spawn_post_start_commands(&extra_vars, hooks_display_path.as_deref())?;
-                    }
-                }
-
-                // Execute user command after post-start hooks have been spawned
-                // Note: execute_args requires execute via clap's `requires` attribute
-                if let Some(cmd) = execute {
-                    // Build template context for expansion (includes base vars when creating)
-                    let repo = Repository::current()?;
-                    let ctx = CommandContext::new(
-                        &repo,
-                        &config,
-                        Some(&branch_info.branch),
-                        result.path(),
-                        yes,
-                    );
-                    let template_vars = build_hook_context(&ctx, &extra_vars);
-                    let vars: HashMap<&str, &str> = template_vars
-                        .iter()
-                        .map(|(k, v)| (k.as_str(), v.as_str()))
+                        // Build extra vars for base branch context (used by both hooks and --execute)
+                        // "base" is the branch we branched from when creating a new worktree.
+                        // For existing worktrees, there's no base concept.
+                        let (base_branch, base_worktree_path): (Option<&str>, Option<&str>) =
+                            match &result {
+                                SwitchResult::Created {
+                                    base_branch,
+                                    base_worktree_path,
+                                    ..
+                                } => (base_branch.as_deref(), base_worktree_path.as_deref()),
+                                SwitchResult::Existing { .. } | SwitchResult::AlreadyAt(_) => {
+                                    (None, None)
+                                }
+                            };
+                        let extra_vars: Vec<(&str, &str)> = [
+                            base_branch.map(|b| ("base", b)),
+                            base_worktree_path.map(|p| ("base_worktree_path", p)),
+                        ]
+                        .into_iter()
+                        .flatten()
                         .collect();
 
-                    // Expand template variables in command (shell_escape: true for safety)
-                    let expanded_cmd =
-                        expand_template(&cmd, &vars, true, &repo, "--execute command").map_err(
-                            |e| anyhow::anyhow!("Failed to expand --execute template: {}", e),
-                        )?;
+                        // Spawn background hooks after success message
+                        // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
+                        // - post-start: runs only when creating a NEW worktree
+                        if !skip_hooks {
+                            let repo = Repository::current()?;
+                            let ctx = CommandContext::new(
+                                &repo,
+                                &config,
+                                Some(&branch_info.branch),
+                                result.path(),
+                                yes,
+                            );
 
-                    // Append any trailing args (after --) to the execute command
-                    // Each arg is also expanded, then shell-escaped
-                    let full_cmd = if execute_args.is_empty() {
-                        expanded_cmd
-                    } else {
-                        let expanded_args: Result<Vec<_>, _> = execute_args
-                            .iter()
-                            .map(|arg| {
-                                expand_template(arg, &vars, false, &repo, "--execute argument")
+                            // Post-switch runs first (immediate "I'm here" signal)
+                            ctx.spawn_post_switch_commands(
+                                &extra_vars,
+                                hooks_display_path.as_deref(),
+                            )?;
+
+                            // Post-start runs only on creation (setup tasks)
+                            if matches!(&result, SwitchResult::Created { .. }) {
+                                ctx.spawn_post_start_commands(
+                                    &extra_vars,
+                                    hooks_display_path.as_deref(),
+                                )?;
+                            }
+                        }
+
+                        // Execute user command after post-start hooks have been spawned
+                        // Note: execute_args requires execute via clap's `requires` attribute
+                        if let Some(cmd) = execute {
+                            // Build template context for expansion (includes base vars when creating)
+                            let repo = Repository::current()?;
+                            let ctx = CommandContext::new(
+                                &repo,
+                                &config,
+                                Some(&branch_info.branch),
+                                result.path(),
+                                yes,
+                            );
+                            let template_vars = build_hook_context(&ctx, &extra_vars);
+                            let vars: HashMap<&str, &str> = template_vars
+                                .iter()
+                                .map(|(k, v)| (k.as_str(), v.as_str()))
+                                .collect();
+
+                            // Expand template variables in command (shell_escape: true for safety)
+                            let expanded_cmd =
+                                expand_template(&cmd, &vars, true, &repo, "--execute command")
                                     .map_err(|e| {
-                                        anyhow::anyhow!("Failed to expand argument template: {}", e)
-                                    })
-                            })
-                            .collect();
-                        let escaped_args: Vec<_> = expanded_args?
-                            .iter()
-                            .map(|arg| shlex::try_quote(arg).unwrap_or(arg.into()).into_owned())
-                            .collect();
-                        format!("{} {}", expanded_cmd, escaped_args.join(" "))
-                    };
-                    execute_user_command(&full_cmd, hooks_display_path.as_deref())?;
-                }
+                                        anyhow::anyhow!(
+                                            "Failed to expand --execute template: {}",
+                                            e
+                                        )
+                                    })?;
 
-                Ok(())
+                            // Append any trailing args (after --) to the execute command
+                            // Each arg is also expanded, then shell-escaped
+                            let full_cmd = if execute_args.is_empty() {
+                                expanded_cmd
+                            } else {
+                                let expanded_args: Result<Vec<_>, _> = execute_args
+                                    .iter()
+                                    .map(|arg| {
+                                        expand_template(
+                                            arg,
+                                            &vars,
+                                            false,
+                                            &repo,
+                                            "--execute argument",
+                                        )
+                                        .map_err(|e| {
+                                            anyhow::anyhow!(
+                                                "Failed to expand argument template: {}",
+                                                e
+                                            )
+                                        })
+                                    })
+                                    .collect();
+                                let escaped_args: Vec<_> = expanded_args?
+                                    .iter()
+                                    .map(|arg| {
+                                        shlex::try_quote(arg).unwrap_or(arg.into()).into_owned()
+                                    })
+                                    .collect();
+                                format!("{} {}", expanded_cmd, escaped_args.join(" "))
+                            };
+                            execute_user_command(&full_cmd, hooks_display_path.as_deref())?;
+                        }
+
+                        Ok(())
+                    })
             }),
         Commands::Remove {
             branches,
@@ -924,190 +952,199 @@ fn main() {
             verify,
             yes,
             force,
-        } => UserConfig::load()
-            .context("Failed to load config")
-            .and_then(|config| {
-                // Handle deprecated --no-background flag
-                if no_background {
-                    eprintln!(
-                        "{}",
-                        warning_message("--no-background is deprecated; use --foreground instead")
-                    );
-                }
-                let background = !(foreground || no_background);
+        } => Repository::current()
+            .context("Failed to remove worktree")
+            .and_then(|repo| {
+                UserConfig::load()
+                    .context("Failed to load config")
+                    .and_then(|config| {
+                        // Handle deprecated --no-background flag
+                        if no_background {
+                            eprintln!(
+                                "{}",
+                                warning_message(
+                                    "--no-background is deprecated; use --foreground instead"
+                                )
+                            );
+                        }
+                        let background = !(foreground || no_background);
 
-                // Validate conflicting flags
-                if !delete_branch && force_delete {
-                    return Err(worktrunk::git::GitError::Other {
-                        message: "Cannot use --force-delete with --no-delete-branch".into(),
-                    }
-                    .into());
-                }
-
-                let repo = Repository::current().context("Failed to remove worktree")?;
-
-                // Helper: approve remove hooks using current worktree context
-                // Returns true if hooks should run (user approved)
-                let approve_remove = |yes: bool| -> anyhow::Result<bool> {
-                    let env = CommandEnv::for_action_branchless()?;
-                    let ctx = env.context(yes);
-                    let approved = approve_hooks(
-                        &ctx,
-                        &[
-                            HookType::PreRemove,
-                            HookType::PostRemove,
-                            HookType::PostSwitch,
-                        ],
-                    )?;
-                    if !approved {
-                        eprintln!("{}", info_message("Commands declined, continuing removal"));
-                    }
-                    Ok(approved)
-                };
-
-                if branches.is_empty() {
-                    // Single worktree removal: validate FIRST, then approve, then execute
-                    let result =
-                        handle_remove_current(!delete_branch, force_delete, force, &config)
-                            .context("Failed to remove worktree")?;
-
-                    // "Approve at the Gate": approval happens AFTER validation passes
-                    let run_hooks = verify && approve_remove(yes)?;
-
-                    handle_remove_output(&result, background, run_hooks)
-                } else {
-                    // Multi-worktree removal: validate ALL first, then approve, then execute
-                    // This supports partial success - some may fail validation while others succeed.
-                    let current_worktree = repo
-                        .current_worktree()
-                        .root()
-                        .ok()
-                        .and_then(|p| dunce::canonicalize(&p).ok());
-
-                    // Dedupe inputs to avoid redundant planning/execution
-                    let branches: Vec<_> = {
-                        let mut seen = HashSet::new();
-                        branches
-                            .into_iter()
-                            .filter(|b| seen.insert(b.clone()))
-                            .collect()
-                    };
-
-                    // Phase 1: Validate all targets (resolution + preparation)
-                    // Store successful plans for execution after approval
-                    let mut plans_others: Vec<RemoveResult> = Vec::new();
-                    let mut plans_branch_only: Vec<RemoveResult> = Vec::new();
-                    let mut plan_current: Option<RemoveResult> = None;
-                    let mut all_errors: Vec<anyhow::Error> = Vec::new();
-
-                    // Helper: record error and continue
-                    let mut record_error = |e: anyhow::Error| {
-                        eprintln!("{}", e);
-                        all_errors.push(e);
-                    };
-
-                    for branch_name in &branches {
-                        // Resolve the target
-                        let resolved = match resolve_worktree_arg(
-                            &repo,
-                            branch_name,
-                            &config,
-                            OperationMode::Remove,
-                        ) {
-                            Ok(r) => r,
-                            Err(e) => {
-                                record_error(e);
-                                continue;
+                        // Validate conflicting flags
+                        if !delete_branch && force_delete {
+                            return Err(worktrunk::git::GitError::Other {
+                                message: "Cannot use --force-delete with --no-delete-branch".into(),
                             }
+                            .into());
+                        }
+
+                        // Helper: approve remove hooks using current worktree context
+                        // Returns true if hooks should run (user approved)
+                        let approve_remove = |yes: bool| -> anyhow::Result<bool> {
+                            let env = CommandEnv::for_action_branchless()?;
+                            let ctx = env.context(yes);
+                            let approved = approve_hooks(
+                                &ctx,
+                                &[
+                                    HookType::PreRemove,
+                                    HookType::PostRemove,
+                                    HookType::PostSwitch,
+                                ],
+                            )?;
+                            if !approved {
+                                eprintln!(
+                                    "{}",
+                                    info_message("Commands declined, continuing removal")
+                                );
+                            }
+                            Ok(approved)
                         };
 
-                        match resolved {
-                            ResolvedWorktree::Worktree { path, branch } => {
-                                // Use canonical paths to avoid symlink/normalization mismatches
-                                let path_canonical = dunce::canonicalize(&path).unwrap_or(path);
-                                let is_current = current_worktree.as_ref() == Some(&path_canonical);
+                        if branches.is_empty() {
+                            // Single worktree removal: validate FIRST, then approve, then execute
+                            let result =
+                                handle_remove_current(!delete_branch, force_delete, force, &config)
+                                    .context("Failed to remove worktree")?;
 
-                                if is_current {
-                                    // Current worktree - use handle_remove_current for detached HEAD
-                                    match handle_remove_current(
-                                        !delete_branch,
-                                        force_delete,
-                                        force,
-                                        &config,
-                                    ) {
-                                        Ok(result) => plan_current = Some(result),
-                                        Err(e) => record_error(e),
+                            // "Approve at the Gate": approval happens AFTER validation passes
+                            let run_hooks = verify && approve_remove(yes)?;
+
+                            handle_remove_output(&result, background, run_hooks)
+                        } else {
+                            // Multi-worktree removal: validate ALL first, then approve, then execute
+                            // This supports partial success - some may fail validation while others succeed.
+                            let current_worktree = repo
+                                .current_worktree()
+                                .root()
+                                .ok()
+                                .and_then(|p| dunce::canonicalize(&p).ok());
+
+                            // Dedupe inputs to avoid redundant planning/execution
+                            let branches: Vec<_> = {
+                                let mut seen = HashSet::new();
+                                branches
+                                    .into_iter()
+                                    .filter(|b| seen.insert(b.clone()))
+                                    .collect()
+                            };
+
+                            // Phase 1: Validate all targets (resolution + preparation)
+                            // Store successful plans for execution after approval
+                            let mut plans_others: Vec<RemoveResult> = Vec::new();
+                            let mut plans_branch_only: Vec<RemoveResult> = Vec::new();
+                            let mut plan_current: Option<RemoveResult> = None;
+                            let mut all_errors: Vec<anyhow::Error> = Vec::new();
+
+                            // Helper: record error and continue
+                            let mut record_error = |e: anyhow::Error| {
+                                eprintln!("{}", e);
+                                all_errors.push(e);
+                            };
+
+                            for branch_name in &branches {
+                                // Resolve the target
+                                let resolved = match resolve_worktree_arg(
+                                    &repo,
+                                    branch_name,
+                                    &config,
+                                    OperationMode::Remove,
+                                ) {
+                                    Ok(r) => r,
+                                    Err(e) => {
+                                        record_error(e);
+                                        continue;
                                     }
-                                    continue;
-                                }
+                                };
 
-                                // Non-current worktree - branch is always Some because:
-                                // - "@" resolves to current worktree (handled by is_current branch above)
-                                // - Other names resolve via resolve_worktree_arg which always sets branch: Some(...)
-                                let branch_for_remove = branch.as_ref().unwrap();
+                                match resolved {
+                                    ResolvedWorktree::Worktree { path, branch } => {
+                                        // Use canonical paths to avoid symlink/normalization mismatches
+                                        let path_canonical =
+                                            dunce::canonicalize(&path).unwrap_or(path);
+                                        let is_current =
+                                            current_worktree.as_ref() == Some(&path_canonical);
 
-                                match handle_remove(
-                                    branch_for_remove,
-                                    !delete_branch,
-                                    force_delete,
-                                    force,
-                                    &config,
-                                ) {
-                                    Ok(result) => plans_others.push(result),
-                                    Err(e) => record_error(e),
+                                        if is_current {
+                                            // Current worktree - use handle_remove_current for detached HEAD
+                                            match handle_remove_current(
+                                                !delete_branch,
+                                                force_delete,
+                                                force,
+                                                &config,
+                                            ) {
+                                                Ok(result) => plan_current = Some(result),
+                                                Err(e) => record_error(e),
+                                            }
+                                            continue;
+                                        }
+
+                                        // Non-current worktree - branch is always Some because:
+                                        // - "@" resolves to current worktree (handled by is_current branch above)
+                                        // - Other names resolve via resolve_worktree_arg which always sets branch: Some(...)
+                                        let branch_for_remove = branch.as_ref().unwrap();
+
+                                        match handle_remove(
+                                            branch_for_remove,
+                                            !delete_branch,
+                                            force_delete,
+                                            force,
+                                            &config,
+                                        ) {
+                                            Ok(result) => plans_others.push(result),
+                                            Err(e) => record_error(e),
+                                        }
+                                    }
+                                    ResolvedWorktree::BranchOnly { branch } => {
+                                        match handle_remove(
+                                            &branch,
+                                            !delete_branch,
+                                            force_delete,
+                                            force,
+                                            &config,
+                                        ) {
+                                            Ok(result) => plans_branch_only.push(result),
+                                            Err(e) => record_error(e),
+                                        }
+                                    }
                                 }
                             }
-                            ResolvedWorktree::BranchOnly { branch } => {
-                                match handle_remove(
-                                    &branch,
-                                    !delete_branch,
-                                    force_delete,
-                                    force,
-                                    &config,
-                                ) {
-                                    Ok(result) => plans_branch_only.push(result),
-                                    Err(e) => record_error(e),
-                                }
+
+                            // If no valid plans, bail early (all failed validation)
+                            let has_valid_plans = !plans_others.is_empty()
+                                || !plans_branch_only.is_empty()
+                                || plan_current.is_some();
+                            if !has_valid_plans {
+                                anyhow::bail!("");
                             }
+
+                            // Phase 2: Approve hooks (only if we have valid plans)
+                            // TODO(pre-remove-context): Approval context uses current worktree,
+                            // but hooks execute in each target worktree.
+                            let run_hooks = verify && approve_remove(yes)?;
+
+                            // Phase 3: Execute all validated plans
+                            // Remove other worktrees first
+                            for result in plans_others {
+                                handle_remove_output(&result, background, run_hooks)?;
+                            }
+
+                            // Handle branch-only cases
+                            for result in plans_branch_only {
+                                handle_remove_output(&result, background, run_hooks)?;
+                            }
+
+                            // Remove current worktree last (if it was in the list)
+                            if let Some(result) = plan_current {
+                                handle_remove_output(&result, background, run_hooks)?;
+                            }
+
+                            // Exit with failure if any validation errors occurred
+                            if !all_errors.is_empty() {
+                                anyhow::bail!("");
+                            }
+
+                            Ok(())
                         }
-                    }
-
-                    // If no valid plans, bail early (all failed validation)
-                    let has_valid_plans = !plans_others.is_empty()
-                        || !plans_branch_only.is_empty()
-                        || plan_current.is_some();
-                    if !has_valid_plans {
-                        anyhow::bail!("");
-                    }
-
-                    // Phase 2: Approve hooks (only if we have valid plans)
-                    // TODO(pre-remove-context): Approval context uses current worktree,
-                    // but hooks execute in each target worktree.
-                    let run_hooks = verify && approve_remove(yes)?;
-
-                    // Phase 3: Execute all validated plans
-                    // Remove other worktrees first
-                    for result in plans_others {
-                        handle_remove_output(&result, background, run_hooks)?;
-                    }
-
-                    // Handle branch-only cases
-                    for result in plans_branch_only {
-                        handle_remove_output(&result, background, run_hooks)?;
-                    }
-
-                    // Remove current worktree last (if it was in the list)
-                    if let Some(result) = plan_current {
-                        handle_remove_output(&result, background, run_hooks)?;
-                    }
-
-                    // Exit with failure if any validation errors occurred
-                    if !all_errors.is_empty() {
-                        anyhow::bail!("");
-                    }
-
-                    Ok(())
-                }
+                    })
             }),
         Commands::Merge {
             target,

@@ -5,13 +5,14 @@
 //! - Deprecated config sections ([commit-generation] → [commit.generation])
 //! - Deprecated fields (args merged into command)
 //!
-//! Migration files are only written once per config file. The hint system tracks
-//! whether a migration file has been written:
-//! - Project config: uses `worktrunk.hints.deprecated-config` in git config
-//! - User config: checks if the `.new` file already exists (no repo context)
+//! Migration file write behavior:
+//! - First time a deprecation is detected: file is written automatically
+//! - Subsequent runs (for commands other than `wt config show`): brief warning only
+//! - `wt config show`: always writes/regenerates the migration file with full details
 //!
-//! To regenerate a project config migration file, run `wt config state hints clear deprecated-config`.
-//! To regenerate a user config migration file, delete the existing `.new` file.
+//! The hint system (`worktrunk.hints.deprecated-config` in git config) tracks whether
+//! a deprecation has been warned about before. User config (no repo context) always
+//! writes the migration file since there's no persistent hint tracking.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -27,7 +28,8 @@ use shell_escape::unix::escape;
 use crate::config::WorktrunkConfig;
 use crate::shell_exec::Cmd;
 use crate::styling::{
-    eprintln, format_bash_with_gutter, format_with_gutter, hint_message, warning_message,
+    eprintln, format_bash_with_gutter, format_with_gutter, hint_message, info_message,
+    warning_message,
 };
 
 /// Tracks which config paths have already shown deprecation warnings this process.
@@ -407,8 +409,6 @@ pub struct DeprecationInfo {
     pub commit_gen_deprecations: CommitGenerationDeprecations,
     /// Label for this config (e.g., "User config", "Project config")
     pub label: String,
-    /// True if user deleted the migration file (show regenerate hint)
-    pub user_deleted_migration: bool,
     /// True if in a linked worktree (migration file written to main worktree only)
     pub in_linked_worktree: bool,
 }
@@ -462,6 +462,14 @@ pub fn check_and_migrate(
     let has_commit_gen_deprecations = !commit_gen_deprecations.is_empty();
 
     if !has_deprecated_vars && !has_commit_gen_deprecations {
+        // Config is clean - clear hint so future deprecations get full treatment.
+        // This handles the case where a user fixes their config today, then months
+        // later a new deprecation is introduced - they should get the full warning.
+        // TODO: We want to avoid gunking up config loading with too many checks,
+        // but a single git config --unset seems acceptable for now.
+        if let Some(repo) = repo {
+            let _ = repo.clear_hint(HINT_DEPRECATED_CONFIG);
+        }
         return Ok(None);
     }
 
@@ -471,12 +479,11 @@ pub fn check_and_migrate(
         path.extension().unwrap_or_default().to_string_lossy()
     ));
 
-    // Check if we should skip writing the migration file
-    // - Always regenerate if .new file exists (user kept it, so overwrite with fresh version)
-    // - For project config: skip if hint shown AND .new doesn't exist (user deleted it)
-    // - For user config: always write (no persistent hint tracking without repo)
-    let should_skip_write =
-        !new_path.exists() && repo.is_some_and(|r| r.has_shown_hint(HINT_DEPRECATED_CONFIG));
+    // Skip writing if: (a) this is a brief warning (not `wt config show`), AND
+    //                  (b) migration file already exists
+    // This means first-time deprecation gets automatic file write, after that
+    // users run `wt config show` to get/update the migration file.
+    let should_skip_write = show_brief_warning && new_path.exists();
 
     // Build deprecation info for return
     let mut info = DeprecationInfo {
@@ -485,7 +492,6 @@ pub fn check_and_migrate(
         deprecated_vars: deprecated_vars.clone(),
         commit_gen_deprecations: commit_gen_deprecations.clone(),
         label: label.to_string(),
-        user_deleted_migration: should_skip_write,
         in_linked_worktree: !warn_and_migrate,
     };
 
@@ -513,7 +519,7 @@ pub fn check_and_migrate(
         eprintln!(
             "{}",
             warning_message(cformat!(
-                "{} has deprecated settings. To see details, run <bright-black>wt config show</>",
+                "{} has deprecated settings. To see details, run <bold>wt config show</>",
                 label
             ))
         );
@@ -642,9 +648,10 @@ pub fn format_migration_diff(original_path: &Path, new_path: &Path) -> Option<St
     let path_str = original_path.to_string_lossy().replace('\\', "/");
 
     // Run git diff and return the formatted output
+    // -U3: Show 3 lines of context (git default)
     // Use -- to separate options from file paths (guards against filenames starting with -)
     if let Ok(output) = Cmd::new("git")
-        .args(["diff", "--no-index", "--color=always", "--"])
+        .args(["diff", "--no-index", "--color=always", "-U3", "--"])
         .arg(&path_str)
         .arg(&new_path_str)
         .run()
@@ -731,8 +738,9 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
             format_bash_with_gutter(&format!("mv -- {} {}", new_path_str, path_str))
         );
 
-        // Inline diff
+        // Inline diff with intro
         if let Some(diff) = format_migration_diff(&info.config_path, new_path) {
+            let _ = writeln!(out, "{}", info_message("Diff:"));
             let _ = writeln!(out, "{}", diff);
         }
     } else if info.in_linked_worktree {
@@ -742,16 +750,6 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
             "{}",
             hint_message(cformat!(
                 "To generate migration file, run <bright-black>wt config show</> from main worktree",
-            ))
-        );
-    } else if info.user_deleted_migration {
-        // User deleted the migration file - show how to regenerate
-        let _ = writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "To regenerate migration file, run <bright-black>wt config state hints clear {}</>",
-                HINT_DEPRECATED_CONFIG
             ))
         );
     }
