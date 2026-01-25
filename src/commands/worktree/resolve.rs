@@ -128,12 +128,55 @@ pub fn is_worktree_at_expected_path(
     }
 }
 
+/// Canonicalize a path, resolving parent symlinks even if the path doesn't exist.
+///
+/// For existing paths, uses standard canonicalization.
+/// For non-existent paths, canonicalizes the longest existing prefix and appends
+/// the remaining components. This handles macOS `/var` -> `/private/var` symlinks
+/// correctly for computed worktree paths that don't exist yet.
+fn canonicalize_with_parents(path: &Path) -> PathBuf {
+    // Try direct canonicalization first
+    if let Ok(canonical) = canonicalize(path) {
+        return canonical;
+    }
+
+    // Path doesn't exist - find the longest existing prefix and canonicalize that
+    let mut existing_prefix = path.to_path_buf();
+    let mut suffix_components = Vec::new();
+
+    // Walk up until we find an existing path
+    while !existing_prefix.exists() {
+        if let Some(file_name) = existing_prefix.file_name() {
+            suffix_components.push(file_name.to_os_string());
+            if let Some(parent) = existing_prefix.parent() {
+                existing_prefix = parent.to_path_buf();
+            } else {
+                // Reached filesystem root without finding existing path
+                return path.to_path_buf();
+            }
+        } else {
+            // No more components to strip
+            return path.to_path_buf();
+        }
+    }
+
+    // Canonicalize the existing prefix and append the non-existent components
+    let canonical_prefix = canonicalize(&existing_prefix).unwrap_or(existing_prefix);
+    let mut result = canonical_prefix;
+    for component in suffix_components.into_iter().rev() {
+        result.push(component);
+    }
+    result
+}
+
 /// Compare two paths for equality, canonicalizing to handle symlinks and relative paths.
 ///
 /// Returns `true` if the paths resolve to the same location.
+/// Handles the case where one path exists and the other doesn't by resolving
+/// parent directory symlinks for non-existent paths.
 pub(super) fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
-    let a_canonical = canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
-    let b_canonical = canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
+    let a_canonical = canonicalize_with_parents(a);
+    let b_canonical = canonicalize_with_parents(b);
     a_canonical == b_canonical
 }
 
@@ -290,5 +333,100 @@ mod tests {
         // Parent reference has no file name
         let path = PathBuf::from("..");
         assert!(generate_backup_path(&path, "20250101-000000").is_err());
+    }
+
+    #[test]
+    fn test_paths_match_identical() {
+        let path = PathBuf::from("/tmp/test");
+        assert!(paths_match(&path, &path));
+    }
+
+    #[test]
+    fn test_paths_match_different() {
+        let a = PathBuf::from("/tmp/foo");
+        let b = PathBuf::from("/tmp/bar");
+        assert!(!paths_match(&a, &b));
+    }
+
+    #[test]
+    fn test_canonicalize_with_parents_existing_path() {
+        // Existing paths should be canonicalized normally
+        let tmp = std::env::temp_dir();
+        let canonical = canonicalize_with_parents(&tmp);
+        // Should resolve to the actual canonical path
+        assert!(canonical.is_absolute());
+    }
+
+    #[test]
+    fn test_canonicalize_with_parents_nonexistent() {
+        // Non-existent path under existing parent should resolve parent symlinks
+        let tmp = std::env::temp_dir();
+        let nonexistent = tmp.join("nonexistent-test-dir-12345");
+        let canonical = canonicalize_with_parents(&nonexistent);
+
+        // The parent (/tmp or similar) should be canonicalized
+        // On macOS, /tmp -> /private/tmp, so the result should contain "private" if on macOS
+        assert!(canonical.is_absolute());
+
+        // The non-existent component should still be at the end
+        assert_eq!(
+            canonical.file_name().unwrap().to_str().unwrap(),
+            "nonexistent-test-dir-12345"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_paths_match_macos_var_symlink() {
+        // On macOS, /var is a symlink to /private/var
+        // This test verifies the fix for symlink resolution with non-existent paths
+
+        // Create a temp directory under /var/tmp (which is /private/var/tmp)
+        let test_dir = PathBuf::from("/var/tmp/wt-test-paths-match");
+
+        // Clean up existing test state and create fresh
+        let _ = std::fs::remove_dir_all(&test_dir);
+        std::fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+        // Test: non-existent path via /private/var vs non-existent path via /var
+        let private_path = PathBuf::from("/private/var/tmp/wt-test-paths-match/subdir");
+        let var_path = PathBuf::from("/var/tmp/wt-test-paths-match/subdir");
+
+        // Neither subdir exists, but parent does
+        // paths_match should return true because both resolve to same location
+        assert!(
+            paths_match(&private_path, &var_path),
+            "Paths should match: {:?} vs {:?}",
+            canonicalize_with_parents(&private_path),
+            canonicalize_with_parents(&var_path)
+        );
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_paths_match_existing_vs_nonexistent() {
+        // When one path exists and the other doesn't, parent symlinks should be resolved
+        let tmp = std::env::temp_dir();
+
+        // Create an existing directory
+        let existing = tmp.join("wt-test-existing");
+        std::fs::create_dir_all(&existing).expect("Failed to create test dir");
+
+        // Non-existent sibling
+        let nonexistent = tmp.join("wt-test-nonexistent");
+        let _ = std::fs::remove_dir_all(&nonexistent);
+
+        // These should NOT match (different paths)
+        assert!(!paths_match(&existing, &nonexistent));
+
+        // But same path with different representations should match
+        // (this tests that we're correctly canonicalizing even when one side doesn't exist)
+        let canonical = canonicalize_with_parents(&existing);
+        assert!(paths_match(&existing, &canonical));
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&existing);
     }
 }

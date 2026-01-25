@@ -142,17 +142,19 @@ impl<'a> WorkingTree<'a> {
 
     /// Get the git directory (may be different from common-dir in worktrees).
     ///
-    /// Always returns an absolute path, resolving any relative paths returned by git.
+    /// Always returns a canonicalized absolute path, resolving symlinks.
+    /// This ensures consistent comparison with `git_common_dir()`.
     pub fn git_dir(&self) -> anyhow::Result<PathBuf> {
         let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
         let path = PathBuf::from(stdout.trim());
 
-        // Resolve relative paths against the worktree's directory
-        if path.is_relative() {
-            canonicalize(self.path.join(&path)).context("Failed to resolve git directory")
+        // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
+        let absolute_path = if path.is_relative() {
+            self.path.join(&path)
         } else {
-            Ok(path)
-        }
+            path
+        };
+        canonicalize(&absolute_path).context("Failed to resolve git directory")
     }
 
     /// Check if a rebase is in progress.
