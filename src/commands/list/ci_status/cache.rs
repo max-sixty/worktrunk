@@ -19,6 +19,9 @@ use super::PrStatus;
 /// Uses file-based caching instead of git config to avoid file locking issues.
 /// On Windows, concurrent `git config` writes can temporarily lock `.git/config`,
 /// causing other git operations to fail with "Permission denied".
+///
+/// Note: Old cache entries without the `branch` field will fail deserialization
+/// and be treated as cache misses — they will be re-fetched with the new format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CachedCiStatus {
     /// The cached CI status (None means no CI found for this branch)
@@ -27,6 +30,8 @@ pub(crate) struct CachedCiStatus {
     pub checked_at: u64,
     /// The HEAD commit SHA when the status was fetched
     pub head: String,
+    /// The original branch name (for display in `wt config state show`)
+    pub branch: String,
 }
 
 impl CachedCiStatus {
@@ -107,6 +112,11 @@ impl CachedCiStatus {
             return;
         }
 
+        // On Windows, fs::rename may fail if target exists (depending on Windows version
+        // and filesystem). Remove target first to ensure rename succeeds.
+        #[cfg(windows)]
+        let _ = fs::remove_file(&path);
+
         if let Err(e) = fs::rename(&temp_path, &path) {
             log::debug!("Failed to rename CI cache file for {}: {}", branch, e);
             // Clean up temp file on failure
@@ -133,10 +143,9 @@ impl CachedCiStatus {
                     return None;
                 }
 
-                let branch = path.file_stem()?.to_str()?.to_string();
                 let json = fs::read_to_string(&path).ok()?;
                 let cached: Self = serde_json::from_str(&json).ok()?;
-                Some((branch, cached))
+                Some((cached.branch.clone(), cached))
             })
             .collect()
     }

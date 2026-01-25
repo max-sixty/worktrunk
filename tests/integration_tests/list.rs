@@ -1586,7 +1586,7 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
 
     // Build the cache JSON (matches CachedCiStatus struct)
     let cache_json = format!(
-        r#"{{"status":{{"ci_status":"{}","source":"{}","is_stale":{}}},"checked_at":{},"head":"{}"}}"#,
+        r#"{{"status":{{"ci_status":"{}","source":"{}","is_stale":{}}},"checked_at":{},"head":"{}","branch":"{}"}}"#,
         status,
         source,
         is_stale,
@@ -1594,7 +1594,8 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs(),
-        head
+        head,
+        branch
     );
 
     // Get git common dir for cache location
