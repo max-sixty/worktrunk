@@ -80,9 +80,8 @@ Show current configuration and file locations:
   [2m# ~/.config/worktrunk/config.toml[0m
   [2mworktree-path = ".worktrees/{{ branch | sanitize }}"[0m
   [2m[0m
-  [2m[commit-generation][0m
-  [2mcommand = "llm"[0m
-  [2margs = ["-m", "claude-haiku-4.5"][0m
+  [2m[commit.generation][0m
+  [2mcommand = "llm -m claude-haiku-4.5"[0m
 
 [1mProject config[0m — shared team settings:
 

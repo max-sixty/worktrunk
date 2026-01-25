@@ -41,9 +41,8 @@ wt config show
 # ~/.config/worktrunk/config.toml
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 
-[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
 ```
 
 **Project config** — shared team settings:
