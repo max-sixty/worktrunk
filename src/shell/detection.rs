@@ -87,8 +87,8 @@ use super::paths::{home_dir_required, powershell_profile_paths};
 pub fn is_shell_integration_line(line: &str, cmd: &str) -> bool {
     let trimmed = line.trim();
 
-    // Skip comments (# for POSIX shells, <# #> for PowerShell)
-    if trimmed.starts_with('#') {
+    // Skip comments (# for POSIX shells, <# #> for PowerShell block comments)
+    if trimmed.starts_with('#') || trimmed.starts_with("<#") {
         return false;
     }
 
@@ -145,7 +145,9 @@ fn has_init_pattern_with_prefix_check(line: &str, cmd: &str) -> bool {
                 // Must be in an execution context
                 if line.contains("eval")
                     || line.contains("source")
+                    || is_dot_source_command(line)
                     || line.contains("Invoke-Expression")
+                    || line.contains("iex")
                     || line.contains("if ")
                 {
                     return true;
@@ -158,6 +160,27 @@ fn has_init_pattern_with_prefix_check(line: &str, cmd: &str) -> bool {
     }
 
     false
+}
+
+/// Check if line uses the POSIX `.` (dot) command for sourcing.
+///
+/// The `.` command is equivalent to `source` in POSIX shells. We check for patterns like:
+/// - `. <(cmd)` — process substitution
+/// - `. =(cmd)` — zsh-specific substitution
+///
+/// We need to be careful not to match `.` in other contexts (paths, etc.).
+fn is_dot_source_command(line: &str) -> bool {
+    // Look for `. ` followed by `<(` or `=(` (process/zsh substitution)
+    // This handles: `. <(wt config shell init bash)` and `. =(wt config shell init zsh)`
+    let trimmed = line.trim_start();
+    if trimmed.starts_with(". <(") || trimmed.starts_with(". =(") {
+        return true;
+    }
+    // Also check for dot after semicolon or other command separator
+    line.contains("; . <(")
+        || line.contains("; . =(")
+        || line.contains("&& . <(")
+        || line.contains("&& . =(")
 }
 
 /// Check if the command at `pos` is a valid standalone command, not part of another command.
@@ -188,9 +211,9 @@ fn is_valid_command_position(line: &str, pos: usize, cmd: &str) -> bool {
         return false;
     }
 
-    // Valid if preceded by: whitespace, $(, (, ", ', or `command `
+    // Valid if preceded by: whitespace, $(, (, ", ', `, or / (for absolute paths)
     let last_char = before.chars().last().unwrap();
-    matches!(last_char, ' ' | '\t' | '$' | '(' | '"' | '\'' | '`')
+    matches!(last_char, ' ' | '\t' | '$' | '(' | '"' | '\'' | '`' | '/')
 }
 
 /// Check if a line contains the command name at a word boundary.
@@ -638,25 +661,25 @@ mod tests {
     // FALSE NEGATIVE: dot (.) command as source equivalent
     // ------------------------------------------------------------------------
 
-    /// The `.` command is POSIX-equivalent to `source` but NOT detected
+    /// The `.` command is POSIX-equivalent to `source` - now detected
     #[test]
-    fn test_fn_dot_command_process_substitution() {
+    fn test_dot_command_process_substitution() {
         // . <(wt config shell init bash) is equivalent to source <(...)
         // This is a common POSIX pattern
-        assert_not_detects(
+        assert_detects(
             ". <(wt config shell init bash)",
             "wt",
-            "CONFIRMED FALSE NEGATIVE: dot command with process substitution",
+            "dot command with process substitution",
         );
     }
 
     #[test]
-    fn test_fn_dot_command_zsh_equals() {
+    fn test_dot_command_zsh_equals() {
         // . =(wt config shell init zsh) is zsh-specific
-        assert_not_detects(
+        assert_detects(
             ". =(wt config shell init zsh)",
             "wt",
-            "CONFIRMED FALSE NEGATIVE: dot command with zsh =() substitution",
+            "dot command with zsh =() substitution",
         );
     }
 
@@ -664,23 +687,23 @@ mod tests {
     // FALSE NEGATIVE: PowerShell iex alias
     // ------------------------------------------------------------------------
 
-    /// iex is PowerShell's alias for Invoke-Expression
+    /// iex is PowerShell's alias for Invoke-Expression - now detected
     #[test]
-    fn test_fn_powershell_iex_alias() {
+    fn test_powershell_iex_alias() {
         // Common in PowerShell profiles
-        assert_not_detects(
+        assert_detects(
             "iex (wt config shell init powershell)",
             "wt",
-            "CONFIRMED FALSE NEGATIVE: PowerShell iex alias",
+            "PowerShell iex alias",
         );
     }
 
     #[test]
-    fn test_fn_powershell_iex_with_ampersand() {
-        assert_not_detects(
+    fn test_powershell_iex_with_ampersand() {
+        assert_detects(
             "iex (& wt config shell init powershell)",
             "wt",
-            "CONFIRMED FALSE NEGATIVE: PowerShell iex with &",
+            "PowerShell iex with &",
         );
     }
 
@@ -690,28 +713,22 @@ mod tests {
     // ------------------------------------------------------------------------
 
     #[test]
-    fn test_fn_powershell_block_comment() {
-        // PowerShell block comments <# #> should NOT match
-        // But current code doesn't skip them
+    fn test_powershell_block_comment() {
+        // PowerShell block comments <# #> should NOT match - now correctly skipped
         let line = "<# Invoke-Expression (wt config shell init powershell) #>";
-        let result = is_shell_integration_line(line, "wt");
-        // This DOES match (false positive) - documenting the behavior
-        assert!(
-            result,
-            "PowerShell block comment currently matches (false positive risk)"
-        );
+        assert_not_detects(line, "wt", "PowerShell block comment should not match");
     }
 
     // ------------------------------------------------------------------------
     // FALSE NEGATIVE: zsh =() process substitution without source/eval
     // ------------------------------------------------------------------------
 
-    /// Zsh allows sourcing with just =() which creates a temp file
+    /// Zsh allows sourcing with just =() which creates a temp file - now detected
     #[test]
-    fn test_fn_zsh_bare_equals_substitution() {
+    fn test_zsh_bare_equals_substitution() {
         // Some zsh configs might use: . =(command)
         // Already covered above, but this is a variant
-        assert_not_detects(
+        assert_detects(
             ". =(command wt config shell init zsh)",
             "wt",
             "dot with command prefix",
@@ -749,30 +766,30 @@ mod tests {
     // ------------------------------------------------------------------------
 
     #[test]
-    fn test_fn_absolute_path() {
-        // Path-prefixed binary invocation - NOT detected because '/' not in allowed chars
-        assert_not_detects(
+    fn test_absolute_path() {
+        // Path-prefixed binary invocation - now detected with '/' in allowed chars
+        assert_detects(
             r#"eval "$(/usr/local/bin/wt config shell init bash)""#,
             "wt",
-            "CONFIRMED FALSE NEGATIVE: absolute path to binary",
+            "absolute path to binary",
         );
     }
 
     #[test]
-    fn test_fn_home_path() {
-        assert_not_detects(
+    fn test_home_path() {
+        assert_detects(
             r#"eval "$(~/.cargo/bin/wt config shell init bash)""#,
             "wt",
-            "CONFIRMED FALSE NEGATIVE: home-relative path",
+            "home-relative path",
         );
     }
 
     #[test]
-    fn test_fn_env_var_path() {
-        assert_not_detects(
+    fn test_env_var_path() {
+        assert_detects(
             r#"eval "$($HOME/.cargo/bin/wt config shell init bash)""#,
             "wt",
-            "CONFIRMED FALSE NEGATIVE: env var in path",
+            "env var in path",
         );
     }
 
