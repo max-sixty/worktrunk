@@ -102,7 +102,7 @@
 #
 # #### Setting overrides (Experimental)
 #
-# Override global user config settings for a specific project. Scalar settings (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run.
+# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run.
 #
 # [projects."github.com/user/repo"]
 # worktree-path = ".worktrees/{{ branch | sanitize }}"

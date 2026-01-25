@@ -154,7 +154,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# #### Setting overrides (Experimental)[0m
   [2m#[0m
-  [2m# Override global user config settings for a specific project. Scalar settings (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run.[0m
+  [2m# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run.[0m
   [2m#[0m
   [2m# [projects."github.com/user/repo"][0m
   [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m

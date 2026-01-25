@@ -176,7 +176,7 @@ To reset, delete the entry or run `wt hook approvals clear`.
 
 #### Setting overrides (Experimental)
 
-Override global user config settings for a specific project. Scalar settings (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run.
+Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run.
 
 ```toml
 [projects."github.com/user/repo"]

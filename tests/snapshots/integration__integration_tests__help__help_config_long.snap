@@ -199,7 +199,7 @@ To reset, delete the entry or run [2mwt hook approvals clear[0m.
 
 [1mSetting overrides (Experimental)[0m
 
-Override global user config settings for a specific project. Scalar settings (like [2mworktree-path[0m) replace the global value. Hooks append — both global and per-project hooks run.
+Override global user config for a specific project. Scalar values (like [2mworktree-path[0m) replace the global value. Hooks append — both global and per-project hooks run.
 
   [2m[projects."github.com/user/repo"][0m
   [2mworktree-path = ".worktrees/{{ branch | sanitize }}"[0m
