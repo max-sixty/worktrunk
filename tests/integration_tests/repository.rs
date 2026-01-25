@@ -655,3 +655,184 @@ fn test_repo_path_in_submodule() {
         git_common_dir
     );
 }
+
+// =============================================================================
+// branch() error propagation tests (Bug fix: branch() swallows errors)
+// =============================================================================
+
+#[test]
+fn test_branch_returns_none_for_detached_head() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+
+    // Detach HEAD by checking out a specific commit
+    let sha = repo.git_output(&["rev-parse", "HEAD"]);
+
+    repo.run_git(&["checkout", "--detach", &sha]);
+
+    // Create a fresh repository instance to avoid cached result
+    let repository = Repository::at(&root).unwrap();
+    // Use worktree_at with explicit path, not current_worktree() which uses base_path()
+    let wt = repository.worktree_at(&root);
+
+    let result = wt.branch();
+    assert!(
+        result.is_ok(),
+        "branch() should succeed even for detached HEAD"
+    );
+    assert!(
+        result.unwrap().is_none(),
+        "branch() should return None for detached HEAD"
+    );
+}
+
+#[test]
+fn test_branch_returns_branch_name() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+    let repository = Repository::at(&root).unwrap();
+    // Use worktree_at with explicit path, not current_worktree() which uses base_path()
+    let wt = repository.worktree_at(&root);
+
+    let result = wt.branch();
+    assert!(result.is_ok(), "branch() should succeed");
+    assert_eq!(
+        result.unwrap(),
+        Some("main".to_string()),
+        "branch() should return the current branch name"
+    );
+}
+
+#[test]
+fn test_branch_caches_result() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+    let repository = Repository::at(&root).unwrap();
+    // Use worktree_at with explicit path, not current_worktree() which uses base_path()
+    let wt = repository.worktree_at(&root);
+
+    // First call
+    let result1 = wt.branch().unwrap();
+    // Second call should return cached result
+    let result2 = wt.branch().unwrap();
+
+    assert_eq!(result1, result2);
+    assert_eq!(result1, Some("main".to_string()));
+}
+
+// =============================================================================
+// hidden_files() tests (Bug fix: is_dirty() misses skip-worktree files)
+// =============================================================================
+
+#[test]
+fn test_hidden_files_empty_when_no_special_flags() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+    let repository = Repository::at(&root).unwrap();
+    let wt = repository.worktree_at(&root);
+
+    let hidden = wt.hidden_files().unwrap();
+    assert!(hidden.is_empty(), "No files should be hidden by default");
+}
+
+#[test]
+fn test_hidden_files_detects_skip_worktree() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+
+    // Create a file and commit it
+    let file_path = root.join("config.local");
+    fs::write(&file_path, "initial content").unwrap();
+    repo.run_git(&["add", "config.local"]);
+    repo.run_git(&["commit", "-m", "add config.local"]);
+
+    // Mark it with skip-worktree
+    repo.run_git(&["update-index", "--skip-worktree", "config.local"]);
+
+    let repository = Repository::at(&root).unwrap();
+    let wt = repository.worktree_at(&root);
+
+    let hidden = wt.hidden_files().unwrap();
+    assert_eq!(hidden.len(), 1, "Should detect one hidden file");
+    assert_eq!(hidden[0].0, "config.local");
+    assert_eq!(hidden[0].1, "skip-worktree");
+}
+
+#[test]
+fn test_hidden_files_detects_assume_unchanged() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+
+    // Create a file and commit it
+    let file_path = root.join("settings.json");
+    fs::write(&file_path, "{}").unwrap();
+    repo.run_git(&["add", "settings.json"]);
+    repo.run_git(&["commit", "-m", "add settings.json"]);
+
+    // Mark it with assume-unchanged
+    repo.run_git(&["update-index", "--assume-unchanged", "settings.json"]);
+
+    let repository = Repository::at(&root).unwrap();
+    let wt = repository.worktree_at(&root);
+
+    let hidden = wt.hidden_files().unwrap();
+    assert_eq!(hidden.len(), 1, "Should detect one hidden file");
+    assert_eq!(hidden[0].0, "settings.json");
+    assert_eq!(hidden[0].1, "assume-unchanged");
+}
+
+#[test]
+fn test_has_hidden_changes() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+
+    // Initially no hidden changes
+    let repository = Repository::at(&root).unwrap();
+    let wt = repository.worktree_at(&root);
+    assert!(!wt.has_hidden_changes().unwrap());
+
+    // Create and commit a file
+    let file_path = root.join("hidden.txt");
+    fs::write(&file_path, "content").unwrap();
+    repo.run_git(&["add", "hidden.txt"]);
+    repo.run_git(&["commit", "-m", "add hidden.txt"]);
+
+    // Mark with skip-worktree
+    repo.run_git(&["update-index", "--skip-worktree", "hidden.txt"]);
+
+    // Fresh repository to avoid cache
+    let repository = Repository::at(&root).unwrap();
+    let wt = repository.worktree_at(&root);
+    assert!(wt.has_hidden_changes().unwrap());
+}
+
+#[test]
+fn test_is_dirty_does_not_detect_skip_worktree_changes() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+
+    // Create and commit a file
+    let file_path = root.join("local.env");
+    fs::write(&file_path, "original").unwrap();
+    repo.run_git(&["add", "local.env"]);
+    repo.run_git(&["commit", "-m", "add local.env"]);
+
+    // Mark with skip-worktree and modify
+    repo.run_git(&["update-index", "--skip-worktree", "local.env"]);
+    fs::write(&file_path, "modified but hidden").unwrap();
+
+    let repository = Repository::at(&root).unwrap();
+    let wt = repository.worktree_at(&root);
+
+    // is_dirty() should return false (this is the documented limitation)
+    assert!(
+        !wt.is_dirty().unwrap(),
+        "is_dirty() does not detect skip-worktree changes by design"
+    );
+
+    // But hidden_files() should detect the file
+    assert!(
+        wt.has_hidden_changes().unwrap(),
+        "has_hidden_changes() should detect skip-worktree files"
+    );
+}
