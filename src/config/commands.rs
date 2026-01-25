@@ -93,6 +93,15 @@ impl<'de> Deserialize<'de> for CommandConfig {
             }
             CommandConfigToml::Named(map) => {
                 // IndexMap preserves insertion order from TOML
+                // Validate hook names don't contain colons (would break log spec parsing)
+                for name in map.keys() {
+                    if name.contains(':') {
+                        return Err(serde::de::Error::custom(format!(
+                            "hook name '{}' cannot contain colons",
+                            name
+                        )));
+                    }
+                }
                 map.into_iter()
                     .map(|(name, template)| Command::new(Some(name), template))
                     .collect()
@@ -248,6 +257,30 @@ third = "echo 3"
         assert_eq!(commands[0].name, Some("first".to_string()));
         assert_eq!(commands[1].name, Some("second".to_string()));
         assert_eq!(commands[2].name, Some("third".to_string()));
+    }
+
+    #[test]
+    fn test_deserialize_rejects_colons_in_name() {
+        // Hook names cannot contain colons (would break log spec parsing)
+        let toml_str = r#"
+[command]
+"my:server" = "npm start"
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            #[serde(rename = "command")]
+            _command: CommandConfig,
+        }
+
+        let result: Result<Wrapper, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("cannot contain colons"),
+            "Expected colon rejection error: {}",
+            err
+        );
     }
 
     // ============================================================================
