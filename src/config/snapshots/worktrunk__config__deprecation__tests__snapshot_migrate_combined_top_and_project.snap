@@ -1,0 +1,15 @@
+---
+source: src/config/deprecation.rs
+expression: "migration_diff(content, &result)"
+---
+ 
+-[commit-generation]
++[commit.generation]
+ command = "llm -m haiku"
+ 
+-[projects."github.com/user/repo".commit-generation]
++[projects."github.com/user/repo".commit.generation]
+ command = "llm -m gpt-4"
+ 
+ [list]
+ branches = true

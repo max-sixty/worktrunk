@@ -3188,6 +3188,7 @@ dependencies = [
  "shellexpand",
  "shlex",
  "signal-hook 0.4.3",
+ "similar",
  "skim",
  "strum",
  "supports-hyperlinks",

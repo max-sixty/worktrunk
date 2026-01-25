@@ -299,6 +299,165 @@ tasks:
         echo ""
         echo "Done! Fixture at: tests/fixtures/standard/"
 
+  bench-llm-commits:
+    desc: Benchmark LLM commit message tools (claude, llm, aichat, codex)
+    silent: true
+    cmds:
+      - |
+        set -euo pipefail
+
+        # Test prompts
+        SMALL_PROMPT=$(cat <<'EOF'
+        Write a commit message for the staged changes below.
+
+        <format>
+        - Subject under 50 chars, blank line, then optional body
+        - Output only the commit message, no quotes or code blocks
+        </format>
+
+        <diffstat>
+         src/config.rs | 2 ++
+         1 file changed, 2 insertions(+)
+        </diffstat>
+
+        <diff>
+        diff --git a/src/config.rs b/src/config.rs
+        @@ -10,6 +10,8 @@ pub struct Config {
+             pub debug: bool,
+        +    /// Enable verbose logging
+        +    pub verbose: bool,
+         }
+        </diff>
+
+        <context>
+        Branch: feature/logging
+        </context>
+        EOF
+        )
+
+        MEDIUM_PROMPT=$(cat <<'EOF'
+        Write a commit message for the staged changes below.
+
+        <format>
+        - Subject under 50 chars, blank line, then optional body
+        - Output only the commit message, no quotes or code blocks
+        </format>
+
+        <style>
+        - Imperative mood: "Add feature" not "Added feature"
+        - Match recent commit style (conventional commits if used)
+        </style>
+
+        <diffstat>
+         src/auth/jwt.rs    | 45 +++++++++++++++++++++++++++++++++
+         src/auth/mod.rs    |  2 ++
+         src/middleware.rs  | 12 +++++++++
+         tests/auth_test.rs | 28 +++++++++++++++++++++
+         4 files changed, 87 insertions(+)
+        </diffstat>
+
+        <diff>
+        diff --git a/src/auth/jwt.rs b/src/auth/jwt.rs
+        new file mode 100644
+        +use jsonwebtoken::{encode, decode, Header, Validation};
+        +
+        +pub struct Claims { pub sub: String, pub exp: usize }
+        +
+        +pub fn create_token(user_id: &str, secret: &[u8]) -> Result<String, Error> {
+        +    let claims = Claims { sub: user_id.to_owned(), exp: ... };
+        +    encode(&Header::default(), &claims, &EncodingKey::from_secret(secret))
+        +}
+        +
+        +pub fn validate_token(token: &str, secret: &[u8]) -> Result<Claims, Error> {
+        +    decode::<Claims>(token, &DecodingKey::from_secret(secret), &Validation::default())
+        +}
+        </diff>
+
+        <context>
+        Branch: feature/auth
+        <recent_commits>
+        - feat(api): add user registration endpoint
+        - fix(db): handle connection pool exhaustion
+        </recent_commits>
+        </context>
+        EOF
+        )
+
+        # Documented commands from llm-commits.md
+        declare -A COMMANDS
+        COMMANDS["claude"]='MAX_THINKING_TOKENS=0 claude -p --model haiku --tools '"'"''"'"' --disable-slash-commands --setting-sources '"'"''"'"' --system-prompt '"'"''"'"''
+        COMMANDS["llm"]='llm -m claude-haiku-4.5'
+        COMMANDS["aichat"]='aichat -m claude:claude-haiku-4.5'
+        COMMANDS["codex"]='codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='"'"'low'"'"' --sandbox read-only --json - | jq -sr '"'"'[.[] | select(.item.type? == "agent_message")] | last.item.text'"'"''
+
+        # Check which tools are available
+        echo "=== LLM Commit Message Benchmark ==="
+        echo ""
+        echo "Checking available tools..."
+        AVAILABLE=()
+        for tool in claude llm aichat codex; do
+          if command -v "$tool" &>/dev/null; then
+            echo "  ✓ $tool"
+            AVAILABLE+=("$tool")
+          else
+            echo "  ✗ $tool (not installed)"
+          fi
+        done
+        if command -v jq &>/dev/null; then
+          echo "  ✓ jq (required for codex)"
+        else
+          echo "  ✗ jq (required for codex)"
+          AVAILABLE=("${AVAILABLE[@]/codex}")
+        fi
+        echo ""
+
+        if [ ${#AVAILABLE[@]} -eq 0 ]; then
+          echo "No tools available. Install at least one:"
+          echo "  claude: https://docs.anthropic.com/en/docs/claude-code"
+          echo "  llm: uv tool install llm llm-anthropic"
+          echo "  aichat: https://github.com/sigoden/aichat"
+          echo "  codex: npm install -g @openai/codex"
+          exit 1
+        fi
+
+        # Benchmark function
+        bench() {
+          local name="$1"
+          local cmd="$2"
+          local prompt="$3"
+          local start end elapsed output first_line
+
+          start=$(date +%s)
+          output=$(echo "$prompt" | eval "$cmd" 2>/dev/null) || output="[error]"
+          end=$(date +%s)
+          elapsed=$((end - start))
+          first_line=$(echo "$output" | head -1 | cut -c1-50)
+
+          printf "  %-8s %3ds  %s\n" "$name:" "$elapsed" "$first_line"
+        }
+
+        # Run benchmarks
+        for size in small medium; do
+          if [ "$size" = "small" ]; then
+            PROMPT="$SMALL_PROMPT"
+            echo "### Small diff (add verbose flag) ###"
+          else
+            PROMPT="$MEDIUM_PROMPT"
+            echo "### Medium diff (JWT auth module) ###"
+          fi
+          echo ""
+
+          for tool in "${AVAILABLE[@]}"; do
+            bench "$tool" "${COMMANDS[$tool]}" "$PROMPT"
+          done
+          echo ""
+        done
+
+        echo "Commands used (from docs/content/llm-commits.md):"
+        for tool in "${AVAILABLE[@]}"; do
+          echo "  $tool: ${COMMANDS[$tool]}"
+        done
+
   generate-logo:
     desc: Generate logo using Gemini AI
     dir: "{{.REPO_ROOT}}"

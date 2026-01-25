@@ -17,30 +17,14 @@ use worktrunk::styling::{fix_dim_after_color_reset, get_terminal_width, truncate
 
 use super::list::{self, CollectOptions, StatuslineSegment};
 
-#[derive(serde::Deserialize, Default)]
-struct ClaudeCodeContextJson {
-    #[serde(default)]
-    workspace: ClaudeCodeWorkspace,
-    #[serde(default)]
-    model: ClaudeCodeModel,
-}
-
-#[derive(serde::Deserialize, Default)]
-struct ClaudeCodeWorkspace {
-    current_dir: Option<String>,
-}
-
-#[derive(serde::Deserialize, Default)]
-struct ClaudeCodeModel {
-    display_name: Option<String>,
-}
-
 /// Claude Code context parsed from stdin JSON
 struct ClaudeCodeContext {
     /// Working directory from `.workspace.current_dir`
     current_dir: String,
     /// Model name from `.model.display_name`
     model_name: Option<String>,
+    /// Context window usage percentage from `.context_window.used_percentage`
+    context_used_percentage: Option<f64>,
 }
 
 impl ClaudeCodeContext {
@@ -51,16 +35,27 @@ impl ClaudeCodeContext {
             return None;
         }
 
-        let json: ClaudeCodeContextJson = serde_json::from_str(input).ok()?;
-        let current_dir = json
-            .workspace
-            .current_dir
-            .unwrap_or_else(|| ".".to_string());
-        let model_name = json.model.display_name;
+        let v: serde_json::Value = serde_json::from_str(input).ok()?;
+
+        let current_dir = v
+            .pointer("/workspace/current_dir")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".")
+            .to_string();
+
+        let model_name = v
+            .pointer("/model/display_name")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let context_used_percentage = v
+            .pointer("/context_window/used_percentage")
+            .and_then(|v| v.as_f64());
 
         Some(Self {
             current_dir,
             model_name,
+            context_used_percentage,
         })
     }
 
@@ -127,23 +122,53 @@ const PRIORITY_DIRECTORY: u8 = 0;
 /// Same as Branch - model identity is important.
 const PRIORITY_MODEL: u8 = 1;
 
+/// Priority for context gauge segment (Claude Code only).
+/// Lower priority than model (higher number = dropped first when truncating).
+const PRIORITY_CONTEXT: u8 = 2;
+
+/// Format context usage as a moon phase gauge.
+///
+/// Uses moon phase emoji to show fill level (waning - gets darker as context fills).
+/// Thresholds use exponential halving where each range is half the previous.
+/// Formula: 5 buckets with ratio 16:8:4:2:1, normalized to 100% (sum = 31).
+/// - 🌕 (0-51%) - full moon (plenty of room) - 16/31 ≈ 52%
+/// - 🌔 (52-77%) - waning gibbous - 8/31 ≈ 26%
+/// - 🌓 (78-90%) - last quarter - 4/31 ≈ 13%
+/// - 🌒 (91-97%) - waning crescent - 2/31 ≈ 7%
+/// - 🌑 (98-100%) - new moon (nearly full, warning) - 1/31 ≈ 3%
+fn format_context_gauge(percentage: f64) -> String {
+    // Clamp to valid range to handle edge cases (negative or >100%)
+    let clamped = percentage.clamp(0.0, 100.0);
+    let symbol = match clamped as u32 {
+        0..=51 => '🌕',
+        52..=77 => '🌔',
+        78..=90 => '🌓',
+        91..=97 => '🌒',
+        _ => '🌑',
+    };
+    // Display the original percentage (not clamped) for transparency
+    format!("{symbol} {:.0}%", percentage)
+}
+
 /// Run the statusline command.
 ///
 /// Output uses `println!` for raw stdout (bypasses anstream color detection).
 /// Shell prompts (PS1) and Claude Code always expect ANSI codes.
 pub fn run(claude_code: bool) -> Result<()> {
     // Get context - either from stdin (claude-code mode) or current directory
-    let (cwd, model_name) = if claude_code {
+    let (cwd, model_name, context_used_percentage) = if claude_code {
         let ctx = ClaudeCodeContext::from_stdin();
         let current_dir = ctx
             .as_ref()
             .map(|c| c.current_dir.clone())
             .unwrap_or_else(|| env::current_dir().unwrap_or_default().display().to_string());
-        let model = ctx.and_then(|c| c.model_name);
-        (Path::new(&current_dir).to_path_buf(), model)
+        let model = ctx.as_ref().and_then(|c| c.model_name.clone());
+        let context_pct = ctx.and_then(|c| c.context_used_percentage);
+        (Path::new(&current_dir).to_path_buf(), model, context_pct)
     } else {
         (
             env::current_dir().context("Failed to get current directory")?,
+            None,
             None,
         )
     };
@@ -186,6 +211,14 @@ pub fn run(claude_code: bool) -> Result<()> {
     if let Some(model) = model_name {
         // Use "| " prefix to visually separate from git status
         segments.push(StatuslineSegment::new(format!("| {model}"), PRIORITY_MODEL));
+    }
+
+    // Context gauge (claude-code mode only) - priority 2 (placed after model)
+    if let Some(pct) = context_used_percentage {
+        segments.push(StatuslineSegment::new(
+            format_context_gauge(pct),
+            PRIORITY_CONTEXT,
+        ));
     }
 
     if segments.is_empty() {
@@ -471,5 +504,81 @@ mod tests {
             visible.len(),
             original_visible.len()
         );
+    }
+
+    #[test]
+    fn test_context_gauge_formatting() {
+        // Test boundary values for each moon phase symbol (waning - darker as context fills)
+        // Thresholds use exponential halving: ratio 16:8:4:2:1, normalized to 100%
+        assert_eq!(format_context_gauge(0.0), "🌕 0%");
+        assert_eq!(format_context_gauge(51.0), "🌕 51%");
+        assert_eq!(format_context_gauge(52.0), "🌔 52%");
+        assert_eq!(format_context_gauge(77.0), "🌔 77%");
+        assert_eq!(format_context_gauge(78.0), "🌓 78%");
+        assert_eq!(format_context_gauge(90.0), "🌓 90%");
+        assert_eq!(format_context_gauge(91.0), "🌒 91%");
+        assert_eq!(format_context_gauge(97.0), "🌒 97%");
+        assert_eq!(format_context_gauge(98.0), "🌑 98%");
+        assert_eq!(format_context_gauge(100.0), "🌑 100%");
+    }
+
+    #[test]
+    fn test_context_gauge_fractional_percentages() {
+        // Fractional values are rounded (per {:.0} format specifier)
+        // Rust uses banker's rounding (round half to even)
+        assert_eq!(format_context_gauge(42.7), "🌕 43%"); // 43% is in 0-51% range
+        assert_eq!(format_context_gauge(0.4), "🌕 0%");
+        assert_eq!(format_context_gauge(0.5), "🌕 0%"); // banker's rounding: 0.5 rounds to even (0)
+        assert_eq!(format_context_gauge(1.5), "🌕 2%"); // banker's rounding: 1.5 rounds to even (2)
+        assert_eq!(format_context_gauge(99.9), "🌑 100%");
+    }
+
+    #[test]
+    fn test_context_gauge_edge_cases() {
+        // Negative values: symbol clamps to bright (low usage), but display shows original value
+        assert_eq!(format_context_gauge(-5.0), "🌕 -5%");
+        assert_eq!(format_context_gauge(-0.1), "🌕 -0%"); // rounds to -0%
+
+        // Values over 100%: symbol clamps to dark (high usage), but display shows original value
+        assert_eq!(format_context_gauge(105.0), "🌑 105%");
+        assert_eq!(format_context_gauge(150.0), "🌑 150%");
+    }
+
+    #[test]
+    fn test_claude_code_context_parse_with_context_window() {
+        let json = r#"{
+            "workspace": {"current_dir": "/tmp/test"},
+            "model": {"display_name": "Opus"},
+            "context_window": {"used_percentage": 42.5}
+        }"#;
+
+        let ctx = ClaudeCodeContext::parse(json).expect("should parse");
+        assert_eq!(ctx.current_dir, "/tmp/test");
+        assert_eq!(ctx.model_name, Some("Opus".to_string()));
+        assert_eq!(ctx.context_used_percentage, Some(42.5));
+    }
+
+    #[test]
+    fn test_claude_code_context_parse_missing_context_window() {
+        // context_window is optional
+        let json = r#"{
+            "workspace": {"current_dir": "/tmp/test"},
+            "model": {"display_name": "Opus"}
+        }"#;
+
+        let ctx = ClaudeCodeContext::parse(json).expect("should parse");
+        assert_eq!(ctx.context_used_percentage, None);
+    }
+
+    #[test]
+    fn test_claude_code_context_parse_context_window_missing_percentage() {
+        // context_window can exist without used_percentage
+        let json = r#"{
+            "workspace": {"current_dir": "/tmp/test"},
+            "context_window": {}
+        }"#;
+
+        let ctx = ClaudeCodeContext::parse(json).expect("should parse");
+        assert_eq!(ctx.context_used_percentage, None);
     }
 }

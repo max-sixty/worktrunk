@@ -74,7 +74,8 @@ repos:
         # select.rs: skim API's selected.output() is not Command::output()
         # tests/benches: test utilities run commands directly
         # src/config/{test,expansion,mod,user}.rs: TestRepo test fixtures use git init directly
-        exclude: '^(src/shell_exec\.rs|src/commands/select/|src/config/(test|expansion|mod|user)\.rs|tests/|benches/)'
+        # src/styling/mod.rs: terminal width detection probes should be silent/quick
+        exclude: '^(src/shell_exec\.rs|src/commands/select/|src/config/(test|expansion|mod|user)\.rs|src/styling/mod\.rs|tests/|benches/)'
 
 ci:
   # pre-commit.ci doesn't have Rust toolchain, so skip Rust-specific hooks.

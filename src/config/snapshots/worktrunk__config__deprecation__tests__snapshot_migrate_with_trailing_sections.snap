@@ -1,0 +1,16 @@
+---
+source: src/config/deprecation.rs
+expression: "migration_diff(content, &result)"
+---
+ # Config file
+ worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+ 
+-[commit-generation]
+-command = "llm"
+-args = ["-m", "claude-haiku-4.5"]
++[commit.generation]
++command = "llm -m claude-haiku-4.5"
+ 
+ [list]
+ branches = true
+ remotes = false

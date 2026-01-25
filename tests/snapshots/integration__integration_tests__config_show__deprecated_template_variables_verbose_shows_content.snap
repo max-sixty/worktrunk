@@ -43,7 +43,7 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mUser config has deprecated settings. To see details, run [90mwt config show[39m[39m
-[2m↳[22m [2mWrote migrated [1mtest-config.toml.new[22m. To apply:[22m
+[2m↳[22m [2mWrote migrated [90mtest-config.toml.new[39m. To apply:[22m
 [107m [0m [2m[0m[2m[34mmv[0m[2m [0m[2m[36m--[0m[2m [TEST_CONFIG_NEW] [TEST_CONFIG]
 [2m○[22m Expanding [1mworktree-path[22m
 [107m [0m ../{{ main_worktree }}.{{ branch }} [2m→[22m ../repo.feature-a

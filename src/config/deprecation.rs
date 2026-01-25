@@ -269,9 +269,13 @@ pub fn migrate_commit_generation_sections(content: &str) -> String {
             // Merge args into command if present
             merge_args_into_command(&mut table);
 
-            // Ensure [commit] section exists
+            // Ensure [commit] section exists.
+            // Mark as implicit so it doesn't render a separate [commit] header
+            // (only [commit.generation] will render)
             if !doc.contains_key("commit") {
-                doc["commit"] = toml_edit::Item::Table(toml_edit::Table::new());
+                let mut commit_table = toml_edit::Table::new();
+                commit_table.set_implicit(true);
+                doc.insert("commit", toml_edit::Item::Table(commit_table));
             }
 
             // Move to [commit.generation]
@@ -310,10 +314,12 @@ pub fn migrate_commit_generation_sections(content: &str) -> String {
                         // Merge args into command if present
                         merge_args_into_command(&mut table);
 
-                        // Ensure [projects."...".commit] section exists
+                        // Ensure [projects."...".commit] section exists.
+                        // Mark as implicit so it doesn't render a separate header
                         if !project_table.contains_key("commit") {
-                            project_table
-                                .insert("commit", toml_edit::Item::Table(toml_edit::Table::new()));
+                            let mut commit_table = toml_edit::Table::new();
+                            commit_table.set_implicit(true);
+                            project_table.insert("commit", toml_edit::Item::Table(commit_table));
                         }
 
                         // Move to [projects."...".commit.generation]
@@ -584,8 +590,7 @@ fn write_migration_file(
     eprintln!(
         "{}",
         hint_message(cformat!(
-            "Wrote migrated <bold>{}</>. To apply:",
-            new_filename
+            "Wrote migrated <bright-black>{new_filename}</>. To apply:"
         ))
     );
     eprintln!(
@@ -717,8 +722,7 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
             out,
             "{}",
             hint_message(cformat!(
-                "Wrote migrated <bold>{}</>. To apply:",
-                new_filename
+                "Wrote migrated <bright-black>{new_filename}</>. To apply:"
             ))
         );
         let _ = writeln!(
@@ -1613,5 +1617,134 @@ other = "value"
         let content = "this is [not valid {toml";
         let result = migrate_commit_generation_sections(content);
         assert_eq!(result, content, "Invalid TOML should be returned unchanged");
+    }
+
+    // Snapshot tests for migration output (showing diffs)
+
+    /// Generate a unified diff between original and migrated content
+    fn migration_diff(original: &str, migrated: &str) -> String {
+        use similar::{ChangeTag, TextDiff};
+        let diff = TextDiff::from_lines(original, migrated);
+        let mut output = String::new();
+        for change in diff.iter_all_changes() {
+            let sign = match change.tag() {
+                ChangeTag::Delete => "-",
+                ChangeTag::Insert => "+",
+                ChangeTag::Equal => " ",
+            };
+            output.push_str(&format!("{}{}", sign, change));
+        }
+        output
+    }
+
+    #[test]
+    fn snapshot_migrate_commit_generation_simple() {
+        let content = r#"
+[commit-generation]
+command = "llm -m haiku"
+"#;
+        let result = migrate_commit_generation_sections(content);
+        insta::assert_snapshot!(migration_diff(content, &result));
+    }
+
+    #[test]
+    fn snapshot_migrate_commit_generation_with_args() {
+        let content = r#"
+[commit-generation]
+command = "llm"
+args = ["-m", "claude-haiku-4.5"]
+"#;
+        let result = migrate_commit_generation_sections(content);
+        insta::assert_snapshot!(migration_diff(content, &result));
+    }
+
+    #[test]
+    fn snapshot_migrate_with_trailing_sections() {
+        // This is the bug case: [commit-generation] in the middle of the file
+        // followed by other sections. The migration should not add an extra
+        // [commit] section at the end.
+        let content = r#"# Config file
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+[commit-generation]
+command = "llm"
+args = ["-m", "claude-haiku-4.5"]
+
+[list]
+branches = true
+remotes = false
+"#;
+        let result = migrate_commit_generation_sections(content);
+        insta::assert_snapshot!(migration_diff(content, &result));
+    }
+
+    #[test]
+    fn snapshot_migrate_preserves_existing_commit_section() {
+        let content = r#"
+[commit]
+stage = "all"
+
+[commit-generation]
+command = "llm -m haiku"
+"#;
+        let result = migrate_commit_generation_sections(content);
+        insta::assert_snapshot!(migration_diff(content, &result));
+    }
+
+    #[test]
+    fn snapshot_migrate_project_level() {
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm test"]
+
+[projects."github.com/user/repo".commit-generation]
+command = "llm"
+args = ["-m", "gpt-4"]
+"#;
+        let result = migrate_commit_generation_sections(content);
+        insta::assert_snapshot!(migration_diff(content, &result));
+    }
+
+    #[test]
+    fn snapshot_migrate_combined_top_and_project() {
+        let content = r#"
+[commit-generation]
+command = "llm -m haiku"
+
+[projects."github.com/user/repo".commit-generation]
+command = "llm -m gpt-4"
+
+[list]
+branches = true
+"#;
+        let result = migrate_commit_generation_sections(content);
+        insta::assert_snapshot!(migration_diff(content, &result));
+    }
+
+    #[test]
+    fn test_set_implicit_suppresses_parent_header() {
+        // Verifies that set_implicit(true) prevents an empty parent table from
+        // rendering its own header. This is the key technique used in
+        // migrate_commit_generation_sections to avoid creating spurious [commit]
+        // headers when migrating [commit-generation] to [commit.generation].
+        use toml_edit::{DocumentMut, Item, Table};
+
+        let mut doc: DocumentMut = "[foo]\nbar = 1\n".parse().unwrap();
+        let mut commit_table = Table::new();
+        commit_table.set_implicit(true);
+        let mut gen_table = Table::new();
+        gen_table.insert("command", toml_edit::value("llm"));
+        commit_table.insert("generation", Item::Table(gen_table));
+        doc.insert("commit", Item::Table(commit_table));
+        let result = doc.to_string();
+
+        assert!(
+            !result.contains("\n[commit]\n"),
+            "set_implicit should suppress separate [commit] header"
+        );
+        assert!(
+            result.contains("[commit.generation]"),
+            "Should have [commit.generation] header"
+        );
     }
 }
