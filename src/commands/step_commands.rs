@@ -283,6 +283,12 @@ pub fn handle_squash(
     eprintln!("{}", format_with_gutter(&formatted_message, None));
 
     // Reset to merge base (soft reset stages all changes, including any already-staged uncommitted changes)
+    //
+    // TOCTOU note: Between this reset and the commit below, an external process could
+    // modify the staging area. This is extremely unlikely (requires precise timing) and
+    // the consequence is minor (unexpected content in squash commit). The commit message
+    // generated above accurately reflects the original commits being squashed, so any
+    // discrepancy would be visible in the diff. Considered acceptable risk.
     repo.run_command(&["reset", "--soft", &merge_base])
         .context("Failed to reset to merge base")?;
 
