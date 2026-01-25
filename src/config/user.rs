@@ -11,6 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::HooksConfig;
+use crate::path::format_path_for_display;
 
 /// Trait for merging configuration structs.
 ///
@@ -913,7 +914,7 @@ impl UserConfig {
         let content = std::fs::read_to_string(&path).map_err(|e| {
             ConfigError::Message(format!(
                 "Failed to read config file {}: {}",
-                path.display(),
+                format_path_for_display(&path),
                 e
             ))
         })?;
@@ -921,7 +922,7 @@ impl UserConfig {
         let disk_config: UserConfig = toml::from_str(&content).map_err(|e| {
             ConfigError::Message(format!(
                 "Failed to parse config file {}: {}",
-                path.display(),
+                format_path_for_display(&path),
                 e
             ))
         })?;

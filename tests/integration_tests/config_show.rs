@@ -246,7 +246,11 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         repo.configure_wt_cmd(&mut cmd);
         // Keep PATH minimal so the probe zsh doesn't find a globally-installed `wt`.
         cmd.env("PATH", "/usr/bin:/bin");
-        cmd.env("ZDOTDIR", temp_home.path());
+        cmd.env(
+            "ZDOTDIR",
+            crate::common::canonicalize(temp_home.path())
+                .unwrap_or_else(|_| temp_home.path().to_path_buf()),
+        );
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
 
@@ -290,7 +294,11 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         repo.configure_wt_cmd(&mut cmd);
         // Keep PATH minimal so the probe zsh doesn't find a globally-installed `wt`.
         cmd.env("PATH", "/usr/bin:/bin");
-        cmd.env("ZDOTDIR", temp_home.path());
+        cmd.env(
+            "ZDOTDIR",
+            crate::common::canonicalize(temp_home.path())
+                .unwrap_or_else(|_| temp_home.path().to_path_buf()),
+        );
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
 
