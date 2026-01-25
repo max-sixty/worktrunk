@@ -91,8 +91,68 @@ pub fn get_terminal_width() -> usize {
         return width;
     }
 
+    // Try parent TTY detection (Unix only)
+    // This is used when running in a subprocess without direct TTY access,
+    // such as Claude Code's statusline hook.
+    #[cfg(unix)]
+    if let Some(width) = detect_parent_tty_width() {
+        return width;
+    }
+
     // Can't detect width — don't truncate, let the consumer handle it
     usize::MAX
+}
+
+/// Detect terminal width by walking up the process tree to find a TTY.
+///
+/// This is a fallback for subprocesses (like Claude Code hooks) that don't have
+/// direct TTY access. Walks up to 10 parent processes looking for one with a TTY,
+/// then queries that TTY's size.
+///
+/// Returns 80% of the detected width to reserve space for Claude Code's UI messages
+/// (like "Approaching context limit").
+#[cfg(unix)]
+fn detect_parent_tty_width() -> Option<usize> {
+    use std::process::Command;
+
+    let mut pid = std::process::id().to_string();
+
+    for _ in 0..10 {
+        let output = Command::new("ps")
+            .args(["-o", "ppid=,tty=", "-p", &pid])
+            .output()
+            .ok()?;
+
+        let info = String::from_utf8_lossy(&output.stdout);
+        let mut parts = info.split_whitespace();
+        let ppid = parts.next()?;
+        let tty = parts.next()?;
+
+        // Valid TTY found (not "?" or "??")
+        if !tty.is_empty() && tty != "?" && tty != "??" {
+            // Query TTY size using stty
+            let size = Command::new("sh")
+                .args(["-c", &format!("stty size < /dev/{tty}")])
+                .output()
+                .ok()?;
+
+            let cols = String::from_utf8_lossy(&size.stdout)
+                .split_whitespace()
+                .nth(1)?
+                .parse::<usize>()
+                .ok()?;
+
+            // Reserve 20% for Claude Code UI messages
+            return Some(cols * 80 / 100);
+        }
+
+        if ppid == "1" || ppid == "0" {
+            break;
+        }
+        pid = ppid.to_string();
+    }
+
+    None
 }
 
 /// Calculate visual width of a string, ignoring ANSI escape codes

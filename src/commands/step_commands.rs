@@ -145,7 +145,8 @@ pub fn handle_squash(
         .as_ref()
         .map(|c| c.hooks.pre_commit.is_some())
         .unwrap_or(false);
-    let has_user_pre_commit = ctx.config.hooks.pre_commit.is_some();
+    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
+    let has_user_pre_commit = user_hooks.pre_commit.is_some();
     let has_any_pre_commit = has_project_pre_commit || has_user_pre_commit;
 
     if skip_pre_commit && has_any_pre_commit {
@@ -160,7 +161,7 @@ pub fn handle_squash(
         let extra_vars = [("target", integration_target.as_str())];
         run_hook_with_filter(
             &ctx,
-            ctx.config.hooks.pre_commit.as_ref(),
+            user_hooks.pre_commit.as_ref(),
             project_config
                 .as_ref()
                 .and_then(|c| c.hooks.pre_commit.as_ref()),

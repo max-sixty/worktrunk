@@ -199,12 +199,13 @@ To reset, delete the entry or run [2mwt hook approvals clear[0m.
 
 [1mSetting overrides (Experimental)[0m
 
-Override global settings for a specific project. Useful when one repo needs a different worktree layout or merge behavior.
+Override global user config for a specific project. Scalar values (like [2mworktree-path[0m) replace the global value. Hooks append — both global and per-project hooks run.
 
   [2m[projects."github.com/user/repo"][0m
   [2mworktree-path = ".worktrees/{{ branch | sanitize }}"[0m
   [2mlist.full = true[0m
   [2mmerge.squash = false[0m
+  [2mpost-create.env = "cp .env.example .env"[0m
 
 [32mCustom prompt templates[0m
 

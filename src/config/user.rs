@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 
 use config::{Case, Config, ConfigError, File};
 use fs2::FileExt;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::HooksConfig;
@@ -86,6 +87,7 @@ use super::expansion::expand_template;
     clap::ValueEnum,
     serde::Serialize,
     serde::Deserialize,
+    JsonSchema,
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum StageMode {
@@ -137,7 +139,7 @@ pub enum StageMode {
 ///
 /// Environment variables can override config file settings using `WORKTRUNK_` prefix with
 /// `__` separator for nested fields (e.g., `WORKTRUNK_COMMIT__GENERATION__COMMAND`).
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct UserConfig {
     /// **DEPRECATED**: Use `[commit.generation]` instead.
     ///
@@ -155,15 +157,9 @@ pub struct UserConfig {
     #[serde(default)]
     pub projects: std::collections::BTreeMap<String, UserProjectOverrides>,
 
-    /// Settings that can be overridden per-project (worktree-path, list, commit, merge, select)
+    /// Settings that can be overridden per-project (worktree-path, list, commit, merge, select, hooks)
     #[serde(flatten, default)]
-    pub overrides: OverridableConfig,
-
-    // =========================================================================
-    // User-level hooks (same syntax as project hooks, run before project hooks)
-    // =========================================================================
-    #[serde(flatten, default)]
-    pub hooks: HooksConfig,
+    pub configs: OverridableConfig,
 
     /// Skip the first-run shell integration prompt
     #[serde(
@@ -172,17 +168,13 @@ pub struct UserConfig {
         skip_serializing_if = "std::ops::Not::not"
     )]
     pub skip_shell_integration_prompt: bool,
-
-    /// Captures unknown fields for validation warnings
-    #[serde(flatten, default, skip_serializing)]
-    pub unknown: std::collections::HashMap<String, toml::Value>,
 }
 
 /// Configuration for commit message generation
 ///
 /// The command is a shell string executed via `sh -c`. Environment variables
 /// can be set inline (e.g., `MAX_THINKING_TOKENS=0 claude -p ...`).
-#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct CommitGenerationConfig {
     /// Shell command to invoke for generating commit messages
     ///
@@ -279,7 +271,7 @@ impl Merge for CommitGenerationConfig {
 /// [projects."github.com/user/repo".merge]
 /// squash = false
 /// ```
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct UserProjectOverrides {
     /// Commands that have been approved for automatic execution in this project
     #[serde(
@@ -317,7 +309,7 @@ impl UserProjectOverrides {
 }
 
 /// Configuration for the `wt list` command
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct ListConfig {
     /// Show CI and `main` diffstat by default
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -353,7 +345,7 @@ impl Merge for ListConfig {
 /// Configuration for the `wt step commit` command
 ///
 /// Also used by `wt merge` for shared settings like `stage`.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct CommitConfig {
     /// What to stage before committing (default: all)
     /// Values: "all", "tracked", "none"
@@ -384,7 +376,7 @@ impl Merge for CommitConfig {
 /// Configuration for the `wt merge` command
 ///
 /// Note: `stage` defaults from `[commit]` section, not here.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct MergeConfig {
     /// Squash commits when merging (default: true)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -422,7 +414,7 @@ impl Merge for MergeConfig {
 }
 
 /// Configuration for the `wt select` command
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct SelectConfig {
     /// Pager command with flags for diff preview
     ///
@@ -447,8 +439,20 @@ impl Merge for SelectConfig {
 /// This struct is flattened into both `UserConfig` (global) and `UserProjectOverrides`
 /// (per-project), ensuring new settings are automatically available in both
 /// contexts without manual synchronization.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+///
+/// Note: Hooks use append semantics when merging global with per-project:
+/// - Global hooks (top-level in TOML) are in `UserConfig.configs.hooks`
+/// - Per-project hooks are in `UserProjectOverrides.overrides.hooks`
+/// - The `UserConfig::hooks()` method merges both with global running first
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct OverridableConfig {
+    /// Hooks configuration.
+    ///
+    /// At top level: global hooks that run for all projects.
+    /// In `[projects."..."]`: per-project hooks that append to global hooks.
+    #[serde(flatten, default)]
+    pub hooks: HooksConfig,
+
     /// Worktree path template
     #[serde(
         rename = "worktree-path",
@@ -475,9 +479,12 @@ pub struct OverridableConfig {
 }
 
 impl OverridableConfig {
-    /// Returns true if all settings are None.
+    /// Returns true if all settings are None/default.
+    ///
+    /// Includes hooks check for per-project configs where hooks are stored here.
     pub fn is_empty(&self) -> bool {
-        self.worktree_path.is_none()
+        self.hooks == HooksConfig::default()
+            && self.worktree_path.is_none()
             && self.list.is_none()
             && self.commit.is_none()
             && self.merge.is_none()
@@ -488,6 +495,7 @@ impl OverridableConfig {
 impl Merge for OverridableConfig {
     fn merge_with(&self, other: &Self) -> Self {
         Self {
+            hooks: self.hooks.merge_with(&other.hooks), // Append semantics
             worktree_path: other
                 .worktree_path
                 .clone()
@@ -508,7 +516,7 @@ fn default_worktree_path() -> String {
 impl UserConfig {
     /// Returns the worktree path template, falling back to the default if not set.
     pub fn worktree_path(&self) -> String {
-        self.overrides
+        self.configs
             .worktree_path
             .clone()
             .unwrap_or_else(default_worktree_path)
@@ -516,7 +524,7 @@ impl UserConfig {
 
     /// Returns true if the user has explicitly set a custom worktree-path.
     pub fn has_custom_worktree_path(&self) -> bool {
-        self.overrides.worktree_path.is_some()
+        self.configs.worktree_path.is_some()
     }
 
     /// Returns the worktree path template for a specific project.
@@ -542,7 +550,7 @@ impl UserConfig {
     pub fn commit_generation(&self, project: Option<&str>) -> CommitGenerationConfig {
         // Get global config: prefer new location, fall back to deprecated
         let global = self
-            .overrides
+            .configs
             .commit
             .as_ref()
             .and_then(|c| c.generation.as_ref())
@@ -573,7 +581,7 @@ impl UserConfig {
         let project_config = project
             .and_then(|p| self.projects.get(p))
             .and_then(|c| c.overrides.list.as_ref());
-        merge_optional(self.overrides.list.as_ref(), project_config)
+        merge_optional(self.configs.list.as_ref(), project_config)
     }
 
     /// Returns the commit config for a specific project.
@@ -584,7 +592,7 @@ impl UserConfig {
         let project_config = project
             .and_then(|p| self.projects.get(p))
             .and_then(|c| c.overrides.commit.as_ref());
-        merge_optional(self.overrides.commit.as_ref(), project_config)
+        merge_optional(self.configs.commit.as_ref(), project_config)
     }
 
     /// Returns the merge config for a specific project.
@@ -595,7 +603,7 @@ impl UserConfig {
         let project_config = project
             .and_then(|p| self.projects.get(p))
             .and_then(|c| c.overrides.merge.as_ref());
-        merge_optional(self.overrides.merge.as_ref(), project_config)
+        merge_optional(self.configs.merge.as_ref(), project_config)
     }
 
     /// Returns the select config for a specific project.
@@ -606,7 +614,23 @@ impl UserConfig {
         let project_config = project
             .and_then(|p| self.projects.get(p))
             .and_then(|c| c.overrides.select.as_ref());
-        merge_optional(self.overrides.select.as_ref(), project_config)
+        merge_optional(self.configs.select.as_ref(), project_config)
+    }
+
+    /// Returns effective hooks for a specific project.
+    ///
+    /// Merges global hooks with per-project hooks using append semantics.
+    /// Both global and per-project hooks run (global first, then per-project).
+    pub fn hooks(&self, project: Option<&str>) -> HooksConfig {
+        let global = &self.configs.hooks;
+        let project_hooks = project
+            .and_then(|p| self.projects.get(p))
+            .map(|c| &c.overrides.hooks);
+
+        match project_hooks {
+            Some(ph) => global.merge_with(ph),
+            None => global.clone(),
+        }
     }
 
     /// Load configuration from config file and environment variables.
@@ -628,8 +652,8 @@ impl UserConfig {
         {
             // Check for deprecated template variables and create migration file if needed
             // User config always gets migration file (it's global, not worktree-specific)
-            // Pass None for repo since user config is global and not tied to any repository
             // Use show_brief_warning=true to emit a brief pointer to `wt config show`
+            // Warning is deduplicated per-process via WARNED_DEPRECATED_PATHS.
             if let Ok(content) = std::fs::read_to_string(config_path) {
                 let _ = super::deprecation::check_and_migrate(
                     config_path,
@@ -683,7 +707,7 @@ impl UserConfig {
     /// Validate configuration values.
     fn validate(&self) -> Result<(), ConfigError> {
         // Validate worktree path (only if explicitly set - default is always valid)
-        if let Some(ref path) = self.overrides.worktree_path {
+        if let Some(ref path) = self.configs.worktree_path {
             if path.is_empty() {
                 return Err(ConfigError::Message("worktree-path cannot be empty".into()));
             }
@@ -1225,18 +1249,42 @@ pub fn get_config_path() -> Option<PathBuf> {
     }
 }
 
+/// Returns all valid top-level keys in user config, derived from the JsonSchema.
+///
+/// This includes keys from UserConfig, OverridableConfig (flattened), and HooksConfig (flattened).
+/// Public for use by the `WorktrunkConfig` trait implementation.
+pub fn valid_user_config_keys() -> Vec<String> {
+    use schemars::SchemaGenerator;
+
+    let schema = SchemaGenerator::default().into_root_schema_for::<UserConfig>();
+
+    // Extract property names from the schema
+    // The schema flattens nested structs, so all top-level keys appear in properties
+    schema
+        .as_object()
+        .and_then(|obj| obj.get("properties"))
+        .and_then(|p| p.as_object())
+        .map(|props| props.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
 /// Find unknown keys in user config TOML content.
 ///
 /// Returns a map of unrecognized top-level keys (with their values) that will be ignored.
-/// Uses serde deserialization with flatten to automatically detect unknown fields.
+/// Compares against the known valid keys derived from the JsonSchema rather than using
+/// serde flatten catchall (which doesn't work reliably with nested flattens).
 /// The values are included to allow checking if keys belong in the other config type.
 pub fn find_unknown_keys(contents: &str) -> std::collections::HashMap<String, toml::Value> {
-    // Deserialize into UserConfig - unknown fields are captured in the `unknown` map
-    let Ok(config) = toml::from_str::<UserConfig>(contents) else {
+    let Ok(table) = contents.parse::<toml::Table>() else {
         return std::collections::HashMap::new();
     };
 
-    config.unknown
+    let valid_keys = valid_user_config_keys();
+
+    table
+        .into_iter()
+        .filter(|(key, _)| !valid_keys.contains(key))
+        .collect()
 }
 
 #[cfg(test)]
@@ -1274,7 +1322,11 @@ mod tests {
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 "#;
         let keys = find_unknown_keys(content);
-        assert!(keys.is_empty());
+        assert!(
+            keys.is_empty(),
+            "Expected no unknown keys, found: {:?}",
+            keys
+        );
     }
 
     #[test]
@@ -1436,7 +1488,7 @@ rename-tab = "echo 'switched'"
     #[test]
     fn test_worktree_path_for_project_falls_back_to_global() {
         let mut config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 worktree_path: Some("../{{ repo }}-{{ branch | sanitize }}".to_string()),
                 ..Default::default()
             },
@@ -1476,7 +1528,7 @@ rename-tab = "echo 'switched'"
     fn test_format_path_with_project_override() {
         let test = test_repo();
         let mut config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 worktree_path: Some("../{{ repo }}.{{ branch | sanitize }}".to_string()),
                 ..Default::default()
             },
@@ -1538,15 +1590,15 @@ rename-tab = "echo 'switched'"
     fn test_worktrunk_config_default() {
         let config = UserConfig::default();
         // worktree_path is None by default, but the getter returns the default
-        assert!(config.overrides.worktree_path.is_none());
+        assert!(config.configs.worktree_path.is_none());
         assert_eq!(
             config.worktree_path(),
             "../{{ repo }}.{{ branch | sanitize }}"
         );
         assert!(config.projects.is_empty());
-        assert!(config.overrides.list.is_none());
-        assert!(config.overrides.commit.is_none());
-        assert!(config.overrides.merge.is_none());
+        assert!(config.configs.list.is_none());
+        assert!(config.configs.commit.is_none());
+        assert!(config.configs.merge.is_none());
         assert!(config.commit_generation.is_none());
         assert!(!config.skip_shell_integration_prompt);
     }
@@ -1661,7 +1713,7 @@ rename-tab = "echo 'switched'"
     fn test_worktrunk_config_format_path_custom_template() {
         let test = test_repo();
         let config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 worktree_path: Some(".worktrees/{{ branch }}".to_string()),
                 ..Default::default()
             },
@@ -1982,7 +2034,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     #[test]
     fn test_effective_commit_generation_no_project() {
         let config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 commit: Some(CommitConfig {
                     stage: None,
                     generation: Some(CommitGenerationConfig {
@@ -2002,7 +2054,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     #[test]
     fn test_effective_commit_generation_with_project_override() {
         let mut config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 commit: Some(CommitConfig {
                     stage: None,
                     generation: Some(CommitGenerationConfig {
@@ -2047,7 +2099,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     #[test]
     fn test_effective_merge_with_partial_override() {
         let mut config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 merge: Some(MergeConfig {
                     squash: Some(true),
                     commit: Some(true),
@@ -2087,7 +2139,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     fn test_effective_list_project_only() {
         // No global list config, only project config
         let mut config = UserConfig::default();
-        assert!(config.overrides.list.is_none());
+        assert!(config.configs.list.is_none());
 
         config.projects.insert(
             "github.com/user/repo".to_string(),
@@ -2117,7 +2169,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     fn test_effective_select_with_project_override() {
         // Test that OverridableConfig merge works correctly for select
         let mut config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 select: Some(SelectConfig {
                     pager: Some("delta".to_string()),
                 }),
@@ -2156,7 +2208,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     fn test_effective_commit_global_only() {
         // Only global config, no project config
         let config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 commit: Some(CommitConfig {
                     stage: Some(StageMode::Tracked),
                     generation: None,
@@ -2254,12 +2306,12 @@ squash = false
 
         // Global config
         assert_eq!(
-            config.overrides.worktree_path,
+            config.configs.worktree_path,
             Some("../{{ repo }}.{{ branch | sanitize }}".to_string())
         );
         assert_eq!(
             config
-                .overrides
+                .configs
                 .commit
                 .as_ref()
                 .unwrap()
@@ -2539,7 +2591,7 @@ squash-template-file = "path/to/file"
         let config_path = dir.path().join("config.toml");
 
         let config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 commit: Some(CommitConfig {
                     stage: None,
                     generation: Some(CommitGenerationConfig {
@@ -2620,7 +2672,7 @@ squash-template-file = "path/to/file"
         let config_path = dir.path().join("config.toml");
 
         let config = UserConfig {
-            overrides: OverridableConfig {
+            configs: OverridableConfig {
                 worktree_path: Some("../{{ repo }}.{{ branch }}".to_string()),
                 ..Default::default()
             },
@@ -2633,6 +2685,224 @@ squash-template-file = "path/to/file"
         assert!(
             saved.contains("worktree-path = \"../{{ repo }}.{{ branch }}\""),
             "Should contain worktree-path: {saved}"
+        );
+    }
+
+    // =========================================================================
+    // Per-project hooks tests (append semantics)
+    // =========================================================================
+
+    /// Helper to parse hooks from TOML
+    fn parse_hooks(toml_str: &str) -> HooksConfig {
+        toml::from_str(toml_str).unwrap()
+    }
+
+    #[test]
+    fn test_hooks_merge_append_semantics() {
+        // Global has post-start, per-project has post-start
+        // Both should run (global first, then per-project)
+        let mut config = UserConfig {
+            configs: OverridableConfig {
+                hooks: parse_hooks("post-start = \"echo global\""),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectOverrides {
+                overrides: OverridableConfig {
+                    hooks: parse_hooks("post-start = \"echo project\""),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let effective = config.hooks(Some("github.com/user/repo"));
+        let post_start = effective.post_start.unwrap();
+        let commands = post_start.commands();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].template, "echo global");
+        assert_eq!(commands[1].template, "echo project");
+    }
+
+    #[test]
+    fn test_hooks_no_project_override_uses_global() {
+        // Global has hooks, project doesn't - global hooks used
+        let config = UserConfig {
+            configs: OverridableConfig {
+                hooks: parse_hooks("post-start = \"echo global\""),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let effective = config.hooks(Some("github.com/other/repo"));
+        let post_start = effective.post_start.unwrap();
+        let commands = post_start.commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].template, "echo global");
+    }
+
+    #[test]
+    fn test_hooks_project_only_no_global() {
+        // Project has hooks, global doesn't - project hooks used
+        let mut config = UserConfig::default();
+
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectOverrides {
+                overrides: OverridableConfig {
+                    hooks: parse_hooks("post-start = \"echo project\""),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let effective = config.hooks(Some("github.com/user/repo"));
+        let post_start = effective.post_start.unwrap();
+        let commands = post_start.commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].template, "echo project");
+    }
+
+    #[test]
+    fn test_hooks_different_hook_types_not_merged() {
+        // Global has post-start, per-project has pre-commit
+        // These should remain separate (different hook types)
+        let mut config = UserConfig {
+            configs: OverridableConfig {
+                hooks: parse_hooks("post-start = \"echo global-start\""),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectOverrides {
+                overrides: OverridableConfig {
+                    hooks: parse_hooks("pre-commit = \"echo project-commit\""),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let effective = config.hooks(Some("github.com/user/repo"));
+
+        // post-start: only global
+        let post_start = effective.post_start.unwrap();
+        let start_commands = post_start.commands();
+        assert_eq!(start_commands.len(), 1);
+        assert_eq!(start_commands[0].template, "echo global-start");
+
+        // pre-commit: only project
+        let pre_commit = effective.pre_commit.unwrap();
+        let commit_commands = pre_commit.commands();
+        assert_eq!(commit_commands.len(), 1);
+        assert_eq!(commit_commands[0].template, "echo project-commit");
+    }
+
+    #[test]
+    fn test_hooks_none_project_uses_global() {
+        // When no project is provided, only global hooks are used
+        let config = UserConfig {
+            configs: OverridableConfig {
+                hooks: parse_hooks("post-start = \"echo global\""),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let effective = config.hooks(None);
+        let post_start = effective.post_start.unwrap();
+        let commands = post_start.commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].template, "echo global");
+    }
+
+    #[test]
+    fn test_hooks_in_overridable_config_is_empty() {
+        // Default hooks should be considered empty
+        let config = OverridableConfig::default();
+        assert!(config.is_empty());
+
+        // With hooks set, should not be empty
+        let config = OverridableConfig {
+            hooks: parse_hooks("post-start = \"echo test\""),
+            ..Default::default()
+        };
+        assert!(!config.is_empty());
+    }
+
+    /// Validates that valid_user_config_keys() includes all hook types from HookType enum.
+    ///
+    /// The JsonSchema derivation should include all HooksConfig fields, which correspond
+    /// to HookType variants. HookType uses strum's Display with kebab-case serialization,
+    /// which matches the serde field names.
+    #[test]
+    fn test_valid_user_config_keys_includes_all_hook_types() {
+        use crate::git::HookType;
+        use strum::IntoEnumIterator;
+
+        let valid_keys = valid_user_config_keys();
+
+        for hook_type in HookType::iter() {
+            let key = hook_type.to_string(); // e.g., "post-create", "pre-merge"
+            assert!(
+                valid_keys.contains(&key),
+                "HookType::{hook_type:?} ({key}) is missing from valid_user_config_keys()"
+            );
+        }
+    }
+
+    /// Validates that all keys from valid_user_config_keys() are accepted by serde.
+    ///
+    /// Creates a TOML config with each key set to a valid value and verifies
+    /// deserialization succeeds. This ensures the JsonSchema matches serde's expectations.
+    #[test]
+    fn test_valid_user_config_keys_all_deserialize() {
+        let valid_keys = valid_user_config_keys();
+
+        // Build a TOML string with all keys
+        // Top-level scalar values must come before table sections
+        let mut scalar_lines = Vec::new();
+        let mut table_lines = Vec::new();
+
+        for key in &valid_keys {
+            match key.as_str() {
+                "projects" => continue, // Skip - table type tested separately
+                "skip-shell-integration-prompt" => {
+                    scalar_lines.push(format!("{key} = true"));
+                }
+                "worktree-path" => {
+                    scalar_lines.push(format!("{key} = \"test-value\""));
+                }
+                "list" | "commit" | "merge" | "select" | "commit-generation" => {
+                    // Table sections with minimal content
+                    table_lines.push(format!("[{key}]"));
+                }
+                // Hook keys take string values
+                _ => {
+                    scalar_lines.push(format!("{key} = \"test-value\""));
+                }
+            };
+        }
+
+        // Scalars first, then tables
+        scalar_lines.extend(table_lines);
+        let toml_content = scalar_lines.join("\n");
+
+        // Should deserialize without error
+        let result: Result<UserConfig, _> = toml::from_str(&toml_content);
+        assert!(
+            result.is_ok(),
+            "Failed to deserialize config with all valid keys:\n{toml_content}\nError: {:?}",
+            result.err()
         );
     }
 }

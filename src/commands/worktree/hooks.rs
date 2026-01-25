@@ -22,9 +22,10 @@ impl<'a> CommandContext<'a> {
     /// `extra_vars`: Additional template variables (e.g., `base`, `base_worktree_path`).
     pub fn execute_post_create_commands(&self, extra_vars: &[(&str, &str)]) -> anyhow::Result<()> {
         let project_config = self.repo.load_project_config()?;
+        let user_hooks = self.config.hooks(self.project_id().as_deref());
         crate::commands::hooks::run_hook_with_filter(
             self,
-            self.config.hooks.post_create.as_ref(),
+            user_hooks.post_create.as_ref(),
             project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_create.as_ref()),
@@ -47,10 +48,11 @@ impl<'a> CommandContext<'a> {
         display_path: Option<&std::path::Path>,
     ) -> anyhow::Result<()> {
         let project_config = self.repo.load_project_config()?;
+        let user_hooks = self.config.hooks(self.project_id().as_deref());
 
         let commands = prepare_hook_commands(
             self,
-            self.config.hooks.post_start.as_ref(),
+            user_hooks.post_start.as_ref(),
             project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_start.as_ref()),
@@ -76,10 +78,11 @@ impl<'a> CommandContext<'a> {
         display_path: Option<&std::path::Path>,
     ) -> anyhow::Result<()> {
         let project_config = self.repo.load_project_config()?;
+        let user_hooks = self.config.hooks(self.project_id().as_deref());
 
         let commands = prepare_hook_commands(
             self,
-            self.config.hooks.post_switch.as_ref(),
+            user_hooks.post_switch.as_ref(),
             project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_switch.as_ref()),
@@ -137,9 +140,10 @@ impl<'a> CommandContext<'a> {
             ("short_commit", short_commit),
         ];
 
+        let user_hooks = self.config.hooks(self.project_id().as_deref());
         let commands = prepare_hook_commands(
             self,
-            self.config.hooks.post_remove.as_ref(),
+            user_hooks.post_remove.as_ref(),
             project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_remove.as_ref()),

@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::git::HookType;
@@ -5,7 +6,7 @@ use crate::git::HookType;
 use super::commands::CommandConfig;
 
 /// Shared hook configuration for user and project configs.
-#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct HooksConfig {
     /// Commands to execute after worktree creation (blocking)
     #[serde(
@@ -79,6 +80,39 @@ impl HooksConfig {
             HookType::PostMerge => self.post_merge.as_ref(),
             HookType::PreRemove => self.pre_remove.as_ref(),
             HookType::PostRemove => self.post_remove.as_ref(),
+        }
+    }
+}
+
+use super::user::Merge;
+
+/// Merge two optional command configs by appending (base commands first, then overlay).
+fn merge_append_hooks(
+    base: &Option<CommandConfig>,
+    overlay: &Option<CommandConfig>,
+) -> Option<CommandConfig> {
+    match (base, overlay) {
+        (None, None) => None,
+        (Some(b), None) => Some(b.clone()),
+        (None, Some(o)) => Some(o.clone()),
+        (Some(b), Some(o)) => Some(b.merge_append(o)),
+    }
+}
+
+impl Merge for HooksConfig {
+    /// Merge two hook configs using append semantics.
+    ///
+    /// Both global and per-project hooks run (global first, then per-project).
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            post_create: merge_append_hooks(&self.post_create, &other.post_create),
+            post_start: merge_append_hooks(&self.post_start, &other.post_start),
+            post_switch: merge_append_hooks(&self.post_switch, &other.post_switch),
+            pre_commit: merge_append_hooks(&self.pre_commit, &other.pre_commit),
+            pre_merge: merge_append_hooks(&self.pre_merge, &other.pre_merge),
+            post_merge: merge_append_hooks(&self.post_merge, &other.post_merge),
+            pre_remove: merge_append_hooks(&self.pre_remove, &other.pre_remove),
+            post_remove: merge_append_hooks(&self.post_remove, &other.post_remove),
         }
     }
 }

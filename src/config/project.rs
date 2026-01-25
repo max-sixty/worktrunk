@@ -3,6 +3,7 @@
 //! Configuration that is checked into the repository and shared across all developers.
 
 use config::ConfigError;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::HooksConfig;
@@ -18,7 +19,7 @@ use super::HooksConfig;
 /// [list]
 /// url = "http://localhost:{{ branch | hash_port }}"
 /// ```
-#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct ProjectListConfig {
     /// URL template for dev server links shown in `wt list`.
     ///
@@ -43,7 +44,7 @@ pub struct ProjectListConfig {
 /// [ci]
 /// platform = "github"  # or "gitlab"
 /// ```
-#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct ProjectCiConfig {
     /// CI platform override. When set, skips URL-based platform detection.
     ///
@@ -94,7 +95,7 @@ impl ProjectConfig {
 ///
 /// - `{{ branch | sanitize }}` - Replace `/` and `\` with `-` (e.g., "feature-auth")
 /// - `{{ branch | hash_port }}` - Hash string to deterministic port (10000-19999)
-#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct ProjectConfig {
     /// Project hooks (same keys as user hooks, flattened at top level)
     #[serde(flatten, default)]
@@ -107,10 +108,6 @@ pub struct ProjectConfig {
     /// CI configuration (platform override)
     #[serde(default)]
     pub ci: Option<ProjectCiConfig>,
-
-    /// Captures unknown fields for validation warnings
-    #[serde(flatten, default, skip_serializing)]
-    pub unknown: std::collections::HashMap<String, toml::Value>,
 }
 
 impl ProjectConfig {
@@ -171,18 +168,39 @@ impl ProjectConfig {
     }
 }
 
+/// Returns all valid top-level keys in project config, derived from the JsonSchema.
+///
+/// This includes keys from ProjectConfig and HooksConfig (flattened).
+/// Public for use by the `WorktrunkConfig` trait implementation.
+pub fn valid_project_config_keys() -> Vec<String> {
+    use schemars::SchemaGenerator;
+
+    let schema = SchemaGenerator::default().into_root_schema_for::<ProjectConfig>();
+
+    schema
+        .as_object()
+        .and_then(|obj| obj.get("properties"))
+        .and_then(|p| p.as_object())
+        .map(|props| props.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
 /// Find unknown keys in project config TOML content
 ///
 /// Returns a map of unrecognized top-level keys (with their values) that will be ignored.
-/// Uses serde deserialization with flatten to automatically detect unknown fields.
+/// Compares against the known valid keys derived from the JsonSchema.
 /// The values are included to allow checking if keys belong in the other config type.
 pub fn find_unknown_keys(contents: &str) -> std::collections::HashMap<String, toml::Value> {
-    // Deserialize into ProjectConfig - unknown fields are captured in the `unknown` map
-    let Ok(config) = toml::from_str::<ProjectConfig>(contents) else {
+    let Ok(table) = contents.parse::<toml::Table>() else {
         return std::collections::HashMap::new();
     };
 
-    config.unknown
+    let valid_keys = valid_project_config_keys();
+
+    table
+        .into_iter()
+        .filter(|(key, _)| !valid_keys.contains(key))
+        .collect()
 }
 
 #[cfg(test)]
