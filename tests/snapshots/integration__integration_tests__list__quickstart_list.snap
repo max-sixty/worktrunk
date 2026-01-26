@@ -1,0 +1,41 @@
+---
+source: tests/integration_tests/list.rs
+info:
+  program: wt
+  args:
+    - list
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "98"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    PATH: "[PATH]"
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+  [1mBranch[0m        [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
+@ feature-auth  [36m+[39m   [2m–[22m      [32m+53[0m                         [2m0e631add[0m  [2m1d[0m    [2mInitial commit
+^ main              [2m^[22m[2m⇡[22m                         [32m⇡1[0m      [2m0e631add[0m  [2m1d[0m    [2mInitial commit
+
+[2m○[22m [2mShowing 2 worktrees, 1 with changes, 1 column hidden
+
+----- stderr -----
