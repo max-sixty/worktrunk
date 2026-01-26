@@ -1774,17 +1774,7 @@ Without shell integration, `wt switch` prints the target directory but cannot `c
 
 ### Skip first-run prompt
 
-On first run without shell integration, Worktrunk offers to install it. Suppress this prompt in CI or automated environments:
-
-```toml
-skip-shell-integration-prompt = true
-```
-
-Or via environment variable:
-
-```bash
-export WORKTRUNK_SKIP_SHELL_INTEGRATION_PROMPT=true
-```
+On first run without shell integration, Worktrunk offers to install it. Declining sets `skip-shell-integration-prompt = true` automatically.
 
 # Other
 

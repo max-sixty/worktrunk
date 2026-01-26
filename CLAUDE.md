@@ -247,6 +247,11 @@ Examples: `feature-user-post-start-npm.log`, `feature-project-post-start-build.l
 
 ## Coverage
 
+**NEVER merge a PR with failing `codecov/patch` without explicit user approval.** The check is marked "not required" in GitHub but it requires user approval to merge. When codecov fails:
+
+1. Investigate and fix the coverage gap (see below)
+2. If you believe the failure is a false positive, ask the user before merging
+
 The `codecov/patch` CI check enforces coverage on changed lines — respond to failures by writing tests, not by ignoring them. If code is unused, remove it. This includes specialized error handlers for rare cases when falling through to a more general handler is sufficient.
 
 ### Running Coverage Locally

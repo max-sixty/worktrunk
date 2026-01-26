@@ -333,13 +333,7 @@ Without shell integration, [2mwt switch[0m prints the target directory but can
 
 [32mSkip first-run prompt[0m
 
-On first run without shell integration, Worktrunk offers to install it. Suppress this prompt in CI or automated environments:
-
-  [2mskip-shell-integration-prompt = true[0m
-
-Or via environment variable:
-
-  [2mexport WORKTRUNK_SKIP_SHELL_INTEGRATION_PROMPT=true[0m
+On first run without shell integration, Worktrunk offers to install it. Declining sets [2mskip-shell-integration-prompt = true[0m automatically.
 
 [32mOTHER[0m
 
