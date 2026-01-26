@@ -7,9 +7,10 @@
 //! avoiding duplication of git operations.
 
 use std::env;
-use std::fs::canonicalize;
 use std::io::{self, IsTerminal, Read};
 use std::path::{Component, Path};
+
+use dunce::canonicalize;
 
 use ansi_str::AnsiStr;
 use anyhow::{Context, Result};
@@ -39,13 +40,10 @@ impl ClaudeCodeContext {
 
         let v: serde_json::Value = serde_json::from_str(input).ok()?;
 
-        // TODO: When current_dir is missing, defaulting to "." suppresses the directory
-        // segment even if model/context fields are present. Consider falling back to
-        // env::current_dir() instead for a more intuitive experience.
+        // current_dir is required - if missing, treat as invalid JSON
         let current_dir = v
             .pointer("/workspace/current_dir")
-            .and_then(|v| v.as_str())
-            .unwrap_or(".")
+            .and_then(|v| v.as_str())?
             .to_string();
 
         let model_name = v
@@ -514,12 +512,13 @@ mod tests {
 
     #[test]
     fn test_claude_code_context_parse_missing_workspace() {
-        // Missing workspace defaults to "."
+        // Missing current_dir makes the JSON invalid - returns None
         let json = r#"{"model": {"display_name": "Sonnet"}}"#;
 
-        let ctx = ClaudeCodeContext::parse(json).expect("should parse");
-        assert_eq!(ctx.current_dir, ".");
-        assert_eq!(ctx.model_name, Some("Sonnet".to_string()));
+        assert!(
+            ClaudeCodeContext::parse(json).is_none(),
+            "Missing current_dir should return None"
+        );
     }
 
     #[test]
