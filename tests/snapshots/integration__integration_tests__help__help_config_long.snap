@@ -227,7 +227,6 @@ Default template:
   [2m<format>[0m
   [2m- Subject line under 50 chars[0m
   [2m- For material changes, add a blank line then a body paragraph explaining the change[0m
-  [2m- Trivial changes (typos, formatting, renames) need only a subject line[0m
   [2m- Output only the commit message, no quotes or code blocks[0m
   [2m</format>[0m
   [2m[0m
@@ -270,7 +269,6 @@ Default template:
   [2m<format>[0m
   [2m- Subject line under 50 chars[0m
   [2m- For material changes, add a blank line then a body paragraph explaining the change[0m
-  [2m- Trivial changes (typos, formatting, renames) need only a subject line[0m
   [2m- Output only the commit message, no quotes or code blocks[0m
   [2m</format>[0m
   [2m[0m
@@ -335,11 +333,9 @@ Or manually add to the shell config:
 
 Without shell integration, [2mwt switch[0m prints the target directory but cannot [2mcd[0m into it.
 
-[32mSkip first-run prompt[0m
+[32mFirst-run prompts[0m
 
-On first run without shell integration, Worktrunk offers to install it. Declining sets [2mskip-shell-integration-prompt = true[0m automatically.
-
-[32mOTHER[0m
+On first run without shell integration, Worktrunk offers to install it. Similarly, on first commit without LLM configuration, it offers to configure a detected tool ([2mclaude[0m, [2mcodex[0m). Declining sets [2mskip-shell-integration-prompt[0m or [2mskip-commit-generation-prompt[0m automatically.
 
 [32mOTHER[0m
 

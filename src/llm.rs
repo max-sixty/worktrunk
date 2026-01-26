@@ -226,7 +226,6 @@ const DEFAULT_TEMPLATE: &str = r#"Write a commit message for the staged changes 
 <format>
 - Subject line under 50 chars
 - For material changes, add a blank line then a body paragraph explaining the change
-- Trivial changes (typos, formatting, renames) need only a subject line
 - Output only the commit message, no quotes or code blocks
 </format>
 
@@ -260,7 +259,6 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"Combine these commits into a single com
 <format>
 - Subject line under 50 chars
 - For material changes, add a blank line then a body paragraph explaining the change
-- Trivial changes (typos, formatting, renames) need only a subject line
 - Output only the commit message, no quotes or code blocks
 </format>
 

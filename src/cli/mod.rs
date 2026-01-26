@@ -1655,7 +1655,6 @@ Write a commit message for the staged changes below.
 <format>
 - Subject line under 50 chars
 - For material changes, add a blank line then a body paragraph explaining the change
-- Trivial changes (typos, formatting, renames) need only a subject line
 - Output only the commit message, no quotes or code blocks
 </format>
 
@@ -1702,7 +1701,6 @@ Combine these commits into a single commit message.
 <format>
 - Subject line under 50 chars
 - For material changes, add a blank line then a body paragraph explaining the change
-- Trivial changes (typos, formatting, renames) need only a subject line
 - Output only the commit message, no quotes or code blocks
 </format>
 
@@ -1776,11 +1774,9 @@ wt config shell init fish | source
 
 Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
 
-### Skip first-run prompt
+### First-run prompts
 
-On first run without shell integration, Worktrunk offers to install it. Declining sets `skip-shell-integration-prompt = true` automatically.
-
-# Other
+On first run without shell integration, Worktrunk offers to install it. Similarly, on first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
 
 # Other
 

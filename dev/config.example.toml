@@ -132,7 +132,6 @@
 # <format>
 # - Subject line under 50 chars
 # - For material changes, add a blank line then a body paragraph explaining the change
-# - Trivial changes (typos, formatting, renames) need only a subject line
 # - Output only the commit message, no quotes or code blocks
 # </format>
 #
@@ -177,7 +176,6 @@
 # <format>
 # - Subject line under 50 chars
 # - For material changes, add a blank line then a body paragraph explaining the change
-# - Trivial changes (typos, formatting, renames) need only a subject line
 # - Output only the commit message, no quotes or code blocks
 # </format>
 #
