@@ -63,7 +63,7 @@ pub fn step_commit(
         if !approved {
             eprintln!(
                 "{}",
-                worktrunk::styling::info_message("Commands declined, committing without hooks")
+                info_message("Commands declined, committing without hooks",)
             );
             true // Skip hooks
         } else {
@@ -194,7 +194,7 @@ pub fn handle_squash(
 
     if commit_count == 0 && has_staged {
         // Just staged changes, no commits - commit them directly (no squashing needed)
-        generator.commit_staged_changes(true, stage_mode)?;
+        generator.commit_staged_changes(&wt, true, true, stage_mode)?;
         return Ok(SquashResult::Squashed);
     }
 
@@ -729,6 +729,79 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
             }
         }
     }
+
+    Ok(())
+}
+
+/// Move worktrees to their expected paths based on the `worktree-path` template.
+///
+/// See `src/commands/relocate.rs` for the implementation details and algorithm.
+///
+/// # Flags
+///
+/// | Flag | Purpose |
+/// |------|---------|
+/// | `--dry-run` | Show what would be moved without moving |
+/// | `--commit` | Auto-commit dirty worktrees with LLM-generated messages before relocating |
+/// | `--clobber` | Move non-worktree paths out of the way (`<path>.bak-<timestamp>`) |
+/// | `[branches...]` | Specific branches to relocate (default: all mismatched) |
+pub fn step_relocate(
+    branches: Vec<String>,
+    dry_run: bool,
+    commit: bool,
+    clobber: bool,
+) -> anyhow::Result<()> {
+    use super::relocate::{
+        GatherResult, RelocationExecutor, ValidationResult, gather_candidates, show_all_skipped,
+        show_dry_run_preview, show_no_relocations_needed, show_summary, validate_candidates,
+    };
+
+    let repo = Repository::current()?;
+    let config = UserConfig::load()?;
+    let default_branch = repo.default_branch().unwrap_or_default();
+
+    // Validate default branch early - needed for main worktree relocation
+    if default_branch.is_empty() {
+        anyhow::bail!(
+            "Cannot determine default branch; set with: wt config state default-branch set main"
+        );
+    }
+    let repo_path = repo.repo_path().to_path_buf();
+
+    // Phase 1: Gather candidates (worktrees not at expected paths)
+    let GatherResult {
+        candidates,
+        template_errors,
+    } = gather_candidates(&repo, &config, &branches)?;
+
+    if candidates.is_empty() {
+        show_no_relocations_needed(template_errors);
+        return Ok(());
+    }
+
+    // Dry run: show preview and exit
+    if dry_run {
+        show_dry_run_preview(&candidates);
+        return Ok(());
+    }
+
+    // Phase 2: Validate candidates (check locked/dirty, optionally auto-commit)
+    let ValidationResult { validated, skipped } =
+        validate_candidates(&repo, &config, candidates, commit, &repo_path)?;
+
+    if validated.is_empty() {
+        show_all_skipped(skipped);
+        return Ok(());
+    }
+
+    // Phase 3 & 4: Create executor (classifies targets) and execute relocations
+    let mut executor = RelocationExecutor::new(&repo, validated, clobber)?;
+    let cwd = std::env::current_dir().ok();
+    executor.execute(&repo_path, &default_branch, cwd.as_deref())?;
+
+    // Show summary
+    let total_skipped = skipped + executor.skipped;
+    show_summary(executor.relocated, total_skipped);
 
     Ok(())
 }
