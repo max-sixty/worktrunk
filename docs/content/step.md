@@ -75,6 +75,8 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
+# Subcommands
+
 ## wt step commit
 
 Stage and commit with LLM-generated message.
