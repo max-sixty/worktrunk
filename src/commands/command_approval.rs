@@ -25,8 +25,8 @@ use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{GitError, HookType};
 use worktrunk::styling::{
-    INFO_SYMBOL, PROMPT_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_bash_with_gutter,
-    hint_message, stderr, warning_message,
+    INFO_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_bash_with_gutter, hint_message,
+    prompt_message, stderr, warning_message,
 };
 
 use super::hook_filter::{HookSource, ParsedFilter};
@@ -148,8 +148,8 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
     stderr().flush()?;
 
     eprint!(
-        "{}",
-        cformat!("{PROMPT_SYMBOL} Allow and remember? <bold>[y/N]</> ")
+        "{} ",
+        prompt_message(cformat!("Allow and remember? <bold>[y/N]</>"))
     );
     stderr().flush()?;
 

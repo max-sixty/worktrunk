@@ -7,8 +7,8 @@ use anstyle::Style;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
 use worktrunk::styling::{
-    INFO_SYMBOL, PROMPT_SYMBOL, SUCCESS_SYMBOL, eprint, eprintln, format_bash_with_gutter,
-    format_with_gutter, warning_message,
+    INFO_SYMBOL, SUCCESS_SYMBOL, eprint, eprintln, format_bash_with_gutter, format_with_gutter,
+    prompt_message, warning_message,
 };
 
 pub struct ConfigureResult {
@@ -726,8 +726,8 @@ pub fn prompt_for_install(
 ) -> Result<bool, String> {
     loop {
         eprint!(
-            "{}",
-            color_print::cformat!("{} {} <bold>[y/N/?]</> ", PROMPT_SYMBOL, prompt_text)
+            "{} ",
+            prompt_message(color_print::cformat!("{prompt_text} <bold>[y/N/?]</>"))
         );
         io::stderr().flush().map_err(|e| e.to_string())?;
 
@@ -758,8 +758,10 @@ pub fn prompt_for_install(
 
 /// Prompt user for yes/no confirmation (simple [y/N] prompt)
 fn prompt_yes_no() -> Result<bool, String> {
-    let bold = Style::new().bold();
-    eprint!("{PROMPT_SYMBOL} Proceed? {bold}[y/N]{bold:#} ");
+    eprint!(
+        "{} ",
+        prompt_message(color_print::cformat!("Proceed? <bold>[y/N]</>"))
+    );
     io::stderr().flush().map_err(|e| e.to_string())?;
 
     let mut input = String::new();
@@ -1237,7 +1239,7 @@ pub fn handle_show_theme() {
 
     // Prompt
     eprintln!("{}", info_message("Prompt formatting:"));
-    eprintln!("{PROMPT_SYMBOL} Proceed? [y/N] ");
+    eprintln!("{} ", prompt_message("Proceed? [y/N]"));
 }
 
 #[cfg(test)]

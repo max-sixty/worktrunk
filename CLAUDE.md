@@ -315,6 +315,18 @@ Use `wt list --format=json` for structured data access. See `wt list --help` for
 
 ## Code Quality
 
+### Use Existing Dependencies
+
+Never hand-roll utilities that already exist as crate dependencies. Check `Cargo.toml` before implementing:
+
+| Need | Use | Not |
+|------|-----|-----|
+| Path normalization | `path_slash::PathExt::to_slash_lossy()` | `.to_string_lossy().replace('\\', "/")` |
+| Shell escaping | `shell_escape::unix::escape()` | Manual quoting |
+| ANSI colors | `color_print::cformat!()` | Raw escape codes |
+
+### Don't Suppress Warnings
+
 Don't suppress warnings with `#[allow(dead_code)]` — either delete the code or add a TODO explaining when it will be used:
 
 ```rust

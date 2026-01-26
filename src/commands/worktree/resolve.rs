@@ -180,7 +180,7 @@ fn canonicalize_with_parents(path: &Path) -> PathBuf {
 /// Returns `true` if the paths resolve to the same location.
 /// Handles the case where one path exists and the other doesn't by resolving
 /// parent directory symlinks for non-existent paths.
-pub(super) fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
+pub(crate) fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
     let a_canonical = canonicalize_with_parents(a);
     let b_canonical = canonicalize_with_parents(b);
     a_canonical == b_canonical

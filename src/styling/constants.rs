@@ -205,6 +205,11 @@ pub fn info_message(content: impl AsRef<str>) -> FormattedMessage {
     FormattedMessage(format!("{INFO_SYMBOL} {}", content.as_ref()))
 }
 
+/// Format a prompt message with symbol and cyan styling
+pub fn prompt_message(content: impl AsRef<str>) -> FormattedMessage {
+    FormattedMessage(cformat!("{PROMPT_SYMBOL} <cyan>{}</>", content.as_ref()))
+}
+
 /// Format a section heading (cyan uppercase text, no emoji)
 ///
 /// Used for organizing output into distinct sections. Headings can have
@@ -329,6 +334,13 @@ mod tests {
         let msg = info_message("5 items found");
         assert!(msg.as_str().contains(INFO_SYMBOL));
         assert!(msg.as_str().contains("5 items found"));
+    }
+
+    #[test]
+    fn test_prompt_message() {
+        let msg = prompt_message("Continue?");
+        assert!(msg.as_str().contains(PROMPT_SYMBOL));
+        assert!(msg.as_str().contains("Continue?"));
     }
 
     // ============================================================================
