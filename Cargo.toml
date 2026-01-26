@@ -124,7 +124,7 @@ schemars = { version = "1.2.0", features = ["derive"] }
 
 [target.'cfg(unix)'.dependencies]
 skim = "0.20"
-nix = { version = "0.30", default-features = false, features = ["process", "signal"] }
+nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 signal-hook = "0.4"
 
 [build-dependencies]
