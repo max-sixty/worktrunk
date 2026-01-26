@@ -1896,8 +1896,8 @@ mod tests {
     )
     .unwrap();
 
+    // Stage files but don't commit - let wt merge do the committing
     repo.run_git_in(&feature_auth, &["add", "auth.rs", "lib.rs"]);
-    repo.commit_staged_with_age("Add authentication module", 2 * HOUR, &feature_auth);
 
     // Create a temp file for the directive outside the repo to avoid making main dirty
     let directive_file = repo
@@ -1907,10 +1907,24 @@ mod tests {
         .join(".wt-directive-temp");
     std::fs::write(&directive_file, "").unwrap();
 
+    // Create a mock LLM script that returns a good commit message
+    let mock_llm = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("mock-llm.sh");
+    std::fs::write(&mock_llm, "#!/bin/sh\necho 'Add authentication module'").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&mock_llm, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
     // Merge feature-auth into main
     assert_cmd_snapshot!("quickstart_merge", {
         let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_auth));
         cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
+        cmd.env("WORKTRUNK_COMMIT__GENERATION__COMMAND", mock_llm.to_str().unwrap());
         cmd
     });
 }

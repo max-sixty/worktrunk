@@ -24,6 +24,7 @@ info:
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_COMMIT__GENERATION__COMMAND: /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmplWLZUt/mock-llm.sh
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_DIRECTIVE_FILE: "[DIRECTIVE_FILE]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -36,7 +37,10 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no commit/squash/rebase needed)[39m
+[36m◎[39m [36mGenerating commit message and committing changes... [90m(2 files, [32m+53[39m, no squashing needed[39m[90m)[39m[39m
+[107m [0m [1mAdd authentication module[22m
+[32m✓[39m [32mCommitted changes @ [2m[HASH][22m[39m
+[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no rebase needed)[39m
 [107m [0m * [33m[HASH][m Add authentication module
 [107m [0m  auth.rs | 51 [32m+++++++++++++++++++++++++++++++++++++++++++++++++++[m
 [107m [0m  lib.rs  |  2 [32m++[m

@@ -176,7 +176,10 @@ wt remove                         # after PR is merged
 
 {% terminal() %}
 <span class="cmd">wt merge main</span>
-<span class=c>◎</span> <span class=c>Merging 1 commit to <b>main</b> @ <span class=d>a1b2c3d</span> (no commit/squash/rebase needed)</span>
+<span class=c>◎</span> <span class=c>Generating commit message and committing changes... <span style='color:var(--bright-black,#555)'>(2 files, <span class=g>+53</span></span></span>, no squashing needed<span style='color:var(--bright-black,#555)'>)</span>
+<span style='background:var(--bright-white,#fff)'> </span> <b>Add authentication module</b>
+<span class=g>✓</span> <span class=g>Committed changes @ <span class=d>a1b2c3d</span></span>
+<span class=c>◎</span> <span class=c>Merging 1 commit to <b>main</b> @ <span class=d>a1b2c3d</span> (no rebase needed)</span>
 <span style='background:var(--bright-white,#fff)'> </span> * <span style='color:var(--yellow,#a60)'>a1b2c3d</span> Add authentication module
 <span style='background:var(--bright-white,#fff)'> </span>  auth.rs | 51 <span class=g>+++++++++++++++++++++++++++++++++++++++++++++++++++</span>
 <span style='background:var(--bright-white,#fff)'> </span>  lib.rs  |  2 <span class=g>++</span>

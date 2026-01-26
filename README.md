@@ -136,7 +136,7 @@ paru worktrunk-bin && wt config shell install
 Create a worktree for a new feature:
 
 ```console
-$ wt switch --create feature-auth
+wt switch --create feature-auth
 ✓ Created branch feature-auth from main and worktree @ repo.feature-auth
 
 ```
@@ -144,7 +144,7 @@ $ wt switch --create feature-auth
 This creates a new branch and worktree, then switches to it. Do your work, then check all worktrees with [`wt list`](https://worktrunk.dev/list/):
 
 ```console
-$ wt list
+wt list
   Branch        Status        HEAD±    main↕  Remote⇅  Commit    Age   Message
 @ feature-auth  +   –      +53                         0e631add  1d    Initial commit
 ^ main              ^⇡                         ⇡1      0e631add  1d    Initial commit
@@ -168,8 +168,11 @@ wt remove                         # after PR is merged
 **Local merge** — squash, rebase onto main, fast-forward merge, clean up:
 
 ```console
-$ wt merge
-◎ Merging 1 commit to main @ a1b2c3d (no commit/squash/rebase needed)
+wt merge main
+◎ Generating commit message and committing changes... (2 files, +53, no squashing needed)
+  Add authentication module
+✓ Committed changes @ a1b2c3d
+◎ Merging 1 commit to main @ a1b2c3d (no rebase needed)
   * a1b2c3d Add authentication module
    auth.rs | 51 +++++++++++++++++++++++++++++++++++++++++++++++++++
    lib.rs  |  2 ++
