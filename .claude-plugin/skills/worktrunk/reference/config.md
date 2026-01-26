@@ -341,7 +341,7 @@ export WORKTRUNK_SKIP_SHELL_INTEGRATION_PROMPT=true
 
 # Other
 
-## Environment Variables
+## Environment variables
 
 All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
 
