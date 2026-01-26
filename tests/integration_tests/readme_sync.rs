@@ -696,10 +696,11 @@ fn heading_to_anchor(heading: &str) -> String {
 }
 
 /// Regex to match terminal shortcodes with AUTO-GENERATED-HTML markers
+/// Optionally captures a preceding bash code block (which becomes redundant)
 /// These need to be converted to plain code blocks for README
 static TERMINAL_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?s)<!-- ⚠️ AUTO-GENERATED-HTML from [^\n]+ -->\n+\{% terminal\(\) %\}\n(.*?)\{% end %\}\n+<!-- END AUTO-GENERATED -->",
+        r"(?s)(?:```bash\n[^\n]+\n```\n+)?<!-- ⚠️ AUTO-GENERATED-HTML from [^\n]+ -->\n+\{% terminal\(\) %\}\n(.*?)\{% end %\}\n+<!-- END AUTO-GENERATED -->",
     )
     .unwrap()
 });
@@ -745,19 +746,13 @@ fn transform_zola_to_github(content: &str) -> String {
         })
         .into_owned();
 
-    // Transform terminal markers to plain code blocks for README
+    // Transform terminal markers to console code blocks for README
     let content = TERMINAL_MARKER_PATTERN
         .replace_all(&content, |caps: &regex::Captures| {
             let inner = caps.get(1).unwrap().as_str();
-            // Strip HTML and extract just the text output (skip the command line)
+            // Strip HTML and extract command + output as single block
             let plain = strip_html(inner);
-            // Skip the first line (which is "$ wt ...") and just show output
-            let output: String = plain
-                .lines()
-                .skip(1) // Skip command line
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!("```\n{}\n```", output)
+            format!("```console\n{}\n```", plain)
         })
         .into_owned();
 

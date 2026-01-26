@@ -135,26 +135,22 @@ paru worktrunk-bin && wt config shell install
 
 Create a worktree for a new feature:
 
-```bash
-wt switch --create feature-auth
-```
-
-```
+```console
+$ wt switch --create feature-auth
 ✓ Created branch feature-auth from main and worktree @ repo.feature-auth
+
 ```
 
 This creates a new branch and worktree, then switches to it. Do your work, then check all worktrees with [`wt list`](https://worktrunk.dev/list/):
 
-```bash
-wt list
-```
-
-```
+```console
+$ wt list
   Branch        Status        HEAD±    main↕  Remote⇅  Commit    Age   Message
 @ feature-auth  +   –      +53                         0e631add  1d    Initial commit
 ^ main              ^⇡                         ⇡1      0e631add  1d    Initial commit
 
 ○ Showing 2 worktrees, 1 with changes, 1 column hidden
+
 ```
 
 The `@` marks the current worktree. `+` means uncommitted changes, `↕` means unpushed commits.
@@ -171,11 +167,8 @@ wt remove                         # after PR is merged
 
 **Local merge** — squash, rebase onto main, fast-forward merge, clean up:
 
-```bash
-wt merge
-```
-
-```
+```console
+$ wt merge
 ◎ Merging 1 commit to main @ a1b2c3d (no commit/squash/rebase needed)
   * a1b2c3d Add authentication module
    auth.rs | 51 +++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -184,6 +177,7 @@ wt merge
 ✓ Merged to main (1 commit, 2 files, +53)
 ◎ Removing feature-auth worktree & branch in background (same commit as main, _)
 ○ Switched to worktree for main @ repo
+
 ```
 
 For parallel agents, create multiple worktrees and launch an agent in each:
