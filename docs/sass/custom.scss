@@ -746,14 +746,10 @@ main {
     }
 
     // H1 entries in TOC - section markers
-    // Text aligns with H2s; left border provides visual grouping
+    // Left border provides visual grouping
     &.toc-h1 {
         margin-top: 0.35rem;
-        padding-left: 0.65rem;  // Account for border so text aligns with H2s
-
-        &:first-of-type {
-            margin-top: 0.15rem;
-        }
+        padding-left: 0.65rem;
 
         a {
             font-weight: 550;

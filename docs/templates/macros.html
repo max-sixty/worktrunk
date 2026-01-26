@@ -28,7 +28,7 @@
             </a>
         </div>
         {# Show H2 children nested under this H1 #}
-        {% for child in h.children %}
+        {% for child in h.children | default(value=[]) %}
         {% if child.level == 2 %}
         <div class="toc-item-child toc-h2-under-h1">
             <a class="subtext" href="{{ child.permalink | safe }}">
