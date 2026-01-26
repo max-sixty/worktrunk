@@ -127,6 +127,50 @@ pub fn maybe_handle_help_with_pager() -> bool {
 /// If `width` is provided, wraps text at that width (for web docs); otherwise uses default.
 /// Always preserves ANSI color codes for HTML conversion.
 fn get_help_reference(command_path: &[&str], width: Option<usize>) -> String {
+    let output = get_help_reference_inner(command_path, width);
+    // Strip OSC 8 hyperlinks. Clap generates these from markdown links like [text](url),
+    // but web docs convert ANSI to HTML via ansi_to_html which only handles SGR codes
+    // (colors), not OSC sequences - hyperlinks leak through as garbage.
+    strip_osc8_hyperlinks(&output)
+}
+
+/// Strip OSC 8 hyperlinks while preserving other ANSI sequences (colors).
+///
+/// Clap's `unstable-markdown` feature (added in 4.5.28) converts markdown links like
+/// `[text](url)` in doc comments to OSC 8 terminal hyperlinks. This is great for terminal
+/// output (clickable links!), but our web docs use `ansi_to_html` which only handles SGR
+/// codes (colors), not OSC sequences—hyperlinks leak through as garbage text.
+///
+/// There's no runtime toggle in clap to disable this; the OSC 8 bytes are emitted
+/// unconditionally by the markdown renderer. Environment variables like `FORCE_HYPERLINK`,
+/// `NO_COLOR`, and `TERM=dumb` have no effect because clap's hyperlink generation is
+/// separate from `supports-hyperlinks` and `anstyle-query`.
+///
+/// Uses the `osc8` crate's parser to find hyperlinks and extract just the visible text.
+fn strip_osc8_hyperlinks(s: &str) -> String {
+    let mut result = s.to_string();
+    // Keep parsing and removing hyperlinks until none remain
+    while let Ok(Some((_, range))) = osc8::Hyperlink::parse(&result) {
+        // The range covers the opening escape sequence only.
+        // We need to find and remove the closing sequence too.
+        let after_open = range.end;
+        // Find the closing sequence (empty hyperlink that ends the link)
+        if let Ok(Some((_, close_range))) = osc8::Hyperlink::parse(&result[after_open..]) {
+            // Extract the text between opening and closing sequences
+            let text_between = result[after_open..after_open + close_range.start].to_string();
+            // Replace the entire hyperlink (open + text + close) with just the text
+            let full_end = after_open + close_range.end;
+            result.replace_range(range.start..full_end, &text_between);
+        } else {
+            // Malformed hyperlink (no closing sequence) - just remove the opening
+            result.replace_range(range.clone(), "");
+            break;
+        }
+    }
+    result
+}
+
+fn get_help_reference_inner(command_path: &[&str], width: Option<usize>) -> String {
     // Build args: ["wt", "config", "create", "--help"]
     let mut args: Vec<String> = vec!["wt".to_string()];
     args.extend(command_path.iter().map(|s| s.to_string()));
