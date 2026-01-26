@@ -36,7 +36,7 @@ The plugin tracks Claude sessions with status markers in `wt list`:
 <!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__list_with_user_marker.snap — edit source to update -->
 
 {% terminal() %}
-<span class="prompt">$</span> <span class="cmd">wt list</span>
+<span class="cmd">wt list</span>
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Path</b>                 <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
 @ main             <span class=d>^</span><span class=d>⇡</span>                        .                     <span class=g>⇡1</span>      <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
 + feature-api      <span class=d>↑</span> 🤖              <span class=g>↑1</span>      ../repo.feature-api           <span class=d>70343f03</span>  <span class=d>1d</span>    <span class=d>Add REST API endpoints</span>

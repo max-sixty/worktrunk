@@ -218,6 +218,44 @@ fn extract_section(content: &str, start_marker: &str, end_marker: &str) -> Strin
     }
 }
 
+/// Extract command line from snapshot YAML header
+///
+/// Parses the YAML front matter to extract program and args, returning the command line.
+/// Returns None if the snapshot doesn't have command info (e.g., non-insta_cmd snapshots).
+fn extract_command_from_snapshot(content: &str) -> Option<String> {
+    // Extract YAML front matter
+    if !content.starts_with("---") {
+        return None;
+    }
+    let parts: Vec<&str> = content.splitn(3, "---").collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    let yaml = parts[1];
+
+    // Extract program (line: "  program: wt")
+    let program = yaml
+        .lines()
+        .find(|l| l.trim().starts_with("program:"))
+        .map(|l| l.trim().strip_prefix("program:").unwrap().trim())?;
+
+    // Extract args (lines: "  args:\n    - switch\n    - --create\n    - feature")
+    let args_start = yaml.find("args:")?;
+    let args_section = &yaml[args_start..];
+    let args: Vec<&str> = args_section
+        .lines()
+        .skip(1) // Skip "args:" line
+        .take_while(|l| l.trim().starts_with("- "))
+        .map(|l| l.trim().strip_prefix("- ").unwrap().trim_matches('"'))
+        .collect();
+
+    if args.is_empty() {
+        Some(program.to_string())
+    } else {
+        Some(format!("{} {}", program, args.join(" ")))
+    }
+}
+
 /// Replace test placeholders with display-friendly values
 ///
 /// Transforms:
@@ -376,10 +414,11 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
         let normalized = trim_lines(&html);
 
         // Build the terminal shortcode with standard template markers
+        // Prompt ($) is added via CSS ::before, so not included in HTML
         let replacement = format!(
             "<!-- ⚠️ AUTO-GENERATED from tests/snapshots/{} — edit source to update -->\n\n\
              {{% terminal() %}}\n\
-             <span class=\"prompt\">$</span> <span class=\"cmd\">{}</span>\n\
+             <span class=\"cmd\">{}</span>\n\
              {}\n\
              {{% end %}}\n\n\
              <!-- END AUTO-GENERATED -->",
@@ -1184,34 +1223,22 @@ fn sync_docs_snapshots(doc_path: &Path, project_root: &Path) -> Result<usize, Ve
         &content,
         &DOCS_SNAPSHOT_MARKER_PATTERN,
         OutputFormat::DocsHtml,
-        |snap_path, current_content| {
-            // Extract existing command line from docs if present
-            let existing_command = current_content
-                .lines()
-                .find(|line| line.contains("class=\"prompt\""))
-                .map(|line| {
-                    // Convert HTML command back to plain text for matching
-                    // <span class="prompt">$</span> wt switch ... -> $ wt switch ...
-                    let plain = strip_html_tags(line);
-                    plain.trim().to_string()
-                });
-
+        |snap_path, _current_content| {
             let full_path = project_root_for_snapshots.join(snap_path);
             let raw = fs::read_to_string(&full_path)
                 .map_err(|e| format!("Failed to read {}: {}", full_path.display(), e))?;
+
+            // Extract command from snapshot YAML header
+            let command = extract_command_from_snapshot(&raw);
+
             let html_content = parse_snapshot_content_for_docs(&raw)?;
             let normalized = trim_lines(&html_content);
 
-            // Prepend command line with prompt styling if present
-            Ok(match existing_command {
-                Some(cmd) if cmd.starts_with("$ ") => {
-                    let cmd_text = cmd.strip_prefix("$ ").unwrap();
-                    format!(
-                        "<span class=\"prompt\">$</span> <span class=\"cmd\">{}</span>\n{}",
-                        cmd_text, normalized
-                    )
-                }
-                _ => normalized,
+            // Prepend command line with styling if present
+            // Prompt ($) is added via CSS ::before, so not included in HTML
+            Ok(match command {
+                Some(cmd) => format!("<span class=\"cmd\">{}</span>\n{}", cmd, normalized),
+                None => normalized,
             })
         },
     ) {
@@ -1371,21 +1398,6 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
     }
 
     (errors, updated_files)
-}
-
-/// Strip HTML tags from a string (simple implementation for command extraction)
-fn strip_html_tags(s: &str) -> String {
-    let mut result = String::new();
-    let mut in_tag = false;
-    for c in s.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => result.push(c),
-            _ => {}
-        }
-    }
-    result
 }
 
 // =============================================================================

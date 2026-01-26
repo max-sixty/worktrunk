@@ -115,12 +115,12 @@ paru worktrunk-bin && wt config shell install
 
 Create a worktree for a new feature:
 
-<span class="prompt">$</span> <span class="cmd">wt switch --create feature-auth</span>
+<span class="cmd">wt switch --create feature-auth</span>
 <span class=g>✓</span> <span class=g>Created branch <b>feature-auth</b> from <b>main</b> and worktree @ <b>repo.feature-auth</b></span>
 
 This creates a new branch and worktree, then switches to it. Do your work, then check all worktrees with [`wt list`](https://worktrunk.dev/list/):
 
-<span class="prompt">$</span> <span class="cmd">wt list</span>
+<span class="cmd">wt list</span>
   <b>Branch</b>        <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
 @ feature-auth  <span class=c>+</span>   <span class=d>–</span>      <span class=g>+53</span>                         <span class=d>0e631add</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
 ^ main              <span class=d>^</span><span class=d>⇡</span>                         <span class=g>⇡1</span>      <span class=d>0e631add</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
@@ -141,7 +141,7 @@ wt remove                         # after PR is merged
 
 **Local merge** — squash, rebase onto main, fast-forward merge, clean up:
 
-<span class="prompt">$</span> <span class="cmd">wt merge</span>
+<span class="cmd">wt merge main</span>
 <span class=c>◎</span> <span class=c>Merging 1 commit to <b>main</b> @ <span class=d>a1b2c3d</span> (no commit/squash/rebase needed)</span>
 <span style='background:var(--bright-white,#fff)'> </span> * <span style='color:var(--yellow,#a60)'>a1b2c3d</span> Add authentication module
 <span style='background:var(--bright-white,#fff)'> </span>  auth.rs | 51 <span class=g>+++++++++++++++++++++++++++++++++++++++++++++++++++</span>
