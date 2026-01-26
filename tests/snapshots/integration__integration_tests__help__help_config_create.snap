@@ -50,7 +50,7 @@ Usage: [1m[36mwt config create[0m [36m[OPTIONS][0m
 
 Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 
-  [2m# ## Worktrunk User Configuration[0m
+  [2m# # User Configuration[0m
   [2m#[0m
   [2m# Create with `wt config create`.[0m
   [2m#[0m
@@ -94,7 +94,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (#custom-prompt-templates) for template customization.[0m
   [2m#[0m
-  [2m# ## Commands[0m
+  [2m# ## Command config[0m
   [2m#[0m
   [2m# ### List[0m
   [2m#[0m
