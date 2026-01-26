@@ -742,11 +742,12 @@ main {
     }
 
     // H1 entries in TOC - section markers
-    // Same alignment as H2s, distinguished by weight and spacing
+    // Distinguished by size, weight, and spacing from H2 items
     &.toc-h1 {
         margin-top: 0.5rem;
 
         a {
+            font-size: 0.8rem;
             font-weight: 600;
             color: var(--wt-color-text-muted);
 
