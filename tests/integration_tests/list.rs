@@ -3,6 +3,7 @@ use crate::common::{
     mock_commands::create_mock_llm_quickstart, repo, repo_with_remote, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
+use path_slash::PathExt as _;
 use rstest::rstest;
 
 /// Creates worktrees with specific timestamps for ordering tests.
@@ -1922,9 +1923,10 @@ mod tests {
         cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
         // Set MOCK_CONFIG_DIR so mock-stub can find llm.json
         cmd.env("MOCK_CONFIG_DIR", &mock_bin_dir);
+        // Use to_slash_lossy() for Windows compatibility - bash can't handle backslash paths
         cmd.env(
             "WORKTRUNK_COMMIT__GENERATION__COMMAND",
-            llm_path.to_str().unwrap(),
+            llm_path.to_slash_lossy().as_ref(),
         );
         cmd
     });
