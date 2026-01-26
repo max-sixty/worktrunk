@@ -59,7 +59,7 @@ test = "npm test"
 ---
 
 <!-- USER_CONFIG_START -->
-## Worktrunk User Configuration
+# User Configuration
 
 Create with `wt config create`.
 
@@ -156,7 +156,7 @@ Pager behavior for `wt select` diff previews.
 
 For context:
 
-- [Project config](https://worktrunk.dev/config/#worktrunk-project-configuration) settings are shared with teammates.
+- [Project config](https://worktrunk.dev/config/#project-configuration) settings are shared with teammates.
 - User configs generally apply to all projects.
 - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.
 
@@ -280,7 +280,7 @@ Combine these commits into a single commit message.
 
 ---
 
-## Project configuration
+# Project Configuration
 
 Project config (`.config/wt.toml`) defines lifecycle hooks and project-specific settings. This file is checked into version control and shared with the team. Create with `wt config create --project`.
 
@@ -302,7 +302,7 @@ platform = "github"  # or "gitlab"
 
 ---
 
-## Shell integration
+# Shell Integration
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
@@ -339,7 +339,7 @@ Or via environment variable:
 export WORKTRUNK_SKIP_SHELL_INTEGRATION_PROMPT=true
 ```
 
-## Environment variables
+# Environment Variables
 
 All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
 
