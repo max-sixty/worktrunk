@@ -50,6 +50,7 @@ exit_code: 0
 [107m [0m [31m-[projects."github.com/example/repo".commit-generation][m
 [107m [0m [32m+[m[32m[projects."github.com/example/repo".commit.generation][m
 [107m [0m  command = "llm -m gpt-4"[m
+[2m○[22m Current config:
 [107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 [107m [0m 
 [107m [0m [1m[36m[projects."github.com/example/repo".commit-generation]

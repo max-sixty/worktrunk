@@ -83,9 +83,8 @@ def _write_user_config(
 
     content = ""
     if commit_generation:
-        content += """[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
+        content += """[commit.generation]
+command = "llm -m claude-haiku-4.5"
 
 """
     content += f'[projects."{project_id}"]\n'

@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.19.0
+
+### Improved
+
+- **LLM commit configuration redesign**: The `[commit-generation]` section is now `[commit.generation]`, and `command` + `args` are unified into a single shell-executed `command` string. Existing configs continue to work — a deprecation warning shows the new format and creates a `.new` config file you can apply with `mv`. Claude Code (`claude -p`) and Codex (`codex exec`) are documented as first-class options alongside `llm`. See the [LLM commits guide](https://worktrunk.dev/llm-commits/). ([#809](https://github.com/max-sixty/worktrunk/pull/809), [#837](https://github.com/max-sixty/worktrunk/pull/837))
+
+- **Per-project hooks**: User config can define hooks per-project that append to global hooks. Execution order: global → per-project → project config. Configure under `[projects."owner/repo".hooks]`. ([#842](https://github.com/max-sixty/worktrunk/pull/842))
+
+- **Context window gauge for Claude Code**: Statusline mode shows a moon phase gauge (🌕🌔🌓🌒🌑) for context window usage. ([#840](https://github.com/max-sixty/worktrunk/pull/840))
+
+- **CI status for remote-only branches**: `wt list --remotes` shows CI status for branches that only exist on the remote. ([#817](https://github.com/max-sixty/worktrunk/pull/817))
+
+- **Hook log file lookup**: `wt config state logs get --hook=<spec>` returns the path to a specific hook's log file. ([#816](https://github.com/max-sixty/worktrunk/pull/816), thanks @EduardoSimon for requesting)
+
+- **Branch/fork info in PR/MR display**: `wt switch pr:N` shows the source branch (e.g., `feature-auth`) or fork reference (e.g., `contributor:feature`) alongside PR details. ([#808](https://github.com/max-sixty/worktrunk/pull/808))
+
+- **Claude Code section in `wt config show`**: Shows Claude CLI installation status, plugin status, and statusline configuration. ([#833](https://github.com/max-sixty/worktrunk/pull/833))
+
+- **Deprecation details moved to `wt config show`**: Other commands show a brief pointer instead of full deprecation details. ([#828](https://github.com/max-sixty/worktrunk/pull/828))
+
+- **Config validation suggests correct file**: When a config key belongs in user config but appears in project config (or vice versa), the warning suggests the correct location. ([#804](https://github.com/max-sixty/worktrunk/pull/804))
+
+- **Tilde paths in hints**: Shell command hints use `~` instead of full home directory paths when safe. ([#710](https://github.com/max-sixty/worktrunk/pull/710))
+
+- **Improved `--create` conflict error**: `wt switch --create pr:101` shows the existing branch name in the error. ([#807](https://github.com/max-sixty/worktrunk/pull/807))
+
+- **CI status prioritized in statusline**: CI status is retained longer when the statusline truncates. ([#845](https://github.com/max-sixty/worktrunk/pull/845))
+
+### Fixed
+
+- **Template expansion bugs**: Fixed `worktree_path_of_branch` not respecting shell_escape flag, Windows CI cache rename failures, and `WORKTRUNK_MAX_CONCURRENT_COMMANDS=0` meaning "no limit". ([#847](https://github.com/max-sixty/worktrunk/pull/847), [#849](https://github.com/max-sixty/worktrunk/pull/849))
+
+- **Hook and CI status panics**: Fixed panic when serializing mixed named/unnamed hook configs, banned colons in hook names to prevent parsing ambiguity, and fixed GitLab MR detection when multiple MRs exist without project ID. ([#846](https://github.com/max-sixty/worktrunk/pull/846), [#848](https://github.com/max-sixty/worktrunk/pull/848))
+
+- **Pre-commit hooks for clean worktree squash**: Pre-commit hooks are collected for approval when squashing on a clean worktree. Previously only collected when dirty. ([#695](https://github.com/max-sixty/worktrunk/pull/695))
+
+- **Hint message formatting**: Fixed ANSI escape code interference in dim hint messages. ([#836](https://github.com/max-sixty/worktrunk/pull/836))
+
+- **Spurious [commit] header**: Fixed config migration showing `[commit]` section header when only `commit-generation` fields needed migration. ([#834](https://github.com/max-sixty/worktrunk/pull/834))
+
+### Documentation
+
+- Added at-a-glance examples to config documentation. ([#826](https://github.com/max-sixty/worktrunk/pull/826))
+- Clarified user project-specific settings section. ([#835](https://github.com/max-sixty/worktrunk/pull/835))
+- Consistent worktree terminology throughout docs. ([#813](https://github.com/max-sixty/worktrunk/pull/813))
+- Added tip for monitoring hook logs. ([#838](https://github.com/max-sixty/worktrunk/pull/838))
+
+### Internal
+
+- Replaced manual quote escaping with `shell_escape` crate. ([#810](https://github.com/max-sixty/worktrunk/pull/810))
+- Used `sanitize-filename` crate for filename sanitization. ([#832](https://github.com/max-sixty/worktrunk/pull/832))
+- Cached CI tool availability checks. ([#831](https://github.com/max-sixty/worktrunk/pull/831))
+- Moved inline imports to module top level. ([#818](https://github.com/max-sixty/worktrunk/pull/818), [#819](https://github.com/max-sixty/worktrunk/pull/819), [#820](https://github.com/max-sixty/worktrunk/pull/820), [#822](https://github.com/max-sixty/worktrunk/pull/822))
+
 ## 0.18.2
 
 ### Improved

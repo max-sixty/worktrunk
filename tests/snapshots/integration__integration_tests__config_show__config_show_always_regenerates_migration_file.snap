@@ -50,6 +50,7 @@ exit_code: 0
 [107m [0m [36m@@ -1 +1 @@[m
 [107m [0m [31m-post-create = "ln -sf {{ main_worktree }}/node_modules"[m
 [107m [0m [32m+[m[32mpost-create = "ln -sf {{ repo }}/node_modules"[m
+[2m○[22m Current config:
 [107m [0m post-create = [32m"ln -sf {{ main_worktree }}/node_modules"
 
 [36mSHELL INTEGRATION[39m

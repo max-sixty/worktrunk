@@ -92,28 +92,42 @@ impl<'a> WorkingTree<'a> {
     /// Get the branch checked out in this worktree, or None if in detached HEAD state.
     ///
     /// Result is cached in the repository's shared cache (keyed by worktree path).
+    /// Errors (e.g., permission denied, corrupted `.git`) are propagated, not swallowed.
     pub fn branch(&self) -> anyhow::Result<Option<String>> {
-        Ok(self
-            .repo
+        // Check cache first
+        if let Some(cached) = self.repo.cache.current_branches.get(&self.path) {
+            return Ok(cached.clone());
+        }
+
+        // Not cached - run git command and propagate errors
+        let stdout = self
+            .run_command(&["branch", "--show-current"])
+            .context("Failed to determine current branch")?;
+
+        let branch = stdout.trim();
+        let result = if branch.is_empty() {
+            None // Detached HEAD
+        } else {
+            Some(branch.to_string())
+        };
+
+        // Cache the successful result
+        self.repo
             .cache
             .current_branches
-            .entry(self.path.clone())
-            .or_insert_with(|| {
-                self.run_command(&["branch", "--show-current"])
-                    .ok()
-                    .and_then(|s| {
-                        let branch = s.trim();
-                        if branch.is_empty() {
-                            None // Detached HEAD
-                        } else {
-                            Some(branch.to_string())
-                        }
-                    })
-            })
-            .clone())
+            .insert(self.path.clone(), result.clone());
+
+        Ok(result)
     }
 
     /// Check if the working tree has uncommitted changes.
+    ///
+    /// Note: This does NOT detect files hidden via `git update-index --assume-unchanged`
+    /// or `--skip-worktree`. We intentionally skip that check because:
+    /// 1. Detecting hidden files requires `git ls-files -v` which lists ALL tracked files
+    /// 2. On large repos (70k+ files), this adds noticeable latency to every clean check
+    /// 3. Users who use skip-worktree are power users who understand the implications
+    /// 4. A warning wouldn't prevent data loss anyway — it's informational only
     pub fn is_dirty(&self) -> anyhow::Result<bool> {
         let stdout = self.run_command(&["status", "--porcelain"])?;
         Ok(!stdout.trim().is_empty())
@@ -142,17 +156,19 @@ impl<'a> WorkingTree<'a> {
 
     /// Get the git directory (may be different from common-dir in worktrees).
     ///
-    /// Always returns an absolute path, resolving any relative paths returned by git.
+    /// Always returns a canonicalized absolute path, resolving symlinks.
+    /// This ensures consistent comparison with `git_common_dir()`.
     pub fn git_dir(&self) -> anyhow::Result<PathBuf> {
         let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
         let path = PathBuf::from(stdout.trim());
 
-        // Resolve relative paths against the worktree's directory
-        if path.is_relative() {
-            canonicalize(self.path.join(&path)).context("Failed to resolve git directory")
+        // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
+        let absolute_path = if path.is_relative() {
+            self.path.join(&path)
         } else {
-            Ok(path)
-        }
+            path
+        };
+        canonicalize(&absolute_path).context("Failed to resolve git directory")
     }
 
     /// Check if a rebase is in progress.
@@ -203,6 +219,7 @@ impl<'a> WorkingTree<'a> {
             }
             .into());
         }
+
         Ok(())
     }
 

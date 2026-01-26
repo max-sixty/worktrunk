@@ -369,7 +369,7 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
 
     // Check for deprecations with show_brief_warning=false (silent mode)
     // User config is global, not tied to any repository
-    if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
+    let has_deprecations = if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         true,
@@ -379,7 +379,10 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
     ) {
         // Add deprecation details to the output buffer
         out.push_str(&worktrunk::config::format_deprecation_details(&info));
-    }
+        true
+    } else {
+        false
+    };
 
     // Validate config (syntax + schema) and warn if invalid
     if let Err(e) = toml::from_str::<UserConfig>(&contents) {
@@ -391,6 +394,11 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
             &contents,
         )));
+    }
+
+    // Add "Current config" label when deprecations shown (to separate from diff)
+    if has_deprecations {
+        writeln!(out, "{}", info_message("Current config:"))?;
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)
@@ -482,7 +490,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     // Check for deprecations with show_brief_warning=false (silent mode)
     // Only show in main worktree (where .git is a directory)
     let is_main_worktree = repo_root.join(".git").is_dir();
-    if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
+    let has_deprecations = if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         is_main_worktree,
@@ -492,7 +500,10 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     ) {
         // Add deprecation details to the output buffer
         out.push_str(&worktrunk::config::format_deprecation_details(&info));
-    }
+        true
+    } else {
+        false
+    };
 
     // Validate config (syntax + schema) and warn if invalid
     if let Err(e) = toml::from_str::<ProjectConfig>(&contents) {
@@ -504,6 +515,11 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         out.push_str(&warn_unknown_keys::<ProjectConfig>(
             &find_unknown_project_keys(&contents),
         ));
+    }
+
+    // Add "Current config" label when deprecations shown (to separate from diff)
+    if has_deprecations {
+        writeln!(out, "{}", info_message("Current config:"))?;
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)

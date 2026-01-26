@@ -183,7 +183,10 @@ fn test_hook_show_approval_status(repo: TestRepo, temp_home: TempDir) {
     let project_id_str = repo.project_id();
 
     // Create user config at XDG path with one approved command
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    // Use canonical path to handle macOS /var -> /private/var symlinks
+    let canonical_home = crate::common::canonicalize(temp_home.path())
+        .unwrap_or_else(|_| temp_home.path().to_path_buf());
+    let global_config_dir = canonical_home.join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
     let config_path = global_config_dir.join("config.toml");
     fs::write(
@@ -286,7 +289,10 @@ lint = "pre-commit run"
 
     let mut settings = setup_home_snapshot_settings(&temp_home);
     // Replace temp home path with ~ for stable snapshots (override the [TEMP_HOME] filter)
-    settings.add_filter(&regex::escape(&temp_home.path().to_string_lossy()), "~");
+    // Canonicalize to handle macOS /var -> /private/var symlinks
+    let canonical_home = crate::common::canonicalize(temp_home.path())
+        .unwrap_or_else(|_| temp_home.path().to_path_buf());
+    settings.add_filter(&regex::escape(&canonical_home.to_string_lossy()), "~");
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.arg("hook").arg("show").current_dir(temp_dir.path());

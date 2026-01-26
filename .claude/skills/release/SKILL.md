@@ -120,6 +120,16 @@ PRs often fix issues without explicit "Fixes #N" — especially when the fix app
 
 Skip credit for: issues opened by the repo owner, trivial reports, or issues that were substantially different from what was implemented.
 
+### Link Significant Features to Docs
+
+For major features with dedicated documentation, include a docs link. Use full URLs so links work from GitHub releases:
+
+```markdown
+- **Hook system**: Shell commands that run at key points in worktree lifecycle. [Docs](https://worktrunk.dev/hook/) ([#234](https://github.com/user/repo/pull/234), thanks @contributor for the suggestion)
+```
+
+Link when there's substantial documentation the user would benefit from reading — new commands, feature pages, or Tips & Patterns sections. Skip for minor improvements.
+
 ### MANDATORY: Verify Each Changelog Entry
 
 **After drafting changelog entries, you MUST spawn a subagent to verify each bullet point is accurate.** This is non-negotiable — changelog mistakes are a recurring problem.

@@ -874,6 +874,41 @@ Format for template expansion:
 Uses `log::debug!()` with structured format for deep debugging. Not intended for
 regular users.
 
+## Path Formatting
+
+**All user-facing paths must use `format_path_for_display()`** from
+`worktrunk::path`. This function replaces home directory prefixes with `~` for
+readability (e.g., `/Users/alex/projects/repo` → `~/projects/repo`).
+
+```rust
+use worktrunk::path::format_path_for_display;
+
+// GOOD - uses format_path_for_display
+crate::output::print(success_message(cformat!(
+    "Created worktree at {}",
+    format_path_for_display(&worktree_path)
+)))?;
+
+// GOOD - error messages too
+.map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?
+
+// BAD - raw path.display()
+crate::output::print(success_message(format!(
+    "Created worktree at {}",
+    worktree_path.display()  // Shows /Users/alex/... instead of ~/...
+)))?;
+```
+
+**Applies to:**
+- Success/info/warning/error messages
+- Hints suggesting paths
+- Progress messages
+- Dry-run previews
+
+**Exceptions:**
+- Debug logging (`log::debug!`) — full paths help debugging
+- Paths passed to git commands — must be real paths
+
 ## Table Column Alignment
 
 - **Text columns** (Branch, Path): left-aligned

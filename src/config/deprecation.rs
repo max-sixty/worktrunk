@@ -474,10 +474,11 @@ pub fn check_and_migrate(
     }
 
     // Build the .new path: "config.toml" -> "config.toml.new"
-    let new_path = path.with_extension(format!(
-        "{}.new",
-        path.extension().unwrap_or_default().to_string_lossy()
-    ));
+    // For files without extension: "config" -> "config.new" (not "config..new")
+    let new_path = match path.extension() {
+        Some(ext) => path.with_extension(format!("{}.new", ext.to_string_lossy())),
+        None => path.with_extension("new"),
+    };
 
     // Skip writing if: (a) this is a brief warning (not `wt config show`), AND
     //                  (b) migration file already exists
@@ -1132,6 +1133,40 @@ approved-commands = [
         let result2 = check_and_migrate(unique_path, content, true, "Test config", None, false);
         assert!(result2.is_ok());
         assert!(result2.unwrap().is_some());
+    }
+
+    #[test]
+    fn test_migration_path_with_extension() {
+        // config.toml -> config.toml.new
+        let path = std::path::Path::new("/tmp/config.toml");
+        let new_path = match path.extension() {
+            Some(ext) => path.with_extension(format!("{}.new", ext.to_string_lossy())),
+            None => path.with_extension("new"),
+        };
+        assert_eq!(new_path.to_str().unwrap(), "/tmp/config.toml.new");
+    }
+
+    #[test]
+    fn test_migration_path_without_extension() {
+        // config -> config.new (not config..new)
+        let path = std::path::Path::new("/tmp/config");
+        let new_path = match path.extension() {
+            Some(ext) => path.with_extension(format!("{}.new", ext.to_string_lossy())),
+            None => path.with_extension("new"),
+        };
+        assert_eq!(new_path.to_str().unwrap(), "/tmp/config.new");
+    }
+
+    #[test]
+    fn test_migration_path_hidden_file() {
+        // .hidden -> .hidden.new (not .hidden..new)
+        // Note: .hidden has no extension (the dot is part of the filename)
+        let path = std::path::Path::new("/tmp/.hidden");
+        let new_path = match path.extension() {
+            Some(ext) => path.with_extension(format!("{}.new", ext.to_string_lossy())),
+            None => path.with_extension("new"),
+        };
+        assert_eq!(new_path.to_str().unwrap(), "/tmp/.hidden.new");
     }
 
     // Tests for commit-generation section migration
