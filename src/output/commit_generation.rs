@@ -237,4 +237,25 @@ mod tests {
             "Command content should be preserved: {result}"
         );
     }
+
+    #[test]
+    fn test_command_exists_known_command() {
+        // 'which' (Unix) or 'where' (Windows) should always exist
+        #[cfg(not(windows))]
+        assert!(command_exists("which"));
+        #[cfg(windows)]
+        assert!(command_exists("where"));
+    }
+
+    #[test]
+    fn test_command_exists_nonexistent() {
+        // A command that definitely doesn't exist
+        assert!(!command_exists("__nonexistent_command_12345__"));
+    }
+
+    #[test]
+    fn test_detect_llm_tool() {
+        // Just exercise the function - result depends on what's installed
+        let _ = detect_llm_tool();
+    }
 }
