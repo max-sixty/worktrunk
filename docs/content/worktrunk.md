@@ -134,10 +134,6 @@ paru worktrunk-bin && wt config shell install
 
 Create a worktree for a new feature:
 
-```bash
-wt switch --create feature-auth
-```
-
 <!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__quickstart_switch.snap — edit source to update -->
 
 {% terminal() %}
@@ -148,10 +144,6 @@ wt switch --create feature-auth
 <!-- END AUTO-GENERATED -->
 
 This creates a new branch and worktree, then switches to it. Do your work, then check all worktrees with [`wt list`](@/list.md):
-
-```bash
-wt list
-```
 
 <!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__quickstart_list.snap — edit source to update -->
 
@@ -179,10 +171,6 @@ wt remove                         # after PR is merged
 ```
 
 **Local merge** — squash, rebase onto main, fast-forward merge, clean up:
-
-```bash
-wt merge
-```
 
 <!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__quickstart_merge.snap — edit source to update -->
 
