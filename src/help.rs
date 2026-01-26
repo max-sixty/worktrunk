@@ -610,3 +610,62 @@ fn expand_demo_placeholders(text: &str) -> String {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_osc8_hyperlinks_removes_hyperlink() {
+        // OSC 8 format: ESC ] 8 ; params ; URL ST TEXT ESC ] 8 ; ; ST
+        // ST can be ESC \ or BEL (\x07)
+        let url = "https://example.com";
+        let text = "link text";
+        let input = format!(
+            "before {}{}{}after",
+            osc8::Hyperlink::new(url),
+            text,
+            osc8::Hyperlink::END
+        );
+
+        let result = strip_osc8_hyperlinks(&input);
+        assert_eq!(result, "before link textafter");
+    }
+
+    #[test]
+    fn test_strip_osc8_hyperlinks_preserves_sgr_codes() {
+        // SGR codes (colors) like ESC [ 0 m should be preserved
+        let url = "https://example.com";
+        let text = "link";
+        let input = format!(
+            "\u{1b}[1m{}{}{}bold\u{1b}[0m",
+            osc8::Hyperlink::new(url),
+            text,
+            osc8::Hyperlink::END
+        );
+
+        let result = strip_osc8_hyperlinks(&input);
+        assert_eq!(result, "\u{1b}[1mlinkbold\u{1b}[0m");
+    }
+
+    #[test]
+    fn test_strip_osc8_hyperlinks_handles_no_hyperlinks() {
+        let input = "plain text with no hyperlinks";
+        let result = strip_osc8_hyperlinks(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_strip_osc8_hyperlinks_handles_multiple() {
+        let input = format!(
+            "{}first{} and {}second{}",
+            osc8::Hyperlink::new("url1"),
+            osc8::Hyperlink::END,
+            osc8::Hyperlink::new("url2"),
+            osc8::Hyperlink::END
+        );
+
+        let result = strip_osc8_hyperlinks(&input);
+        assert_eq!(result, "first and second");
+    }
+}
