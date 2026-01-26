@@ -1,6 +1,6 @@
 use crate::common::{
-    DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd, repo, repo_with_remote,
-    wt_command,
+    DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd,
+    mock_commands::create_mock_llm_quickstart, repo, repo_with_remote, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -1907,22 +1907,24 @@ mod tests {
         .join(".wt-directive-temp");
     std::fs::write(&directive_file, "").unwrap();
 
-    // Create a mock LLM script that returns a good commit message
-    let mock_llm = repo.root_path().parent().unwrap().join("mock-llm.sh");
-    std::fs::write(&mock_llm, "#!/bin/sh\necho 'Add authentication module'").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&mock_llm, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    // Create a cross-platform mock LLM command (uses mock-stub binary system)
+    // The mock-bin directory is already created by setup_mock_gh() via the repo fixture
+    let mock_bin_dir = repo.root_path().parent().unwrap().join("mock-bin");
+    create_mock_llm_quickstart(&mock_bin_dir);
+
+    // Configure the LLM path (Windows needs .exe extension)
+    let llm_name = if cfg!(windows) { "llm.exe" } else { "llm" };
+    let llm_path = mock_bin_dir.join(llm_name);
 
     // Merge feature-auth into main
     assert_cmd_snapshot!("quickstart_merge", {
         let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_auth));
         cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
+        // Set MOCK_CONFIG_DIR so mock-stub can find llm.json
+        cmd.env("MOCK_CONFIG_DIR", &mock_bin_dir);
         cmd.env(
             "WORKTRUNK_COMMIT__GENERATION__COMMAND",
-            mock_llm.to_str().unwrap(),
+            llm_path.to_str().unwrap(),
         );
         cmd
     });
