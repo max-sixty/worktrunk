@@ -64,6 +64,11 @@ static TMPDIR_MAIN_REGEX: LazyLock<Regex> =
 /// Regex for REPO placeholder
 static REPO_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[REPO\]").unwrap());
 
+/// Regex for _REPO_ placeholder (used in insta-cmd snapshots)
+/// Matches _REPO_ followed by optional .branch suffix
+static REPO_UNDERSCORE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"_REPO_(\.([a-zA-Z0-9_-]+))?").unwrap());
+
 /// Regex to extract user config section from src/cli/mod.rs
 /// Matches content between USER_CONFIG_START and USER_CONFIG_END markers
 static USER_CONFIG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
@@ -219,12 +224,24 @@ fn extract_section(content: &str, start_marker: &str, end_marker: &str) -> Strin
 /// - `[HASH]` → `a1b2c3d`
 /// - `[TMPDIR]/repo.branch` → `../repo.branch`
 /// - `[TMPDIR]/repo` → `../repo`
-/// - `_REPO_` → `../repo`
+/// - `[REPO]` → `../repo`
+/// - `_REPO_` → `repo` (just the repo name, no path)
+/// - `_REPO_.branch` → `repo.branch`
 fn replace_placeholders(content: &str) -> String {
     let content = HASH_REGEX.replace_all(content, "a1b2c3d");
     let content = TMPDIR_BRANCH_REGEX.replace_all(&content, "../repo.$1");
     let content = TMPDIR_MAIN_REGEX.replace_all(&content, "../repo$1");
-    REPO_REGEX.replace_all(&content, "../repo").into_owned()
+    let content = REPO_REGEX.replace_all(&content, "../repo");
+    // Handle _REPO_.branch -> repo.branch and _REPO_ -> repo
+    REPO_UNDERSCORE_REGEX
+        .replace_all(&content, |caps: &regex::Captures| {
+            if let Some(branch) = caps.get(2) {
+                format!("repo.{}", branch.as_str())
+            } else {
+                "repo".to_string()
+            }
+        })
+        .into_owned()
 }
 
 /// Format replacement content based on output format
@@ -678,6 +695,29 @@ fn heading_to_anchor(heading: &str) -> String {
         .join("-")
 }
 
+/// Regex to match terminal shortcodes with AUTO-GENERATED-HTML markers
+/// These need to be converted to plain code blocks for README
+static TERMINAL_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?s)<!-- ⚠️ AUTO-GENERATED-HTML from [^\n]+ -->\n+\{% terminal\(\) %\}\n(.*?)\{% end %\}\n+<!-- END AUTO-GENERATED -->",
+    )
+    .unwrap()
+});
+
+/// Strip HTML tags from content
+fn strip_html(content: &str) -> String {
+    // Simple HTML tag stripping - handles most common cases
+    let tag_pattern = Regex::new(r"<[^>]+>").unwrap();
+    let result = tag_pattern.replace_all(content, "");
+    // Decode HTML entities
+    result
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+}
+
 /// Transform Zola-flavored markdown to GitHub-flavored markdown
 ///
 /// Converts:
@@ -685,6 +725,7 @@ fn heading_to_anchor(heading: &str) -> String {
 /// - `[text](@/page.md#anchor)` → `[text](https://worktrunk.dev/page/#anchor)`
 /// - `{% rawcode() %}...{% end %}` → `<pre>...</pre>`
 /// - `<figure class="demo">...<img src="/assets/X.gif"...>...</figure>` → `![alt](raw.githubusercontent.com/.../X.gif)`
+/// - AUTO-GENERATED-HTML terminal markers → plain code blocks
 fn transform_zola_to_github(content: &str) -> String {
     // Transform internal links
     let content = ZOLA_LINK_PATTERN
@@ -701,6 +742,22 @@ fn transform_zola_to_github(content: &str) -> String {
         .replace_all(&content, |caps: &regex::Captures| {
             let inner = caps.get(1).unwrap().as_str();
             format!("<pre>{}</pre>", inner)
+        })
+        .into_owned();
+
+    // Transform terminal markers to plain code blocks for README
+    let content = TERMINAL_MARKER_PATTERN
+        .replace_all(&content, |caps: &regex::Captures| {
+            let inner = caps.get(1).unwrap().as_str();
+            // Strip HTML and extract just the text output (skip the command line)
+            let plain = strip_html(inner);
+            // Skip the first line (which is "$ wt ...") and just show output
+            let output: String = plain
+                .lines()
+                .skip(1) // Skip command line
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("```\n{}\n```", output)
         })
         .into_owned();
 
