@@ -716,13 +716,13 @@ main {
 }
 
 .toc-item-child {
-    padding: 0 0.45rem 0 1rem;
+    padding: 0;
     margin: 0 0.4rem;
 
     a {
         font-size: 0.75rem;
         color: var(--wt-color-text-soft);
-        padding: 0.2rem 0.35rem;
+        padding: 0.2rem 0.8rem 0.2rem 1.35rem;
         border-radius: var(--wt-radius-sm);
         display: block;
         transition: color 150ms, background 150ms;
@@ -734,10 +734,9 @@ main {
     }
 
     &.nested {
-        padding-left: 1.6rem;
-
         a {
             font-size: 0.7rem;
+            padding-left: 1.95rem;
         }
     }
 
