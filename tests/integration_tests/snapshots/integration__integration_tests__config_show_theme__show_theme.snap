@@ -10,6 +10,8 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
@@ -38,4 +40,4 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mwt[0m[2m config shell init bash)"[0m[2m[0m
 
 [2m○[22m Prompt formatting:
-[36m❯[39m Proceed? [y/N]
+[36m❯[39m [36mProceed? [y/N][39m
