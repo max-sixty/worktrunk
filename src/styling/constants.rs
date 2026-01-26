@@ -370,4 +370,16 @@ mod tests {
         // Empty string, still formatted
         assert!(heading.is_empty() || heading.contains('\u{1b}'));
     }
+
+    // ============================================================================
+    // FormattedMessage Tests
+    // ============================================================================
+
+    #[test]
+    fn test_formatted_message_into_inner() {
+        let msg = success_message("Done");
+        let inner: String = msg.into_inner();
+        assert!(inner.contains(SUCCESS_SYMBOL));
+        assert!(inner.contains("Done"));
+    }
 }

@@ -3000,4 +3000,97 @@ test = "npm test"
         assert_eq!(commands[0].template, "cargo test");
         assert_eq!(commands[1].template, "npm test");
     }
+
+    // =========================================================================
+    // reload_projects_from error path tests
+    // =========================================================================
+
+    /// Test that reload_projects_from returns a parse error with formatted path
+    /// when the config file contains invalid TOML.
+    #[test]
+    fn test_reload_projects_from_invalid_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+
+        // Create initial valid config so file exists
+        std::fs::write(&config_path, "# Valid config\n").unwrap();
+
+        // Now corrupt it with invalid TOML
+        std::fs::write(&config_path, "this is not valid toml [[[").unwrap();
+
+        // Try to reload - should fail with parse error
+        let mut config = UserConfig::default();
+        let result = config.approve_command(
+            "github.com/test/repo".to_string(),
+            "echo test".to_string(),
+            Some(&config_path),
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Failed to parse config file"),
+            "Expected parse error, got: {err}"
+        );
+        // Verify path is included in error (format_path_for_display would format it)
+        assert!(
+            err.contains("config.toml"),
+            "Expected path in error, got: {err}"
+        );
+    }
+
+    /// Test that reload_projects_from handles permission errors
+    /// when the config file exists but cannot be read.
+    #[cfg(unix)]
+    #[test]
+    fn test_reload_projects_from_permission_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+
+        // Create a valid config file
+        std::fs::write(&config_path, "[projects]\n").unwrap();
+
+        // Remove read permissions
+        let mut perms = std::fs::metadata(&config_path).unwrap().permissions();
+        perms.set_mode(0o000); // No permissions
+        std::fs::set_permissions(&config_path, perms).unwrap();
+
+        // Restore permissions on drop to allow cleanup
+        struct RestorePerms<'a>(&'a std::path::Path);
+        impl Drop for RestorePerms<'_> {
+            fn drop(&mut self) {
+                let mut perms = std::fs::metadata(self.0).unwrap().permissions();
+                perms.set_mode(0o644);
+                let _ = std::fs::set_permissions(self.0, perms);
+            }
+        }
+        let _guard = RestorePerms(&config_path);
+
+        // Skip this test when running as root (common in CI containers)
+        if std::env::var("USER").as_deref() == Ok("root") {
+            return;
+        }
+
+        // Try to reload - should fail with read error
+        let mut config = UserConfig::default();
+        let result = config.approve_command(
+            "github.com/test/repo".to_string(),
+            "echo test".to_string(),
+            Some(&config_path),
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Failed to read config file"),
+            "Expected read error, got: {err}"
+        );
+        // Verify path is included in error
+        assert!(
+            err.contains("config.toml"),
+            "Expected path in error, got: {err}"
+        );
+    }
 }

@@ -566,6 +566,98 @@ fn test_list_full_with_gitlab_filters_by_project_id(mut repo: TestRepo) {
 }
 
 // =============================================================================
+// GitLab project ID edge cases (PR #846 panic prevention)
+// =============================================================================
+
+/// Test that single MR without project ID works (unambiguous case).
+///
+/// When `glab repo view` fails to return a project ID but there's only one MR,
+/// we can safely use it since there's no ambiguity.
+#[rstest]
+fn test_list_full_with_gitlab_single_mr_no_project_id(mut repo: TestRepo) {
+    let head_sha = setup_gitlab_repo_with_feature(&mut repo);
+
+    // Single MR - should work even without project ID to filter by
+    let mr_json = format!(
+        r#"[{{
+        "iid": 1,
+        "sha": "{}",
+        "has_conflicts": false,
+        "detailed_merge_status": null,
+        "head_pipeline": {{"status": "success"}},
+        "source_project_id": 12345,
+        "web_url": "https://gitlab.com/test-group/test-project/-/merge_requests/1"
+    }}]"#,
+        head_sha
+    );
+
+    // Pass None for project_id to trigger "no project ID" path
+    run_gitlab_ci_status_test(&mut repo, "gitlab_single_mr_no_project_id", &mr_json, None);
+}
+
+/// Test that empty MR list without project ID returns None gracefully.
+///
+/// When no MRs are found and we don't have a project ID, the code should
+/// return None without panicking. This falls through to pipeline detection.
+#[rstest]
+fn test_list_full_with_gitlab_empty_mr_list_no_project_id(mut repo: TestRepo) {
+    setup_gitlab_repo_with_feature(&mut repo);
+
+    // Empty MR list + no project ID -> falls through to pipeline check
+    run_gitlab_ci_status_test(
+        &mut repo,
+        "gitlab_empty_mr_list_no_project_id",
+        "[]", // Empty MR list
+        None, // No project ID
+    );
+}
+
+/// Test that multiple MRs without project ID are skipped (ambiguous case).
+///
+/// When there are multiple MRs with the same branch name and we can't determine
+/// which project we're in, we skip CI detection rather than showing the wrong one.
+/// This falls through to pipeline detection via `glab ci list`.
+#[rstest]
+fn test_list_full_with_gitlab_multiple_mrs_no_project_id(mut repo: TestRepo) {
+    let head_sha = setup_gitlab_repo_with_feature(&mut repo);
+
+    // Multiple MRs from different projects - ambiguous without project ID
+    let mr_json = format!(
+        r#"[
+        {{
+            "iid": 1,
+            "sha": "{}",
+            "has_conflicts": false,
+            "detailed_merge_status": null,
+            "head_pipeline": {{"status": "failed"}},
+            "source_project_id": 11111,
+            "web_url": "https://gitlab.com/org-a/project/-/merge_requests/1"
+        }},
+        {{
+            "iid": 2,
+            "sha": "{}",
+            "has_conflicts": false,
+            "detailed_merge_status": null,
+            "head_pipeline": {{"status": "success"}},
+            "source_project_id": 22222,
+            "web_url": "https://gitlab.com/org-b/project/-/merge_requests/2"
+        }}
+    ]"#,
+        head_sha, head_sha
+    );
+
+    // Pass None for project_id - should skip MR detection due to ambiguity
+    // and fall through to pipeline detection (which will show NoCI since
+    // our mock returns empty pipeline list)
+    run_gitlab_ci_status_test(
+        &mut repo,
+        "gitlab_multiple_mrs_no_project_id",
+        &mr_json,
+        None,
+    );
+}
+
+// =============================================================================
 // URL-based pushremote tests (gh pr checkout scenario)
 // =============================================================================
 
