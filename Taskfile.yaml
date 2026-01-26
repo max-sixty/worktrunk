@@ -385,10 +385,10 @@ tasks:
 
         # Documented commands from llm-commits.md
         declare -A COMMANDS
-        COMMANDS["claude"]='MAX_THINKING_TOKENS=0 claude -p --model haiku --tools '"'"''"'"' --disable-slash-commands --setting-sources '"'"''"'"' --system-prompt '"'"''"'"''
+        COMMANDS["claude"]='MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='"'"''"'"' --disable-slash-commands --setting-sources='"'"''"'"' --system-prompt='"'"''"'"''
         COMMANDS["llm"]='llm -m claude-haiku-4.5'
         COMMANDS["aichat"]='aichat -m claude:claude-haiku-4.5'
-        COMMANDS["codex"]='codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='"'"'low'"'"' --sandbox read-only --json - | jq -sr '"'"'[.[] | select(.item.type? == "agent_message")] | last.item.text'"'"''
+        COMMANDS["codex"]='codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='"'"'low'"'"' --sandbox=read-only --json - | jq -sr '"'"'[.[] | select(.item.type? == "agent_message")] | last.item.text'"'"''
 
         # Check which tools are available
         echo "=== LLM Commit Message Benchmark ==="

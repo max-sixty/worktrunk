@@ -337,6 +337,8 @@ On first run without shell integration, Worktrunk offers to install it. Declinin
 
 [32mOTHER[0m
 
+[32mOTHER[0m
+
 [1m[32mEnvironment variables[0m
 
 All user config options can be overridden with environment variables using the [2mWORKTRUNK_[0m prefix.

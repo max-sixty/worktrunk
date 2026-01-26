@@ -1653,7 +1653,9 @@ template = """
 Write a commit message for the staged changes below.
 
 <format>
-- Subject under 50 chars, blank line, then optional body
+- Subject line under 50 chars
+- For material changes, add a blank line then a body paragraph explaining the change
+- Trivial changes (typos, formatting, renames) need only a subject line
 - Output only the commit message, no quotes or code blocks
 </format>
 
@@ -1698,7 +1700,9 @@ squash-template = """
 Combine these commits into a single commit message.
 
 <format>
-- Subject under 50 chars, blank line, then optional body
+- Subject line under 50 chars
+- For material changes, add a blank line then a body paragraph explaining the change
+- Trivial changes (typos, formatting, renames) need only a subject line
 - Output only the commit message, no quotes or code blocks
 </format>
 
@@ -1775,6 +1779,8 @@ Without shell integration, `wt switch` prints the target directory but cannot `c
 ### Skip first-run prompt
 
 On first run without shell integration, Worktrunk offers to install it. Declining sets `skip-shell-integration-prompt = true` automatically.
+
+# Other
 
 # Other
 

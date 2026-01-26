@@ -224,7 +224,9 @@ struct TemplateContext<'a> {
 const DEFAULT_TEMPLATE: &str = r#"Write a commit message for the staged changes below.
 
 <format>
-- Subject under 50 chars, blank line, then optional body
+- Subject line under 50 chars
+- For material changes, add a blank line then a body paragraph explaining the change
+- Trivial changes (typos, formatting, renames) need only a subject line
 - Output only the commit message, no quotes or code blocks
 </format>
 
@@ -256,7 +258,9 @@ Branch: {{ branch }}
 const DEFAULT_SQUASH_TEMPLATE: &str = r#"Combine these commits into a single commit message.
 
 <format>
-- Subject under 50 chars, blank line, then optional body
+- Subject line under 50 chars
+- For material changes, add a blank line then a body paragraph explaining the change
+- Trivial changes (typos, formatting, renames) need only a subject line
 - Output only the commit message, no quotes or code blocks
 </format>
 

@@ -48,6 +48,10 @@ pub fn step_commit(
         return Ok(());
     }
 
+    // One-time LLM setup prompt (errors logged internally; don't block commit)
+    let mut config = UserConfig::load().context("Failed to load config")?;
+    let _ = crate::output::prompt_commit_generation(&mut config);
+
     let env = CommandEnv::for_action("commit")?;
     let ctx = env.context(yes);
 
@@ -107,6 +111,10 @@ pub fn handle_squash(
     skip_pre_commit: bool,
     stage: Option<StageMode>,
 ) -> anyhow::Result<SquashResult> {
+    // One-time LLM setup prompt (errors logged internally; don't block commit)
+    let mut config = UserConfig::load().context("Failed to load config")?;
+    let _ = crate::output::prompt_commit_generation(&mut config);
+
     let env = CommandEnv::for_action("squash")?;
     let repo = &env.repo;
     // Squash requires being on a branch (can't squash in detached HEAD)

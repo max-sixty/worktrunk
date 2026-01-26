@@ -1,7 +1,8 @@
 use std::path::Path;
 
+use anyhow::Context;
 use worktrunk::HookType;
-use worktrunk::config::ProjectConfig;
+use worktrunk::config::{ProjectConfig, UserConfig};
 use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, info_message};
 
@@ -88,6 +89,12 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         yes,
         stage,
     } = opts;
+
+    // One-time LLM setup prompt (errors logged internally; don't block merge)
+    if commit_opt.unwrap_or(true) {
+        let mut config = UserConfig::load().context("Failed to load config")?;
+        let _ = crate::output::prompt_commit_generation(&mut config);
+    }
 
     let env = CommandEnv::for_action("merge")?;
     let repo = &env.repo;
