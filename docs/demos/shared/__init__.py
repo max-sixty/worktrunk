@@ -27,6 +27,9 @@ from .lib import (
     # Text output recording
     record_text,
     build_tape_replacements,
+    # Snapshot recording
+    extract_commands_from_tape,
+    record_snapshot,
     # External dependencies
     ensure_vhs_binary,
 )
@@ -61,6 +64,9 @@ __all__ = [
     # Text output recording
     "record_text",
     "build_tape_replacements",
+    # Snapshot recording
+    "extract_commands_from_tape",
+    "record_snapshot",
     # External dependencies
     "ensure_vhs_binary",
 ]
