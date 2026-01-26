@@ -1908,11 +1908,7 @@ mod tests {
     std::fs::write(&directive_file, "").unwrap();
 
     // Create a mock LLM script that returns a good commit message
-    let mock_llm = repo
-        .root_path()
-        .parent()
-        .unwrap()
-        .join("mock-llm.sh");
+    let mock_llm = repo.root_path().parent().unwrap().join("mock-llm.sh");
     std::fs::write(&mock_llm, "#!/bin/sh\necho 'Add authentication module'").unwrap();
     #[cfg(unix)]
     {
@@ -1924,7 +1920,10 @@ mod tests {
     assert_cmd_snapshot!("quickstart_merge", {
         let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_auth));
         cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
-        cmd.env("WORKTRUNK_COMMIT__GENERATION__COMMAND", mock_llm.to_str().unwrap());
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            mock_llm.to_str().unwrap(),
+        );
         cmd
     });
 }
