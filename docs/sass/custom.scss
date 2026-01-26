@@ -153,6 +153,7 @@ h4 > a.zola-anchor {
 }
 
 // Page title heading (used on content pages and hero)
+// These are standalone titles, not section headers, so no underline
 .heading-text {
     font-family: var(--wt-font-head);
     font-size: 1.75rem;
@@ -161,6 +162,12 @@ h4 > a.zola-anchor {
     margin-top: 0;
     margin-bottom: 0.5rem;
     color: var(--wt-color-text);
+    width: auto;  // Override h1's fit-content to allow centering
+
+    // Disable the h1 > a underline for page titles
+    > a::after {
+        display: none;
+    }
 }
 
 // ============================================================================
