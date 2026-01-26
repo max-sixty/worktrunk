@@ -43,6 +43,28 @@ a {
 // Typography
 // ============================================================================
 
+// Shared heading underline effect (H1/H2)
+// Turns gold on hover, otherwise subtle craft brown
+%heading-underline {
+    &::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        bottom: -0.3rem;
+        width: 45%;
+        height: 2px;
+        background: var(--wt-color-craft-brown);
+        opacity: 0.5;
+        border-radius: 1px;
+        transition: background 150ms ease-out, opacity 150ms ease-out;
+    }
+
+    &:hover::after {
+        background: var(--wt-color-accent);
+        opacity: 1;
+    }
+}
+
 // Headings
 h1, h2, h3, h4, h5, h6 {
     font-family: var(--wt-font-head);
@@ -60,25 +82,8 @@ h1 {
     position: relative;
     width: fit-content;  // Block-level but sized to content (for underline effect)
 
-    // Same underline treatment as h2
     > a {
-        &::after {
-            content: "";
-            position: absolute;
-            left: 0;
-            bottom: -0.3rem;
-            width: 45%;
-            height: 2px;
-            background: var(--wt-color-craft-brown);
-            opacity: 0.5;
-            border-radius: 1px;
-            transition: background 150ms ease-out, opacity 150ms ease-out;
-        }
-
-        &:hover::after {
-            background: var(--wt-color-accent);
-            opacity: 1;
-        }
+        @extend %heading-underline;
     }
 }
 
@@ -91,26 +96,8 @@ h2 {
     position: relative;
     display: inline-block;
 
-    // Anchor inside h2 gets the underline (aligns with text)
     > a {
-        // Hand-drawn underline - turns gold on hover
-        &::after {
-            content: "";
-            position: absolute;
-            left: 0;
-            bottom: -0.3rem;
-            width: 45%;
-            height: 2px;
-            background: var(--wt-color-craft-brown);
-            opacity: 0.5;
-            border-radius: 1px;
-            transition: background 150ms ease-out, opacity 150ms ease-out;
-        }
-
-        &:hover::after {
-            background: var(--wt-color-accent);
-            opacity: 1;
-        }
+        @extend %heading-underline;
     }
 }
 
@@ -247,7 +234,7 @@ nav {
     font-weight: 500;
     color: var(--wt-color-text-muted);
     padding: 0.2rem 0.4rem;
-    border-radius: 999px;
+    border-radius: var(--wt-radius-pill);
     transition: color 150ms, background 150ms;
 
     &:hover {
@@ -287,7 +274,7 @@ nav {
     color: var(--wt-color-text);
     background: var(--wt-color-bg);
     border: 1px solid var(--wt-color-border-subtle);
-    border-radius: 0.5rem;
+    border-radius: var(--wt-radius-md);
     transition: width 150ms, border-color 150ms;
 
     &::placeholder {
@@ -305,7 +292,7 @@ nav {
     overflow-y: auto;
     background: var(--wt-color-bg-elevated);
     border: 1px solid var(--wt-color-border-subtle);
-    border-radius: 0.5rem;
+    border-radius: var(--wt-radius-md);
     box-shadow: 0 8px 30px var(--wt-shadow-medium);
     z-index: 1000;
 }
@@ -366,7 +353,7 @@ main {
     overflow-x: auto;
     padding: 1.5rem 30px;
     background-color: var(--wt-color-bg-elevated);
-    border-radius: 12px;
+    border-radius: var(--wt-radius-lg);
     border: 1px solid var(--wt-color-border-subtle);
     box-shadow: 0 1px 3px var(--wt-shadow-soft);
     // Account for sticky header when scrolling to page anchor (e.g., /#worktrunk)
@@ -513,7 +500,7 @@ main {
     padding: 0.4rem;
     background: var(--wt-color-bg-soft);
     border: 1px solid var(--wt-color-border-subtle);
-    border-radius: 0.3rem;
+    border-radius: var(--wt-radius-sm);
     cursor: pointer;
     color: var(--wt-color-text-muted);
     opacity: 0;
@@ -577,7 +564,7 @@ main {
 // ============================================================================
 
 .content blockquote {
-    border-radius: 0.5rem;
+    border-radius: var(--wt-radius-md);
     padding: 0.75rem 1rem;
     border: 1px solid var(--wt-color-border-subtle);
     border-left: 3px solid var(--wt-color-accent);
@@ -605,7 +592,7 @@ main {
     border-collapse: separate;
     border-spacing: 0;
     margin: 1rem 0;
-    border-radius: 0.5rem;
+    border-radius: var(--wt-radius-md);
     border: 1px solid var(--wt-color-border-subtle);
 
     th, td {
@@ -675,7 +662,7 @@ main {
     position: sticky;
     top: calc(var(--wt-header-height) + var(--wt-main-padding-top));
     box-sizing: border-box;
-    border-radius: 0.5rem;
+    border-radius: var(--wt-radius-md);
     background-color: var(--wt-color-bg-elevated);
     border: 1px solid var(--wt-color-border-subtle);
     border-top: 3px solid var(--wt-color-accent);
@@ -707,7 +694,7 @@ main {
     a {
         display: block;
         padding: 0.55rem 0.5rem;
-        border-radius: 0.25rem;
+        border-radius: var(--wt-radius-sm);
         font-size: 0.8rem;
         color: var(--wt-color-text-muted);
         transition: color 150ms, background 150ms;
@@ -734,7 +721,7 @@ main {
         font-size: 0.75rem;
         color: var(--wt-color-text-soft);
         padding: 0.1rem 0.35rem;
-        border-radius: 0.2rem;
+        border-radius: var(--wt-radius-sm);
         display: block;
         transition: color 150ms, background 150ms;
 
@@ -789,7 +776,7 @@ main {
         color: var(--wt-color-accent);
         font-weight: 500;
         padding: 0.5rem 1rem;
-        border-radius: 0.5rem;
+        border-radius: var(--wt-radius-md);
         transition: color 150ms, background 150ms;
 
         &:hover {
@@ -946,15 +933,21 @@ footer {
     background: var(--wt-color-accent);
     color: white;
     padding: 0.6rem 1.5rem;
-    border-radius: 999px;
+    border-radius: var(--wt-radius-pill);
     font-weight: 600;
     font-size: 1rem;
     border: none;
     cursor: pointer;
     transition: background 150ms, box-shadow 150ms;
+    box-shadow: 0 2px 4px var(--wt-shadow-accent);
 
     &:hover {
         background: var(--wt-color-accent-strong);
+        box-shadow: 0 4px 12px var(--wt-shadow-accent-strong);
+    }
+
+    &:active {
+        box-shadow: 0 1px 2px var(--wt-shadow-accent);
     }
 }
 
@@ -1107,7 +1100,7 @@ figcaption {
     font-size: 0.95rem;
     font-weight: 500;
     color: var(--wt-color-text);
-    border-radius: 0.375rem;
+    border-radius: var(--wt-radius-sm);
     transition: background 150ms, color 150ms;
 
     &:hover {
@@ -1144,7 +1137,7 @@ figcaption {
     padding: 0.5rem 0.75rem;
     font-size: 0.85rem;
     color: var(--wt-color-text-muted);
-    border-radius: 0.25rem;
+    border-radius: var(--wt-radius-sm);
     transition: background 150ms, color 150ms;
 
     &:hover {
@@ -1190,7 +1183,7 @@ body.mobile-menu-open {
 
     .content {
         padding: 1rem 16px;
-        border-radius: 12px;
+        border-radius: var(--wt-radius-lg);
     }
 
     h1, .heading-text {
@@ -1300,18 +1293,7 @@ input:focus-visible {
     }
 }
 
-// Button - enhanced hover
-.button {
-    box-shadow: 0 2px 4px var(--wt-shadow-accent);
-
-    &:hover {
-        box-shadow: 0 4px 12px var(--wt-shadow-accent-strong);
-    }
-
-    &:active {
-        box-shadow: 0 1px 2px var(--wt-shadow-accent);
-    }
-}
+// .button shadows defined in Hero Section
 
 // Custom scrollbar (webkit browsers)
 ::-webkit-scrollbar {
@@ -1325,7 +1307,7 @@ input:focus-visible {
 
 ::-webkit-scrollbar-thumb {
     background: var(--wt-color-border-subtle);
-    border-radius: 4px;
+    border-radius: var(--wt-radius-sm);
 
     &:hover {
         background: var(--wt-color-text-soft);
@@ -1365,10 +1347,7 @@ header nav .nav-item {
     }
 }
 
-// TOC hover indicator
-.toc-item a:not(.active):hover {
-    background: var(--wt-color-bg-soft);
-}
+// TOC hover defined in .toc-item a:hover
 
 // Logo hover effect
 header .logo:hover img {
@@ -1376,15 +1355,7 @@ header .logo:hover img {
     transition: filter 200ms ease;
 }
 
-// Explore more bounce animation
-@keyframes gentle-bounce {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(4px); }
-}
-
-button.explore-more {
-    animation: gentle-bounce 2s ease-in-out infinite;
-}
+// button.explore-more uses .hero .explore-more animation (float keyframes)
 
 // ============================================================================
 // Dark Mode Adjustments
