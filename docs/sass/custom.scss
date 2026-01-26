@@ -753,17 +753,13 @@ main {
     }
 
     // H1 entries in TOC - section markers
-    // Left border provides visual grouping
+    // Same alignment as H2s, distinguished by weight and spacing
     &.toc-h1 {
-        margin-top: 0.35rem;
-        padding-left: 0.65rem;
+        margin-top: 0.5rem;
 
         a {
-            font-weight: 550;
-            font-size: 0.75rem;
+            font-weight: 600;
             color: var(--wt-color-text-muted);
-            border-left: 2px solid var(--wt-color-border-subtle);
-            padding-left: 0.35rem;
 
             &:hover {
                 color: var(--wt-color-text);
