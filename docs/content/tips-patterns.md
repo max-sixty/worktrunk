@@ -328,7 +328,7 @@ Configure worktrunk to create worktrees as subdirectories:
 
 ```toml
 # ~/.config/worktrunk/config.toml
-worktree-path = "{{ branch | sanitize }}"
+worktree-path = "../{{ branch | sanitize }}"
 ```
 
 Create the first worktree:
