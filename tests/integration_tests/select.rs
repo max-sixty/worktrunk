@@ -295,8 +295,41 @@ fn render_terminal_screen(raw_output: &[u8]) -> String {
     result
 }
 
+/// Strip OSC 8 hyperlinks while preserving other ANSI sequences.
+///
+/// Git on some platforms (notably macOS) generates OSC 8 terminal hyperlinks in diff output.
+/// The vt100 parser passes these through, and they can appear as garbage characters (like ^D)
+/// in the rendered output. We strip them for test stability across platforms.
+///
+/// This uses the same logic as `src/help.rs::strip_osc8_hyperlinks()`.
+fn strip_osc8_hyperlinks(s: &str) -> String {
+    let mut result = s.to_string();
+    // Keep parsing and removing hyperlinks until none remain
+    while let Ok(Some((_, range))) = osc8::Hyperlink::parse(&result) {
+        // The range covers the opening escape sequence only.
+        // We need to find and remove the closing sequence too.
+        let after_open = range.end;
+        // Find the closing sequence (empty hyperlink that ends the link)
+        if let Ok(Some((_, close_range))) = osc8::Hyperlink::parse(&result[after_open..]) {
+            // Extract the text between opening and closing sequences
+            let text_between = result[after_open..after_open + close_range.start].to_string();
+            // Replace the entire hyperlink (open + text + close) with just the text
+            let full_end = after_open + close_range.end;
+            result.replace_range(range.start..full_end, &text_between);
+        } else {
+            // Malformed hyperlink (no closing sequence) - just remove the opening
+            result.replace_range(range.clone(), "");
+            break;
+        }
+    }
+    result
+}
+
 /// Normalize output for snapshot stability
 fn normalize_output(output: &str) -> String {
+    // Strip OSC 8 hyperlinks first (git on macOS generates these in diffs)
+    let output = strip_osc8_hyperlinks(output);
+
     let mut lines: Vec<&str> = output.lines().collect();
 
     // Normalize line 1 (query line) - replace with fixed marker
