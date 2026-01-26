@@ -173,12 +173,17 @@ pub(crate) fn version_str() -> &'static str {
     })
 }
 
+// TODO: ClaudeCode is statusline-specific but lives in this shared enum, forcing
+// unrelated codepaths to handle it. Consider a dedicated StatuslineFormat enum.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub(crate) enum OutputFormat {
     /// Human-readable table format
     Table,
     /// JSON output
     Json,
+    /// Claude Code statusline mode (reads context from stdin)
+    #[value(name = "claude-code")]
+    ClaudeCode,
 }
 
 #[derive(Parser)]

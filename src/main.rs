@@ -703,8 +703,18 @@ fn main() {
             progressive,
             no_progressive,
         } => match subcommand {
-            Some(ListSubcommand::Statusline { claude_code }) => {
-                commands::statusline::run(claude_code)
+            Some(ListSubcommand::Statusline {
+                format,
+                claude_code,
+            }) => {
+                // Hidden --claude-code flag only applies when format is default (Table)
+                // Explicit --format=json takes precedence over --claude-code
+                let effective_format = if claude_code && matches!(format, OutputFormat::Table) {
+                    OutputFormat::ClaudeCode
+                } else {
+                    format
+                };
+                commands::statusline::run(effective_format)
             }
             None => {
                 // Load config and merge with CLI flags (CLI flags take precedence)
