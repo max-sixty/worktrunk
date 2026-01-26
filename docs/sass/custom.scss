@@ -543,14 +543,17 @@ main {
     line-height: 1.5;
     color: var(--wt-color-text);  // Default text color for terminal (not syntax-highlighted)
 
-    .prompt {
-        color: var(--wt-color-text-soft);
-    }
-
-    // Command text after prompt - bold amber for visibility
+    // Command text - bold amber for visibility
+    // Prompt ($) is generated via ::before, making it non-copyable
     .cmd {
         color: var(--wt-color-accent);
         font-weight: 600;
+
+        &::before {
+            content: "$ ";
+            color: var(--wt-color-text-soft);
+            font-weight: 400;
+        }
     }
 
     // Softer bold for table headers and branch names
