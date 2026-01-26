@@ -58,7 +58,7 @@ h1 {
     margin-top: 2rem;
     margin-bottom: 0.5rem;
     position: relative;
-    display: inline-block;
+    width: fit-content;  // Block-level but sized to content (for underline effect)
 
     // Same underline treatment as h2
     > a {
@@ -720,7 +720,7 @@ main {
 }
 
 .toc-item-child {
-    padding: 0 0.45rem 0.2rem 1rem;
+    padding: 0 0.45rem 0.15rem 1rem;
     margin: 0 0.4rem;
 
     a {
@@ -745,23 +745,33 @@ main {
         }
     }
 
-    // H1 entries in TOC - major section markers
+    // H1 entries in TOC - section markers
+    // Text aligns with H2s; left border provides visual grouping
     &.toc-h1 {
-        margin-top: 0.75rem;
-        padding-left: 0.6rem;  // Less indented than H2s
-        border-top: 1px solid var(--wt-color-border-subtle);
-        padding-top: 0.5rem;
+        margin-top: 0.35rem;
+        padding-left: 0.65rem;  // Account for border so text aligns with H2s
 
         &:first-of-type {
-            border-top: none;
-            margin-top: 0.25rem;
+            margin-top: 0.15rem;
         }
 
         a {
-            font-weight: 600;
-            font-size: 0.8rem;
+            font-weight: 550;
+            font-size: 0.75rem;
             color: var(--wt-color-text-muted);
+            border-left: 2px solid var(--wt-color-border-subtle);
+            padding-left: 0.35rem;
+
+            &:hover {
+                color: var(--wt-color-text);
+                background: var(--wt-color-bg-soft);
+            }
         }
+    }
+
+    // H2s under H1s - same alignment as standalone H2s
+    &.toc-h2-under-h1 {
+        // No extra indent - aligns with standalone H2s
     }
 }
 

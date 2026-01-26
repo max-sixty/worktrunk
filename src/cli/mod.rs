@@ -1553,7 +1553,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 
 See [LLM commits docs](@/llm-commits.md) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
 
-## Commands
+## Command config
 
 ### List
 
@@ -1787,7 +1787,9 @@ Or via environment variable:
 export WORKTRUNK_SKIP_SHELL_INTEGRATION_PROMPT=true
 ```
 
-# Environment Variables
+# Other
+
+## Environment Variables
 
 All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
 
