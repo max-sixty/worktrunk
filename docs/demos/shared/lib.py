@@ -58,16 +58,21 @@ def _detect_platform() -> str:
 
 
 def _download_file(url: str, dest: Path) -> None:
-    """Download a file from URL to destination (atomic)."""
+    """Download a file from URL to destination (parallel-safe).
+
+    Uses PID-unique temp file to avoid races when multiple processes download
+    simultaneously. Only moves to dest if dest doesn't exist at move time.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"Downloading {dest.name}...")
-    temp = dest.with_suffix(".tmp")
+    temp = dest.with_suffix(f".{os.getpid()}.tmp")
     try:
         urllib.request.urlretrieve(url, temp)
-        temp.rename(dest)
-    except BaseException:
+        # Only move if dest doesn't exist (another process may have finished first)
+        if not dest.exists():
+            temp.rename(dest)
+    finally:
         temp.unlink(missing_ok=True)
-        raise
 
 
 def _ensure_claude_binary() -> Path:
@@ -329,6 +334,8 @@ def prepare_base_repo(env: DemoEnv, repo_root: Path):
     git(["-C", str(env.repo), "config", "user.name", "Worktrunk Demo"])
     git(["-C", str(env.repo), "config", "user.email", "demo@example.com"])
     git(["-C", str(env.repo), "config", "commit.gpgsign", "false"])
+    # Suppress wt hints in demo output (hints are stored in git config)
+    git(["-C", str(env.repo), "config", "worktrunk.hints.worktree-path", "true"])
 
     # Initial commit
     (env.repo / "README.md").write_text("# Acme App\n\nA demo application.\n")
