@@ -736,6 +736,8 @@ pub fn prompt_for_install(
 
 /// Prompt user for yes/no confirmation (simple [y/N] prompt)
 fn prompt_yes_no() -> Result<bool, String> {
+    // Blank line before prompt for visual separation
+    eprintln!();
     eprint!(
         "{} ",
         prompt_message(color_print::cformat!("Proceed? <bold>[y/N]</>"))
@@ -747,6 +749,7 @@ fn prompt_yes_no() -> Result<bool, String> {
         .read_line(&mut input)
         .map_err(|e| e.to_string())?;
 
+    // End the prompt line on stderr (user's input went to stdin, not stderr)
     eprintln!();
 
     let response = input.trim().to_lowercase();

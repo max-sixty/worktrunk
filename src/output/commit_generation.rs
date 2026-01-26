@@ -4,7 +4,7 @@
 //! attempt a commit without configuration. Detects available tools (claude, codex)
 //! and offers to auto-configure the recommended settings.
 
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal};
 
 use color_print::cformat;
 use worktrunk::config::UserConfig;
@@ -137,9 +137,6 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
     let config_preview = format!("[commit.generation]\ncommand = {formatted_command}");
 
     // Show prompt with preview on ?
-    eprintln!();
-    io::stderr().flush()?;
-
     let response = prompt_yes_no_preview(
         &cformat!("Configure <bold>{tool}</> for commit messages?"),
         || {

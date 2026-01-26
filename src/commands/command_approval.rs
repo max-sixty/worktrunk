@@ -122,7 +122,6 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
             "{WARNING_SYMBOL} <yellow><bold>{project_name}</> needs approval to execute <bold>{count}</> command{plural}:</>"
         )
     );
-    eprintln!();
 
     for cmd in commands {
         // Format as: {phase} {bold}{name}{bold:#}:
@@ -144,7 +143,8 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
         return Err(GitError::NotInteractive.into());
     }
 
-    // Flush stderr before showing prompt to ensure all output is visible
+    // Blank line before prompt for visual separation
+    worktrunk::styling::eprintln!();
     stderr().flush()?;
 
     eprint!(
@@ -156,7 +156,8 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
     let mut response = String::new();
     io::stdin().read_line(&mut response)?;
 
-    eprintln!();
+    // End the prompt line on stderr (user's input went to stdin, not stderr)
+    worktrunk::styling::eprintln!();
 
     Ok(response.trim().eq_ignore_ascii_case("y"))
 }

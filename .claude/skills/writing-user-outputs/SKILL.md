@@ -463,31 +463,34 @@ parsing.
 Specific rules:
 
 - **No leading/trailing blanks** — Start immediately, end cleanly
-- **One blank after prompts** — Separate user input from results
+- **Blank before prompts, not after** — Signal "pause, something interactive is
+  happening" before the prompt; once the user responds, output flows continuously
 - **One blank between phases** — When a sub-operation completes and a different
   operation begins, add a blank line to visually separate them
 - **Never double blanks** — One blank line maximum between elements
 
-**Phase separation:** A "phase" is a logically distinct operation. Examples:
-
-- First-time config setup completing → main command workflow starting
-- Interactive prompt with results → unrelated command output
-- One complete sub-operation → another unrelated sub-operation
+**Prompt spacing:** A blank line before the prompt signals "something different
+is about to happen" and gives the user's eye a natural stopping point before they
+need to read and respond. No blank line after — the user's input ends the
+interactive moment and subsequent output flows naturally from that decision.
 
 ```
-❯ Configure claude for commit messages? [y/N/?] y
+◎ Detecting available LLM tools...
 
+❯ Configure claude for commit messages? [y/N/?] y
 ✓ Added to user config:
    ┃ [commit.generation]
    ┃ command = "..."
 ↳ View config: wt config show
-                                      ← Blank line separates phases
+
 ▲ Auto-staging 1 untracked path:
    ┃ a
 ◎ Generating commit message...
 ```
 
-The blank line signals "that's done, now we're doing something else."
+**Phase separation:** A "phase" is a logically distinct operation. The blank
+line between the hint and warning above signals "config setup is done, now we're
+doing the main command workflow."
 
 **Interactive prompts** must flush stderr before blocking on stdin:
 
