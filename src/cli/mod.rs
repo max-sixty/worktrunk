@@ -1653,7 +1653,8 @@ template = """
 Write a commit message for the staged changes below.
 
 <format>
-- Subject under 50 chars, blank line, then optional body
+- Subject line under 50 chars
+- For material changes, add a blank line then a body paragraph explaining the change
 - Output only the commit message, no quotes or code blocks
 </format>
 
@@ -1698,7 +1699,8 @@ squash-template = """
 Combine these commits into a single commit message.
 
 <format>
-- Subject under 50 chars, blank line, then optional body
+- Subject line under 50 chars
+- For material changes, add a blank line then a body paragraph explaining the change
 - Output only the commit message, no quotes or code blocks
 </format>
 
@@ -1772,9 +1774,9 @@ wt config shell init fish | source
 
 Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
 
-### Skip first-run prompt
+### First-run prompts
 
-On first run without shell integration, Worktrunk offers to install it. Declining sets `skip-shell-integration-prompt = true` automatically.
+On first run without shell integration, Worktrunk offers to install it. Similarly, on first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
 
 # Other
 

@@ -1386,8 +1386,12 @@ impl TestRepo {
     }
 
     /// Overwrite the isolated WORKTRUNK_CONFIG_PATH used during tests.
+    ///
+    /// Automatically prepends `skip-commit-generation-prompt = true` to prevent
+    /// interactive prompts from appearing in test output.
     pub fn write_test_config(&self, contents: &str) {
-        std::fs::write(&self.test_config_path, contents).unwrap();
+        let full_contents = format!("skip-commit-generation-prompt = true\n{}", contents);
+        std::fs::write(&self.test_config_path, full_contents).unwrap();
     }
 
     /// Get the path to a named worktree

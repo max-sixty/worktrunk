@@ -11,6 +11,8 @@ use worktrunk::styling::{
     prompt_message, warning_message,
 };
 
+use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
+
 pub struct ConfigureResult {
     pub shell: Shell,
     pub path: PathBuf,
@@ -724,36 +726,12 @@ pub fn prompt_for_install(
     cmd: &str,
     prompt_text: &str,
 ) -> Result<bool, String> {
-    loop {
-        eprint!(
-            "{} ",
-            prompt_message(color_print::cformat!("{prompt_text} <bold>[y/N/?]</>"))
-        );
-        io::stderr().flush().map_err(|e| e.to_string())?;
+    let response = prompt_yes_no_preview(prompt_text, || {
+        show_install_preview(results, completion_results, cmd);
+    })
+    .map_err(|e| e.to_string())?;
 
-        let mut input = String::new();
-        io::stdin()
-            .read_line(&mut input)
-            .map_err(|e| e.to_string())?;
-
-        let response = input.trim().to_lowercase();
-        match response.as_str() {
-            "y" | "yes" => {
-                eprintln!();
-                return Ok(true);
-            }
-            "?" => {
-                eprintln!();
-                show_install_preview(results, completion_results, cmd);
-                // Loop back to prompt again
-            }
-            _ => {
-                // Empty, "n", "no", or anything else is decline
-                eprintln!();
-                return Ok(false);
-            }
-        }
-    }
+    Ok(response == PromptResponse::Accepted)
 }
 
 /// Prompt user for yes/no confirmation (simple [y/N] prompt)

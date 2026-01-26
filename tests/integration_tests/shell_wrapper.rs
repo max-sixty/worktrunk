@@ -899,6 +899,9 @@ mod unix_tests {
     #[case("zsh")]
     #[case("fish")]
     fn test_wrapper_merge(#[case] shell: &str, mut repo: TestRepo) {
+        // Disable LLM prompt (PTY tests are interactive, claude may be installed)
+        repo.write_test_config("");
+
         // Create a feature branch
         repo.add_worktree("feature");
 
@@ -1073,8 +1076,7 @@ test = "echo '✓ All 47 tests passed in 2.3s'"
         let feature_wt = repo.add_feature();
 
         // Pre-approve commands
-        fs::write(
-            repo.test_config_path(),
+        repo.write_test_config(
             r#"[projects."../origin"]
 approved-commands = [
     "echo '✓ Code formatting check passed'",
@@ -1082,8 +1084,7 @@ approved-commands = [
     "echo '✓ All 47 tests passed in 2.3s'",
 ]
 "#,
-        )
-        .unwrap();
+        );
 
         // Run merge from the feature worktree
         let output =
@@ -1131,16 +1132,14 @@ test = "echo '✗ Test suite failed: 3 tests failing' && exit 1"
         );
 
         // Pre-approve the commands
-        fs::write(
-            repo.test_config_path(),
+        repo.write_test_config(
             r#"[projects."../origin"]
 approved-commands = [
     "echo '✓ Code formatting check passed'",
     "echo '✗ Test suite failed: 3 tests failing' && exit 1",
 ]
 "#,
-        )
-        .unwrap();
+        );
 
         // Run merge from the feature worktree
         let output =
@@ -1198,10 +1197,8 @@ check2 = "{} check2 3"
         let feature_wt = repo.add_feature();
 
         // Pre-approve commands
-        fs::write(
-            repo.test_config_path(),
-            format!(
-                r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
+        repo.write_test_config(&format!(
+            r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
 [projects."../origin"]
 approved-commands = [
@@ -1209,11 +1206,9 @@ approved-commands = [
     "{} check2 3",
 ]
 "#,
-                script_path.display(),
-                script_path.display()
-            ),
-        )
-        .unwrap();
+            script_path.display(),
+            script_path.display()
+        ));
 
         // Run merge from the feature worktree
         let output =
@@ -2450,7 +2445,7 @@ command = "{}"
 "#,
             llm_path.display()
         );
-        fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+        repo.write_test_config(&worktrunk_config);
 
         // Set PATH with mock binaries and run merge
         let path_with_bin = format!(

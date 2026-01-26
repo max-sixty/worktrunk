@@ -182,7 +182,8 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# Write a commit message for the staged changes below.[0m
   [2m#[0m
   [2m# <format>[0m
-  [2m# - Subject under 50 chars, blank line, then optional body[0m
+  [2m# - Subject line under 50 chars[0m
+  [2m# - For material changes, add a blank line then a body paragraph explaining the change[0m
   [2m# - Output only the commit message, no quotes or code blocks[0m
   [2m# </format>[0m
   [2m#[0m
@@ -225,7 +226,8 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# Combine these commits into a single commit message.[0m
   [2m#[0m
   [2m# <format>[0m
-  [2m# - Subject under 50 chars, blank line, then optional body[0m
+  [2m# - Subject line under 50 chars[0m
+  [2m# - For material changes, add a blank line then a body paragraph explaining the change[0m
   [2m# - Output only the commit message, no quotes or code blocks[0m
   [2m# </format>[0m
   [2m#[0m

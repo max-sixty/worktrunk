@@ -169,6 +169,14 @@ pub struct UserConfig {
         skip_serializing_if = "std::ops::Not::not"
     )]
     pub skip_shell_integration_prompt: bool,
+
+    /// Skip the first-run commit generation prompt
+    #[serde(
+        default,
+        rename = "skip-commit-generation-prompt",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub skip_commit_generation_prompt: bool,
 }
 
 /// Configuration for commit message generation
@@ -181,7 +189,7 @@ pub struct CommitGenerationConfig {
     ///
     /// Examples:
     /// - `"llm -m claude-haiku-4.5"`
-    /// - `"MAX_THINKING_TOKENS=0 claude -p --model haiku"`
+    /// - `"MAX_THINKING_TOKENS=0 claude -p --model=haiku"`
     ///
     /// The command receives the prompt via stdin and should output the commit message.
     #[serde(default)]
@@ -1008,6 +1016,49 @@ impl UserConfig {
         })
     }
 
+    /// Set `skip-commit-generation-prompt = true` and save.
+    ///
+    /// Acquires lock, reloads from disk, sets flag if not already set, and saves.
+    /// Pass `None` for default config path, or `Some(path)` for testing.
+    pub fn set_skip_commit_generation_prompt(
+        &mut self,
+        config_path: Option<&std::path::Path>,
+    ) -> Result<(), ConfigError> {
+        self.with_locked_mutation(config_path, |config| {
+            if config.skip_commit_generation_prompt {
+                return false;
+            }
+            config.skip_commit_generation_prompt = true;
+            true
+        })
+    }
+
+    /// Set commit generation command and save.
+    ///
+    /// Sets `[commit.generation] command = ...` in the user config.
+    /// Acquires lock, reloads from disk, sets the command, and saves.
+    /// Pass `None` for default config path, or `Some(path)` for testing.
+    pub fn set_commit_generation_command(
+        &mut self,
+        command: String,
+        config_path: Option<&std::path::Path>,
+    ) -> Result<(), ConfigError> {
+        self.with_locked_mutation(config_path, |config| {
+            // Ensure commit config exists
+            let commit_config = config
+                .configs
+                .commit
+                .get_or_insert_with(CommitConfig::default);
+            let gen_config = commit_config
+                .generation
+                .get_or_insert_with(CommitGenerationConfig::default);
+
+            // Set the command
+            gen_config.command = Some(command.clone());
+            true
+        })
+    }
+
     /// Save the current configuration to the default config file location
     pub fn save(&self) -> Result<(), ConfigError> {
         self.save_impl(None)
@@ -1024,6 +1075,130 @@ impl UserConfig {
                     )
                 })?;
                 self.save_to(&path)
+            }
+        }
+    }
+
+    /// Update the [commit.generation] section in the document.
+    fn update_commit_generation_section(&self, doc: &mut toml_edit::DocumentMut) {
+        // Helper to update a string field only if changed, preserving comments
+        fn update_string_field(
+            table: &mut toml_edit::Table,
+            key: &str,
+            new_value: Option<&String>,
+        ) {
+            match new_value {
+                Some(v) => {
+                    // Only update if value changed (preserves comments if unchanged)
+                    let current = table.get(key).and_then(|i| i.as_str());
+                    if current != Some(v.as_str()) {
+                        table[key] = toml_edit::value(v.as_str());
+                    }
+                }
+                None => {
+                    table.remove(key);
+                }
+            }
+        }
+
+        if let Some(ref commit_cfg) = self.configs.commit
+            && let Some(ref gen_cfg) = commit_cfg.generation
+        {
+            // Ensure [commit] table exists
+            if !doc.contains_key("commit") {
+                doc["commit"] = toml_edit::Item::Table(toml_edit::Table::new());
+            }
+            if let Some(commit_table) = doc["commit"].as_table_mut() {
+                // Ensure [commit.generation] table exists
+                if !commit_table.contains_key("generation") {
+                    commit_table["generation"] = toml_edit::Item::Table(toml_edit::Table::new());
+                }
+                if let Some(gen_table) = commit_table["generation"].as_table_mut() {
+                    update_string_field(gen_table, "command", gen_cfg.command.as_ref());
+                    update_string_field(gen_table, "template", gen_cfg.template.as_ref());
+                    update_string_field(gen_table, "template-file", gen_cfg.template_file.as_ref());
+                    update_string_field(
+                        gen_table,
+                        "squash-template",
+                        gen_cfg.squash_template.as_ref(),
+                    );
+                    update_string_field(
+                        gen_table,
+                        "squash-template-file",
+                        gen_cfg.squash_template_file.as_ref(),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Update the [projects] section in the document.
+    fn update_projects_section(&self, doc: &mut toml_edit::DocumentMut) {
+        // Ensure projects table exists
+        if !doc.contains_key("projects") {
+            doc["projects"] = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+
+        if let Some(projects) = doc["projects"].as_table_mut() {
+            // Remove stale projects
+            let stale: Vec<_> = projects
+                .iter()
+                .filter(|(k, _)| !self.projects.contains_key(*k))
+                .map(|(k, _)| k.to_string())
+                .collect();
+            for key in stale {
+                projects.remove(&key);
+            }
+
+            // Add/update projects
+            for (project_id, project_config) in &self.projects {
+                if !projects.contains_key(project_id) {
+                    projects[project_id] = toml_edit::Item::Table(toml_edit::Table::new());
+                }
+
+                // worktree-path (only if set)
+                if let Some(ref path) = project_config.overrides.worktree_path {
+                    projects[project_id]["worktree-path"] = toml_edit::value(path);
+                } else if let Some(table) = projects[project_id].as_table_mut() {
+                    table.remove("worktree-path");
+                }
+
+                // approved-commands
+                let commands =
+                    Self::format_multiline_array(project_config.approved_commands.iter());
+                projects[project_id]["approved-commands"] = toml_edit::value(commands);
+
+                // Per-project nested config sections
+                Self::serialize_project_config_section(
+                    projects,
+                    project_id,
+                    "commit-generation",
+                    project_config.commit_generation.as_ref(),
+                );
+                Self::serialize_project_config_section(
+                    projects,
+                    project_id,
+                    "list",
+                    project_config.overrides.list.as_ref(),
+                );
+                Self::serialize_project_config_section(
+                    projects,
+                    project_id,
+                    "commit",
+                    project_config.overrides.commit.as_ref(),
+                );
+                Self::serialize_project_config_section(
+                    projects,
+                    project_id,
+                    "merge",
+                    project_config.overrides.merge.as_ref(),
+                );
+                Self::serialize_project_config_section(
+                    projects,
+                    project_id,
+                    "select",
+                    project_config.overrides.select.as_ref(),
+                );
             }
         }
     }
@@ -1091,6 +1266,11 @@ impl UserConfig {
     ///
     /// Use this in tests to save to a temporary location instead of the user's config.
     /// Preserves comments and formatting in the existing file when possible.
+    ///
+    /// TODO: This design is fragile. When file exists, we surgically update specific
+    /// sections to preserve comments. If a new programmatically-modifiable field is added
+    /// but not handled here, changes won't persist. Consider using a diff-based approach:
+    /// compare self vs existing config and only update what changed.
     pub fn save_to(&self, config_path: &std::path::Path) -> Result<(), ConfigError> {
         // Create parent directory if it doesn't exist
         if let Some(parent) = config_path.parent() {
@@ -1099,8 +1279,8 @@ impl UserConfig {
             })?;
         }
 
-        // If file exists, use toml_edit to preserve comments and formatting
         let toml_string = if config_path.exists() {
+            // Surgically update sections to preserve comments
             let existing_content = std::fs::read_to_string(config_path)
                 .map_err(|e| ConfigError::Message(format!("Failed to read config file: {}", e)))?;
 
@@ -1108,81 +1288,22 @@ impl UserConfig {
                 .parse()
                 .map_err(|e| ConfigError::Message(format!("Failed to parse config file: {}", e)))?;
 
-            // Update skip-shell-integration-prompt flag
+            // Update all programmatically-modifiable sections
+            // NOTE: If you add a new setter that modifies config, add the update here too!
             if self.skip_shell_integration_prompt {
                 doc["skip-shell-integration-prompt"] = toml_edit::value(true);
             } else {
                 doc.remove("skip-shell-integration-prompt");
             }
 
-            // Update the projects section
-            // Ensure projects table exists
-            if !doc.contains_key("projects") {
-                doc["projects"] = toml_edit::Item::Table(toml_edit::Table::new());
+            if self.skip_commit_generation_prompt {
+                doc["skip-commit-generation-prompt"] = toml_edit::value(true);
+            } else {
+                doc.remove("skip-commit-generation-prompt");
             }
 
-            if let Some(projects) = doc["projects"].as_table_mut() {
-                // Remove stale projects
-                let stale: Vec<_> = projects
-                    .iter()
-                    .filter(|(k, _)| !self.projects.contains_key(*k))
-                    .map(|(k, _)| k.to_string())
-                    .collect();
-                for key in stale {
-                    projects.remove(&key);
-                }
-
-                // Add/update projects
-                for (project_id, project_config) in &self.projects {
-                    if !projects.contains_key(project_id) {
-                        projects[project_id] = toml_edit::Item::Table(toml_edit::Table::new());
-                    }
-
-                    // worktree-path (only if set)
-                    if let Some(ref path) = project_config.overrides.worktree_path {
-                        projects[project_id]["worktree-path"] = toml_edit::value(path);
-                    } else if let Some(table) = projects[project_id].as_table_mut() {
-                        table.remove("worktree-path");
-                    }
-
-                    // approved-commands
-                    let commands =
-                        Self::format_multiline_array(project_config.approved_commands.iter());
-                    projects[project_id]["approved-commands"] = toml_edit::value(commands);
-
-                    // Per-project nested config sections
-                    Self::serialize_project_config_section(
-                        projects,
-                        project_id,
-                        "commit-generation",
-                        project_config.commit_generation.as_ref(),
-                    );
-                    Self::serialize_project_config_section(
-                        projects,
-                        project_id,
-                        "list",
-                        project_config.overrides.list.as_ref(),
-                    );
-                    Self::serialize_project_config_section(
-                        projects,
-                        project_id,
-                        "commit",
-                        project_config.overrides.commit.as_ref(),
-                    );
-                    Self::serialize_project_config_section(
-                        projects,
-                        project_id,
-                        "merge",
-                        project_config.overrides.merge.as_ref(),
-                    );
-                    Self::serialize_project_config_section(
-                        projects,
-                        project_id,
-                        "select",
-                        project_config.overrides.select.as_ref(),
-                    );
-                }
-            }
+            self.update_commit_generation_section(&mut doc);
+            self.update_projects_section(&mut doc);
 
             doc.to_string()
         } else {
@@ -1936,7 +2057,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
             squash_template_file: None,
         };
         let override_config = CommitGenerationConfig {
-            command: Some("claude -p --model haiku".to_string()), // Override
+            command: Some("claude -p --model=haiku".to_string()), // Override
             template: Some("custom".to_string()),                 // Override (was None)
             template_file: None,                                  // Fall back to base
             squash_template: None,
@@ -1944,7 +2065,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
         };
 
         let merged = base.merge_with(&override_config);
-        assert_eq!(merged.command, Some("claude -p --model haiku".to_string()));
+        assert_eq!(merged.command, Some("claude -p --model=haiku".to_string()));
         assert_eq!(merged.template, Some("custom".to_string()));
         // When project sets template, template_file is cleared to maintain mutual exclusivity
         assert_eq!(merged.template_file, None);
@@ -2877,7 +2998,7 @@ squash-template-file = "path/to/file"
         for key in &valid_keys {
             match key.as_str() {
                 "projects" => continue, // Skip - table type tested separately
-                "skip-shell-integration-prompt" => {
+                "skip-shell-integration-prompt" | "skip-commit-generation-prompt" => {
                     scalar_lines.push(format!("{key} = true"));
                 }
                 "worktree-path" => {
