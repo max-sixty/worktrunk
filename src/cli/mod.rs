@@ -926,7 +926,6 @@ lint = "cargo clippy"
     /// Browse and switch worktrees with live preview.
     #[cfg_attr(not(unix), command(hide = true))]
     #[command(after_long_help = r#"<!-- demo: wt-select.gif 1600x800 -->
-
 ## Examples
 
 Open the selector:

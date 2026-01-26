@@ -18,6 +18,7 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
   <img src="/assets/docs/light/wt-switch.gif" alt="wt switch demo" width="1600" height="900">
 </picture>
 </figure>
+
 ## Examples
 
 ```bash

@@ -552,9 +552,9 @@ fn expand_demo_placeholders(text: &str) -> String {
             // Use figure.demo class for proper mobile styling (no shrink, horizontal scroll)
             // Generate <picture> element for light/dark theme switching
             // Assets are organized as: /assets/docs/{light,dark}/filename.gif
-            // Blank line after is already in source; blank line before comes from section separation
+            // Add trailing newline for markdown paragraph separation after the figure
             let replacement = format!(
-                "<figure class=\"demo\">\n<picture>\n  <source srcset=\"/assets/docs/dark/{filename}\" media=\"(prefers-color-scheme: dark)\">\n  <img src=\"/assets/docs/light/{filename}\" alt=\"{alt_text} demo\"{dim_attrs}>\n</picture>\n</figure>"
+                "<figure class=\"demo\">\n<picture>\n  <source srcset=\"/assets/docs/dark/{filename}\" media=\"(prefers-color-scheme: dark)\">\n  <img src=\"/assets/docs/light/{filename}\" alt=\"{alt_text} demo\"{dim_attrs}>\n</picture>\n</figure>\n"
             );
             let end = after_prefix + end_offset + SUFFIX.len();
             result.replace_range(start..end, &replacement);
