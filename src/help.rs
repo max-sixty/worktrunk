@@ -301,6 +301,8 @@ Commands with pages: merge, switch, remove, list"
         let subdocs_expanded = expand_subdoc_placeholders(subdocs, sub, &parent_name);
         let subdocs_processed = colorize_ci_status_for_html(&subdocs_expanded);
         std::println!();
+        std::println!("# Subcommands");
+        std::println!();
         std::println!("{}", subdocs_processed.trim());
     }
 

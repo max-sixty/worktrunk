@@ -18,10 +18,27 @@
             </a>
         </div>
 
-        {# Show page TOC for current page (h2s only) #}
+        {# Show page TOC for current page (h1s with nested h2s, or standalone h2s) #}
         {% if is_current and current_page.toc %}
         {% for h in current_page.toc %}
-        {% if h.level == 2 %}
+        {% if h.level == 1 %}
+        <div class="toc-item-child toc-h1">
+            <a class="subtext" href="{{ h.permalink | safe }}">
+                <small>{{ h.title }}</small>
+            </a>
+        </div>
+        {# Show H2 children nested under this H1 #}
+        {% for child in h.children | default(value=[]) %}
+        {% if child.level == 2 %}
+        <div class="toc-item-child toc-h2-under-h1">
+            <a class="subtext" href="{{ child.permalink | safe }}">
+                <small>{{ child.title }}</small>
+            </a>
+        </div>
+        {% endif %}
+        {% endfor %}
+        {% elif h.level == 2 %}
+        {# Standalone H2s (before any H1) #}
         <div class="toc-item-child">
             <a class="subtext" href="{{ h.permalink | safe }}">
                 <small>{{ h.title }}</small>

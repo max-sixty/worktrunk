@@ -1,4 +1,4 @@
-# ## Worktrunk User Configuration
+# # User Configuration
 #
 # Create with `wt config create`.
 #
@@ -42,7 +42,7 @@
 #
 # See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (#custom-prompt-templates) for template customization.
 #
-# ## Commands
+# ## Command config
 #
 # ### List
 #

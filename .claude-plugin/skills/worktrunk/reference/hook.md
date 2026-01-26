@@ -429,6 +429,8 @@ Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
+# Subcommands
+
 ## wt hook approvals
 
 Manage command approvals.

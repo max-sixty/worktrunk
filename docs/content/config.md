@@ -67,7 +67,7 @@ test = "npm test"
 ---
 
 <!-- USER_CONFIG_START -->
-## Worktrunk User Configuration
+# User Configuration
 
 Create with `wt config create`.
 
@@ -113,7 +113,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 
 See [LLM commits docs](@/llm-commits.md) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
 
-## Commands
+## Command config
 
 ### List
 
@@ -288,7 +288,7 @@ Combine these commits into a single commit message.
 
 ---
 
-## Project configuration
+# Project Configuration
 
 Project config (`.config/wt.toml`) defines lifecycle hooks and project-specific settings. This file is checked into version control and shared with the team. Create with `wt config create --project`.
 
@@ -310,7 +310,7 @@ platform = "github"  # or "gitlab"
 
 ---
 
-## Shell integration
+# Shell Integration
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
@@ -346,6 +346,8 @@ Or via environment variable:
 ```bash
 export WORKTRUNK_SKIP_SHELL_INTEGRATION_PROMPT=true
 ```
+
+# Other
 
 ## Environment variables
 
@@ -414,6 +416,8 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
+
+# Subcommands
 
 ## wt config show
 
