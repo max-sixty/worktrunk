@@ -113,16 +113,10 @@ On Windows with Git Bash, `mktemp` returns POSIX-style paths like `/tmp/tmp.xxx`
 The native Windows binary (`wt.exe`) needs a Windows path to write to the
 directive file.
 
-**No explicit path conversion is needed.** MSYS2 (which Git Bash uses)
-automatically converts POSIX paths in environment variables when spawning native
-Windows binaries. When the shell wrapper sets `WORKTRUNK_DIRECTIVE_FILE=/tmp/...`
-and runs `wt.exe`, MSYS2 translates this to `C:\Users\...\Temp\...` before the
-binary sees it.
-
-See: https://www.msys2.org/docs/filesystem-paths/
-
-This means the shell wrapper templates can use `$directive_file` directly without
-calling `cygpath -w`. The conversion happens automatically in the MSYS2 runtime.
+**No explicit path conversion is needed.** MSYS2 automatically converts POSIX
+paths in environment variables when spawning native Windows binaries — shell
+wrappers can use `$directive_file` directly. See:
+https://www.msys2.org/docs/filesystem-paths/
 
 ---
 
@@ -146,15 +140,8 @@ address the user. Imperatives like "Run", "Use", "Add" are fine — they're
 concise CLI idiom.
 
 ```rust
-// BAD - possessive pronoun
-"Use 'wt merge' to rebase your changes onto main"
-// GOOD - refers to the thing directly
-"Use 'wt merge' to rebase onto main"
-
-// BAD - possessive pronoun
-"Add one line to your shell config"
-// GOOD - refers to the thing directly
-"Add one line to the shell config"
+// BAD - "Use 'wt merge' to rebase your changes onto main"
+// GOOD - "Use 'wt merge' to rebase onto main"
 ```
 
 **Avoid redundant parenthesized content:** Parenthesized text should add new
@@ -206,17 +193,7 @@ run_hook_with_filter(..., crate::output::pre_hook_display_path(ctx.worktree_path
 
 // Post-hooks: user will cd to destination if shell integration active
 ctx.spawn_post_start_commands(crate::output::post_hook_display_path(&destination))?;
-
-// Complex case: cd only happens under certain conditions
-let display_path = if will_cd_to_destination {
-    crate::output::post_hook_display_path(&destination_path)
-} else {
-    crate::output::pre_hook_display_path(&destination_path)
-};
 ```
-
-These helpers encapsulate the shell integration check internally, so callers
-don't need to check `is_shell_integration_active()` directly.
 
 **Avoid pronouns with cross-message referents:** Hints appear as separate
 messages from errors. Don't use pronouns like "it" that refer to something
@@ -283,15 +260,10 @@ modifies.
 
 ```rust
 // GOOD - parallel structure with integration reason explaining branch deletion
-// Both wt merge and wt remove show integration reason when branch is deleted
 // Target branch is bold; symbol uses its standard styling (dim for _ and ⊂)
-"Removing feature worktree & branch in background (same commit as <bold>main</>, <dim>_</>)"        // SameCommit
-"Removing feature worktree & branch in background (ancestor of <bold>main</>, <dim>⊂</>)"           // Ancestor (main moved past)
-"Removing feature worktree & branch in background (no added changes on <bold>main</>, <dim>⊂</>)"   // NoAddedChanges (empty 3-dot diff)
-"Removing feature worktree & branch in background (tree matches <bold>main</>, <dim>⊂</>)"          // TreesMatch (squash/rebase)
-"Removing feature worktree & branch in background (all changes in <bold>main</>, <dim>⊂</>)"        // MergeAddsNothing (squash + main advanced)
-"Removing feature worktree in background; retaining unmerged branch"                         // Unmerged (system keeps)
-"Removing feature worktree in background; retaining branch (--no-delete-branch)"             // User flag (user keeps)
+"Removing feature worktree & branch in background (same commit as <bold>main</>, <dim>_</>)"  // Integrated
+"Removing feature worktree in background; retaining unmerged branch"                          // Unmerged
+"Removing feature worktree in background; retaining branch (--no-delete-branch)"              // User flag
 ```
 
 **Symbol styling:** Symbols are atomic with their color — the styling is part of
@@ -360,23 +332,6 @@ Not:
 ▲ Branch-worktree mismatch; expected feature @ ~/workspace/project.feature ⚑
 ```
 
-**Why this ordering matters:** The action message announces a decision. Warnings
-discovered while making that decision should precede the announcement — they
-explain what we found before we decided to proceed. Showing warnings after the
-action makes them feel like afterthoughts rather than considered observations.
-
-**The pattern:**
-
-1. Evaluate state and gather information (discovery phase)
-2. Show warnings about unexpected state discovered during evaluation
-3. Show the action message (what we decided to do)
-4. Show hints about what the user might do next
-
-This applies to warnings that are:
-- Pre-computed during command evaluation (path mismatches, state anomalies)
-- About the state we found, not about the action we're taking
-- Informational rather than blocking (we proceed despite the warning)
-
 Warnings that result from the action itself (something failed during execution)
 naturally come after the action.
 
@@ -436,20 +391,6 @@ shouldn't clutter user output:
 |-------|----------------|
 | JSON parse error (API changed) | Requires code fix |
 | Internal invariant violated | Developer bug |
-
-```rust
-// Inline - temporary issue affecting this command
-if is_rate_limited(&stderr) {
-    return Some(CiStatus::Error);  // Shows in CI column
-}
-
-// config show - permanent, user-fixable (checked on-demand by wt config show)
-// Shell integration status is probed by wt config show, not cached
-
-// log::warn! - not user-fixable, for developer debugging
-log::warn!("Failed to parse CI JSON for {}: {}", branch, e);
-return None;
-```
 
 **Command suggestions in hints:** When a hint includes a runnable command, use
 "To X, run Y" pattern. End with the command for easy copying:
@@ -548,16 +489,6 @@ Specific rules:
 
 The blank line signals "that's done, now we're doing something else."
 
-## Output System
-
-Use `eprintln!`/`println!` from `worktrunk::styling` for output:
-
-```rust
-use worktrunk::styling::{eprintln, success_message};
-
-eprintln!("{}", success_message("Branch created"));
-```
-
 **Interactive prompts** must flush stderr before blocking on stdin:
 
 ```rust
@@ -651,13 +582,8 @@ Never quote commands or branch names. Use styling to make them stand out:
 ```rust
 // GOOD - bold in normal context
 eprintln!("{}", info_message(cformat!("Use <bold>wt merge</> to continue")));
-
 // GOOD - bright-black for commands in hints
 eprintln!("{}", hint_message(cformat!("Run <bright-black>wt list</> to see worktrees")));
-
-// GOOD - plain hint without commands
-eprintln!("{}", hint_message("No changes to commit"));
-
 // BAD - quoted commands
 eprintln!("{}", hint_message("Run 'wt list' to see worktrees"));
 ```
@@ -670,7 +596,6 @@ eprintln!("{}", hint_message("Run 'wt list' to see worktrees"));
   content (branch names, commit messages, paths, shell commands with `<`/`>`
   redirects) can be interpolated directly without escaping. Do NOT escape
   `<`/`>` in variables — it adds extra chars.
-- **`output::` for printing** — Preferred for consistency; direct `println!`/`eprintln!` acceptable
 - **YAGNI** — Most output needs no styling
 - **Graceful degradation** — Colors auto-adjust (NO_COLOR, TTY detection)
 - **Unicode-aware** — Width calculations respect symbols and CJK (via `StyledLine`)
@@ -789,27 +714,8 @@ eprintln!("{}", progress_message("Merging..."));
 eprintln!("{}", progress_message("Merging...\n"));
 ```
 
-**Avoid bullets — use gutter instead:**
-
-```rust
-// BAD - bullet list
-let mut warning = String::from("Some git operations failed:");
-for error in &errors {
-    warning.push_str(&format!("\n  - {}: {}", name, msg));
-}
-eprintln!("{}", warning_message(warning));
-
-// GOOD - gutter formatting
-let error_lines: Vec<String> = errors
-    .iter()
-    .map(|e| cformat!("<bold>{}</>: {}", e.name, e.msg))
-    .collect();
-let warning = format!(
-    "Some git operations failed:\n{}",
-    format_with_gutter(&error_lines.join("\n"), None)
-);
-eprintln!("{}", warning_message(warning));
-```
+**Avoid bullets — use gutter instead.** Instead of `"\n  - {}: {}"` bullet
+formatting, use `format_with_gutter()` to present lists.
 
 ## Error Formatting
 
