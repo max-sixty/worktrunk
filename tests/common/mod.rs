@@ -1853,7 +1853,7 @@ impl TestRepo {
         std::fs::create_dir_all(&claude_dir).unwrap();
         std::fs::write(
             claude_dir.join("settings.json"),
-            r#"{"statusLine":{"type":"command","command":"wt list statusline --claude-code"}}"#,
+            r#"{"statusLine":{"type":"command","command":"wt list statusline --format=claude-code"}}"#,
         )
         .unwrap();
     }

@@ -477,7 +477,7 @@ def setup_claude_code_config(
         "model": "claude-opus-4-5-20251101",
         "statusLine": {
             "type": "command",
-            "command": "wt list statusline --claude-code",
+            "command": "wt list statusline --format=claude-code",
         },
     }
     (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2))
