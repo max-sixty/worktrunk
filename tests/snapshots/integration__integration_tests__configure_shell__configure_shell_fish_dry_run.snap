@@ -41,7 +41,7 @@ exit_code: 0
 [2m○[22m Will create shell extension for [1mfish[0m @ [1m~/.config/fish/functions/wt.fish
 [107m [0m [2m# worktrunk shell integration for fish[0m[2m
 [107m [0m [2m# Sources full integration from binary on first use.[0m[2m
-[107m [0m [2m# Docs: https://worktrunk.dev/docs/shell-integration[0m[2m
+[107m [0m [2m# Docs: https://worktrunk.dev/config/#shell-integration[0m[2m
 [107m [0m [2m# Check: wt config show | Uninstall: wt config shell uninstall[0m[2m
 [107m [0m [2m
 [107m [0m [2m[0m[2m[35mfunction[0m[2m wt

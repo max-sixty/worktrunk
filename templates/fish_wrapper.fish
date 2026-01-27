@@ -1,6 +1,6 @@
 # worktrunk shell integration for fish
 # Sources full integration from binary on first use.
-# Docs: https://worktrunk.dev/docs/shell-integration
+# Docs: https://worktrunk.dev/config/#shell-integration
 # Check: {{ cmd }} config show | Uninstall: {{ cmd }} config shell uninstall
 
 function {{ cmd }}

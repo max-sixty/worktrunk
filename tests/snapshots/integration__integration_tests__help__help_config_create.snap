@@ -137,7 +137,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# For context:[0m
   [2m#[0m
-  [2m# - Project config (https://worktrunk.dev/config.md#project-configuration/) settings are shared with teammates.[0m
+  [2m# - Project config (https://worktrunk.dev/config/#project-configuration) settings are shared with teammates.[0m
   [2m# - User configs generally apply to all projects.[0m
   [2m# - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.[0m
   [2m#[0m

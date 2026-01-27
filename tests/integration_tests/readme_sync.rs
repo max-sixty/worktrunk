@@ -978,8 +978,15 @@ fn convert_markdown_links_for_config(line: &str) -> String {
 
             // Convert Zola @/ links to full URLs
             let url = if let Some(path) = url.strip_prefix("@/") {
-                let page = path.trim_end_matches(".md");
-                format!("https://worktrunk.dev/{page}/")
+                // Handle anchors: @/config.md#section → config/#section
+                let (page, anchor) = match path.split_once('#') {
+                    Some((p, a)) => (p.trim_end_matches(".md"), Some(a)),
+                    None => (path.trim_end_matches(".md"), None),
+                };
+                match anchor {
+                    Some(a) => format!("https://worktrunk.dev/{page}/#{a}"),
+                    None => format!("https://worktrunk.dev/{page}/"),
+                }
             } else {
                 url.to_string()
             };
