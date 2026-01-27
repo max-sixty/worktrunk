@@ -150,7 +150,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           full terminal control. Useful for launching editors, AI agents, or
           other interactive tools.
 
-          Supports ]8;;@/hook.md#template-variables\<u>hook template variables]8;;\</u> (<b>{{ branch }}</b>, <b>{{ worktree_path }}</b>,
+          Supports <u>hook template variables</u> (<b>{{ branch }}</b>, <b>{{ worktree_path }}</b>,
           etc.) and filters. <b>{{ base }}</b> and <b>{{ base_worktree_path }}</b> require
           --create.
 

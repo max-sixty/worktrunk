@@ -1,0 +1,32 @@
+$ wt list
+  [1mBranch[0m   [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage[0m
+@ main         [2m^[22m[2m|[22m                           [2m|[0m     [2m9b344c49[0m  [2m1d[0m    [2mdocs: add developm…[0m
++ hooks    [36m+[39m[36m![39m  [2m↑[22m       [32m+2[0m        [32m↑1[0m               [2m0967fab5[0m  [2m2h[0m    [2mfeat: add math ope…[0m
++ [2mbilling[0m      [2m_[22m[2m|[22m                           [2m|[0m     [2m9b344c49[0m  [2m1d[0m    [2mdocs: add developm…[0m
++ alpha     [36m![39m[36m?[39m [2m↑[22m[2m⇡[22m    [32m+105[0m  [31m-14[0m   [32m↑5[0m       [32m⇡1[0m      [2mf31634d7[0m  [2m3d[0m    [2mdocs: add FAQ sect…[0m
++ beta     [36m+[39m   [2m↓[22m[2m|[22m      [32m+2[0m            [2m[31m↓1[0m     [2m|[0m     [2mb10e3edd[0m  [2m5d[0m    [2mAdd project hooks[0m
+
+[2m○[22m [2mShowing 5 worktrees, 3 with changes, 2 ahead, 1 column hidden[0m
+[0m
+$ wt list --full
+  [1mBranch[0m   [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m     [1mmain…±[0m  [1mRemote⇅[0m  [1mCI[0m  [1mCommit[0m    [1mAge[0m
+@ main         [2m^[22m[2m|[22m                                      [2m|[0m         [2m9b344c49[0m  [2m1d[0m
++ hooks    [36m+[39m[36m![39m  [2m↑[22m       [32m+2[0m        [32m↑1[0m       [32m+12[0m   [31m-7[0m               [2m0967fab5[0m  [2m2h[0m
++ [2mbilling[0m      [2m_[22m[2m|[22m                                      [2m|[0m         [2m9b344c49[0m  [2m1d[0m
++ alpha     [36m![39m[36m?[39m [2m↑[22m[2m⇡[22m    [32m+105[0m  [31m-14[0m   [32m↑5[0m      [32m+264[0m   [31m-3[0m   [32m⇡1[0m          [2mf31634d7[0m  [2m3d[0m
++ beta     [36m+[39m   [2m↓[22m[2m|[22m      [32m+2[0m            [2m[31m↓1[0m                [2m|[0m         [2mb10e3edd[0m  [2m5d[0m
+
+[2m○[22m [2mShowing 5 worktrees, 3 with changes, 2 ahead, 2 columns hidden[0m
+[0m
+$ wt list --branches
+  [1mBranch[0m        [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage[0m
+@ main              [2m^[22m[2m|[22m                           [2m|[0m     [2m9b344c49[0m  [2m1d[0m    [2mdocs: add dev…[0m
++ hooks         [36m+[39m[36m![39m  [2m↑[22m       [32m+2[0m        [32m↑1[0m               [2m0967fab5[0m  [2m2h[0m    [2mfeat: add mat…[0m
++ [2mbilling[0m           [2m_[22m[2m|[22m                           [2m|[0m     [2m9b344c49[0m  [2m1d[0m    [2mdocs: add dev…[0m
++ alpha          [36m![39m[36m?[39m [2m↑[22m[2m⇡[22m    [32m+105[0m  [31m-14[0m   [32m↑5[0m       [32m⇡1[0m      [2mf31634d7[0m  [2m3d[0m    [2mdocs: add FAQ…[0m
++ beta          [36m+[39m   [2m↓[22m[2m|[22m      [32m+2[0m            [2m[31m↓1[0m     [2m|[0m     [2mb10e3edd[0m  [2m5d[0m    [2mAdd project h…[0m
+  [2mdocs/readme[0m      [2m/[22m[2m⊂[22m                     [2m[31m↓1[0m           [2mb10e3edd[0m  [2m5d[0m    [2mAdd project h…[0m
+  [2mspike/search[0m     [2m/[22m[2m⊂[22m                     [2m[31m↓1[0m           [2mb10e3edd[0m  [2m5d[0m    [2mAdd project h…[0m
+
+[2m○[22m [2mShowing 5 worktrees, 2 remote branches, 3 with changes, 2 ahead, 1 column hidden[0m
+[0m[0m

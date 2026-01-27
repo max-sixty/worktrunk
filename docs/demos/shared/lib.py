@@ -936,6 +936,163 @@ def record_text(
     temp_txt.unlink()
 
 
+def extract_commands_from_tape(
+    tape_path: Path, repo_root: Path, command_prefixes: tuple[str, ...] = ("wt", "git")
+) -> list[str]:
+    """Extract shell commands from a VHS tape file.
+
+    Parses the tape looking for Type "command" followed by Enter patterns,
+    filtering to commands that start with specified prefixes (default: wt, git).
+
+    Only extracts commands after Show directive (visible part of demo).
+    Skips commands in Hide blocks.
+
+    Args:
+        tape_path: Path to the .tape template file
+        repo_root: Root of the repository (for resolving Source paths)
+        command_prefixes: Tuple of command prefixes to extract (default: wt, git)
+
+    Returns:
+        List of commands in order they appear in the tape
+    """
+    # Render tape with dummy replacements to inline Source directives
+    rendered = render_tape(tape_path, {}, repo_root)
+    if not rendered:
+        return []
+
+    commands = []
+    in_visible_section = False
+    lines = rendered.split("\n")
+    i = 0
+
+    while i < len(lines):
+        line = lines[i].strip()
+
+        # Track visibility
+        if line == "Show":
+            in_visible_section = True
+        elif line == "Hide":
+            in_visible_section = False
+
+        # Look for Type "command" pattern
+        if in_visible_section and line.startswith("Type "):
+            # Extract command from Type "..." or Type '...'
+            match = re.match(r'Type\s+["\'](.+)["\']', line)
+            if match:
+                cmd = match.group(1)
+                # Check if Enter follows (possibly with Sleep in between)
+                j = i + 1
+                while j < len(lines):
+                    next_line = lines[j].strip()
+                    if not next_line:
+                        j += 1
+                        continue
+                    if next_line.startswith("Sleep "):
+                        j += 1
+                        continue
+                    if next_line == "Enter":
+                        # Only include commands with specified prefixes
+                        if any(cmd.startswith(prefix) for prefix in command_prefixes):
+                            commands.append(cmd)
+                    break
+        i += 1
+
+    return commands
+
+
+def record_snapshot(
+    demo_env: "DemoEnv",
+    tape_path: Path,
+    output_snap: Path,
+    repo_root: Path,
+) -> None:
+    """Record command output snapshot for regression testing.
+
+    Extracts commands from the tape and runs them in a fish shell with full
+    shell integration (just like the GIF demos). The snapshot format is:
+
+        $ wt list
+        <output>
+
+        $ wt switch alpha
+        <output>
+
+    This captures semantic output (what commands produce) rather than visual
+    rendering (how it looks in a terminal). Small diffs are expected when
+    output formats change; the goal is catching unexpected regressions like
+    new hints or warnings creeping in.
+
+    Args:
+        demo_env: Demo environment with repo and home paths
+        tape_path: Path to the .tape template file
+        output_snap: Path to write snapshot output
+        repo_root: Root of the repository
+
+    Raises:
+        RuntimeError: If no commands found in tape
+    """
+    commands = extract_commands_from_tape(tape_path, repo_root)
+    if not commands:
+        raise RuntimeError(f"No snapshotable commands found in {tape_path.name}")
+
+    # Build environment matching the GIF demos
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(demo_env.home),
+            "XDG_CONFIG_HOME": str(demo_env.home / ".config"),
+            "PATH": f"{repo_root / 'target' / 'debug'}:{demo_env.home / '.local' / 'bin'}:{os.environ.get('PATH', '')}",
+            "TERM": "xterm-256color",
+            "LANG": "en_US.UTF-8",
+            "LC_ALL": "en_US.UTF-8",
+        }
+    )
+
+    # Generate a fish script that:
+    # 1. Initializes shell integration (like shared-commands.tape)
+    # 2. Runs each command, printing "$ cmd" before and blank line after
+    script_lines = [
+        "# Initialize shell integration",
+        "wt config shell init fish | source",
+        "source ~/.config/fish/completions/wt.fish",
+        f"cd {demo_env.repo}",
+        "",
+    ]
+
+    for i, cmd in enumerate(commands):
+        # Echo the command prompt, run command (merging stderr)
+        script_lines.append(f"echo '$ {cmd}'")
+        script_lines.append(f"{cmd} 2>&1")
+        # Blank line between commands (not after last)
+        if i < len(commands) - 1:
+            script_lines.append("echo ''")
+
+    script_content = "\n".join(script_lines)
+    script_path = demo_env.out_dir / ".snapshot-script.fish"
+    script_path.write_text(script_content)
+
+    # Run the script in fish
+    result = subprocess.run(
+        ["fish", str(script_path)],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    # Combine stdout and stderr
+    output = (result.stdout + result.stderr).rstrip()
+
+    # Normalize temp paths to stable placeholder
+    temp_path = str(demo_env.out_dir)
+    temp_path_real = str(demo_env.out_dir.resolve())
+    output = output.replace(temp_path_real, "<DEMO_DIR>")
+    output = output.replace(temp_path, "<DEMO_DIR>")
+
+    # Write snapshot
+    output_snap.parent.mkdir(parents=True, exist_ok=True)
+    output_snap.write_text(output + "\n")
+
+
 @dataclass
 class DemoSize:
     """Canvas and font size for demo recording."""

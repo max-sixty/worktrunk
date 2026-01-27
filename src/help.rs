@@ -127,6 +127,14 @@ pub fn maybe_handle_help_with_pager() -> bool {
 /// If `width` is provided, wraps text at that width (for web docs); otherwise uses default.
 /// Always preserves ANSI color codes for HTML conversion.
 fn get_help_reference(command_path: &[&str], width: Option<usize>) -> String {
+    let output = get_help_reference_inner(command_path, width);
+    // Strip OSC 8 hyperlinks. Clap generates these from markdown links like [text](url),
+    // but web docs convert ANSI to HTML via ansi_to_html which only handles SGR codes
+    // (colors), not OSC sequences - hyperlinks leak through as garbage.
+    worktrunk::styling::strip_osc8_hyperlinks(&output)
+}
+
+fn get_help_reference_inner(command_path: &[&str], width: Option<usize>) -> String {
     // Build args: ["wt", "config", "create", "--help"]
     let mut args: Vec<String> = vec!["wt".to_string()];
     args.extend(command_path.iter().map(|s| s.to_string()));

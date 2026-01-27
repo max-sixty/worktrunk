@@ -41,6 +41,9 @@ pub fn prompt_yes_no_preview(
     prompt_text: &str,
     show_preview: impl Fn(),
 ) -> io::Result<PromptResponse> {
+    // Blank line before first prompt for visual separation
+    worktrunk::styling::eprintln!();
+
     loop {
         eprint!(
             "{}",
@@ -51,19 +54,19 @@ pub fn prompt_yes_no_preview(
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
 
+        // End the prompt line on stderr (user's input went to stdin, not stderr)
+        worktrunk::styling::eprintln!();
+
         let response = input.trim().to_lowercase();
         match response.as_str() {
             "y" | "yes" => {
-                worktrunk::styling::eprintln!();
                 return Ok(PromptResponse::Accepted);
             }
             "?" => {
-                worktrunk::styling::eprintln!();
                 show_preview();
                 // Loop back to prompt again
             }
             _ => {
-                worktrunk::styling::eprintln!();
                 return Ok(PromptResponse::Declined);
             }
         }

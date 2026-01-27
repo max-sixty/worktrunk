@@ -32,12 +32,8 @@ struct ClaudeCodeContext {
 
 impl ClaudeCodeContext {
     /// Parse Claude Code context from a JSON string.
-    /// Returns None if the string is empty or not valid JSON.
+    /// Returns None if not valid JSON or missing required fields.
     fn parse(input: &str) -> Option<Self> {
-        if input.is_empty() {
-            return None;
-        }
-
         let v: serde_json::Value = serde_json::from_str(input).ok()?;
 
         // current_dir is required - if missing, treat as invalid JSON
