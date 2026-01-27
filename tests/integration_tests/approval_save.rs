@@ -901,4 +901,9 @@ approved-commands = [
         saved.contains("llm -m haiku"),
         "command should be saved. Saved content:\n{saved}"
     );
+    // When only generation is set (no stage), [commit] header should be implicit
+    assert!(
+        !saved.contains("[commit]\n"),
+        "Should not have standalone [commit] header when only generation is set:\n{saved}"
+    );
 }
