@@ -737,8 +737,6 @@ fn test_set_commit_generation_command_saves_to_disk() {
     // Verify TOML structure - should have [commit.generation] section with command
     let toml_content = fs::read_to_string(&config_path).unwrap();
     assert_snapshot!(toml_content, @r#"
-    [commit]
-
     [commit.generation]
     command = "llm -m haiku"
     "#);
@@ -902,5 +900,10 @@ approved-commands = [
     assert!(
         saved.contains("llm -m haiku"),
         "command should be saved. Saved content:\n{saved}"
+    );
+    // When only generation is set (no stage), [commit] header should be implicit
+    assert!(
+        !saved.contains("[commit]\n"),
+        "Should not have standalone [commit] header when only generation is set:\n{saved}"
     );
 }

@@ -1262,6 +1262,17 @@ impl UserConfig {
         }
     }
 
+    /// If `[commit]` only contains subtables (like `[commit.generation]`), mark it implicit
+    /// so TOML doesn't emit an empty `[commit]` header.
+    fn make_commit_table_implicit_if_only_subtables(doc: &mut toml_edit::DocumentMut) {
+        if let Some(commit) = doc.get_mut("commit").and_then(|c| c.as_table_mut()) {
+            let has_only_subtables = commit.iter().all(|(_, v)| v.is_table());
+            if has_only_subtables {
+                commit.set_implicit(true);
+            }
+        }
+    }
+
     /// Save the current configuration to a specific file path
     ///
     /// Use this in tests to save to a temporary location instead of the user's config.
@@ -1304,6 +1315,7 @@ impl UserConfig {
 
             self.update_commit_generation_section(&mut doc);
             self.update_projects_section(&mut doc);
+            Self::make_commit_table_implicit_if_only_subtables(&mut doc);
 
             doc.to_string()
         } else {
@@ -1313,6 +1325,7 @@ impl UserConfig {
 
             // Convert inline tables to standard tables for readability
             Self::expand_inline_tables(doc.as_table_mut());
+            Self::make_commit_table_implicit_if_only_subtables(&mut doc);
 
             // Post-process: format approved-commands as multiline arrays for readability
             if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
@@ -2736,6 +2749,48 @@ squash-template-file = "path/to/file"
         assert!(
             saved.contains("command = \"llm -m haiku\""),
             "Should contain command: {saved}"
+        );
+        // When only generation is set (no stage), [commit] header should be implicit
+        assert!(
+            !saved.contains("[commit]\n"),
+            "Should not have standalone [commit] header when only generation is set: {saved}"
+        );
+    }
+
+    #[test]
+    fn test_save_to_new_file_commit_with_stage_and_generation() {
+        // Test that when both stage and generation are set, [commit] header is explicit
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+
+        let config = UserConfig {
+            configs: OverridableConfig {
+                commit: Some(CommitConfig {
+                    stage: Some(StageMode::Tracked),
+                    generation: Some(CommitGenerationConfig {
+                        command: Some("llm -m haiku".to_string()),
+                        ..Default::default()
+                    }),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        config.save_to(&config_path).unwrap();
+
+        let saved = std::fs::read_to_string(&config_path).unwrap();
+        assert!(
+            saved.contains("[commit]\n"),
+            "Should have [commit] header when stage is set: {saved}"
+        );
+        assert!(
+            saved.contains("stage = \"tracked\""),
+            "Should contain stage: {saved}"
+        );
+        assert!(
+            saved.contains("[commit.generation]"),
+            "Should have generation section: {saved}"
         );
     }
 
