@@ -297,6 +297,9 @@ fn render_terminal_screen(raw_output: &[u8]) -> String {
 
 /// Normalize output for snapshot stability
 fn normalize_output(output: &str) -> String {
+    // Strip OSC 8 hyperlinks first (git on macOS generates these in diffs)
+    let output = worktrunk::styling::strip_osc8_hyperlinks(output);
+
     let mut lines: Vec<&str> = output.lines().collect();
 
     // Normalize line 1 (query line) - replace with fixed marker

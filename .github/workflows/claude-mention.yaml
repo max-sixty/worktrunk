@@ -94,8 +94,9 @@ jobs:
             - Check the test output for detailed failure information
             - When fixing issues, verify changes with the appropriate test commands
             - Once local test commands work, push to the PR
-            - Then: iterate between monitoring CI, fixing any remaining issues, monitoring CI
-            - Don't return until we're confident that we've done everything we can
+            - After pushing, MUST monitor CI until all checks complete (CI tests on Linux, Windows, macOS)
+            - Local tests passing is not sufficient — use 'gh pr checks' to monitor actual CI
+            - If CI fails, fix and push again. Do not return until CI is green.
 
             Available test commands:
             - 'cargo insta test --dnd --test-runner=nextest' - Run all tests with snapshot testing

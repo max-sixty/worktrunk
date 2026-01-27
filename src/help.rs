@@ -131,43 +131,7 @@ fn get_help_reference(command_path: &[&str], width: Option<usize>) -> String {
     // Strip OSC 8 hyperlinks. Clap generates these from markdown links like [text](url),
     // but web docs convert ANSI to HTML via ansi_to_html which only handles SGR codes
     // (colors), not OSC sequences - hyperlinks leak through as garbage.
-    strip_osc8_hyperlinks(&output)
-}
-
-/// Strip OSC 8 hyperlinks while preserving other ANSI sequences (colors).
-///
-/// Clap's `unstable-markdown` feature (added in 4.5.28) converts markdown links like
-/// `[text](url)` in doc comments to OSC 8 terminal hyperlinks. This is great for terminal
-/// output (clickable links!), but our web docs use `ansi_to_html` which only handles SGR
-/// codes (colors), not OSC sequences—hyperlinks leak through as garbage text.
-///
-/// There's no runtime toggle in clap to disable this; the OSC 8 bytes are emitted
-/// unconditionally by the markdown renderer. Environment variables like `FORCE_HYPERLINK`,
-/// `NO_COLOR`, and `TERM=dumb` have no effect because clap's hyperlink generation is
-/// separate from `supports-hyperlinks` and `anstyle-query`.
-///
-/// Uses the `osc8` crate's parser to find hyperlinks and extract just the visible text.
-fn strip_osc8_hyperlinks(s: &str) -> String {
-    let mut result = s.to_string();
-    // Keep parsing and removing hyperlinks until none remain
-    while let Ok(Some((_, range))) = osc8::Hyperlink::parse(&result) {
-        // The range covers the opening escape sequence only.
-        // We need to find and remove the closing sequence too.
-        let after_open = range.end;
-        // Find the closing sequence (empty hyperlink that ends the link)
-        if let Ok(Some((_, close_range))) = osc8::Hyperlink::parse(&result[after_open..]) {
-            // Extract the text between opening and closing sequences
-            let text_between = result[after_open..after_open + close_range.start].to_string();
-            // Replace the entire hyperlink (open + text + close) with just the text
-            let full_end = after_open + close_range.end;
-            result.replace_range(range.start..full_end, &text_between);
-        } else {
-            // Malformed hyperlink (no closing sequence) - just remove the opening
-            result.replace_range(range.clone(), "");
-            break;
-        }
-    }
-    result
+    worktrunk::styling::strip_osc8_hyperlinks(&output)
 }
 
 fn get_help_reference_inner(command_path: &[&str], width: Option<usize>) -> String {
@@ -609,63 +573,4 @@ fn expand_demo_placeholders(text: &str) -> String {
         }
     }
     result
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_strip_osc8_hyperlinks_removes_hyperlink() {
-        // OSC 8 format: ESC ] 8 ; params ; URL ST TEXT ESC ] 8 ; ; ST
-        // ST can be ESC \ or BEL (\x07)
-        let url = "https://example.com";
-        let text = "link text";
-        let input = format!(
-            "before {}{}{}after",
-            osc8::Hyperlink::new(url),
-            text,
-            osc8::Hyperlink::END
-        );
-
-        let result = strip_osc8_hyperlinks(&input);
-        assert_eq!(result, "before link textafter");
-    }
-
-    #[test]
-    fn test_strip_osc8_hyperlinks_preserves_sgr_codes() {
-        // SGR codes (colors) like ESC [ 0 m should be preserved
-        let url = "https://example.com";
-        let text = "link";
-        let input = format!(
-            "\u{1b}[1m{}{}{}bold\u{1b}[0m",
-            osc8::Hyperlink::new(url),
-            text,
-            osc8::Hyperlink::END
-        );
-
-        let result = strip_osc8_hyperlinks(&input);
-        assert_eq!(result, "\u{1b}[1mlinkbold\u{1b}[0m");
-    }
-
-    #[test]
-    fn test_strip_osc8_hyperlinks_handles_no_hyperlinks() {
-        let input = "plain text with no hyperlinks";
-        let result = strip_osc8_hyperlinks(input);
-        assert_eq!(result, input);
-    }
-
-    #[test]
-    fn test_strip_osc8_hyperlinks_handles_multiple() {
-        let input = format!(
-            "{}first{} and {}second{}",
-            osc8::Hyperlink::new("url1"),
-            osc8::Hyperlink::END,
-            osc8::Hyperlink::new("url2"),
-            osc8::Hyperlink::END
-        );
-
-        let result = strip_osc8_hyperlinks(&input);
-        assert_eq!(result, "first and second");
-    }
 }
