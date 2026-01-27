@@ -461,19 +461,21 @@ mod tests {
     fn test_powershell_config_line_evaluates_correctly() {
         use crate::shell_exec::Cmd;
 
-        // Get the actual binary path (for WORKTRUNK_BIN)
-        let wt_bin = std::env::current_exe()
+        // Get the directory containing the wt binary (to add to PATH)
+        let bin_dir = std::env::current_exe()
             .ok()
-            .and_then(|p| p.parent().map(|p| p.join("wt")))
-            .unwrap_or_else(|| std::path::PathBuf::from("wt"));
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .expect("Failed to get binary directory");
 
         // Build a script that:
-        // 1. Sets WORKTRUNK_BIN so the init script can find the binary
-        // 2. Runs the config_line (which uses Invoke-Expression)
-        // 3. Checks if the function is defined
+        // 1. Adds the binary directory to PATH so Get-Command wt works
+        // 2. Sets WORKTRUNK_BIN so the init script can find the binary
+        // 3. Runs the config_line (which uses Invoke-Expression)
+        // 4. Checks if the function is defined
         let config_line = Shell::PowerShell.config_line("wt");
         let script = format!(
             r#"
+$env:PATH = '{}' + [IO.Path]::PathSeparator + $env:PATH
 $env:WORKTRUNK_BIN = '{}'
 {}
 $cmd = Get-Command wt -ErrorAction SilentlyContinue
@@ -483,7 +485,8 @@ if ($cmd -and $cmd.CommandType -eq 'Function') {{
     Write-Output "FUNCTION_NOT_DEFINED: CommandType=$($cmd.CommandType)"
 }}
 "#,
-            wt_bin.display().to_string().replace('\'', "''"),
+            bin_dir.display().to_string().replace('\'', "''"),
+            bin_dir.join("wt").display().to_string().replace('\'', "''"),
             config_line
         );
 
