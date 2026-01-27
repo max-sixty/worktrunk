@@ -2,4 +2,4 @@
 source: src/shell/mod.rs
 expression: "Shell::PowerShell.config_line(\"wt\")"
 ---
-if (Get-Command wt -ErrorAction SilentlyContinue) { Invoke-Expression (& wt config shell init powershell) }
+if (Get-Command wt -ErrorAction SilentlyContinue) { Invoke-Expression (& wt config shell init powershell | Out-String) }

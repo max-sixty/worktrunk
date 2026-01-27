@@ -554,8 +554,16 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         }
 
         // Show $SHELL to help diagnose rc file sourcing issues
-        if let Ok(shell_env) = std::env::var("SHELL") {
-            debug_lines.push(cformat!("$SHELL: <bold>{shell_env}</>"));
+        let shell_env = std::env::var("SHELL").ok();
+        if let Some(ref shell) = shell_env {
+            debug_lines.push(cformat!("$SHELL: <bold>{shell}</>"));
+        }
+
+        // Windows: PSModulePath hints at PowerShell but isn't definitive
+        // (it can be set in other shells too). Use var_os to handle non-UTF8 values.
+        #[cfg(windows)]
+        if shell_env.is_none() && std::env::var_os("PSModulePath").is_some() {
+            debug_lines.push("PSModulePath: set (may indicate PowerShell)".to_string());
         }
 
         if is_git_subcommand {
