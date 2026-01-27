@@ -73,11 +73,11 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
 
 /// Check if Claude Code CLI is available
 fn is_claude_available() -> bool {
-    Cmd::new("claude")
-        .arg("--version")
-        .run()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    // Allow tests to override detection
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_CLAUDE_INSTALLED") {
+        return val == "1";
+    }
+    which::which("claude").is_ok()
 }
 
 /// Get the home directory for Claude Code config detection

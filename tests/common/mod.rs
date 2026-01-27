@@ -685,6 +685,8 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
     // Enable warn-level logging so diagnostics show up in test failures
     cmd.env("RUST_LOG", "warn");
+    // Treat Claude as not installed by default (tests can override with "1")
+    cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "0");
 
     // Apply shared static env vars (see STATIC_TEST_ENV_VARS)
     for &(key, value) in STATIC_TEST_ENV_VARS {
@@ -999,6 +1001,8 @@ pub struct TestRepo {
     git_config_path: PathBuf,
     /// Path to mock bin directory for gh/glab commands
     mock_bin_path: Option<PathBuf>,
+    /// Whether Claude CLI should be treated as installed
+    claude_installed: bool,
     /// Snapshot settings guard - keeps insta filters active for this repo's lifetime
     _snapshot_guard: insta::internals::SettingsBindDropGuard,
 }
@@ -1044,6 +1048,7 @@ impl TestRepo {
             test_config_path,
             git_config_path,
             mock_bin_path: None,
+            claude_installed: false,
             _snapshot_guard: snapshot_guard,
         };
 
@@ -1087,6 +1092,7 @@ impl TestRepo {
             test_config_path,
             git_config_path,
             mock_bin_path: None,
+            claude_installed: false,
             _snapshot_guard: snapshot_guard,
         };
 
@@ -1803,10 +1809,7 @@ impl TestRepo {
             .command("auth", MockResponse::exit(1))
             .write(&mock_bin);
 
-        // claude: not installed
-        MockConfig::new("claude")
-            .command("_default", MockResponse::exit(1))
-            .write(&mock_bin);
+        // claude: not installed (don't create mock - which::which won't find it)
 
         self.mock_bin_path = Some(mock_bin);
     }
@@ -1816,18 +1819,8 @@ impl TestRepo {
     /// Call this after setup_mock_ci_tools_unauthenticated() to simulate
     /// Claude Code being available on the system.
     pub fn setup_mock_claude_installed(&mut self) {
-        use crate::common::mock_commands::{MockConfig, MockResponse};
-
-        let mock_bin = self
-            .mock_bin_path
-            .as_ref()
-            .expect("Call setup_mock_ci_tools_unauthenticated first");
-
-        // claude: installed
-        MockConfig::new("claude")
-            .version("Claude Code 1.0.0 (mock)")
-            .command("_default", MockResponse::exit(0))
-            .write(mock_bin);
+        // Mark Claude as installed for test environment
+        self.claude_installed = true;
     }
 
     /// Setup the worktrunk plugin as installed in Claude Code
@@ -2072,6 +2065,11 @@ impl TestRepo {
             paths.insert(0, mock_bin.clone());
             let new_path = std::env::join_paths(&paths).unwrap();
             cmd.env(&path_var_name, new_path);
+        }
+
+        // Override Claude installed status if setup_mock_claude_installed() was called
+        if self.claude_installed {
+            cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "1");
         }
     }
 
