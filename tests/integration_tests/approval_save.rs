@@ -737,8 +737,6 @@ fn test_set_commit_generation_command_saves_to_disk() {
     // Verify TOML structure - should have [commit.generation] section with command
     let toml_content = fs::read_to_string(&config_path).unwrap();
     assert_snapshot!(toml_content, @r#"
-    [commit]
-
     [commit.generation]
     command = "llm -m haiku"
     "#);
