@@ -39,7 +39,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2022]
+        include:
+          - os: ubuntu-24.04
+            name: linux
+          - os: macos-15
+            name: macos
+          - os: windows-2022
+            name: windows
+    name: test (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -109,7 +116,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v6
       with:
-        name: junit-${{ matrix.os }}
+        name: junit-${{ matrix.name }}
         path: target/nextest/default/junit.xml
 
     - name: 📊 Upload test results to Codecov
