@@ -449,64 +449,6 @@ mod tests {
     // mutating HOME env var (unsafe). It's tested indirectly via integration
     // tests that exercise the shell integration warning paths.
 
-    /// Test that the PowerShell config_line() actually works when evaluated.
-    ///
-    /// This is a regression test for issue #885 where `Invoke-Expression` failed
-    /// because command output is an array of strings, not a single string.
-    /// The fix was adding `| Out-String` to the config_line.
-    ///
-    /// Requires pwsh (PowerShell Core), which is pre-installed on GitHub Actions runners.
-    #[test]
-    #[cfg(feature = "shell-integration-tests")]
-    fn test_powershell_config_line_evaluates_correctly() {
-        use crate::shell_exec::Cmd;
-
-        // Get the directory containing the wt binary (to add to PATH)
-        let bin_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .expect("Failed to get binary directory");
-
-        // Build a script that:
-        // 1. Adds the binary directory to PATH so Get-Command wt works
-        // 2. Sets WORKTRUNK_BIN so the init script can find the binary
-        // 3. Runs the config_line (which uses Invoke-Expression)
-        // 4. Checks if the function is defined
-        let config_line = Shell::PowerShell.config_line("wt");
-        let script = format!(
-            r#"
-$env:PATH = '{}' + [IO.Path]::PathSeparator + $env:PATH
-$env:WORKTRUNK_BIN = '{}'
-{}
-$cmd = Get-Command wt -ErrorAction SilentlyContinue
-if ($cmd -and $cmd.CommandType -eq 'Function') {{
-    Write-Output 'FUNCTION_DEFINED'
-}} else {{
-    Write-Output "FUNCTION_NOT_DEFINED: CommandType=$($cmd.CommandType)"
-}}
-"#,
-            bin_dir.display().to_string().replace('\'', "''"),
-            bin_dir.join("wt").display().to_string().replace('\'', "''"),
-            config_line
-        );
-
-        let output = Cmd::new("pwsh")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .run()
-            .expect("Failed to run pwsh");
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        assert!(
-            stdout.contains("FUNCTION_DEFINED"),
-            "PowerShell config_line failed to define function.\n\
-             Config line: {}\n\
-             stdout: {}\n\
-             stderr: {}",
-            config_line,
-            stdout,
-            stderr
-        );
-    }
+    // PowerShell config_line evaluation test is in tests/integration_tests/shell_powershell.rs
+    // because it needs CARGO_BIN_EXE_wt which is only available in integration tests.
 }
