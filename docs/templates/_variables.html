@@ -1,4 +1,35 @@
 <style>
+    /* Fallback fonts with adjusted metrics to prevent layout shift on font swap.
+     * These match the metrics of the custom fonts so text doesn't reflow.
+     * Values from: https://developer.chrome.com/blog/font-fallbacks
+     * Inter values: https://github.com/rsms/inter/discussions/632
+     */
+    @font-face {
+        font-family: "Inter Fallback";
+        src: local("Arial"), local("ArialMT");
+        ascent-override: 90.2%;
+        descent-override: 22.5%;
+        line-gap-override: 0%;
+        size-adjust: 107.4%;
+    }
+    @font-face {
+        font-family: "Plus Jakarta Sans Fallback";
+        src: local("Arial"), local("ArialMT");
+        /* Plus Jakarta Sans has similar metrics to Inter (geometric sans-serif) */
+        ascent-override: 94%;
+        descent-override: 23%;
+        line-gap-override: 0%;
+        size-adjust: 104%;
+    }
+    @font-face {
+        font-family: "JetBrains Mono Fallback";
+        src: local("Menlo"), local("Consolas"), local("Monaco");
+        ascent-override: 102%;
+        descent-override: 30%;
+        line-gap-override: 0%;
+        size-adjust: 98%;
+    }
+
     :root {
         /* Warm Workbench Theme - Light Mode */
 
@@ -49,10 +80,16 @@
         --wt-header-height: 60px;
         --wt-main-padding-top: 40px;
 
-        /* Typography */
-        --wt-font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-        --wt-font-head: "Plus Jakarta Sans", var(--wt-font-sans);
-        --wt-font-mono: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, monospace;
+        /* Border Radius Scale */
+        --wt-radius-sm: 0.25rem;   /* 4px - small elements, TOC items */
+        --wt-radius-md: 0.5rem;    /* 8px - buttons, inputs, cards */
+        --wt-radius-lg: 0.75rem;   /* 12px - content cards, modals */
+        --wt-radius-pill: 999px;   /* pill shapes */
+
+        /* Typography - adjusted fallbacks prevent layout shift on font swap */
+        --wt-font-sans: "Inter", "Inter Fallback", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        --wt-font-head: "Plus Jakarta Sans", "Plus Jakarta Sans Fallback", var(--wt-font-sans);
+        --wt-font-mono: "JetBrains Mono", "JetBrains Mono Fallback", "Fira Code", "SF Mono", Menlo, monospace;
     }
 
     /* Dark Mode - follows system preference */

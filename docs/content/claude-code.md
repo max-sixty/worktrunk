@@ -36,7 +36,7 @@ The plugin tracks Claude sessions with status markers in `wt list`:
 <!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__list_with_user_marker.snap — edit source to update -->
 
 {% terminal() %}
-<span class="prompt">$</span> <span class="cmd">wt list</span>
+<span class="cmd">wt list</span>
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Path</b>                 <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
 @ main             <span class=d>^</span><span class=d>⇡</span>                        .                     <span class=g>⇡1</span>      <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
 + feature-api      <span class=d>↑</span> 🤖              <span class=g>↑1</span>      ../repo.feature-api           <span class=d>70343f03</span>  <span class=d>1d</span>    <span class=d>Add REST API endpoints</span>
@@ -63,9 +63,11 @@ $ git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Di
 
 ## Statusline
 
-`wt list statusline --claude-code` outputs a single-line status for the Claude Code statusline. This may fetch CI status from the network when the cache is stale (often ~1–2 seconds), making it suitable for async statuslines but too slow for synchronous shell prompts. If a faster version would be helpful, please [open an issue](https://github.com/max-sixty/worktrunk/issues).
+`wt list statusline --format=claude-code` outputs a single-line status for the Claude Code statusline. This may fetch CI status from the network when the cache is stale (often ~1–2 seconds), making it suitable for async statuslines but too slow for synchronous shell prompts. If a faster version would be helpful, please [open an issue](https://github.com/max-sixty/worktrunk/issues).
 
-<code>~/w/myproject.feature-auth  !🤖  @<span style='color:#0a0'>+42</span> <span style='color:#a00'>-8</span>  <span style='color:#0a0'>↑3</span>  <span style='color:#0a0'>⇡1</span>  <span style='color:#0a0'>●</span>  | Opus</code>
+<code>~/w/myproject.feature-auth  !🤖  @<span style='color:#0a0'>+42</span> <span style='color:#a00'>-8</span>  <span style='color:#0a0'>↑3</span>  <span style='color:#0a0'>⇡1</span>  <span style='color:#0a0'>●</span>  | Opus 🌔 65%</code>
+
+When Claude Code provides context window usage via stdin JSON, a moon phase gauge appears (🌕→🌑 as context fills).
 
 <figure class="demo">
 <picture>
@@ -80,7 +82,7 @@ Add to `~/.claude/settings.json`:
 {
   "statusLine": {
     "type": "command",
-    "command": "wt list statusline --claude-code"
+    "command": "wt list statusline --format=claude-code"
   }
 }
 ```

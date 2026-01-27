@@ -1,0 +1,26 @@
+$ wt switch hooks
+○ Switched to worktree for hooks @ <DEMO_DIR>/.demo-wt-commit/w/acme.hooks
+[0m
+$ git diff --staged --stat
+ src/lib.rs        |  1 +
+ src/validation.rs | 23 +++++++++++++++++++++++
+ 2 files changed, 24 insertions(+)
+
+$ wt step commit
+◎ Generating commit message and committing changes... (2 files, +25)
+  feat(validation): add input validation utilities
+  
+  Add validation module with is_positive and is_non_empty helpers
+  for validating user input. Includes comprehensive test coverage.
+✓ Committed changes @ 200f6f2
+[0m
+$ git log -1
+commit 200f6f2d9731f93626892c1a410f942217189339
+Author: Worktrunk Demo <demo@example.com>
+Date:   Mon Jan 26 13:27:07 2026 -0800
+
+    feat(validation): add input validation utilities
+    
+    Add validation module with is_positive and is_non_empty helpers
+    for validating user input. Includes comprehensive test coverage.
+[0m

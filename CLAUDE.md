@@ -247,6 +247,11 @@ Examples: `feature-user-post-start-npm.log`, `feature-project-post-start-build.l
 
 ## Coverage
 
+**NEVER merge a PR with failing `codecov/patch` without explicit user approval.** The check is marked "not required" in GitHub but it requires user approval to merge. When codecov fails:
+
+1. Investigate and fix the coverage gap (see below)
+2. If you believe the failure is a false positive, ask the user before merging
+
 The `codecov/patch` CI check enforces coverage on changed lines — respond to failures by writing tests, not by ignoring them. If code is unused, remove it. This includes specialized error handlers for rare cases when falling through to a more general handler is sufficient.
 
 ### Running Coverage Locally
@@ -314,6 +319,18 @@ Use `wt list --format=json` for structured data access. See `wt list --help` for
 - We **never retarget an existing worktree** to a different branch; instead create/switch/remove worktrees.
 
 ## Code Quality
+
+### Use Existing Dependencies
+
+Never hand-roll utilities that already exist as crate dependencies. Check `Cargo.toml` before implementing:
+
+| Need | Use | Not |
+|------|-----|-----|
+| Path normalization | `path_slash::PathExt::to_slash_lossy()` | `.to_string_lossy().replace('\\', "/")` |
+| Shell escaping | `shell_escape::unix::escape()` | Manual quoting |
+| ANSI colors | `color_print::cformat!()` | Raw escape codes |
+
+### Don't Suppress Warnings
 
 Don't suppress warnings with `#[allow(dead_code)]` — either delete the code or add a TODO explaining when it will be used:
 

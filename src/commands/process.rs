@@ -139,7 +139,7 @@ impl HookLog {
                 Ok(Self::Internal(op))
             }
             // source:hook-type:name
-            [source_str, hook_type_str, name] => {
+            [source_str, hook_type_str, name] if !name.is_empty() => {
                 let source = HookSource::from_str(source_str).map_err(|_| {
                     cformat!(
                         "Unknown source: <bold>{}</>. Valid: user, project",
@@ -648,18 +648,17 @@ mod tests {
 
     #[test]
     fn test_hook_log_parse_invalid_format() {
-        // Too many colons
-        let result = HookLog::parse("user:post-start:server:extra");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid log spec"));
-
-        // Single word (not valid anymore)
+        // Single word (no colons)
         let result = HookLog::parse("remove");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid log spec"));
 
-        // Two colons but not internal:op
+        // Two parts but not internal:op (missing hook name)
         let result = HookLog::parse("foo:bar");
+        assert!(result.is_err());
+
+        // Missing hook-type segment
+        let result = HookLog::parse("user:");
         assert!(result.is_err());
     }
 
@@ -703,5 +702,21 @@ mod tests {
         assert_eq!(spec, "internal:remove");
         let parsed = HookLog::parse(&spec).unwrap();
         assert_eq!(original, parsed);
+    }
+
+    #[test]
+    fn test_hook_log_parse_rejects_colons_in_name() {
+        // Hook names cannot contain colons (would make parsing ambiguous)
+        let result = HookLog::parse("user:post-start:my:server");
+        assert!(result.is_err(), "Colons in hook names should be rejected");
+        assert!(result.unwrap_err().contains("Invalid log spec"));
+    }
+
+    #[test]
+    fn test_hook_log_parse_rejects_empty_name() {
+        // Empty hook name should be rejected
+        let result = HookLog::parse("user:post-start:");
+        assert!(result.is_err(), "Empty hook name should be rejected");
+        assert!(result.unwrap_err().contains("Invalid log spec"));
     }
 }

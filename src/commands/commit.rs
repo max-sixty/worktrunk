@@ -2,7 +2,6 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::CommitGenerationConfig;
-use worktrunk::git::Repository;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
 };
@@ -77,50 +76,58 @@ impl<'a> CommitGenerator<'a> {
         }
     }
 
+    /// Commit staged changes in the given worktree.
+    ///
+    /// When `show_progress` is true, displays a progress message with diff stats
+    /// before committing. Set to false for bulk operations where each worktree
+    /// is handled individually (e.g., `step relocate --commit`).
     pub fn commit_staged_changes(
         &self,
+        wt: &worktrunk::git::WorkingTree<'_>,
+        show_progress: bool,
         show_no_squash_note: bool,
         stage_mode: StageMode,
     ) -> anyhow::Result<()> {
-        let repo = Repository::current()?;
-        let wt = repo.current_worktree();
-
         // Fail early if nothing is staged (avoids confusing LLM prompt with empty diff)
         if !wt.has_staged_changes()? {
             anyhow::bail!("Nothing to commit");
         }
 
-        let stats_parts = repo.diff_stats_summary(&["diff", "--staged", "--shortstat"]);
+        if show_progress {
+            let stats_parts = wt
+                .repo()
+                .diff_stats_summary(&["diff", "--staged", "--shortstat"]);
 
-        let changes_type = match stage_mode {
-            StageMode::Tracked => "tracked changes",
-            _ => "changes",
-        };
+            let changes_type = match stage_mode {
+                StageMode::Tracked => "tracked changes",
+                _ => "changes",
+            };
 
-        let action = if self.config.is_configured() {
-            format!("Generating commit message and committing {changes_type}...")
-        } else {
-            format!("Committing {changes_type} with default message...")
-        };
+            let action = if self.config.is_configured() {
+                format!("Generating commit message and committing {changes_type}...")
+            } else {
+                format!("Committing {changes_type} with default message...")
+            };
 
-        let mut parts = vec![];
-        if !stats_parts.is_empty() {
-            parts.extend(stats_parts);
+            let mut parts = vec![];
+            if !stats_parts.is_empty() {
+                parts.extend(stats_parts);
+            }
+            if show_no_squash_note {
+                parts.push("no squashing needed".to_string());
+            }
+
+            let full_progress_msg = if parts.is_empty() {
+                action
+            } else {
+                // Gray parenthetical with separate cformat for closing paren (avoids optimizer)
+                let parts_str = parts.join(", ");
+                let paren_close = cformat!("<bright-black>)</>");
+                cformat!("{action} <bright-black>({parts_str}</>{paren_close}")
+            };
+
+            eprintln!("{}", progress_message(full_progress_msg));
         }
-        if show_no_squash_note {
-            parts.push("no squashing needed".to_string());
-        }
-
-        let full_progress_msg = if parts.is_empty() {
-            action
-        } else {
-            // Gray parenthetical with separate cformat for closing paren (avoids optimizer)
-            let parts_str = parts.join(", ");
-            let paren_close = cformat!("<bright-black>)</>");
-            cformat!("{action} <bright-black>({parts_str}</>{paren_close}")
-        };
-
-        eprintln!("{}", progress_message(full_progress_msg));
 
         self.emit_hint_if_needed();
         let commit_message = crate::llm::generate_commit_message(self.config)?;
@@ -128,10 +135,10 @@ impl<'a> CommitGenerator<'a> {
         let formatted_message = self.format_message_for_display(&commit_message);
         eprintln!("{}", format_with_gutter(&formatted_message, None));
 
-        repo.run_command(&["commit", "-m", &commit_message])
+        wt.run_command(&["commit", "-m", &commit_message])
             .context("Failed to commit")?;
 
-        let commit_hash = repo
+        let commit_hash = wt
             .run_command(&["rev-parse", "--short", "HEAD"])?
             .trim()
             .to_string();
@@ -214,8 +221,13 @@ impl CommitOptions<'_> {
         }
 
         let effective_config = self.ctx.commit_generation();
-        CommitGenerator::new(&effective_config)
-            .commit_staged_changes(self.show_no_squash_note, self.stage_mode)
+        let wt = self.ctx.repo.current_worktree();
+        CommitGenerator::new(&effective_config).commit_staged_changes(
+            &wt,
+            true, // show_progress
+            self.show_no_squash_note,
+            self.stage_mode,
+        )
     }
 }
 

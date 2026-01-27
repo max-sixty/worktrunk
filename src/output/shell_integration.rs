@@ -423,7 +423,6 @@ pub fn prompt_shell_integration(
 
     // TTY + first time: Show interactive prompt
     // Accepting installs for all shells with config files (same as `wt config shell install`)
-    eprintln!();
     let confirmed = prompt_for_install(
         &scan.configured,
         &scan.completion_results,

@@ -50,7 +50,7 @@ Usage: [1m[36mwt config create[0m [36m[OPTIONS][0m
 
 Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 
-  [2m# ## Worktrunk User Configuration[0m
+  [2m# # User Configuration[0m
   [2m#[0m
   [2m# Create with `wt config create`.[0m
   [2m#[0m
@@ -94,7 +94,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (#custom-prompt-templates) for template customization.[0m
   [2m#[0m
-  [2m# ## Commands[0m
+  [2m# ## Command config[0m
   [2m#[0m
   [2m# ### List[0m
   [2m#[0m
@@ -137,7 +137,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# For context:[0m
   [2m#[0m
-  [2m# - Project config (https://worktrunk.dev/config.md#worktrunk-project-configuration/) settings are shared with teammates.[0m
+  [2m# - Project config (https://worktrunk.dev/config/#project-configuration) settings are shared with teammates.[0m
   [2m# - User configs generally apply to all projects.[0m
   [2m# - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.[0m
   [2m#[0m
@@ -182,7 +182,8 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# Write a commit message for the staged changes below.[0m
   [2m#[0m
   [2m# <format>[0m
-  [2m# - Subject under 50 chars, blank line, then optional body[0m
+  [2m# - Subject line under 50 chars[0m
+  [2m# - For material changes, add a blank line then a body paragraph explaining the change[0m
   [2m# - Output only the commit message, no quotes or code blocks[0m
   [2m# </format>[0m
   [2m#[0m
@@ -225,7 +226,8 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# Combine these commits into a single commit message.[0m
   [2m#[0m
   [2m# <format>[0m
-  [2m# - Subject under 50 chars, blank line, then optional body[0m
+  [2m# - Subject line under 50 chars[0m
+  [2m# - For material changes, add a blank line then a body paragraph explaining the change[0m
   [2m# - Output only the commit message, no quotes or code blocks[0m
   [2m# </format>[0m
   [2m#[0m

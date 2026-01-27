@@ -10,12 +10,15 @@ use std::env;
 use std::io::{self, IsTerminal, Read};
 use std::path::{Component, Path};
 
+use dunce::canonicalize;
+
 use ansi_str::AnsiStr;
 use anyhow::{Context, Result};
 use worktrunk::git::Repository;
 use worktrunk::styling::{fix_dim_after_color_reset, get_terminal_width, truncate_visible};
 
-use super::list::{self, CollectOptions, StatuslineSegment};
+use super::list::{self, CollectOptions, StatuslineSegment, json_output};
+use crate::cli::OutputFormat;
 
 /// Claude Code context parsed from stdin JSON
 struct ClaudeCodeContext {
@@ -29,18 +32,14 @@ struct ClaudeCodeContext {
 
 impl ClaudeCodeContext {
     /// Parse Claude Code context from a JSON string.
-    /// Returns None if the string is empty or not valid JSON.
+    /// Returns None if not valid JSON or missing required fields.
     fn parse(input: &str) -> Option<Self> {
-        if input.is_empty() {
-            return None;
-        }
-
         let v: serde_json::Value = serde_json::from_str(input).ok()?;
 
+        // current_dir is required - if missing, treat as invalid JSON
         let current_dir = v
             .pointer("/workspace/current_dir")
-            .and_then(|v| v.as_str())
-            .unwrap_or(".")
+            .and_then(|v| v.as_str())?
             .to_string();
 
         let model_name = v
@@ -154,7 +153,14 @@ fn format_context_gauge(percentage: f64) -> String {
 ///
 /// Output uses `println!` for raw stdout (bypasses anstream color detection).
 /// Shell prompts (PS1) and Claude Code always expect ANSI codes.
-pub fn run(claude_code: bool) -> Result<()> {
+pub fn run(format: OutputFormat) -> Result<()> {
+    // JSON format: output current worktree as JSON
+    if matches!(format, OutputFormat::Json) {
+        return run_json();
+    }
+
+    let claude_code = matches!(format, OutputFormat::ClaudeCode);
+
     // Get context - either from stdin (claude-code mode) or current directory
     let (cwd, model_name, context_used_percentage) = if claude_code {
         let ctx = ClaudeCodeContext::from_stdin();
@@ -243,6 +249,69 @@ pub fn run(claude_code: bool) -> Result<()> {
     Ok(())
 }
 
+/// Run statusline with JSON output format.
+///
+/// Outputs the current worktree as JSON, using the same structure as `wt list --format=json`.
+fn run_json() -> Result<()> {
+    let cwd = env::current_dir().context("Failed to get current directory")?;
+
+    let repo = Repository::current().context("Not in a git repository")?;
+
+    // Verify we're in a worktree
+    if repo.worktree_at(&cwd).git_dir().is_err() {
+        // Not in a worktree - return empty array (consistent with wt list)
+        println!("[]");
+        return Ok(());
+    }
+
+    // Get current worktree info
+    // Use git rev-parse --show-toplevel (via current_worktree().root()) to correctly identify
+    // the worktree containing cwd, rather than prefix matching which fails for nested worktrees.
+    let worktrees = repo.list_worktrees()?;
+    let worktree_root = repo.current_worktree().root()?;
+    let current_worktree = worktrees.iter().find(|wt| {
+        canonicalize(&wt.path)
+            .map(|p| p == worktree_root)
+            .unwrap_or(false)
+    });
+
+    let Some(wt) = current_worktree else {
+        println!("[]");
+        return Ok(());
+    };
+
+    // Determine if this is the primary worktree
+    let is_home = repo
+        .primary_worktree()
+        .ok()
+        .flatten()
+        .is_some_and(|p| wt.path == p);
+
+    // Build item with identity fields
+    let mut item = list::build_worktree_item(wt, is_home, true, false);
+
+    // Load URL template from project config (if configured)
+    let url_template = repo.url_template();
+
+    // Build collect options with URL template (compute everything for complete data)
+    let options = CollectOptions {
+        url_template,
+        ..Default::default()
+    };
+
+    // Populate computed fields (parallel git operations)
+    list::populate_item(&repo, &mut item, options)?;
+
+    // Convert to JSON format
+    let json_item = json_output::JsonItem::from_list_item(&item);
+
+    // Output as JSON array (consistent with wt list --format=json)
+    let output = serde_json::to_string_pretty(&[json_item])?;
+    println!("{output}");
+
+    Ok(())
+}
+
 /// Filter out branch segment if directory already shows it via worktrunk template.
 fn filter_redundant_branch(segments: Vec<StatuslineSegment>, dir: &str) -> Vec<StatuslineSegment> {
     use super::list::columns::ColumnKind;
@@ -278,8 +347,15 @@ fn get_git_status_segments(
     use super::list::columns::ColumnKind;
 
     // Get current worktree info
+    // Use git rev-parse --show-toplevel (via worktree_at().root()) to correctly identify
+    // the worktree containing cwd, rather than prefix matching which fails for nested worktrees.
     let worktrees = repo.list_worktrees()?;
-    let current_worktree = worktrees.iter().find(|wt| cwd.starts_with(&wt.path));
+    let worktree_root = repo.worktree_at(cwd).root()?;
+    let current_worktree = worktrees.iter().find(|wt| {
+        canonicalize(&wt.path)
+            .map(|p| p == worktree_root)
+            .unwrap_or(false)
+    });
 
     let Some(wt) = current_worktree else {
         // Not in a worktree - just show branch name as a segment
@@ -432,12 +508,13 @@ mod tests {
 
     #[test]
     fn test_claude_code_context_parse_missing_workspace() {
-        // Missing workspace defaults to "."
+        // Missing current_dir makes the JSON invalid - returns None
         let json = r#"{"model": {"display_name": "Sonnet"}}"#;
 
-        let ctx = ClaudeCodeContext::parse(json).expect("should parse");
-        assert_eq!(ctx.current_dir, ".");
-        assert_eq!(ctx.model_name, Some("Sonnet".to_string()));
+        assert!(
+            ClaudeCodeContext::parse(json).is_none(),
+            "Missing current_dir should return None"
+        );
     }
 
     #[test]

@@ -5,14 +5,14 @@ expression: "&output"
 y
 
 [33m▲[39m [33m[1mrepo[22m needs approval to execute [1m3[22m commands:[39m
-
 [2m○[22m post-create [1minstall[22m:
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing dependencies...'[0m[2m
 [2m○[22m post-create [1mbuild[22m:
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Building project...'[0m[2m
 [2m○[22m post-create [1mtest[22m:
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running tests...'[0m[2m
-[36m❯[39m Allow and remember? [1m[y/N][22m 
+
+[36m❯[39m [36mAllow and remember? [1m[y/N][22m[39m 
 [36m◎[39m [36mRunning post-create [1mproject:install[22m @ [1m_REPO_.test-named[22m:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing dependencies...'[0m[2m
 Installing dependencies...

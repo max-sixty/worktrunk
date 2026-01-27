@@ -173,12 +173,17 @@ pub(crate) fn version_str() -> &'static str {
     })
 }
 
+// TODO: ClaudeCode is statusline-specific but lives in this shared enum, forcing
+// unrelated codepaths to handle it. Consider a dedicated StatuslineFormat enum.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub(crate) enum OutputFormat {
     /// Human-readable table format
     Table,
     /// JSON output
     Json,
+    /// Claude Code statusline mode (reads context from stdin)
+    #[value(name = "claude-code")]
+    ClaudeCode,
 }
 
 #[derive(Parser)]
@@ -477,7 +482,7 @@ The CI column shows GitHub/GitLab pipeline status:
 | `⚠` yellow | Fetch error (rate limit, network) |
 | (blank) | No upstream or no PR/MR |
 
-CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
+CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches (visible with `--remotes`) get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
 ## Status symbols
 
@@ -926,7 +931,6 @@ lint = "cargo clippy"
     /// Browse and switch worktrees with live preview.
     #[cfg_attr(not(unix), command(hide = true))]
     #[command(after_long_help = r#"<!-- demo: wt-select.gif 1600x800 -->
-
 ## Examples
 
 Open the selector:
@@ -1490,9 +1494,8 @@ wt config show
 # ~/.config/worktrunk/config.toml
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 
-[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
 ```
 
 **Project config** — shared team settings:
@@ -1509,7 +1512,7 @@ test = "npm test"
 ---
 
 <!-- USER_CONFIG_START -->
-## Worktrunk User Configuration
+# User Configuration
 
 Create with `wt config create`.
 
@@ -1555,7 +1558,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 
 See [LLM commits docs](@/llm-commits.md) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
 
-## Commands
+## Command config
 
 ### List
 
@@ -1606,7 +1609,7 @@ Pager behavior for `wt select` diff previews.
 
 For context:
 
-- [Project config](@/config.md#worktrunk-project-configuration) settings are shared with teammates.
+- [Project config](@/config.md#project-configuration) settings are shared with teammates.
 - User configs generally apply to all projects.
 - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.
 
@@ -1656,7 +1659,8 @@ template = """
 Write a commit message for the staged changes below.
 
 <format>
-- Subject under 50 chars, blank line, then optional body
+- Subject line under 50 chars
+- For material changes, add a blank line then a body paragraph explaining the change
 - Output only the commit message, no quotes or code blocks
 </format>
 
@@ -1701,7 +1705,8 @@ squash-template = """
 Combine these commits into a single commit message.
 
 <format>
-- Subject under 50 chars, blank line, then optional body
+- Subject line under 50 chars
+- For material changes, add a blank line then a body paragraph explaining the change
 - Output only the commit message, no quotes or code blocks
 </format>
 
@@ -1730,48 +1735,29 @@ Combine these commits into a single commit message.
 
 ---
 
-## Worktrunk Project Configuration
+# Project Configuration
 
-The project config defines lifecycle hooks and project-specific settings. This file is checked into version control and shared across the team.
+Project config (`.config/wt.toml`) defines lifecycle hooks and project-specific settings. This file is checked into version control and shared with the team. Create with `wt config create --project`.
 
-Create `.config/wt.toml` in the repository root:
+See [`wt hook`](@/hook.md) for hook types, execution order, template variables, and examples.
 
-```toml
-[post-create]
-install = "npm ci"
-
-[pre-merge]
-test = "npm test"
-lint = "npm run lint"
-```
-
-See [`wt hook`](@/hook.md) for complete documentation on hook types, execution order, template variables, and [JSON context](@/hook.md#json-context).
-
-### Dev server URL
-
-The `[list]` section adds a URL column to `wt list`:
+### Non-hook settings
 
 ```toml
+# .config/wt.toml
+
+# URL column in wt list (dimmed when port not listening)
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
-```
 
-URLs are dimmed when the port isn't listening.
-
-### CI platform override
-
-The `[ci]` section overrides CI platform detection for GitHub Enterprise or self-hosted GitLab with custom domains:
-
-```toml
+# Override CI platform detection for self-hosted instances
 [ci]
 platform = "github"  # or "gitlab"
 ```
 
-By default, the platform is detected from the remote URL. Use this when URL detection fails (e.g., `git.mycompany.com` instead of `github.mycompany.com`).
-
 ---
 
-## Shell integration
+# Shell Integration
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
@@ -1794,19 +1780,11 @@ wt config shell init fish | source
 
 Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
 
-### Skip first-run prompt
+### First-run prompts
 
-On first run without shell integration, Worktrunk offers to install it. Suppress this prompt in CI or automated environments:
+On first run without shell integration, Worktrunk offers to install it. Similarly, on first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
 
-```toml
-skip-shell-integration-prompt = true
-```
-
-Or via environment variable:
-
-```bash
-export WORKTRUNK_SKIP_SHELL_INTEGRATION_PROMPT=true
-```
+# Other
 
 ## Environment variables
 

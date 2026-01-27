@@ -4,13 +4,7 @@ This is the Zola-based documentation site for Worktrunk, published at worktrunk.
 
 ## Development workflow
 
-Start the dev server in the background from the docs directory (use `run_in_background` parameter or `&`):
-
-```bash
-cd docs && zola serve -p $((10000 + RANDOM))
-```
-
-Check the output for "Web server is available at http://127.0.0.1:<port>" before proceeding.
+The docs dev server starts automatically via the post-start hook. Find the port with `wt list statusline`.
 
 For static builds with local URLs (e.g., testing with a simple HTTP server):
 

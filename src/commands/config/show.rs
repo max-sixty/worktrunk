@@ -73,11 +73,11 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
 
 /// Check if Claude Code CLI is available
 fn is_claude_available() -> bool {
-    Cmd::new("claude")
-        .arg("--version")
-        .run()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    // Allow tests to override detection
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_CLAUDE_INSTALLED") {
+        return val == "1";
+    }
+    which::which("claude").is_ok()
 }
 
 /// Get the home directory for Claude Code config detection
@@ -369,7 +369,7 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
 
     // Check for deprecations with show_brief_warning=false (silent mode)
     // User config is global, not tied to any repository
-    if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
+    let has_deprecations = if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         true,
@@ -379,7 +379,10 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
     ) {
         // Add deprecation details to the output buffer
         out.push_str(&worktrunk::config::format_deprecation_details(&info));
-    }
+        true
+    } else {
+        false
+    };
 
     // Validate config (syntax + schema) and warn if invalid
     if let Err(e) = toml::from_str::<UserConfig>(&contents) {
@@ -391,6 +394,11 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
             &contents,
         )));
+    }
+
+    // Add "Current config" label when deprecations shown (to separate from diff)
+    if has_deprecations {
+        writeln!(out, "{}", info_message("Current config:"))?;
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)
@@ -482,7 +490,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     // Check for deprecations with show_brief_warning=false (silent mode)
     // Only show in main worktree (where .git is a directory)
     let is_main_worktree = repo_root.join(".git").is_dir();
-    if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
+    let has_deprecations = if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         is_main_worktree,
@@ -492,7 +500,10 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     ) {
         // Add deprecation details to the output buffer
         out.push_str(&worktrunk::config::format_deprecation_details(&info));
-    }
+        true
+    } else {
+        false
+    };
 
     // Validate config (syntax + schema) and warn if invalid
     if let Err(e) = toml::from_str::<ProjectConfig>(&contents) {
@@ -504,6 +515,11 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         out.push_str(&warn_unknown_keys::<ProjectConfig>(
             &find_unknown_project_keys(&contents),
         ));
+    }
+
+    // Add "Current config" label when deprecations shown (to separate from diff)
+    if has_deprecations {
+        writeln!(out, "{}", info_message("Current config:"))?;
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)
@@ -614,7 +630,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     out,
                     "{}",
                     info_message(cformat!(
-                        "Already configured {what} for <bold>{shell}</> @ {location}"
+                        "<bold>{shell}</>: Already configured {what} @ {location}"
                     ))
                 )?;
 
@@ -662,7 +678,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                             out,
                             "{}",
                             info_message(cformat!(
-                                "Already configured completions for <bold>{shell}</> @ {completion_display}"
+                                "<bold>{shell}</>: Already configured completions @ {completion_display}"
                             ))
                         )?;
                     } else {
@@ -670,7 +686,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                         writeln!(
                             out,
                             "{}",
-                            hint_message(format!("Not configured completions for {shell}"))
+                            hint_message(format!("{shell}: Not configured completions"))
                         )?;
                     }
                 }
@@ -709,7 +725,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     writeln!(
                         out,
                         "{}",
-                        hint_message(format!("Not configured {what} for {shell}"))
+                        hint_message(format!("{shell}: Not configured {what}"))
                     )?;
                 }
             }
@@ -752,7 +768,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         writeln!(
             out,
             "{}",
-            info_message(cformat!("<dim>Skipped {shell}; {path} not found</>"))
+            info_message(cformat!("<dim>{shell}: Skipped; {path} not found</>"))
         )?;
     }
 

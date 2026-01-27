@@ -131,6 +131,68 @@ Alternatively, disable Windows Terminal's alias (Settings → Privacy & security
 paru worktrunk-bin && wt config shell install
 ```
 
+## Quick start
+
+Create a worktree for a new feature:
+
+```console
+$ wt switch --create feature-auth
+✓ Created branch feature-auth from main and worktree @ repo.feature-auth
+
+```
+
+This creates a new branch and worktree, then switches to it. Do your work, then check all worktrees with [`wt list`](https://worktrunk.dev/list/):
+
+```console
+$ wt list
+  Branch        Status        HEAD±    main↕  Remote⇅  Commit    Age   Message
+@ feature-auth  +   –      +53                         0e631add  1d    Initial commit
+^ main              ^⇡                         ⇡1      0e631add  1d    Initial commit
+
+○ Showing 2 worktrees, 1 with changes, 1 column hidden
+
+```
+
+The `@` marks the current worktree. `+` means uncommitted changes, `↕` means unpushed commits.
+
+When done, either:
+
+**PR workflow** — commit, push, open a PR, merge via GitHub/GitLab, then clean up:
+
+```bash
+wt step commit                    # commit staged changes
+gh pr create                      # or glab mr create
+wt remove                         # after PR is merged
+```
+
+**Local merge** — squash, rebase onto main, fast-forward merge, clean up:
+
+```console
+$ wt merge main
+◎ Generating commit message and committing changes... (2 files, +53, no squashing needed)
+  Add authentication module
+✓ Committed changes @ a1b2c3d
+◎ Merging 1 commit to main @ a1b2c3d (no rebase needed)
+  * a1b2c3d Add authentication module
+   auth.rs | 51 +++++++++++++++++++++++++++++++++++++++++++++++++++
+   lib.rs  |  2 ++
+   2 files changed, 53 insertions(+)
+✓ Merged to main (1 commit, 2 files, +53)
+◎ Removing feature-auth worktree & branch in background (same commit as main, _)
+○ Switched to worktree for main @ repo
+
+```
+
+For parallel agents, create multiple worktrees and launch an agent in each:
+
+```bash
+wt switch -x claude -c feature-a -- 'Add user authentication'
+wt switch -x claude -c feature-b -- 'Fix the pagination bug'
+wt switch -x claude -c feature-c -- 'Write tests for the API'
+```
+
+The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](https://worktrunk.dev/hook/) to automate setup (install deps, start dev servers).
+
 ## Next steps
 
 - Learn the core commands: [`wt switch`](https://worktrunk.dev/switch/), [`wt list`](https://worktrunk.dev/list/), [`wt merge`](https://worktrunk.dev/merge/), [`wt remove`](https://worktrunk.dev/remove/)

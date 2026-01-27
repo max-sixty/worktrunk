@@ -263,14 +263,21 @@ pub fn expand_template(
     env.add_filter("hash_port", |value: String| string_to_port(&value));
 
     // Register worktree_path_of_branch function for looking up branch worktree paths
+    // The function returns shell-escaped paths when shell_escape is true, matching
+    // how regular template variables are handled.
     let repo_clone = repo.clone();
     env.add_function("worktree_path_of_branch", move |branch: String| -> String {
-        repo_clone
+        let path = repo_clone
             .worktree_for_branch(&branch)
             .ok()
             .flatten()
             .map(|p| to_posix_path(&p.to_string_lossy()))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if shell_escape && !path.is_empty() {
+            escape(Cow::Borrowed(&path)).to_string()
+        } else {
+            path
+        }
     });
 
     // Cache verbosity level for consistent behavior within this call

@@ -283,6 +283,17 @@ Includes comprehensive test coverage and input validation.",
         .write(bin_dir);
 }
 
+/// Create a mock llm command for quickstart documentation.
+/// Simple output for clean documentation examples.
+pub fn create_mock_llm_quickstart(bin_dir: &Path) {
+    MockConfig::new("llm")
+        .command(
+            "_default",
+            MockResponse::output("Add authentication module"),
+        )
+        .write(bin_dir);
+}
+
 /// Create a mock uv command for dependency sync and dev server.
 pub fn create_mock_uv_sync(bin_dir: &Path) {
     MockConfig::new("uv")

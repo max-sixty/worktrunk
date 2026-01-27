@@ -7,9 +7,11 @@ use anstyle::Style;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
 use worktrunk::styling::{
-    INFO_SYMBOL, PROMPT_SYMBOL, SUCCESS_SYMBOL, eprint, eprintln, format_bash_with_gutter,
-    format_with_gutter, warning_message,
+    INFO_SYMBOL, SUCCESS_SYMBOL, eprint, eprintln, format_bash_with_gutter, format_with_gutter,
+    prompt_message, warning_message,
 };
+
+use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
 pub struct ConfigureResult {
     pub shell: Shell,
@@ -480,7 +482,11 @@ fn configure_shell_file(
             // Create parent directories if they don't exist
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).map_err(|e| {
-                    format!("Failed to create directory {}: {}", parent.display(), e)
+                    format!(
+                        "Failed to create directory {}: {}",
+                        format_path_for_display(parent),
+                        e
+                    )
                 })?;
             }
 
@@ -565,8 +571,12 @@ fn configure_fish_file(
 
     // Create parent directories if they don't exist
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory {}: {e}", parent.display()))?;
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed to create directory {}: {e}",
+                format_path_for_display(parent)
+            )
+        })?;
     }
 
     // Write the complete fish function file
@@ -716,42 +726,22 @@ pub fn prompt_for_install(
     cmd: &str,
     prompt_text: &str,
 ) -> Result<bool, String> {
-    loop {
-        eprint!(
-            "{}",
-            color_print::cformat!("{} {} <bold>[y/N/?]</> ", PROMPT_SYMBOL, prompt_text)
-        );
-        io::stderr().flush().map_err(|e| e.to_string())?;
+    let response = prompt_yes_no_preview(prompt_text, || {
+        show_install_preview(results, completion_results, cmd);
+    })
+    .map_err(|e| e.to_string())?;
 
-        let mut input = String::new();
-        io::stdin()
-            .read_line(&mut input)
-            .map_err(|e| e.to_string())?;
-
-        let response = input.trim().to_lowercase();
-        match response.as_str() {
-            "y" | "yes" => {
-                eprintln!();
-                return Ok(true);
-            }
-            "?" => {
-                eprintln!();
-                show_install_preview(results, completion_results, cmd);
-                // Loop back to prompt again
-            }
-            _ => {
-                // Empty, "n", "no", or anything else is decline
-                eprintln!();
-                return Ok(false);
-            }
-        }
-    }
+    Ok(response == PromptResponse::Accepted)
 }
 
 /// Prompt user for yes/no confirmation (simple [y/N] prompt)
 fn prompt_yes_no() -> Result<bool, String> {
-    let bold = Style::new().bold();
-    eprint!("{PROMPT_SYMBOL} Proceed? {bold}[y/N]{bold:#} ");
+    // Blank line before prompt for visual separation
+    eprintln!();
+    eprint!(
+        "{} ",
+        prompt_message(color_print::cformat!("Proceed? <bold>[y/N]</>"))
+    );
     io::stderr().flush().map_err(|e| e.to_string())?;
 
     let mut input = String::new();
@@ -759,6 +749,7 @@ fn prompt_yes_no() -> Result<bool, String> {
         .read_line(&mut input)
         .map_err(|e| e.to_string())?;
 
+    // End the prompt line on stderr (user's input went to stdin, not stderr)
     eprintln!();
 
     let response = input.trim().to_lowercase();
@@ -829,13 +820,21 @@ pub fn process_shell_completions(
 
         // Create parent directory if needed
         if let Some(parent) = completion_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create directory {}: {e}", parent.display()))?;
+            fs::create_dir_all(parent).map_err(|e| {
+                format!(
+                    "Failed to create directory {}: {e}",
+                    format_path_for_display(parent)
+                )
+            })?;
         }
 
         // Write the completion file
-        fs::write(&completion_path, &fish_completion)
-            .map_err(|e| format!("Failed to write {}: {e}", completion_path.display()))?;
+        fs::write(&completion_path, &fish_completion).map_err(|e| {
+            format!(
+                "Failed to write {}: {e}",
+                format_path_for_display(&completion_path)
+            )
+        })?;
 
         results.push(CompletionResult {
             shell,
@@ -959,7 +958,10 @@ fn scan_for_uninstall(
                         });
                     } else {
                         fs::remove_file(&legacy_path).map_err(|e| {
-                            format!("Failed to remove {}: {e}", legacy_path.display())
+                            format!(
+                                "Failed to remove {}: {e}",
+                                format_path_for_display(&legacy_path)
+                            )
                         })?;
                         results.push(UninstallResult {
                             shell,
@@ -1023,7 +1025,11 @@ fn scan_for_uninstall(
                 });
             } else {
                 fs::remove_file(&completion_path).map_err(|e| {
-                    format!("Failed to remove {}: {}", completion_path.display(), e)
+                    format!(
+                        "Failed to remove {}: {}",
+                        format_path_for_display(&completion_path),
+                        e
+                    )
                 })?;
                 completion_results.push(CompletionUninstallResult {
                     shell,
@@ -1214,7 +1220,7 @@ pub fn handle_show_theme() {
 
     // Prompt
     eprintln!("{}", info_message("Prompt formatting:"));
-    eprintln!("{PROMPT_SYMBOL} Proceed? [y/N] ");
+    eprintln!("{} ", prompt_message("Proceed? [y/N]"));
 }
 
 #[cfg(test)]

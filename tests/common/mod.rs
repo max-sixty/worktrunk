@@ -394,10 +394,18 @@ pub fn open_pty_with_size(rows: u16, cols: u16) -> portable_pty::PtyPair {
         .unwrap()
 }
 
-use insta_cmd::get_cargo_bin;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// Path to the `wt` binary built by Cargo.
+///
+/// Uses `env!()` (compile-time) rather than runtime lookup so Cargo knows to
+/// build the binary when compiling tests. This works with both `cargo test`
+/// and `cargo nextest`.
+pub fn wt_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_wt"))
+}
 use tempfile::TempDir;
 use worktrunk::config::sanitize_branch_name;
 use worktrunk::path::to_posix_path;
@@ -599,7 +607,7 @@ const NULL_DEVICE: &str = "/dev/null";
 /// - Terminal width set to 150 columns (`COLUMNS=150`)
 #[must_use]
 pub fn wt_command() -> Command {
-    let mut cmd = Command::new(get_cargo_bin("wt"));
+    let mut cmd = Command::new(wt_bin());
     configure_cli_command(&mut cmd);
     cmd
 }
@@ -685,6 +693,8 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
     // Enable warn-level logging so diagnostics show up in test failures
     cmd.env("RUST_LOG", "warn");
+    // Treat Claude as not installed by default (tests can override with "1")
+    cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "0");
 
     // Apply shared static env vars (see STATIC_TEST_ENV_VARS)
     for &(key, value) in STATIC_TEST_ENV_VARS {
@@ -952,11 +962,17 @@ pub fn shell_command(
 ///
 /// Sets both Unix (`HOME`, `XDG_CONFIG_HOME`) and Windows (`USERPROFILE`) variables
 /// so the `home` crate can find the temp home directory on all platforms.
+///
+/// Canonicalizes the path on macOS to handle `/var` → `/private/var` symlinks.
+/// This ensures `format_path_for_display()` can correctly convert paths to `~/...`.
 pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
-    cmd.env("HOME", home);
+    // Canonicalize to resolve macOS symlinks (/var -> /private/var)
+    // This ensures paths match when format_path_for_display() compares against HOME
+    let home = canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    cmd.env("HOME", &home);
     cmd.env("XDG_CONFIG_HOME", home.join(".config"));
     // Windows: the `home` crate uses USERPROFILE for home_dir()
-    cmd.env("USERPROFILE", home);
+    cmd.env("USERPROFILE", &home);
     // Windows: etcetera uses APPDATA for config_dir() (AppData\Roaming)
     // Map it to .config to match Unix XDG_CONFIG_HOME behavior
     cmd.env("APPDATA", home.join(".config"));
@@ -993,6 +1009,8 @@ pub struct TestRepo {
     git_config_path: PathBuf,
     /// Path to mock bin directory for gh/glab commands
     mock_bin_path: Option<PathBuf>,
+    /// Whether Claude CLI should be treated as installed
+    claude_installed: bool,
     /// Snapshot settings guard - keeps insta filters active for this repo's lifetime
     _snapshot_guard: insta::internals::SettingsBindDropGuard,
 }
@@ -1038,6 +1056,7 @@ impl TestRepo {
             test_config_path,
             git_config_path,
             mock_bin_path: None,
+            claude_installed: false,
             _snapshot_guard: snapshot_guard,
         };
 
@@ -1081,6 +1100,7 @@ impl TestRepo {
             test_config_path,
             git_config_path,
             mock_bin_path: None,
+            claude_installed: false,
             _snapshot_guard: snapshot_guard,
         };
 
@@ -1298,7 +1318,7 @@ impl TestRepo {
     /// ```
     #[must_use]
     pub fn wt_command(&self) -> Command {
-        let mut cmd = Command::new(get_cargo_bin("wt"));
+        let mut cmd = Command::new(wt_bin());
         self.configure_wt_cmd(&mut cmd);
         cmd.current_dir(self.root_path());
         cmd
@@ -1380,8 +1400,12 @@ impl TestRepo {
     }
 
     /// Overwrite the isolated WORKTRUNK_CONFIG_PATH used during tests.
+    ///
+    /// Automatically prepends `skip-commit-generation-prompt = true` to prevent
+    /// interactive prompts from appearing in test output.
     pub fn write_test_config(&self, contents: &str) {
-        std::fs::write(&self.test_config_path, contents).unwrap();
+        let full_contents = format!("skip-commit-generation-prompt = true\n{}", contents);
+        std::fs::write(&self.test_config_path, full_contents).unwrap();
     }
 
     /// Get the path to a named worktree
@@ -1793,10 +1817,7 @@ impl TestRepo {
             .command("auth", MockResponse::exit(1))
             .write(&mock_bin);
 
-        // claude: not installed
-        MockConfig::new("claude")
-            .command("_default", MockResponse::exit(1))
-            .write(&mock_bin);
+        // claude: not installed (don't create mock - which::which won't find it)
 
         self.mock_bin_path = Some(mock_bin);
     }
@@ -1806,18 +1827,8 @@ impl TestRepo {
     /// Call this after setup_mock_ci_tools_unauthenticated() to simulate
     /// Claude Code being available on the system.
     pub fn setup_mock_claude_installed(&mut self) {
-        use crate::common::mock_commands::{MockConfig, MockResponse};
-
-        let mock_bin = self
-            .mock_bin_path
-            .as_ref()
-            .expect("Call setup_mock_ci_tools_unauthenticated first");
-
-        // claude: installed
-        MockConfig::new("claude")
-            .version("Claude Code 1.0.0 (mock)")
-            .command("_default", MockResponse::exit(0))
-            .write(mock_bin);
+        // Mark Claude as installed for test environment
+        self.claude_installed = true;
     }
 
     /// Setup the worktrunk plugin as installed in Claude Code
@@ -1843,7 +1854,7 @@ impl TestRepo {
         std::fs::create_dir_all(&claude_dir).unwrap();
         std::fs::write(
             claude_dir.join("settings.json"),
-            r#"{"statusLine":{"type":"command","command":"wt list statusline --claude-code"}}"#,
+            r#"{"statusLine":{"type":"command","command":"wt list statusline --format=claude-code"}}"#,
         )
         .unwrap();
     }
@@ -2062,6 +2073,11 @@ impl TestRepo {
             paths.insert(0, mock_bin.clone());
             let new_path = std::env::join_paths(&paths).unwrap();
             cmd.env(&path_var_name, new_path);
+        }
+
+        // Override Claude installed status if setup_mock_claude_installed() was called
+        if self.claude_installed {
+            cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "1");
         }
     }
 
@@ -2606,7 +2622,8 @@ fn setup_snapshot_settings_for_paths_with_home(
     // On CI, HOME is a temp directory, so paths under HOME become ~/something.
     // This catches paths like ~/wrong-path that don't follow the repo naming convention.
     // MUST come AFTER specific ~/repo patterns so they match first.
-    settings.add_filter(r"~/[a-zA-Z0-9_-]+", "[PROJECT_ID]");
+    // Uses _PARENT_ prefix (matching _REPO_ convention) and preserves directory name.
+    settings.add_filter(r"~/([a-zA-Z0-9_-]+)", "_PARENT_/$1");
 
     // Strip quotes around [PROJECT_ID] after replacement.
     // On Windows, paths inside quotes get replaced but quotes remain: 'C:/...' -> '[PROJECT_ID]'
@@ -2758,8 +2775,11 @@ pub fn setup_snapshot_settings_with_home(repo: &TestRepo, temp_home: &TempDir) -
 pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
+    // Canonicalize to match paths in output (macOS /var -> /private/var)
+    let canonical_home =
+        canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().to_path_buf());
     settings.add_filter(
-        &regex::escape(&temp_home.path().to_string_lossy()),
+        &regex::escape(&canonical_home.to_string_lossy()),
         "[TEMP_HOME]",
     );
     settings.add_filter(r"\\", "/");
@@ -2863,7 +2883,7 @@ pub fn make_snapshot_cmd_with_global_flags(
     cwd: Option<&Path>,
     global_flags: &[&str],
 ) -> Command {
-    let mut cmd = Command::new(insta_cmd::get_cargo_bin("wt"));
+    let mut cmd = Command::new(wt_bin());
     repo.configure_wt_cmd(&mut cmd);
     cmd.args(global_flags)
         .arg(subcommand)

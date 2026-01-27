@@ -205,6 +205,11 @@ pub fn info_message(content: impl AsRef<str>) -> FormattedMessage {
     FormattedMessage(format!("{INFO_SYMBOL} {}", content.as_ref()))
 }
 
+/// Format a prompt message with symbol and cyan styling
+pub fn prompt_message(content: impl AsRef<str>) -> FormattedMessage {
+    FormattedMessage(cformat!("{PROMPT_SYMBOL} <cyan>{}</>", content.as_ref()))
+}
+
 /// Format a section heading (cyan uppercase text, no emoji)
 ///
 /// Used for organizing output into distinct sections. Headings can have
@@ -331,6 +336,13 @@ mod tests {
         assert!(msg.as_str().contains("5 items found"));
     }
 
+    #[test]
+    fn test_prompt_message() {
+        let msg = prompt_message("Continue?");
+        assert!(msg.as_str().contains(PROMPT_SYMBOL));
+        assert!(msg.as_str().contains("Continue?"));
+    }
+
     // ============================================================================
     // format_heading Tests
     // ============================================================================
@@ -357,5 +369,17 @@ mod tests {
         let heading = format_heading("", None);
         // Empty string, still formatted
         assert!(heading.is_empty() || heading.contains('\u{1b}'));
+    }
+
+    // ============================================================================
+    // FormattedMessage Tests
+    // ============================================================================
+
+    #[test]
+    fn test_formatted_message_into_inner() {
+        let msg = success_message("Done");
+        let inner: String = msg.into_inner();
+        assert!(inner.contains(SUCCESS_SYMBOL));
+        assert!(inner.contains("Done"));
     }
 }

@@ -36,5 +36,5 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mBranch-worktree mismatch; expected [1mfeature-mismatch[22m @ [1m_REPO_.feature-mismatch[22m [31m⚑[39m[39m
-[33m▲[39m [33mWorktree for [1mfeature-mismatch[22m @ [1m[PROJECT_ID][22m, but cannot change directory — shell integration not installed[39m
+[33m▲[39m [33mWorktree for [1mfeature-mismatch[22m @ [1m_PARENT_/wrong-path-no-shell[22m, but cannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

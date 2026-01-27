@@ -29,8 +29,10 @@
 //!
 //! See [`shell_integration`] module for the complete spec of warning messages.
 
+pub(crate) mod commit_generation;
 mod global;
 pub(crate) mod handlers;
+pub(crate) mod prompt;
 pub(crate) mod shell_integration;
 
 // Re-export the public API
@@ -46,3 +48,5 @@ pub(crate) use handlers::{
 pub(crate) use shell_integration::{
     print_shell_install_result, print_skipped_shells, prompt_shell_integration,
 };
+// Re-export commit generation functions
+pub(crate) use commit_generation::prompt_commit_generation;

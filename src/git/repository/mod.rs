@@ -224,6 +224,9 @@ impl Repository {
     }
 
     /// Resolve the git common directory for a path.
+    ///
+    /// Always returns a canonicalized absolute path to ensure consistent
+    /// comparison with `WorkingTree::git_dir()`.
     fn resolve_git_common_dir(discovery_path: &Path) -> anyhow::Result<PathBuf> {
         let output = Cmd::new("git")
             .args(["rev-parse", "--git-common-dir"])
@@ -239,12 +242,13 @@ impl Repository {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let path = PathBuf::from(stdout.trim());
-        if path.is_relative() {
-            canonicalize(discovery_path.join(&path))
-                .context("Failed to resolve git common directory")
+        // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
+        let absolute_path = if path.is_relative() {
+            discovery_path.join(&path)
         } else {
-            Ok(path)
-        }
+            path
+        };
+        canonicalize(&absolute_path).context("Failed to resolve git common directory")
     }
 
     /// Get the path this repository was discovered from.

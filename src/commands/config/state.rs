@@ -595,7 +595,7 @@ pub fn handle_state_show(format: OutputFormat) -> anyhow::Result<()> {
 
     match format {
         OutputFormat::Json => handle_state_show_json(&repo),
-        OutputFormat::Table => handle_state_show_table(&repo),
+        OutputFormat::Table | OutputFormat::ClaudeCode => handle_state_show_table(&repo),
     }
 }
 

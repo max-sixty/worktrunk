@@ -14,6 +14,7 @@ pub(crate) mod list;
 pub(crate) mod merge;
 pub(crate) mod process;
 pub(crate) mod project_config;
+mod relocate;
 pub(crate) mod repository_ext;
 #[cfg(unix)]
 pub(crate) mod select;
@@ -38,7 +39,7 @@ pub(crate) use merge::{MergeOptions, execute_pre_remove_commands, handle_merge};
 pub(crate) use select::handle_select;
 pub(crate) use step_commands::{
     PromoteResult, RebaseResult, SquashResult, handle_promote, handle_rebase, handle_squash,
-    step_commit, step_copy_ignored, step_show_squash_prompt,
+    step_commit, step_copy_ignored, step_relocate, step_show_squash_prompt,
 };
 pub(crate) use worktree::{
     OperationMode, execute_switch, handle_remove, handle_remove_current,

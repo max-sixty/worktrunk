@@ -53,7 +53,7 @@ use commands::{
     handle_remove_current, handle_show_theme, handle_squash, handle_state_clear,
     handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show,
     handle_unconfigure_shell, plan_switch, resolve_worktree_arg, run_hook, step_commit,
-    step_copy_ignored, step_for_each,
+    step_copy_ignored, step_for_each, step_relocate,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
@@ -588,6 +588,12 @@ fn main() {
                     }
                 })
             }
+            StepCommand::Relocate {
+                branches,
+                dry_run,
+                commit,
+                clobber,
+            } => step_relocate(branches, dry_run, commit, clobber),
         },
         Commands::Hook { action } => match action {
             HookCommand::Show {
@@ -711,8 +717,18 @@ fn main() {
             progressive,
             no_progressive,
         } => match subcommand {
-            Some(ListSubcommand::Statusline { claude_code }) => {
-                commands::statusline::run(claude_code)
+            Some(ListSubcommand::Statusline {
+                format,
+                claude_code,
+            }) => {
+                // Hidden --claude-code flag only applies when format is default (Table)
+                // Explicit --format=json takes precedence over --claude-code
+                let effective_format = if claude_code && matches!(format, OutputFormat::Table) {
+                    OutputFormat::ClaudeCode
+                } else {
+                    format
+                };
+                commands::statusline::run(effective_format)
             }
             None => {
                 // Load config and merge with CLI flags (CLI flags take precedence)

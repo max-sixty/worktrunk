@@ -80,9 +80,8 @@ Show current configuration and file locations:
   [2m# ~/.config/worktrunk/config.toml[0m
   [2mworktree-path = ".worktrees/{{ branch | sanitize }}"[0m
   [2m[0m
-  [2m[commit-generation][0m
-  [2mcommand = "llm"[0m
-  [2margs = ["-m", "claude-haiku-4.5"][0m
+  [2m[commit.generation][0m
+  [2mcommand = "llm -m claude-haiku-4.5"[0m
 
 [1mProject config[0m — shared team settings:
 
@@ -95,7 +94,7 @@ Show current configuration and file locations:
 
 [2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 
-[1m[32mWorktrunk User Configuration[0m
+[32mUSER CONFIGURATION[0m
 
 Create with [2mwt config create[0m.
 
@@ -139,7 +138,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 
 See LLM commits docs for setup and Custom prompt templates for template customization.
 
-[1m[32mCommands[0m
+[1m[32mCommand config[0m
 
 [32mList[0m
 
@@ -226,7 +225,8 @@ Default template:
   [2mWrite a commit message for the staged changes below.[0m
   [2m[0m
   [2m<format>[0m
-  [2m- Subject under 50 chars, blank line, then optional body[0m
+  [2m- Subject line under 50 chars[0m
+  [2m- For material changes, add a blank line then a body paragraph explaining the change[0m
   [2m- Output only the commit message, no quotes or code blocks[0m
   [2m</format>[0m
   [2m[0m
@@ -267,7 +267,8 @@ Default template:
   [2mCombine these commits into a single commit message.[0m
   [2m[0m
   [2m<format>[0m
-  [2m- Subject under 50 chars, blank line, then optional body[0m
+  [2m- Subject line under 50 chars[0m
+  [2m- For material changes, add a blank line then a body paragraph explaining the change[0m
   [2m- Output only the commit message, no quotes or code blocks[0m
   [2m</format>[0m
   [2m[0m
@@ -293,42 +294,27 @@ Default template:
 
 [2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 
-[1m[32mWorktrunk Project Configuration[0m
+[32mPROJECT CONFIGURATION[0m
 
-The project config defines lifecycle hooks and project-specific settings. This file is checked into version control and shared across the team.
+Project config ([2m.config/wt.toml[0m) defines lifecycle hooks and project-specific settings. This file is checked into version control and shared with the team. Create with [2mwt config create --project[0m.
 
-Create [2m.config/wt.toml[0m in the repository root:
+See [2mwt hook[0m for hook types, execution order, template variables, and examples.
 
-  [2m[post-create][0m
-  [2minstall = "npm ci"[0m
+[32mNon-hook settings[0m
+
+  [2m# .config/wt.toml[0m
   [2m[0m
-  [2m[pre-merge][0m
-  [2mtest = "npm test"[0m
-  [2mlint = "npm run lint"[0m
-
-See [2mwt hook[0m for complete documentation on hook types, execution order, template variables, and JSON context.
-
-[32mDev server URL[0m
-
-The [2m[list][0m section adds a URL column to [2mwt list[0m:
-
+  [2m# URL column in wt list (dimmed when port not listening)[0m
   [2m[list][0m
   [2murl = "http://localhost:{{ branch | hash_port }}"[0m
-
-URLs are dimmed when the port isn't listening.
-
-[32mCI platform override[0m
-
-The [2m[ci][0m section overrides CI platform detection for GitHub Enterprise or self-hosted GitLab with custom domains:
-
+  [2m[0m
+  [2m# Override CI platform detection for self-hosted instances[0m
   [2m[ci][0m
   [2mplatform = "github"  # or "gitlab"[0m
 
-By default, the platform is detected from the remote URL. Use this when URL detection fails (e.g., [2mgit.mycompany.com[0m instead of [2mgithub.mycompany.com[0m).
-
 [2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 
-[1m[32mShell integration[0m
+[32mSHELL INTEGRATION[0m
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
@@ -347,15 +333,11 @@ Or manually add to the shell config:
 
 Without shell integration, [2mwt switch[0m prints the target directory but cannot [2mcd[0m into it.
 
-[32mSkip first-run prompt[0m
+[32mFirst-run prompts[0m
 
-On first run without shell integration, Worktrunk offers to install it. Suppress this prompt in CI or automated environments:
+On first run without shell integration, Worktrunk offers to install it. Similarly, on first commit without LLM configuration, it offers to configure a detected tool ([2mclaude[0m, [2mcodex[0m). Declining sets [2mskip-shell-integration-prompt[0m or [2mskip-commit-generation-prompt[0m automatically.
 
-  [2mskip-shell-integration-prompt = true[0m
-
-Or via environment variable:
-
-  [2mexport WORKTRUNK_SKIP_SHELL_INTEGRATION_PROMPT=true[0m
+[32mOTHER[0m
 
 [1m[32mEnvironment variables[0m
 

@@ -1055,7 +1055,8 @@ fn test_configure_shell_no_warning_when_compinit_enabled(repo: TestRepo, temp_ho
         repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
-        cmd.env("ZDOTDIR", temp_home.path()); // Point zsh to our test home for config
+        // Canonicalize to handle macOS /var -> /private/var symlinks
+        cmd.env("ZDOTDIR", crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().to_path_buf()));
         cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1"); // Bypass zsh subprocess check (unreliable on CI)
         cmd.arg("config")
             .arg("shell")
@@ -1533,9 +1534,10 @@ fn test_uninstall_shell_dry_run_multiple(repo: TestRepo, temp_home: TempDir) {
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {
     use crate::common::pty::exec_cmd_in_pty;
-    use crate::common::{TestRepo, add_pty_filters, configure_pty_command, repo, temp_home};
+    use crate::common::{
+        TestRepo, add_pty_filters, configure_pty_command, repo, temp_home, wt_bin,
+    };
     use insta::assert_snapshot;
-    use insta_cmd::get_cargo_bin;
     use portable_pty::CommandBuilder;
     use rstest::rstest;
     use std::fs;
@@ -1543,7 +1545,7 @@ mod pty_tests {
 
     /// Execute shell install command in a PTY with interactive input
     fn exec_install_in_pty(temp_home: &TempDir, repo: &TestRepo, input: &str) -> (String, i32) {
-        let mut cmd = CommandBuilder::new(get_cargo_bin("wt"));
+        let mut cmd = CommandBuilder::new(wt_bin());
         cmd.arg("-C");
         cmd.arg(repo.root_path());
         cmd.arg("config");

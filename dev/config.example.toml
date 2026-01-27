@@ -1,4 +1,4 @@
-# ## Worktrunk User Configuration
+# # User Configuration
 #
 # Create with `wt config create`.
 #
@@ -42,7 +42,7 @@
 #
 # See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (#custom-prompt-templates) for template customization.
 #
-# ## Commands
+# ## Command config
 #
 # ### List
 #
@@ -85,7 +85,7 @@
 #
 # For context:
 #
-# - Project config (https://worktrunk.dev/config.md#worktrunk-project-configuration/) settings are shared with teammates.
+# - Project config (https://worktrunk.dev/config/#project-configuration) settings are shared with teammates.
 # - User configs generally apply to all projects.
 # - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.
 #
@@ -130,7 +130,8 @@
 # Write a commit message for the staged changes below.
 #
 # <format>
-# - Subject under 50 chars, blank line, then optional body
+# - Subject line under 50 chars
+# - For material changes, add a blank line then a body paragraph explaining the change
 # - Output only the commit message, no quotes or code blocks
 # </format>
 #
@@ -173,7 +174,8 @@
 # Combine these commits into a single commit message.
 #
 # <format>
-# - Subject under 50 chars, blank line, then optional body
+# - Subject line under 50 chars
+# - For material changes, add a blank line then a body paragraph explaining the change
 # - Output only the commit message, no quotes or code blocks
 # </format>
 #

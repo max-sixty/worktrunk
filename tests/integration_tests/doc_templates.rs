@@ -509,3 +509,69 @@ fn test_worktree_path_of_branch_function_registered(repo: TestRepo) {
     );
     assert_eq!(result.unwrap(), "");
 }
+
+/// Test that worktree_path_of_branch returns shell-escaped paths when shell_escape=true.
+///
+/// This is a regression test for the bug where worktree_path_of_branch returned raw paths
+/// even when shell_escape=true, which could break hook commands on paths with spaces
+/// like "/Users/john/My Projects/feature".
+#[rstest]
+fn test_worktree_path_of_branch_shell_escape(repo: TestRepo) {
+    // Create a worktree with a space in the path to test shell escaping
+    let worktree_path = repo.root_path().parent().unwrap().join("My Worktree");
+
+    // Create a new branch and worktree
+    repo.run_git(&["branch", "test-branch"]);
+    repo.run_git(&[
+        "worktree",
+        "add",
+        worktree_path.to_str().unwrap(),
+        "test-branch",
+    ]);
+
+    let repository = Repository::at(repo.root_path()).unwrap();
+    let vars: HashMap<&str, &str> = HashMap::new();
+
+    // With shell_escape=false, path is returned literally
+    let result_literal = expand_template(
+        "{{ worktree_path_of_branch('test-branch') }}",
+        &vars,
+        false,
+        &repository,
+        "test",
+    )
+    .unwrap();
+    // Path should contain "My Worktree" unescaped (spaces as-is, posix-style)
+    assert!(
+        result_literal.contains("My Worktree"),
+        "Expected literal path with space, got: {result_literal}"
+    );
+
+    // With shell_escape=true, path should be escaped for safe shell usage
+    let result_escaped = expand_template(
+        "{{ worktree_path_of_branch('test-branch') }}",
+        &vars,
+        true,
+        &repository,
+        "test",
+    )
+    .unwrap();
+    // Path should be quoted or escaped (shell_escape crate uses single quotes)
+    assert!(
+        result_escaped.contains('\'') || result_escaped.contains('\\'),
+        "Expected shell-escaped path, got: {result_escaped}"
+    );
+    // The escaped path should still reference the worktree
+    assert!(
+        result_escaped.contains("My Worktree") || result_escaped.contains("My\\ Worktree"),
+        "Escaped path should reference worktree: {result_escaped}"
+    );
+
+    // Clean up worktree
+    repo.run_git(&[
+        "worktree",
+        "remove",
+        "--force",
+        worktree_path.to_str().unwrap(),
+    ]);
+}

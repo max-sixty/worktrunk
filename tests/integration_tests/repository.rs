@@ -649,9 +649,117 @@ fn test_repo_path_in_submodule() {
 
     // Also verify that git_common_dir is in the parent's .git/modules/ (confirming this is a real submodule)
     let git_common_dir = repository.git_common_dir();
+    // Use components() to check path structure (works on both Unix and Windows)
+    let components: Vec<_> = git_common_dir.components().collect();
+    let has_git_modules = components.windows(2).any(|pair| {
+        matches!(
+            (pair[0].as_os_str().to_str(), pair[1].as_os_str().to_str()),
+            (Some(".git"), Some("modules"))
+        )
+    });
     assert!(
-        git_common_dir.to_string_lossy().contains(".git/modules"),
+        has_git_modules,
         "git_common_dir should be in parent's .git/modules/ for a submodule, got: {:?}",
         git_common_dir
+    );
+}
+
+// =============================================================================
+// branch() error propagation tests (Bug fix: branch() swallows errors)
+// =============================================================================
+
+#[test]
+fn test_branch_returns_none_for_detached_head() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+
+    // Detach HEAD by checking out a specific commit
+    let sha = repo.git_output(&["rev-parse", "HEAD"]);
+
+    repo.run_git(&["checkout", "--detach", &sha]);
+
+    // Create a fresh repository instance to avoid cached result
+    let repository = Repository::at(&root).unwrap();
+    // Use worktree_at with explicit path, not current_worktree() which uses base_path()
+    let wt = repository.worktree_at(&root);
+
+    let result = wt.branch();
+    assert!(
+        result.is_ok(),
+        "branch() should succeed even for detached HEAD"
+    );
+    assert!(
+        result.unwrap().is_none(),
+        "branch() should return None for detached HEAD"
+    );
+}
+
+#[test]
+fn test_branch_returns_branch_name() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+    let repository = Repository::at(&root).unwrap();
+    // Use worktree_at with explicit path, not current_worktree() which uses base_path()
+    let wt = repository.worktree_at(&root);
+
+    let result = wt.branch();
+    assert!(result.is_ok(), "branch() should succeed");
+    assert_eq!(
+        result.unwrap(),
+        Some("main".to_string()),
+        "branch() should return the current branch name"
+    );
+}
+
+#[test]
+fn test_branch_caches_result() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+    let repository = Repository::at(&root).unwrap();
+    // Use worktree_at with explicit path, not current_worktree() which uses base_path()
+    let wt = repository.worktree_at(&root);
+
+    // First call
+    let result1 = wt.branch().unwrap();
+    // Second call should return cached result
+    let result2 = wt.branch().unwrap();
+
+    assert_eq!(result1, result2);
+    assert_eq!(result1, Some("main".to_string()));
+}
+
+// =============================================================================
+// is_dirty() behavior tests
+// =============================================================================
+
+#[test]
+fn test_is_dirty_does_not_detect_skip_worktree_changes() {
+    // This test documents a known limitation: is_dirty() uses `git status --porcelain`
+    // which doesn't show files hidden via --skip-worktree or --assume-unchanged.
+    //
+    // We intentionally don't check for these because:
+    // 1. Detecting them requires `git ls-files -v` which lists ALL tracked files
+    // 2. On large repos (70k+ files), this adds noticeable latency to every clean check
+    // 3. Users who use skip-worktree are power users who understand the implications
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+
+    // Create and commit a file
+    let file_path = root.join("local.env");
+    fs::write(&file_path, "original").unwrap();
+    repo.run_git(&["add", "local.env"]);
+    repo.run_git(&["commit", "-m", "add local.env"]);
+
+    // Mark with skip-worktree and modify
+    repo.run_git(&["update-index", "--skip-worktree", "local.env"]);
+    fs::write(&file_path, "modified but hidden").unwrap();
+
+    let repository = Repository::at(&root).unwrap();
+    let wt = repository.worktree_at(&root);
+
+    // is_dirty() returns false — this is documented behavior, not a bug
+    assert!(
+        !wt.is_dirty().unwrap(),
+        "is_dirty() does not detect skip-worktree changes by design"
     );
 }
