@@ -1534,9 +1534,10 @@ fn test_uninstall_shell_dry_run_multiple(repo: TestRepo, temp_home: TempDir) {
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {
     use crate::common::pty::exec_cmd_in_pty;
-    use crate::common::{TestRepo, add_pty_filters, configure_pty_command, repo, temp_home};
+    use crate::common::{
+        TestRepo, add_pty_filters, configure_pty_command, repo, temp_home, wt_bin,
+    };
     use insta::assert_snapshot;
-    use insta_cmd::get_cargo_bin;
     use portable_pty::CommandBuilder;
     use rstest::rstest;
     use std::fs;
@@ -1544,7 +1545,7 @@ mod pty_tests {
 
     /// Execute shell install command in a PTY with interactive input
     fn exec_install_in_pty(temp_home: &TempDir, repo: &TestRepo, input: &str) -> (String, i32) {
-        let mut cmd = CommandBuilder::new(get_cargo_bin("wt"));
+        let mut cmd = CommandBuilder::new(wt_bin());
         cmd.arg("-C");
         cmd.arg(repo.root_path());
         cmd.arg("config");

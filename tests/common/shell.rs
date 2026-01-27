@@ -1,5 +1,4 @@
-use super::{TestRepo, wt_command};
-use insta_cmd::get_cargo_bin;
+use super::{TestRepo, wt_bin, wt_command};
 
 /// Map shell display names to actual binaries.
 pub fn get_shell_binary(shell: &str) -> &str {
@@ -178,9 +177,5 @@ pub fn path_export_syntax(shell: &str, bin_path: &str) -> String {
 
 /// Helper that returns the `wt` binary directory for PATH injection.
 pub fn wt_bin_dir() -> String {
-    get_cargo_bin("wt")
-        .parent()
-        .unwrap()
-        .to_string_lossy()
-        .to_string()
+    wt_bin().parent().unwrap().to_string_lossy().to_string()
 }

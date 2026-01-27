@@ -7,7 +7,7 @@
 //! - Shows hint when not a TTY (non-interactive)
 //! - Prompts and respects user's choice in interactive mode
 
-use crate::common::{TestRepo, repo};
+use crate::common::{TestRepo, repo, wt_bin};
 use rstest::rstest;
 use std::fs;
 use worktrunk::config::UserConfig;
@@ -206,7 +206,6 @@ mod pty_tests {
     use crate::common::pty::exec_in_pty_with_home;
     use crate::common::{add_pty_filters, setup_snapshot_settings};
     use insta::assert_snapshot;
-    use insta_cmd::get_cargo_bin;
     use std::path::Path;
     use tempfile::TempDir;
 
@@ -252,7 +251,7 @@ mod pty_tests {
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
         let (output, exit_code) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
@@ -297,7 +296,7 @@ mod pty_tests {
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
         let (output, exit_code) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
@@ -353,7 +352,7 @@ mod pty_tests {
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
         let (output, exit_code) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
@@ -410,7 +409,7 @@ mod pty_tests {
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
         let (output, exit_code) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
@@ -466,7 +465,7 @@ mod pty_tests {
 
         // First switch - decline the prompt
         let (_, _) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature1"],
             repo.root_path(),
             &env_vars,
@@ -476,7 +475,7 @@ mod pty_tests {
 
         // Second switch - should NOT prompt again
         let (output, exit_code) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature2"],
             repo.root_path(),
             &env_vars,
@@ -498,7 +497,6 @@ mod pty_tests {
 mod commit_generation_prompt_tests {
     use super::*;
     use crate::common::pty::exec_in_pty_with_home;
-    use insta_cmd::get_cargo_bin;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;
@@ -531,7 +529,7 @@ mod commit_generation_prompt_tests {
         env_vars.push(("PATH".to_string(), "/usr/bin:/bin".to_string()));
 
         let (output, exit_code) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["step", "commit"],
             repo.root_path(),
             &env_vars,
@@ -567,7 +565,7 @@ mod commit_generation_prompt_tests {
         env_vars.push(("PATH".to_string(), path));
 
         let (output, exit_code) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["step", "commit"],
             repo.root_path(),
             &env_vars,
@@ -607,7 +605,7 @@ mod commit_generation_prompt_tests {
         env_vars.push(("PATH".to_string(), path));
 
         let (output, _exit_code) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["step", "commit"],
             repo.root_path(),
             &env_vars,
@@ -648,7 +646,7 @@ mod commit_generation_prompt_tests {
         env_vars.push(("PATH".to_string(), path));
 
         let (output, exit_code) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["step", "commit"],
             repo.root_path(),
             &env_vars,

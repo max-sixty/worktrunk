@@ -19,9 +19,8 @@
 //! - **Stabilization detection** waits for screen to stop changing
 //! - **Content expectations** wait for async preview content to load (e.g., "diff --git")
 
-use crate::common::{TestRepo, repo};
+use crate::common::{TestRepo, repo, wt_bin};
 use insta::assert_snapshot;
-use insta_cmd::get_cargo_bin;
 use portable_pty::CommandBuilder;
 use rstest::rstest;
 use std::io::{Read, Write};
@@ -336,7 +335,7 @@ fn test_select_abort_with_escape(mut repo: TestRepo) {
 
     let env_vars = repo.test_env_vars();
     let (raw_output, exit_code) = exec_in_pty_with_input(
-        get_cargo_bin("wt").to_str().unwrap(),
+        wt_bin().to_str().unwrap(),
         &["select"],
         repo.root_path(),
         &env_vars,
@@ -361,7 +360,7 @@ fn test_select_with_multiple_worktrees(mut repo: TestRepo) {
 
     let env_vars = repo.test_env_vars();
     let (raw_output, exit_code) = exec_in_pty_with_input(
-        get_cargo_bin("wt").to_str().unwrap(),
+        wt_bin().to_str().unwrap(),
         &["select"],
         repo.root_path(),
         &env_vars,
@@ -392,7 +391,7 @@ fn test_select_with_branches(mut repo: TestRepo) {
 
     let env_vars = repo.test_env_vars();
     let (raw_output, exit_code) = exec_in_pty_with_input(
-        get_cargo_bin("wt").to_str().unwrap(),
+        wt_bin().to_str().unwrap(),
         &["select", "--branches"],
         repo.root_path(),
         &env_vars,
@@ -446,7 +445,7 @@ fn test_select_preview_panel_uncommitted(mut repo: TestRepo) {
     // Type "feature" to filter to just the feature worktree, press 1 for HEAD± panel
     // Wait for "diff --git" to appear after pressing 1 - the async preview can be slow under congestion
     let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
-        get_cargo_bin("wt").to_str().unwrap(),
+        wt_bin().to_str().unwrap(),
         &["select"],
         repo.root_path(),
         &env_vars,
@@ -503,7 +502,7 @@ fn test_select_preview_panel_log(mut repo: TestRepo) {
     // Type "feature" to filter, press 2 for log panel
     // Wait for commit log format "* [hash]" to appear - the async preview can be slow under congestion
     let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
-        get_cargo_bin("wt").to_str().unwrap(),
+        wt_bin().to_str().unwrap(),
         &["select"],
         repo.root_path(),
         &env_vars,
@@ -593,7 +592,7 @@ fn test_new_feature() {
     // Type "feature" to filter, press 3 for main…± panel
     // Wait for "diff --git" to appear after pressing 3 - the async preview can be slow under congestion
     let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
-        get_cargo_bin("wt").to_str().unwrap(),
+        wt_bin().to_str().unwrap(),
         &["select"],
         repo.root_path(),
         &env_vars,
@@ -633,7 +632,7 @@ branches = true
 
     let env_vars = repo.test_env_vars();
     let (raw_output, exit_code) = exec_in_pty_with_input(
-        get_cargo_bin("wt").to_str().unwrap(),
+        wt_bin().to_str().unwrap(),
         &["select"], // No --branches flag - config should enable it
         repo.root_path(),
         &env_vars,

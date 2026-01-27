@@ -394,10 +394,18 @@ pub fn open_pty_with_size(rows: u16, cols: u16) -> portable_pty::PtyPair {
         .unwrap()
 }
 
-use insta_cmd::get_cargo_bin;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// Path to the `wt` binary built by Cargo.
+///
+/// Uses `env!()` (compile-time) rather than runtime lookup so Cargo knows to
+/// build the binary when compiling tests. This works with both `cargo test`
+/// and `cargo nextest`.
+pub fn wt_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_wt"))
+}
 use tempfile::TempDir;
 use worktrunk::config::sanitize_branch_name;
 use worktrunk::path::to_posix_path;
@@ -599,7 +607,7 @@ const NULL_DEVICE: &str = "/dev/null";
 /// - Terminal width set to 150 columns (`COLUMNS=150`)
 #[must_use]
 pub fn wt_command() -> Command {
-    let mut cmd = Command::new(get_cargo_bin("wt"));
+    let mut cmd = Command::new(wt_bin());
     configure_cli_command(&mut cmd);
     cmd
 }
@@ -1310,7 +1318,7 @@ impl TestRepo {
     /// ```
     #[must_use]
     pub fn wt_command(&self) -> Command {
-        let mut cmd = Command::new(get_cargo_bin("wt"));
+        let mut cmd = Command::new(wt_bin());
         self.configure_wt_cmd(&mut cmd);
         cmd.current_dir(self.root_path());
         cmd
@@ -2875,7 +2883,7 @@ pub fn make_snapshot_cmd_with_global_flags(
     cwd: Option<&Path>,
     global_flags: &[&str],
 ) -> Command {
-    let mut cmd = Command::new(insta_cmd::get_cargo_bin("wt"));
+    let mut cmd = Command::new(wt_bin());
     repo.configure_wt_cmd(&mut cmd);
     cmd.args(global_flags)
         .arg(subcommand)

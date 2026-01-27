@@ -31,8 +31,7 @@
 // =============================================================================
 
 // Shared imports (both platforms)
-use crate::common::{TestRepo, shell::get_shell_binary};
-use insta_cmd::get_cargo_bin;
+use crate::common::{TestRepo, shell::get_shell_binary, wt_bin};
 use std::process::Command;
 
 // Unix-only imports
@@ -112,7 +111,7 @@ fn shell_wrapper_settings() -> insta::Settings {
 
 /// Generate a shell wrapper script using the actual `wt config shell init` command
 fn generate_wrapper(repo: &TestRepo, shell: &str) -> String {
-    let wt_bin = get_cargo_bin("wt");
+    let wt_bin = wt_bin();
 
     let mut cmd = Command::new(&wt_bin);
     cmd.arg("config").arg("shell").arg("init").arg(shell);
@@ -185,7 +184,7 @@ fn powershell_quote(s: &str) -> String {
 
 /// Build a shell script that sources the wrapper and runs a command
 fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&str]) -> String {
-    let wt_bin = get_cargo_bin("wt");
+    let wt_bin = wt_bin();
     let wrapper_script = generate_wrapper(repo, shell);
     let mut script = String::new();
 
@@ -1535,7 +1534,7 @@ approved-commands = ["echo 'fish background task'"]
         let worktrunk_source = canonicalize(&env::current_dir().unwrap()).unwrap();
 
         // Build a shell script that runs from the worktrunk source directory
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let wrapper_script = generate_wrapper(&repo, shell);
         let mut script = String::new();
 
@@ -1710,7 +1709,7 @@ approved-commands = ["echo 'bash background'"]
         .unwrap();
 
         // Build the setup script that defines the wt function
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let wrapper_script = generate_wrapper(&repo, "bash");
         let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
         let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
@@ -1769,7 +1768,7 @@ approved-commands = ["echo 'bash background'"]
     /// Note: Completions are inline in the wrapper script (lazy loading)
     #[rstest]
     fn test_bash_completions_registered(repo: TestRepo) {
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let wrapper_script = generate_wrapper(&repo, "bash");
 
         // Script that sources wrapper and checks if completion is registered
@@ -1806,7 +1805,7 @@ approved-commands = ["echo 'bash background'"]
     /// Test that fish completions are properly registered
     #[rstest]
     fn test_fish_completions_registered(repo: TestRepo) {
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let wrapper_script = generate_wrapper(&repo, "fish");
         let completions_script = generate_completions(&repo, "fish");
 
@@ -1849,7 +1848,7 @@ approved-commands = ["echo 'bash background'"]
     /// Note: Completions are inline in the wrapper script (lazy loading via compdef)
     #[rstest]
     fn test_zsh_wrapper_function_registered(repo: TestRepo) {
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let wrapper_script = generate_wrapper(&repo, "zsh");
 
         // Use a marker file to avoid PTY output race conditions.
@@ -1954,7 +1953,7 @@ approved-commands = ["echo 'bash background'"]
     #[case("zsh")]
     #[case("fish")]
     fn test_worktrunk_bin_fallback(#[case] shell: &str, repo: TestRepo) {
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let wrapper_script = generate_wrapper(&repo, shell);
 
         // Use shell_quote to handle paths with special chars (like single quotes)
@@ -2573,7 +2572,7 @@ test = "echo 'Running tests...'"
 
         let pair = crate::common::open_pty();
 
-        let cargo_bin = get_cargo_bin("wt");
+        let cargo_bin = wt_bin();
         let mut cmd = CommandBuilder::new(cargo_bin);
         cmd.arg("switch");
         cmd.arg("--create");
@@ -2669,7 +2668,7 @@ test = "echo 'Running tests...'"
     fn test_bash_completion_produces_correct_output(repo: TestRepo) {
         use std::io::Read;
 
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let wt_bin_dir = wt_bin.parent().unwrap();
 
         // Generate wrapper without WORKTRUNK_BIN (simulates installed wt)
@@ -2805,7 +2804,7 @@ fi
     fn test_zsh_completion_produces_correct_output(repo: TestRepo) {
         use std::io::Read;
 
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let wt_bin_dir = wt_bin.parent().unwrap();
 
         // Generate wrapper without WORKTRUNK_BIN (simulates installed wt)
@@ -2919,7 +2918,7 @@ fi
     /// Sources actual `wt config shell init zsh`, triggers completion, snapshots result.
     #[test]
     fn test_zsh_completion_subcommands() {
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let init = std::process::Command::new(&wt_bin)
             .args(["config", "shell", "init", "zsh"])
             .output()
@@ -2962,7 +2961,7 @@ _wt_lazy_complete
     /// Sources actual `wt config shell init bash`, triggers completion, snapshots result.
     #[test]
     fn test_bash_completion_subcommands() {
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let init = std::process::Command::new(&wt_bin)
             .args(["config", "shell", "init", "bash"])
             .output()
@@ -3000,7 +2999,7 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     /// Fish completions call binary with COMPLETE=fish (separate from init script).
     #[test]
     fn test_fish_completion_subcommands() {
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
 
         let output = std::process::Command::new(&wt_bin)
             .args(["--", "wt", ""])
@@ -3043,7 +3042,7 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     fn test_wrapper_help_redirect_captures_all_output(#[case] shell: &str, repo: TestRepo) {
         use std::io::Read;
 
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let wt_bin_dir = wt_bin.parent().unwrap();
 
         // Create a temp file for the redirect target
@@ -3193,7 +3192,7 @@ echo "SCRIPT_COMPLETED"
     fn test_wrapper_help_interactive_uses_pager(#[case] shell: &str, repo: TestRepo) {
         use std::io::Read;
 
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let wt_bin_dir = wt_bin.parent().unwrap();
 
         // Create temp dir for marker file and pager script
@@ -3409,7 +3408,7 @@ mod windows_tests {
         use crate::common::pty::exec_in_pty;
         use insta_cmd::get_cargo_bin;
 
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let tmp = tempfile::tempdir().unwrap();
 
         let (output, exit_code) = exec_in_pty(
@@ -3631,7 +3630,7 @@ mod windows_tests {
     #[ignore = "ConPTY output not captured when cargo test redirects stdout"]
     fn test_powershell_wrapper_function_registered(repo: TestRepo) {
         // Test that the wrapper function is defined by checking if it exists
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let wrapper_script = generate_wrapper(&repo, "powershell");
 
         // Build a script that sources the wrapper and checks if wt is a function
@@ -3674,7 +3673,7 @@ mod windows_tests {
     #[rstest]
     #[ignore = "ConPTY output not captured when cargo test redirects stdout"]
     fn test_powershell_completion_registered(repo: TestRepo) {
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let wrapper_script = generate_wrapper(&repo, "powershell");
 
         // Build a script that sources the wrapper and checks for completion
@@ -3760,7 +3759,7 @@ mod windows_tests {
     #[ignore = "ConPTY output not captured when cargo test redirects stdout"]
     fn test_powershell_worktrunk_bin_env(repo: TestRepo) {
         // This tests the fix we just made - WORKTRUNK_BIN should be used
-        let wt_bin = get_cargo_bin("wt");
+        let wt_bin = wt_bin();
         let wrapper_script = generate_wrapper(&repo, "powershell");
 
         // Script that prints which binary would be used

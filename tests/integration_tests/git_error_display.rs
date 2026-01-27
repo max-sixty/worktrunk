@@ -1,3 +1,4 @@
+use crate::common::wt_bin;
 use insta::assert_snapshot;
 use std::path::PathBuf;
 use worktrunk::git::{GitError, HookType, WorktrunkError, add_hook_skip_hint};
@@ -400,10 +401,9 @@ fn multiline_error_crlf_normalization() {
 #[test]
 #[cfg(unix)]
 fn git_unavailable_error_includes_command() {
-    use insta_cmd::get_cargo_bin;
     use std::process::Command;
 
-    let mut cmd = Command::new(get_cargo_bin("wt"));
+    let mut cmd = Command::new(wt_bin());
     cmd.arg("list")
         // Set PATH to empty so git isn't found
         .env("PATH", "/nonexistent")

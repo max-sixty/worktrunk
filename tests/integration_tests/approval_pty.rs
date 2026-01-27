@@ -9,9 +9,8 @@
 //! error case (non-TTY environments).
 
 use crate::common::pty::exec_in_pty;
-use crate::common::{TestRepo, add_pty_binary_path_filters, add_pty_filters, repo};
+use crate::common::{TestRepo, add_pty_binary_path_filters, add_pty_filters, repo, wt_bin};
 use insta::assert_snapshot;
-use insta_cmd::get_cargo_bin;
 use rstest::rstest;
 
 /// Execute wt in a PTY with interactive input.
@@ -24,7 +23,7 @@ fn exec_wt_in_pty(
     input: &str,
 ) -> (String, i32) {
     exec_in_pty(
-        get_cargo_bin("wt").to_str().unwrap(),
+        wt_bin().to_str().unwrap(),
         args,
         repo.root_path(),
         env_vars,
