@@ -3406,7 +3406,7 @@ mod windows_tests {
     #[test]
     fn test_conpty_wt_version() {
         use crate::common::pty::exec_in_pty;
-        use insta_cmd::get_cargo_bin;
+        use crate::common::wt_bin;
 
         let wt_bin = wt_bin();
         let tmp = tempfile::tempdir().unwrap();

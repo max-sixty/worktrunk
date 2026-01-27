@@ -7,7 +7,7 @@
 //! - Shows hint when not a TTY (non-interactive)
 //! - Prompts and respects user's choice in interactive mode
 
-use crate::common::{TestRepo, repo, wt_bin};
+use crate::common::{TestRepo, repo};
 use rstest::rstest;
 use std::fs;
 use worktrunk::config::UserConfig;
@@ -204,7 +204,7 @@ fn test_switch_no_shell_env_shows_hint(repo: TestRepo) {
 mod pty_tests {
     use super::*;
     use crate::common::pty::exec_in_pty_with_home;
-    use crate::common::{add_pty_filters, setup_snapshot_settings};
+    use crate::common::{add_pty_filters, setup_snapshot_settings, wt_bin};
     use insta::assert_snapshot;
     use std::path::Path;
     use tempfile::TempDir;
@@ -497,6 +497,7 @@ mod pty_tests {
 mod commit_generation_prompt_tests {
     use super::*;
     use crate::common::pty::exec_in_pty_with_home;
+    use crate::common::wt_bin;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;

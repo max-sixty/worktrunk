@@ -1,4 +1,3 @@
-use crate::common::wt_bin;
 use insta::assert_snapshot;
 use std::path::PathBuf;
 use worktrunk::git::{GitError, HookType, WorktrunkError, add_hook_skip_hint};
@@ -401,6 +400,7 @@ fn multiline_error_crlf_normalization() {
 #[test]
 #[cfg(unix)]
 fn git_unavailable_error_includes_command() {
+    use crate::common::wt_bin;
     use std::process::Command;
 
     let mut cmd = Command::new(wt_bin());
