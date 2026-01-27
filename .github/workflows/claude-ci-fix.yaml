@@ -1,4 +1,5 @@
 name: claude-ci-fix
+# Runner versions pinned; see ci.yaml header comment for rationale.
 
 # Trigger when CI workflow fails on main
 on:
@@ -18,7 +19,7 @@ jobs:
   fix-ci:
     # Only run when CI failed on main
     if: github.event.workflow_run.conclusion == 'failure'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write

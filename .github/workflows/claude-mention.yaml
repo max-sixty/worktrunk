@@ -1,4 +1,5 @@
 name: claude-mention
+# Runner versions pinned; see ci.yaml header comment for rationale.
 
 on:
   issue_comment:
@@ -19,7 +20,7 @@ jobs:
     if: |
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write # Allow pushing commits
       pull-requests: write # Allow commenting and updating PRs
