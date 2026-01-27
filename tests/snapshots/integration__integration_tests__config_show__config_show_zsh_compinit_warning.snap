@@ -46,12 +46,12 @@ exit_code: 0
 [33m▲[39m [33mShell integration not active[39m
 [107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
 
-[2m○[22m Already configured shell extension & completions for [1mzsh[22m @ ~/.zshrc:2
+[2m○[22m [1mzsh[22m: Already configured shell extension & completions @ ~/.zshrc:2
 [107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init zsh)"[0m[2m; [0m[2m[35mfi[0m[2m
 [33m▲[39m [33mCompletions won't work; add to ~/.zshrc before the wt line:[39m
 [107m [0m autoload -Uz compinit && compinit
-[2m○[22m [2mSkipped bash; ~/.bashrc not found[22m
-[2m○[22m [2mSkipped fish; ~/.config/fish/functions not found[22m
+[2m○[22m [2mbash: Skipped; ~/.bashrc not found[22m
+[2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
 
 [36mCLAUDE CODE[39m
 [2m○[22m [1mclaude[22m CLI not installed

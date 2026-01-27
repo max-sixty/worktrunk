@@ -630,7 +630,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     out,
                     "{}",
                     info_message(cformat!(
-                        "Already configured {what} for <bold>{shell}</> @ {location}"
+                        "<bold>{shell}</>: Already configured {what} @ {location}"
                     ))
                 )?;
 
@@ -678,7 +678,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                             out,
                             "{}",
                             info_message(cformat!(
-                                "Already configured completions for <bold>{shell}</> @ {completion_display}"
+                                "<bold>{shell}</>: Already configured completions @ {completion_display}"
                             ))
                         )?;
                     } else {
@@ -686,7 +686,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                         writeln!(
                             out,
                             "{}",
-                            hint_message(format!("Not configured completions for {shell}"))
+                            hint_message(format!("{shell}: Not configured completions"))
                         )?;
                     }
                 }
@@ -725,7 +725,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     writeln!(
                         out,
                         "{}",
-                        hint_message(format!("Not configured {what} for {shell}"))
+                        hint_message(format!("{shell}: Not configured {what}"))
                     )?;
                 }
             }
@@ -768,7 +768,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         writeln!(
             out,
             "{}",
-            info_message(cformat!("<dim>Skipped {shell}; {path} not found</>"))
+            info_message(cformat!("<dim>{shell}: Skipped; {path} not found</>"))
         )?;
     }
 
