@@ -24,14 +24,10 @@ pub enum PlatformData {
     },
     /// GitLab-specific data.
     GitLab {
-        /// Source project ID.
+        /// Source project ID (used for deferred URL fetching).
         source_project_id: u64,
-        /// Target project ID.
+        /// Target project ID (used for deferred URL fetching).
         target_project_id: u64,
-        /// Target project SSH URL (where MR refs live).
-        target_ssh_url: Option<String>,
-        /// Target project HTTP URL (where MR refs live).
-        target_http_url: Option<String>,
     },
 }
 
@@ -102,11 +98,11 @@ impl RefContext for RemoteRefInfo {
                     format!("{}:{}", head_owner, self.source_branch)
                 }
                 PlatformData::GitLab { .. } => {
-                    // For GitLab, try to extract owner from fork_push_url
+                    // For GitLab, try to extract namespace from fork_push_url
                     if let Some(url) = &self.fork_push_url
-                        && let Some(owner) = extract_owner_from_url(url)
+                        && let Some(namespace) = extract_namespace_from_url(url)
                     {
-                        return format!("{}:{}", owner, self.source_branch);
+                        return format!("{}:{}", namespace, self.source_branch);
                     }
                     self.source_branch.clone()
                 }
@@ -118,32 +114,6 @@ impl RefContext for RemoteRefInfo {
 }
 
 impl RemoteRefInfo {
-    /// Get the target remote URL (where refs live) for GitLab fork MRs.
-    ///
-    /// For GitHub, use `find_remote_for_repo` instead.
-    /// Returns `None` for same-repo refs or if URL isn't available.
-    ///
-    /// TODO(hidden-io): This accessor calls `glab config get git_protocol` which spawns
-    /// a subprocess. Consider moving protocol choice into `GitLabProvider::fetch_info`
-    /// and storing the chosen URL in `RemoteRefInfo` to avoid hidden I/O.
-    pub fn target_remote_url(&self) -> Option<String> {
-        match &self.platform_data {
-            PlatformData::GitHub { .. } => None,
-            PlatformData::GitLab {
-                target_ssh_url,
-                target_http_url,
-                ..
-            } => {
-                let use_ssh = get_git_protocol() == "ssh";
-                if use_ssh {
-                    target_ssh_url.clone().or_else(|| target_http_url.clone())
-                } else {
-                    target_http_url.clone().or_else(|| target_ssh_url.clone())
-                }
-            }
-        }
-    }
-
     /// Generate a prefixed local branch name for when the unprefixed name conflicts.
     ///
     /// Returns `<owner>/<branch>` (e.g., `contributor/main`).
@@ -158,30 +128,40 @@ impl RemoteRefInfo {
     }
 }
 
-/// Extract owner from a git URL.
+/// Extract namespace (owner or group/subgroup) from a git URL.
 ///
-/// Handles both SSH (`git@host:owner/repo.git`) and HTTPS
-/// (`https://host/owner/repo.git`) formats.
-///
-/// TODO(nested-namespaces): Only extracts the first path segment. GitLab nested
-/// namespaces (`group/subgroup/repo`) will display as `group:<branch>`, losing
-/// the subgroup context. Consider extracting the full namespace path.
-fn extract_owner_from_url(url: &str) -> Option<String> {
-    // SSH format: git@host:owner/repo.git
+/// Handles both SSH (`git@host:namespace/repo.git`) and HTTPS
+/// (`https://host/namespace/repo.git`) formats. Supports GitLab nested
+/// namespaces like `group/subgroup/repo.git` → `group/subgroup`.
+fn extract_namespace_from_url(url: &str) -> Option<String> {
+    // SSH format: git@host:namespace/repo.git
     if let Some(path) = url.strip_prefix("git@").and_then(|s| s.split(':').nth(1)) {
-        return path.split('/').next().map(|s| s.to_string());
+        return extract_namespace_from_path(path);
     }
-    // HTTPS format: https://host/owner/repo.git
-    if let Some(path) = url
+    // HTTPS format: https://host/namespace/repo.git
+    if let Some(rest) = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))
     {
-        return path.split('/').nth(1).map(|s| s.to_string());
+        // Skip the host segment
+        let path = rest.split('/').skip(1).collect::<Vec<_>>().join("/");
+        return extract_namespace_from_path(&path);
     }
     None
 }
 
-use super::gitlab::get_git_protocol;
+/// Extract namespace from a path like `group/subgroup/repo.git`.
+///
+/// Returns everything except the last segment (repo name).
+fn extract_namespace_from_path(path: &str) -> Option<String> {
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let segments: Vec<_> = path.split('/').collect();
+    if segments.len() < 2 {
+        return None;
+    }
+    // All segments except the last (which is the repo name)
+    Some(segments[..segments.len() - 1].join("/"))
+}
 
 #[cfg(test)]
 mod tests {
@@ -251,8 +231,6 @@ mod tests {
             platform_data: PlatformData::GitLab {
                 source_project_id: 456,
                 target_project_id: 123,
-                target_ssh_url: Some("git@gitlab.com:owner/repo.git".to_string()),
-                target_http_url: Some("https://gitlab.com/owner/repo.git".to_string()),
             },
         };
         assert_eq!(info.source_ref(), "contributor:feature-fix");
@@ -301,8 +279,6 @@ mod tests {
             platform_data: PlatformData::GitLab {
                 source_project_id: 456,
                 target_project_id: 123,
-                target_ssh_url: None,
-                target_http_url: None,
             },
         };
         // GitLab doesn't support prefixed branch names
@@ -310,32 +286,52 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_owner_from_url_ssh() {
+    fn test_extract_namespace_from_url_ssh() {
         assert_eq!(
-            extract_owner_from_url("git@gitlab.com:owner/repo.git"),
+            extract_namespace_from_url("git@gitlab.com:owner/repo.git"),
             Some("owner".to_string())
         );
         assert_eq!(
-            extract_owner_from_url("git@github.com:contributor/repo.git"),
+            extract_namespace_from_url("git@github.com:contributor/repo.git"),
             Some("contributor".to_string())
         );
     }
 
     #[test]
-    fn test_extract_owner_from_url_https() {
+    fn test_extract_namespace_from_url_https() {
         assert_eq!(
-            extract_owner_from_url("https://gitlab.com/owner/repo.git"),
+            extract_namespace_from_url("https://gitlab.com/owner/repo.git"),
             Some("owner".to_string())
         );
         assert_eq!(
-            extract_owner_from_url("http://github.com/owner/repo.git"),
+            extract_namespace_from_url("http://github.com/owner/repo.git"),
             Some("owner".to_string())
         );
     }
 
     #[test]
-    fn test_extract_owner_from_url_invalid() {
-        assert_eq!(extract_owner_from_url("invalid-url"), None);
-        assert_eq!(extract_owner_from_url(""), None);
+    fn test_extract_namespace_from_url_nested() {
+        // GitLab nested namespaces
+        assert_eq!(
+            extract_namespace_from_url("git@gitlab.com:group/subgroup/repo.git"),
+            Some("group/subgroup".to_string())
+        );
+        assert_eq!(
+            extract_namespace_from_url("https://gitlab.com/group/subgroup/repo.git"),
+            Some("group/subgroup".to_string())
+        );
+        // Even deeper nesting
+        assert_eq!(
+            extract_namespace_from_url("git@gitlab.com:org/team/project/repo.git"),
+            Some("org/team/project".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_namespace_from_url_invalid() {
+        assert_eq!(extract_namespace_from_url("invalid-url"), None);
+        assert_eq!(extract_namespace_from_url(""), None);
+        // Just a repo name, no namespace
+        assert_eq!(extract_namespace_from_url("git@gitlab.com:repo.git"), None);
     }
 }

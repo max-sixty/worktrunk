@@ -162,7 +162,8 @@ fn resolve_fork_ref(
             }
 
             // Use prefixed branch name; push won't work (None for fork_push_url)
-            let remote = find_remote_for_ref(repo, info)?;
+            // This is GitHub-only (GitLab doesn't support prefixed names)
+            let remote = find_github_remote(repo, info)?;
             return Ok(ResolvedTarget {
                 branch: prefixed,
                 method: CreationMethod::ForkRef {
@@ -185,17 +186,46 @@ fn resolve_fork_ref(
         .into());
     }
 
-    // Branch doesn't exist - use unprefixed name with push support
-    let fork_push_url = info.fork_push_url.clone();
-    if fork_push_url.is_none() && ref_type == RefType::Mr {
-        anyhow::bail!(
-            "{} is from a fork but glab didn't provide source project URL; \
-             upgrade glab or checkout the fork branch manually",
-            ref_type.display(number)
-        );
-    }
-
-    let remote = find_remote_for_ref(repo, info)?;
+    // Branch doesn't exist - need to create it with push support.
+    // Resolve remote and URLs based on platform.
+    let (fork_push_url, remote) = match ref_type {
+        RefType::Pr => {
+            // GitHub: URLs already in info, just find remote
+            let remote = find_github_remote(repo, info)?;
+            (info.fork_push_url.clone(), remote)
+        }
+        RefType::Mr => {
+            // GitLab: fetch project URLs now (deferred from fetch_mr_info for perf)
+            let urls =
+                worktrunk::git::remote_ref::gitlab::fetch_gitlab_project_urls(info, repo_root)?;
+            let target_url = urls.target_url.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} is from a fork but glab didn't provide target project URL; \
+                     upgrade glab or checkout the fork branch manually",
+                    ref_type.display(number)
+                )
+            })?;
+            // TODO(gitlab-protocol): We only try the URL based on glab's git_protocol setting.
+            // If the user's remote uses the other protocol (ssh vs https), we'll fail to find it.
+            // Consider trying both ssh and https URLs before erroring.
+            let remote = repo.find_remote_by_url(&target_url).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No remote found for target project; \
+                     add a remote pointing to {} (e.g., `git remote add upstream {}`)",
+                    target_url,
+                    target_url
+                )
+            })?;
+            if urls.fork_push_url.is_none() {
+                anyhow::bail!(
+                    "{} is from a fork but glab didn't provide source project URL; \
+                     upgrade glab or checkout the fork branch manually",
+                    ref_type.display(number)
+                );
+            }
+            (urls.fork_push_url, remote)
+        }
+    };
 
     Ok(ResolvedTarget {
         branch: local_branch,
@@ -210,50 +240,31 @@ fn resolve_fork_ref(
     })
 }
 
-/// Find the remote for a ref (where the PR/MR refs live).
-fn find_remote_for_ref(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result<String> {
+/// Find the remote for a GitHub PR (where PR refs live).
+fn find_github_remote(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result<String> {
     use worktrunk::git::remote_ref::PlatformData;
 
-    match &info.platform_data {
-        PlatformData::GitHub {
-            host,
-            base_owner,
-            base_repo,
-            ..
-        } => repo
-            .find_remote_for_repo(Some(host), base_owner, base_repo)
-            .ok_or_else(|| {
-                let suggested_url = worktrunk::git::remote_ref::github::fork_remote_url(
-                    host, base_owner, base_repo,
-                );
-                GitError::NoRemoteForRepo {
-                    owner: base_owner.clone(),
-                    repo: base_repo.clone(),
-                    suggested_url,
-                }
-                .into()
-            }),
-        PlatformData::GitLab { .. } => {
-            // TODO(gitlab-protocol): We only try the URL based on glab's git_protocol setting.
-            // If the user's remote uses the other protocol (ssh vs https), we'll fail to find it.
-            // Consider trying both target_ssh_url and target_http_url before erroring.
-            let target_url = info.target_remote_url().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "{} is from a fork but glab didn't provide target project URL; \
-                     upgrade glab or checkout the fork branch manually",
-                    info.ref_type.display(info.number)
-                )
-            })?;
-            repo.find_remote_by_url(&target_url).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "No remote found for target project; \
-                     add a remote pointing to {} (e.g., `git remote add upstream {}`)",
-                    target_url,
-                    target_url
-                )
-            })
-        }
-    }
+    let PlatformData::GitHub {
+        host,
+        base_owner,
+        base_repo,
+        ..
+    } = &info.platform_data
+    else {
+        anyhow::bail!("find_github_remote called on non-GitHub ref");
+    };
+
+    repo.find_remote_for_repo(Some(host), base_owner, base_repo)
+        .ok_or_else(|| {
+            let suggested_url =
+                worktrunk::git::remote_ref::github::fork_remote_url(host, base_owner, base_repo);
+            GitError::NoRemoteForRepo {
+                owner: base_owner.clone(),
+                repo: base_repo.clone(),
+                suggested_url,
+            }
+            .into()
+        })
 }
 
 /// Resolve a same-repo (non-fork) PR/MR.

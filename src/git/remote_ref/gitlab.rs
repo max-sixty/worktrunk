@@ -136,43 +136,9 @@ fn fetch_mr_info(mr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefIn
 
     let is_cross_repo = response.source_project_id != response.target_project_id;
 
-    // Fetch project URLs for cross-project (fork) MRs.
-    // TODO(perf): These 2 API calls add noticeable latency (~500ms each). Defer URL
-    // fetching until after the branch_tracks_ref check in switch.rs, which often
-    // short-circuits (branch already configured) and doesn't need the URLs.
-    let (source_ssh_url, source_http_url) = if is_cross_repo {
-        fetch_project_urls(response.source_project_id, repo_root).with_context(|| {
-            format!(
-                "Failed to fetch source project {} for MR !{}",
-                response.source_project_id, mr_number
-            )
-        })?
-    } else {
-        (None, None)
-    };
-
-    let (target_ssh_url, target_http_url) = if is_cross_repo {
-        fetch_project_urls(response.target_project_id, repo_root).with_context(|| {
-            format!(
-                "Failed to fetch target project {} for MR !{}",
-                response.target_project_id, mr_number
-            )
-        })?
-    } else {
-        (None, None)
-    };
-
-    // Compute fork push URL based on protocol preference
-    let fork_push_url = if is_cross_repo {
-        let use_ssh = get_git_protocol() == "ssh";
-        if use_ssh {
-            source_ssh_url.or(source_http_url)
-        } else {
-            source_http_url.or(source_ssh_url)
-        }
-    } else {
-        None
-    };
+    // Don't fetch project URLs here - defer until after branch_tracks_ref check
+    // in switch.rs, which often short-circuits (branch already configured).
+    // Use fetch_gitlab_project_urls() when URLs are actually needed.
 
     Ok(RemoteRefInfo {
         ref_type: RefType::Mr,
@@ -184,13 +150,75 @@ fn fetch_mr_info(mr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefIn
         source_branch: response.source_branch,
         is_cross_repo,
         url: response.web_url,
-        fork_push_url,
+        fork_push_url: None, // Populated later by fetch_gitlab_project_urls if needed
         platform_data: PlatformData::GitLab {
             source_project_id: response.source_project_id,
             target_project_id: response.target_project_id,
-            target_ssh_url,
-            target_http_url,
         },
+    })
+}
+
+/// URLs for a GitLab fork MR.
+#[derive(Debug)]
+pub struct GitLabForkUrls {
+    /// URL to push to the fork (source project).
+    pub fork_push_url: Option<String>,
+    /// Target project URL (where MR refs live) - SSH or HTTPS based on config.
+    pub target_url: Option<String>,
+}
+
+/// Fetch project URLs for a GitLab fork MR.
+///
+/// This is deferred from `fetch_mr_info` because the 2 API calls (~500ms each)
+/// are only needed when creating a new branch. If the branch already tracks the
+/// MR (checked via `branch_tracks_ref`), we can skip these calls entirely.
+pub fn fetch_gitlab_project_urls(
+    info: &RemoteRefInfo,
+    repo_root: &Path,
+) -> anyhow::Result<GitLabForkUrls> {
+    let PlatformData::GitLab {
+        source_project_id,
+        target_project_id,
+        ..
+    } = &info.platform_data
+    else {
+        bail!("fetch_gitlab_project_urls called on non-GitLab ref");
+    };
+
+    // Fetch source project URLs (for fork push)
+    let (source_ssh, source_http) = fetch_project_urls(*source_project_id, repo_root)
+        .with_context(|| {
+            format!(
+                "Failed to fetch source project {} for MR !{}",
+                source_project_id, info.number
+            )
+        })?;
+
+    // Fetch target project URLs (where MR refs live)
+    let (target_ssh, target_http) = fetch_project_urls(*target_project_id, repo_root)
+        .with_context(|| {
+            format!(
+                "Failed to fetch target project {} for MR !{}",
+                target_project_id, info.number
+            )
+        })?;
+
+    // Compute URLs based on protocol preference
+    let use_ssh = get_git_protocol() == "ssh";
+    let fork_push_url = if use_ssh {
+        source_ssh.or(source_http)
+    } else {
+        source_http.or(source_ssh)
+    };
+    let target_url = if use_ssh {
+        target_ssh.or(target_http)
+    } else {
+        target_http.or(target_ssh)
+    };
+
+    Ok(GitLabForkUrls {
+        fork_push_url,
+        target_url,
     })
 }
 
