@@ -184,8 +184,11 @@ fn compute_shell_warning_reason_inner(
 }
 
 /// Print skipped shells (config file not found).
+///
+/// The `cmd` parameter is used on Windows to show a hint for creating PowerShell profiles.
 pub fn print_skipped_shells(
     skipped: &[(worktrunk::shell::Shell, std::path::PathBuf)],
+    _cmd: &str,
 ) -> anyhow::Result<()> {
     for (shell, path) in skipped {
         let path = format_path_for_display(path);
@@ -195,6 +198,17 @@ pub fn print_skipped_shells(
                 "Skipped <bright-black>{shell}</>; <bright-black>{path}</> not found"
             ))
         );
+
+        // On Windows, PowerShell doesn't create profiles by default, so show a helpful hint
+        #[cfg(windows)]
+        if matches!(shell, worktrunk::shell::Shell::PowerShell) {
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "To create the PowerShell profile, run: <bright-black>{_cmd} config shell install powershell</>"
+                ))
+            );
+        }
     }
     Ok(())
 }
@@ -212,6 +226,7 @@ pub fn print_skipped_shells(
 /// Used by both `wt config shell install` and the interactive prompt after `wt switch`.
 pub fn print_shell_install_result(
     scan_result: &crate::commands::configure_shell::ScanResult,
+    cmd: &str,
 ) -> anyhow::Result<()> {
     // Count shells that became (more) configured
     let shells_configured_count = scan_result
@@ -299,7 +314,7 @@ pub fn print_shell_install_result(
     }
 
     // Show skipped shells
-    print_skipped_shells(&scan_result.skipped)?;
+    print_skipped_shells(&scan_result.skipped, cmd)?;
 
     // Summary
     if shells_configured_count > 0 {
@@ -442,7 +457,7 @@ pub fn prompt_shell_integration(
     let install_result = handle_configure_shell(None, true, false, binary_name.to_string())
         .map_err(|e| anyhow::anyhow!("Failed to configure shell integration: {e}"))?;
 
-    print_shell_install_result(&install_result)?;
+    print_shell_install_result(&install_result, binary_name)?;
 
     Ok(true)
 }

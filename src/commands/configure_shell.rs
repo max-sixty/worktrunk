@@ -292,18 +292,23 @@ pub fn handle_configure_shell(
     })
 }
 
-/// Check if we're running in a PowerShell environment.
+/// Check if we're running in a PowerShell environment (non-Windows only).
 ///
-/// PowerShell (including cross-platform PowerShell Core) always sets PSModulePath,
-/// so we can use it to detect PowerShell sessions. This is used to auto-create
-/// the PowerShell profile when running `wt config shell install` from PowerShell,
-/// since PowerShell doesn't create a profile by default (issue #885).
+/// PowerShell Core sets PSModulePath, which we use to detect PowerShell sessions.
+/// This is only used on non-Windows platforms where PowerShell Core is explicitly
+/// installed. On Windows, PSModulePath is often set even in non-PowerShell shells
+/// (Git Bash, cmd), making it unreliable for detection (issue #885).
+///
+/// On Windows, PowerShell is always in the default shells list but requires
+/// explicit `install powershell` to create a missing profile.
+#[cfg(not(windows))]
 fn is_powershell_environment() -> bool {
     // Allow tests to override detection (set via Command::env() in integration tests)
     if let Ok(val) = std::env::var("WORKTRUNK_TEST_POWERSHELL_ENV") {
         return val == "1";
     }
-    std::env::var("PSModulePath").is_ok()
+    // Use var_os for a robust "exists?" check (var() fails on non-UTF8)
+    std::env::var_os("PSModulePath").is_some()
 }
 
 pub fn scan_shell_configs(
@@ -313,15 +318,15 @@ pub fn scan_shell_configs(
 ) -> Result<ScanResult, String> {
     // Base shells to check - PowerShell included on Windows by default
     #[cfg(windows)]
-    let mut default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
+    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
     #[cfg(not(windows))]
     let mut default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
 
-    // Check once for PowerShell environment (used in multiple places below)
+    // On non-Windows, add PowerShell if we detect we're in a PowerShell session.
+    // PowerShell Core is cross-platform and sets PSModulePath reliably.
+    // We don't do this on Windows because PSModulePath is often set in Git Bash/cmd.
+    #[cfg(not(windows))]
     let in_powershell_env = is_powershell_environment();
-
-    // On non-Windows, add PowerShell if we detect we're in a PowerShell session
-    // (PowerShell Core is cross-platform)
     #[cfg(not(windows))]
     if in_powershell_env {
         default_shells.push(Shell::PowerShell);
@@ -353,10 +358,15 @@ pub fn scan_shell_configs(
             target_path.is_some()
         };
 
-        // Auto-configure PowerShell when user is in a PowerShell session, even if the
-        // profile doesn't exist yet (issue #885). PowerShell doesn't create a profile
-        // by default, so most users won't have one until they create it.
+        // On non-Windows, auto-configure PowerShell when user is in a PowerShell session,
+        // even if the profile doesn't exist yet (issue #885). PowerShell doesn't create
+        // a profile by default, so most users won't have one until they create it.
+        // On Windows, require explicit `install powershell` since PSModulePath detection
+        // is unreliable (set in Git Bash, cmd, etc.).
+        #[cfg(not(windows))]
         let in_detected_shell = matches!(shell, Shell::PowerShell) && in_powershell_env;
+        #[cfg(windows)]
+        let in_detected_shell = false;
 
         // Only configure if explicitly targeting this shell OR if config file/location exists
         // OR if we detected we're running in this shell's environment
@@ -1352,7 +1362,8 @@ mod tests {
         insta::assert_snapshot!(fish_completion_content("myapp"));
     }
 
-    // Note: is_powershell_environment() can be tested via WORKTRUNK_TEST_POWERSHELL_ENV
-    // override in integration tests (set via Command::env()). The function checks
-    // if PSModulePath env var is set, which PowerShell always sets.
+    // Note: is_powershell_environment() (non-Windows only) can be tested via
+    // WORKTRUNK_TEST_POWERSHELL_ENV override in integration tests (set via Command::env()).
+    // The function checks if PSModulePath env var is set, which PowerShell always sets.
+    // On Windows, PSModulePath is unreliable so we require explicit `install powershell`.
 }

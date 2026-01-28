@@ -260,13 +260,16 @@ fn main() {
                     } => {
                         // Auto-write to shell config files and completions
                         let cmd = cmd.unwrap_or_else(binary_name);
-                        handle_configure_shell(shell, yes, dry_run, cmd)
+                        handle_configure_shell(shell, yes, dry_run, cmd.clone())
                             .map_err(|e| anyhow::anyhow!("{}", e))
                             .and_then(|scan_result| {
                                 // Exit with error if no shells configured
                                 // Show skipped shells first so user knows what was tried
                                 if scan_result.configured.is_empty() {
-                                    crate::output::print_skipped_shells(&scan_result.skipped)?;
+                                    crate::output::print_skipped_shells(
+                                        &scan_result.skipped,
+                                        &cmd,
+                                    )?;
                                     return Err(worktrunk::git::GitError::Other {
                                         message: "No shell config files found".into(),
                                     }
@@ -276,7 +279,7 @@ fn main() {
                                 if dry_run {
                                     return Ok(());
                                 }
-                                crate::output::print_shell_install_result(&scan_result)
+                                crate::output::print_shell_install_result(&scan_result, &cmd)
                             })
                     }
                     ConfigShellCommand::Uninstall {
