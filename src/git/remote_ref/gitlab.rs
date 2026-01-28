@@ -1,6 +1,25 @@
 //! GitLab MR provider.
 //!
 //! Implements `RemoteRefProvider` for GitLab Merge Requests using the `glab` CLI.
+//!
+//! # API Differences from GitHub
+//!
+//! GitLab's MR API (`projects/:id/merge_requests/:iid`) only returns project IDs,
+//! not full project objects. To get clone URLs for fork MRs, we must make separate
+//! calls to the Projects API (`projects/:id`).
+//!
+//! In contrast, GitHub's PR API returns complete `head.repo` and `base.repo` objects
+//! with `clone_url` and `ssh_url` — everything in one call.
+//!
+//! # Deferred URL Fetching
+//!
+//! To avoid the ~1 second overhead of 2 extra API calls, we defer URL fetching:
+//!
+//! 1. `fetch_mr_info()` returns `RemoteRefInfo` with `fork_push_url: None`
+//! 2. Caller checks if branch already tracks the MR via `branch_tracks_ref()`
+//! 3. Only if a new branch is needed, call `fetch_gitlab_project_urls()`
+//!
+//! This saves ~1 second for the common case (switching to an existing MR branch).
 
 use std::io::ErrorKind;
 use std::path::Path;
@@ -169,9 +188,11 @@ pub struct GitLabForkUrls {
 
 /// Fetch project URLs for a GitLab fork MR.
 ///
-/// This is deferred from `fetch_mr_info` because the 2 API calls (~500ms each)
-/// are only needed when creating a new branch. If the branch already tracks the
-/// MR (checked via `branch_tracks_ref`), we can skip these calls entirely.
+/// This is deferred from `fetch_mr_info` because GitLab's MR API doesn't include
+/// project URLs (unlike GitHub's PR API which returns full repo objects). The 2
+/// extra API calls (~500ms each) are only needed when creating a new branch.
+///
+/// See module-level docs for the full explanation of this optimization.
 pub fn fetch_gitlab_project_urls(
     info: &RemoteRefInfo,
     repo_root: &Path,
