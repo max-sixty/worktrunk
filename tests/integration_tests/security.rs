@@ -445,7 +445,11 @@ fn test_execute_flag_with_directive_like_branch_name(repo: TestRepo) {
 /// are rejected by git check-ref-format rule 4.
 ///
 /// The escape character (`\x1b` = 27) is a control character, so git rejects it.
+///
+/// Note: Git for Windows with MSYS2 bash behaves differently and may accept
+/// these branch names, so this test is Unix-only.
 #[rstest]
+#[cfg(unix)]
 fn test_git_rejects_ansi_escape_in_branch_names(repo: TestRepo) {
     let shell_cmd = r#"git branch $'feature-\x1b[31mRED\x1b[0m-test'"#;
 
