@@ -279,6 +279,7 @@ pub fn get_git_protocol() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::remote_ref::RemoteRefInfo;
 
     #[test]
     fn test_ref_path() {
@@ -291,5 +292,32 @@ mod tests {
     fn test_ref_type() {
         let provider = GitLabProvider;
         assert_eq!(provider.ref_type(), RefType::Mr);
+    }
+
+    #[test]
+    fn test_fetch_gitlab_project_urls_rejects_github_ref() {
+        let github_info = RemoteRefInfo {
+            ref_type: RefType::Pr,
+            number: 123,
+            title: "Test PR".to_string(),
+            author: "user".to_string(),
+            state: "open".to_string(),
+            draft: false,
+            source_branch: "feature".to_string(),
+            is_cross_repo: false,
+            url: "https://github.com/owner/repo/pull/123".to_string(),
+            fork_push_url: None,
+            platform_data: PlatformData::GitHub {
+                host: "github.com".to_string(),
+                head_owner: "user".to_string(),
+                head_repo: "repo".to_string(),
+                base_owner: "owner".to_string(),
+                base_repo: "repo".to_string(),
+            },
+        };
+
+        let result = fetch_gitlab_project_urls(&github_info, std::path::Path::new("."));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("non-GitLab ref"));
     }
 }
