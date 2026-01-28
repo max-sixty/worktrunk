@@ -8,8 +8,9 @@ use anyhow::Context;
 use color_print::cformat;
 use dunce::canonicalize;
 use worktrunk::config::UserConfig;
-use worktrunk::git::mr_ref;
-use worktrunk::git::pr_ref::{self, fork_remote_url, prefixed_local_branch_name};
+use worktrunk::git::remote_ref::{
+    self, GitHubProvider, GitLabProvider, RemoteRefInfo, RemoteRefProvider,
+};
 use worktrunk::git::{GitError, RefContext, RefType, Repository};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, suggest_command,
@@ -52,281 +53,251 @@ fn format_ref_context(ctx: &impl RefContext) -> String {
     )
 }
 
-/// Resolve a PR reference (`pr:<number>` syntax).
-fn resolve_pr_ref(
+/// Resolve a remote ref (PR or MR) using the unified provider interface.
+fn resolve_remote_ref(
     repo: &Repository,
-    pr_number: u32,
+    provider: &dyn RemoteRefProvider,
+    number: u32,
     create: bool,
     base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
-    // --base is invalid with pr: syntax (check early, no network needed)
+    let ref_type = provider.ref_type();
+    let symbol = ref_type.symbol();
+
+    // --base is invalid with pr:/mr: syntax (check early, no network needed)
     if base.is_some() {
-        return Err(GitError::RefBaseConflict {
-            ref_type: RefType::Pr,
-            number: pr_number,
-        }
-        .into());
+        return Err(GitError::RefBaseConflict { ref_type, number }.into());
     }
 
-    // Fetch PR info (network call via gh CLI)
+    // Fetch ref info (network call via gh/glab CLI)
     eprintln!(
         "{}",
-        progress_message(cformat!("Fetching PR #{pr_number}..."))
+        progress_message(cformat!("Fetching {} {symbol}{number}...", ref_type.name()))
     );
 
     let repo_root = repo.repo_path();
-    let pr_info = pr_ref::fetch_pr_info(pr_number, repo_root)?;
+    let info = provider.fetch_info(number, repo_root)?;
 
-    // Display PR context with URL (as gutter under fetch progress)
-    eprintln!(
-        "{}",
-        format_with_gutter(&format_ref_context(&pr_info), None)
-    );
+    // Display context with URL (as gutter under fetch progress)
+    eprintln!("{}", format_with_gutter(&format_ref_context(&info), None));
 
-    // --create is invalid with pr: syntax (check after fetch to show branch name)
+    // --create is invalid with pr:/mr: syntax (check after fetch to show branch name)
     if create {
         return Err(GitError::RefCreateConflict {
-            ref_type: RefType::Pr,
-            number: pr_number,
-            branch: pr_info.head_ref_name.clone(),
+            ref_type,
+            number,
+            branch: info.source_branch.clone(),
         }
         .into());
     }
 
-    if pr_info.is_cross_repository {
-        // Fork PR: check if branch already exists and is tracking this PR
-        let local_branch = pr_ref::local_branch_name(&pr_info);
-
-        // Determine if we need to use a prefixed branch name due to conflicts
-        let (final_branch, fork_push_url) = if let Some(tracks_this) =
-            pr_ref::branch_tracks_pr(repo_root, &local_branch, pr_number)
-        {
-            if tracks_this {
-                eprintln!(
-                    "{}",
-                    info_message(cformat!(
-                        "Branch <bold>{local_branch}</> already configured for PR #{pr_number}"
-                    ))
-                );
-                return Ok(ResolvedTarget {
-                    branch: local_branch,
-                    method: CreationMethod::Regular {
-                        create_branch: false,
-                        base_branch: None,
-                    },
-                });
-            } else {
-                // Branch exists but doesn't track this PR - use prefixed name
-                let prefixed = prefixed_local_branch_name(&pr_info);
-
-                // Check if the prefixed branch also exists and tracks this PR
-                if let Some(prefixed_tracks) =
-                    pr_ref::branch_tracks_pr(repo_root, &prefixed, pr_number)
-                {
-                    if prefixed_tracks {
-                        eprintln!(
-                            "{}",
-                            info_message(cformat!(
-                                "Branch <bold>{prefixed}</> already configured for PR #{pr_number}"
-                            ))
-                        );
-                        return Ok(ResolvedTarget {
-                            branch: prefixed,
-                            method: CreationMethod::Regular {
-                                create_branch: false,
-                                base_branch: None,
-                            },
-                        });
-                    }
-                    // Prefixed branch exists but tracks something else - error
-                    return Err(GitError::BranchTracksDifferentRef {
-                        branch: prefixed,
-                        ref_type: RefType::Pr,
-                        number: pr_number,
-                    }
-                    .into());
-                }
-
-                // Use prefixed branch name; push won't work (None for fork_push_url)
-                (prefixed, None)
-            }
-        } else {
-            // Branch doesn't exist - use unprefixed name with push support
-            let fork_push_url =
-                fork_remote_url(&pr_info.host, &pr_info.head_owner, &pr_info.head_repo);
-            (local_branch, Some(fork_push_url))
-        };
-
-        // Resolve the remote now (during planning) to fail early if no matching remote exists
-        let remote = repo
-            .find_remote_for_repo(Some(&pr_info.host), &pr_info.base_owner, &pr_info.base_repo)
-            .ok_or_else(|| {
-                let suggested_url =
-                    fork_remote_url(&pr_info.host, &pr_info.base_owner, &pr_info.base_repo);
-                GitError::NoRemoteForRepo {
-                    owner: pr_info.base_owner.clone(),
-                    repo: pr_info.base_repo.clone(),
-                    suggested_url,
-                }
-            })?;
-
-        return Ok(ResolvedTarget {
-            branch: final_branch,
-            method: CreationMethod::ForkRef {
-                ref_type: RefType::Pr,
-                number: pr_number,
-                fork_push_url,
-                ref_url: pr_info.url,
-                remote,
-            },
-        });
+    if info.is_cross_repo {
+        return resolve_fork_ref(repo, provider, number, &info);
     }
 
-    // Same-repo PR: fetch the branch to ensure remote refs are up-to-date.
-    // Use host-aware matching for multi-host setups (e.g., github.com + github.enterprise.com).
-    let remote = repo
-        .find_remote_for_repo(Some(&pr_info.host), &pr_info.base_owner, &pr_info.base_repo)
-        .ok_or_else(|| {
-            let suggested_url =
-                fork_remote_url(&pr_info.host, &pr_info.base_owner, &pr_info.base_repo);
-            GitError::NoRemoteForRepo {
-                owner: pr_info.base_owner.clone(),
-                repo: pr_info.base_repo.clone(),
-                suggested_url,
-            }
-        })?;
-    let branch = &pr_info.head_ref_name;
+    // Same-repo ref: for PRs, fetch the branch; for MRs, just use the branch name
+    resolve_same_repo_ref(repo, &info)
+}
 
-    eprintln!(
-        "{}",
-        progress_message(cformat!("Fetching <bold>{branch}</> from {remote}..."))
-    );
-    repo.run_command(&["fetch", &remote, branch])
-        .with_context(|| format!("Failed to fetch branch '{}' from {}", branch, remote))?;
+/// Resolve a fork (cross-repo) PR/MR.
+fn resolve_fork_ref(
+    repo: &Repository,
+    provider: &dyn RemoteRefProvider,
+    number: u32,
+    info: &RemoteRefInfo,
+) -> anyhow::Result<ResolvedTarget> {
+    let ref_type = provider.ref_type();
+    let repo_root = repo.repo_path();
+    let local_branch = remote_ref::local_branch_name(info);
+
+    // Check if branch already exists and is tracking this ref
+    if let Some(tracks_this) =
+        remote_ref::branch_tracks_ref(repo_root, &local_branch, provider, number)
+    {
+        if tracks_this {
+            eprintln!(
+                "{}",
+                info_message(cformat!(
+                    "Branch <bold>{local_branch}</> already configured for {}",
+                    ref_type.display(number)
+                ))
+            );
+            return Ok(ResolvedTarget {
+                branch: local_branch,
+                method: CreationMethod::Regular {
+                    create_branch: false,
+                    base_branch: None,
+                },
+            });
+        }
+
+        // Branch exists but doesn't track this ref - try prefixed name (GitHub only)
+        if let Some(prefixed) = info.prefixed_local_branch_name() {
+            if let Some(prefixed_tracks) =
+                remote_ref::branch_tracks_ref(repo_root, &prefixed, provider, number)
+            {
+                if prefixed_tracks {
+                    eprintln!(
+                        "{}",
+                        info_message(cformat!(
+                            "Branch <bold>{prefixed}</> already configured for {}",
+                            ref_type.display(number)
+                        ))
+                    );
+                    return Ok(ResolvedTarget {
+                        branch: prefixed,
+                        method: CreationMethod::Regular {
+                            create_branch: false,
+                            base_branch: None,
+                        },
+                    });
+                }
+                // Prefixed branch exists but tracks something else - error
+                return Err(GitError::BranchTracksDifferentRef {
+                    branch: prefixed,
+                    ref_type,
+                    number,
+                }
+                .into());
+            }
+
+            // Use prefixed branch name; push won't work (None for fork_push_url)
+            let remote = find_remote_for_ref(repo, info)?;
+            return Ok(ResolvedTarget {
+                branch: prefixed,
+                method: CreationMethod::ForkRef {
+                    ref_type,
+                    number,
+                    ref_path: provider.ref_path(number),
+                    fork_push_url: None,
+                    ref_url: info.url.clone(),
+                    remote,
+                },
+            });
+        }
+
+        // GitLab doesn't support prefixed branch names - error
+        return Err(GitError::BranchTracksDifferentRef {
+            branch: local_branch,
+            ref_type,
+            number,
+        }
+        .into());
+    }
+
+    // Branch doesn't exist - use unprefixed name with push support
+    let fork_push_url = info.fork_push_url.clone();
+    if fork_push_url.is_none() && ref_type == RefType::Mr {
+        anyhow::bail!(
+            "{} is from a fork but glab didn't provide source project URL; \
+             upgrade glab or checkout the fork branch manually",
+            ref_type.display(number)
+        );
+    }
+
+    let remote = find_remote_for_ref(repo, info)?;
 
     Ok(ResolvedTarget {
-        branch: pr_info.head_ref_name,
-        method: CreationMethod::Regular {
-            create_branch: false,
-            base_branch: None,
+        branch: local_branch,
+        method: CreationMethod::ForkRef {
+            ref_type,
+            number,
+            ref_path: provider.ref_path(number),
+            fork_push_url,
+            ref_url: info.url.clone(),
+            remote,
         },
     })
 }
 
-/// Resolve an MR reference (`mr:<number>` syntax).
-fn resolve_mr_ref(
-    repo: &Repository,
-    mr_number: u32,
-    create: bool,
-    base: Option<&str>,
-) -> anyhow::Result<ResolvedTarget> {
-    // --base is invalid with mr: syntax (check early, no network needed)
-    if base.is_some() {
-        return Err(GitError::RefBaseConflict {
-            ref_type: RefType::Mr,
-            number: mr_number,
-        }
-        .into());
-    }
+/// Find the remote for a ref (where the PR/MR refs live).
+fn find_remote_for_ref(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result<String> {
+    use worktrunk::git::remote_ref::PlatformData;
 
-    // Fetch MR info (network call via glab CLI)
-    eprintln!(
-        "{}",
-        progress_message(cformat!("Fetching MR !{mr_number}..."))
-    );
-
-    let repo_root = repo.repo_path();
-    let mr_info = mr_ref::fetch_mr_info(mr_number, repo_root)?;
-
-    // Display MR context with URL (as gutter under fetch progress)
-    eprintln!(
-        "{}",
-        format_with_gutter(&format_ref_context(&mr_info), None)
-    );
-
-    // --create is invalid with mr: syntax (check after fetch to show branch name)
-    if create {
-        return Err(GitError::RefCreateConflict {
-            ref_type: RefType::Mr,
-            number: mr_number,
-            branch: mr_info.source_branch.clone(),
-        }
-        .into());
-    }
-
-    if mr_info.is_cross_project {
-        // Fork MR: check if branch already exists and is tracking this MR
-        let local_branch = mr_ref::local_branch_name(&mr_info);
-
-        if let Some(tracks_this) = mr_ref::branch_tracks_mr(repo_root, &local_branch, mr_number) {
-            if tracks_this {
-                eprintln!(
-                    "{}",
-                    info_message(cformat!(
-                        "Branch <bold>{local_branch}</> already configured for MR !{mr_number}"
-                    ))
+    match &info.platform_data {
+        PlatformData::GitHub {
+            host,
+            base_owner,
+            base_repo,
+            ..
+        } => repo
+            .find_remote_for_repo(Some(host), base_owner, base_repo)
+            .ok_or_else(|| {
+                let suggested_url = worktrunk::git::remote_ref::github::fork_remote_url(
+                    host, base_owner, base_repo,
                 );
-                return Ok(ResolvedTarget {
-                    branch: local_branch,
-                    method: CreationMethod::Regular {
-                        create_branch: false,
-                        base_branch: None,
-                    },
-                });
-            } else {
-                // TODO: Consider adding prefixed branch support for MRs like we do for PRs.
-                // For now, MRs with conflicting branch names return an error.
-                // See https://github.com/max-sixty/worktrunk/issues/714 for PR support.
-                return Err(GitError::BranchTracksDifferentRef {
-                    branch: local_branch,
-                    ref_type: RefType::Mr,
-                    number: mr_number,
+                GitError::NoRemoteForRepo {
+                    owner: base_owner.clone(),
+                    repo: base_repo.clone(),
+                    suggested_url,
                 }
-                .into());
-            }
+                .into()
+            }),
+        PlatformData::GitLab { .. } => {
+            // TODO(gitlab-protocol): We only try the URL based on glab's git_protocol setting.
+            // If the user's remote uses the other protocol (ssh vs https), we'll fail to find it.
+            // Consider trying both target_ssh_url and target_http_url before erroring.
+            let target_url = info.target_remote_url().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} is from a fork but glab didn't provide target project URL; \
+                     upgrade glab or checkout the fork branch manually",
+                    info.ref_type.display(info.number)
+                )
+            })?;
+            repo.find_remote_by_url(&target_url).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No remote found for target project; \
+                     add a remote pointing to {} (e.g., `git remote add upstream {}`)",
+                    target_url,
+                    target_url
+                )
+            })
         }
+    }
+}
 
-        // Branch doesn't exist - need fork setup
-        let fork_push_url = mr_ref::fork_remote_url(&mr_info).ok_or_else(|| {
-            anyhow::anyhow!(
-                "MR !{} is from a fork but glab didn't provide source project URL; \
-                 upgrade glab or checkout the fork branch manually",
-                mr_number
-            )
-        })?;
-        let target_url = mr_ref::target_remote_url(&mr_info).ok_or_else(|| {
-            anyhow::anyhow!(
-                "MR !{} is from a fork but glab didn't provide target project URL; \
-                 upgrade glab or checkout the fork branch manually",
-                mr_number
-            )
-        })?;
+/// Resolve a same-repo (non-fork) PR/MR.
+fn resolve_same_repo_ref(
+    repo: &Repository,
+    info: &RemoteRefInfo,
+) -> anyhow::Result<ResolvedTarget> {
+    use worktrunk::git::remote_ref::PlatformData;
 
-        // Resolve the remote now (during planning) to fail early if no matching remote exists
-        let remote = repo.find_remote_by_url(&target_url).ok_or_else(|| {
-            anyhow::anyhow!(
-                "No remote found for target project; \
-                 add a remote pointing to {} (e.g., `git remote add upstream {}`)",
-                target_url,
-                target_url
-            )
-        })?;
+    // For GitHub PRs, fetch the branch to ensure remote refs are up-to-date
+    if let PlatformData::GitHub {
+        host,
+        base_owner,
+        base_repo,
+        ..
+    } = &info.platform_data
+    {
+        let remote = repo
+            .find_remote_for_repo(Some(host), base_owner, base_repo)
+            .ok_or_else(|| {
+                let suggested_url = worktrunk::git::remote_ref::github::fork_remote_url(
+                    host, base_owner, base_repo,
+                );
+                GitError::NoRemoteForRepo {
+                    owner: base_owner.clone(),
+                    repo: base_repo.clone(),
+                    suggested_url,
+                }
+            })?;
+        let branch = &info.source_branch;
 
-        return Ok(ResolvedTarget {
-            branch: local_branch,
-            method: CreationMethod::ForkRef {
-                ref_type: RefType::Mr,
-                number: mr_number,
-                fork_push_url: Some(fork_push_url),
-                ref_url: mr_info.url,
-                remote,
-            },
-        });
+        eprintln!(
+            "{}",
+            progress_message(cformat!("Fetching <bold>{branch}</> from {remote}..."))
+        );
+        // Use -- to prevent branch names starting with - from being interpreted as flags
+        repo.run_command(&["fetch", "--", &remote, branch])
+            .with_context(|| format!("Failed to fetch branch '{}' from {}", branch, remote))?;
     }
 
-    // Same-repo MR: just use the branch name
+    // For GitLab same-repo MRs, we just use the branch name directly
+
     Ok(ResolvedTarget {
-        branch: mr_info.source_branch,
+        branch: info.source_branch.clone(),
         method: CreationMethod::Regular {
             create_branch: false,
             base_branch: None,
@@ -345,13 +316,17 @@ fn resolve_switch_target(
     base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
     // Handle pr:<number> syntax
-    if let Some(pr_number) = pr_ref::parse_pr_ref(branch) {
-        return resolve_pr_ref(repo, pr_number, create, base);
+    if let Some(suffix) = branch.strip_prefix("pr:")
+        && let Ok(number) = suffix.parse::<u32>()
+    {
+        return resolve_remote_ref(repo, &GitHubProvider, number, create, base);
     }
 
     // Handle mr:<number> syntax (GitLab MRs)
-    if let Some(mr_number) = mr_ref::parse_mr_ref(branch) {
-        return resolve_mr_ref(repo, mr_number, create, base);
+    if let Some(suffix) = branch.strip_prefix("mr:")
+        && let Ok(number) = suffix.parse::<u32>()
+    {
+        return resolve_remote_ref(repo, &GitLabProvider, number, create, base);
     }
 
     // Regular branch switch
@@ -573,9 +548,10 @@ fn setup_fork_branch(
     }
 
     // Create worktree (delayed streaming: silent if fast, shows progress if slow)
+    // Use -- to prevent branch names starting with - from being interpreted as flags
     let worktree_path_str = worktree_path.to_string_lossy();
     repo.run_command_delayed_stream(
-        &["worktree", "add", worktree_path_str.as_ref(), branch],
+        &["worktree", "add", "--", worktree_path_str.as_ref(), branch],
         Repository::SLOW_OPERATION_DELAY_MS,
         Some(
             progress_message(cformat!("Creating worktree for <bold>{}</>...", branch)).to_string(),
@@ -783,19 +759,16 @@ pub fn execute_switch(
                 CreationMethod::ForkRef {
                     ref_type,
                     number,
+                    ref_path,
                     fork_push_url,
                     ref_url: _,
                     remote,
                 } => {
-                    // Compute the ref path based on type
-                    let remote_ref = match ref_type {
-                        RefType::Pr => format!("pull/{}/head", number),
-                        RefType::Mr => format!("merge-requests/{}/head", number),
-                    };
                     let label = ref_type.display(*number);
 
                     // Fetch the ref (remote was resolved during planning)
-                    repo.run_command(&["fetch", remote, &remote_ref])
+                    // Use -- to prevent refs starting with - from being interpreted as flags
+                    repo.run_command(&["fetch", "--", remote, ref_path])
                         .with_context(|| format!("Failed to fetch {} from {}", label, remote))?;
 
                     // Execute branch creation and configuration with cleanup on failure.
@@ -803,7 +776,7 @@ pub fn execute_switch(
                         repo,
                         &branch,
                         remote,
-                        &remote_ref,
+                        ref_path,
                         fork_push_url.as_deref(),
                         &worktree_path,
                         &label,

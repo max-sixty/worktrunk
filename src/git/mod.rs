@@ -5,9 +5,7 @@ use std::path::PathBuf;
 // Submodules
 mod diff;
 mod error;
-pub mod mr_ref;
 mod parse;
-pub mod pr_ref;
 pub mod remote_ref;
 mod repository;
 mod url;
