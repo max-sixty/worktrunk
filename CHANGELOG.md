@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.20.2
+
+### Fixed
+
+- **PowerShell shell integration**: Fixed shell integration not working on Windows PowerShell. The init script now includes `| Out-String` to convert array output to a string. Existing configs without this fix are detected as "not installed" so `wt config shell install` will update them automatically. Fixes [#885](https://github.com/max-sixty/worktrunk/issues/885). (thanks @DiTo97 for reporting) ([#888](https://github.com/max-sixty/worktrunk/pull/888))
+
+- **Branch removal message**: "No worktree found for branch X" now shows as info (○) instead of warning (▲) when removing a branch-only, since this is expected behavior. ([#887](https://github.com/max-sixty/worktrunk/pull/887))
+
+### Documentation
+
+- Documented main worktree behavior in `wt step relocate --help`. ([#889](https://github.com/max-sixty/worktrunk/pull/889))
+
 ## 0.20.1
 
 ### Improved
