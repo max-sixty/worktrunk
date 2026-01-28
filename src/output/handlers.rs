@@ -545,10 +545,10 @@ fn handle_branch_only_output(
             ))
         );
     } else {
-        // No worktree at all - warn since user asked to remove something that doesn't exist
+        // No worktree at all, but branch exists - informational since branch removal will proceed
         eprintln!(
             "{}",
-            warning_message(cformat!(
+            info_message(cformat!(
                 "No worktree found for branch <bold>{branch_name}</>"
             ))
         );
