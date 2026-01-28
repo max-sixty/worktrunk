@@ -66,9 +66,21 @@ Snapshots capture command output (not terminal rendering) and are committed to `
 - Output format changes you didn't intend
 - New lines or missing output
 
+**TUI demo validation:**
+
+TUI demos (Zellij, Claude UI) can't use text snapshots because VHS only captures the outer terminal, not content inside terminal multiplexers. Instead, they're validated via OCR:
+
+1. Key frames are extracted from the GIF at known timestamps
+2. OCR (tesseract) extracts text from each frame
+3. Expected patterns are verified, forbidden patterns are checked
+
+Checkpoints are defined in `docs/demos/shared/validation.py`. Currently `wt-zellij-omnibus` has checkpoints; other TUI demos are skipped until checkpoints are added.
+
+**Requirements:** `ffmpeg`, `tesseract` (for TUI validation)
+
 **Limitations:**
 - Tab completion sequences are not replayed; only `Type "command"` + `Enter` patterns are extracted
-- TUI demos (wt-select, wt-switch, wt-statusline, wt-zellij-omnibus) are skipped since they require interactive input
+- TUI demos without defined checkpoints are skipped
 
 ## Prerequisites
 
