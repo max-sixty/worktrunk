@@ -16,7 +16,7 @@ use askama::Template;
 // Re-export public types and functions
 pub use detection::{
     BypassAlias, DetectedLine, FileDetectionResult, is_shell_integration_line,
-    scan_for_detection_details,
+    is_shell_integration_line_for_uninstall, scan_for_detection_details,
 };
 pub use paths::{completion_path, config_paths, legacy_fish_conf_d_path};
 pub use utils::{current_shell, detect_zsh_compinit, extract_filename_from_path};

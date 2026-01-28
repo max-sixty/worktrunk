@@ -53,6 +53,13 @@ if ($cmd -and $cmd.CommandType -eq 'Function') {{
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
+        output.status.success(),
+        "pwsh command failed.\nstdout: {}\nstderr: {}",
+        stdout,
+        stderr
+    );
+
+    assert!(
         stdout.contains("FUNCTION_DEFINED"),
         "PowerShell config_line failed to define function.\n\
          Config line: {}\n\
