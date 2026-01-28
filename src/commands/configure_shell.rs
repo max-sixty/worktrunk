@@ -292,15 +292,40 @@ pub fn handle_configure_shell(
     })
 }
 
+/// Check if we're running in a PowerShell environment.
+///
+/// PowerShell (including cross-platform PowerShell Core) always sets PSModulePath,
+/// so we can use it to detect PowerShell sessions. This is used to auto-create
+/// the PowerShell profile when running `wt config shell install` from PowerShell,
+/// since PowerShell doesn't create a profile by default (issue #885).
+fn is_powershell_environment() -> bool {
+    // Allow tests to override detection (set via Command::env() in integration tests)
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_POWERSHELL_ENV") {
+        return val == "1";
+    }
+    std::env::var("PSModulePath").is_ok()
+}
+
 pub fn scan_shell_configs(
     shell_filter: Option<Shell>,
     dry_run: bool,
     cmd: &str,
 ) -> Result<ScanResult, String> {
+    // Base shells to check - PowerShell included on Windows by default
     #[cfg(windows)]
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
+    let mut default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
     #[cfg(not(windows))]
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
+    let mut default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
+
+    // Check once for PowerShell environment (used in multiple places below)
+    let in_powershell_env = is_powershell_environment();
+
+    // On non-Windows, add PowerShell if we detect we're in a PowerShell session
+    // (PowerShell Core is cross-platform)
+    #[cfg(not(windows))]
+    if in_powershell_env {
+        default_shells.push(Shell::PowerShell);
+    }
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
@@ -328,13 +353,23 @@ pub fn scan_shell_configs(
             target_path.is_some()
         };
 
+        // Auto-configure PowerShell when user is in a PowerShell session, even if the
+        // profile doesn't exist yet (issue #885). PowerShell doesn't create a profile
+        // by default, so most users won't have one until they create it.
+        let in_detected_shell = matches!(shell, Shell::PowerShell) && in_powershell_env;
+
         // Only configure if explicitly targeting this shell OR if config file/location exists
-        let should_configure = shell_filter.is_some() || has_config_location;
+        // OR if we detected we're running in this shell's environment
+        let should_configure = shell_filter.is_some() || has_config_location || in_detected_shell;
+
+        // Allow creating the config file if explicitly targeting this shell,
+        // or if we detected we're in this shell's environment
+        let allow_create = shell_filter.is_some() || in_detected_shell;
 
         if should_configure {
             let path = target_path.or_else(|| paths.first());
             if let Some(path) = path {
-                match configure_shell_file(shell, path, dry_run, shell_filter.is_some(), cmd) {
+                match configure_shell_file(shell, path, dry_run, allow_create, cmd) {
                     Ok(Some(result)) => results.push(result),
                     Ok(None) => {} // No action needed
                     Err(e) => {
@@ -379,7 +414,7 @@ fn configure_shell_file(
     shell: Shell,
     path: &Path,
     dry_run: bool,
-    explicit_shell: bool,
+    allow_create: bool,
     cmd: &str,
 ) -> Result<Option<ConfigureResult>, String> {
     // The line we write to the config file (also used for display)
@@ -398,7 +433,7 @@ fn configure_shell_file(
             path,
             &fish_wrapper,
             dry_run,
-            explicit_shell,
+            allow_create,
             &config_line,
         );
     }
@@ -468,8 +503,8 @@ fn configure_shell_file(
         }))
     } else {
         // File doesn't exist
-        // Only create if explicitly targeting this shell
-        if explicit_shell {
+        // Only create if allowed (explicitly targeting this shell or detected environment)
+        if allow_create {
             if dry_run {
                 return Ok(Some(ConfigureResult {
                     shell,
@@ -517,7 +552,7 @@ fn configure_fish_file(
     path: &Path,
     content: &str,
     dry_run: bool,
-    explicit_shell: bool,
+    allow_create: bool,
     config_line: &str,
 ) -> Result<Option<ConfigureResult>, String> {
     // For Fish, we write a minimal wrapper to functions/{cmd}.fish that sources
@@ -544,10 +579,10 @@ fn configure_fish_file(
     }
 
     // File doesn't exist or doesn't have our integration
-    // For Fish, create if parent directory exists or if explicitly targeting this shell
+    // For Fish, create if parent directory exists or if explicitly allowed
     // This is different from other shells because Fish uses functions/ which may exist
     // even if the specific wt.fish file doesn't
-    if !explicit_shell && !path.exists() {
+    if !allow_create && !path.exists() {
         // Check if parent directory exists
         if !path.parent().is_some_and(|p| p.exists()) {
             return Ok(None);
@@ -1316,4 +1351,8 @@ mod tests {
     fn test_fish_completion_content_custom_cmd() {
         insta::assert_snapshot!(fish_completion_content("myapp"));
     }
+
+    // Note: is_powershell_environment() can be tested via WORKTRUNK_TEST_POWERSHELL_ENV
+    // override in integration tests (set via Command::env()). The function checks
+    // if PSModulePath env var is set, which PowerShell always sets.
 }
