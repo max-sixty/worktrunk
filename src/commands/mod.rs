@@ -6,9 +6,10 @@ pub(crate) mod config;
 pub(crate) mod configure_shell;
 pub(crate) mod context;
 mod for_each;
+mod handle_switch;
 mod hook_commands;
 mod hook_filter;
-mod hooks;
+pub(crate) mod hooks;
 pub(crate) mod init;
 pub(crate) mod list;
 pub(crate) mod merge;
@@ -31,10 +32,11 @@ pub(crate) use configure_shell::{
     handle_configure_shell, handle_show_theme, handle_unconfigure_shell,
 };
 pub(crate) use for_each::step_for_each;
+pub(crate) use handle_switch::{SwitchOptions, handle_switch};
 pub(crate) use hook_commands::{add_approvals, clear_approvals, handle_hook_show, run_hook};
 pub(crate) use init::{handle_completions, handle_init};
 pub(crate) use list::handle_list;
-pub(crate) use merge::{MergeOptions, execute_pre_remove_commands, handle_merge};
+pub(crate) use merge::{MergeOptions, handle_merge};
 #[cfg(unix)]
 pub(crate) use select::handle_select;
 pub(crate) use step_commands::{
@@ -42,8 +44,8 @@ pub(crate) use step_commands::{
     step_relocate, step_show_squash_prompt,
 };
 pub(crate) use worktree::{
-    OperationMode, execute_switch, handle_remove, handle_remove_current,
-    is_worktree_at_expected_path, plan_switch, resolve_worktree_arg, worktree_display_name,
+    OperationMode, handle_remove, handle_remove_current, is_worktree_at_expected_path,
+    resolve_worktree_arg, worktree_display_name,
 };
 
 // Re-export Shell from the canonical location

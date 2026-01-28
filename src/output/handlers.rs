@@ -12,7 +12,7 @@ use crate::commands::branch_deletion::{
     BranchDeletionOutcome, BranchDeletionResult, delete_branch_if_safe,
 };
 use crate::commands::command_executor::CommandContext;
-use crate::commands::execute_pre_remove_commands;
+use crate::commands::hooks::{HookFailureStrategy, execute_hook, spawn_hook_background};
 use crate::commands::process::{HookLog, InternalOp, build_remove_command, spawn_detached};
 use crate::commands::worktree::{BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult};
 use worktrunk::config::UserConfig;
@@ -657,7 +657,13 @@ fn spawn_post_switch_after_remove(
         false, // yes=false for CommandContext
     );
     // No base context for remove-triggered switch (we're returning to main, not creating)
-    ctx.spawn_post_switch_commands(&[], super::post_hook_display_path(main_path))
+    spawn_hook_background(
+        &ctx,
+        worktrunk::HookType::PostSwitch,
+        &[],
+        None,
+        super::post_hook_display_path(main_path),
+    )
 }
 
 // ============================================================================
@@ -892,7 +898,14 @@ fn handle_removed_worktree_output(
         } else {
             Some(worktree_path) // Show path when user is elsewhere
         };
-        execute_pre_remove_commands(&ctx, None, display_path, &[])?;
+        execute_hook(
+            &ctx,
+            worktrunk::HookType::PreRemove,
+            &[],
+            HookFailureStrategy::FailFast,
+            None,
+            display_path,
+        )?;
     }
 
     // Emit cd directive only after pre-remove hooks succeed

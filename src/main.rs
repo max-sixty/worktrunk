@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::Write;
 
 use anyhow::Context;
@@ -6,7 +6,7 @@ use clap::FromArgMatches;
 use clap::error::ErrorKind as ClapErrorKind;
 use color_print::{ceprintln, cformat};
 use std::process;
-use worktrunk::config::{UserConfig, expand_template, set_config_path};
+use worktrunk::config::{UserConfig, set_config_path};
 use worktrunk::git::{Repository, ResolvedWorktree, exit_code, set_base_path};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::extract_filename_from_path;
@@ -41,21 +41,20 @@ pub(crate) use invocation::{
 
 pub(crate) use crate::cli::OutputFormat;
 
-use commands::command_executor::{CommandContext, build_hook_context};
 #[cfg(unix)]
 use commands::handle_select;
-use commands::worktree::{SwitchResult, handle_push};
+use commands::worktree::handle_push;
 use commands::{
-    MergeOptions, OperationMode, RebaseResult, SquashResult, add_approvals, clear_approvals,
-    execute_switch, handle_completions, handle_config_create, handle_config_show,
+    MergeOptions, OperationMode, RebaseResult, SquashResult, SwitchOptions, add_approvals,
+    clear_approvals, handle_completions, handle_config_create, handle_config_show,
     handle_configure_shell, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
     handle_list, handle_logs_get, handle_merge, handle_rebase, handle_remove,
     handle_remove_current, handle_show_theme, handle_squash, handle_state_clear,
-    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show,
-    handle_unconfigure_shell, plan_switch, resolve_worktree_arg, run_hook, step_commit,
-    step_copy_ignored, step_for_each, step_relocate,
+    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show, handle_switch,
+    handle_unconfigure_shell, resolve_worktree_arg, run_hook, step_commit, step_copy_ignored,
+    step_for_each, step_relocate,
 };
-use output::{execute_user_command, handle_remove_output, handle_switch_output};
+use output::handle_remove_output;
 
 use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigShellCommand,
@@ -519,43 +518,25 @@ fn main() {
                 if show_prompt {
                     commands::step_show_squash_prompt(target.as_deref())
                 } else {
-                    (|| {
-                        // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
-                        // Shadow verify: if user declines approval, skip hooks but continue squash
-                        let verify = if verify {
-                            let env = CommandEnv::for_action("squash")?;
-                            let ctx = env.context(yes);
-                            let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
-                            if !approved {
-                                eprintln!(
-                                    "{}",
-                                    info_message("Commands declined, squashing without hooks")
-                                );
-                            }
-                            approved
-                        } else {
-                            false
-                        };
-
-                        match handle_squash(target.as_deref(), yes, !verify, stage)? {
-                            SquashResult::Squashed | SquashResult::NoNetChanges => {}
-                            SquashResult::NoCommitsAhead(branch) => {
-                                eprintln!(
-                                    "{}",
-                                    info_message(format!(
-                                        "Nothing to squash; no commits ahead of {branch}"
-                                    ))
-                                );
-                            }
-                            SquashResult::AlreadySingleCommit => {
-                                eprintln!(
-                                    "{}",
-                                    info_message("Nothing to squash; already a single commit")
-                                );
-                            }
+                    // Approval is handled inside handle_squash (like step_commit)
+                    handle_squash(target.as_deref(), yes, !verify, stage).map(|result| match result
+                    {
+                        SquashResult::Squashed | SquashResult::NoNetChanges => {}
+                        SquashResult::NoCommitsAhead(branch) => {
+                            eprintln!(
+                                "{}",
+                                info_message(format!(
+                                    "Nothing to squash; no commits ahead of {branch}"
+                                ))
+                            );
                         }
-                        Ok(())
-                    })()
+                        SquashResult::AlreadySingleCommit => {
+                            eprintln!(
+                                "{}",
+                                info_message("Nothing to squash; already a single commit")
+                            );
+                        }
+                    })
                 }
             }
             StepCommand::Push { target } => handle_push(target.as_deref(), "Pushed to", None),
@@ -773,163 +754,20 @@ fn main() {
         } => UserConfig::load()
             .context("Failed to load config")
             .and_then(|mut config| {
-                let repo = Repository::current().context("Failed to switch worktree")?;
-
-                // Validate FIRST (before approval) - fails fast if branch doesn't exist, etc.
-                let plan = plan_switch(&repo, &branch, create, base.as_deref(), clobber, &config)?;
-
-                // "Approve at the Gate": collect and approve hooks upfront
-                // This ensures approval happens once at the command entry point
-                // If user declines, skip hooks but continue with worktree operation
-                let approved = if verify {
-                    let ctx = CommandContext::new(
-                        &repo,
-                        &config,
-                        Some(plan.branch()),
-                        plan.worktree_path(),
+                handle_switch(
+                    SwitchOptions {
+                        branch: &branch,
+                        create,
+                        base: base.as_deref(),
+                        execute: execute.as_deref(),
+                        execute_args: &execute_args,
                         yes,
-                    );
-                    // Approve different hooks based on whether we're creating or switching
-                    if plan.is_create() {
-                        approve_hooks(
-                            &ctx,
-                            &[
-                                HookType::PostCreate,
-                                HookType::PostStart,
-                                HookType::PostSwitch,
-                            ],
-                        )?
-                    } else {
-                        // When switching to existing, only post-switch needs approval
-                        approve_hooks(&ctx, &[HookType::PostSwitch])?
-                    }
-                } else {
-                    true // --no-verify: skip all hooks
-                };
-
-                // Skip hooks if --no-verify or user declined approval
-                let skip_hooks = !verify || !approved;
-
-                // Show message if user declined approval
-                if !approved {
-                    eprintln!(
-                        "{}",
-                        info_message(if plan.is_create() {
-                            "Commands declined, continuing worktree creation"
-                        } else {
-                            "Commands declined"
-                        })
-                    );
-                }
-
-                // Execute the validated plan
-                let (result, branch_info) = execute_switch(&repo, plan, &config, yes, skip_hooks)?;
-
-                // Show success message (temporal locality: immediately after worktree operation)
-                // Returns path to display in hooks when user's shell won't be in the worktree
-                // Also shows worktree-path hint on first --create (before shell integration warning)
-                let hooks_display_path = handle_switch_output(&result, &branch_info)?;
-
-                // Offer shell integration if not already installed/active
-                // (only shows prompt/hint when shell integration isn't working)
-                // With --execute: show hints only (don't interrupt with prompt)
-                // Best-effort: don't fail switch if offer fails
-                if !output::is_shell_integration_active() {
-                    let skip_prompt = execute.is_some();
-                    let _ =
-                        output::prompt_shell_integration(&mut config, &binary_name(), skip_prompt);
-                }
-
-                // Build extra vars for base branch context (used by both hooks and --execute)
-                // "base" is the branch we branched from when creating a new worktree.
-                // For existing worktrees, there's no base concept.
-                let (base_branch, base_worktree_path): (Option<&str>, Option<&str>) = match &result
-                {
-                    SwitchResult::Created {
-                        base_branch,
-                        base_worktree_path,
-                        ..
-                    } => (base_branch.as_deref(), base_worktree_path.as_deref()),
-                    SwitchResult::Existing { .. } | SwitchResult::AlreadyAt(_) => (None, None),
-                };
-                let extra_vars: Vec<(&str, &str)> = [
-                    base_branch.map(|b| ("base", b)),
-                    base_worktree_path.map(|p| ("base_worktree_path", p)),
-                ]
-                .into_iter()
-                .flatten()
-                .collect();
-
-                // Spawn background hooks after success message
-                // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
-                // - post-start: runs only when creating a NEW worktree
-                if !skip_hooks {
-                    let repo = Repository::current()?;
-                    let ctx = CommandContext::new(
-                        &repo,
-                        &config,
-                        Some(&branch_info.branch),
-                        result.path(),
-                        yes,
-                    );
-
-                    // Post-switch runs first (immediate "I'm here" signal)
-                    ctx.spawn_post_switch_commands(&extra_vars, hooks_display_path.as_deref())?;
-
-                    // Post-start runs only on creation (setup tasks)
-                    if matches!(&result, SwitchResult::Created { .. }) {
-                        ctx.spawn_post_start_commands(&extra_vars, hooks_display_path.as_deref())?;
-                    }
-                }
-
-                // Execute user command after post-start hooks have been spawned
-                // Note: execute_args requires execute via clap's `requires` attribute
-                if let Some(cmd) = execute {
-                    // Build template context for expansion (includes base vars when creating)
-                    let repo = Repository::current()?;
-                    let ctx = CommandContext::new(
-                        &repo,
-                        &config,
-                        Some(&branch_info.branch),
-                        result.path(),
-                        yes,
-                    );
-                    let template_vars = build_hook_context(&ctx, &extra_vars);
-                    let vars: HashMap<&str, &str> = template_vars
-                        .iter()
-                        .map(|(k, v)| (k.as_str(), v.as_str()))
-                        .collect();
-
-                    // Expand template variables in command (shell_escape: true for safety)
-                    let expanded_cmd =
-                        expand_template(&cmd, &vars, true, &repo, "--execute command").map_err(
-                            |e| anyhow::anyhow!("Failed to expand --execute template: {}", e),
-                        )?;
-
-                    // Append any trailing args (after --) to the execute command
-                    // Each arg is also expanded, then shell-escaped
-                    let full_cmd = if execute_args.is_empty() {
-                        expanded_cmd
-                    } else {
-                        let expanded_args: Result<Vec<_>, _> = execute_args
-                            .iter()
-                            .map(|arg| {
-                                expand_template(arg, &vars, false, &repo, "--execute argument")
-                                    .map_err(|e| {
-                                        anyhow::anyhow!("Failed to expand argument template: {}", e)
-                                    })
-                            })
-                            .collect();
-                        let escaped_args: Vec<_> = expanded_args?
-                            .iter()
-                            .map(|arg| shlex::try_quote(arg).unwrap_or(arg.into()).into_owned())
-                            .collect();
-                        format!("{} {}", expanded_cmd, escaped_args.join(" "))
-                    };
-                    execute_user_command(&full_cmd, hooks_display_path.as_deref())?;
-                }
-
-                Ok(())
+                        clobber,
+                        verify,
+                    },
+                    &mut config,
+                    &binary_name(),
+                )
             }),
         Commands::Remove {
             branches,

@@ -28,11 +28,10 @@ impl CommandEnv {
     ///
     /// `action` describes what command is running (e.g., "merge", "squash").
     /// Used in error messages when the environment can't be loaded.
-    pub fn for_action(action: &str) -> anyhow::Result<Self> {
+    pub fn for_action(action: &str, config: UserConfig) -> anyhow::Result<Self> {
         let repo = Repository::current()?;
         let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
         let branch = repo.require_current_branch(action)?;
-        let config = UserConfig::load().context("Failed to load config")?;
 
         Ok(Self {
             repo,
