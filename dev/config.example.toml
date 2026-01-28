@@ -73,7 +73,7 @@
 #
 # ### Select
 #
-# Pager behavior for `wt select` diff previews.
+# Pager behavior for `wt switch` interactive picker diff previews.
 #
 # [select]
 # # Pager command with flags for diff preview (overrides git's core.pager)

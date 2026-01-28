@@ -11,8 +11,8 @@ Show
 Set KeyStrokes Show
 Sleep 500ms
 
-# Launch wt select
-Type "wt select"
+# Launch interactive picker (wt switch without args)
+Type "wt switch"
 Enter
 Sleep 1.5s
 

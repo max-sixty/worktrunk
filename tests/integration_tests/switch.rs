@@ -1053,8 +1053,9 @@ fn test_switch_ping_pong_realistic(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_switch_missing_argument_shows_hints(repo: TestRepo) {
-    // Run switch with no arguments - should show clap error plus hints
+fn test_switch_no_args_requires_tty(repo: TestRepo) {
+    // Run switch with no arguments in non-TTY - should fail with TTY requirement
+    // (interactive picker requires a terminal)
     snapshot_switch("switch_missing_argument_hints", &repo, &[]);
 }
 

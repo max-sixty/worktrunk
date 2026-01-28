@@ -142,7 +142,7 @@ verify = true      # Run project hooks (--no-verify to skip)
 
 ### Select
 
-Pager behavior for `wt select` diff previews.
+Pager behavior for `wt switch` interactive picker diff previews.
 
 ```toml
 [select]

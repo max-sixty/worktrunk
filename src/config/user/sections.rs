@@ -218,7 +218,8 @@ impl Merge for MergeConfig {
     }
 }
 
-/// Configuration for the `wt select` command
+/// Configuration for the `wt select` command (now `wt switch` interactive picker).
+// TODO(#890): Rename to SwitchPickerConfig and [switch.picker] once migration is confirmed
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct SelectConfig {
     /// Pager command with flags for diff preview

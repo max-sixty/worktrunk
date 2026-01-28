@@ -151,9 +151,9 @@ ffmpeg -i demo.gif -vsync 0 /tmp/gif-frames/frame_%04d.png
 # Adjust keystrokeDelayMS: increase if keystroke appears too early, decrease if too late
 ```
 
-## wt-select demo goals
+## wt-select demo goals (interactive picker)
 
-The wt-select demo showcases **realistic variety in all columns**:
+The wt-select demo showcases the interactive picker (`wt switch` without args) with **realistic variety in all columns**:
 
 | Column | Demonstration |
 |--------|---------------|
