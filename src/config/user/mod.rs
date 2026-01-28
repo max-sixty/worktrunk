@@ -152,6 +152,17 @@ impl UserConfig {
             }
 
             builder = builder.add_source(File::from(config_path.clone()));
+        } else if let Some(config_path) = config_path.as_ref()
+            && path::is_config_path_explicit()
+        {
+            // Warn if user explicitly specified a config path that doesn't exist
+            crate::styling::eprintln!(
+                "{}",
+                crate::styling::warning_message(format!(
+                    "Config file not found: {}",
+                    config_path.display()
+                ))
+            );
         }
 
         // Add environment variables with WORKTRUNK prefix

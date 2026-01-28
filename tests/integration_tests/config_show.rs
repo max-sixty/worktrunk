@@ -1,5 +1,6 @@
 use crate::common::{
-    TestRepo, repo, set_temp_home_env, setup_snapshot_settings_with_home, temp_home, wt_command,
+    TestRepo, repo, set_temp_home_env, setup_snapshot_settings, setup_snapshot_settings_with_home,
+    temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -1749,4 +1750,21 @@ command = "llm -m gpt-4"
         "Migration file should be created at {:?}",
         migration_file
     );
+}
+
+/// Test that explicitly specified --config path that doesn't exist shows a warning
+#[rstest]
+fn test_explicit_config_path_not_found_shows_warning(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("--config")
+            .arg("/nonexistent/worktrunk/config.toml")
+            .arg("list")
+            .current_dir(repo.root_path());
+
+        // Should show warning about missing config file but still succeed
+        assert_cmd_snapshot!(cmd);
+    });
 }

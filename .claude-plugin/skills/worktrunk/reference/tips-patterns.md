@@ -212,8 +212,8 @@ Each worktree gets its own tmux session with a multi-pane layout. Sessions are n
 # .config/wt.toml
 [post-create]
 tmux = """
-S="{{ branch | sanitize }}"
-W="{{ worktree_path }}"
+S={{ branch | sanitize }}
+W={{ worktree_path }}
 tmux new-session -d -s "$S" -c "$W" -n dev
 
 # Create 4-pane layout: shell | backend / claude | frontend
@@ -231,7 +231,7 @@ echo "✓ Session '$S' — attach with: tmux attach -t $S"
 """
 
 [pre-remove]
-tmux = "tmux kill-session -t '{{ branch | sanitize }}' 2>/dev/null || true"
+tmux = "tmux kill-session -t {{ branch | sanitize }} 2>/dev/null || true"
 ```
 
 `pre-remove` stops all services when the worktree is removed.

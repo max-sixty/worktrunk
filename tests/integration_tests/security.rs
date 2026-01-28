@@ -432,3 +432,105 @@ fn test_execute_flag_with_directive_like_branch_name(repo: TestRepo) {
         "Malicious code was executed alongside legitimate -x command!"
     );
 }
+
+// =============================================================================
+// ANSI escape sequence handling in branch names
+// =============================================================================
+
+/// Test that git rejects branch names containing ANSI escape sequences.
+///
+/// ANSI escape sequences could theoretically corrupt terminal output if they
+/// appeared in branch names displayed by `wt list`. However, git blocks this
+/// at the ref validation level: control characters (bytes < 0x20 or 0x7F)
+/// are rejected by git check-ref-format rule 4.
+///
+/// The escape character (`\x1b` = 27) is a control character, so git rejects it.
+#[rstest]
+fn test_git_rejects_ansi_escape_in_branch_names(repo: TestRepo) {
+    let shell_cmd = r#"git branch $'feature-\x1b[31mRED\x1b[0m-test'"#;
+
+    let output = Command::new("bash")
+        .args(["-c", shell_cmd])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "Expected git to reject ANSI escape sequences in branch name"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not a valid branch name") || stderr.contains("invalid"),
+        "Expected git to complain about invalid branch name, got: {}",
+        stderr
+    );
+}
+
+/// Test that manually created refs with ANSI escapes are ignored by git.
+///
+/// Even if an attacker bypasses git's normal validation and creates a ref file
+/// directly in .git/refs/heads/ with ANSI codes in the filename, git ignores it.
+#[rstest]
+#[cfg(unix)]
+fn test_git_ignores_malformed_refs_with_ansi(repo: TestRepo) {
+    let shell_cmd = r#"
+        commit_sha=$(git rev-parse HEAD)
+        printf "$commit_sha" > '.git/refs/heads/feature-'$'\x1b''[31mRED'$'\x1b''[0m-test'
+        "#;
+
+    let create_result = Command::new("bash")
+        .args(["-c", shell_cmd])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    assert!(
+        create_result.status.success(),
+        "Failed to create malformed ref file: {}",
+        String::from_utf8_lossy(&create_result.stderr)
+    );
+
+    // Git should ignore the malformed ref
+    let branch_output = repo.git_output(&["branch", "-a"]);
+    assert!(
+        !branch_output.contains("RED"),
+        "Malformed ref with ANSI escape should not appear in branch list"
+    );
+
+    // wt list should also not show it
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test that literal escape-like text in branch names displays safely.
+///
+/// Branch names like "fix-backslash-x1b-test" contain literal characters
+/// (not actual escape codes). Git allows this and they should display literally.
+#[rstest]
+fn test_literal_escape_like_branch_names_displayed_safely(repo: TestRepo) {
+    let branch_name = "fix-backslash-x1b-test";
+
+    let result = repo.git_command().args(["branch", branch_name]).output();
+
+    if let Ok(output) = result
+        && output.status.success()
+    {
+        let mut settings = setup_snapshot_settings(&repo);
+        settings.add_filter(r"\b[0-9a-f]{7,40}\b", "[SHA]");
+
+        settings.bind(|| {
+            let mut cmd = wt_command();
+            repo.configure_wt_cmd(&mut cmd);
+            cmd.args(["list", "--branches"])
+                .current_dir(repo.root_path());
+            assert_cmd_snapshot!(cmd);
+        });
+    }
+}
