@@ -47,6 +47,10 @@ from shared import (  # noqa: E402
     build_tape_replacements,
     ensure_vhs_binary,
 )
+from shared.validation import (  # noqa: E402
+    TUI_CHECKPOINTS,
+    validate_tui_demo_verbose,
+)
 
 REPO_ROOT = SCRIPT_DIR.parent.parent
 OUT_DIR = SCRIPT_DIR.parent / "static" / "assets"
@@ -385,7 +389,23 @@ def record_demo(
             vhs_binary=vhs_binary,
             size=demo_size,
         )
-        print(f"✓ {output_name}: GIFs saved: {', '.join(themes)}")
+
+        # Validate TUI demos with OCR after recording
+        if output_name in TUI_CHECKPOINTS:
+            # Use the light theme GIF for validation
+            gif_path = output_gifs.get("light", list(output_gifs.values())[0])
+            success, output = validate_tui_demo_verbose(output_name, gif_path)
+            if success:
+                print(f"✓ {output_name}: GIFs saved + validation passed")
+            else:
+                print(f"✓ {output_name}: GIFs saved")
+                print(f"✗ {output_name}: Validation failed")
+                for line in output.split("\n"):
+                    if line.startswith("  "):
+                        print(line)
+                raise RuntimeError(f"TUI validation failed for {output_name}")
+        else:
+            print(f"✓ {output_name}: GIFs saved: {', '.join(themes)}")
 
 
 # =============================================================================
@@ -498,13 +518,13 @@ Examples:
             print(f"Available for {args.target}: {', '.join(all_names)}")
             return
 
-    # Filter out TUI demos in snapshot mode
+    # In snapshot mode, skip TUI demos (they validate via checkpoints during GIF recording)
     if args.snapshot:
         original_count = len(demos)
         demos = [(t, n, s) for t, n, s in demos if n not in TUI_DEMOS]
         skipped = original_count - len(demos)
         if skipped:
-            print(f"Skipping {skipped} TUI demo(s) (not snapshotable)")
+            print(f"Skipping {skipped} TUI demo(s) (validate during GIF recording instead)")
         if not demos:
             print("No snapshotable demos found")
             return
