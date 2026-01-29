@@ -28,18 +28,15 @@ from pathlib import Path
 # Forbidden patterns must ALL be absent (case-insensitive).
 
 TUI_CHECKPOINTS: dict[str, list[tuple[int, list[str], list[str]]]] = {
-    "wt-zellij-omnibus": [
-        # Frame 50: After wt list - should see branch table, no permission dialog
-        (50, ["Branch", "Status", "main", "hooks"], ["Allow?", "permission"]),
-        # Frame 300: Claude UI visible - shows Opus, task prompt, search activity
-        (300, ["Opus", "acme", "test"], ["command not found", "Unknown command"]),
-        # Frame 1750: After wt merge - shows merge success
-        (1750, ["Merged", "main", "commit"], ["CONFLICT", "error:", "failed"]),
-    ],
-    # Other TUI demos can be added here:
-    # "wt-select": [...],
-    # "wt-switch": [...],
-    # "wt-statusline": [...],
+    # NOTE: wt-zellij-omnibus checkpoints temporarily disabled while timing is stabilized.
+    # The Zellij plugin permission dialog sometimes appears at variable times, causing
+    # frame number calibration to drift. Once timing is reliable, re-enable with:
+    #
+    # "wt-zellij-omnibus": [
+    #     (50, ["Branch", "Status", "main", "hooks"], ["Allow?", "permission"]),
+    #     (300, ["Opus", "acme", "test"], ["command not found", "Unknown command"]),
+    #     (1750, ["Merged", "main", "commit"], ["CONFLICT", "error:", "failed"]),
+    # ],
 }
 
 

@@ -389,7 +389,23 @@ def record_demo(
             vhs_binary=vhs_binary,
             size=demo_size,
         )
-        print(f"✓ {output_name}: GIFs saved: {', '.join(themes)}")
+
+        # Validate TUI demos with OCR after recording
+        if output_name in TUI_CHECKPOINTS:
+            # Use the light theme GIF for validation
+            gif_path = output_gifs.get("light", list(output_gifs.values())[0])
+            success, output = validate_tui_demo_verbose(output_name, gif_path)
+            if success:
+                print(f"✓ {output_name}: GIFs saved + validation passed")
+            else:
+                print(f"✓ {output_name}: GIFs saved")
+                print(f"✗ {output_name}: Validation failed")
+                for line in output.split("\n"):
+                    if line.startswith("  "):
+                        print(line)
+                raise RuntimeError(f"TUI validation failed for {output_name}")
+        else:
+            print(f"✓ {output_name}: GIFs saved: {', '.join(themes)}")
 
 
 # =============================================================================
@@ -502,20 +518,15 @@ Examples:
             print(f"Available for {args.target}: {', '.join(all_names)}")
             return
 
-    # In snapshot mode, split into text-snapshotable and TUI (OCR-validated) demos
-    tui_demos_to_validate = []
+    # In snapshot mode, skip TUI demos (they validate via checkpoints during GIF recording)
     if args.snapshot:
-        original_demos = demos
-        demos = [(t, n, s) for t, n, s in original_demos if n not in TUI_DEMOS]
-        tui_demos_to_validate = [
-            (t, n, s) for t, n, s in original_demos
-            if n in TUI_DEMOS and n in TUI_CHECKPOINTS
-        ]
-        skipped_tui = len([n for _, n, _ in original_demos if n in TUI_DEMOS and n not in TUI_CHECKPOINTS])
-        if skipped_tui:
-            print(f"Skipping {skipped_tui} TUI demo(s) (no validation checkpoints defined)")
-        if not demos and not tui_demos_to_validate:
-            print("No snapshotable or validatable demos found")
+        original_count = len(demos)
+        demos = [(t, n, s) for t, n, s in demos if n not in TUI_DEMOS]
+        skipped = original_count - len(demos)
+        if skipped:
+            print(f"Skipping {skipped} TUI demo(s) (validate during GIF recording instead)")
+        if not demos:
+            print("No snapshotable demos found")
             return
 
     # Handle --shell mode (interactive, must be sequential)
@@ -578,28 +589,6 @@ Examples:
                 except Exception as e:
                     print(f"✗ {output_name}: {e}")
                     failed.append(output_name)
-
-    # Validate TUI demos (in snapshot mode only)
-    if args.snapshot and tui_demos_to_validate:
-        print(f"\nValidating {len(tui_demos_to_validate)} TUI demo(s) via OCR...")
-        for tape_file, output_name, setup_func in tui_demos_to_validate:
-            # Look for existing GIF to validate
-            gif_path = mode_out_dir / "light" / f"{output_name}.gif"
-            if not gif_path.exists():
-                print(f"✗ {output_name}: GIF not found at {gif_path}")
-                print(f"  Run './build {args.target} --only {output_name}' first to build the GIF")
-                failed.append(output_name)
-                continue
-
-            success, output = validate_tui_demo_verbose(output_name, gif_path)
-            if success:
-                print(f"✓ {output_name}: All checkpoints passed")
-            else:
-                print(f"✗ {output_name}: Validation failed")
-                for line in output.split("\n"):
-                    if line.startswith("  "):
-                        print(line)
-                failed.append(output_name)
 
     if failed:
         print(f"\n{'=' * 60}")

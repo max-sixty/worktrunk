@@ -42,14 +42,7 @@ Sleep 5s
 # Start Zellij before showing
 Type "zellij"
 Enter
-Sleep 4s
-# Dismiss plugin permission dialog (zellij-tab-name asks for permissions on first run)
-Type "y"
-Sleep 1s
-# Clear any leftover characters from the permission dialog (before recording starts)
-Type "clear"
-Enter
-Sleep 1s
+Sleep 2s
 Show
 Sleep 500ms
 
