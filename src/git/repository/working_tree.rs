@@ -57,6 +57,14 @@ impl<'a> WorkingTree<'a> {
         self.repo
     }
 
+    /// Get the path this WorkingTree was created with.
+    ///
+    /// This is the path passed to `worktree_at()` or `base_path()` for `current_worktree()`.
+    /// For the canonical git-determined root, use [`root()`](Self::root) instead.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     /// Run a git command in this worktree and return stdout.
     pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
         let output = self.run_command_output(args)?;

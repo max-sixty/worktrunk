@@ -30,7 +30,7 @@ impl CommandEnv {
     /// Used in error messages when the environment can't be loaded.
     pub fn for_action(action: &str, config: UserConfig) -> anyhow::Result<Self> {
         let repo = Repository::current()?;
-        let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
+        let worktree_path = repo.current_worktree().path().to_path_buf();
         let branch = repo.require_current_branch(action)?;
 
         Ok(Self {
@@ -47,10 +47,10 @@ impl CommandEnv {
     /// such as running hooks (where `{{ branch }}` expands to "HEAD" if detached).
     pub fn for_action_branchless() -> anyhow::Result<Self> {
         let repo = Repository::current()?;
-        let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
+        let current_wt = repo.current_worktree();
+        let worktree_path = current_wt.path().to_path_buf();
         // Propagate git errors (broken repo, missing git) but allow None for detached HEAD
-        let branch = repo
-            .current_worktree()
+        let branch = current_wt
             .branch()
             .context("Failed to determine current branch")?;
         let config = UserConfig::load().context("Failed to load config")?;
