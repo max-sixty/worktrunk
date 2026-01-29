@@ -292,7 +292,7 @@ pub fn handle_configure_shell(
     })
 }
 
-/// Check if we're running in a PowerShell environment.
+/// Check if we should auto-configure PowerShell profiles.
 ///
 /// **Non-Windows:** PowerShell Core sets PSModulePath, which we use to detect
 /// PowerShell sessions. This is reliable because PowerShell must be explicitly
@@ -304,7 +304,7 @@ pub fn handle_configure_shell(
 /// PowerShell), so we auto-configure both PowerShell profiles. This avoids the
 /// PSModulePath false-positive issue (issue #885) while still supporting
 /// PowerShell users who haven't created a profile yet.
-fn is_powershell_environment() -> bool {
+fn should_auto_configure_powershell() -> bool {
     // Allow tests to override detection (set via Command::env() in integration tests)
     if let Ok(val) = std::env::var("WORKTRUNK_TEST_POWERSHELL_ENV") {
         return val == "1";
@@ -335,7 +335,7 @@ pub fn scan_shell_configs(
     // Add PowerShell if we detect we're in a PowerShell-compatible environment.
     // - Non-Windows: PSModulePath reliably indicates PowerShell Core
     // - Windows: SHELL not set indicates Windows-native shell (cmd or PowerShell)
-    let in_powershell_env = is_powershell_environment();
+    let in_powershell_env = should_auto_configure_powershell();
     if in_powershell_env {
         default_shells.push(Shell::PowerShell);
     }
@@ -1366,8 +1366,6 @@ mod tests {
         insta::assert_snapshot!(fish_completion_content("myapp"));
     }
 
-    // Note: is_powershell_environment() can be tested via WORKTRUNK_TEST_POWERSHELL_ENV
-    // override in integration tests (set via Command::env()).
-    // - Non-Windows: checks if PSModulePath is set (PowerShell always sets it)
-    // - Windows: checks if SHELL is NOT set (Git Bash/MSYS2 set it, cmd/PowerShell don't)
+    // Note: should_auto_configure_powershell() is tested via WORKTRUNK_TEST_POWERSHELL_ENV
+    // override in tests/integration_tests/configure_shell.rs.
 }
