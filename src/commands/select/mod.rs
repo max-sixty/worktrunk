@@ -28,9 +28,9 @@ pub fn handle_select(
     show_remotes: bool,
     config: &UserConfig,
 ) -> anyhow::Result<()> {
-    // Select requires an interactive terminal for the TUI
+    // Interactive picker requires a terminal for the TUI
     if !std::io::stdin().is_terminal() {
-        anyhow::bail!("wt select requires an interactive terminal");
+        anyhow::bail!("Interactive picker requires an interactive terminal");
     }
 
     let repo = Repository::current()?;

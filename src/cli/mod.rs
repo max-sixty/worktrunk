@@ -340,9 +340,41 @@ Requires `glab` CLI to be installed and authenticated. The `--create` flag canno
 
 To change which branch a worktree is on, use `git switch` inside that worktree.
 
+## Interactive picker
+
+When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview. The picker requires a TTY.
+
+<!-- demo: wt-select.gif 1600x800 -->
+**Keybindings:**
+
+| Key | Action |
+|-----|--------|
+| `↑`/`↓` | Navigate worktree list |
+| `Enter` | Switch to selected worktree |
+| `Esc` | Cancel |
+| (type) | Filter worktrees |
+| `1`/`2`/`3`/`4` | Switch preview tab |
+| `Alt-p` | Toggle preview panel |
+| `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
+
+**Preview tabs** (toggle with number keys):
+
+1. **HEAD±** — Diff of uncommitted changes
+2. **log** — Recent commits; commits already on the default branch have dimmed hashes
+3. **main…±** — Diff of changes since the merge-base with the default branch
+4. **remote⇅** — Diff vs upstream tracking branch (ahead/behind)
+
+**Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
+
+```toml
+[select]
+pager = "delta --paging=never"
+```
+
+Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <branch>` directly.
+
 ## See also
 
-- [`wt select`](@/select.md) — Interactive worktree selection
 - [`wt list`](@/list.md) — View all worktrees
 - [`wt remove`](@/remove.md) — Delete worktrees when done
 - [`wt merge`](@/merge.md) — Integrate changes back to the default branch
@@ -351,9 +383,18 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
     Switch {
         /// Branch name or shortcut
         ///
+        /// Opens interactive picker if omitted.
         /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)
         #[arg(add = crate::completion::worktree_branch_completer())]
-        branch: String,
+        branch: Option<String>,
+
+        /// Include branches without worktrees (interactive picker)
+        #[arg(long, conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
+        branches: bool,
+
+        /// Include remote branches (interactive picker)
+        #[arg(long, conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
+        remotes: bool,
 
         /// Create a new branch
         #[arg(short = 'c', long)]
@@ -644,7 +685,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
 
 ## See also
 
-- [`wt select`](@/select.md) — Interactive worktree picker with live preview
+- [`wt switch`](@/switch.md) — Switch worktrees or open interactive picker
 "#
     )]
     // TODO: `args_conflicts_with_subcommands` causes confusing errors for unknown
@@ -926,62 +967,10 @@ lint = "cargo clippy"
         #[arg(long)]
         stage: Option<crate::commands::commit::StageMode>,
     },
-    /// Interactive worktree selector
+    /// Deprecated: use `wt switch` instead
     ///
-    /// Browse and switch worktrees with live preview.
-    #[cfg_attr(not(unix), command(hide = true))]
-    #[command(after_long_help = r#"<!-- demo: wt-select.gif 1600x800 -->
-## Examples
-
-Open the selector:
-
-```console
-wt select
-```
-
-## Preview tabs
-
-Toggle between views with number keys:
-
-1. **HEAD±** — Diff of uncommitted changes
-2. **log** — Recent commits; commits already on the default branch have dimmed hashes
-3. **main…±** — Diff of changes since the merge-base with the default branch
-4. **remote⇅** — Diff vs upstream tracking branch (ahead/behind)
-
-## Keybindings
-
-| Key | Action |
-|-----|--------|
-| `↑`/`↓` | Navigate worktree list |
-| `Enter` | Switch to selected worktree |
-| `Esc` | Cancel |
-| (type) | Filter worktrees |
-| `1`/`2`/`3`/`4` | Switch preview tab |
-| `Alt-p` | Toggle preview panel |
-| `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
-
-With `--branches`, branches without worktrees are included — selecting one creates a worktree. This matches `wt list --branches`.
-
-## Configuration
-
-### Pager
-
-The preview panel pipes diff output through git's pager (typically `less` or `delta`). Override pager behavior in user config:
-
-```toml
-[select]
-pager = "delta --paging=never"
-```
-
-This is useful when the default pager doesn't render correctly in the embedded preview panel.
-
-## See also
-
-- [`wt list`](@/list.md) — Static table view with all worktree metadata
-- [`wt switch`](@/switch.md) — Direct switching to a known target branch
-
-Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch` directly.
-"#)]
+    /// Interactive worktree picker (now integrated into `wt switch`).
+    #[command(hide = true)]
     Select {
         /// Include branches without worktrees
         #[arg(long)]
@@ -1596,7 +1585,7 @@ verify = true      # Run project hooks (--no-verify to skip)
 
 ### Select
 
-Pager behavior for `wt select` diff previews.
+Pager behavior for `wt switch` interactive picker diff previews.
 
 ```toml
 [select]

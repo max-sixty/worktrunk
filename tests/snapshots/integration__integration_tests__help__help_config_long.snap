@@ -170,7 +170,7 @@ All flags are on by default. Set to false to change default behavior.
 
 [32mSelect[0m
 
-Pager behavior for [2mwt select[0m diff previews.
+Pager behavior for [2mwt switch[0m interactive picker diff previews.
 
   [2m[select][0m
   [2m# Pager command with flags for diff preview (overrides git's core.pager)[0m

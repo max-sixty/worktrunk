@@ -105,9 +105,47 @@ Requires `glab` CLI to be installed and authenticated. The `--create` flag canno
 
 To change which branch a worktree is on, use `git switch` inside that worktree.
 
+## Interactive picker
+
+When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview. The picker requires a TTY.
+
+<figure class="demo">
+<picture>
+  <source srcset="/assets/docs/dark/wt-select.gif" media="(prefers-color-scheme: dark)">
+  <img src="/assets/docs/light/wt-select.gif" alt="wt select demo" width="1600" height="800">
+</picture>
+</figure>
+
+**Keybindings:**
+
+| Key | Action |
+|-----|--------|
+| `↑`/`↓` | Navigate worktree list |
+| `Enter` | Switch to selected worktree |
+| `Esc` | Cancel |
+| (type) | Filter worktrees |
+| `1`/`2`/`3`/`4` | Switch preview tab |
+| `Alt-p` | Toggle preview panel |
+| `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
+
+**Preview tabs** (toggle with number keys):
+
+1. **HEAD±** — Diff of uncommitted changes
+2. **log** — Recent commits; commits already on the default branch have dimmed hashes
+3. **main…±** — Diff of changes since the merge-base with the default branch
+4. **remote⇅** — Diff vs upstream tracking branch (ahead/behind)
+
+**Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
+
+```toml
+[select]
+pager = "delta --paging=never"
+```
+
+Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <branch>` directly.
+
 ## See also
 
-- [`wt select`](@/select.md) — Interactive worktree selection
 - [`wt list`](@/list.md) — View all worktrees
 - [`wt remove`](@/remove.md) — Delete worktrees when done
 - [`wt merge`](@/merge.md) — Integrate changes back to the default branch
@@ -119,14 +157,15 @@ wt switch - Switch to a worktree
 
 Creates one if needed.
 
-Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;BRANCH&gt;</span> <b><span class=c>[--</span></b> <span class=c>&lt;EXECUTE_ARGS&gt;...</span><b><span class=c>]</span></b>
+Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <span class=c>[BRANCH]</span> <b><span class=c>[--</span></b> <span class=c>&lt;EXECUTE_ARGS&gt;...</span><b><span class=c>]</span></b>
 
 <b><span class=g>Arguments:</span></b>
-  <span class=c>&lt;BRANCH&gt;</span>
+  <span class=c>[BRANCH]</span>
           Branch name or shortcut
 
-          Shortcuts: &#39;^&#39; (default branch), &#39;-&#39; (previous), &#39;@&#39; (current),
-          &#39;pr:{N}&#39; (GitHub PR), &#39;mr:{N}&#39; (GitLab MR)
+          Opens interactive picker if omitted. Shortcuts: &#39;^&#39; (default branch),
+          &#39;-&#39; (previous), &#39;@&#39; (current), &#39;pr:{N}&#39; (GitHub PR), &#39;mr:{N}&#39; (GitLab
+          MR)
 
   <span class=c>[EXECUTE_ARGS]...</span>
           Additional arguments for --execute command (after --)
@@ -135,6 +174,12 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           is expanded for templates, then POSIX shell-escaped.
 
 <b><span class=g>Options:</span></b>
+      <b><span class=c>--branches</span></b>
+          Include branches without worktrees (interactive picker)
+
+      <b><span class=c>--remotes</span></b>
+          Include remote branches (interactive picker)
+
   <b><span class=c>-c</span></b>, <b><span class=c>--create</span></b>
           Create a new branch
 

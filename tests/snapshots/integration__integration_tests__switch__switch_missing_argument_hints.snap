@@ -24,25 +24,15 @@ info:
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
     WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: false
-exit_code: 2
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[1m[31merror:[0m the following required arguments were not provided:
-  [1m[32m<BRANCH>
-
-[1m[32mUsage:[0m [1m[36mwt switch[0m [36m<BRANCH>[0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m]
-
-For more information, try '[1m[36m--help[0m'.
-
-
-[32m[1mQuick switches:[39m[22m
-  [36m[1mwt switch ^[39m[22m    # default branch's worktree
-  [36m[1mwt switch -[39m[22m    # previous worktree
-  [36m[1mwt select[39m[22m      # interactive picker
+[31m✗[39m [31mInteractive picker requires an interactive terminal[39m
