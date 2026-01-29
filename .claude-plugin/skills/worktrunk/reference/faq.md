@@ -90,6 +90,11 @@ Created by `wt config shell install`:
 - **Bash**: adds line to `~/.bashrc`
 - **Zsh**: adds line to `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
 - **Fish**: creates `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish`
+- **PowerShell** (Windows): creates both profile files if they don't exist:
+  - `Documents/PowerShell/Microsoft.PowerShell_profile.ps1` (PowerShell 7+)
+  - `Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1` (Windows PowerShell 5.1)
+
+**PowerShell detection on Windows:** When running from cmd.exe or PowerShell, both PowerShell profile files are created automatically. When running from Git Bash or MSYS2, PowerShell is skipped (use `wt config shell install powershell` to create the profiles explicitly).
 
 **To remove:** `wt config shell uninstall`.
 

@@ -292,23 +292,36 @@ pub fn handle_configure_shell(
     })
 }
 
-/// Check if we're running in a PowerShell environment (non-Windows only).
+/// Check if we're running in a PowerShell environment.
 ///
-/// PowerShell Core sets PSModulePath, which we use to detect PowerShell sessions.
-/// This is only used on non-Windows platforms where PowerShell Core is explicitly
-/// installed. On Windows, PSModulePath is often set even in non-PowerShell shells
-/// (Git Bash, cmd), making it unreliable for detection (issue #885).
+/// **Non-Windows:** PowerShell Core sets PSModulePath, which we use to detect
+/// PowerShell sessions. This is reliable because PowerShell must be explicitly
+/// installed on these platforms.
 ///
-/// On Windows, PowerShell is always in the default shells list but requires
-/// explicit `install powershell` to create a missing profile.
-#[cfg(not(windows))]
+/// **Windows:** We check that `SHELL` is NOT set. The `SHELL` env var is set by
+/// Git Bash, MSYS2, and Cygwin, but NOT by cmd.exe or PowerShell. When `SHELL`
+/// is absent on Windows, the user is likely in a Windows-native shell (cmd or
+/// PowerShell), so we auto-configure both PowerShell profiles. This avoids the
+/// PSModulePath false-positive issue (issue #885) while still supporting
+/// PowerShell users who haven't created a profile yet.
 fn is_powershell_environment() -> bool {
     // Allow tests to override detection (set via Command::env() in integration tests)
     if let Ok(val) = std::env::var("WORKTRUNK_TEST_POWERSHELL_ENV") {
         return val == "1";
     }
-    // Use var_os for a robust "exists?" check (var() fails on non-UTF8)
-    std::env::var_os("PSModulePath").is_some()
+
+    #[cfg(windows)]
+    {
+        // On Windows, SHELL is set by Git Bash/MSYS2/Cygwin but not by cmd/PowerShell.
+        // If SHELL is absent, we're likely in a Windows-native shell.
+        std::env::var_os("SHELL").is_none()
+    }
+
+    #[cfg(not(windows))]
+    {
+        // On non-Windows, PSModulePath reliably indicates PowerShell Core
+        std::env::var_os("PSModulePath").is_some()
+    }
 }
 
 pub fn scan_shell_configs(
@@ -316,18 +329,13 @@ pub fn scan_shell_configs(
     dry_run: bool,
     cmd: &str,
 ) -> Result<ScanResult, String> {
-    // Base shells to check - PowerShell included on Windows by default
-    #[cfg(windows)]
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
-    #[cfg(not(windows))]
+    // Base shells to check
     let mut default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
 
-    // On non-Windows, add PowerShell if we detect we're in a PowerShell session.
-    // PowerShell Core is cross-platform and sets PSModulePath reliably.
-    // We don't do this on Windows because PSModulePath is often set in Git Bash/cmd.
-    #[cfg(not(windows))]
+    // Add PowerShell if we detect we're in a PowerShell-compatible environment.
+    // - Non-Windows: PSModulePath reliably indicates PowerShell Core
+    // - Windows: SHELL not set indicates Windows-native shell (cmd or PowerShell)
     let in_powershell_env = is_powershell_environment();
-    #[cfg(not(windows))]
     if in_powershell_env {
         default_shells.push(Shell::PowerShell);
     }
@@ -358,15 +366,13 @@ pub fn scan_shell_configs(
             target_path.is_some()
         };
 
-        // On non-Windows, auto-configure PowerShell when user is in a PowerShell session,
+        // Auto-configure PowerShell when user is in a PowerShell-compatible environment,
         // even if the profile doesn't exist yet (issue #885). PowerShell doesn't create
         // a profile by default, so most users won't have one until they create it.
-        // On Windows, require explicit `install powershell` since PSModulePath detection
-        // is unreliable (set in Git Bash, cmd, etc.).
-        #[cfg(not(windows))]
+        // Detection:
+        // - Non-Windows: PSModulePath indicates PowerShell Core
+        // - Windows: SHELL not set indicates Windows-native shell (not Git Bash/MSYS2)
         let in_detected_shell = matches!(shell, Shell::PowerShell) && in_powershell_env;
-        #[cfg(windows)]
-        let in_detected_shell = false;
 
         // Only configure if explicitly targeting this shell OR if config file/location exists
         // OR if we detected we're running in this shell's environment
@@ -927,10 +933,8 @@ fn scan_for_uninstall(
     dry_run: bool,
     cmd: &str,
 ) -> Result<UninstallScanResult, String> {
-    #[cfg(windows)]
+    // For uninstall, always include PowerShell to clean up any existing profiles
     let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
-    #[cfg(not(windows))]
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
@@ -1362,8 +1366,8 @@ mod tests {
         insta::assert_snapshot!(fish_completion_content("myapp"));
     }
 
-    // Note: is_powershell_environment() (non-Windows only) can be tested via
-    // WORKTRUNK_TEST_POWERSHELL_ENV override in integration tests (set via Command::env()).
-    // The function checks if PSModulePath env var is set, which PowerShell always sets.
-    // On Windows, PSModulePath is unreliable so we require explicit `install powershell`.
+    // Note: is_powershell_environment() can be tested via WORKTRUNK_TEST_POWERSHELL_ENV
+    // override in integration tests (set via Command::env()).
+    // - Non-Windows: checks if PSModulePath is set (PowerShell always sets it)
+    // - Windows: checks if SHELL is NOT set (Git Bash/MSYS2 set it, cmd/PowerShell don't)
 }

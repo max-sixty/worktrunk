@@ -70,3 +70,27 @@ post-create = "npm run build"
 post-create = "npm install"
 post-start = "npm run build"
 ```
+
+## PowerShell on Windows
+
+### PowerShell profiles not created
+
+On Windows, `wt config shell install` creates PowerShell profiles automatically when running from cmd.exe or PowerShell. It creates both:
+- `Documents/PowerShell/Microsoft.PowerShell_profile.ps1` (PowerShell 7+/pwsh)
+- `Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1` (Windows PowerShell 5.1)
+
+**If running from Git Bash or MSYS2**, PowerShell is skipped because the `SHELL` environment variable is set. To create PowerShell profiles explicitly:
+
+```bash
+wt config shell install powershell
+```
+
+### Wrong PowerShell variant configured
+
+Both profile files are created when installing from a Windows-native shell. This ensures shell integration works regardless of which PowerShell variant the user opens later. The profile files are small and harmless if unused.
+
+### Detection logic
+
+Worktrunk detects Windows-native shells (cmd/PowerShell) by checking if the `SHELL` environment variable is **not** set:
+- `SHELL` not set → Windows-native shell → create both PowerShell profiles
+- `SHELL` set (e.g., `/usr/bin/bash`) → Git Bash/MSYS2 → skip PowerShell
