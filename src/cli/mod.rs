@@ -397,13 +397,13 @@ Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <
         remotes: bool,
 
         /// Create a new branch
-        #[arg(short = 'c', long)]
+        #[arg(short = 'c', long, requires = "branch")]
         create: bool,
 
         /// Base branch
         ///
         /// Defaults to default branch.
-        #[arg(short = 'b', long, add = crate::completion::branch_value_completer())]
+        #[arg(short = 'b', long, requires = "branch", add = crate::completion::branch_value_completer())]
         base: Option<String>,
 
         /// Command to run after switch
@@ -431,7 +431,7 @@ Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <
         /// Template example: `-x 'code {{ worktree_path }}'` opens VS Code
         /// at the worktree, `-x 'tmux new -s {{ branch | sanitize }}'` starts
         /// a tmux session named after the branch.
-        #[arg(short = 'x', long)]
+        #[arg(short = 'x', long, requires = "branch")]
         execute: Option<String>,
 
         /// Additional arguments for --execute command (after --)
@@ -446,7 +446,7 @@ Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <
         yes: bool,
 
         /// Remove stale paths at target
-        #[arg(long)]
+        #[arg(long, requires = "branch")]
         clobber: bool,
 
         /// Skip hooks
