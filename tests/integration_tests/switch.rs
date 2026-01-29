@@ -1052,6 +1052,7 @@ fn test_switch_ping_pong_realistic(repo: TestRepo) {
     );
 }
 
+#[cfg(unix)] // Interactive picker only available on Unix
 #[rstest]
 fn test_switch_no_args_requires_tty(repo: TestRepo) {
     // Run switch with no arguments in non-TTY - should fail with TTY requirement
