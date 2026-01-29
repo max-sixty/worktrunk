@@ -64,7 +64,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# ## Worktree path template[0m
   [2m#[0m
-  [2m# Controls where new worktrees are created. Supports both relative and absolute paths.[0m
+  [2m# Controls where new worktrees are created.[0m
   [2m#[0m
   [2m# **Variables:**[0m
   [2m#[0m
@@ -76,29 +76,19 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# **Examples** for repo at `~/code/myproject`, branch `feature/auth`:[0m
   [2m#[0m
-  [2m# # Default — absolute path to sibling directory[0m
+  [2m# # Default — sibling directory[0m
   [2m# # Creates: ~/code/myproject.feature-auth[0m
   [2m# # worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"[0m
   [2m#[0m
-  [2m# # Relative path (legacy behavior) — relative to repository root[0m
-  [2m# # Creates: ~/code/myproject.feature-auth[0m
-  [2m# worktree-path = "../{{ repo }}.{{ branch | sanitize }}"[0m
-  [2m#[0m
   [2m# # Inside the repository[0m
   [2m# # Creates: ~/code/myproject/.worktrees/feature-auth[0m
-  [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
+  [2m# worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"[0m
   [2m#[0m
-  [2m# # Centralized worktrees directory (absolute path)[0m
+  [2m# # Centralized worktrees directory[0m
   [2m# # Creates: ~/worktrees/myproject/feature-auth[0m
   [2m# worktree-path = "{{ repo_path }}/../worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
   [2m#[0m
-  [2m# # Fixed absolute path (all repos share one worktrees directory)[0m
-  [2m# # Creates: /tmp/worktrees/myproject/feature-auth[0m
-  [2m# worktree-path = "/tmp/worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
-  [2m#[0m
-  [2m# # Nested bare repo (git clone --bare <url> project/.git)[0m
-  [2m# # Creates: ~/code/project/feature-auth (sibling to .git)[0m
-  [2m# worktree-path = "../{{ branch | sanitize }}"[0m
+  [2m# Paths without `{{ repo_path }}` are relative to the repository root.[0m
   [2m#[0m
   [2m# ## LLM commit messages[0m
   [2m#[0m

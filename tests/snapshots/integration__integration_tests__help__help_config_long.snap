@@ -108,7 +108,7 @@ Location:
 
 [1m[32mWorktree path template[0m
 
-Controls where new worktrees are created. Supports both relative and absolute paths.
+Controls where new worktrees are created.
 
 [1mVariables:[0m
 
@@ -120,29 +120,19 @@ Controls where new worktrees are created. Supports both relative and absolute pa
 
 [1mExamples[0m for repo at [2m~/code/myproject[0m, branch [2mfeature/auth[0m:
 
-  [2m# Default — absolute path to sibling directory[0m
+  [2m# Default — sibling directory[0m
   [2m# Creates: ~/code/myproject.feature-auth[0m
   [2m# worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"[0m
   [2m[0m
-  [2m# Relative path (legacy behavior) — relative to repository root[0m
-  [2m# Creates: ~/code/myproject.feature-auth[0m
-  [2mworktree-path = "../{{ repo }}.{{ branch | sanitize }}"[0m
-  [2m[0m
   [2m# Inside the repository[0m
   [2m# Creates: ~/code/myproject/.worktrees/feature-auth[0m
-  [2mworktree-path = ".worktrees/{{ branch | sanitize }}"[0m
+  [2mworktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"[0m
   [2m[0m
-  [2m# Centralized worktrees directory (absolute path)[0m
+  [2m# Centralized worktrees directory[0m
   [2m# Creates: ~/worktrees/myproject/feature-auth[0m
   [2mworktree-path = "{{ repo_path }}/../worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
-  [2m[0m
-  [2m# Fixed absolute path (all repos share one worktrees directory)[0m
-  [2m# Creates: /tmp/worktrees/myproject/feature-auth[0m
-  [2mworktree-path = "/tmp/worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
-  [2m[0m
-  [2m# Nested bare repo (git clone --bare <url> project/.git)[0m
-  [2m# Creates: ~/code/project/feature-auth (sibling to .git)[0m
-  [2mworktree-path = "../{{ branch | sanitize }}"[0m
+
+Paths without [2m{{ repo_path }}[0m are relative to the repository root.
 
 [1m[32mLLM commit messages[0m
 

@@ -78,7 +78,7 @@ Location:
 
 ## Worktree path template
 
-Controls where new worktrees are created. Supports both relative and absolute paths.
+Controls where new worktrees are created.
 
 **Variables:**
 
@@ -91,30 +91,20 @@ Controls where new worktrees are created. Supports both relative and absolute pa
 **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 
 ```toml
-# Default — absolute path to sibling directory
+# Default — sibling directory
 # Creates: ~/code/myproject.feature-auth
 # worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
 
-# Relative path (legacy behavior) — relative to repository root
-# Creates: ~/code/myproject.feature-auth
-worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
-
 # Inside the repository
 # Creates: ~/code/myproject/.worktrees/feature-auth
-worktree-path = ".worktrees/{{ branch | sanitize }}"
+worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
 
-# Centralized worktrees directory (absolute path)
+# Centralized worktrees directory
 # Creates: ~/worktrees/myproject/feature-auth
 worktree-path = "{{ repo_path }}/../worktrees/{{ repo }}/{{ branch | sanitize }}"
-
-# Fixed absolute path (all repos share one worktrees directory)
-# Creates: /tmp/worktrees/myproject/feature-auth
-worktree-path = "/tmp/worktrees/{{ repo }}/{{ branch | sanitize }}"
-
-# Nested bare repo (git clone --bare <url> project/.git)
-# Creates: ~/code/project/feature-auth (sibling to .git)
-worktree-path = "../{{ branch | sanitize }}"
 ```
+
+Paths without `{{ repo_path }}` are relative to the repository root.
 
 ## LLM commit messages
 
