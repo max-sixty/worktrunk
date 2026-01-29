@@ -157,7 +157,7 @@ mod tests {
         assert!(config.configs.worktree_path.is_none());
         assert_eq!(
             config.worktree_path(),
-            "../{{ repo }}.{{ branch | sanitize }}"
+            "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
         );
         // commit_generation is None by default
         assert!(config.commit_generation.is_none());

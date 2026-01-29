@@ -230,7 +230,7 @@ fn test_worktree_path_for_project_falls_back_to_default() {
     // Unknown project should fall back to default template
     assert_eq!(
         config.worktree_path_for_project("github.com/unknown/project"),
-        "../{{ repo }}.{{ branch | sanitize }}"
+        "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
     );
 }
 
@@ -303,7 +303,7 @@ fn test_worktrunk_config_default() {
     assert!(config.configs.worktree_path.is_none());
     assert_eq!(
         config.worktree_path(),
-        "../{{ repo }}.{{ branch | sanitize }}"
+        "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
     );
     assert!(config.projects.is_empty());
     assert!(config.configs.list.is_none());
@@ -416,7 +416,17 @@ fn test_worktrunk_config_format_path() {
     let path = config
         .format_path("myrepo", "feature/branch", &test.repo, None)
         .unwrap();
-    assert_eq!(path, "../myrepo.feature-branch");
+    // Default path is now absolute: {{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}
+    // Should end with the relative portion, and be an absolute path
+    assert!(
+        path.ends_with("/../myrepo.feature-branch"),
+        "Expected path ending with '/../myrepo.feature-branch', got: {path}"
+    );
+    // The path starts with the temp dir path (absolute)
+    assert!(
+        std::path::Path::new(&path).is_absolute() || path.starts_with('/'),
+        "Expected absolute path, got: {path}"
+    );
 }
 
 #[test]
@@ -433,6 +443,32 @@ fn test_worktrunk_config_format_path_custom_template() {
         .format_path("myrepo", "feature", &test.repo, None)
         .unwrap();
     assert_eq!(path, ".worktrees/feature");
+}
+
+#[test]
+fn test_worktrunk_config_format_path_repo_path_variable() {
+    let test = test_repo();
+    let config = UserConfig {
+        configs: OverridableConfig {
+            worktree_path: Some("{{ repo_path }}/worktrees/{{ branch | sanitize }}".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let path = config
+        .format_path("myrepo", "feature/branch", &test.repo, None)
+        .unwrap();
+    // Path should start with the repo path and end with the branch
+    let expected_suffix = "/worktrees/feature-branch";
+    assert!(
+        path.ends_with(expected_suffix),
+        "Expected path ending with '{expected_suffix}', got: {path}"
+    );
+    // The path should be absolute since repo_path is absolute
+    assert!(
+        std::path::Path::new(&path).is_absolute() || path.starts_with('/'),
+        "Expected absolute path, got: {path}"
+    );
 }
 
 #[test]
@@ -1250,17 +1286,19 @@ fn test_validation_empty_worktree_path() {
 }
 
 #[test]
-fn test_validation_absolute_worktree_path() {
-    // Use platform-appropriate absolute path
+fn test_validation_absolute_worktree_path_allowed() {
+    // Absolute paths should be allowed for worktree-path
     let content = if cfg!(windows) {
-        r#"worktree-path = "C:\\absolute\\path""#
+        r#"worktree-path = "C:\\worktrees\\{{ branch | sanitize }}""#
     } else {
-        r#"worktree-path = "/absolute/path""#
+        r#"worktree-path = "/worktrees/{{ branch | sanitize }}""#
     };
     let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("must be relative"), "{err}");
+    assert!(
+        result.is_ok(),
+        "Absolute paths should be allowed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1276,23 +1314,25 @@ worktree-path = ""
 }
 
 #[test]
-fn test_validation_project_absolute_worktree_path() {
-    // Use platform-appropriate absolute path
+fn test_validation_project_absolute_worktree_path_allowed() {
+    // Absolute paths should be allowed for per-project worktree-path
     let content = if cfg!(windows) {
         r#"
 [projects."github.com/user/repo"]
-worktree-path = "C:\\absolute\\path"
+worktree-path = "C:\\worktrees\\{{ branch | sanitize }}"
 "#
     } else {
         r#"
 [projects."github.com/user/repo"]
-worktree-path = "/absolute/path"
+worktree-path = "/worktrees/{{ branch | sanitize }}"
 "#
     };
     let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("must be relative"), "{err}");
+    assert!(
+        result.is_ok(),
+        "Absolute paths should be allowed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
