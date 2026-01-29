@@ -592,11 +592,12 @@ fn test_complete_step_subcommands(repo: TestRepo) {
         "Missing copy-ignored"
     );
     assert!(subcommands.contains(&"for-each"), "Missing for-each");
+    assert!(subcommands.contains(&"promote"), "Missing promote");
     assert!(subcommands.contains(&"relocate"), "Missing relocate");
     assert_eq!(
         subcommands.len(),
-        7,
-        "Should have exactly 7 step subcommands"
+        8,
+        "Should have exactly 8 step subcommands"
     );
 }
 
