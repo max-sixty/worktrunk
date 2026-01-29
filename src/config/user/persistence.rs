@@ -318,7 +318,7 @@ impl UserConfig {
     pub(super) fn validate(&self) -> Result<(), ConfigError> {
         // Validate worktree path (only if explicitly set - default is always valid)
         if let Some(ref path) = self.configs.worktree_path
-            && path.is_empty()
+            && path.trim().is_empty()
         {
             return Err(ConfigError::Message("worktree-path cannot be empty".into()));
         }
@@ -327,7 +327,7 @@ impl UserConfig {
         for (project, project_config) in &self.projects {
             // Validate worktree path
             if let Some(ref path) = project_config.overrides.worktree_path
-                && path.is_empty()
+                && path.trim().is_empty()
             {
                 return Err(ConfigError::Message(format!(
                     "projects.{project}.worktree-path cannot be empty"

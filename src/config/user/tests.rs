@@ -417,14 +417,16 @@ fn test_worktrunk_config_format_path() {
         .format_path("myrepo", "feature/branch", &test.repo, None)
         .unwrap();
     // Default path is now absolute: {{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}
-    // Should end with the relative portion, and be an absolute path
+    // Use path separator from std::path for cross-platform compatibility
+    let sep = std::path::MAIN_SEPARATOR;
+    let expected_suffix = format!("{sep}..{sep}myrepo.feature-branch");
     assert!(
-        path.ends_with("/../myrepo.feature-branch"),
-        "Expected path ending with '/../myrepo.feature-branch', got: {path}"
+        path.ends_with(&expected_suffix),
+        "Expected path ending with '{expected_suffix}', got: {path}"
     );
-    // The path starts with the temp dir path (absolute)
+    // The path should be absolute (starts with repo_path)
     assert!(
-        std::path::Path::new(&path).is_absolute() || path.starts_with('/'),
+        std::path::Path::new(&path).is_absolute(),
         "Expected absolute path, got: {path}"
     );
 }
@@ -448,9 +450,13 @@ fn test_worktrunk_config_format_path_custom_template() {
 #[test]
 fn test_worktrunk_config_format_path_repo_path_variable() {
     let test = test_repo();
+    let sep = std::path::MAIN_SEPARATOR;
     let config = UserConfig {
         configs: OverridableConfig {
-            worktree_path: Some("{{ repo_path }}/worktrees/{{ branch | sanitize }}".to_string()),
+            // Use platform-appropriate separator in template
+            worktree_path: Some(format!(
+                "{{{{ repo_path }}}}{sep}worktrees{sep}{{{{ branch | sanitize }}}}"
+            )),
             ..Default::default()
         },
         ..Default::default()
@@ -459,9 +465,9 @@ fn test_worktrunk_config_format_path_repo_path_variable() {
         .format_path("myrepo", "feature/branch", &test.repo, None)
         .unwrap();
     // Path should start with the repo path and end with the branch
-    let expected_suffix = "/worktrees/feature-branch";
+    let expected_suffix = format!("{sep}worktrees{sep}feature-branch");
     assert!(
-        path.ends_with(expected_suffix),
+        path.ends_with(&expected_suffix),
         "Expected path ending with '{expected_suffix}', got: {path}"
     );
     // The path should be absolute since repo_path is absolute

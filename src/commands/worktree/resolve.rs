@@ -107,11 +107,11 @@ pub fn compute_worktree_path(
         })?;
 
     let project = repo.project_identifier().ok();
-    let relative_path = config
+    let expanded_path = config
         .format_path(repo_name, branch, repo, project.as_deref())
         .map_err(|e| anyhow::anyhow!("Failed to format worktree path: {e}"))?;
 
-    Ok(repo_root.join(relative_path).normalize())
+    Ok(repo_root.join(expanded_path).normalize())
 }
 
 /// Check if a worktree is at its expected path based on config template.

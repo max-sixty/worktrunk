@@ -7,7 +7,6 @@ use std::collections::HashMap;
 
 use crate::config::HooksConfig;
 use crate::config::expansion::expand_template;
-use crate::path::to_posix_path;
 
 use super::UserConfig;
 use super::merge::{Merge, merge_optional};
@@ -168,7 +167,8 @@ impl UserConfig {
             Some(p) => self.worktree_path_for_project(p),
             None => self.worktree_path(),
         };
-        let repo_path = to_posix_path(&repo.repo_path().to_string_lossy());
+        // Use native path format (not POSIX) since this is used for filesystem operations
+        let repo_path = repo.repo_path().to_string_lossy().to_string();
         let mut vars = HashMap::new();
         vars.insert("main_worktree", main_worktree);
         vars.insert("repo", main_worktree);
