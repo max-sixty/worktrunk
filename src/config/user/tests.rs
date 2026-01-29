@@ -933,6 +933,118 @@ fn test_effective_commit_global_only() {
 }
 
 // =========================================================================
+// Config accessor methods and ResolvedConfig tests
+// =========================================================================
+
+#[test]
+fn test_list_config_accessor_methods_defaults() {
+    let config = ListConfig::default();
+    assert!(!config.full());
+    assert!(!config.branches());
+    assert!(!config.remotes());
+    assert!(config.timeout_ms().is_none());
+}
+
+#[test]
+fn test_list_config_accessor_methods_with_values() {
+    let config = ListConfig {
+        full: Some(true),
+        branches: Some(true),
+        remotes: Some(false),
+        timeout_ms: Some(5000),
+    };
+    assert!(config.full());
+    assert!(config.branches());
+    assert!(!config.remotes());
+    assert_eq!(config.timeout_ms(), Some(5000));
+}
+
+#[test]
+fn test_merge_config_accessor_methods_defaults() {
+    let config = MergeConfig::default();
+    // MergeConfig defaults are all true
+    assert!(config.squash());
+    assert!(config.commit());
+    assert!(config.rebase());
+    assert!(config.remove());
+    assert!(config.verify());
+}
+
+#[test]
+fn test_merge_config_accessor_methods_with_values() {
+    let config = MergeConfig {
+        squash: Some(false),
+        commit: Some(false),
+        rebase: Some(false),
+        remove: Some(false),
+        verify: Some(false),
+    };
+    assert!(!config.squash());
+    assert!(!config.commit());
+    assert!(!config.rebase());
+    assert!(!config.remove());
+    assert!(!config.verify());
+}
+
+#[test]
+fn test_commit_config_accessor_methods() {
+    let config = CommitConfig::default();
+    assert_eq!(config.stage(), StageMode::All);
+
+    let config = CommitConfig {
+        stage: Some(StageMode::Tracked),
+        generation: None,
+    };
+    assert_eq!(config.stage(), StageMode::Tracked);
+}
+
+#[test]
+fn test_select_config_accessor_methods() {
+    let config = SelectConfig::default();
+    assert!(config.pager().is_none());
+
+    let config = SelectConfig {
+        pager: Some("delta --paging=never".to_string()),
+    };
+    assert_eq!(config.pager(), Some("delta --paging=never"));
+}
+
+#[test]
+fn test_resolved_config_for_project() {
+    let config = UserConfig {
+        configs: OverridableConfig {
+            list: Some(ListConfig {
+                full: Some(true),
+                ..Default::default()
+            }),
+            merge: Some(MergeConfig {
+                squash: Some(false),
+                ..Default::default()
+            }),
+            commit: Some(CommitConfig {
+                stage: Some(StageMode::None),
+                ..Default::default()
+            }),
+            select: Some(SelectConfig {
+                pager: Some("less".to_string()),
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let resolved = config.resolved(None);
+
+    // Test that accessor methods work through ResolvedConfig
+    assert!(resolved.list.full());
+    assert!(!resolved.list.branches()); // Default
+    assert!(!resolved.merge.squash()); // Overridden to false
+    assert!(resolved.merge.commit()); // Default true
+    assert_eq!(resolved.commit.stage(), StageMode::None);
+    assert_eq!(resolved.select.pager(), Some("less"));
+}
+
+// =========================================================================
 // Per-project config serde tests
 // =========================================================================
 

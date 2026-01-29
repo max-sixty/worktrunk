@@ -138,6 +138,15 @@ impl UserConfig {
         }
     }
 
+    // ---- Resolved config (concrete types with defaults applied) ----
+
+    /// Returns all resolved config with defaults applied.
+    ///
+    /// Merges global and per-project settings, applying defaults for any unset fields.
+    pub fn resolved(&self, project: Option<&str>) -> super::resolved::ResolvedConfig {
+        super::resolved::ResolvedConfig::for_project(self, project)
+    }
+
     /// Format a worktree path using this configuration's template.
     ///
     /// # Arguments

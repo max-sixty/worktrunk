@@ -1063,7 +1063,7 @@ fn uninstall_from_file(
     let integration_lines: Vec<(usize, &str)> = lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| shell::is_shell_integration_line(line, cmd))
+        .filter(|(_, line)| shell::is_shell_integration_line_for_uninstall(line, cmd))
         .map(|(i, line)| (i, *line))
         .collect();
 

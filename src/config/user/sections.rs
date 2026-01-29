@@ -136,6 +136,28 @@ pub struct ListConfig {
     pub timeout_ms: Option<u64>,
 }
 
+impl ListConfig {
+    /// Show CI and `main` diffstat by default (default: false)
+    pub fn full(&self) -> bool {
+        self.full.unwrap_or(false)
+    }
+
+    /// Include branches without worktrees by default (default: false)
+    pub fn branches(&self) -> bool {
+        self.branches.unwrap_or(false)
+    }
+
+    /// Include remote branches by default (default: false)
+    pub fn remotes(&self) -> bool {
+        self.remotes.unwrap_or(false)
+    }
+
+    /// Per-task timeout in milliseconds (default: None)
+    pub fn timeout_ms(&self) -> Option<u64> {
+        self.timeout_ms
+    }
+}
+
 impl Merge for ListConfig {
     fn merge_with(&self, other: &Self) -> Self {
         Self {
@@ -162,6 +184,13 @@ pub struct CommitConfig {
     /// Nested under `[commit.generation]` in TOML.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation: Option<CommitGenerationConfig>,
+}
+
+impl CommitConfig {
+    /// What to stage before committing (default: All)
+    pub fn stage(&self) -> StageMode {
+        self.stage.unwrap_or_default()
+    }
 }
 
 impl Merge for CommitConfig {
@@ -206,6 +235,33 @@ pub struct MergeConfig {
     pub verify: Option<bool>,
 }
 
+impl MergeConfig {
+    /// Squash commits when merging (default: true)
+    pub fn squash(&self) -> bool {
+        self.squash.unwrap_or(true)
+    }
+
+    /// Commit, squash, and rebase during merge (default: true)
+    pub fn commit(&self) -> bool {
+        self.commit.unwrap_or(true)
+    }
+
+    /// Rebase onto target branch before merging (default: true)
+    pub fn rebase(&self) -> bool {
+        self.rebase.unwrap_or(true)
+    }
+
+    /// Remove worktree after merge (default: true)
+    pub fn remove(&self) -> bool {
+        self.remove.unwrap_or(true)
+    }
+
+    /// Run project hooks (default: true)
+    pub fn verify(&self) -> bool {
+        self.verify.unwrap_or(true)
+    }
+}
+
 impl Merge for MergeConfig {
     fn merge_with(&self, other: &Self) -> Self {
         Self {
@@ -229,6 +285,13 @@ pub struct SelectConfig {
     /// Example: `pager = "delta --paging=never"`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pager: Option<String>,
+}
+
+impl SelectConfig {
+    /// Pager command with flags for diff preview (default: None, uses git default)
+    pub fn pager(&self) -> Option<&str> {
+        self.pager.as_deref()
+    }
 }
 
 impl Merge for SelectConfig {

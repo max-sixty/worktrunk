@@ -1086,7 +1086,7 @@ Triggers on all switch results: creating new worktrees, switching to existing on
 
 ```toml
 [post-switch]
-tmux = "[ -n \"$TMUX\" ] && tmux rename-window '{{ branch | sanitize }}'"
+tmux = "[ -n \"$TMUX\" ] && tmux rename-window {{ branch | sanitize }}"
 ```
 
 ### pre-commit
@@ -1261,6 +1261,8 @@ Hash any string, including concatenations:
 dev = "npm run dev --port {{ (repo ~ '-' ~ branch) | hash_port }}"
 ```
 
+Variables are shell-escaped automatically — quotes around `{{ ... }}` are unnecessary and can cause issues with special characters.
+
 ### Worktrunk functions
 
 Templates also support functions for dynamic lookups:
@@ -1416,9 +1418,9 @@ Different actions for production vs staging:
 
 ```toml
 post-merge = """
-if [ "{{ target }}" = "main" ]; then
+if [ {{ target }} = main ]; then
     npm run deploy:production
-elif [ "{{ target }}" = "staging" ]; then
+elif [ {{ target }} = staging ]; then
     npm run deploy:staging
 fi
 """
@@ -1494,7 +1496,7 @@ wt config show
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 [commit.generation]
-command = "llm -m claude-haiku-4.5"
+command = "MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 ```
 
 **Project config** — shared team settings:

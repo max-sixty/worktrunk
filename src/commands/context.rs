@@ -28,11 +28,10 @@ impl CommandEnv {
     ///
     /// `action` describes what command is running (e.g., "merge", "squash").
     /// Used in error messages when the environment can't be loaded.
-    pub fn for_action(action: &str) -> anyhow::Result<Self> {
+    pub fn for_action(action: &str, config: UserConfig) -> anyhow::Result<Self> {
         let repo = Repository::current()?;
         let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
         let branch = repo.require_current_branch(action)?;
-        let config = UserConfig::load().context("Failed to load config")?;
 
         Ok(Self {
             repo,
@@ -93,18 +92,8 @@ impl CommandEnv {
         self.repo.project_identifier().ok()
     }
 
-    /// Get the commit generation config, merging project-specific settings.
-    pub fn commit_generation(&self) -> worktrunk::config::CommitGenerationConfig {
-        self.config.commit_generation(self.project_id().as_deref())
-    }
-
-    /// Get the commit config, merging project-specific settings.
-    pub fn commit(&self) -> Option<worktrunk::config::CommitConfig> {
-        self.config.commit(self.project_id().as_deref())
-    }
-
-    /// Get the merge config, merging project-specific settings.
-    pub fn merge(&self) -> Option<worktrunk::config::MergeConfig> {
-        self.config.merge(self.project_id().as_deref())
+    /// Get all resolved config with defaults applied.
+    pub fn resolved(&self) -> worktrunk::config::ResolvedConfig {
+        self.config.resolved(self.project_id().as_deref())
     }
 }

@@ -15,6 +15,7 @@ info:
     SHELL: ""
     TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
     WT_TEST_EPOCH: "1735776000"
@@ -81,7 +82,7 @@ Show current configuration and file locations:
   [2mworktree-path = ".worktrees/{{ branch | sanitize }}"[0m
   [2m[0m
   [2m[commit.generation][0m
-  [2mcommand = "llm -m claude-haiku-4.5"[0m
+  [2mcommand = "MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
 
 [1mProject config[0m — shared team settings:
 

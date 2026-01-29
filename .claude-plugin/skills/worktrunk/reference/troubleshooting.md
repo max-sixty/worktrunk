@@ -2,27 +2,30 @@
 
 Claude-specific troubleshooting guidance for common worktrunk issues.
 
-## LLM Commit Messages
+## Commit Message Generation
 
-### LLM command not found
+### Command not found
+
+Check if the configured tool is installed:
 
 ```bash
-$ which llm
+$ wt config show  # shows the configured command
+$ which claude    # or: which codex, which llm, which aichat
 ```
 
-If empty, the tool isn't installed or not in PATH. Install with `uv tool install -U llm`.
+If empty, install one of the supported tools. See [LLM commits docs](https://worktrunk.dev/llm-commits/) for setup instructions.
 
-### LLM returns an error
+### Command returns an error
 
-Test the command directly:
+Test the configured command directly by piping a prompt to it. See `reference/llm-commits.md` for the exact command syntax for each tool.
 
 ```bash
-$ echo "say hello" | llm
+$ echo "say hello" | <your-configured-command>
 ```
 
 Common issues:
-- **API key not set**: Run `llm keys set anthropic` (or `openai`)
-- **Model not available**: Check model name with `llm models`
+- **API key not set**: Each tool has its own auth mechanism
+- **Model not available**: Check model name with the tool's help
 - **Network issues**: Check internet connectivity
 
 ### Config not loading

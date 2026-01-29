@@ -1,10 +1,13 @@
 ---
-source: tests/integration_tests/switch.rs
+source: tests/integration_tests/merge.rs
 info:
   program: wt
   args:
-    - switch
-    - "mr:42"
+    - merge
+    - main
+    - "--squash"
+    - "--no-commit"
+    - "--no-remove"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -36,10 +39,11 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mFetching MR !42...[39m
-[107m [0m [1mAdd feature fix for edge case[22m (!42)
-[107m [0m by @contributor · opened · feature-fix · [90mhttps://gitlab.com/owner/test-repo/-/merge_requests/42[39m
-[2m○[22m Push configured to fork: [90mhttps://gitlab.com/contributor/test-repo.git[39m
-[32m✓[39m [32mCreated branch [1mfeature-fix[22m (tracking [1mMR !42[22m) and worktree @ [1m_REPO_.feature-fix[22m[39m
-[33m▲[39m [33mCannot change directory — shell integration not installed[39m
-[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
+[36m◎[39m [36mMerging 2 commits to [1mmain[22m @ [2m[HASH][22m (no commit/squash/rebase needed)[39m
+[107m [0m * [33m[HASH][m feat: add file 2
+[107m [0m * [33m[HASH][m feat: add file 1
+[107m [0m  file1.txt | 1 [32m+[m
+[107m [0m  file2.txt | 1 [32m+[m
+[107m [0m  2 files changed, 2 insertions(+)
+[32m✓[39m [32mMerged to [1mmain[22m [90m(2 commits, 2 files, [32m+2[39m[39m[90m)[39m[39m
+[2m○[22m Worktree preserved (--no-remove)

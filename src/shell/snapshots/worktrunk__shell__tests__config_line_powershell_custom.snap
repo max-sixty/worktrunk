@@ -2,4 +2,4 @@
 source: src/shell/mod.rs
 expression: "Shell::PowerShell.config_line(\"git-wt\")"
 ---
-if (Get-Command git-wt -ErrorAction SilentlyContinue) { Invoke-Expression (& git-wt config shell init powershell) }
+if (Get-Command git-wt -ErrorAction SilentlyContinue) { Invoke-Expression (& git-wt config shell init powershell | Out-String) }

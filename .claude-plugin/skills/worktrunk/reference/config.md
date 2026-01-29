@@ -42,7 +42,7 @@ wt config show
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 [commit.generation]
-command = "llm -m claude-haiku-4.5"
+command = "MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 ```
 
 **Project config** — shared team settings:
