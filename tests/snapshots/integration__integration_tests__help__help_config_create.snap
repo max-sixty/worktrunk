@@ -88,7 +88,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# # Creates: ~/worktrees/myproject/feature-auth[0m
   [2m# worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
   [2m#[0m
-  [2m# `~` expands to the home directory. Paths without `~` or `{{ repo_path }}` are relative to the repository root.[0m
+  [2m# `~` expands to the home directory. Relative paths are relative to the repository root.[0m
   [2m#[0m
   [2m# ## LLM commit messages[0m
   [2m#[0m

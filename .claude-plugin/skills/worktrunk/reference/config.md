@@ -96,7 +96,7 @@ worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
 worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
 ```
 
-`~` expands to the home directory. Paths without `~` or `{{ repo_path }}` are relative to the repository root.
+`~` expands to the home directory. Relative paths are relative to the repository root.
 
 ## LLM commit messages
 

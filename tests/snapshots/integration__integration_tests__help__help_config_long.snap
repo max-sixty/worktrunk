@@ -132,7 +132,7 @@ Controls where new worktrees are created.
   [2m# Creates: ~/worktrees/myproject/feature-auth[0m
   [2mworktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
 
-[2m~[0m expands to the home directory. Paths without [2m~[0m or [2m{{ repo_path }}[0m are relative to the repository root.
+[2m~[0m expands to the home directory. Relative paths are relative to the repository root.
 
 [1m[32mLLM commit messages[0m
 
