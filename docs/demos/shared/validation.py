@@ -28,15 +28,16 @@ from pathlib import Path
 # Forbidden patterns must ALL be absent (case-insensitive).
 
 TUI_CHECKPOINTS: dict[str, list[tuple[int, list[str], list[str]]]] = {
-    # NOTE: wt-zellij-omnibus checkpoints temporarily disabled while timing is stabilized.
-    # The Zellij plugin permission dialog sometimes appears at variable times, causing
-    # frame number calibration to drift. Once timing is reliable, re-enable with:
-    #
-    # "wt-zellij-omnibus": [
-    #     (50, ["Branch", "Status", "main", "hooks"], ["Allow?", "permission"]),
-    #     (300, ["Opus", "acme", "test"], ["command not found", "Unknown command"]),
-    #     (1750, ["Merged", "main", "commit"], ["CONFLICT", "error:", "failed"]),
-    # ],
+    # Frame numbers calibrated with permissions cache fix (no permission dialog).
+    # At 30fps: frame 100 = ~3.3s, frame 500 = ~16.7s, frame 2000 = ~66.7s
+    "wt-zellij-omnibus": [
+        # Frame 100: After wt list - should see branch table, no permission dialog
+        (100, ["Branch", "Status", "main", "hooks"], ["Allow?", "permission"]),
+        # Frame 500: Claude UI visible - shows Opus model indicator and worktree
+        (500, ["Opus", "acme"], ["command not found", "Unknown command"]),
+        # Frame 2000: Near end - wt list --full showing all worktrees
+        (2000, ["Branch", "main", "feature", "billing"], ["CONFLICT", "error:", "failed"]),
+    ],
 }
 
 
