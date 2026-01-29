@@ -175,5 +175,6 @@ impl UserConfig {
         vars.insert("branch", branch);
         vars.insert("repo_path", repo_path.as_str());
         expand_template(&template, &vars, false, repo, "worktree-path")
+            .map(|p| shellexpand::tilde(&p).into_owned())
     }
 }

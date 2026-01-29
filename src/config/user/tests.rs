@@ -485,6 +485,36 @@ fn test_worktrunk_config_format_path_repo_path_variable() {
 }
 
 #[test]
+fn test_worktrunk_config_format_path_tilde_expansion() {
+    let test = test_repo();
+    let config = UserConfig {
+        configs: OverridableConfig {
+            worktree_path: Some("~/worktrees/{{ repo }}/{{ branch | sanitize }}".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let path = config
+        .format_path("myrepo", "feature/branch", &test.repo, None)
+        .unwrap();
+    // Tilde should be expanded to home directory
+    assert!(
+        !path.starts_with('~'),
+        "Tilde should be expanded, got: {path}"
+    );
+    // Path should contain expected components
+    assert!(
+        path.contains("worktrees") && path.contains("myrepo") && path.contains("feature-branch"),
+        "Expected path containing 'worktrees/myrepo/feature-branch', got: {path}"
+    );
+    // Path should be absolute after tilde expansion
+    assert!(
+        std::path::Path::new(&path).is_absolute(),
+        "Expected absolute path after tilde expansion, got: {path}"
+    );
+}
+
+#[test]
 fn test_merge_config_serde() {
     let config = MergeConfig {
         squash: Some(true),

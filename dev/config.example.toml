@@ -31,9 +31,9 @@
 #
 # # Centralized worktrees directory
 # # Creates: ~/worktrees/myproject/feature-auth
-# worktree-path = "{{ repo_path }}/../worktrees/{{ repo }}/{{ branch | sanitize }}"
+# worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
 #
-# Paths without `{{ repo_path }}` are relative to the repository root.
+# `~` expands to the home directory. Paths without `~` or `{{ repo_path }}` are relative to the repository root.
 #
 # ## LLM commit messages
 #
