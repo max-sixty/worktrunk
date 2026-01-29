@@ -101,30 +101,16 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Merge requires being on a branch (can't merge from detached HEAD)
     let current_branch = env.require_branch("merge")?.to_string();
 
-    // Get effective merge config (project-specific merged with global)
-    let merge_config = env.merge();
+    // Get effective settings (project-specific merged with global, defaults applied)
+    let resolved = env.resolved();
 
-    // Determine final values: CLI > project config > global config > default (true)
-    let squash = squash_opt
-        .or_else(|| merge_config.as_ref().and_then(|m| m.squash))
-        .unwrap_or(true);
-    let commit = commit_opt
-        .or_else(|| merge_config.as_ref().and_then(|m| m.commit))
-        .unwrap_or(true);
-    let rebase = rebase_opt
-        .or_else(|| merge_config.as_ref().and_then(|m| m.rebase))
-        .unwrap_or(true);
-    let remove = remove_opt
-        .or_else(|| merge_config.as_ref().and_then(|m| m.remove))
-        .unwrap_or(true);
-    let verify = verify_opt
-        .or_else(|| merge_config.as_ref().and_then(|m| m.verify))
-        .unwrap_or(true);
-
-    // Stage mode: CLI > project commit config > global commit config > default
-    let stage_mode = stage
-        .or_else(|| env.commit().and_then(|c| c.stage))
-        .unwrap_or_default();
+    // CLI flags override config values
+    let squash = squash_opt.unwrap_or(resolved.merge.squash());
+    let commit = commit_opt.unwrap_or(resolved.merge.commit());
+    let rebase = rebase_opt.unwrap_or(resolved.merge.rebase());
+    let remove = remove_opt.unwrap_or(resolved.merge.remove());
+    let verify = verify_opt.unwrap_or(resolved.merge.verify());
+    let stage_mode = stage.unwrap_or(resolved.commit.stage());
 
     // Cache current worktree for multiple queries
     let current_wt = repo.current_worktree();

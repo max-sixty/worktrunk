@@ -56,10 +56,8 @@ pub fn step_commit(
     let env = CommandEnv::for_action("commit", config)?;
     let ctx = env.context(yes);
 
-    // Determine effective stage mode: CLI > project config > global config > default
-    let stage_mode = stage
-        .or_else(|| env.commit().and_then(|c| c.stage))
-        .unwrap_or_default();
+    // CLI flag overrides config value
+    let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
 
     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
     // Shadow no_verify: if user declines approval, skip hooks but continue commit
@@ -122,13 +120,11 @@ pub fn handle_squash(
     // Squash requires being on a branch (can't squash in detached HEAD)
     let current_branch = env.require_branch("squash")?.to_string();
     let ctx = env.context(yes);
-    let effective_config = env.commit_generation();
-    let generator = CommitGenerator::new(&effective_config);
+    let resolved = env.resolved();
+    let generator = CommitGenerator::new(&resolved.commit_generation);
 
-    // Determine effective stage mode: CLI > project config > global config > default
-    let stage_mode = stage
-        .or_else(|| env.commit().and_then(|c| c.stage))
-        .unwrap_or_default();
+    // CLI flag overrides config value
+    let stage_mode = stage.unwrap_or(resolved.commit.stage());
 
     // Check if any pre-commit hooks exist (needed for skip message and approval)
     let project_config = repo.load_project_config()?;
@@ -300,7 +296,7 @@ pub fn handle_squash(
         &subjects,
         &current_branch,
         repo_name,
-        &effective_config,
+        &resolved.commit_generation,
     )?;
 
     // Display the generated commit message

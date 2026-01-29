@@ -92,9 +92,9 @@ pub use project::{
     find_unknown_keys as find_unknown_project_keys,
 };
 pub use user::{
-    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig, SelectConfig,
-    StageMode, UserConfig, UserProjectOverrides, find_unknown_keys as find_unknown_user_keys,
-    get_config_path, set_config_path,
+    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig,
+    ResolvedConfig, SelectConfig, StageMode, UserConfig, UserProjectOverrides,
+    find_unknown_keys as find_unknown_user_keys, get_config_path, set_config_path,
 };
 
 #[cfg(test)]

@@ -646,20 +646,15 @@ fn main() {
             UserConfig::load()
                 .context("Failed to load config")
                 .and_then(|config| {
-                    // Get project ID for per-project config lookup
+                    // Get effective settings (project-specific merged with global, defaults applied)
                     let project_id = Repository::current()
                         .ok()
                         .and_then(|r| r.project_identifier().ok());
-
-                    // Get effective list config (merges project-specific with global)
-                    let (show_branches_config, show_remotes_config) = config
-                        .list(project_id.as_deref())
-                        .map(|l| (l.branches.unwrap_or(false), l.remotes.unwrap_or(false)))
-                        .unwrap_or((false, false));
+                    let resolved = config.resolved(project_id.as_deref());
 
                     // CLI flags override config
-                    let show_branches = branches || show_branches_config;
-                    let show_remotes = remotes || show_remotes_config;
+                    let show_branches = branches || resolved.list.branches();
+                    let show_remotes = remotes || resolved.list.remotes();
 
                     handle_select(show_branches, show_remotes, &config)
                 })
@@ -702,27 +697,16 @@ fn main() {
                 UserConfig::load()
                     .context("Failed to load config")
                     .and_then(|config| {
-                        // Get project ID for per-project config lookup
+                        // Get resolved config (project-specific merged with global, defaults applied)
                         let project_id = Repository::current()
                             .ok()
                             .and_then(|r| r.project_identifier().ok());
-
-                        // Get effective list config (merges project-specific with global)
-                        let (show_branches_config, show_remotes_config, show_full_config) = config
-                            .list(project_id.as_deref())
-                            .map(|l| {
-                                (
-                                    l.branches.unwrap_or(false),
-                                    l.remotes.unwrap_or(false),
-                                    l.full.unwrap_or(false),
-                                )
-                            })
-                            .unwrap_or((false, false, false));
+                        let resolved = config.resolved(project_id.as_deref());
 
                         // CLI flags override config
-                        let show_branches = branches || show_branches_config;
-                        let show_remotes = remotes || show_remotes_config;
-                        let show_full = full || show_full_config;
+                        let show_branches = branches || resolved.list.branches();
+                        let show_remotes = remotes || resolved.list.remotes();
+                        let show_full = full || resolved.list.full();
 
                         // Convert two bools to Option<bool>: Some(true), Some(false), or None
                         let progressive_opt = match (progressive, no_progressive) {
