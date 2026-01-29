@@ -690,6 +690,11 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // Remove $SHELL to avoid platform-dependent diagnostic output (macOS has /bin/zsh,
     // Linux has /bin/bash). Tests that need SHELL should set it explicitly.
     cmd.env_remove("SHELL");
+    // Remove PSModulePath to prevent false PowerShell detection on CI environments
+    // where PowerShell Core is installed but not being used.
+    cmd.env_remove("PSModulePath");
+    // Disable auto PowerShell detection (tests that need it should set to "1")
+    cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "0");
     cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
     // Enable warn-level logging so diagnostics show up in test failures
     cmd.env("RUST_LOG", "warn");

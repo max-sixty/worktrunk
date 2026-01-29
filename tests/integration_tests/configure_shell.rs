@@ -1630,8 +1630,14 @@ mod pty_tests {
 /// Test that WORKTRUNK_TEST_POWERSHELL_ENV=1 triggers PowerShell auto-detection.
 /// This simulates the Windows behavior where we detect PowerShell when SHELL is not set.
 #[rstest]
+#[cfg_attr(
+    windows,
+    ignore = "Windows uses Documents folder which can't be easily overridden"
+)]
 fn test_powershell_env_detection(repo: TestRepo, temp_home: TempDir) {
-    // Create the PowerShell config directory (simulating ~/.config/powershell on Unix)
+    // Create the PowerShell config directory (Unix: ~/.config/powershell)
+    // Note: On Windows, PowerShell uses Documents/ which dirs::document_dir() returns.
+    // This test only runs on Unix where we can control the path via HOME.
     let powershell_dir = temp_home.path().join(".config/powershell");
     fs::create_dir_all(&powershell_dir).unwrap();
 
