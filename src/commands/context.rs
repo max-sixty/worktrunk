@@ -30,7 +30,7 @@ impl CommandEnv {
     /// Used in error messages when the environment can't be loaded.
     pub fn for_action(action: &str, config: UserConfig) -> anyhow::Result<Self> {
         let repo = Repository::current()?;
-        let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
+        let worktree_path = repo.current_worktree().path().to_path_buf();
         let branch = repo.require_current_branch(action)?;
 
         Ok(Self {
@@ -47,10 +47,10 @@ impl CommandEnv {
     /// such as running hooks (where `{{ branch }}` expands to "HEAD" if detached).
     pub fn for_action_branchless() -> anyhow::Result<Self> {
         let repo = Repository::current()?;
-        let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
+        let current_wt = repo.current_worktree();
+        let worktree_path = current_wt.path().to_path_buf();
         // Propagate git errors (broken repo, missing git) but allow None for detached HEAD
-        let branch = repo
-            .current_worktree()
+        let branch = current_wt
             .branch()
             .context("Failed to determine current branch")?;
         let config = UserConfig::load().context("Failed to load config")?;
@@ -92,18 +92,8 @@ impl CommandEnv {
         self.repo.project_identifier().ok()
     }
 
-    /// Get the commit generation config, merging project-specific settings.
-    pub fn commit_generation(&self) -> worktrunk::config::CommitGenerationConfig {
-        self.config.commit_generation(self.project_id().as_deref())
-    }
-
-    /// Get the commit config, merging project-specific settings.
-    pub fn commit(&self) -> Option<worktrunk::config::CommitConfig> {
-        self.config.commit(self.project_id().as_deref())
-    }
-
-    /// Get the merge config, merging project-specific settings.
-    pub fn merge(&self) -> Option<worktrunk::config::MergeConfig> {
-        self.config.merge(self.project_id().as_deref())
+    /// Get all resolved config with defaults applied.
+    pub fn resolved(&self) -> worktrunk::config::ResolvedConfig {
+        self.config.resolved(self.project_id().as_deref())
     }
 }

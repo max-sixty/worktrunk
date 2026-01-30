@@ -230,6 +230,56 @@ fn test_bare_repo_path_used_for_worktree_paths() {
     );
 }
 
+#[test]
+fn test_bare_repo_with_repo_path_variable() {
+    // Test that {{ repo_path }} resolves correctly in bare repos
+    // For bare repos, repo_path should be the bare repo directory itself
+    let test = BareRepoTest::new();
+
+    // Override config to use {{ repo_path }} explicitly
+    fs::write(
+        test.config_path(),
+        "worktree-path = \"{{ repo_path }}/../worktrees/{{ branch | sanitize }}\"\n",
+    )
+    .unwrap();
+
+    // Create initial worktree
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Create new worktree using wt switch
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "feature/auth"])
+        .current_dir(&main_worktree);
+
+    let output = cmd.output().unwrap();
+
+    if !output.status.success() {
+        panic!(
+            "wt switch failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // Verify worktree was created at sibling path using {{ repo_path }}/../worktrees/
+    // Bare repo is at /tmp/xxx/repo, so worktree should be at /tmp/xxx/worktrees/feature-auth
+    let expected_path = test
+        .bare_repo_path()
+        .parent()
+        .unwrap()
+        .join("worktrees")
+        .join("feature-auth");
+    assert!(
+        expected_path.exists(),
+        "Expected worktree at {:?} (using repo_path variable)",
+        expected_path
+    );
+}
+
 #[rstest]
 fn test_bare_repo_equivalent_to_normal_repo(repo: TestRepo) {
     // This test verifies that bare repos behave identically to normal repos

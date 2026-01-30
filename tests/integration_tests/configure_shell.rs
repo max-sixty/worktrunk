@@ -1626,3 +1626,57 @@ mod pty_tests {
         );
     }
 }
+
+/// Test that WORKTRUNK_TEST_POWERSHELL_ENV=1 triggers PowerShell auto-detection.
+/// This simulates the Windows behavior where we detect PowerShell when SHELL is not set.
+#[rstest]
+#[cfg_attr(
+    windows,
+    ignore = "Windows uses Documents folder which can't be easily overridden"
+)]
+fn test_powershell_env_detection(repo: TestRepo, temp_home: TempDir) {
+    // Create the PowerShell config directory (Unix: ~/.config/powershell)
+    // Note: On Windows, PowerShell uses Documents/ which dirs::document_dir() returns.
+    // This test only runs on Unix where we can control the path via HOME.
+    let powershell_dir = temp_home.path().join(".config/powershell");
+    fs::create_dir_all(&powershell_dir).unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    // Force PowerShell detection via test env var
+    cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "1");
+    // Set SHELL to something non-PowerShell to ensure we're testing the override
+    cmd.env("SHELL", "/bin/bash");
+    cmd.arg("config")
+        .arg("shell")
+        .arg("install")
+        .arg("--yes")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute command");
+    assert!(output.status.success(), "Command should succeed");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Check that PowerShell was configured (not skipped)
+    assert!(
+        stderr.contains("Created shell extension for") && stderr.contains("powershell"),
+        "Output should show PowerShell was created:\n{}",
+        stderr
+    );
+
+    // Verify the PowerShell profile was created
+    let profile_path = powershell_dir.join("Microsoft.PowerShell_profile.ps1");
+    assert!(
+        profile_path.exists(),
+        "PowerShell profile should be created at {:?}",
+        profile_path
+    );
+
+    let content = fs::read_to_string(&profile_path).unwrap();
+    assert!(
+        content.contains("wt config shell init powershell"),
+        "Profile should contain shell init: {}",
+        content
+    );
+}

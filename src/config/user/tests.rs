@@ -230,7 +230,7 @@ fn test_worktree_path_for_project_falls_back_to_default() {
     // Unknown project should fall back to default template
     assert_eq!(
         config.worktree_path_for_project("github.com/unknown/project"),
-        "../{{ repo }}.{{ branch | sanitize }}"
+        "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
     );
 }
 
@@ -303,7 +303,7 @@ fn test_worktrunk_config_default() {
     assert!(config.configs.worktree_path.is_none());
     assert_eq!(
         config.worktree_path(),
-        "../{{ repo }}.{{ branch | sanitize }}"
+        "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
     );
     assert!(config.projects.is_empty());
     assert!(config.configs.list.is_none());
@@ -416,7 +416,24 @@ fn test_worktrunk_config_format_path() {
     let path = config
         .format_path("myrepo", "feature/branch", &test.repo, None)
         .unwrap();
-    assert_eq!(path, "../myrepo.feature-branch");
+    // Default path is now absolute: {{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}
+    // The template uses forward slashes which work on all platforms
+    // Check that the path contains the expected components
+    assert!(
+        path.contains("myrepo.feature-branch"),
+        "Expected path containing 'myrepo.feature-branch', got: {path}"
+    );
+    // Verify it contains parent directory navigation
+    assert!(
+        path.contains("/..") || path.contains("\\.."),
+        "Expected path containing parent navigation, got: {path}"
+    );
+    // The path should start with the repo path (absolute)
+    let repo_path = test.repo.repo_path().to_string_lossy();
+    assert!(
+        path.starts_with(repo_path.as_ref()),
+        "Expected path starting with repo path '{repo_path}', got: {path}"
+    );
 }
 
 #[test]
@@ -433,6 +450,68 @@ fn test_worktrunk_config_format_path_custom_template() {
         .format_path("myrepo", "feature", &test.repo, None)
         .unwrap();
     assert_eq!(path, ".worktrees/feature");
+}
+
+#[test]
+fn test_worktrunk_config_format_path_repo_path_variable() {
+    let test = test_repo();
+    let config = UserConfig {
+        configs: OverridableConfig {
+            // Use forward slashes in template (works on all platforms)
+            worktree_path: Some("{{ repo_path }}/worktrees/{{ branch | sanitize }}".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let path = config
+        .format_path("myrepo", "feature/branch", &test.repo, None)
+        .unwrap();
+    // Path should contain the expected components
+    assert!(
+        path.contains("worktrees") && path.contains("feature-branch"),
+        "Expected path containing 'worktrees' and 'feature-branch', got: {path}"
+    );
+    // The path should start with the repo path
+    let repo_path = test.repo.repo_path().to_string_lossy();
+    assert!(
+        path.starts_with(repo_path.as_ref()),
+        "Expected path starting with repo path '{repo_path}', got: {path}"
+    );
+    // The path should be absolute since repo_path is absolute
+    assert!(
+        std::path::Path::new(&path).is_absolute() || path.starts_with('/'),
+        "Expected absolute path, got: {path}"
+    );
+}
+
+#[test]
+fn test_worktrunk_config_format_path_tilde_expansion() {
+    let test = test_repo();
+    let config = UserConfig {
+        configs: OverridableConfig {
+            worktree_path: Some("~/worktrees/{{ repo }}/{{ branch | sanitize }}".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let path = config
+        .format_path("myrepo", "feature/branch", &test.repo, None)
+        .unwrap();
+    // Tilde should be expanded to home directory
+    assert!(
+        !path.starts_with('~'),
+        "Tilde should be expanded, got: {path}"
+    );
+    // Path should contain expected components
+    assert!(
+        path.contains("worktrees") && path.contains("myrepo") && path.contains("feature-branch"),
+        "Expected path containing 'worktrees/myrepo/feature-branch', got: {path}"
+    );
+    // Path should be absolute after tilde expansion
+    assert!(
+        std::path::Path::new(&path).is_absolute(),
+        "Expected absolute path after tilde expansion, got: {path}"
+    );
 }
 
 #[test]
@@ -933,6 +1012,118 @@ fn test_effective_commit_global_only() {
 }
 
 // =========================================================================
+// Config accessor methods and ResolvedConfig tests
+// =========================================================================
+
+#[test]
+fn test_list_config_accessor_methods_defaults() {
+    let config = ListConfig::default();
+    assert!(!config.full());
+    assert!(!config.branches());
+    assert!(!config.remotes());
+    assert!(config.timeout_ms().is_none());
+}
+
+#[test]
+fn test_list_config_accessor_methods_with_values() {
+    let config = ListConfig {
+        full: Some(true),
+        branches: Some(true),
+        remotes: Some(false),
+        timeout_ms: Some(5000),
+    };
+    assert!(config.full());
+    assert!(config.branches());
+    assert!(!config.remotes());
+    assert_eq!(config.timeout_ms(), Some(5000));
+}
+
+#[test]
+fn test_merge_config_accessor_methods_defaults() {
+    let config = MergeConfig::default();
+    // MergeConfig defaults are all true
+    assert!(config.squash());
+    assert!(config.commit());
+    assert!(config.rebase());
+    assert!(config.remove());
+    assert!(config.verify());
+}
+
+#[test]
+fn test_merge_config_accessor_methods_with_values() {
+    let config = MergeConfig {
+        squash: Some(false),
+        commit: Some(false),
+        rebase: Some(false),
+        remove: Some(false),
+        verify: Some(false),
+    };
+    assert!(!config.squash());
+    assert!(!config.commit());
+    assert!(!config.rebase());
+    assert!(!config.remove());
+    assert!(!config.verify());
+}
+
+#[test]
+fn test_commit_config_accessor_methods() {
+    let config = CommitConfig::default();
+    assert_eq!(config.stage(), StageMode::All);
+
+    let config = CommitConfig {
+        stage: Some(StageMode::Tracked),
+        generation: None,
+    };
+    assert_eq!(config.stage(), StageMode::Tracked);
+}
+
+#[test]
+fn test_select_config_accessor_methods() {
+    let config = SelectConfig::default();
+    assert!(config.pager().is_none());
+
+    let config = SelectConfig {
+        pager: Some("delta --paging=never".to_string()),
+    };
+    assert_eq!(config.pager(), Some("delta --paging=never"));
+}
+
+#[test]
+fn test_resolved_config_for_project() {
+    let config = UserConfig {
+        configs: OverridableConfig {
+            list: Some(ListConfig {
+                full: Some(true),
+                ..Default::default()
+            }),
+            merge: Some(MergeConfig {
+                squash: Some(false),
+                ..Default::default()
+            }),
+            commit: Some(CommitConfig {
+                stage: Some(StageMode::None),
+                ..Default::default()
+            }),
+            select: Some(SelectConfig {
+                pager: Some("less".to_string()),
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let resolved = config.resolved(None);
+
+    // Test that accessor methods work through ResolvedConfig
+    assert!(resolved.list.full());
+    assert!(!resolved.list.branches()); // Default
+    assert!(!resolved.merge.squash()); // Overridden to false
+    assert!(resolved.merge.commit()); // Default true
+    assert_eq!(resolved.commit.stage(), StageMode::None);
+    assert_eq!(resolved.select.pager(), Some("less"));
+}
+
+// =========================================================================
 // Per-project config serde tests
 // =========================================================================
 
@@ -1138,17 +1329,19 @@ fn test_validation_empty_worktree_path() {
 }
 
 #[test]
-fn test_validation_absolute_worktree_path() {
-    // Use platform-appropriate absolute path
+fn test_validation_absolute_worktree_path_allowed() {
+    // Absolute paths should be allowed for worktree-path
     let content = if cfg!(windows) {
-        r#"worktree-path = "C:\\absolute\\path""#
+        r#"worktree-path = "C:\\worktrees\\{{ branch | sanitize }}""#
     } else {
-        r#"worktree-path = "/absolute/path""#
+        r#"worktree-path = "/worktrees/{{ branch | sanitize }}""#
     };
     let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("must be relative"), "{err}");
+    assert!(
+        result.is_ok(),
+        "Absolute paths should be allowed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1164,23 +1357,25 @@ worktree-path = ""
 }
 
 #[test]
-fn test_validation_project_absolute_worktree_path() {
-    // Use platform-appropriate absolute path
+fn test_validation_project_absolute_worktree_path_allowed() {
+    // Absolute paths should be allowed for per-project worktree-path
     let content = if cfg!(windows) {
         r#"
 [projects."github.com/user/repo"]
-worktree-path = "C:\\absolute\\path"
+worktree-path = "C:\\worktrees\\{{ branch | sanitize }}"
 "#
     } else {
         r#"
 [projects."github.com/user/repo"]
-worktree-path = "/absolute/path"
+worktree-path = "/worktrees/{{ branch | sanitize }}"
 "#
     };
     let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("must be relative"), "{err}");
+    assert!(
+        result.is_ok(),
+        "Absolute paths should be allowed: {:?}",
+        result.err()
+    );
 }
 
 #[test]

@@ -78,11 +78,12 @@ Location:
 
 ## Worktree path template
 
-Controls where new worktrees are created. Paths are relative to the repository root.
+Controls where new worktrees are created.
 
 **Variables:**
 
-- `{{ repo }}` — repository directory name
+- `{{ repo_path }}` — absolute path to the repository (e.g., `/Users/me/code/myproject`)
+- `{{ repo }}` — repository directory name (e.g., `myproject`)
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
@@ -90,22 +91,20 @@ Controls where new worktrees are created. Paths are relative to the repository r
 **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 
 ```toml
-# Default — siblings in parent directory
+# Default — sibling directory
 # Creates: ~/code/myproject.feature-auth
-worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+# worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
 
 # Inside the repository
 # Creates: ~/code/myproject/.worktrees/feature-auth
-worktree-path = ".worktrees/{{ branch | sanitize }}"
+worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
 
-# Namespaced (useful when multiple repos share a parent directory)
-# Creates: ~/code/worktrees/myproject/feature-auth
-worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
-
-# Nested bare repo (git clone --bare <url> project/.git)
-# Creates: ~/code/project/feature-auth (sibling to .git)
-worktree-path = "../{{ branch | sanitize }}"
+# Centralized worktrees directory
+# Creates: ~/worktrees/myproject/feature-auth
+worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
 ```
+
+`~` expands to the home directory. Relative paths are relative to the repository root.
 
 ## LLM commit messages
 
