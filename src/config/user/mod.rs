@@ -7,6 +7,7 @@ mod merge;
 mod mutation;
 mod path;
 mod persistence;
+mod resolved;
 mod schema;
 mod sections;
 #[cfg(test)]
@@ -19,6 +20,7 @@ use serde::{Deserialize, Serialize};
 // Re-export public types
 pub use merge::Merge;
 pub use path::{get_config_path, set_config_path};
+pub use resolved::ResolvedConfig;
 pub use schema::{find_unknown_keys, valid_user_config_keys};
 pub use sections::{
     CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig, SelectConfig,
@@ -152,6 +154,17 @@ impl UserConfig {
             }
 
             builder = builder.add_source(File::from(config_path.clone()));
+        } else if let Some(config_path) = config_path.as_ref()
+            && path::is_config_path_explicit()
+        {
+            // Warn if user explicitly specified a config path that doesn't exist
+            crate::styling::eprintln!(
+                "{}",
+                crate::styling::warning_message(format!(
+                    "Config file not found: {}",
+                    config_path.display()
+                ))
+            );
         }
 
         // Add environment variables with WORKTRUNK prefix

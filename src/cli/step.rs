@@ -410,6 +410,12 @@ this by using a temporary location.
 With `--clobber`, non-worktree paths at target locations are moved to
 `<path>.bak-<timestamp>` before relocating.
 
+## Main worktree behavior
+
+The main worktree can't be moved with `git worktree move`. Instead, relocate
+switches it to the default branch and creates a new linked worktree at the
+expected path. Untracked and gitignored files remain at the original location.
+
 ## Skipped worktrees
 
 - **Dirty** (without `--commit`) — use `--commit` to auto-commit first

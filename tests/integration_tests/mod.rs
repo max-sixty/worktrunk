@@ -49,6 +49,7 @@ pub mod select;
 pub mod select_config;
 pub mod shell_integration_prompt;
 pub mod shell_integration_windows;
+pub mod shell_powershell;
 pub mod shell_wrapper;
 pub mod spacing_edge_cases;
 pub mod statusline;

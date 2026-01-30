@@ -75,6 +75,8 @@ pub enum CreationMethod {
         ref_type: RefType,
         /// The PR/MR number.
         number: u32,
+        /// The ref path (e.g., "pull/123/head" or "merge-requests/42/head").
+        ref_path: String,
         /// URL to push to (the fork's URL). `None` when using a prefixed branch
         /// name (e.g., `contributor/main`) because push won't work.
         fork_push_url: Option<String>,

@@ -92,9 +92,9 @@ pub use project::{
     find_unknown_keys as find_unknown_project_keys,
 };
 pub use user::{
-    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig, SelectConfig,
-    StageMode, UserConfig, UserProjectOverrides, find_unknown_keys as find_unknown_user_keys,
-    get_config_path, set_config_path,
+    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig,
+    ResolvedConfig, SelectConfig, StageMode, UserConfig, UserProjectOverrides,
+    find_unknown_keys as find_unknown_user_keys, get_config_path, set_config_path,
 };
 
 #[cfg(test)]
@@ -157,7 +157,7 @@ mod tests {
         assert!(config.configs.worktree_path.is_none());
         assert_eq!(
             config.worktree_path(),
-            "../{{ repo }}.{{ branch | sanitize }}"
+            "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
         );
         // commit_generation is None by default
         assert!(config.commit_generation.is_none());

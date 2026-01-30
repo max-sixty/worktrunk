@@ -317,31 +317,21 @@ impl UserConfig {
     /// Validate configuration values.
     pub(super) fn validate(&self) -> Result<(), ConfigError> {
         // Validate worktree path (only if explicitly set - default is always valid)
-        if let Some(ref path) = self.configs.worktree_path {
-            if path.is_empty() {
-                return Err(ConfigError::Message("worktree-path cannot be empty".into()));
-            }
-            if std::path::Path::new(path).is_absolute() {
-                return Err(ConfigError::Message(
-                    "worktree-path must be relative, not absolute".into(),
-                ));
-            }
+        if let Some(ref path) = self.configs.worktree_path
+            && path.trim().is_empty()
+        {
+            return Err(ConfigError::Message("worktree-path cannot be empty".into()));
         }
 
         // Validate per-project configs
         for (project, project_config) in &self.projects {
             // Validate worktree path
-            if let Some(ref path) = project_config.overrides.worktree_path {
-                if path.is_empty() {
-                    return Err(ConfigError::Message(format!(
-                        "projects.{project}.worktree-path cannot be empty"
-                    )));
-                }
-                if std::path::Path::new(path).is_absolute() {
-                    return Err(ConfigError::Message(format!(
-                        "projects.{project}.worktree-path must be relative, not absolute"
-                    )));
-                }
+            if let Some(ref path) = project_config.overrides.worktree_path
+                && path.trim().is_empty()
+            {
+                return Err(ConfigError::Message(format!(
+                    "projects.{project}.worktree-path cannot be empty"
+                )));
             }
 
             // Validate commit generation config (check both old and new locations)

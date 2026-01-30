@@ -16,7 +16,7 @@ use askama::Template;
 // Re-export public types and functions
 pub use detection::{
     BypassAlias, DetectedLine, FileDetectionResult, is_shell_integration_line,
-    scan_for_detection_details,
+    is_shell_integration_line_for_uninstall, scan_for_detection_details,
 };
 pub use paths::{completion_path, config_paths, legacy_fish_conf_d_path};
 pub use utils::{current_shell, detect_zsh_compinit, extract_filename_from_path};
@@ -91,8 +91,11 @@ impl Shell {
                 )
             }
             Self::PowerShell => {
+                // Note: `| Out-String` is required because PowerShell command output is an array
+                // of strings by default, but Invoke-Expression expects a single string.
+                // Without it, Invoke-Expression fails with "Cannot convert 'System.Object[]'"
                 format!(
-                    "if (Get-Command {cmd} -ErrorAction SilentlyContinue) {{ Invoke-Expression (& {cmd} config shell init powershell) }}",
+                    "if (Get-Command {cmd} -ErrorAction SilentlyContinue) {{ Invoke-Expression (& {cmd} config shell init powershell | Out-String) }}",
                 )
             }
         }
@@ -445,4 +448,7 @@ mod tests {
     // Note: is_shell_configured() is not unit-tested because it requires
     // mutating HOME env var (unsafe). It's tested indirectly via integration
     // tests that exercise the shell integration warning paths.
+
+    // PowerShell config_line evaluation test is in tests/integration_tests/shell_powershell.rs
+    // because it needs CARGO_BIN_EXE_wt which is only available in integration tests.
 }

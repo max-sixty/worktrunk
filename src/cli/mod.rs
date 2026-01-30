@@ -1088,7 +1088,7 @@ Triggers on all switch results: creating new worktrees, switching to existing on
 
 ```toml
 [post-switch]
-tmux = "[ -n \"$TMUX\" ] && tmux rename-window '{{ branch | sanitize }}'"
+tmux = "[ -n \"$TMUX\" ] && tmux rename-window {{ branch | sanitize }}"
 ```
 
 ### pre-commit
@@ -1263,6 +1263,8 @@ Hash any string, including concatenations:
 dev = "npm run dev --port {{ (repo ~ '-' ~ branch) | hash_port }}"
 ```
 
+Variables are shell-escaped automatically — quotes around `{{ ... }}` are unnecessary and can cause issues with special characters.
+
 ### Worktrunk functions
 
 Templates also support functions for dynamic lookups:
@@ -1418,9 +1420,9 @@ Different actions for production vs staging:
 
 ```toml
 post-merge = """
-if [ "{{ target }}" = "main" ]; then
+if [ {{ target }} = main ]; then
     npm run deploy:production
-elif [ "{{ target }}" = "staging" ]; then
+elif [ {{ target }} = staging ]; then
     npm run deploy:staging
 fi
 """
@@ -1496,7 +1498,7 @@ wt config show
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 [commit.generation]
-command = "llm -m claude-haiku-4.5"
+command = "MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 ```
 
 **Project config** — shared team settings:
@@ -1524,11 +1526,12 @@ Location:
 
 ## Worktree path template
 
-Controls where new worktrees are created. Paths are relative to the repository root.
+Controls where new worktrees are created.
 
 **Variables:**
 
-- `{{ repo }}` — repository directory name
+- `{{ repo_path }}` — absolute path to the repository (e.g., `/Users/me/code/myproject`)
+- `{{ repo }}` — repository directory name (e.g., `myproject`)
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
@@ -1536,22 +1539,20 @@ Controls where new worktrees are created. Paths are relative to the repository r
 **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 
 ```toml
-# Default — siblings in parent directory
+# Default — sibling directory
 # Creates: ~/code/myproject.feature-auth
-worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+# worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
 
 # Inside the repository
 # Creates: ~/code/myproject/.worktrees/feature-auth
-worktree-path = ".worktrees/{{ branch | sanitize }}"
+worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
 
-# Namespaced (useful when multiple repos share a parent directory)
-# Creates: ~/code/worktrees/myproject/feature-auth
-worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
-
-# Nested bare repo (git clone --bare <url> project/.git)
-# Creates: ~/code/project/feature-auth (sibling to .git)
-worktree-path = "../{{ branch | sanitize }}"
+# Centralized worktrees directory
+# Creates: ~/worktrees/myproject/feature-auth
+worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
 ```
+
+`~` expands to the home directory. Relative paths are relative to the repository root.
 
 ## LLM commit messages
 

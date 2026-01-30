@@ -251,7 +251,18 @@ pub fn compute_hooks_display_path<'a>(
     hooks_run_at: &'a std::path::Path,
     user_location: &std::path::Path,
 ) -> Option<&'a std::path::Path> {
-    if hooks_run_at == user_location {
+    // Canonicalize both paths for comparison to handle relative vs absolute paths
+    // (e.g., "." vs "/absolute/path/to/cwd"). Fall back to direct comparison if
+    // canonicalization fails (e.g., path doesn't exist).
+    let same_location = match (
+        dunce::canonicalize(hooks_run_at),
+        dunce::canonicalize(user_location),
+    ) {
+        (Ok(h), Ok(u)) => h == u,
+        _ => hooks_run_at == user_location,
+    };
+
+    if same_location {
         None
     } else {
         Some(hooks_run_at)

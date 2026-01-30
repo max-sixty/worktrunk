@@ -504,6 +504,22 @@ def setup_zellij_config(env: DemoEnv, default_cwd: str = None) -> None:
 
     default_cwd_line = f'default_cwd "{default_cwd}"' if default_cwd else ""
 
+    # Pre-populate Zellij permissions cache to avoid permission dialog
+    # On macOS, cache is at $HOME/Library/Caches/org.Zellij-Contributors.Zellij/
+    # On Linux, it would be at $HOME/.cache/zellij/
+    plugin_dest = zellij_plugins_dir / "zellij-tab-name.wasm"
+    if platform.system() == "Darwin":
+        zellij_cache_dir = env.home / "Library" / "Caches" / "org.Zellij-Contributors.Zellij"
+    else:
+        zellij_cache_dir = env.home / ".cache" / "zellij"
+    zellij_cache_dir.mkdir(parents=True, exist_ok=True)
+    permissions_file = zellij_cache_dir / "permissions.kdl"
+    permissions_file.write_text(f'''"{plugin_dest}" {{
+    ReadApplicationState
+    ChangeApplicationState
+}}
+''')
+
     zellij_config = zellij_config_dir / "config.kdl"
     zellij_config.write_text(f"""// Demo Zellij config
 default_shell "fish"
@@ -512,6 +528,11 @@ pane_frames false
 show_startup_tips false
 show_release_notes false
 theme "warm-gold"
+
+// Load the tab-name plugin
+load_plugins {{
+    "file:{zellij_plugins_dir}/zellij-tab-name.wasm"
+}}
 
 // Warm gold theme to match the demo aesthetic
 themes {{
@@ -528,10 +549,6 @@ themes {{
         white "#57534e"
         orange "#d97706"
     }}
-}}
-
-load_plugins {{
-  "file:{zellij_plugins_dir}/zellij-tab-name.wasm"
 }}
 
 keybinds clear-defaults=true {{

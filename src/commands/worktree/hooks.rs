@@ -9,7 +9,8 @@ use worktrunk::path::to_posix_path;
 
 use crate::commands::command_executor::CommandContext;
 use crate::commands::hooks::{
-    HookFailureStrategy, prepare_hook_commands, spawn_hook_commands_background,
+    HookFailureStrategy, execute_hook, prepare_hook_commands, spawn_hook_background,
+    spawn_hook_commands_background,
 };
 
 impl<'a> CommandContext<'a> {
@@ -21,14 +22,8 @@ impl<'a> CommandContext<'a> {
     ///
     /// `extra_vars`: Additional template variables (e.g., `base`, `base_worktree_path`).
     pub fn execute_post_create_commands(&self, extra_vars: &[(&str, &str)]) -> anyhow::Result<()> {
-        let project_config = self.repo.load_project_config()?;
-        let user_hooks = self.config.hooks(self.project_id().as_deref());
-        crate::commands::hooks::run_hook_with_filter(
+        execute_hook(
             self,
-            user_hooks.post_create.as_ref(),
-            project_config
-                .as_ref()
-                .and_then(|c| c.hooks.post_create.as_ref()),
             HookType::PostCreate,
             extra_vars,
             HookFailureStrategy::Warn,
@@ -38,61 +33,21 @@ impl<'a> CommandContext<'a> {
     }
 
     /// Spawn post-start commands in parallel as background processes (non-blocking)
-    ///
-    /// `extra_vars`: Additional template variables (e.g., `base`, `base_worktree_path`).
-    /// `display_path`: When `Some`, shows the path in hook announcements. Pass this when
-    /// the user's shell won't be in the worktree (shell integration not active).
     pub fn spawn_post_start_commands(
         &self,
         extra_vars: &[(&str, &str)],
-        display_path: Option<&std::path::Path>,
+        display_path: Option<&Path>,
     ) -> anyhow::Result<()> {
-        let project_config = self.repo.load_project_config()?;
-        let user_hooks = self.config.hooks(self.project_id().as_deref());
-
-        let commands = prepare_hook_commands(
-            self,
-            user_hooks.post_start.as_ref(),
-            project_config
-                .as_ref()
-                .and_then(|c| c.hooks.post_start.as_ref()),
-            HookType::PostStart,
-            extra_vars,
-            None,
-            display_path,
-        )?;
-
-        spawn_hook_commands_background(self, commands, HookType::PostStart)
+        spawn_hook_background(self, HookType::PostStart, extra_vars, None, display_path)
     }
 
     /// Spawn post-switch commands in parallel as background processes (non-blocking)
-    ///
-    /// Runs on every switch, including to existing worktrees and newly created ones.
-    ///
-    /// `extra_vars`: Additional template variables (e.g., `base`, `base_worktree_path`).
-    /// `display_path`: When `Some`, shows the path in hook announcements. Pass this when
-    /// the user's shell won't be in the worktree (shell integration not active).
     pub fn spawn_post_switch_commands(
         &self,
         extra_vars: &[(&str, &str)],
-        display_path: Option<&std::path::Path>,
+        display_path: Option<&Path>,
     ) -> anyhow::Result<()> {
-        let project_config = self.repo.load_project_config()?;
-        let user_hooks = self.config.hooks(self.project_id().as_deref());
-
-        let commands = prepare_hook_commands(
-            self,
-            user_hooks.post_switch.as_ref(),
-            project_config
-                .as_ref()
-                .and_then(|c| c.hooks.post_switch.as_ref()),
-            HookType::PostSwitch,
-            extra_vars,
-            None,
-            display_path,
-        )?;
-
-        spawn_hook_commands_background(self, commands, HookType::PostSwitch)
+        spawn_hook_background(self, HookType::PostSwitch, extra_vars, None, display_path)
     }
 
     /// Spawn post-remove commands in parallel as background processes (non-blocking)

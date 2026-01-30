@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.21.0
+
+### Improved
+
+- **Absolute paths in `worktree-path` templates**: New `{{ repo_path }}` variable enables absolute path configurations like `{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}`. Tilde expansion is also supported (`~/worktrees/{{ repo }}/{{ branch }}`). Fixes [#902](https://github.com/max-sixty/worktrunk/issues/902). (thanks @bingryan for reporting) ([#904](https://github.com/max-sixty/worktrunk/pull/904))
+
+### Documentation
+
+- Documented prefix stripping in `worktree-path` templates using minijinja's built-in `replace` filter and slicing syntax. Closes [#900](https://github.com/max-sixty/worktrunk/issues/900). (thanks @laurentkempe for requesting) ([#903](https://github.com/max-sixty/worktrunk/pull/903))
+
+## 0.20.3
+
+### Fixed
+
+- **PowerShell auto-configuration on Windows**: When running `wt config shell install` from cmd.exe or PowerShell, both PowerShell profile files are now created automatically (Documents/PowerShell and Documents/WindowsPowerShell). Fixes [#885](https://github.com/max-sixty/worktrunk/issues/885). (thanks @DiTo97 for reporting) ([#898](https://github.com/max-sixty/worktrunk/pull/898))
+
+- **`-C` flag respected in hook context**: The `-C` flag now correctly sets the worktree path for hooks, fixing `wt -C /path hook ...` commands that were using the wrong context. ([#899](https://github.com/max-sixty/worktrunk/pull/899))
+
+- **`--config` path validation**: Now warns when `--config` points to a non-existent file instead of silently using defaults. ([#895](https://github.com/max-sixty/worktrunk/pull/895))
+
+### Documentation
+
+- Fix shell quoting in hook examples — template variables are auto-escaped, so manual quoting caused issues with special characters. ([#895](https://github.com/max-sixty/worktrunk/pull/895))
+
+- Updated documentation to use tool-agnostic terminology for LLM commit messages. ([#891](https://github.com/max-sixty/worktrunk/pull/891))
+
+### Internal
+
+- Consolidated PR/MR resolution into unified `remote_ref` module. ([#893](https://github.com/max-sixty/worktrunk/pull/893))
+
+- Simplified command structure and removed dead code. ([#892](https://github.com/max-sixty/worktrunk/pull/892))
+
+- Eliminated Settings types, added accessor methods to Config types. ([#896](https://github.com/max-sixty/worktrunk/pull/896))
+
+## 0.20.2
+
+### Fixed
+
+- **PowerShell shell integration**: Fixed shell integration not working on Windows PowerShell. The init script now includes `| Out-String` to convert array output to a string. Existing configs without this fix are detected as "not installed" so `wt config shell install` will update them automatically. Fixes [#885](https://github.com/max-sixty/worktrunk/issues/885). (thanks @DiTo97 for reporting) ([#888](https://github.com/max-sixty/worktrunk/pull/888))
+
+- **Branch removal message**: "No worktree found for branch X" now shows as info (○) instead of warning (▲) when removing a branch-only, since this is expected behavior. ([#887](https://github.com/max-sixty/worktrunk/pull/887))
+
+### Documentation
+
+- Documented main worktree behavior in `wt step relocate --help`. ([#889](https://github.com/max-sixty/worktrunk/pull/889))
+
 ## 0.20.1
 
 ### Improved

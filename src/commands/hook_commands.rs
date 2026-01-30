@@ -26,12 +26,10 @@ use super::command_executor::build_hook_context;
 
 use super::command_executor::CommandContext;
 use super::context::CommandEnv;
+use super::hooks::execute_hook;
 use super::hooks::{
     HookFailureStrategy, check_name_filter_matched, prepare_hook_commands, run_hook_with_filter,
     spawn_hook_commands_background,
-};
-use super::merge::{
-    execute_post_merge_commands, execute_pre_remove_commands, run_pre_merge_commands,
 };
 use super::project_config::collect_commands_for_hooks;
 
@@ -224,35 +222,40 @@ pub fn run_hook(
             )
         }
         HookType::PreMerge => {
-            // pre-merge, post-merge, pre-remove use functions from merge.rs
-            // which already handle user hooks (approval already happened at gate)
             // Use current branch as target (matches approval prompt for wt hook)
-            let project_cfg = project_config.unwrap_or_default();
-            run_pre_merge_commands(
-                &project_cfg,
+            let mut vars = vec![("target", ctx.branch_or_head())];
+            vars.extend(custom_vars_refs.iter().cloned());
+            execute_hook(
                 &ctx,
-                ctx.branch_or_head(),
+                HookType::PreMerge,
+                &vars,
+                HookFailureStrategy::FailFast,
                 name_filter,
-                &custom_vars_refs,
+                crate::output::pre_hook_display_path(ctx.worktree_path),
             )
         }
         HookType::PostMerge => {
             // Manual wt hook: user stays at cwd (no cd happens)
-            execute_post_merge_commands(
+            let mut vars = vec![("target", ctx.branch_or_head())];
+            vars.extend(custom_vars_refs.iter().cloned());
+            execute_hook(
                 &ctx,
-                ctx.branch_or_head(),
+                HookType::PostMerge,
+                &vars,
+                HookFailureStrategy::Warn,
                 name_filter,
                 crate::output::pre_hook_display_path(ctx.worktree_path),
-                &custom_vars_refs,
             )
         }
         HookType::PreRemove => {
             // Manual wt hook: user stays at cwd (no cd happens)
-            execute_pre_remove_commands(
+            execute_hook(
                 &ctx,
+                HookType::PreRemove,
+                &custom_vars_refs,
+                HookFailureStrategy::FailFast,
                 name_filter,
                 crate::output::pre_hook_display_path(ctx.worktree_path),
-                &custom_vars_refs,
             )
         }
         HookType::PostRemove => {

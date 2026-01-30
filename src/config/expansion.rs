@@ -609,6 +609,87 @@ mod tests {
     }
 
     #[test]
+    fn test_expand_template_strip_prefix() {
+        let test = test_repo();
+        let mut vars = HashMap::new();
+
+        // Built-in replace filter strips prefix (replaces all occurrences)
+        vars.insert("branch", "feature/foo");
+        assert_eq!(
+            expand_template(
+                "{{ branch | replace('feature/', '') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "foo"
+        );
+
+        // Replace + sanitize for worktree paths
+        assert_eq!(
+            expand_template(
+                "{{ branch | replace('feature/', '') | sanitize }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "foo"
+        );
+
+        // Branch without prefix passes through unchanged
+        vars.insert("branch", "main");
+        assert_eq!(
+            expand_template(
+                "{{ branch | replace('feature/', '') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "main"
+        );
+
+        // Slicing for prefix-only removal (avoids replacing mid-string)
+        vars.insert("branch", "feature/nested/feature/deep");
+        assert_eq!(
+            expand_template("{{ branch[8:] }}", &vars, false, &test.repo, "test").unwrap(),
+            "nested/feature/deep"
+        );
+
+        // Conditional slicing for safe prefix removal
+        assert_eq!(
+            expand_template(
+                "{% if branch[:8] == 'feature/' %}{{ branch[8:] }}{% else %}{{ branch }}{% endif %}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "nested/feature/deep"
+        );
+
+        // Conditional passes through non-matching branches
+        vars.insert("branch", "bugfix/bar");
+        assert_eq!(
+            expand_template(
+                "{% if branch[:8] == 'feature/' %}{{ branch[8:] }}{% else %}{{ branch }}{% endif %}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "bugfix/bar"
+        );
+    }
+
+    #[test]
     fn test_expand_template_sanitize_filter() {
         let test = test_repo();
         let mut vars = HashMap::new();

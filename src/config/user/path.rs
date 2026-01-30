@@ -17,6 +17,15 @@ pub fn set_config_path(path: PathBuf) {
     CONFIG_PATH.set(path).ok();
 }
 
+/// Check if the config path was explicitly specified via --config CLI flag.
+///
+/// Returns true only if --config flag was used. Environment variable
+/// (WORKTRUNK_CONFIG_PATH) is not considered "explicit" because it's commonly
+/// used for test/CI isolation with intentionally non-existent paths.
+pub fn is_config_path_explicit() -> bool {
+    CONFIG_PATH.get().is_some()
+}
+
 /// Get the user config file path.
 ///
 /// Priority:

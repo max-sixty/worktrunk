@@ -2015,3 +2015,27 @@ fn test_step_rebase_accepts_tag(mut repo: TestRepo) {
         Some(&feature_wt)
     ));
 }
+
+// =============================================================================
+// Behavior verification: --squash with --no-commit
+// =============================================================================
+
+/// Verify that `--squash` is correctly ignored when `--no-commit` is passed.
+///
+/// This is expected behavior: squashing creates a single commit from multiple
+/// commits. If `--no-commit` is passed, there's no commit to create, so squash
+/// has no effect. The merge proceeds as a fast-forward to the target.
+#[rstest]
+fn test_merge_squash_ignored_with_no_commit(repo_with_multi_commit_feature: TestRepo) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = &repo.worktrees["feature"];
+
+    // With --no-commit, squash has no effect - the merge fast-forwards
+    // to main without creating any new commits
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        repo,
+        "merge",
+        &["main", "--squash", "--no-commit", "--no-remove"],
+        Some(feature_wt)
+    ));
+}

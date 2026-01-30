@@ -7,8 +7,8 @@ use anstyle::Style;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
 use worktrunk::styling::{
-    INFO_SYMBOL, SUCCESS_SYMBOL, eprint, eprintln, format_bash_with_gutter, format_with_gutter,
-    prompt_message, warning_message,
+    INFO_SYMBOL, SUCCESS_SYMBOL, eprint, eprintln, format_bash_with_gutter, format_toml,
+    format_with_gutter, prompt_message, warning_message,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -292,15 +292,53 @@ pub fn handle_configure_shell(
     })
 }
 
+/// Check if we should auto-configure PowerShell profiles.
+///
+/// **Non-Windows:** PowerShell Core sets PSModulePath, which we use to detect
+/// PowerShell sessions. This is reliable because PowerShell must be explicitly
+/// installed on these platforms.
+///
+/// **Windows:** We check that `SHELL` is NOT set. The `SHELL` env var is set by
+/// Git Bash, MSYS2, and Cygwin, but NOT by cmd.exe or PowerShell. When `SHELL`
+/// is absent on Windows, the user is likely in a Windows-native shell (cmd or
+/// PowerShell), so we auto-configure both PowerShell profiles. This avoids the
+/// PSModulePath false-positive issue (issue #885) while still supporting
+/// PowerShell users who haven't created a profile yet.
+fn should_auto_configure_powershell() -> bool {
+    // Allow tests to override detection (set via Command::env() in integration tests)
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_POWERSHELL_ENV") {
+        return val == "1";
+    }
+
+    #[cfg(windows)]
+    {
+        // On Windows, SHELL is set by Git Bash/MSYS2/Cygwin but not by cmd/PowerShell.
+        // If SHELL is absent, we're likely in a Windows-native shell.
+        std::env::var_os("SHELL").is_none()
+    }
+
+    #[cfg(not(windows))]
+    {
+        // On non-Windows, PSModulePath reliably indicates PowerShell Core
+        std::env::var_os("PSModulePath").is_some()
+    }
+}
+
 pub fn scan_shell_configs(
     shell_filter: Option<Shell>,
     dry_run: bool,
     cmd: &str,
 ) -> Result<ScanResult, String> {
-    #[cfg(windows)]
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
-    #[cfg(not(windows))]
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
+    // Base shells to check
+    let mut default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
+
+    // Add PowerShell if we detect we're in a PowerShell-compatible environment.
+    // - Non-Windows: PSModulePath reliably indicates PowerShell Core
+    // - Windows: SHELL not set indicates Windows-native shell (cmd or PowerShell)
+    let in_powershell_env = should_auto_configure_powershell();
+    if in_powershell_env {
+        default_shells.push(Shell::PowerShell);
+    }
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
@@ -328,13 +366,26 @@ pub fn scan_shell_configs(
             target_path.is_some()
         };
 
+        // Auto-configure PowerShell when user is in a PowerShell-compatible environment,
+        // even if the profile doesn't exist yet (issue #885). PowerShell doesn't create
+        // a profile by default, so most users won't have one until they create it.
+        // Detection:
+        // - Non-Windows: PSModulePath indicates PowerShell Core
+        // - Windows: SHELL not set indicates Windows-native shell (not Git Bash/MSYS2)
+        let in_detected_shell = matches!(shell, Shell::PowerShell) && in_powershell_env;
+
         // Only configure if explicitly targeting this shell OR if config file/location exists
-        let should_configure = shell_filter.is_some() || has_config_location;
+        // OR if we detected we're running in this shell's environment
+        let should_configure = shell_filter.is_some() || has_config_location || in_detected_shell;
+
+        // Allow creating the config file if explicitly targeting this shell,
+        // or if we detected we're in this shell's environment
+        let allow_create = shell_filter.is_some() || in_detected_shell;
 
         if should_configure {
             let path = target_path.or_else(|| paths.first());
             if let Some(path) = path {
-                match configure_shell_file(shell, path, dry_run, shell_filter.is_some(), cmd) {
+                match configure_shell_file(shell, path, dry_run, allow_create, cmd) {
                     Ok(Some(result)) => results.push(result),
                     Ok(None) => {} // No action needed
                     Err(e) => {
@@ -379,7 +430,7 @@ fn configure_shell_file(
     shell: Shell,
     path: &Path,
     dry_run: bool,
-    explicit_shell: bool,
+    allow_create: bool,
     cmd: &str,
 ) -> Result<Option<ConfigureResult>, String> {
     // The line we write to the config file (also used for display)
@@ -398,7 +449,7 @@ fn configure_shell_file(
             path,
             &fish_wrapper,
             dry_run,
-            explicit_shell,
+            allow_create,
             &config_line,
         );
     }
@@ -468,8 +519,8 @@ fn configure_shell_file(
         }))
     } else {
         // File doesn't exist
-        // Only create if explicitly targeting this shell
-        if explicit_shell {
+        // Only create if allowed (explicitly targeting this shell or detected environment)
+        if allow_create {
             if dry_run {
                 return Ok(Some(ConfigureResult {
                     shell,
@@ -517,7 +568,7 @@ fn configure_fish_file(
     path: &Path,
     content: &str,
     dry_run: bool,
-    explicit_shell: bool,
+    allow_create: bool,
     config_line: &str,
 ) -> Result<Option<ConfigureResult>, String> {
     // For Fish, we write a minimal wrapper to functions/{cmd}.fish that sources
@@ -544,10 +595,10 @@ fn configure_fish_file(
     }
 
     // File doesn't exist or doesn't have our integration
-    // For Fish, create if parent directory exists or if explicitly targeting this shell
+    // For Fish, create if parent directory exists or if explicitly allowed
     // This is different from other shells because Fish uses functions/ which may exist
     // even if the specific wt.fish file doesn't
-    if !explicit_shell && !path.exists() {
+    if !allow_create && !path.exists() {
         // Check if parent directory exists
         if !path.parent().is_some_and(|p| p.exists()) {
             return Ok(None);
@@ -614,11 +665,11 @@ pub fn show_install_preview(
 
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
-        // Bash/Zsh: inline completions; Fish: separate completion file
-        let what = if matches!(shell, Shell::Fish) {
-            "shell extension"
-        } else {
+        // Bash/Zsh: inline completions; Fish/PowerShell: separate or no completions
+        let what = if matches!(shell, Shell::Bash | Shell::Zsh) {
             "shell extension & completions"
+        } else {
+            "shell extension"
         };
 
         eprintln!(
@@ -882,10 +933,8 @@ fn scan_for_uninstall(
     dry_run: bool,
     cmd: &str,
 ) -> Result<UninstallScanResult, String> {
-    #[cfg(windows)]
+    // For uninstall, always include PowerShell to clean up any existing profiles
     let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
-    #[cfg(not(windows))]
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
@@ -1063,7 +1112,7 @@ fn uninstall_from_file(
     let integration_lines: Vec<(usize, &str)> = lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| shell::is_shell_integration_line(line, cmd))
+        .filter(|(_, line)| shell::is_shell_integration_line_for_uninstall(line, cmd))
         .map(|(i, line)| (i, *line))
         .collect();
 
@@ -1122,11 +1171,11 @@ fn prompt_for_uninstall_confirmation(
         let bold = Style::new().bold();
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
-        // Bash/Zsh: inline completions; Fish: separate completion file
-        let what = if matches!(shell, Shell::Fish) {
-            "shell extension"
-        } else {
+        // Bash/Zsh: inline completions; Fish/PowerShell: separate or no completions
+        let what = if matches!(shell, Shell::Bash | Shell::Zsh) {
             "shell extension & completions"
+        } else {
+            "shell extension"
         };
 
         eprintln!(
@@ -1197,19 +1246,25 @@ pub fn handle_show_theme() {
 
     eprintln!();
 
-    // Gutter - quoted content
-    eprintln!("{}", info_message("Gutter formatting (quoted content):"));
+    // Gutter - error details (plain text, no syntax highlighting)
+    eprintln!("{}", info_message("Gutter formatting (error details):"));
     eprintln!(
         "{}",
-        format_with_gutter(
-            "[commit-generation]\ncommand = \"llm --model claude\"",
-            None,
-        )
+        format_with_gutter("expected `=`, found newline at line 3 column 1", None,)
     );
 
     eprintln!();
 
-    // Gutter - bash code
+    // Gutter - TOML config (syntax highlighted)
+    eprintln!("{}", info_message("Gutter formatting (config):"));
+    eprintln!(
+        "{}",
+        format_toml("[commit.generation]\ncommand = \"llm --model claude\"")
+    );
+
+    eprintln!();
+
+    // Gutter - bash code (syntax highlighted)
     eprintln!("{}", info_message("Gutter formatting (shell code):"));
     eprintln!(
         "{}",
@@ -1316,4 +1371,7 @@ mod tests {
     fn test_fish_completion_content_custom_cmd() {
         insta::assert_snapshot!(fish_completion_content("myapp"));
     }
+
+    // Note: should_auto_configure_powershell() is tested via WORKTRUNK_TEST_POWERSHELL_ENV
+    // override in tests/integration_tests/configure_shell.rs.
 }

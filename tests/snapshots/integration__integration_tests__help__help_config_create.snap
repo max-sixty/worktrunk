@@ -9,13 +9,15 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
     WT_TEST_EPOCH: "1735776000"
@@ -61,32 +63,31 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# ## Worktree path template[0m
   [2m#[0m
-  [2m# Controls where new worktrees are created. Paths are relative to the repository root.[0m
+  [2m# Controls where new worktrees are created.[0m
   [2m#[0m
   [2m# **Variables:**[0m
   [2m#[0m
-  [2m# - `{{ repo }}` — repository directory name[0m
+  [2m# - `{{ repo_path }}` — absolute path to the repository (e.g., `/Users/me/code/myproject`)[0m
+  [2m# - `{{ repo }}` — repository directory name (e.g., `myproject`)[0m
   [2m# - `{{ branch }}` — raw branch name (e.g., `feature/auth`)[0m
   [2m# - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)[0m
   [2m# - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)[0m
   [2m#[0m
   [2m# **Examples** for repo at `~/code/myproject`, branch `feature/auth`:[0m
   [2m#[0m
-  [2m# # Default — siblings in parent directory[0m
+  [2m# # Default — sibling directory[0m
   [2m# # Creates: ~/code/myproject.feature-auth[0m
-  [2m# worktree-path = "../{{ repo }}.{{ branch | sanitize }}"[0m
+  [2m# # worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"[0m
   [2m#[0m
   [2m# # Inside the repository[0m
   [2m# # Creates: ~/code/myproject/.worktrees/feature-auth[0m
-  [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
+  [2m# worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"[0m
   [2m#[0m
-  [2m# # Namespaced (useful when multiple repos share a parent directory)[0m
-  [2m# # Creates: ~/code/worktrees/myproject/feature-auth[0m
-  [2m# worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
+  [2m# # Centralized worktrees directory[0m
+  [2m# # Creates: ~/worktrees/myproject/feature-auth[0m
+  [2m# worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
   [2m#[0m
-  [2m# # Nested bare repo (git clone --bare <url> project/.git)[0m
-  [2m# # Creates: ~/code/project/feature-auth (sibling to .git)[0m
-  [2m# worktree-path = "../{{ branch | sanitize }}"[0m
+  [2m# `~` expands to the home directory. Relative paths are relative to the repository root.[0m
   [2m#[0m
   [2m# ## LLM commit messages[0m
   [2m#[0m
