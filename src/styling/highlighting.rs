@@ -108,17 +108,15 @@ pub fn format_toml(content: &str) -> String {
             let mut line_output = format!("{gutter} {gutter:#} ");
 
             for token in highlighter.line(y, line) {
-                match token {
-                    TokOpt::Some(text, kind) => {
-                        if let Some(s) = toml_token_style(&kind) {
-                            line_output.push_str(&format!("{s}{text}{s:#}"));
-                        } else {
-                            line_output.push_str(&text);
-                        }
-                    }
-                    TokOpt::None(text) => {
-                        line_output.push_str(&text);
-                    }
+                let (text, style) = match token {
+                    TokOpt::Some(text, kind) => (text, toml_token_style(&kind)),
+                    TokOpt::None(text) => (text, None),
+                };
+
+                if let Some(s) = style {
+                    line_output.push_str(&format!("{s}{text}{s:#}"));
+                } else {
+                    line_output.push_str(&text);
                 }
             }
 
@@ -304,6 +302,44 @@ mod tests {
         assert!(result.contains("value"));
         // Should have multiple lines (one per input line)
         assert!(result.lines().count() >= 2);
+    }
+
+    #[test]
+    fn test_format_toml_has_styled_and_unstyled_text() {
+        // This test verifies that format_toml handles both styled tokens (string, table)
+        // and unstyled text (TokOpt::None for whitespace, punctuation)
+        use synoptic::{TokOpt, from_extension};
+
+        let content = "key = \"value\"";
+        let mut highlighter = from_extension("toml", 4).expect("synoptic supports TOML");
+        let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        highlighter.run(&lines);
+
+        // Collect token types
+        let mut has_styled = false;
+        let mut has_unstyled = false;
+        for (y, line) in lines.iter().enumerate() {
+            for token in highlighter.line(y, line) {
+                match token {
+                    TokOpt::Some(_, kind) => {
+                        if toml_token_style(&kind).is_some() {
+                            has_styled = true;
+                        }
+                    }
+                    TokOpt::None(_) => {
+                        has_unstyled = true;
+                    }
+                }
+            }
+        }
+
+        // Should have styled token (the string "value")
+        assert!(has_styled, "Should have at least one styled token");
+        // Should have unstyled text (whitespace, "=", "key")
+        assert!(
+            has_unstyled,
+            "Should have at least one unstyled text segment"
+        );
     }
 
     #[test]
