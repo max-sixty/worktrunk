@@ -6,6 +6,7 @@
 //! - `step_show_squash_prompt` - Show squash prompt without executing
 //! - `handle_rebase` - Rebase onto target branch
 //! - `step_copy_ignored` - Copy gitignored files matching .worktreeinclude
+//! - `handle_promote` - Put a branch into the main worktree
 
 use std::fs;
 use std::io::ErrorKind;
@@ -19,6 +20,7 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
+    warning_message,
 };
 
 use super::command_approval::approve_hooks;
@@ -748,6 +750,142 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Result of a promote operation
+pub enum PromoteResult {
+    /// Branch was promoted successfully
+    Promoted,
+    /// Already in canonical state (requested branch is already in main)
+    AlreadyInMain(String),
+}
+
+/// Handle `wt step promote` command
+///
+/// Promotes a branch to the main worktree, exchanging it with whatever branch is currently there.
+pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
+    use worktrunk::git::GitError;
+
+    let repo = Repository::current()?;
+    let worktrees = repo.list_worktrees()?;
+
+    if worktrees.is_empty() {
+        anyhow::bail!("No worktrees found");
+    }
+
+    // For normal repos, worktrees[0] is the main worktree
+    // For bare repos, there's no main worktree - we don't support promote there
+    if repo.is_bare() {
+        anyhow::bail!("wt step promote is not supported in bare repositories");
+    }
+
+    let main_wt = &worktrees[0];
+    let main_path = &main_wt.path;
+    let main_branch = main_wt
+        .branch
+        .clone()
+        .ok_or_else(|| GitError::DetachedHead {
+            action: Some("promote".into()),
+        })?;
+
+    // Resolve the branch to promote (default_branch computed lazily, only when needed)
+    let target_branch = match branch {
+        Some(b) => b.to_string(),
+        None => {
+            let current_wt = repo.current_worktree();
+            if !current_wt.is_linked()? {
+                // From main worktree with no args: restore default branch
+                repo.default_branch()
+                    .ok_or_else(|| anyhow::anyhow!("Could not determine default branch"))?
+            } else {
+                // From other worktree with no args: promote current branch
+                current_wt.branch()?.ok_or_else(|| GitError::DetachedHead {
+                    action: Some("promote".into()),
+                })?
+            }
+        }
+    };
+
+    // Check if target is already in main worktree
+    if target_branch == main_branch {
+        return Ok(PromoteResult::AlreadyInMain(target_branch));
+    }
+
+    // Find the worktree with the target branch
+    let target_wt = worktrees
+        .iter()
+        .skip(1) // Skip main worktree
+        .find(|wt| wt.branch.as_deref() == Some(&target_branch))
+        .ok_or_else(|| GitError::WorktreeNotFound {
+            branch: target_branch.clone(),
+        })?;
+
+    let target_path = &target_wt.path;
+
+    // Ensure both worktrees are clean
+    let main_working_tree = repo.worktree_at(main_path);
+    let target_working_tree = repo.worktree_at(target_path);
+
+    main_working_tree.ensure_clean("promote", Some(&main_branch), false)?;
+    target_working_tree.ensure_clean("promote", Some(&target_branch), false)?;
+
+    // Check if we're restoring canonical state (promoting default branch back to main worktree)
+    // Only lookup default_branch if needed for messaging (already resolved if no-arg from main)
+    let default_branch = repo.default_branch();
+    let is_restoring = default_branch.as_ref() == Some(&target_branch);
+
+    if is_restoring {
+        // Restoring default branch to main worktree - no warning needed
+        eprintln!("{}", info_message("Restoring main worktree"));
+    } else {
+        // Creating mismatch - show warning and how to restore
+        eprintln!(
+            "{}",
+            warning_message("Promoting creates mismatched worktree state (shown as ⚑ in wt list)",)
+        );
+        // Only show restore hint if we know the default branch
+        if let Some(default) = &default_branch {
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "Run <bright-black>wt step promote {default}</> to restore canonical locations"
+                ))
+            );
+        }
+    }
+
+    // Perform the exchange:
+    // 1. Detach both worktrees (releases branch locks)
+    // 2. Switch to exchanged branches
+    //
+    // Detach target first so if it fails, main worktree is unchanged.
+    // Use `git switch` for branch checkouts (branch-only, no path ambiguity).
+
+    // Detach HEAD in both worktrees (target first for safer failure mode)
+    target_working_tree
+        .run_command(&["checkout", "--detach"])
+        .context("Failed to detach HEAD in target worktree")?;
+    main_working_tree
+        .run_command(&["checkout", "--detach"])
+        .context("Failed to detach HEAD in main worktree")?;
+
+    // Switch to exchanged branches
+    main_working_tree
+        .run_command(&["switch", &target_branch])
+        .context("Failed to switch to branch in main worktree")?;
+    target_working_tree
+        .run_command(&["switch", &main_branch])
+        .context("Failed to switch to branch in target worktree")?;
+
+    eprintln!(
+        "{}",
+        success_message(cformat!(
+            "Promoted: main worktree now has <bold>{target_branch}</>; {} now has <bold>{main_branch}</>",
+            worktrunk::path::format_path_for_display(target_path)
+        ))
+    );
+
+    Ok(PromoteResult::Promoted)
 }
 
 /// Move worktrees to their expected paths based on the `worktree-path` template.

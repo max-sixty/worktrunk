@@ -54,6 +54,7 @@ pub mod shell_wrapper;
 pub mod spacing_edge_cases;
 pub mod statusline;
 pub mod step_copy_ignored;
+pub mod step_promote;
 pub mod step_relocate;
 pub mod switch;
 pub mod user_hooks;

@@ -1022,6 +1022,8 @@ wt step push
 - `push` — Fast-forward target to current branch
 - `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
+- `promote` — [experimental] Put a branch into the main worktree
+- `relocate` — [experimental] Move worktrees to expected paths
 
 ## See also
 
