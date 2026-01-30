@@ -438,19 +438,4 @@ mod tests {
         // Clean up
         let _ = std::fs::remove_dir_all(&existing);
     }
-
-    #[test]
-    fn test_pathbuf_join_absolute_replaces_base() {
-        // Verify that PathBuf::join with an absolute path replaces the base.
-        // This is the behavior we rely on for absolute worktree-path templates.
-        let base = PathBuf::from("/some/repo/path");
-        let absolute = "/absolute/worktree/path";
-        let result = base.join(absolute);
-        assert_eq!(result, PathBuf::from("/absolute/worktree/path"));
-
-        // Relative path is joined
-        let relative = "relative/path";
-        let result = base.join(relative);
-        assert_eq!(result, PathBuf::from("/some/repo/path/relative/path"));
-    }
 }
