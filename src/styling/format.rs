@@ -594,4 +594,117 @@ mod tests {
         assert!(result.contains("cargo"));
         assert!(result.contains("--release"));
     }
+
+    /// Regression test: tree-sitter 0.26 properly highlights multi-line commands.
+    ///
+    /// With tree-sitter-bash 0.25.1+, unified highlighting (processing the entire
+    /// command at once) correctly identifies `&&` as operators even when they appear
+    /// at line ends. This enables switching from line-by-line to unified highlighting.
+    #[test]
+    #[cfg(feature = "syntax-highlighting")]
+    fn test_unified_multiline_highlighting() {
+        use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
+
+        let cmd = "echo 'line1' &&\necho 'line2' &&\necho 'line3'";
+
+        let highlight_names = vec![
+            "function", "keyword", "string", "operator", "comment", "number", "variable",
+            "constant",
+        ];
+
+        let bash_language = tree_sitter_bash::LANGUAGE.into();
+        let bash_highlights = tree_sitter_bash::HIGHLIGHT_QUERY;
+
+        let mut config =
+            HighlightConfiguration::new(bash_language, "bash", bash_highlights, "", "").unwrap();
+        config.configure(&highlight_names);
+
+        let mut highlighter = Highlighter::new();
+
+        // Collect highlight events as tagged text for verification
+        let mut output = String::new();
+        let highlights = highlighter
+            .highlight(&config, cmd.as_bytes(), None, |_| None)
+            .unwrap();
+        for event in highlights {
+            match event.unwrap() {
+                HighlightEvent::Source { start, end } => {
+                    output.push_str(&cmd[start..end]);
+                }
+                HighlightEvent::HighlightStart(idx) => {
+                    output.push_str(&format!("[{}:", highlight_names[idx.0]));
+                }
+                HighlightEvent::HighlightEnd => {
+                    output.push(']');
+                }
+            }
+        }
+
+        // Unified highlighting should identify && as operators
+        assert!(
+            output.contains("[operator:&&]"),
+            "Should identify && as operator in multi-line command"
+        );
+
+        // Should identify echo as function on each line
+        assert_eq!(
+            output.matches("[function:echo]").count(),
+            3,
+            "Should identify all three echo commands"
+        );
+    }
+
+    /// Regression test: template syntax ({{ }}) doesn't break highlighting.
+    ///
+    /// Tree-sitter parses around template variables, still identifying commands.
+    #[test]
+    #[cfg(feature = "syntax-highlighting")]
+    fn test_highlighting_with_template_syntax() {
+        use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
+
+        let cmd = "echo {{ branch }} && mkdir {{ path }}";
+
+        let highlight_names = vec!["function", "keyword", "string", "operator", "constant"];
+
+        let bash_language = tree_sitter_bash::LANGUAGE.into();
+        let bash_highlights = tree_sitter_bash::HIGHLIGHT_QUERY;
+
+        let mut config =
+            HighlightConfiguration::new(bash_language, "bash", bash_highlights, "", "").unwrap();
+        config.configure(&highlight_names);
+
+        let mut highlighter = Highlighter::new();
+
+        let mut output = String::new();
+        let highlights = highlighter
+            .highlight(&config, cmd.as_bytes(), None, |_| None)
+            .unwrap();
+        for event in highlights {
+            match event.unwrap() {
+                HighlightEvent::Source { start, end } => {
+                    output.push_str(&cmd[start..end]);
+                }
+                HighlightEvent::HighlightStart(idx) => {
+                    output.push_str(&format!("[{}:", highlight_names[idx.0]));
+                }
+                HighlightEvent::HighlightEnd => {
+                    output.push(']');
+                }
+            }
+        }
+
+        // Commands should still be identified despite template syntax
+        assert!(
+            output.contains("[function:echo]"),
+            "Should identify echo despite template syntax"
+        );
+        assert!(
+            output.contains("[function:mkdir]"),
+            "Should identify mkdir despite template syntax"
+        );
+        assert!(
+            output.contains("[operator:&&]"),
+            "Should identify && operator"
+        );
+    }
 }

@@ -92,12 +92,13 @@ synoptic = "2"
 terminal_size = "0.4"
 toml = { version = "0.9", features = ["preserve_order"] }
 toml_edit = { version = "0.24", features = ["serde"] }
-# All three crates must use the same version series to avoid native library conflicts
+# tree-sitter and tree-sitter-highlight should use matching versions.
+# tree-sitter-bash may lag behind (0.25.x works with tree-sitter 0.26.x).
 # These are optional dependencies controlled by the "syntax-highlighting" feature.
 # To build without C compilation requirements, use: cargo install worktrunk --no-default-features
-tree-sitter = { version = "0.25", optional = true }
-tree-sitter-bash = { version = "0.25", optional = true }
-tree-sitter-highlight = { version = "0.25", optional = true }
+tree-sitter = { version = "0.26", optional = true }
+tree-sitter-bash = { version = "0.25.1", optional = true }
+tree-sitter-highlight = { version = "0.26", optional = true }
 unicode-width = "0.2"
 wrap-ansi = "0.1"
 osc8 = "0.1.0"

@@ -12,10 +12,13 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
     WT_TEST_EPOCH: "1735776000"
@@ -38,6 +41,11 @@ exit_code: 0
 
 [2m○[22m Gutter formatting (shell code):
 [107m [0m [2m[0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mwt[0m[2m config shell init bash)"[0m[2m[0m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'This is a long command that will wrap to the next line when the terminal is narrow enough to require wrapping.'[0m[2m[0m
+[107m [0m [2m[0m[2m[34mecho[0m[2m 'hello[0m
+[107m [0m [2m[0m[2m[34mworld[0m[2m'[0m
+[107m [0m [2m[0m[2m[34mcargo[0m[2m build [0m[2m[36m--release[0m[2m [0m[2m[36m&&[0m[2m[0m[2m[0m
+[107m [0m [2m[0m[2m[34mcargo[0m[2m test[0m
 
 [2m○[22m Prompt formatting:
 [36m❯[39m [36mProceed? [y/N][39m

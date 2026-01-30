@@ -1258,11 +1258,13 @@ pub fn handle_show_theme() {
 
     eprintln!();
 
-    // Gutter - bash code
+    // Gutter - bash code (short, long wrapping, multi-line string, and multi-line command)
     eprintln!("{}", info_message("Gutter formatting (shell code):"));
     eprintln!(
         "{}",
-        format_bash_with_gutter("eval \"$(wt config shell init bash)\"",)
+        format_bash_with_gutter(
+            "eval \"$(wt config shell init bash)\"\necho 'This is a long command that will wrap to the next line when the terminal is narrow enough to require wrapping.'\necho 'hello\nworld'\ncargo build --release &&\ncargo test"
+        )
     );
 
     eprintln!();
