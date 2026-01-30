@@ -402,7 +402,7 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)
-    write!(out, "{}", format_toml(&contents))?;
+    writeln!(out, "{}", format_toml(&contents))?;
 
     Ok(())
 }
@@ -523,7 +523,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)
-    write!(out, "{}", format_toml(&contents))?;
+    writeln!(out, "{}", format_toml(&contents))?;
 
     Ok(())
 }
