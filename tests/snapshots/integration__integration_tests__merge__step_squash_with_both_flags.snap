@@ -20,15 +20,17 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
     RUST_LOG: warn
-    SOURCE_DATE_EPOCH: "1735776000"
+    SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
-    WORKTRUNK_COMMIT_GENERATION__ARGS: "squash: combined commits"
-    WORKTRUNK_COMMIT_GENERATION__COMMAND: echo
+    WORKTRUNK_COMMIT__GENERATION__COMMAND: "cat >/dev/null && echo 'squash: combined commits'"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -38,7 +40,7 @@ exit_code: 0
 ----- stderr -----
 [2m○[22m Skipping pre-commit hooks (--no-verify)
 [36m◎[39m [36mSquashing 2 commits & tracked changes into a single commit [90m(3 files, [32m+3[39m[39m[90m)[39m...[39m
-[2m↳[22m [2mBackup created @ ef0df66[22m
+[2m↳[22m [2mBackup created @ 91a335e[22m
 [36m◎[39m [36mGenerating squash commit message...[39m
 [107m [0m [1msquash: combined commits[22m
 [32m✓[39m [32mSquashed @ [HASH][39m

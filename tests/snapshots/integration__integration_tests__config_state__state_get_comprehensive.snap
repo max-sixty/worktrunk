@@ -1,6 +1,6 @@
 ---
 source: tests/integration_tests/config_state.rs
-expression: "normalize_log_path(&String::from_utf8_lossy(&output.stderr))"
+expression: "String::from_utf8_lossy(&output.stderr)"
 ---
 [36mDEFAULT BRANCH[39m
 [107m [0m main

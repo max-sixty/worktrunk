@@ -33,7 +33,9 @@
     <meta charset="UTF-8">
     <title>{% block title %}{{ config.title }}{% endblock title %}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <link rel="icon" type="image/png" href="/favicon.png">
+    <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 
     {% include "_variables.html" %}
 
@@ -229,6 +231,20 @@
             </a>
         </div>
     </footer>
+    <script>
+    // Wrap code blocks in containers SYNCHRONOUSLY before first paint to prevent layout jump.
+    // The deferred code-copy.js will add copy buttons to these wrappers later.
+    (function() {
+        var blocks = document.querySelectorAll('.content pre');
+        for (var i = 0; i < blocks.length; i++) {
+            var block = blocks[i];
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            block.parentNode.insertBefore(wrapper, block);
+            wrapper.appendChild(block);
+        }
+    })();
+    </script>
 </body>
 
 </html>

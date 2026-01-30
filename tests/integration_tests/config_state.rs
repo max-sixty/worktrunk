@@ -1,15 +1,32 @@
 use crate::common::{TEST_EPOCH, TestRepo, repo, wt_command};
 use insta::assert_snapshot;
-use regex::Regex;
 use rstest::rstest;
 use std::process::Command;
+use worktrunk::path::sanitize_for_filename;
 
-/// Normalize LOG FILES path in output for stable snapshots (temp dir varies per test)
-fn normalize_log_path(output: &str) -> String {
-    // Match "LOG FILES" followed by ANSI codes, spaces, and "@ " then the path
-    // Pattern: LOG FILES + optional ANSI reset + spaces + @ + path until newline
-    let re = Regex::new(r"(LOG FILES\x1b\[39m\s+@ )[^\n]+").unwrap();
-    re.replace_all(output, "${1}<PATH>").to_string()
+/// Generate a hook log filename matching the format from `commands::process::HookLog`.
+///
+/// Format: `{branch}-{source}-{hook_type}-{name}.log` where branch and name are sanitized.
+fn hook_log_filename(branch: &str, source: &str, hook_type: &str, name: &str) -> String {
+    let safe_branch = sanitize_for_filename(branch);
+    let safe_name = sanitize_for_filename(name);
+    format!("{safe_branch}-{source}-{hook_type}-{safe_name}.log")
+}
+
+/// Generate an internal operation log filename.
+///
+/// Format: `{branch}-{op}.log` where branch is sanitized.
+fn internal_log_filename(branch: &str, op: &str) -> String {
+    let safe_branch = sanitize_for_filename(branch);
+    format!("{safe_branch}-{op}.log")
+}
+
+/// Settings for `wt config state get` snapshots (normalizes log paths)
+fn state_get_settings() -> insta::Settings {
+    let mut settings = insta::Settings::clone_current();
+    // LOG FILES path varies per test (temp dir), normalize for stable snapshots
+    settings.add_filter(r"(LOG FILES\x1b\[39m\s+@ )[^\n]+", "${1}<PATH>");
+    settings
 }
 
 /// Write CI status to the file-based cache at .git/wt-cache/ci-status/<branch>.json
@@ -80,6 +97,9 @@ fn test_state_get_default_branch_no_remote(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_default_branch_fails_when_undetermined(repo: TestRepo) {
+    // Remove origin (fixture has it) - otherwise remote can determine default branch
+    repo.run_git(&["remote", "remove", "origin"]);
+
     // Rename main to something non-standard so default branch can't be determined
     repo.git_command()
         .args(["branch", "-m", "main", "xyz"])
@@ -149,9 +169,7 @@ fn test_state_clear_default_branch(mut repo: TestRepo) {
 
 #[rstest]
 fn test_state_clear_default_branch_empty(repo: TestRepo) {
-    // Set up remote but don't set default branch cache
-    repo.run_git(&["remote", "add", "origin", "https://example.com/repo.git"]);
-
+    // Fixture already has origin remote, no default branch cache set
     let output = wt_state_cmd(&repo, "default-branch", "clear", &[])
         .output()
         .unwrap();
@@ -591,7 +609,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     write_ci_cache(
         &repo,
         "feature",
-        r#"{"checked_at":1704067200,"head":"abc123"}"#,
+        r#"{"checked_at":1704067200,"head":"abc123","branch":"feature"}"#,
     );
 
     // Logs
@@ -651,25 +669,27 @@ fn test_state_clear_all_nothing_to_clear(repo: TestRepo) {
 fn test_state_get_empty(repo: TestRepo) {
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(normalize_log_path(&String::from_utf8_lossy(&output.stderr)), @"
-    [36mDEFAULT BRANCH[39m
-    [107m [0m main
+    state_get_settings().bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+        [36mDEFAULT BRANCH[39m
+        [107m [0m main
 
-    [36mPREVIOUS BRANCH[39m
-    [107m [0m (none)
+        [36mPREVIOUS BRANCH[39m
+        [107m [0m (none)
 
-    [36mBRANCH MARKERS[39m
-    [107m [0m (none)
+        [36mBRANCH MARKERS[39m
+        [107m [0m (none)
 
-    [36mCI STATUS CACHE[39m
-    [107m [0m (none)
+        [36mCI STATUS CACHE[39m
+        [107m [0m (none)
 
-    [36mHINTS[39m
-    [107m [0m (none)
+        [36mHINTS[39m
+        [107m [0m (none)
 
-    [36mLOG FILES[39m  @ <PATH>
-    [107m [0m (none)
-    ");
+        [36mLOG FILES[39m  @ <PATH>
+        [107m [0m (none)
+        ");
+    });
 }
 
 #[rstest]
@@ -679,7 +699,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
         ),
     );
 
@@ -687,19 +707,23 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
         &repo,
         "bugfix",
         &format!(
-            r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":true}},"checked_at":{TEST_EPOCH},"head":"111222333444555"}}"#
+            r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":true}},"checked_at":{TEST_EPOCH},"head":"111222333444555","branch":"bugfix"}}"#
         ),
     );
 
     write_ci_cache(
         &repo,
         "main",
-        &format!(r#"{{"status":null,"checked_at":{TEST_EPOCH},"head":"deadbeef12345678"}}"#),
+        &format!(
+            r#"{{"status":null,"checked_at":{TEST_EPOCH},"head":"deadbeef12345678","branch":"main"}}"#
+        ),
     );
 
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(normalize_log_path(&String::from_utf8_lossy(&output.stderr)));
+    state_get_settings().bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr));
+    });
 }
 
 #[rstest]
@@ -733,7 +757,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
         ),
     );
 
@@ -746,7 +770,9 @@ fn test_state_get_comprehensive(repo: TestRepo) {
 
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(normalize_log_path(&String::from_utf8_lossy(&output.stderr)));
+    state_get_settings().bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr));
+    });
 }
 
 #[rstest]
@@ -788,7 +814,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
         ),
     );
 
@@ -861,14 +887,14 @@ fn test_state_clear_ci_status_all_with_entries(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
         ),
     );
     write_ci_cache(
         &repo,
         "bugfix",
         &format!(
-            r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"def67890"}}"#
+            r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"def67890","branch":"bugfix"}}"#
         ),
     );
 
@@ -886,7 +912,7 @@ fn test_state_clear_ci_status_all_single_entry(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
         ),
     );
 
@@ -1106,4 +1132,242 @@ fn test_state_hints_clear_specific_not_set(repo: TestRepo) {
         .unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m Hint [1mnonexistent[22m was not set");
+}
+
+// ============================================================================
+// logs get --hook
+// ============================================================================
+
+#[rstest]
+fn test_state_logs_get_hook_returns_path(repo: TestRepo) {
+    // Create wt-logs directory with a post-start log file
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let filename = hook_log_filename("main", "user", "post-start", "server");
+    let log_file = log_dir.join(&filename);
+    std::fs::write(&log_file, "server output here").unwrap();
+
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    // The path should be printed to stdout for piping
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&filename),
+        "Expected log path in stdout: {}",
+        stdout
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_project_source(repo: TestRepo) {
+    // Test that project source logs are found with explicit format
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let filename = hook_log_filename("main", "project", "post-start", "build");
+    let log_file = log_dir.join(&filename);
+    std::fs::write(&log_file, "build output here").unwrap();
+
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=project:post-start:build"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&filename),
+        "Expected log path in stdout: {}",
+        stdout
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_internal_op(repo: TestRepo) {
+    // Test finding an internal operation log (e.g., "internal:remove")
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let filename = internal_log_filename("main", "remove");
+    let log_file = log_dir.join(&filename);
+    std::fs::write(&log_file, "remove output").unwrap();
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=internal:remove"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&filename),
+        "Expected log path in stdout: {}",
+        stdout
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_not_found(repo: TestRepo) {
+    // Create wt-logs directory with some log files but not the requested one
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let other_filename = hook_log_filename("main", "user", "post-start", "other");
+    std::fs::write(log_dir.join(&other_filename), "other output").unwrap();
+
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Check key parts separately (ANSI bold codes may appear around values)
+    assert!(
+        stderr.contains("No log file matches") && stderr.contains("user:post-start:server"),
+        "Expected spec echo in error: {}",
+        stderr
+    );
+    // The expected filename now includes hash suffixes
+    let expected_filename = hook_log_filename("main", "user", "post-start", "server");
+    assert!(
+        stderr.contains(&format!("Expected: {expected_filename}")),
+        "Expected filename in error: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Available:"),
+        "Expected list of available logs: {}",
+        stderr
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_no_logs_dir(repo: TestRepo) {
+    // No log directory exists
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No log directory exists"),
+        "Expected 'No log directory exists' error: {}",
+        stderr
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_no_logs_for_branch(repo: TestRepo) {
+    // Create wt-logs directory with logs for different branch
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let other_branch_filename = hook_log_filename("other-branch", "user", "post-start", "server");
+    std::fs::write(log_dir.join(&other_branch_filename), "other output").unwrap();
+
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No log files for branch"),
+        "Expected 'No log files for branch' error: {}",
+        stderr
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_with_branch_flag(repo: TestRepo) {
+    // Create log file for a different branch
+    repo.git_command()
+        .args(["branch", "feature"])
+        .status()
+        .unwrap();
+
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let filename = hook_log_filename("feature", "user", "post-start", "dev");
+    std::fs::write(log_dir.join(&filename), "dev output").unwrap();
+
+    // Use explicit format: source:hook-type:name
+    let output = wt_state_cmd(
+        &repo,
+        "logs",
+        "get",
+        &["--hook=user:post-start:dev", "--branch=feature"],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&filename),
+        "Expected log path in stdout: {}",
+        stdout
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_invalid_format(repo: TestRepo) {
+    // Test invalid hook spec format (missing required segments)
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Invalid log spec"),
+        "Expected 'Invalid log spec' error: {}",
+        stderr
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_rejects_colons_in_name(repo: TestRepo) {
+    // Hook names cannot contain colons (makes parsing ambiguous)
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:my:server"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Invalid log spec"),
+        "Colons in hook names should be rejected: {}",
+        stderr
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_invalid_source(repo: TestRepo) {
+    // Test invalid source
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=invalid:post-start:server"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Unknown source"),
+        "Expected 'Unknown source' error: {}",
+        stderr
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_invalid_hook_type(repo: TestRepo) {
+    // Test invalid hook type
+    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:invalid:server"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Unknown hook type"),
+        "Expected 'Unknown hook type' error: {}",
+        stderr
+    );
 }

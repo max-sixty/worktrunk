@@ -1,6 +1,6 @@
 use crate::common::{
     BareRepoTest, TestRepo, TestRepoBase, canonicalize, configure_directive_file, directive_file,
-    repo, setup_temp_snapshot_settings, wait_for_file, wt_command,
+    repo, setup_temp_snapshot_settings, wait_for, wait_for_file_count, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -195,7 +195,7 @@ fn test_bare_repo_identifies_primary_correctly() {
 }
 
 #[test]
-fn test_bare_repo_worktree_base_used_for_paths() {
+fn test_bare_repo_path_used_for_worktree_paths() {
     let test = BareRepoTest::new();
 
     // Create initial worktree
@@ -213,12 +213,12 @@ fn test_bare_repo_worktree_base_used_for_paths() {
 
     cmd.output().unwrap();
 
-    // Verify path is created inside bare repo (using worktree_base)
+    // Verify path is created inside bare repo (using repo_path as base)
     // Template: {{ branch }} -> repo/dev
     let expected = test.bare_repo_path().join("dev");
     assert!(
         expected.exists(),
-        "Worktree should be created using worktree_base: {:?}",
+        "Worktree should be created using repo_path: {:?}",
         expected
     );
 
@@ -230,10 +230,80 @@ fn test_bare_repo_worktree_base_used_for_paths() {
     );
 }
 
+#[test]
+fn test_bare_repo_with_repo_path_variable() {
+    // Test that {{ repo_path }} resolves correctly in bare repos
+    // For bare repos, repo_path should be the bare repo directory itself
+    let test = BareRepoTest::new();
+
+    // Override config to use {{ repo_path }} explicitly
+    fs::write(
+        test.config_path(),
+        "worktree-path = \"{{ repo_path }}/../worktrees/{{ branch | sanitize }}\"\n",
+    )
+    .unwrap();
+
+    // Create initial worktree
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Create new worktree using wt switch
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "feature/auth"])
+        .current_dir(&main_worktree);
+
+    let output = cmd.output().unwrap();
+
+    if !output.status.success() {
+        panic!(
+            "wt switch failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // Verify worktree was created at sibling path using {{ repo_path }}/../worktrees/
+    // Bare repo is at /tmp/xxx/repo, so worktree should be at /tmp/xxx/worktrees/feature-auth
+    let expected_path = test
+        .bare_repo_path()
+        .parent()
+        .unwrap()
+        .join("worktrees")
+        .join("feature-auth");
+    assert!(
+        expected_path.exists(),
+        "Expected worktree at {:?} (using repo_path variable)",
+        expected_path
+    );
+}
+
 #[rstest]
 fn test_bare_repo_equivalent_to_normal_repo(repo: TestRepo) {
     // This test verifies that bare repos behave identically to normal repos
     // from the user's perspective
+
+    // Remove fixture worktrees to get a clean state with just main
+    for branch in &["feature-a", "feature-b", "feature-c"] {
+        let worktree_path = repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{}", branch));
+        if worktree_path.exists() {
+            repo.git_command()
+                .args([
+                    "worktree",
+                    "remove",
+                    "--force",
+                    worktree_path.to_str().unwrap(),
+                ])
+                .output()
+                .unwrap();
+        }
+    }
 
     // Set up bare repo
     let bare_test = BareRepoTest::new();
@@ -344,16 +414,7 @@ fn test_bare_repo_merge_workflow() {
     }
 
     // Wait for background removal to complete
-    for _ in 0..50 {
-        if !feature_worktree.exists() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    assert!(
-        !feature_worktree.exists(),
-        "Feature worktree should be removed after merge"
-    );
+    wait_for("feature worktree removed", || !feature_worktree.exists());
 
     // Verify main worktree still exists and has the feature commit
     assert!(main_worktree.exists());
@@ -405,13 +466,35 @@ fn test_bare_repo_background_logs_location() {
 
     // Wait for background process to create log file (poll instead of fixed sleep)
     // The key test is that the path is correct, not that content was written (background processes are flaky in tests)
-    let log_path = test.bare_repo_path().join("wt-logs/feature-remove.log");
-    wait_for_file(&log_path);
+    // Log filename has hash suffix: feature-<hash>-remove-<hash>.log
+    let log_dir = test.bare_repo_path().join("wt-logs");
+    wait_for_file_count(&log_dir, "log", 1);
+
+    // Verify the log file matches expected pattern (feature-*-remove.log)
+    // Format: {branch_with_hash}-{op}.log (internal ops don't have hash on suffix)
+    let log_files: Vec<_> = std::fs::read_dir(&log_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.starts_with("feature-") && name.ends_with("-remove.log")
+        })
+        .collect();
+    assert_eq!(
+        log_files.len(),
+        1,
+        "Expected exactly one feature-*-remove.log file, found: {:?}",
+        log_files
+    );
 
     // Verify it's NOT in the worktree's .git directory (which doesn't exist for linked worktrees)
-    let wrong_path = main_worktree.join(".git/wt-logs/feature-remove.log");
+    let wrong_dir = main_worktree.join(".git/wt-logs");
     assert!(
-        !wrong_path.exists(),
+        !wrong_dir.exists()
+            || std::fs::read_dir(&wrong_dir)
+                .map(|d| d.count())
+                .unwrap_or(0)
+                == 0,
         "Log should NOT be in worktree's .git directory"
     );
 }

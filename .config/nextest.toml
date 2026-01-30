@@ -19,14 +19,6 @@ success-output = "never"
 [profile.default.junit]
 path = "junit.xml"
 
-# The ci_status tests spawn many parallel threads and processes (~30 threads, ~34
-# child processes each). Mark them as "heavy" so nextest limits how many run
-# concurrently. threads-required=4 means on an 8-core machine, only 2 of these
-# tests run at once instead of 8.
-[[profile.default.overrides]]
-filter = 'test(/integration_tests::ci_status::test_list_full/)'
-threads-required = 4
-
 # The source_flag test runs `cargo run` inside a PTY, which can take longer than
 # 60s when cargo needs to check/compile dependencies on slow CI runners.
 [[profile.default.overrides]]

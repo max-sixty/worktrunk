@@ -3,6 +3,7 @@
 //! Configuration that is checked into the repository and shared across all developers.
 
 use config::ConfigError;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::HooksConfig;
@@ -18,7 +19,7 @@ use super::HooksConfig;
 /// [list]
 /// url = "http://localhost:{{ branch | hash_port }}"
 /// ```
-#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct ProjectListConfig {
     /// URL template for dev server links shown in `wt list`.
     ///
@@ -43,7 +44,7 @@ pub struct ProjectListConfig {
 /// [ci]
 /// platform = "github"  # or "gitlab"
 /// ```
-#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct ProjectCiConfig {
     /// CI platform override. When set, skips URL-based platform detection.
     ///
@@ -80,7 +81,7 @@ impl ProjectConfig {
 /// - `{{ branch }}` - Branch name (e.g., "feature/auth")
 /// - `{{ worktree_name }}` - Worktree directory name (e.g., "myproject.feature-auth")
 /// - `{{ worktree_path }}` - Absolute path to the worktree (e.g., "/path/to/myproject.feature-auth")
-/// - `{{ main_worktree_path }}` - Absolute path to main worktree (e.g., "/path/to/myproject")
+/// - `{{ primary_worktree_path }}` - Primary worktree path (main worktree for normal repos; default branch worktree for bare repos)
 /// - `{{ default_branch }}` - Default branch name (e.g., "main")
 /// - `{{ commit }}` - Current HEAD commit SHA (full 40-character hash)
 /// - `{{ short_commit }}` - Current HEAD commit SHA (short 7-character hash)
@@ -94,7 +95,7 @@ impl ProjectConfig {
 ///
 /// - `{{ branch | sanitize }}` - Replace `/` and `\` with `-` (e.g., "feature-auth")
 /// - `{{ branch | hash_port }}` - Hash string to deterministic port (10000-19999)
-#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct ProjectConfig {
     /// Project hooks (same keys as user hooks, flattened at top level)
     #[serde(flatten, default)]
@@ -107,10 +108,6 @@ pub struct ProjectConfig {
     /// CI configuration (platform override)
     #[serde(default)]
     pub ci: Option<ProjectCiConfig>,
-
-    /// Captures unknown fields for validation warnings
-    #[serde(flatten, default, skip_serializing)]
-    unknown: std::collections::HashMap<String, toml::Value>,
 }
 
 impl ProjectConfig {
@@ -139,6 +136,7 @@ impl ProjectConfig {
         // Check for deprecated template variables and create migration file if needed
         // Only write migration file in main worktree (where .git is a directory)
         // Linked worktrees have .git as a file pointing to the main worktree
+        // Use show_brief_warning=true to emit a brief pointer to `wt config show`
         let is_main_worktree = repo_root.join(".git").is_dir();
         let repo_for_hints = if write_hints { Some(repo) } else { None };
         let _ = super::deprecation::check_and_migrate(
@@ -147,7 +145,21 @@ impl ProjectConfig {
             is_main_worktree,
             "Project config",
             repo_for_hints,
+            true, // show_brief_warning
         );
+
+        // Warn about unknown fields (only in main worktree where it's actionable)
+        if is_main_worktree {
+            let unknown_keys: std::collections::HashMap<_, _> = find_unknown_keys(&contents)
+                .into_iter()
+                .filter(|(k, _)| !super::deprecation::DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
+                .collect();
+            super::deprecation::warn_unknown_fields::<ProjectConfig>(
+                &config_path,
+                &unknown_keys,
+                "Project config",
+            );
+        }
 
         let config: ProjectConfig = toml::from_str(&contents)
             .map_err(|e| ConfigError::Message(format!("Failed to parse TOML: {}", e)))?;
@@ -156,17 +168,39 @@ impl ProjectConfig {
     }
 }
 
+/// Returns all valid top-level keys in project config, derived from the JsonSchema.
+///
+/// This includes keys from ProjectConfig and HooksConfig (flattened).
+/// Public for use by the `WorktrunkConfig` trait implementation.
+pub fn valid_project_config_keys() -> Vec<String> {
+    use schemars::SchemaGenerator;
+
+    let schema = SchemaGenerator::default().into_root_schema_for::<ProjectConfig>();
+
+    schema
+        .as_object()
+        .and_then(|obj| obj.get("properties"))
+        .and_then(|p| p.as_object())
+        .map(|props| props.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
 /// Find unknown keys in project config TOML content
 ///
-/// Returns a list of unrecognized top-level keys that will be silently ignored.
-/// Uses serde deserialization with flatten to automatically detect unknown fields.
-pub fn find_unknown_keys(contents: &str) -> Vec<String> {
-    // Deserialize into ProjectConfig - unknown fields are captured in the `unknown` map
-    let Ok(config) = toml::from_str::<ProjectConfig>(contents) else {
-        return vec![];
+/// Returns a map of unrecognized top-level keys (with their values) that will be ignored.
+/// Compares against the known valid keys derived from the JsonSchema.
+/// The values are included to allow checking if keys belong in the other config type.
+pub fn find_unknown_keys(contents: &str) -> std::collections::HashMap<String, toml::Value> {
+    let Ok(table) = contents.parse::<toml::Table>() else {
+        return std::collections::HashMap::new();
     };
 
-    config.unknown.into_keys().collect()
+    let valid_keys = valid_project_config_keys();
+
+    table
+        .into_iter()
+        .filter(|(key, _)| !valid_keys.contains(key))
+        .collect()
 }
 
 #[cfg(test)]
@@ -383,7 +417,7 @@ unknown-key = "value"
 "#;
         let keys = find_unknown_keys(contents);
         assert_eq!(keys.len(), 1);
-        assert!(keys.contains(&"unknown-key".to_string()));
+        assert!(keys.contains_key("unknown-key"));
     }
 
     #[test]
@@ -395,16 +429,8 @@ post-create = "npm install"
 "#;
         let keys = find_unknown_keys(contents);
         assert_eq!(keys.len(), 2);
-        assert!(keys.contains(&"foo".to_string()));
-        assert!(keys.contains(&"baz".to_string()));
-    }
-
-    #[test]
-    fn test_find_unknown_keys_invalid_toml() {
-        let contents = "invalid { toml }}}";
-        let keys = find_unknown_keys(contents);
-        // Returns empty vec for invalid TOML (graceful fallback)
-        assert!(keys.is_empty());
+        assert!(keys.contains_key("foo"));
+        assert!(keys.contains_key("baz"));
     }
 
     // ============================================================================

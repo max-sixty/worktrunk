@@ -6,27 +6,30 @@
 //! - `clear_approvals` - Clear approved commands
 //! - `handle_hook_show` - Display configured hooks
 
+use std::collections::HashMap;
+use std::fmt::Write as _;
+
 use anyhow::Context;
 use color_print::cformat;
-use std::fmt::Write as _;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
-use worktrunk::config::{CommandConfig, ProjectConfig, WorktrunkConfig};
+use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig};
 use worktrunk::git::{GitError, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    INFO_SYMBOL, PROMPT_SYMBOL, format_bash_with_gutter, format_heading, hint_message,
+    INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, hint_message,
     info_message, success_message,
 };
 
+use super::command_approval::approve_hooks_filtered;
+use super::command_executor::build_hook_context;
+
 use super::command_executor::CommandContext;
 use super::context::CommandEnv;
+use super::hooks::execute_hook;
 use super::hooks::{
     HookFailureStrategy, check_name_filter_matched, prepare_hook_commands, run_hook_with_filter,
     spawn_hook_commands_background,
-};
-use super::merge::{
-    execute_post_merge_commands, execute_pre_remove_commands, run_pre_merge_commands,
 };
 use super::project_config::collect_commands_for_hooks;
 
@@ -52,8 +55,6 @@ pub fn run_hook(
     name_filter: Option<&str>,
     custom_vars: &[(String, String)],
 ) -> anyhow::Result<()> {
-    use super::command_approval::approve_hooks_filtered;
-
     // Derive context from current environment (branch-optional for CI compatibility)
     let env = CommandEnv::for_action_branchless()?;
     let repo = &env.repo;
@@ -67,7 +68,7 @@ pub fn run_hook(
     let approved = approve_hooks_filtered(&ctx, &[hook_type], name_filter)?;
     // If declined, return early - the whole point of `wt hook` is to run hooks
     if !approved {
-        crate::output::print(worktrunk::styling::info_message("Commands declined"))?;
+        eprintln!("{}", worktrunk::styling::info_message("Commands declined"));
         return Ok(());
     }
 
@@ -76,13 +77,6 @@ pub fn run_hook(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-
-    // Helper to get user hook config
-    macro_rules! user_hook {
-        ($field:ident) => {
-            ctx.config.hooks.$field.as_ref()
-        };
-    }
 
     /// Helper to require at least one hook is configured (for standalone `wt hook` command)
     fn require_hooks(
@@ -99,10 +93,13 @@ pub fn run_hook(
         Ok(())
     }
 
+    // Get effective user hooks (global + per-project merged)
+    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
+
     // Execute the hook based on type
     match hook_type {
         HookType::PostCreate => {
-            let user_config = user_hook!(post_create);
+            let user_config = user_hooks.post_create.as_ref();
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_create.as_ref());
@@ -120,7 +117,7 @@ pub fn run_hook(
             )
         }
         HookType::PostStart => {
-            let user_config = user_hook!(post_start);
+            let user_config = user_hooks.post_start.as_ref();
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_start.as_ref());
@@ -159,7 +156,7 @@ pub fn run_hook(
             }
         }
         HookType::PostSwitch => {
-            let user_config = user_hook!(post_switch);
+            let user_config = user_hooks.post_switch.as_ref();
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_switch.as_ref());
@@ -198,7 +195,7 @@ pub fn run_hook(
             }
         }
         HookType::PreCommit => {
-            let user_config = user_hook!(pre_commit);
+            let user_config = user_hooks.pre_commit.as_ref();
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.pre_commit.as_ref());
@@ -225,36 +222,80 @@ pub fn run_hook(
             )
         }
         HookType::PreMerge => {
-            // pre-merge, post-merge, pre-remove use functions from merge.rs
-            // which already handle user hooks (approval already happened at gate)
             // Use current branch as target (matches approval prompt for wt hook)
-            let project_cfg = project_config.unwrap_or_default();
-            run_pre_merge_commands(
-                &project_cfg,
+            let mut vars = vec![("target", ctx.branch_or_head())];
+            vars.extend(custom_vars_refs.iter().cloned());
+            execute_hook(
                 &ctx,
-                ctx.branch_or_head(),
+                HookType::PreMerge,
+                &vars,
+                HookFailureStrategy::FailFast,
                 name_filter,
-                &custom_vars_refs,
+                crate::output::pre_hook_display_path(ctx.worktree_path),
             )
         }
         HookType::PostMerge => {
             // Manual wt hook: user stays at cwd (no cd happens)
-            execute_post_merge_commands(
+            let mut vars = vec![("target", ctx.branch_or_head())];
+            vars.extend(custom_vars_refs.iter().cloned());
+            execute_hook(
                 &ctx,
-                ctx.branch_or_head(),
+                HookType::PostMerge,
+                &vars,
+                HookFailureStrategy::Warn,
                 name_filter,
                 crate::output::pre_hook_display_path(ctx.worktree_path),
-                &custom_vars_refs,
             )
         }
         HookType::PreRemove => {
             // Manual wt hook: user stays at cwd (no cd happens)
-            execute_pre_remove_commands(
+            execute_hook(
                 &ctx,
+                HookType::PreRemove,
+                &custom_vars_refs,
+                HookFailureStrategy::FailFast,
                 name_filter,
                 crate::output::pre_hook_display_path(ctx.worktree_path),
-                &custom_vars_refs,
             )
+        }
+        HookType::PostRemove => {
+            let user_config = user_hooks.post_remove.as_ref();
+            let project_config = project_config
+                .as_ref()
+                .and_then(|c| c.hooks.post_remove.as_ref());
+            require_hooks(user_config, project_config, hook_type)?;
+
+            // Default to background (matching normal behavior during remove)
+            // Use --foreground to run in foreground for debugging
+            if !foreground.unwrap_or(false) {
+                let commands = prepare_hook_commands(
+                    &ctx,
+                    user_config,
+                    project_config,
+                    hook_type,
+                    &custom_vars_refs,
+                    name_filter,
+                    None,
+                )?;
+                check_name_filter_matched(
+                    name_filter,
+                    commands.len(),
+                    user_config,
+                    project_config,
+                )?;
+                spawn_hook_commands_background(&ctx, commands, hook_type)
+            } else {
+                run_hook_with_filter(
+                    &ctx,
+                    user_config,
+                    project_config,
+                    hook_type,
+                    &custom_vars_refs,
+                    HookFailureStrategy::Warn,
+                    name_filter,
+                    crate::output::pre_hook_display_path(ctx.worktree_path),
+                )
+            }
         }
     }
 }
@@ -262,11 +303,10 @@ pub fn run_hook(
 /// Handle `wt hook approvals add` command - approve all commands in the project
 pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     use super::command_approval::approve_command_batch;
-    use worktrunk::config::WorktrunkConfig;
 
     let repo = Repository::current()?;
     let project_id = repo.project_identifier()?;
-    let config = WorktrunkConfig::load().context("Failed to load config")?;
+    let config = UserConfig::load().context("Failed to load config")?;
 
     // Load project config (error if missing - this command requires it)
     let config_path = repo
@@ -283,7 +323,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     let commands = collect_commands_for_hooks(&project_config, &all_hooks);
 
     if commands.is_empty() {
-        crate::output::print(info_message("No commands configured in project"))?;
+        eprintln!("{}", info_message("No commands configured in project"));
         return Ok(());
     }
 
@@ -295,7 +335,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
             .collect();
 
         if unapproved.is_empty() {
-            crate::output::print(info_message("All commands already approved"))?;
+            eprintln!("{}", info_message("All commands already approved"));
             return Ok(());
         }
 
@@ -312,9 +352,9 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
 
     // Show result
     if approved {
-        crate::output::print(success_message("Commands approved & saved to config"))?;
+        eprintln!("{}", success_message("Commands approved & saved to config"));
     } else {
-        crate::output::print(info_message("Commands declined"))?;
+        eprintln!("{}", info_message("Commands declined"));
     }
 
     Ok(())
@@ -322,36 +362,56 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
 
 /// Handle `wt hook approvals clear` command - clear approved commands
 pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
-    use worktrunk::config::WorktrunkConfig;
-
-    let mut config = WorktrunkConfig::load().context("Failed to load config")?;
+    let mut config = UserConfig::load().context("Failed to load config")?;
 
     if global {
-        // Clear all approvals for all projects
-        let project_count = config.projects.len();
+        // Clear all approvals for all projects (preserving other per-project settings)
+        let projects_with_approvals: Vec<String> = config
+            .projects
+            .iter()
+            .filter(|(_, p)| !p.approved_commands.is_empty())
+            .map(|(id, _)| id.clone())
+            .collect();
 
-        if project_count == 0 {
-            crate::output::print(info_message("No approvals to clear"))?;
+        if projects_with_approvals.is_empty() {
+            eprintln!("{}", info_message("No approvals to clear"));
             return Ok(());
         }
 
-        config.projects.clear();
+        let project_count = projects_with_approvals.len();
+
+        // Clear only approved_commands, preserve other settings
+        for project_id in &projects_with_approvals {
+            if let Some(project_config) = config.projects.get_mut(project_id) {
+                project_config.approved_commands.clear();
+                // Remove project entry only if it has no other settings
+                if project_config.is_empty() {
+                    config.projects.remove(project_id);
+                }
+            }
+        }
         config.save().context("Failed to save config")?;
 
-        crate::output::print(success_message(format!(
-            "Cleared approvals for {project_count} project{}",
-            if project_count == 1 { "" } else { "s" }
-        )))?;
+        eprintln!(
+            "{}",
+            success_message(format!(
+                "Cleared approvals for {project_count} project{}",
+                if project_count == 1 { "" } else { "s" }
+            ))
+        );
     } else {
         // Clear approvals for current project (default)
         let repo = Repository::current()?;
         let project_id = repo.project_identifier()?;
 
-        // Check if project has any approvals
-        let had_approvals = config.projects.contains_key(&project_id);
+        // Check if project has any approvals (not just if it exists)
+        let had_approvals = config
+            .projects
+            .get(&project_id)
+            .is_some_and(|p| !p.approved_commands.is_empty());
 
         if !had_approvals {
-            crate::output::print(info_message("No approvals to clear for this project"))?;
+            eprintln!("{}", info_message("No approvals to clear for this project"));
             return Ok(());
         }
 
@@ -366,10 +426,13 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
             .revoke_project(&project_id, None)
             .context("Failed to clear project approvals")?;
 
-        crate::output::print(success_message(format!(
-            "Cleared {approval_count} approval{} for this project",
-            if approval_count == 1 { "" } else { "s" }
-        )))?;
+        eprintln!(
+            "{}",
+            success_message(format!(
+                "Cleared {approval_count} approval{} for this project",
+                if approval_count == 1 { "" } else { "s" }
+            ))
+        );
     }
 
     Ok(())
@@ -380,7 +443,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
     use crate::help_pager::show_help_in_pager;
 
     let repo = Repository::current()?;
-    let config = WorktrunkConfig::load().context("Failed to load user config")?;
+    let config = UserConfig::load().context("Failed to load user config")?;
     let project_config = repo.load_project_config()?;
     let project_id = repo.project_identifier().ok();
 
@@ -393,6 +456,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
         "pre-merge" => HookType::PreMerge,
         "post-merge" => HookType::PostMerge,
         "pre-remove" => HookType::PreRemove,
+        "post-remove" => HookType::PostRemove,
         _ => unreachable!("clap validates hook type"),
     });
 
@@ -424,7 +488,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
     )?;
 
     // Display through pager (fall back to stderr if pager unavailable)
-    if show_help_in_pager(&output).is_err() {
+    if show_help_in_pager(&output, true).is_err() {
         worktrunk::styling::eprintln!("{}", output);
     }
 
@@ -434,7 +498,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
 /// Render user hooks section
 fn render_user_hooks(
     out: &mut String,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
@@ -454,15 +518,18 @@ fn render_user_hooks(
         )
     )?;
 
-    // Collect all user hooks
+    // Collect all user hooks (global hooks from the user config file)
+    // Note: uses overrides.hooks for display, not the merged hooks() accessor
+    let user_hooks = &config.configs.hooks;
     let hooks = [
-        (HookType::PostCreate, &config.hooks.post_create),
-        (HookType::PostStart, &config.hooks.post_start),
-        (HookType::PostSwitch, &config.hooks.post_switch),
-        (HookType::PreCommit, &config.hooks.pre_commit),
-        (HookType::PreMerge, &config.hooks.pre_merge),
-        (HookType::PostMerge, &config.hooks.post_merge),
-        (HookType::PreRemove, &config.hooks.pre_remove),
+        (HookType::PostCreate, &user_hooks.post_create),
+        (HookType::PostStart, &user_hooks.post_start),
+        (HookType::PostSwitch, &user_hooks.post_switch),
+        (HookType::PreCommit, &user_hooks.pre_commit),
+        (HookType::PreMerge, &user_hooks.pre_merge),
+        (HookType::PostMerge, &user_hooks.post_merge),
+        (HookType::PreRemove, &user_hooks.pre_remove),
+        (HookType::PostRemove, &user_hooks.post_remove),
     ];
 
     let mut has_any = false;
@@ -492,7 +559,7 @@ fn render_project_hooks(
     out: &mut String,
     repo: &Repository,
     project_config: Option<&ProjectConfig>,
-    user_config: &WorktrunkConfig,
+    user_config: &UserConfig,
     project_id: Option<&str>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
@@ -523,6 +590,7 @@ fn render_project_hooks(
         (HookType::PreMerge, &config.hooks.pre_merge),
         (HookType::PostMerge, &config.hooks.post_merge),
         (HookType::PreRemove, &config.hooks.pre_remove),
+        (HookType::PostRemove, &config.hooks.post_remove),
     ];
 
     let mut has_any = false;
@@ -553,7 +621,7 @@ fn render_hook_commands(
     hook_type: HookType,
     config: &CommandConfig,
     // For project hooks: (user_config, project_id) to check approval status
-    approval_context: Option<(&WorktrunkConfig, Option<&str>)>,
+    approval_context: Option<(&UserConfig, Option<&str>)>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
     let commands = config.commands();
@@ -600,8 +668,6 @@ fn render_hook_commands(
 
 /// Expand a command template with context variables
 fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: HookType) -> String {
-    use super::command_executor::build_hook_context;
-
     // Build extra vars based on hook type (same logic as run_hook approval)
     let default_branch = ctx.repo.default_branch();
     let extra_vars: Vec<(&str, &str)> = match hook_type {
@@ -620,12 +686,13 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
         _ => Vec::new(),
     };
     let template_ctx = build_hook_context(ctx, &extra_vars);
-    let vars: std::collections::HashMap<&str, &str> = template_ctx
+    let vars: HashMap<&str, &str> = template_ctx
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
     // Use the standard template expansion (shell-escaped)
-    worktrunk::config::expand_template(template, &vars, true)
-        .unwrap_or_else(|_| template.to_string())
+    // On any error, show both the template and error message
+    worktrunk::config::expand_template(template, &vars, true, ctx.repo, "hook preview")
+        .unwrap_or_else(|err| format!("# Template error: {}\n{}", err, template))
 }

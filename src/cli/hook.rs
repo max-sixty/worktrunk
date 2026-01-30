@@ -10,7 +10,7 @@ pub enum HookCommand {
     /// Lists user and project hooks. Project hooks show approval status (❓ = needs approval).
     Show {
         /// Hook type to show (default: all)
-        #[arg(value_parser = ["post-create", "post-start", "post-switch", "pre-commit", "pre-merge", "post-merge", "pre-remove"])]
+        #[arg(value_parser = ["post-create", "post-start", "post-switch", "pre-commit", "pre-merge", "post-merge", "pre-remove", "post-remove"])]
         hook_type: Option<String>,
 
         /// Show expanded commands with current variables
@@ -160,6 +160,30 @@ pub enum HookCommand {
         /// Skip approval prompts
         #[arg(short, long)]
         yes: bool,
+
+        /// Override built-in template variable (KEY=VALUE)
+        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
+        vars: Vec<(String, String)>,
+    },
+
+    /// Run post-remove hooks
+    ///
+    /// Background by default. Use `--foreground` to run in foreground for debugging.
+    PostRemove {
+        /// Filter by command name
+        ///
+        /// Supports `user:name` or `project:name` to filter by source.
+        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
+        /// Skip approval prompts
+        #[arg(short, long)]
+        yes: bool,
+
+        /// Run in foreground (block until complete)
+        #[arg(long)]
+        foreground: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]

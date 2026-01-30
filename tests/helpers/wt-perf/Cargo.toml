@@ -1,0 +1,26 @@
+[package]
+name = "wt-perf"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+publish = false
+description = "Performance testing and tracing tools for worktrunk"
+
+[dependencies]
+# For repo setup
+tempfile = "3.19"
+dunce = "1"
+
+# For CLI
+clap = { version = "4", features = ["derive"] }
+
+# For trace parsing (reuse worktrunk's trace module)
+worktrunk = { path = "../../.." }
+
+[lib]
+name = "wt_perf"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wt-perf"
+path = "src/main.rs"

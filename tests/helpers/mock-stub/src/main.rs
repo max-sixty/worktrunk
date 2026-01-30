@@ -1,141 +1,159 @@
-//! Windows-compatible mock executable stub.
+//! Config-driven mock executable for integration tests.
 //!
-//! When invoked as `foo.exe`, runs `bash foo <args>` where `foo` is a companion
-//! shell script in the same directory. This allows Rust's Command::new() to find
-//! mock commands on Windows (CreateProcessW only searches for .exe files).
+//! Reads a JSON config file to determine responses. When invoked as `gh`,
+//! looks for `gh.json` and responds based on config.
 //!
-//! Usage in tests:
-//! 1. Copy mock-stub.exe to bin_dir/gh.exe
-//! 2. Write shell script to bin_dir/gh
-//! 3. Command::new("gh") now works on Windows
+//! Config location: `MOCK_CONFIG_DIR` env var (set by test harness)
+//!
+//! Config format:
+//! ```json
+//! {
+//!   "version": "gh version 2.0.0 (mock)",
+//!   "commands": {
+//!     "auth": { "exit_code": 0 },
+//!     "pr": { "file": "pr_data.json" },
+//!     "run": { "output": "[{\"status\": \"completed\"}]" }
+//!   }
+//! }
+//! ```
+//!
+//! Command matching (in priority order):
+//! 1. `gh --version` → outputs version string
+//! 2. Triple: `glab mr view 123` → matches "mr view 123" (first three args)
+//! 3. Compound: `gh mr list ...` → matches "mr list" (first two args)
+//! 4. Single: `gh mr ...` → matches "mr" (first arg only)
+//! 5. `_default` → fallback if no match
+//!
+//! This allows different responses for `glab mr view 1` vs `glab mr view 2`.
+//!
+//! Response types:
+//! - `file`: read and output contents of specified file (relative to config dir)
+//! - `output`: output literal string
+//! - `exit_code`: exit with specified code (default 0)
 
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::env;
+use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio, exit};
+use std::path::PathBuf;
+use std::process::exit;
 
-/// Convert Windows path to MSYS2/Git Bash style path.
-///
-/// Git Bash expects Unix-style paths. When we pass a Windows path like
-/// `D:\temp\bin\gh` to bash, it doesn't understand it. Convert to `/d/temp/bin/gh`.
-fn to_msys_path(path: &Path) -> String {
-    let path_str = path.to_string_lossy();
-
-    // Check for Windows drive letter (e.g., "D:\...")
-    let chars: Vec<char> = path_str.chars().collect();
-    if chars.len() >= 2 && chars[1] == ':' {
-        // D:\foo\bar -> /d/foo/bar
-        let drive = chars[0].to_ascii_lowercase();
-        format!("/{}{}", drive, path_str[2..].replace('\\', "/"))
-    } else {
-        // Already Unix-style or relative path
-        path_str.replace('\\', "/")
-    }
+#[derive(Debug, Deserialize)]
+struct Config {
+    version: Option<String>,
+    #[serde(default)]
+    commands: HashMap<String, CommandResponse>,
 }
 
-/// Find Git Bash on Windows (avoid WSL bash wrapper at `C:\Windows\System32\bash.exe`).
-#[cfg(windows)]
-fn find_bash() -> PathBuf {
-    // GitHub Actions and most Windows installations have Git here
-    let git_bash = PathBuf::from(r"C:\Program Files\Git\bin\bash.exe");
-    if git_bash.exists() {
-        git_bash
-    } else {
-        PathBuf::from("bash")
-    }
+#[derive(Debug, Deserialize)]
+struct CommandResponse {
+    file: Option<String>,
+    output: Option<String>,
+    stderr: Option<String>,
+    #[serde(default)]
+    exit_code: i32,
 }
 
-#[cfg(not(windows))]
-fn find_bash() -> PathBuf {
-    PathBuf::from("bash")
+/// Get command name from argv\[0\].
+fn command_name() -> String {
+    let argv0 = env::args().next().expect("mock: no argv[0]");
+    std::path::Path::new(&argv0)
+        .file_stem()
+        .expect("mock: argv[0] has no file stem")
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn config_dir() -> PathBuf {
+    PathBuf::from(env::var_os("MOCK_CONFIG_DIR").expect("mock: MOCK_CONFIG_DIR not set"))
 }
 
 fn main() {
-    let exe_path = env::current_exe().expect("failed to get executable path");
+    let cmd_name = command_name();
+    let config_dir = config_dir();
+    let config_path = config_dir.join(format!("{}.json", cmd_name));
 
-    // Strip .exe extension to get companion script path
-    // e.g., /tmp/bin/gh.exe -> /tmp/bin/gh
-    let script_path = exe_path.with_extension("");
-    let script_dir = script_path
-        .parent()
-        .expect("mock-stub: script path has no parent directory");
-
-    // Distinguish setup errors from environment errors
-    if !script_path.exists() {
-        eprintln!(
-            "mock-stub: companion script not found: {}",
-            script_path.display()
-        );
-        eprintln!("Check that write_mock_script() created the script file.");
+    let content = fs::read_to_string(&config_path).unwrap_or_else(|e| {
+        eprintln!("mock: failed to read {}: {}", config_path.display(), e);
         exit(1);
-    }
+    });
 
-    // Convert to MSYS2-style path for bash on Windows
-    let script_path_str = to_msys_path(&script_path);
-    let script_dir_str = to_msys_path(script_dir);
+    let config: Config = serde_json::from_str(&content).unwrap_or_else(|e| {
+        eprintln!("mock: failed to parse {}: {}", config_path.display(), e);
+        exit(1);
+    });
 
-    // Forward all arguments to bash with the script
     let args: Vec<String> = env::args().skip(1).collect();
 
-    // Find Git Bash on Windows (avoid WSL bash wrapper)
-    let bash_path = find_bash();
-
-    // Debug: Show what we're about to execute (only when MOCK_DEBUG is set)
-    if env::var("MOCK_DEBUG").is_ok() {
-        eprintln!("mock-stub: exe_path={}", exe_path.display());
-        eprintln!("mock-stub: script_path={}", script_path.display());
-        eprintln!("mock-stub: script_path_str={}", script_path_str);
-        eprintln!("mock-stub: script_dir={}", script_dir.display());
-        eprintln!("mock-stub: script_dir_str={}", script_dir_str);
-        eprintln!("mock-stub: bash_path={}", bash_path.display());
-        eprintln!("mock-stub: args={:?}", args);
+    // Handle --version flag
+    if args.first().map(|s| s.as_str()) == Some("--version")
+        && let Some(version) = &config.version
+    {
+        println!("{}", version);
+        exit(0);
     }
 
-    // Use .output() to capture stdout/stderr, then forward them.
-    // This is more reliable than relying on handle inheritance on Windows,
-    // which can fail silently when pipes are involved.
-    //
-    // Pass MOCK_SCRIPT_DIR so scripts can reliably find sibling files.
-    // This avoids $0/dirname/pwd issues in Git Bash on Windows CI.
-    let output = Command::new(&bash_path)
-        .arg(&script_path_str)
-        .args(&args)
-        .env("MOCK_SCRIPT_DIR", &script_dir_str)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .unwrap_or_else(|e| {
-            eprintln!(
-                "mock-stub: failed to execute bash at {}: {e}",
-                bash_path.display()
-            );
-            eprintln!("Is Git Bash installed?");
-            exit(1);
-        });
+    // Match against commands with priority: triple > compound > single > _default
+    // Triple: "mr view 123" matches before "mr view"
+    // Compound: "mr list" matches before "mr"
+    let default_response = CommandResponse {
+        file: None,
+        output: None,
+        stderr: None,
+        exit_code: 1,
+    };
 
-    // Debug: Show exit code and output lengths
-    if env::var("MOCK_DEBUG").is_ok() {
-        eprintln!(
-            "mock-stub: exit={} stdout_len={} stderr_len={}",
-            output.status.code().unwrap_or(-1),
-            output.stdout.len(),
-            output.stderr.len()
-        );
-        if !output.stderr.is_empty() {
-            eprintln!(
-                "mock-stub: stderr={}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+    // Try triple match first (e.g., "mr view 1", "mr view 2")
+    let triple_key = if args.len() >= 3 {
+        Some(format!("{} {} {}", args[0], args[1], args[2]))
+    } else {
+        None
+    };
+
+    // Try compound match (e.g., "mr list", "mr view")
+    let compound_key = if args.len() >= 2 {
+        Some(format!("{} {}", args[0], args[1]))
+    } else {
+        None
+    };
+
+    let response = triple_key
+        .as_ref()
+        .and_then(|key| config.commands.get(key))
+        // Fall back to compound match
+        .or_else(|| {
+            compound_key
+                .as_ref()
+                .and_then(|key| config.commands.get(key))
+        })
+        // Fall back to single-arg match
+        .or_else(|| args.first().and_then(|cmd| config.commands.get(cmd)))
+        // Fall back to _default
+        .or_else(|| config.commands.get("_default"))
+        .unwrap_or(&default_response);
+
+    if let Some(file) = &response.file {
+        let file_path = config_dir.join(file);
+        match fs::read_to_string(&file_path) {
+            Ok(contents) => {
+                print!("{}", contents);
+                io::stdout().flush().unwrap();
+            }
+            Err(e) => {
+                eprintln!("mock: failed to read {}: {}", file_path.display(), e);
+                exit(1);
+            }
         }
+    } else if let Some(output) = &response.output {
+        print!("{}", output);
+        io::stdout().flush().unwrap();
     }
 
-    // Forward captured output to our stdout/stderr.
-    // Must flush before exit() since exit() doesn't run destructors.
-    io::stdout().write_all(&output.stdout).unwrap();
-    io::stdout().flush().unwrap();
-    io::stderr().write_all(&output.stderr).unwrap();
-    io::stderr().flush().unwrap();
+    if let Some(stderr_output) = &response.stderr {
+        eprint!("{}", stderr_output);
+        io::stderr().flush().unwrap();
+    }
 
-    exit(output.status.code().unwrap_or(1));
+    exit(response.exit_code);
 }

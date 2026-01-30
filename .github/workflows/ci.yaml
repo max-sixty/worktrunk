@@ -1,5 +1,10 @@
 name: ci
 
+# Runner versions are pinned to avoid surprise breaking changes from -latest migrations.
+# The claude-renovate workflow checks weekly for updates and creates PRs.
+# - windows-2022: Pinned because windows-2025 lacks D: drive (actions/runner-images#12677)
+# - ubuntu-24.04, macos-15: Pinned to current -latest equivalents
+
 on:
   push:
     branches: [ main ]
@@ -14,7 +19,7 @@ env:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
       uses: actions/checkout@v6
@@ -34,7 +39,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-24.04
+            name: linux
+          - os: macos-15
+            name: macos
+          - os: windows-2022
+            name: windows
+    name: test (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -104,12 +116,19 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v6
       with:
-        name: junit-${{ matrix.os }}
+        name: junit-${{ matrix.name }}
         path: target/nextest/default/junit.xml
+
+    - name: 📊 Upload test results to Codecov
+      if: ${{ !cancelled() && github.repository_owner == 'max-sixty' }}
+      uses: codecov/test-results-action@v1
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: target/nextest/default/junit.xml
 
   # Check if Cargo files changed (for conditional jobs below)
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: read
@@ -128,7 +147,7 @@ jobs:
             - 'rust-toolchain.toml'
 
   msrv:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: changes
     if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
     steps:
@@ -146,7 +165,7 @@ jobs:
       run: cargo msrv verify
 
   check-unused-dependencies:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: changes
     if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
     steps:
@@ -169,7 +188,7 @@ jobs:
         args: --all-targets
 
   benchmarks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: changes
     if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
     steps:
@@ -185,15 +204,17 @@ jobs:
         packages: zsh fish
         version: 1.0
 
-    - name: 📊 Run benchmarks
-      uses: clechasseur/rs-cargo@v4
+    - name: 💰 Rust repo cache
+      uses: actions/cache@v5
       with:
-        command: bench
-        # Run completion benchmarks (list has slow real_repo tests)
-        args: --bench completion -- --warm-up-time 0.3 --measurement-time 1
+        path: target/bench-repos
+        key: bench-repos-rust-${{ runner.os }}
+
+    - name: 📊 Run benchmarks
+      run: cargo bench
 
   code-coverage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
       uses: actions/checkout@v6

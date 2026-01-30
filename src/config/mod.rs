@@ -24,12 +24,67 @@ mod project;
 mod test;
 mod user;
 
+/// Trait for worktrunk config types (user and project config).
+///
+/// Both config types use JsonSchema to derive valid keys, allowing validation
+/// to detect misplaced or misspelled keys. The `Other` associated type enables
+/// checking whether a key belongs in the other config.
+pub trait WorktrunkConfig: for<'de> serde::Deserialize<'de> + Sized {
+    /// The other config type (UserConfig ↔ ProjectConfig).
+    type Other: WorktrunkConfig;
+
+    /// Human-readable description of where this config lives.
+    fn description() -> &'static str;
+
+    /// Check if a key would be valid in this config type.
+    /// Uses JsonSchema-derived keys for validation.
+    fn is_valid_key(key: &str) -> bool;
+}
+
+impl WorktrunkConfig for UserConfig {
+    type Other = ProjectConfig;
+
+    fn description() -> &'static str {
+        "user config"
+    }
+
+    fn is_valid_key(key: &str) -> bool {
+        use std::sync::OnceLock;
+        static VALID_KEYS: OnceLock<Vec<String>> = OnceLock::new();
+        let valid_keys = VALID_KEYS.get_or_init(user::valid_user_config_keys);
+        valid_keys.iter().any(|k| k == key)
+    }
+}
+
+impl WorktrunkConfig for ProjectConfig {
+    type Other = UserConfig;
+
+    fn description() -> &'static str {
+        "project config"
+    }
+
+    fn is_valid_key(key: &str) -> bool {
+        use std::sync::OnceLock;
+        static VALID_KEYS: OnceLock<Vec<String>> = OnceLock::new();
+        let valid_keys = VALID_KEYS.get_or_init(project::valid_project_config_keys);
+        valid_keys.iter().any(|k| k == key)
+    }
+}
+
 // Re-export public types
 pub use commands::{Command, CommandConfig};
-pub use deprecation::check_and_migrate as check_deprecated_vars;
+pub use deprecation::DeprecationInfo;
+pub use deprecation::Deprecations;
+pub use deprecation::check_and_migrate;
+pub use deprecation::detect_deprecations;
+pub use deprecation::format_brief_warning;
+pub use deprecation::format_deprecation_details;
 pub use deprecation::normalize_template_vars;
+pub use deprecation::write_migration_file;
+pub use deprecation::{DEPRECATED_SECTION_KEYS, key_belongs_in, warn_unknown_fields};
 pub use expansion::{
-    DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, expand_template, sanitize_branch_name, sanitize_db,
+    DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, expand_template, redact_credentials,
+    sanitize_branch_name, sanitize_db, short_hash,
 };
 pub use hooks::HooksConfig;
 pub use project::{
@@ -37,27 +92,57 @@ pub use project::{
     find_unknown_keys as find_unknown_project_keys,
 };
 pub use user::{
-    CommitGenerationConfig, StageMode, UserProjectConfig, WorktrunkConfig,
+    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig,
+    ResolvedConfig, SelectConfig, StageMode, UserConfig, UserProjectOverrides,
     find_unknown_keys as find_unknown_user_keys, get_config_path, set_config_path,
 };
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::Repository;
+
+    /// Test fixture that creates a real temporary git repository.
+    struct TestRepo {
+        _dir: tempfile::TempDir,
+        repo: Repository,
+    }
+
+    impl TestRepo {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            std::process::Command::new("git")
+                .args(["init"])
+                .current_dir(dir.path())
+                .output()
+                .unwrap();
+            let repo = Repository::at(dir.path()).unwrap();
+            Self { _dir: dir, repo }
+        }
+    }
+
+    fn test_repo() -> TestRepo {
+        TestRepo::new()
+    }
 
     #[test]
     fn test_config_serialization() {
-        let config = WorktrunkConfig::default();
+        let config = UserConfig::default();
         let toml = toml::to_string(&config).unwrap();
         // worktree-path is not serialized when None (uses built-in default)
         assert!(!toml.contains("worktree-path"));
-        assert!(toml.contains("commit-generation"));
+        // commit and commit-generation sections are not serialized when None
+        assert!(!toml.contains("[commit]"));
+        assert!(!toml.contains("[commit-generation]"));
     }
 
     #[test]
     fn test_config_serialization_with_worktree_path() {
-        let config = WorktrunkConfig {
-            worktree_path: Some("custom/{{ branch }}".to_string()),
+        let config = UserConfig {
+            configs: OverridableConfig {
+                worktree_path: Some("custom/{{ branch }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let toml = toml::to_string(&config).unwrap();
@@ -67,115 +152,149 @@ mod tests {
 
     #[test]
     fn test_default_config() {
-        let config = WorktrunkConfig::default();
+        let config = UserConfig::default();
         // worktree_path is None by default, but the getter returns the default
-        assert!(config.worktree_path.is_none());
+        assert!(config.configs.worktree_path.is_none());
         assert_eq!(
             config.worktree_path(),
-            "../{{ repo }}.{{ branch | sanitize }}"
+            "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
         );
-        assert_eq!(config.commit_generation.command, None);
+        // commit_generation is None by default
+        assert!(config.commit_generation.is_none());
         assert!(config.projects.is_empty());
     }
 
     #[test]
     fn test_format_worktree_path() {
-        let config = WorktrunkConfig {
-            worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
+        let test = test_repo();
+        let config = UserConfig {
+            configs: OverridableConfig {
+                worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
-            config.format_path("myproject", "feature-x").unwrap(),
+            config
+                .format_path("myproject", "feature-x", &test.repo, None)
+                .unwrap(),
             "myproject.feature-x"
         );
     }
 
     #[test]
     fn test_format_worktree_path_custom_template() {
-        let config = WorktrunkConfig {
-            worktree_path: Some("{{ main_worktree }}-{{ branch }}".to_string()),
+        let test = test_repo();
+        let config = UserConfig {
+            configs: OverridableConfig {
+                worktree_path: Some("{{ main_worktree }}-{{ branch }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
-            config.format_path("myproject", "feature-x").unwrap(),
+            config
+                .format_path("myproject", "feature-x", &test.repo, None)
+                .unwrap(),
             "myproject-feature-x"
         );
     }
 
     #[test]
     fn test_format_worktree_path_only_branch() {
-        let config = WorktrunkConfig {
-            worktree_path: Some(".worktrees/{{ main_worktree }}/{{ branch }}".to_string()),
+        let test = test_repo();
+        let config = UserConfig {
+            configs: OverridableConfig {
+                worktree_path: Some(".worktrees/{{ main_worktree }}/{{ branch }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
-            config.format_path("myproject", "feature-x").unwrap(),
+            config
+                .format_path("myproject", "feature-x", &test.repo, None)
+                .unwrap(),
             ".worktrees/myproject/feature-x"
         );
     }
 
     #[test]
     fn test_format_worktree_path_with_slashes() {
+        let test = test_repo();
         // Use {{ branch | sanitize }} to replace slashes with dashes
-        let config = WorktrunkConfig {
-            worktree_path: Some("{{ main_worktree }}.{{ branch | sanitize }}".to_string()),
+        let config = UserConfig {
+            configs: OverridableConfig {
+                worktree_path: Some("{{ main_worktree }}.{{ branch | sanitize }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
-            config.format_path("myproject", "feature/foo").unwrap(),
+            config
+                .format_path("myproject", "feature/foo", &test.repo, None)
+                .unwrap(),
             "myproject.feature-foo"
         );
     }
 
     #[test]
     fn test_format_worktree_path_with_multiple_slashes() {
-        let config = WorktrunkConfig {
-            worktree_path: Some(
-                ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
-            ),
+        let test = test_repo();
+        let config = UserConfig {
+            configs: OverridableConfig {
+                worktree_path: Some(
+                    ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
+                ),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
-            config.format_path("myproject", "feature/sub/task").unwrap(),
+            config
+                .format_path("myproject", "feature/sub/task", &test.repo, None)
+                .unwrap(),
             ".worktrees/myproject/feature-sub-task"
         );
     }
 
     #[test]
     fn test_format_worktree_path_with_backslashes() {
+        let test = test_repo();
         // Windows-style path separators should also be sanitized
-        let config = WorktrunkConfig {
-            worktree_path: Some(
-                ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
-            ),
+        let config = UserConfig {
+            configs: OverridableConfig {
+                worktree_path: Some(
+                    ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
+                ),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
-            config.format_path("myproject", "feature\\foo").unwrap(),
+            config
+                .format_path("myproject", "feature\\foo", &test.repo, None)
+                .unwrap(),
             ".worktrees/myproject/feature-foo"
         );
     }
 
     #[test]
     fn test_format_worktree_path_raw_branch() {
+        let test = test_repo();
         // {{ branch }} without filter gives raw branch name
-        let config = WorktrunkConfig {
-            worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
+        let config = UserConfig {
+            configs: OverridableConfig {
+                worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert_eq!(
-            config.format_path("myproject", "feature/foo").unwrap(),
+            config
+                .format_path("myproject", "feature/foo", &test.repo, None)
+                .unwrap(),
             "myproject.feature/foo"
         );
-    }
-
-    #[test]
-    fn test_project_config_default() {
-        let config = ProjectConfig::default();
-        assert!(config.hooks.post_create.is_none());
-        assert!(config.hooks.post_start.is_none());
-        assert!(config.hooks.pre_merge.is_none());
-        assert!(config.hooks.post_merge.is_none());
     }
 
     #[test]
@@ -350,14 +469,17 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
     #[test]
     fn test_user_project_config_equality() {
-        let config1 = UserProjectConfig {
+        let config1 = UserProjectOverrides {
             approved_commands: vec!["npm install".to_string()],
+            ..Default::default()
         };
-        let config2 = UserProjectConfig {
+        let config2 = UserProjectOverrides {
             approved_commands: vec!["npm install".to_string()],
+            ..Default::default()
         };
-        let config3 = UserProjectConfig {
+        let config3 = UserProjectOverrides {
             approved_commands: vec!["npm test".to_string()],
+            ..Default::default()
         };
         assert_eq!(config1, config2);
         assert_ne!(config1, config3);
@@ -365,11 +487,12 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
     #[test]
     fn test_is_command_approved() {
-        let mut config = WorktrunkConfig::default();
+        let mut config = UserConfig::default();
         config.projects.insert(
             "github.com/user/repo".to_string(),
-            UserProjectConfig {
+            UserProjectOverrides {
                 approved_commands: vec!["npm install".to_string()],
+                ..Default::default()
             },
         );
 
@@ -384,7 +507,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("test-config.toml");
-        let mut config = WorktrunkConfig::default();
+        let mut config = UserConfig::default();
 
         // First approval
         assert!(!config.is_command_approved("github.com/user/repo", "npm install"));
@@ -429,7 +552,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("test-config.toml");
 
-        let mut config = WorktrunkConfig::default();
+        let mut config = UserConfig::default();
 
         // Set up two approved commands
         config
@@ -475,7 +598,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("test-config.toml");
 
-        let mut config = WorktrunkConfig::default();
+        let mut config = UserConfig::default();
 
         // Revoking from non-existent project is a no-op
         config
@@ -505,7 +628,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("test-config.toml");
 
-        let mut config = WorktrunkConfig::default();
+        let mut config = UserConfig::default();
 
         // Set up multiple projects
         config
@@ -553,10 +676,18 @@ task2 = "echo 'Task 2 running' > task2.txt"
     fn test_expand_template_basic() {
         use std::collections::HashMap;
 
+        let test = test_repo();
         let mut vars = HashMap::new();
         vars.insert("main_worktree", "myrepo");
         vars.insert("branch", "feature-x");
-        let result = expand_template("../{{ main_worktree }}.{{ branch }}", &vars, true).unwrap();
+        let result = expand_template(
+            "../{{ main_worktree }}.{{ branch }}",
+            &vars,
+            true,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert_eq!(result, "../myrepo.feature-x");
     }
 
@@ -564,13 +695,21 @@ task2 = "echo 'Task 2 running' > task2.txt"
     fn test_expand_template_sanitizes_branch() {
         use std::collections::HashMap;
 
+        let test = test_repo();
+
         // Use {{ branch | sanitize }} filter for filesystem-safe paths
         // shell_escape=false to test filter in isolation (shell escaping tested separately)
         let mut vars = HashMap::new();
         vars.insert("main_worktree", "myrepo");
         vars.insert("branch", "feature/foo");
-        let result =
-            expand_template("{{ main_worktree }}/{{ branch | sanitize }}", &vars, false).unwrap();
+        let result = expand_template(
+            "{{ main_worktree }}/{{ branch | sanitize }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert_eq!(result, "myrepo/feature-foo");
 
         let mut vars = HashMap::new();
@@ -580,6 +719,8 @@ task2 = "echo 'Task 2 running' > task2.txt"
             ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}",
             &vars,
             false,
+            &test.repo,
+            "test",
         )
         .unwrap();
         assert_eq!(result, ".worktrees/myrepo/feat-bar");
@@ -597,6 +738,8 @@ task2 = "echo 'Task 2 running' > task2.txt"
             "{{ repo_root }}/target -> {{ worktree }}/target",
             &vars,
             true,
+            &test_repo().repo,
+            "test",
         )
         .unwrap();
         assert_eq!(result, "/path/to/repo/target -> /path/to/worktree/target");
@@ -608,21 +751,27 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let toml_content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
-[commit-generation]
+[commit.generation]
 command = "llm"
 template = "inline template"
 template-file = "~/file.txt"
 "#;
 
         // Parse the TOML directly
-        let config_result: Result<WorktrunkConfig, _> = toml::from_str(toml_content);
+        let config_result: Result<UserConfig, _> = toml::from_str(toml_content);
 
         // The deserialization should succeed, but validation in load() would fail
         // Since we can't easily test load() without env vars, we verify the fields deserialize
         if let Ok(config) = config_result {
+            let generation = config
+                .configs
+                .commit
+                .as_ref()
+                .and_then(|c| c.generation.as_ref());
             // Verify validation logic: both fields should not be Some
-            let has_both = config.commit_generation.template.is_some()
-                && config.commit_generation.template_file.is_some();
+            let has_both = generation
+                .map(|g| g.template.is_some() && g.template_file.is_some())
+                .unwrap_or(false);
             assert!(
                 has_both,
                 "Config should have both template fields set for this test"
@@ -636,21 +785,27 @@ template-file = "~/file.txt"
         let toml_content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
-[commit-generation]
+[commit.generation]
 command = "llm"
 squash-template = "inline template"
 squash-template-file = "~/file.txt"
 "#;
 
         // Parse the TOML directly
-        let config_result: Result<WorktrunkConfig, _> = toml::from_str(toml_content);
+        let config_result: Result<UserConfig, _> = toml::from_str(toml_content);
 
         // The deserialization should succeed, but validation in load() would fail
         // Since we can't easily test load() without env vars, we verify the fields deserialize
         if let Ok(config) = config_result {
+            let generation = config
+                .configs
+                .commit
+                .as_ref()
+                .and_then(|c| c.generation.as_ref());
             // Verify validation logic: both fields should not be Some
-            let has_both = config.commit_generation.squash_template.is_some()
-                && config.commit_generation.squash_template_file.is_some();
+            let has_both = generation
+                .map(|g| g.squash_template.is_some() && g.squash_template_file.is_some())
+                .unwrap_or(false);
             assert!(
                 has_both,
                 "Config should have both squash template fields set for this test"
@@ -661,8 +816,7 @@ squash-template-file = "~/file.txt"
     #[test]
     fn test_commit_generation_config_serialization() {
         let config = CommitGenerationConfig {
-            command: Some("llm".to_string()),
-            args: vec!["-m".to_string(), "model".to_string()],
+            command: Some("llm -m model".to_string()),
             template: Some("template content".to_string()),
             template_file: None,
             squash_template: None,
@@ -670,7 +824,7 @@ squash-template-file = "~/file.txt"
         };
 
         let toml = toml::to_string(&config).unwrap();
-        assert!(toml.contains("llm"));
+        assert!(toml.contains("llm -m model"));
         assert!(toml.contains("template"));
     }
 
@@ -678,7 +832,8 @@ squash-template-file = "~/file.txt"
     fn test_find_unknown_project_keys_with_typo() {
         let toml_str = "[post-merge-command]\ndeploy = \"task deploy\"";
         let unknown = find_unknown_project_keys(toml_str);
-        assert_eq!(unknown, vec!["post-merge-command"]);
+        assert!(unknown.contains_key("post-merge-command"));
+        assert_eq!(unknown.len(), 1);
     }
 
     #[test]
@@ -694,15 +849,16 @@ squash-template-file = "~/file.txt"
         let toml_str = "[post-merge-command]\ndeploy = \"task deploy\"\n\n[after-create]\nsetup = \"npm install\"";
         let unknown = find_unknown_project_keys(toml_str);
         assert_eq!(unknown.len(), 2);
-        assert!(unknown.contains(&"post-merge-command".to_string()));
-        assert!(unknown.contains(&"after-create".to_string()));
+        assert!(unknown.contains_key("post-merge-command"));
+        assert!(unknown.contains_key("after-create"));
     }
 
     #[test]
     fn test_find_unknown_user_keys_with_typo() {
         let toml_str = "worktree-path = \"../test\"\n\n[commit-gen]\ncommand = \"llm\"";
         let unknown = find_unknown_user_keys(toml_str);
-        assert_eq!(unknown, vec!["commit-gen"]);
+        assert!(unknown.contains_key("commit-gen"));
+        assert_eq!(unknown.len(), 1);
     }
 
     #[test]
@@ -733,10 +889,11 @@ log = "echo '{{ repo }}' >> ~/.log"
 test = "cargo test"
 lint = "cargo clippy"
 "#;
-        let config: WorktrunkConfig = toml::from_str(toml_str).unwrap();
+        let config: UserConfig = toml::from_str(toml_str).unwrap();
 
         // Check post-create
         let post_create = config
+            .configs
             .hooks
             .post_create
             .expect("post-create should be present");
@@ -745,7 +902,11 @@ lint = "cargo clippy"
         assert_eq!(commands[0].name.as_deref(), Some("log"));
 
         // Check pre-merge (multiple commands preserve order)
-        let pre_merge = config.hooks.pre_merge.expect("pre-merge should be present");
+        let pre_merge = config
+            .configs
+            .hooks
+            .pre_merge
+            .expect("pre-merge should be present");
         let commands = pre_merge.commands();
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].name.as_deref(), Some("test"));
@@ -758,9 +919,10 @@ lint = "cargo clippy"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 post-create = "npm install"
 "#;
-        let config: WorktrunkConfig = toml::from_str(toml_str).unwrap();
+        let config: UserConfig = toml::from_str(toml_str).unwrap();
 
         let post_create = config
+            .configs
             .hooks
             .post_create
             .expect("post-create should be present");
@@ -784,6 +946,48 @@ test = "cargo test"
             unknown.is_empty(),
             "hook fields should not be reported as unknown: {:?}",
             unknown
+        );
+    }
+
+    #[test]
+    fn test_user_config_key_in_project_config_is_detected() {
+        // commit-generation is a user-config-only key
+        let toml_str = r#"
+[commit-generation]
+command = "claude"
+"#;
+        let unknown = find_unknown_project_keys(toml_str);
+        assert!(
+            unknown.contains_key("commit-generation"),
+            "commit-generation should be unknown in project config"
+        );
+
+        // Verify it's valid in user config
+        let unknown_in_user = find_unknown_user_keys(toml_str);
+        assert!(
+            unknown_in_user.is_empty(),
+            "commit-generation should be valid in user config"
+        );
+    }
+
+    #[test]
+    fn test_project_config_key_in_user_config_is_detected() {
+        // ci is a project-config-only key
+        let toml_str = r#"
+[ci]
+platform = "github"
+"#;
+        let unknown = find_unknown_user_keys(toml_str);
+        assert!(
+            unknown.contains_key("ci"),
+            "ci should be unknown in user config"
+        );
+
+        // Verify it's valid in project config
+        let unknown_in_project = find_unknown_project_keys(toml_str);
+        assert!(
+            unknown_in_project.is_empty(),
+            "ci should be valid in project config"
         );
     }
 }

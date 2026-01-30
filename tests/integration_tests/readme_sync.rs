@@ -37,11 +37,7 @@ static MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-/// Regex to strip ANSI escape codes (actual escape sequences)
-static ANSI_ESCAPE_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\x1b\[[0-9;]*m").unwrap());
-
-/// Regex to strip literal bracket notation (as stored in snapshots)
+/// Regex for literal bracket notation (as stored in snapshots) - used by literal_to_escape
 static ANSI_LITERAL_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[[0-9;]*m").unwrap());
 
 /// Regex to find docs snapshot markers (HTML output)
@@ -68,16 +64,27 @@ static TMPDIR_MAIN_REGEX: LazyLock<Regex> =
 /// Regex for REPO placeholder
 static REPO_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[REPO\]").unwrap());
 
-/// Regex to find DEFAULT_TEMPLATE marker
+/// Regex for _REPO_ placeholder (used in insta-cmd snapshots)
+/// Matches _REPO_ followed by optional .branch suffix
+static REPO_UNDERSCORE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"_REPO_(\.([a-zA-Z0-9_-]+))?").unwrap());
+
+/// Regex to extract user config section from src/cli/mod.rs
+/// Matches content between USER_CONFIG_START and USER_CONFIG_END markers
+static USER_CONFIG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)<!-- USER_CONFIG_START -->\n(.*?)\n<!-- USER_CONFIG_END -->").unwrap()
+});
+
+/// Regex to find DEFAULT_TEMPLATE marker in user config section (markdown format)
 static DEFAULT_TEMPLATE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?s)(# <!-- DEFAULT_TEMPLATE_START -->\n).*?(# <!-- DEFAULT_TEMPLATE_END -->)")
+    Regex::new(r"(?s)(<!-- DEFAULT_TEMPLATE_START -->\n).*?(<!-- DEFAULT_TEMPLATE_END -->)")
         .unwrap()
 });
 
-/// Regex to find DEFAULT_SQUASH_TEMPLATE marker
+/// Regex to find DEFAULT_SQUASH_TEMPLATE marker in user config section (markdown format)
 static SQUASH_TEMPLATE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?s)(# <!-- DEFAULT_SQUASH_TEMPLATE_START -->\n).*?(# <!-- DEFAULT_SQUASH_TEMPLATE_END -->)",
+        r"(?s)(<!-- DEFAULT_SQUASH_TEMPLATE_START -->\n).*?(<!-- DEFAULT_SQUASH_TEMPLATE_END -->)",
     )
     .unwrap()
 });
@@ -115,8 +122,6 @@ static ZOLA_FIGURE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Output format for section updates
 enum OutputFormat {
-    /// README: plain text in ```console``` code block
-    Readme,
     /// Docs: HTML with ANSI colors in {% terminal() %} shortcode
     DocsHtml,
     /// Unwrapped: raw markdown content (help commands, doc sections)
@@ -149,31 +154,18 @@ impl MarkerType {
     /// Get the OutputFormat for this marker type
     fn output_format(&self) -> OutputFormat {
         match self {
-            Self::Snapshot => OutputFormat::Readme,
+            Self::Snapshot => unreachable!("README has no snapshot markers"),
             Self::Help | Self::Section => OutputFormat::Unwrapped,
         }
     }
 
-    /// Strip wrapper from content based on marker type
-    /// Snapshots are wrapped in ```console```, help/sections are unwrapped
+    /// Extract inner content (help/sections are unwrapped)
     fn extract_inner(&self, content: &str) -> String {
         match self {
-            Self::Snapshot => strip_code_block(content),
+            Self::Snapshot => unreachable!("README has no snapshot markers"),
             Self::Help | Self::Section => content.to_string(),
         }
     }
-}
-
-/// Regex to strip code block wrapper from content
-static CODE_BLOCK_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)^```\w*\n(.*)\n```$").unwrap());
-
-/// Strip code block wrapper if present, returning inner content
-fn strip_code_block(content: &str) -> String {
-    CODE_BLOCK_REGEX
-        .captures(content.trim())
-        .map(|cap| cap.get(1).unwrap().as_str().to_string())
-        .unwrap_or_else(|| content.to_string())
 }
 
 /// Parse a snapshot file, returning the user-facing output content
@@ -226,29 +218,73 @@ fn extract_section(content: &str, start_marker: &str, end_marker: &str) -> Strin
     }
 }
 
+/// Extract command line from snapshot YAML header
+///
+/// Parses the YAML front matter to extract program and args, returning the command line.
+/// Returns None if the snapshot doesn't have command info (e.g., non-insta_cmd snapshots).
+fn extract_command_from_snapshot(content: &str) -> Option<String> {
+    // Extract YAML front matter
+    if !content.starts_with("---") {
+        return None;
+    }
+    let parts: Vec<&str> = content.splitn(3, "---").collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    let yaml = parts[1];
+
+    // Extract program (line: "  program: wt")
+    let program = yaml
+        .lines()
+        .find(|l| l.trim().starts_with("program:"))
+        .map(|l| l.trim().strip_prefix("program:").unwrap().trim())?;
+
+    // Extract args (lines: "  args:\n    - switch\n    - --create\n    - feature")
+    let args_start = yaml.find("args:")?;
+    let args_section = &yaml[args_start..];
+    let args: Vec<&str> = args_section
+        .lines()
+        .skip(1) // Skip "args:" line
+        .take_while(|l| l.trim().starts_with("- "))
+        .map(|l| l.trim().strip_prefix("- ").unwrap().trim_matches('"'))
+        .collect();
+
+    if args.is_empty() {
+        Some(program.to_string())
+    } else {
+        Some(format!("{} {}", program, args.join(" ")))
+    }
+}
+
 /// Replace test placeholders with display-friendly values
 ///
 /// Transforms:
 /// - `[HASH]` → `a1b2c3d`
 /// - `[TMPDIR]/repo.branch` → `../repo.branch`
 /// - `[TMPDIR]/repo` → `../repo`
-/// - `_REPO_` → `../repo`
+/// - `[REPO]` → `../repo`
+/// - `_REPO_` → `repo` (just the repo name, no path)
+/// - `_REPO_.branch` → `repo.branch`
 fn replace_placeholders(content: &str) -> String {
     let content = HASH_REGEX.replace_all(content, "a1b2c3d");
     let content = TMPDIR_BRANCH_REGEX.replace_all(&content, "../repo.$1");
     let content = TMPDIR_MAIN_REGEX.replace_all(&content, "../repo$1");
-    REPO_REGEX.replace_all(&content, "../repo").into_owned()
+    let content = REPO_REGEX.replace_all(&content, "../repo");
+    // Handle _REPO_.branch -> repo.branch and _REPO_ -> repo
+    REPO_UNDERSCORE_REGEX
+        .replace_all(&content, |caps: &regex::Captures| {
+            if let Some(branch) = caps.get(2) {
+                format!("repo.{}", branch.as_str())
+            } else {
+                "repo".to_string()
+            }
+        })
+        .into_owned()
 }
 
 /// Format replacement content based on output format
 fn format_replacement(id: &str, content: &str, format: &OutputFormat) -> String {
     match format {
-        OutputFormat::Readme => {
-            format!(
-                "<!-- ⚠️ AUTO-GENERATED from {} — edit source to update -->\n\n```console\n{}\n```\n\n<!-- END AUTO-GENERATED -->",
-                id, content
-            )
-        }
         OutputFormat::DocsHtml => {
             format!(
                 "<!-- ⚠️ AUTO-GENERATED-HTML from {} — edit source to update -->\n\n{{% terminal() %}}\n{}\n{{% end %}}\n\n<!-- END AUTO-GENERATED -->",
@@ -378,10 +414,11 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
         let normalized = trim_lines(&html);
 
         // Build the terminal shortcode with standard template markers
+        // Prompt ($) is added via CSS ::before, so not included in HTML
         let replacement = format!(
             "<!-- ⚠️ AUTO-GENERATED from tests/snapshots/{} — edit source to update -->\n\n\
              {{% terminal() %}}\n\
-             <span class=\"prompt\">$</span> <span class=\"cmd\">{}</span>\n\
+             <span class=\"cmd\">{}</span>\n\
              {}\n\
              {{% end %}}\n\n\
              <!-- END AUTO-GENERATED -->",
@@ -398,12 +435,6 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
     Ok(result)
 }
 
-/// Strip ANSI escape codes from text
-fn strip_ansi(text: &str) -> String {
-    let text = ANSI_ESCAPE_REGEX.replace_all(text, "");
-    ANSI_LITERAL_REGEX.replace_all(&text, "").to_string()
-}
-
 /// Convert literal bracket notation [32m to actual escape sequences \x1b[32m
 fn literal_to_escape(text: &str) -> String {
     ANSI_LITERAL_REGEX
@@ -412,23 +443,6 @@ fn literal_to_escape(text: &str) -> String {
             format!("\x1b{code}")
         })
         .to_string()
-}
-
-/// Parse content from an insta snapshot file, optionally including command line.
-/// Command line comes from the README (preserved during update), not the snapshot.
-fn parse_snapshot_with_command(
-    path: &Path,
-    readme_command: Option<&str>,
-) -> Result<String, String> {
-    let raw = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-
-    let content = strip_ansi(&parse_snapshot_raw(&raw));
-
-    Ok(match readme_command {
-        Some(cmd) => format!("{}\n{}", cmd, content),
-        None => content,
-    })
 }
 
 /// Trim trailing whitespace from each line and overall.
@@ -560,6 +574,7 @@ fn get_help_output(id: &str, project_root: &Path) -> Result<String, String> {
 
     // Use the already-built binary from cargo test (wt_command provides isolation)
     let output = wt_command()
+        .env("NO_COLOR", "1") // Plain text for README
         .args(&args[1..]) // Skip "wt" prefix
         .current_dir(project_root)
         .output()
@@ -574,9 +589,6 @@ fn get_help_output(id: &str, project_root: &Path) -> Result<String, String> {
     } else {
         stderr.to_string()
     };
-
-    // Strip ANSI codes
-    let help_output = strip_ansi(&help_output);
 
     // Trim trailing whitespace from each line and join
     let help_output = help_output
@@ -640,21 +652,6 @@ fn increase_heading_levels(content: &str) -> String {
     }
 
     result.join("\n")
-}
-
-/// Convert a template to commented TOML format
-fn comment_template(template: &str) -> String {
-    template
-        .lines()
-        .map(|line| {
-            if line.is_empty() {
-                String::from("#")
-            } else {
-                format!("# {line}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// Extract templates from llm.rs source
@@ -737,6 +734,35 @@ fn heading_to_anchor(heading: &str) -> String {
         .join("-")
 }
 
+/// Regex to match terminal shortcodes with AUTO-GENERATED-HTML markers
+/// Optionally captures a preceding bash code block (which becomes redundant)
+/// These need to be converted to plain code blocks for README
+static TERMINAL_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?s)(?:```bash\n[^\n]+\n```\n+)?<!-- ⚠️ AUTO-GENERATED-HTML from [^\n]+ -->\n+\{% terminal\(\) %\}\n(.*?)\{% end %\}\n+<!-- END AUTO-GENERATED -->",
+    )
+    .unwrap()
+});
+
+/// Strip HTML tags from content, converting .cmd spans to `$ ` prefixed commands
+fn strip_html(content: &str) -> String {
+    // First, convert <span class="cmd">...</span> to "$ ..." (add prompt)
+    let cmd_pattern = Regex::new(r#"<span class="cmd">([^<]*)</span>"#).unwrap();
+    let result = cmd_pattern.replace_all(content, "$ $1");
+
+    // Strip remaining HTML tags
+    let tag_pattern = Regex::new(r"<[^>]+>").unwrap();
+    let result = tag_pattern.replace_all(&result, "");
+
+    // Decode HTML entities
+    result
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+}
+
 /// Transform Zola-flavored markdown to GitHub-flavored markdown
 ///
 /// Converts:
@@ -744,6 +770,7 @@ fn heading_to_anchor(heading: &str) -> String {
 /// - `[text](@/page.md#anchor)` → `[text](https://worktrunk.dev/page/#anchor)`
 /// - `{% rawcode() %}...{% end %}` → `<pre>...</pre>`
 /// - `<figure class="demo">...<img src="/assets/X.gif"...>...</figure>` → `![alt](raw.githubusercontent.com/.../X.gif)`
+/// - AUTO-GENERATED-HTML terminal markers → plain code blocks
 fn transform_zola_to_github(content: &str) -> String {
     // Transform internal links
     let content = ZOLA_LINK_PATTERN
@@ -760,6 +787,16 @@ fn transform_zola_to_github(content: &str) -> String {
         .replace_all(&content, |caps: &regex::Captures| {
             let inner = caps.get(1).unwrap().as_str();
             format!("<pre>{}</pre>", inner)
+        })
+        .into_owned();
+
+    // Transform terminal markers to console code blocks for README
+    let content = TERMINAL_MARKER_PATTERN
+        .replace_all(&content, |caps: &regex::Captures| {
+            let inner = caps.get(1).unwrap().as_str();
+            // Strip HTML, converting .cmd spans to "$ ..." (adds prompt)
+            let plain = strip_html(inner);
+            format!("```console\n{}\n```", plain)
         })
         .into_owned();
 
@@ -797,21 +834,14 @@ fn get_docs_section_for_readme(id: &str, project_root: &Path) -> Result<String, 
 
 /// Get content for a README marker based on its type
 ///
-/// Handles all marker types: snapshots (.snap), help (`cmd`), sections (#anchor)
+/// Handles help (`cmd`) and section (#anchor) markers.
 fn get_readme_content(
     id: &str,
-    current_content: &str,
+    _current_content: &str,
     project_root: &Path,
 ) -> Result<String, String> {
     match MarkerType::from_id(id) {
-        MarkerType::Snapshot => {
-            // Extract existing command line from README if present
-            let inner = strip_code_block(current_content);
-            let existing_command = inner.lines().next().filter(|line| line.starts_with("$ "));
-            let full_path = project_root.join(id);
-            parse_snapshot_with_command(&full_path, existing_command)
-                .map(|content| trim_lines(&replace_placeholders(&content)))
-        }
+        MarkerType::Snapshot => unreachable!("README has no snapshot markers"),
         MarkerType::Help => get_help_output(id, project_root),
         MarkerType::Section => {
             get_docs_section_for_readme(id, project_root).map(|c| trim_lines(&c))
@@ -822,12 +852,8 @@ fn get_readme_content(
 /// Sync all README markers in a single pass
 ///
 /// Processes all AUTO-GENERATED markers in one regex traversal:
-/// - Snapshots (.snap) - terminal output in ```console``` blocks
 /// - Help commands (`cmd`) - rendered markdown from --help-md
 /// - Doc sections (#anchor) - extracted content from docs
-///
-/// Replaces the previous 3-pass approach with a single pass, detecting
-/// marker type from ID characteristics (extension, backticks, # anchor).
 fn sync_readme_markers(
     readme_content: &str,
     project_root: &Path,
@@ -879,14 +905,144 @@ fn sync_readme_markers(
     }
 }
 
+/// Transform user config markdown to config.example.toml format
+///
+/// # Design
+///
+/// The source content is the user config section in `src/cli/mod.rs`, embedded between
+/// `<!-- USER_CONFIG_START -->` and `<!-- USER_CONFIG_END -->` markers. This markdown
+/// is designed as a great explainer for configuration options, containing prose
+/// explanations and TOML code blocks showing example values.
+///
+/// The generated file (`dev/config.example.toml`) is the entire source with every line
+/// `# ` prefixed and code fence markers stripped. This creates a fully-commented config
+/// file that serves as inline documentation — users read through, find what they want,
+/// and uncomment the relevant `key = value` line.
+///
+/// # Transform Rules
+///
+/// 1. Code fence markers (```` ``` ````, ```` ```toml ````) → stripped entirely
+/// 2. Markdown links → converted to plain URLs (config files aren't rendered as markdown)
+/// 3. All other lines → prefixed with `# `
+/// 4. Trailing empty comment lines → trimmed
+fn transform_config_source_to_toml(source: &str) -> String {
+    let mut result = Vec::new();
+    let mut in_code_block = false;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+
+        // Strip code fence markers
+        if trimmed.starts_with("```") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+
+        // Convert markdown links to plain text for config file readability
+        // [Link text](@/page.md) → Link text (https://worktrunk.dev/page/)
+        // [Link text](https://...) → Link text (https://...)
+        let line = convert_markdown_links_for_config(line);
+
+        // Comment all lines
+        if line.is_empty() {
+            result.push(String::from("#"));
+        } else {
+            result.push(format!("# {}", line));
+        }
+    }
+
+    // Clean up: remove trailing empty comment lines
+    while result.last().is_some_and(|l| l == "#" || l.is_empty()) {
+        result.pop();
+    }
+
+    result.join("\n")
+}
+
+/// Convert markdown links to plain text with URL in parentheses.
+///
+/// Config files aren't rendered as markdown, so links need to be readable as plain text.
+/// - `[Link text](@/page.md)` → `Link text (https://worktrunk.dev/page/)`
+/// - `[Link text](https://example.com)` → `Link text (https://example.com)`
+fn convert_markdown_links_for_config(line: &str) -> String {
+    use regex::Regex;
+    use std::sync::LazyLock;
+
+    static MARKDOWN_LINK: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
+
+    MARKDOWN_LINK
+        .replace_all(line, |caps: &regex::Captures| {
+            let text = &caps[1];
+            let url = &caps[2];
+
+            // Convert Zola @/ links to full URLs
+            let url = if let Some(path) = url.strip_prefix("@/") {
+                // Handle anchors: @/config.md#section → config/#section
+                let (page, anchor) = match path.split_once('#') {
+                    Some((p, a)) => (p.trim_end_matches(".md"), Some(a)),
+                    None => (path.trim_end_matches(".md"), None),
+                };
+                match anchor {
+                    Some(a) => format!("https://worktrunk.dev/{page}/#{a}"),
+                    None => format!("https://worktrunk.dev/{page}/"),
+                }
+            } else {
+                url.to_string()
+            };
+
+            format!("{text} ({url})")
+        })
+        .to_string()
+}
+
+/// Extract user config documentation from src/cli/mod.rs
+///
+/// The user config section is embedded in mod.rs between USER_CONFIG_START
+/// and USER_CONFIG_END markers. This function extracts that content for
+/// transforming into config.example.toml.
+fn extract_user_config_from_cli(cli_mod_content: &str) -> String {
+    USER_CONFIG_PATTERN
+        .captures(cli_mod_content)
+        .and_then(|cap| cap.get(1))
+        .map(|m| m.as_str().to_string())
+        .expect("USER_CONFIG_START/END markers not found in src/cli/mod.rs")
+}
+
 #[test]
-fn test_config_example_templates_are_in_sync() {
+fn test_config_source_generates_example_toml() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let llm_rs_path = project_root.join("src/llm.rs");
+    let cli_mod_path = project_root.join("src/cli/mod.rs");
     let config_path = project_root.join("dev/config.example.toml");
 
+    let cli_mod_content = fs::read_to_string(&cli_mod_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", cli_mod_path.display(), e));
+
+    let user_config_content = extract_user_config_from_cli(&cli_mod_content);
+    let expected = transform_config_source_to_toml(&user_config_content);
+    let expected = trim_lines(&expected);
+
+    let current = fs::read_to_string(&config_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", config_path.display(), e));
+    let current = trim_lines(&current);
+
+    if current != expected {
+        fs::write(&config_path, format!("{}\n", expected)).unwrap();
+        panic!(
+            "config.example.toml out of sync with user config section in src/cli/mod.rs. \
+             Run tests locally and commit the changes."
+        );
+    }
+}
+
+#[test]
+fn test_config_source_templates_are_in_sync() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let llm_rs_path = project_root.join("src/llm.rs");
+    let cli_mod_path = project_root.join("src/cli/mod.rs");
+
     let llm_content = fs::read_to_string(&llm_rs_path).unwrap();
-    let config_content = fs::read_to_string(&config_path).unwrap();
+    let cli_mod_content = fs::read_to_string(&cli_mod_path).unwrap();
 
     // Extract templates from llm.rs
     let templates = extract_templates(&llm_content);
@@ -899,10 +1055,10 @@ fn test_config_example_templates_are_in_sync() {
         "DEFAULT_SQUASH_TEMPLATE not found in src/llm.rs"
     );
 
-    let mut updated_content = config_content.clone();
+    let mut updated_content = cli_mod_content.clone();
     let mut updated_count = 0;
 
-    // Helper to replace a template section
+    // Helper to replace a template section in markdown format
     let mut replace_template = |pattern: &Regex, name: &str, key: &str| {
         if let Some(cap) = pattern.captures(&updated_content.clone()) {
             let full_match = cap.get(0).unwrap();
@@ -912,12 +1068,15 @@ fn test_config_example_templates_are_in_sync() {
             let template = templates
                 .get(name)
                 .unwrap_or_else(|| panic!("{name} not found in src/llm.rs"));
-            let commented = comment_template(template);
 
+            // Format as markdown code block
             let replacement = format!(
-                r#"{prefix}# {key} = """
-{commented}
-# """
+                r#"{prefix}```toml
+[commit.generation]
+{key} = """
+{template}
+"""
+```
 {suffix}"#
             );
 
@@ -936,9 +1095,9 @@ fn test_config_example_templates_are_in_sync() {
     );
 
     if updated_count > 0 {
-        fs::write(&config_path, &updated_content).unwrap();
+        fs::write(&cli_mod_path, &updated_content).unwrap();
         panic!(
-            "Templates out of sync: updated {} section(s) in config.example.toml. \
+            "Templates out of sync: updated {} section(s) in src/cli/mod.rs. \
              Run tests locally and commit the changes.",
             updated_count
         );
@@ -1076,34 +1235,22 @@ fn sync_docs_snapshots(doc_path: &Path, project_root: &Path) -> Result<usize, Ve
         &content,
         &DOCS_SNAPSHOT_MARKER_PATTERN,
         OutputFormat::DocsHtml,
-        |snap_path, current_content| {
-            // Extract existing command line from docs if present
-            let existing_command = current_content
-                .lines()
-                .find(|line| line.contains("class=\"prompt\""))
-                .map(|line| {
-                    // Convert HTML command back to plain text for matching
-                    // <span class="prompt">$</span> wt switch ... -> $ wt switch ...
-                    let plain = strip_html_tags(line);
-                    plain.trim().to_string()
-                });
-
+        |snap_path, _current_content| {
             let full_path = project_root_for_snapshots.join(snap_path);
             let raw = fs::read_to_string(&full_path)
                 .map_err(|e| format!("Failed to read {}: {}", full_path.display(), e))?;
+
+            // Extract command from snapshot YAML header
+            let command = extract_command_from_snapshot(&raw);
+
             let html_content = parse_snapshot_content_for_docs(&raw)?;
             let normalized = trim_lines(&html_content);
 
-            // Prepend command line with prompt styling if present
-            Ok(match existing_command {
-                Some(cmd) if cmd.starts_with("$ ") => {
-                    let cmd_text = cmd.strip_prefix("$ ").unwrap();
-                    format!(
-                        "<span class=\"prompt\">$</span> <span class=\"cmd\">{}</span>\n{}",
-                        cmd_text, normalized
-                    )
-                }
-                _ => normalized,
+            // Prepend command line with styling if present
+            // Prompt ($) is added via CSS ::before, so not included in HTML
+            Ok(match command {
+                Some(cmd) => format!("<span class=\"cmd\">{}</span>\n{}", cmd, normalized),
+                None => normalized,
             })
         },
     ) {
@@ -1161,11 +1308,11 @@ const COMMAND_PAGES: &[&str] = &[
     "switch", "list", "merge", "remove", "select", "config", "step", "hook",
 ];
 
-#[test]
-fn test_command_pages_are_in_sync() {
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+/// Sync command pages from --help-page output to docs/content/*.md
+/// Returns (errors, updated_files)
+fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
     let mut errors = Vec::new();
-    let mut updated = 0;
+    let mut updated_files = Vec::new();
 
     for cmd in COMMAND_PAGES {
         let doc_path = project_root.join(format!("docs/content/{}.md", cmd));
@@ -1258,36 +1405,11 @@ fn test_command_pages_are_in_sync() {
         if current != new_content {
             fs::write(&doc_path, &new_content)
                 .unwrap_or_else(|e| panic!("Failed to write {}: {}", doc_path.display(), e));
-            updated += 1;
+            updated_files.push(format!("docs/content/{}.md", cmd));
         }
     }
 
-    if !errors.is_empty() {
-        panic!("Command pages out of sync:\n\n{}\n", errors.join("\n"));
-    }
-
-    if updated > 0 {
-        panic!(
-            "Command pages out of sync: updated {} page(s). \
-             Run tests locally and commit the changes.",
-            updated
-        );
-    }
-}
-
-/// Strip HTML tags from a string (simple implementation for command extraction)
-fn strip_html_tags(s: &str) -> String {
-    let mut result = String::new();
-    let mut in_tag = false;
-    for c in s.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => result.push(c),
-            _ => {}
-        }
-    }
-    result
+    (errors, updated_files)
 }
 
 // =============================================================================
@@ -1462,11 +1584,11 @@ const SKILL_SYNC_FILES: &[(&str, &str)] = &[
     ),
 ];
 
-#[test]
-fn test_skill_files_are_in_sync_with_docs() {
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+/// Sync skill files from docs/content/*.md to .claude-plugin/skills/worktrunk/reference/*.md
+/// Returns (errors, updated_files)
+fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     let mut errors = Vec::new();
-    let mut updated = 0;
+    let mut updated_files = Vec::new();
 
     for (docs_path, skill_path) in SKILL_SYNC_FILES {
         let docs_file = project_root.join(docs_path);
@@ -1501,19 +1623,38 @@ fn test_skill_files_are_in_sync_with_docs() {
             }
             fs::write(&skill_file, format!("{}\n", expected))
                 .unwrap_or_else(|e| panic!("Failed to write {}: {}", skill_file.display(), e));
-            updated += 1;
+            updated_files.push(skill_path.to_string());
         }
     }
 
-    if !errors.is_empty() {
-        panic!("Skill sync errors:\n\n{}\n", errors.join("\n"));
+    (errors, updated_files)
+}
+
+/// Combined test: sync command pages (mod.rs → docs) then skill files (docs → skills)
+/// This ensures a single test run handles the full chain when mod.rs changes.
+#[test]
+fn test_command_pages_and_skill_files_are_in_sync() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // Step 1: Sync command pages (mod.rs → docs/content/*.md)
+    let (cmd_errors, cmd_files) = sync_command_pages(project_root);
+
+    // Step 2: Sync skill files (docs/content/*.md → .claude-plugin/skills/*)
+    // This reads the freshly-written docs from step 1
+    let (skill_errors, skill_files) = sync_skill_files(project_root);
+
+    // Aggregate results
+    let all_errors: Vec<_> = cmd_errors.into_iter().chain(skill_errors).collect();
+    let all_files: Vec<_> = cmd_files.into_iter().chain(skill_files).collect();
+
+    if !all_errors.is_empty() {
+        panic!("Sync errors:\n\n{}\n", all_errors.join("\n"));
     }
 
-    if updated > 0 {
+    if !all_files.is_empty() {
         panic!(
-            "Skill files out of sync with docs: updated {} file(s). \
-             Run tests locally and commit the changes.",
-            updated
+            "Files out of sync (updated):\n  {}\n\nRun tests locally and commit the changes.",
+            all_files.join("\n  ")
         );
     }
 }

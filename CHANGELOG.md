@@ -1,5 +1,424 @@
 # Changelog
 
+## 0.20.3
+
+### Fixed
+
+- **PowerShell auto-configuration on Windows**: When running `wt config shell install` from cmd.exe or PowerShell, both PowerShell profile files are now created automatically (Documents/PowerShell and Documents/WindowsPowerShell). Fixes [#885](https://github.com/max-sixty/worktrunk/issues/885). (thanks @DiTo97 for reporting) ([#898](https://github.com/max-sixty/worktrunk/pull/898))
+
+- **`-C` flag respected in hook context**: The `-C` flag now correctly sets the worktree path for hooks, fixing `wt -C /path hook ...` commands that were using the wrong context. ([#899](https://github.com/max-sixty/worktrunk/pull/899))
+
+- **`--config` path validation**: Now warns when `--config` points to a non-existent file instead of silently using defaults. ([#895](https://github.com/max-sixty/worktrunk/pull/895))
+
+### Documentation
+
+- Fix shell quoting in hook examples — template variables are auto-escaped, so manual quoting caused issues with special characters. ([#895](https://github.com/max-sixty/worktrunk/pull/895))
+
+- Updated documentation to use tool-agnostic terminology for LLM commit messages. ([#891](https://github.com/max-sixty/worktrunk/pull/891))
+
+### Internal
+
+- Consolidated PR/MR resolution into unified `remote_ref` module. ([#893](https://github.com/max-sixty/worktrunk/pull/893))
+
+- Simplified command structure and removed dead code. ([#892](https://github.com/max-sixty/worktrunk/pull/892))
+
+- Eliminated Settings types, added accessor methods to Config types. ([#896](https://github.com/max-sixty/worktrunk/pull/896))
+
+## 0.20.2
+
+### Fixed
+
+- **PowerShell shell integration**: Fixed shell integration not working on Windows PowerShell. The init script now includes `| Out-String` to convert array output to a string. Existing configs without this fix are detected as "not installed" so `wt config shell install` will update them automatically. Fixes [#885](https://github.com/max-sixty/worktrunk/issues/885). (thanks @DiTo97 for reporting) ([#888](https://github.com/max-sixty/worktrunk/pull/888))
+
+- **Branch removal message**: "No worktree found for branch X" now shows as info (○) instead of warning (▲) when removing a branch-only, since this is expected behavior. ([#887](https://github.com/max-sixty/worktrunk/pull/887))
+
+### Documentation
+
+- Documented main worktree behavior in `wt step relocate --help`. ([#889](https://github.com/max-sixty/worktrunk/pull/889))
+
+## 0.20.1
+
+### Improved
+
+- **`wt statusline --format=json`**: Output current worktree as JSON (same structure as `wt list --format=json`). Also adds `--format=claude-code` as canonical syntax (the old `--claude-code` flag remains supported). Fixes nested worktree detection that incorrectly identified parent worktrees. ([#875](https://github.com/max-sixty/worktrunk/pull/875))
+
+- **`wt config show` shell status**: Each shell integration line now starts with the shell name (e.g., "bash: Already configured...") for easier scanning. ([#881](https://github.com/max-sixty/worktrunk/pull/881))
+
+- **`wt config show` performance**: 8x faster (~1.2s → ~150ms) by using PATH lookup instead of running `claude --version`. ([#883](https://github.com/max-sixty/worktrunk/pull/883))
+
+### Fixed
+
+- **Config TOML formatting**: Fixed spurious empty `[commit]` header appearing when only `[commit.generation]` is configured. ([#879](https://github.com/max-sixty/worktrunk/pull/879))
+
+- **Documentation URLs**: Fixed broken worktrunk.dev URLs in fish wrapper and config templates. ([#882](https://github.com/max-sixty/worktrunk/pull/882))
+
+### Documentation
+
+- Fixed `worktree-path` example on tips page. ([#876](https://github.com/max-sixty/worktrunk/pull/876), thanks @uriahcarpenter)
+
+- Fixed OSC 8 hyperlink sequences leaking through to web docs as garbage text. ([#870](https://github.com/max-sixty/worktrunk/pull/870))
+
+### Internal
+
+- Demo snapshot mode for regression testing of command output. ([#871](https://github.com/max-sixty/worktrunk/pull/871))
+
+- CI improvements: nextest binary compatibility fix, pinned runner versions, weekly renovation workflow. ([#878](https://github.com/max-sixty/worktrunk/pull/878), [#884](https://github.com/max-sixty/worktrunk/pull/884))
+
+## 0.20.0
+
+### Improved
+
+- **`wt step relocate` command**: Move worktrees to their expected paths based on the `worktree-path` template. Supports `--dry-run` preview, filtering by branch name, and `--commit` to auto-commit dirty worktrees before moving. Handles complex scenarios including worktree swaps (A→B, B→A), chains, and the `--clobber` flag to back up blocking non-worktree paths. [Docs](https://worktrunk.dev/step/) ([#790](https://github.com/max-sixty/worktrunk/pull/790))
+
+- **LLM setup prompt**: First-time interactive prompt when users attempt `wt merge`, `wt step commit`, or `wt step squash` without LLM configuration. Detects available tools (claude, codex) and offers auto-configuration with `?` to preview the generated config. Add `skip-commit-generation-prompt` to user config to suppress. ([#867](https://github.com/max-sixty/worktrunk/pull/867))
+
+- **Consistent prompt styling**: Interactive prompts now use consistent cyan styling via `prompt_message()` formatting. ([#858](https://github.com/max-sixty/worktrunk/pull/858))
+
+### Fixed
+
+- **Path display in error messages**: User-facing paths now consistently use `format_path_for_display()`, fixing cases where raw `.display()` output could show inconsistent path formats. ([#856](https://github.com/max-sixty/worktrunk/pull/856))
+
+### Documentation
+
+- Added Quick Start section to front page showing the switch → list → merge workflow. ([#864](https://github.com/max-sixty/worktrunk/pull/864))
+- Updated template documentation: removed deprecated `template-file` options, added `{{ git_diff_stat }}` variable, clarified squash-only variables. ([#854](https://github.com/max-sixty/worktrunk/pull/854))
+- Fixed stale documentation for `[commit.generation]` config format, statusline context gauge, and CI status for remote-only branches. ([#853](https://github.com/max-sixty/worktrunk/pull/853))
+
+### Internal
+
+- Bumped nix crate from 0.30.1 to 0.31.1. ([#860](https://github.com/max-sixty/worktrunk/pull/860))
+- Refactored deprecation detection for better modularity. ([#852](https://github.com/max-sixty/worktrunk/pull/852))
+
+## 0.19.0
+
+### Improved
+
+- **LLM commit configuration redesign**: The `[commit-generation]` section is now `[commit.generation]`, and `command` + `args` are unified into a single shell-executed `command` string. Existing configs continue to work — a deprecation warning shows the new format and creates a `.new` config file you can apply with `mv`. Claude Code (`claude -p`) and Codex (`codex exec`) are documented as first-class options alongside `llm`. See the [LLM commits guide](https://worktrunk.dev/llm-commits/). ([#809](https://github.com/max-sixty/worktrunk/pull/809), [#837](https://github.com/max-sixty/worktrunk/pull/837))
+
+- **Per-project hooks**: User config can define hooks per-project that append to global hooks. Execution order: global → per-project → project config. Configure under `[projects."owner/repo".hooks]`. ([#842](https://github.com/max-sixty/worktrunk/pull/842))
+
+- **Context window gauge for Claude Code**: Statusline mode shows a moon phase gauge (🌕🌔🌓🌒🌑) for context window usage. ([#840](https://github.com/max-sixty/worktrunk/pull/840))
+
+- **CI status for remote-only branches**: `wt list --remotes` shows CI status for branches that only exist on the remote. ([#817](https://github.com/max-sixty/worktrunk/pull/817))
+
+- **Hook log file lookup**: `wt config state logs get --hook=<spec>` returns the path to a specific hook's log file. ([#816](https://github.com/max-sixty/worktrunk/pull/816), thanks @EduardoSimon for requesting)
+
+- **Branch/fork info in PR/MR display**: `wt switch pr:N` shows the source branch (e.g., `feature-auth`) or fork reference (e.g., `contributor:feature`) alongside PR details. ([#808](https://github.com/max-sixty/worktrunk/pull/808))
+
+- **Claude Code section in `wt config show`**: Shows Claude CLI installation status, plugin status, and statusline configuration. ([#833](https://github.com/max-sixty/worktrunk/pull/833))
+
+- **Deprecation details moved to `wt config show`**: Other commands show a brief pointer instead of full deprecation details. ([#828](https://github.com/max-sixty/worktrunk/pull/828))
+
+- **Config validation suggests correct file**: When a config key belongs in user config but appears in project config (or vice versa), the warning suggests the correct location. ([#804](https://github.com/max-sixty/worktrunk/pull/804))
+
+- **Tilde paths in hints**: Shell command hints use `~` instead of full home directory paths when safe. ([#710](https://github.com/max-sixty/worktrunk/pull/710))
+
+- **Improved `--create` conflict error**: `wt switch --create pr:101` shows the existing branch name in the error. ([#807](https://github.com/max-sixty/worktrunk/pull/807))
+
+- **CI status prioritized in statusline**: CI status is retained longer when the statusline truncates. ([#845](https://github.com/max-sixty/worktrunk/pull/845))
+
+### Fixed
+
+- **Template expansion bugs**: Fixed `worktree_path_of_branch` not respecting shell_escape flag, Windows CI cache rename failures, and `WORKTRUNK_MAX_CONCURRENT_COMMANDS=0` meaning "no limit". ([#847](https://github.com/max-sixty/worktrunk/pull/847), [#849](https://github.com/max-sixty/worktrunk/pull/849))
+
+- **Hook and CI status panics**: Fixed panic when serializing mixed named/unnamed hook configs, banned colons in hook names to prevent parsing ambiguity, and fixed GitLab MR detection when multiple MRs exist without project ID. ([#846](https://github.com/max-sixty/worktrunk/pull/846), [#848](https://github.com/max-sixty/worktrunk/pull/848))
+
+- **Pre-commit hooks for clean worktree squash**: Pre-commit hooks are collected for approval when squashing on a clean worktree. Previously only collected when dirty. ([#695](https://github.com/max-sixty/worktrunk/pull/695))
+
+- **Hint message formatting**: Fixed ANSI escape code interference in dim hint messages. ([#836](https://github.com/max-sixty/worktrunk/pull/836))
+
+- **Spurious [commit] header**: Fixed config migration showing `[commit]` section header when only `commit-generation` fields needed migration. ([#834](https://github.com/max-sixty/worktrunk/pull/834))
+
+### Documentation
+
+- Added at-a-glance examples to config documentation. ([#826](https://github.com/max-sixty/worktrunk/pull/826))
+- Clarified user project-specific settings section. ([#835](https://github.com/max-sixty/worktrunk/pull/835))
+- Consistent worktree terminology throughout docs. ([#813](https://github.com/max-sixty/worktrunk/pull/813))
+- Added tip for monitoring hook logs. ([#838](https://github.com/max-sixty/worktrunk/pull/838))
+
+### Internal
+
+- Replaced manual quote escaping with `shell_escape` crate. ([#810](https://github.com/max-sixty/worktrunk/pull/810))
+- Used `sanitize-filename` crate for filename sanitization. ([#832](https://github.com/max-sixty/worktrunk/pull/832))
+- Cached CI tool availability checks. ([#831](https://github.com/max-sixty/worktrunk/pull/831))
+- Moved inline imports to module top level. ([#818](https://github.com/max-sixty/worktrunk/pull/818), [#819](https://github.com/max-sixty/worktrunk/pull/819), [#820](https://github.com/max-sixty/worktrunk/pull/820), [#822](https://github.com/max-sixty/worktrunk/pull/822))
+
+## 0.18.2
+
+### Improved
+
+- **PR/MR context display**: `wt switch pr:N` and `mr:N` now show PR/MR details (title, author, state, URL) after fetching. ([#782](https://github.com/max-sixty/worktrunk/pull/782))
+
+- **Fork PR branch conflicts**: When a fork PR's branch name conflicts with an existing local branch (e.g., contributor opens PR from their `main`), worktrunk now creates a prefixed branch like `contributor/main` instead of failing. Closes [#714](https://github.com/max-sixty/worktrunk/issues/714). (thanks @vimtor for reporting)
+
+### Fixed
+
+- **Help output formatting**: Fixed double blank lines appearing after demo comments in help output. ([#795](https://github.com/max-sixty/worktrunk/pull/795))
+
+- **Error handling reliability**: Replaced fragile string-based error parsing with structured approaches for git stash, GitHub CLI, and GitLab CLI operations. ([#787](https://github.com/max-sixty/worktrunk/pull/787))
+
+### Documentation
+
+- **ci-status help text**: Improved clarity of the ci-status configuration documentation. ([#794](https://github.com/max-sixty/worktrunk/pull/794))
+
+- **wt remove help text**: Simplified short description and added documentation for `pre-remove` and `post-remove` hooks. ([#792](https://github.com/max-sixty/worktrunk/pull/792))
+
+- **Subcommand documentation**: Fixed generated website docs for subcommands (like `wt step copy-ignored`, `wt config state`) to include their short descriptions. ([#793](https://github.com/max-sixty/worktrunk/pull/793))
+
+## 0.18.1
+
+### Fixed
+
+- **Submodule worktree paths**: Worktrees are now created in the correct location when running inside a git submodule. Previously, worktrees were created relative to the parent repo's `.git/modules/` directory instead of the submodule's working directory. ([#762](https://github.com/max-sixty/worktrunk/pull/762), thanks @lajarre; [#777](https://github.com/max-sixty/worktrunk/issues/777), thanks @mhonsel for reporting)
+- **Shell integration warnings**: Warnings about shell integration now check if the *current* shell has integration configured, not whether *any* shell does. This fixes misleading "shell requires restart" messages when e.g. bash had integration but the user was running fish. ([#772](https://github.com/max-sixty/worktrunk/pull/772))
+- **"Not found" error messages**: Improved error message phrasing — "No branch named X" instead of "Branch X not found", "Branch X has no worktree" instead of "No worktree found for branch X". Context-appropriate hints now appear (e.g., `wt remove` no longer suggests `--create`). ([#774](https://github.com/max-sixty/worktrunk/pull/774))
+
+### Internal
+
+- Unified PR/MR reference resolution, reducing code duplication. ([#778](https://github.com/max-sixty/worktrunk/pull/778))
+
+## 0.18.0
+
+### Improved
+
+- **Post-remove hook**: New hook type runs after worktree removal. Template variables (`{{ branch }}`, `{{ worktree_path }}`, `{{ commit }}`) reference the removed worktree, enabling cleanup scripts for containers, servers, or other resources. ([#757](https://github.com/max-sixty/worktrunk/pull/757))
+- **Graceful handling of missing worktree directories**: `wt remove` now prunes stale git metadata when the worktree directory was deleted externally (e.g., `rm -rf`), making the command more idempotent. Fixes [#724](https://github.com/max-sixty/worktrunk/issues/724). (thanks @strangemonad for reporting)
+- **Config validation warnings at load time**: Unknown fields in config files (typos like `[commit-gen]` instead of `[commit-generation]`) now show warnings immediately instead of only in `wt config show`. ([#758](https://github.com/max-sixty/worktrunk/pull/758))
+
+### Fixed
+
+- **Age column shows "future" on NixOS/direnv**: `wt list` no longer uses `SOURCE_DATE_EPOCH` for time calculations, which NixOS and direnv commonly set to past timestamps for reproducible builds. Fixes [#763](https://github.com/max-sixty/worktrunk/issues/763). (thanks @ngotchac for reporting)
+- **CI status with URL-based pushremote**: CI detection now works when `branch.<name>.pushremote` is set to a URL directly (as `gh pr checkout` does) instead of a remote name. ([#769](https://github.com/max-sixty/worktrunk/pull/769))
+- **GitLab nested groups in URL parsing**: URLs like `gitlab.com/group/subgroup/repo` now correctly identify `repo` as the repository name instead of `subgroup`. This was a security fix — previously, approval bypass was possible across sibling repos in the same parent group. ([#768](https://github.com/max-sixty/worktrunk/pull/768))
+- **GitLab CI status detection**: Fixed multiple issues with `glab` CLI compatibility — MR lookup now uses two-step resolution, "manual" pipelines show as running instead of failed, and rate limit errors are handled properly. Fixes [#764](https://github.com/max-sixty/worktrunk/issues/764). (thanks @ngotchac for reporting)
+
+### Internal
+
+- Refactored accessor functions to use bare nouns per Rust convention. ([#765](https://github.com/max-sixty/worktrunk/pull/765))
+- Clarified target/integration naming across codebase. ([#755](https://github.com/max-sixty/worktrunk/pull/755))
+
+## 0.17.0
+
+### Improved
+
+- **Per-project config overrides** (Experimental): Override settings per-project in user config. Supports `worktree-path`, `commit-generation`, `list`, `commit`, and `merge` sections. Config precedence: CLI arg > project config > global config > default. Closes [#596](https://github.com/max-sixty/worktrunk/issues/596). ([#749](https://github.com/max-sixty/worktrunk/pull/749))
+- **Search all remotes for branch existence**: Branch existence checks and completions now search all remotes instead of just the primary remote, matching git's behavior. When a branch exists on multiple remotes, completions show all of them (e.g., `feature ⇣ 2d origin, upstream`). ([#744](https://github.com/max-sixty/worktrunk/pull/744))
+- **CI detection for fork workflows**: CI status detection now searches all remotes and uses `gh config get git_protocol` / `glab config get git_protocol` for fork URL protocol preference instead of inferring from existing remotes. ([#753](https://github.com/max-sixty/worktrunk/pull/753))
+
+### Fixed
+
+- **Same-repo PR switching with stale refs**: `wt switch pr:N` for same-repo PRs now fetches the branch before validation, fixing "Branch not found" errors when local refs were stale. ([#742](https://github.com/max-sixty/worktrunk/pull/742))
+- **Project identifier collision for repos without remotes**: Repos without remotes now use their full canonical path as the project identifier instead of just the directory name, preventing approval collisions between unrelated repos (e.g., `~/work/myproject` vs `~/personal/myproject`). Users with remoteless repos will need to re-approve commands. ([#747](https://github.com/max-sixty/worktrunk/pull/747))
+
+### Internal
+
+- Cross-platform path handling improvements using `path-slash` crate and `Path::file_name()`. ([#750](https://github.com/max-sixty/worktrunk/pull/750))
+- Renamed `WorktrunkConfig` to `UserConfig` internally. ([#746](https://github.com/max-sixty/worktrunk/pull/746))
+
+## 0.16.0
+
+### Improved
+
+- **Background hook verbosity**: Background hooks (post-start, post-switch) now show a single-line summary by default instead of per-hook output. Use `-v` to see detailed output with expanded commands. We're open to feedback on this change — let us know in [#690](https://github.com/max-sixty/worktrunk/issues/690). (thanks @clutchski for reporting)
+
+### Internal
+
+- Fixed dead Apple documentation link in copy-ignored rationale. ([#743](https://github.com/max-sixty/worktrunk/pull/743))
+
+## 0.15.5
+
+### Fixed
+
+- **Hook execution order**: Hooks now run in the order defined in the config file. Previously, HashMap iteration randomized the order. Fixes [#737](https://github.com/max-sixty/worktrunk/issues/737). (thanks @ngotchac for reporting)
+
+## 0.15.4
+
+### Improved
+
+- **Git progress for slow worktree creation**: When `git worktree add` takes more than 400ms (common on large repos), worktrunk now shows a progress message and streams git's output instead of going silent. ([#725](https://github.com/max-sixty/worktrunk/pull/725))
+- **Verbose template expansion output**: `-v` now shows template expansion details: the template, expanded command, and any undefined variables with SemiStrict fallback behavior. ([#712](https://github.com/max-sixty/worktrunk/pull/712))
+- **Shell integration hint for explicit path invocation**: When running wt via explicit path (e.g., `./target/debug/wt`) with shell integration configured, the warning now suggests running `wt switch <branch>` to use the shell-wrapped command. ([#721](https://github.com/max-sixty/worktrunk/pull/721))
+
+### Fixed
+
+- **Unsafe upstream when creating branch from remote base**: `wt switch --create feature --base=origin/main` no longer sets up tracking to origin/main, preventing accidental pushes to the base branch. Fixes [#713](https://github.com/max-sixty/worktrunk/issues/713). (thanks @kfirba)
+- **Credential redaction in debug logs**: URLs with embedded credentials (e.g., `https://token@github.com/...`) are now redacted in `-vv` debug output. ([#718](https://github.com/max-sixty/worktrunk/pull/718))
+- **Hook preview shows template on expansion failure**: `wt hook show --expanded` now displays both the error message and original template when expansion fails, instead of hiding the template. ([#722](https://github.com/max-sixty/worktrunk/pull/722))
+
+### Documentation
+
+- **Homebrew install uses core tap**: Install command updated from `max-sixty/worktrunk/wt` to `worktrunk`. ([#716](https://github.com/max-sixty/worktrunk/pull/716), thanks @chenrui333)
+- **Hook docs reordered**: post-start (background) is now the recommended default, with post-create for blocking dependencies. ([#733](https://github.com/max-sixty/worktrunk/pull/733))
+
+### Internal
+
+- Simplified GitHub/GitLab CI status detection. ([#730](https://github.com/max-sixty/worktrunk/pull/730))
+- Previous worktree gutter changed from `-` to `+` for visual consistency. ([#699](https://github.com/max-sixty/worktrunk/pull/699))
+
+## 0.15.3
+
+### Fixed
+
+- **`--execute` command display**: Shows the expanded command in a gutter with path context instead of showing the raw template before expansion. ([#708](https://github.com/max-sixty/worktrunk/pull/708))
+- **CRLF line endings in error display**: Multiline errors with Windows (`\r\n`) or old Mac (`\r`) line endings now display correctly instead of falling through to single-line handling. ([#707](https://github.com/max-sixty/worktrunk/pull/707))
+
+### Documentation
+
+- **Arch Linux install via AUR**: Added installation instructions and shell integration command. ([#709](https://github.com/max-sixty/worktrunk/pull/709), [#561](https://github.com/max-sixty/worktrunk/pull/561), thanks @razor-x)
+
+## 0.15.2
+
+### Improved
+
+- **`wt config shell completions <shell>`**: Generate static shell completion scripts for package managers and custom installation. ([#701](https://github.com/max-sixty/worktrunk/pull/701), thanks @chenrui333)
+- **Debug logging threshold**: Now requires `-vv` instead of `-v` for debug logging and diagnostic file generation, freeing `-v` for future use. ([#702](https://github.com/max-sixty/worktrunk/pull/702))
+
+### Fixed
+
+- **Fork PR fetching**: `wt switch pr:N` now works when `origin` points to a fork by fetching PR refs from the upstream remote. Shows actionable error with `git remote add` command if upstream remote is missing. ([#704](https://github.com/max-sixty/worktrunk/pull/704))
+- **Fork PR branch naming**: Fork PR branches now use the original branch name (e.g., `feature-fix`) instead of `owner/feature-fix`, so `git push` works correctly. ([#706](https://github.com/max-sixty/worktrunk/pull/706))
+- **Config race conditions**: File locking prevents corruption when multiple `wt` processes modify config simultaneously. ([#693](https://github.com/max-sixty/worktrunk/pull/693))
+- **Nested worktree detection**: Current worktree indicator (`@`) now shows on the correct worktree when worktrees are nested (e.g., `.worktrees/` layout inside repo). ([#697](https://github.com/max-sixty/worktrunk/pull/697))
+- **Symlink path resolution**: Worktree commands work correctly on systems with symlinks (e.g., macOS `/var` → `/private/var`). ([#696](https://github.com/max-sixty/worktrunk/pull/696))
+- **Pre-remove hook failures**: Shell no longer cd's to main worktree when pre-remove hooks fail, leaving user in their current location. ([#692](https://github.com/max-sixty/worktrunk/pull/692))
+- **PowerShell completion robustness**: Completion registration errors no longer break the shell wrapper function. ([#674](https://github.com/max-sixty/worktrunk/pull/674))
+
+### Documentation
+
+- Added missing `orphan` (`∅`) symbol and `no_worktree` state to JSON output documentation. ([#687](https://github.com/max-sixty/worktrunk/pull/687))
+- Clarified Unicode handling in shell detection. ([#700](https://github.com/max-sixty/worktrunk/pull/700))
+
+### Internal
+
+- Refactored large files into focused modules. ([#688](https://github.com/max-sixty/worktrunk/pull/688))
+- Consolidated integration reason computation into Repository method. ([#689](https://github.com/max-sixty/worktrunk/pull/689))
+- Added verbose level tracking infrastructure for future `-v` output. ([#703](https://github.com/max-sixty/worktrunk/pull/703))
+- PowerShell template uses `WORKTRUNK_BIN` for test isolation. ([#674](https://github.com/max-sixty/worktrunk/pull/674))
+
+## 0.15.1
+
+### Improved
+
+- **`wt config show` diagnostics**: When shell integration is not active, now shows how the command was invoked, the binary path (if different), and `$SHELL` environment variable. Helps diagnose setup issues. ([#683](https://github.com/max-sixty/worktrunk/pull/683))
+- **Help pager follows git convention**: `-h` never opens a pager, `--help` uses pager when available. Closes [#583](https://github.com/max-sixty/worktrunk/issues/583). ([#651](https://github.com/max-sixty/worktrunk/pull/651), thanks @razor-x)
+- **Verbose mode logging**: `-v` now logs command stdout/stderr and all spawned processes including background hooks, `wt for-each` commands, and shell probes. ([#680](https://github.com/max-sixty/worktrunk/pull/680))
+
+### Documentation
+
+- **FAQ reordered**: Questions now ordered by frequency and importance.
+
+### Internal
+
+- **AUR package**: Worktrunk now published to Arch Linux AUR on each release. ([#585](https://github.com/max-sixty/worktrunk/pull/585), thanks @razor-x)
+- **Codecov Test Analytics**: Integration tests now report to Codecov Test Analytics. ([#682](https://github.com/max-sixty/worktrunk/pull/682))
+
+## 0.15.0
+
+### Improved
+
+- **`wt switch pr:<number>` syntax** (experimental): Switch directly to a GitHub PR by number. Same-repo PRs delegate to normal switch flow; fork PRs fetch from refs/pull/N/head and configure pushRemote. ([#673](https://github.com/max-sixty/worktrunk/pull/673), closes [#657](https://github.com/max-sixty/worktrunk/issues/657), thanks @wladpaiva for requesting)
+- **`--force` hint for dirty worktrees**: When `wt remove` fails due to uncommitted changes, the hint now shows the full command: `wt remove <branch> --force`. ([#671](https://github.com/max-sixty/worktrunk/pull/671))
+
+### Documentation
+
+- **Windows install guidance**: Winget as recommended install (ships `git-wt` by default), plus the App Execution Aliases workaround to use `wt` directly. Closes [#133](https://github.com/max-sixty/worktrunk/issues/133). (thanks @ctolkien for reporting, @shanselman for the aliases tip, @Farley-Chen for [#648](https://github.com/max-sixty/worktrunk/pull/648))
+- **Caddy subdomain routing pattern**: Clean URLs like `feature-auth.myproject.lvh.me` via Caddy reverse proxy with dynamic route registration.
+- **tmux session per worktree pattern**: Dedicated tmux session with multi-pane layout per worktree.
+
+## 0.14.2
+
+### Fixed
+
+- **`wt remove --force` works with dirty worktrees**: The `--force` flag was documented to allow removal with uncommitted changes, but worktrunk's own cleanliness check blocked it before git could apply the flag. Fixes [#658](https://github.com/max-sixty/worktrunk/issues/658). (thanks @pedro93)
+- **Correct output when switching to existing local branch**: When switching to a local branch that tracks a remote, worktrunk incorrectly reported "Created branch X" instead of "Created worktree for X". Now only reports branch creation when git's DWIM actually creates a new tracking branch from a remote. Fixes [#656](https://github.com/max-sixty/worktrunk/issues/656). (thanks @guidupuy-ws)
+- **PowerShell handles multiple `wt.exe` binaries**: On Windows, when both Windows Terminal's `wt.exe` and worktrunk's `wt.exe` exist in PATH, shell integration errored with "Cannot convert 'System.Object[]' to the type 'System.String'". Now correctly uses the first match. Relates to [#648](https://github.com/max-sixty/worktrunk/issues/648). (thanks @Farley-Chen)
+
+## 0.14.1
+
+### Improved
+
+- **`--base` accepts commit-ish refs**: `wt switch --create --base` now accepts HEAD, tags, commit SHAs, and relative refs (e.g., `HEAD~2`), not just branch names. Fixes [#630](https://github.com/max-sixty/worktrunk/issues/630). (thanks @myhau)
+- **Upfront validation for target refs**: `wt merge` and `wt step` commands now validate target refs before approval prompts, giving clearer "Branch X not found" errors immediately.
+- **Visual hierarchy in help**: Section dividers, improved heading structure, and sentence case in `--help` output.
+
+### Fixed
+
+- **macOS shell freeze during `copy-ignored`**: Atomic `clonefile()` on directories saturated disk I/O, blocking shell startup. Now uses per-file reflink which is slower but keeps the system responsive.
+- **`copy-ignored` no longer copies nested worktrees**: When `worktree-path` places worktrees inside the main worktree, `copy-ignored` now skips them. Also now copies symlinks (fixes `node_modules/.bin/` etc.). Fixes [#641](https://github.com/max-sixty/worktrunk/issues/641). (thanks @razor-x)
+- **Context-aware hints for `wt config create`**: Hints now suggest relevant next steps based on which configs exist.
+
+## 0.14.0
+
+### Improved
+
+- **`worktree_path_of_branch(branch)` template function**: Look up the filesystem path of any branch's worktree in hooks. Enables copying files between worktrees: `setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"`. Returns empty string if no worktree exists for the branch.
+- **Per-task timeout for `wt list`**: Configure timeout for git operations via `[list] timeout-ms` in user config. Shows timeout count in footer. Use `--full` to disable timeout for complete data collection.
+- **Atomic COW directory cloning on macOS**: `wt step copy-ignored` uses `clonefile()` syscall on APFS for O(1) directory cloning instead of file-by-file copying. ~12-15x faster for large directories like `target/`.
+- **Template variable renamed**: `main_worktree_path` → `primary_worktree_path` for clarity. Old name still works with deprecation warning.
+
+### Fixed
+
+- **`wt step copy-ignored` in bare repositories**: Fixed "this operation must be run in a work tree" error when using bare repo setups. Closes [#598](https://github.com/max-sixty/worktrunk/issues/598). (thanks @sbennett33 for reporting)
+
+### Internal
+
+- **Help system extraction**: Moved help and invocation utilities from main.rs to dedicated modules.
+- **`wt list` model refactor**: Split monolithic model.rs into modular directory structure.
+
+## 0.13.4
+
+### Fixed
+
+- **LESS flag concatenation with long options**: Fixed "invalid option" error when users have long options in LESS (e.g., `LESS=--mouse`). The pager auto-quit feature from v0.13.1 now correctly separates flags. Fixes [#594](https://github.com/max-sixty/worktrunk/issues/594). (thanks @tnlanh for reporting)
+
+### Internal
+
+- **Homebrew formula generation**: Release workflow now uses cargo-dist for Homebrew formula generation, simplifying the release process.
+
+## 0.13.2
+
+### Improved
+
+- **Validate before approval prompts**: `wt switch` and `wt remove` now validate operations before prompting for hook approval, so users don't approve hooks for operations that will fail.
+
+### Fixed
+
+- **Homebrew formula SHA256 hashes**: Fixed release workflow that was setting incorrect checksums for Intel and Linux binaries, causing `brew install` to fail. Fixes [#589](https://github.com/max-sixty/worktrunk/issues/589). (thanks @kobrigo for reporting)
+
+## 0.13.1
+
+### Fixed
+
+- **Pager auto-quit**: Help text now auto-quits when it fits on screen, even when `LESS` is set without the `F` flag (common with oh-my-zsh's `LESS=-R` default). Fixes [#583](https://github.com/max-sixty/worktrunk/issues/583). (thanks @razor-x for reporting)
+- **`--create` hint for remote branch shadowing**: Improved recovery hint when `--create` shadows a remote branch — now shows the full recovery command.
+
+## 0.13.0
+
+### Improved
+
+- **`wt list` parallelization improvements**: Better parallelization of worktree operations reduce latency in some conditions. Respects `RAYON_NUM_THREADS` environment variable for controlling parallelism.
+- **Template variables in `--execute`**: Hook template variables (`{{ branch }}`, `{{ worktree_path }}`, etc.) are now expanded in `--execute` commands and trailing args. With `--create`, `{{ base }}` and `{{ base_worktree_path }}` are also available.
+- **Fish shell Homebrew compatibility**: Fish shell integration now installs to `~/.config/fish/functions/wt.fish` instead of `conf.d/`, ensuring PATH is fully configured before the wt function loads. `wt config show` detects legacy installations and `wt config shell install` handles migration automatically. ([#586](https://github.com/max-sixty/worktrunk/issues/586) — thanks @ekans & @itzlambda)
+- **Chrome Trace Format export**: Performance traces can be exported for analysis with Chrome's trace viewer or Perfetto.
+- **`--dry-run` flag for shell commands**: `wt config shell install` and `wt config shell uninstall` now support `--dry-run` to preview changes without prompting.
+- **Nested subcommand suggestions**: When typing `wt squash` instead of `wt step squash`, the error now suggests the correct command path.
+- **Orphan branch indicator**: `wt list` shows `∅` (empty set) for orphan branches with no common ancestor to the default branch.
+- **Improved `-vv` diagnostic workflow**: Bug reporting hint now uses a gist workflow to avoid URL length limits.
+
+### Fixed
+
+- **`wt switch --create --base` error message**: Now correctly identifies the invalid base branch instead of the target branch. Fixes [#562](https://github.com/max-sixty/worktrunk/issues/562). (thanks @fablefactor)
+- **AheadBehind column loading indicator**: Shows `⋯` when not yet loaded instead of appearing empty, distinguishing loading state from "in sync".
+- **Post-merge hook failure output**: Simplified error messages and removed confusing `--no-verify` hint.
+- **`wt select` log preview**: Graph structure is now preserved when displaying commit history, and columns dynamically align.
+
+### Documentation
+
+- **FAQ entry for shell setup issues**: Added troubleshooting guidance for common shell integration problems.
+- **Template variables reference**: Consolidated template variables documentation into hook.md.
+- **Clarified `--force` vs `-D` flags**: Updated `wt remove` documentation. (thanks @hlee-cb)
+- **Performance benchmarks**: Added documentation for `copy-ignored` performance.
+
 ## 0.12.0
 
 ### Improved
@@ -47,7 +466,7 @@
 - **`wt step copy-ignored`**: Copy gitignored files listed in `.worktreeinclude` between worktrees. Useful for syncing `.env` files, IDE settings, and build caches to new worktrees via post-create hooks. Uses COW (reflink) copying for efficient handling of large directories. Matches Claude Code Desktop's worktree file syncing behavior.
 - **`--foreground` flag**: Debug background hooks by running them in the foreground. Available on `wt hook post-start`, `wt hook post-switch`, and `wt remove`. Replaces the deprecated `--no-background` flag.
 - **`--var` flag for hooks**: Override template variables when running hooks manually, e.g., `wt hook post-create --var target=main`.
-- **`[ci] platform` config**: Explicitly set CI platform (`github` or `gitlab`) for GitHub Enterprise or self-hosted GitLab where URL-based detection fails.
+- **`ci.platform` config**: Explicitly set CI platform (`github` or `gitlab`) for GitHub Enterprise or self-hosted GitLab where URL-based detection fails.
 - **Upstream diff in `wt select`**: Tab 4 shows ahead/behind diff vs upstream tracking branch (remote⇅), matching the column in `wt list`.
 - **`{{ base }}` and `{{ base_worktree_path }}` variables**: New template variables for creation hooks (post-create, post-start, post-switch) to access the base branch name and worktree path.
 - **`-vv` diagnostic reports**: Double-verbose flag writes a diagnostic report to `.git/wt-logs/diagnostic.md` with environment info, configs, and logs for easy bug reporting.

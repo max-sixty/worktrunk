@@ -4,6 +4,8 @@
 
 #[cfg(feature = "syntax-highlighting")]
 use super::highlighting::bash_token_style;
+#[cfg(feature = "syntax-highlighting")]
+use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
 // Import canonical implementations from parent module
 use super::{get_terminal_width, visual_width};
@@ -223,8 +225,6 @@ pub fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
 
 #[cfg(feature = "syntax-highlighting")]
 fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) -> String {
-    use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
-
     let gutter = super::GUTTER;
     let reset = anstyle::Reset;
     let dim = anstyle::Style::new().dimmed();

@@ -5,6 +5,7 @@
 use crate::common::{TestRepo, repo, wt_command};
 use insta::assert_snapshot;
 use rstest::rstest;
+use serde_json::Value;
 use std::io::Write;
 use std::process::Stdio;
 
@@ -102,14 +103,14 @@ fn add_commits_ahead(repo: &mut TestRepo) {
 #[rstest]
 fn test_statusline_basic(repo: TestRepo) {
     let output = run_statusline(&repo, &[], None);
-    assert_snapshot!(output, @"[0m main  [2m^[22m");
+    assert_snapshot!(output, @"[0m main  [2m^[22m[2m|[22m");
 }
 
 #[rstest]
 fn test_statusline_with_changes(repo: TestRepo) {
     add_uncommitted_changes(&repo);
     let output = run_statusline(&repo, &[], None);
-    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m");
+    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m");
 }
 
 #[rstest]
@@ -168,9 +169,9 @@ fn test_statusline_claude_code_full_context(repo: TestRepo) {
         }}"#,
     );
 
-    let output = run_statusline(&repo, &["--claude-code"], Some(&json));
+    let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [36m?[0m[2m^[22m  | Opus");
+        assert_snapshot!(output, @"[PATH]  main  [36m?[0m[2m^[22m[2m|[22m  | Opus");
     });
 }
 
@@ -179,9 +180,9 @@ fn test_statusline_claude_code_minimal(repo: TestRepo) {
     let escaped_path = escape_path_for_json(repo.root_path());
     let json = format!(r#"{{"workspace": {{"current_dir": "{escaped_path}"}}}}"#,);
 
-    let output = run_statusline(&repo, &["--claude-code"], Some(&json));
+    let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m");
     });
 }
 
@@ -195,9 +196,88 @@ fn test_statusline_claude_code_with_model(repo: TestRepo) {
         }}"#,
     );
 
-    let output = run_statusline(&repo, &["--claude-code"], Some(&json));
+    let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m  | Haiku");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Haiku");
+    });
+}
+
+// --- Context Gauge Tests ---
+
+#[rstest]
+fn test_statusline_claude_code_with_context_gauge(repo: TestRepo) {
+    let escaped_path = escape_path_for_json(repo.root_path());
+    let json = format!(
+        r#"{{
+            "workspace": {{"current_dir": "{escaped_path}"}},
+            "model": {{"display_name": "Opus"}},
+            "context_window": {{"used_percentage": 42}}
+        }}"#,
+    );
+
+    let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus  🌕 42%");
+    });
+}
+
+#[rstest]
+fn test_statusline_claude_code_context_gauge_low(repo: TestRepo) {
+    let escaped_path = escape_path_for_json(repo.root_path());
+    let json = format!(
+        r#"{{
+            "workspace": {{"current_dir": "{escaped_path}"}},
+            "model": {{"display_name": "Opus"}},
+            "context_window": {{"used_percentage": 5}}
+        }}"#,
+    );
+
+    let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus  🌕 5%");
+    });
+}
+
+#[rstest]
+fn test_statusline_claude_code_context_gauge_high(repo: TestRepo) {
+    let escaped_path = escape_path_for_json(repo.root_path());
+    let json = format!(
+        r#"{{
+            "workspace": {{"current_dir": "{escaped_path}"}},
+            "model": {{"display_name": "Opus"}},
+            "context_window": {{"used_percentage": 98}}
+        }}"#,
+    );
+
+    let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus  🌑 98%");
+    });
+}
+
+#[rstest]
+fn test_statusline_claude_code_missing_context_window(repo: TestRepo) {
+    // When context_window is missing, no gauge should be displayed
+    let escaped_path = escape_path_for_json(repo.root_path());
+    let json = format!(
+        r#"{{
+            "workspace": {{"current_dir": "{escaped_path}"}},
+            "model": {{"display_name": "Opus"}}
+        }}"#,
+    );
+
+    let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
+    claude_code_snapshot_settings().bind(|| {
+        // No gauge symbol (○◔◑◕●) should appear
+        assert!(
+            !output.contains('○')
+                && !output.contains('◔')
+                && !output.contains('◑')
+                && !output.contains('◕')
+                && !output.contains('●'),
+            "No gauge should appear when context_window is missing: {output}"
+        );
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus");
     });
 }
 
@@ -288,7 +368,7 @@ url = "http://{{ branch }}.localhost:3000"
 
     let output = run_statusline(&repo, &[], None);
     // Shows `?` because writing project config creates uncommitted file
-    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m  http://main.localhost:3000");
+    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m  http://main.localhost:3000");
 }
 
 #[rstest]
@@ -310,4 +390,163 @@ url = "http://{{ branch }}.localhost:3000"
     // Run statusline from feature worktree
     let output = run_statusline_from_dir(&repo, &[], None, &feature_path);
     assert_snapshot!(output, @"[0m feature  [2m_[22m  http://feature.localhost:3000");
+}
+
+// --- JSON Format Tests ---
+
+#[rstest]
+fn test_statusline_json_basic(repo: TestRepo) {
+    let output = run_statusline(&repo, &["--format=json"], None);
+    let parsed: Value = serde_json::from_str(&output).expect("should be valid JSON");
+
+    // Should be an array with one item
+    let items = parsed.as_array().expect("should be an array");
+    assert_eq!(
+        items.len(),
+        1,
+        "should have exactly one item (current worktree)"
+    );
+
+    let item = &items[0];
+
+    // Check essential fields
+    assert_eq!(item["branch"], "main");
+    assert_eq!(item["kind"], "worktree");
+    assert!(item["is_current"].as_bool().unwrap());
+    assert!(item["is_main"].as_bool().unwrap());
+
+    // commit object should exist with sha
+    assert!(item["commit"]["sha"].is_string());
+    assert!(item["commit"]["short_sha"].is_string());
+}
+
+#[rstest]
+fn test_statusline_json_with_changes(repo: TestRepo) {
+    // Create uncommitted changes
+    std::fs::write(repo.root_path().join("modified.txt"), "modified content").unwrap();
+
+    let output = run_statusline(&repo, &["--format=json"], None);
+    let parsed: Value = serde_json::from_str(&output).expect("should be valid JSON");
+
+    let item = &parsed[0];
+    assert_eq!(item["branch"], "main");
+
+    // Should have working_tree status
+    let working_tree = &item["working_tree"];
+    assert!(
+        working_tree["untracked"].as_bool().unwrap(),
+        "should show untracked file"
+    );
+}
+
+#[rstest]
+fn test_statusline_json_feature_branch(mut repo: TestRepo) {
+    // Create feature worktree with commits
+    let feature_path = repo.add_worktree("feature");
+
+    std::fs::write(feature_path.join("feature.txt"), "content").unwrap();
+    repo.git_command()
+        .args(["add", "."])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "Feature commit"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    let output = run_statusline_from_dir(&repo, &["--format=json"], None, &feature_path);
+    let parsed: Value = serde_json::from_str(&output).expect("should be valid JSON");
+
+    let item = &parsed[0];
+    assert_eq!(item["branch"], "feature");
+    assert!(item["is_current"].as_bool().unwrap());
+    assert!(!item["is_main"].as_bool().unwrap());
+
+    // Should have ahead/behind counts (commits ahead of main)
+    assert!(
+        item["main"]["ahead"].as_u64().unwrap() >= 1,
+        "should be ahead of main"
+    );
+}
+
+#[rstest]
+fn test_statusline_json_ignores_claude_code(repo: TestRepo) {
+    // When --format=json is used, --claude-code should be ignored
+    let escaped_path = escape_path_for_json(repo.root_path());
+    let json = format!(
+        r#"{{
+            "workspace": {{"current_dir": "{escaped_path}"}},
+            "model": {{"display_name": "Opus"}}
+        }}"#,
+    );
+
+    let output = run_statusline(&repo, &["--format=json", "--claude-code"], Some(&json));
+    let parsed: Value = serde_json::from_str(&output).expect("should be valid JSON");
+
+    // Should still produce JSON output (not statusline format)
+    assert!(parsed.is_array(), "should produce JSON array output");
+    let item = &parsed[0];
+    assert_eq!(item["branch"], "main");
+}
+
+/// Tests that statusline correctly identifies nested worktrees.
+///
+/// When worktrees are placed inside other worktrees (e.g., `.worktrees/` layout),
+/// the detection must use git rev-parse --show-toplevel rather than prefix matching,
+/// which would incorrectly match the parent worktree.
+///
+/// Regression test for: prefix matching with starts_with would incorrectly identify
+/// the main worktree when running from a nested worktree.
+#[rstest]
+fn test_statusline_nested_worktree(mut repo: TestRepo) {
+    // Create a worktree nested inside the main repo (like .worktrees/ layout)
+    let nested_path = repo.root_path().join(".worktrees").join("feature");
+    let nested_worktree = repo.add_worktree_at_path("feature", &nested_path);
+
+    // Run statusline from inside the nested worktree - should show "feature", not "main"
+    let output = repo
+        .wt_command()
+        .current_dir(&nested_worktree)
+        .args(["list", "statusline"])
+        .output()
+        .expect("statusline should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("feature"),
+        "Nested worktree should show 'feature' branch, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("main"),
+        "Nested worktree should NOT show 'main' branch, got: {stdout}"
+    );
+}
+
+/// Tests that JSON output correctly identifies nested worktrees.
+#[rstest]
+fn test_statusline_json_nested_worktree(mut repo: TestRepo) {
+    // Create a worktree nested inside the main repo
+    let nested_path = repo.root_path().join(".worktrees").join("feature");
+    let nested_worktree = repo.add_worktree_at_path("feature", &nested_path);
+
+    // Run statusline --format=json from inside the nested worktree
+    let output = repo
+        .wt_command()
+        .current_dir(&nested_worktree)
+        .args(["list", "statusline", "--format=json"])
+        .output()
+        .expect("statusline should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Value = serde_json::from_str(&stdout).expect("should be valid JSON");
+
+    assert!(parsed.is_array(), "should produce JSON array");
+    let items = parsed.as_array().unwrap();
+    assert_eq!(items.len(), 1, "should have exactly one item");
+    assert_eq!(
+        items[0]["branch"], "feature",
+        "Nested worktree should report 'feature' branch, not parent"
+    );
 }

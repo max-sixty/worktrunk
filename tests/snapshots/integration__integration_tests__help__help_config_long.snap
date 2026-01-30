@@ -9,254 +9,363 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    PSModulePath: ""
     RUST_LOG: warn
-    SOURCE_DATE_EPOCH: "1735776000"
+    SHELL: ""
     TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt config - Manage configuration and shell integration
+wt config - Manage user & project configs[0m
 
-Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>
+Includes shell integration, hooks, and saved state.[0m
 
-[1m[32mCommands:
+Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
+
+[1m[32mCommands:[0m
   [1m[36mshell[0m   Shell integration setup
   [1m[36mcreate[0m  Create configuration file
   [1m[36mshow[0m    Show configuration files & locations
   [1m[36mstate[0m   Manage internal data and cache
 
-[1m[32mOptions:
-  [1m[36m-h[0m, [1m[36m--help
+[1m[32mOptions:[0m
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
-          Show debug info (-v), or also write diagnostic report (-vv)
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
+          Verbose output (-v: hooks, templates; -vv: debug report)
 
-Manages configuration, shell integration, and runtime settings.
-
-Worktrunk uses two configuration files:
-
-        File                 Location                                        Purpose                             
-   ────────────── ─────────────────────────────── ────────────────────────────────────────────────────────────── 
-   User config    ~/.config/worktrunk/config.toml Personal settings, command defaults, approved project commands 
-   Project config .config/wt.toml                 Lifecycle hooks, checked into version control                  
-
-[32mExamples
+[1m[32mExamples[0m
 
 Install shell integration (required for directory switching):
 
-  [2mwt config shell install
+  [2mwt config shell install[0m
 
 Create user config file with documented examples:
 
-  [2mwt config create
+  [2mwt config create[0m
 
 Create project config file ([2m.config/wt.toml[0m) for hooks:
 
-  [2mwt config create --project
+  [2mwt config create --project[0m
 
 Show current configuration and file locations:
 
-  [2mwt config show
+  [2mwt config show[0m
 
-[32mUser config
+[1m[32mConfiguration files[0m
 
-The user config stores personal preferences that apply across all repositories. Create it with [2mwt config create[0m and view with [2mwt config show[0m.
+        File                 Location                                Contains                     Committed & shared 
+   ────────────── ─────────────────────────────── ─────────────────────────────────────────────── ────────────────── 
+   User config    ~/.config/worktrunk/config.toml Worktree path template, LLM commit configs, etc ✗                  
+   Project config .config/wt.toml                 Project hooks, dev server URL                   ✓                  
 
-[1mWorktree path template
+[1mUser config[0m — personal preferences:
 
-Controls where new worktrees are created. The template is relative to the repository root.
+  [2m# ~/.config/worktrunk/config.toml[0m
+  [2mworktree-path = ".worktrees/{{ branch | sanitize }}"[0m
+  [2m[0m
+  [2m[commit.generation][0m
+  [2mcommand = "MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
 
-[1mAvailable variables:
-- [2m{{ repo }}[0m — repository directory name
+[1mProject config[0m — shared team settings:
+
+  [2m# .config/wt.toml[0m
+  [2m[post-create][0m
+  [2mdeps = "npm ci"[0m
+  [2m[0m
+  [2m[pre-merge][0m
+  [2mtest = "npm test"[0m
+
+[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+
+[32mUSER CONFIGURATION[0m
+
+Create with [2mwt config create[0m.
+
+Location:
+
+- macOS/Linux: [2m~/.config/worktrunk/config.toml[0m (or [2m$XDG_CONFIG_HOME[0m if set)
+- Windows: [2m%APPDATA%\worktrunk\config.toml[0m
+
+[1m[32mWorktree path template[0m
+
+Controls where new worktrees are created.
+
+[1mVariables:[0m
+
+- [2m{{ repo_path }}[0m — absolute path to the repository (e.g., [2m/Users/me/code/myproject[0m)
+- [2m{{ repo }}[0m — repository directory name (e.g., [2mmyproject[0m)
 - [2m{{ branch }}[0m — raw branch name (e.g., [2mfeature/auth[0m)
-- [2m{{ branch | sanitize }}[0m — branch name with [2m/[0m and [2m\[0m replaced by [2m-
+- [2m{{ branch | sanitize }}[0m — filesystem-safe: [2m/[0m and [2m\[0m become [2m-[0m (e.g., [2mfeature-auth[0m)
+- [2m{{ branch | sanitize_db }}[0m — database-safe: lowercase, underscores, hash suffix (e.g., [2mfeature_auth_x7k[0m)
 
-[1mExamples[0m for a repo at [2m~/code/myproject[0m creating branch [2mfeature/login[0m:
+[1mExamples[0m for repo at [2m~/code/myproject[0m, branch [2mfeature/auth[0m:
 
-  [2m# Default — siblings in parent directory
-  [2m# Creates: ~/code/myproject.feature-login
-  [2mworktree-path = "../{{ repo }}.{{ branch | sanitize }}"
-  [2m
-  [2m# Inside the repository
-  [2m# Creates: ~/code/myproject/.worktrees/feature-login
-  [2mworktree-path = ".worktrees/{{ branch | sanitize }}"
-  [2m
-  [2m# Namespaced (useful when multiple repos share a parent directory)
-  [2m# Creates: ~/code/worktrees/myproject/feature-login
-  [2mworktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
-  [2m
-  [2m# Nested bare repo (git clone --bare <url> project/.git)
-  [2m# Creates: ~/code/project/feature-login (sibling to .git)
-  [2mworktree-path = "../{{ branch | sanitize }}"
+  [2m# Default — sibling directory[0m
+  [2m# Creates: ~/code/myproject.feature-auth[0m
+  [2m# worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"[0m
+  [2m[0m
+  [2m# Inside the repository[0m
+  [2m# Creates: ~/code/myproject/.worktrees/feature-auth[0m
+  [2mworktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"[0m
+  [2m[0m
+  [2m# Centralized worktrees directory[0m
+  [2m# Creates: ~/worktrees/myproject/feature-auth[0m
+  [2mworktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
 
-[1mCommand settings
+[2m~[0m expands to the home directory. Relative paths are relative to the repository root.
 
-Set persistent flag values for commands. These apply unless explicitly overridden on the command line.
+[1m[32mLLM commit messages[0m
 
-[1m[2mwt list[0m:
+Generate commit messages automatically during merge. Requires an external CLI tool.
 
-  [2m[list]
-  [2m# All off by default
-  [2mfull = true      # --full
-  [2mbranches = true  # --branches
-  [2mremotes = true   # --remotes
+See LLM commits docs for setup and Custom prompt templates for template customization.
 
-[1m[2mwt step commit[0m and [2mwt merge[0m staging:
+[1m[32mCommand config[0m
 
-  [2m[commit]
-  [2mstage = "all"    # "all" (default), "tracked", or "none"
+[32mList[0m
 
-[1m[2mwt merge[0m:
+Persistent flag values for [2mwt list[0m. Override on command line as needed.
 
-  [2m[merge]
-  [2m# These flags are on by default; set to false to disable
-  [2msquash = false  # Preserve individual commits (--no-squash)
-  [2mcommit = false  # Skip committing uncommitted changes (also disables squash)
-  [2mrebase = false  # Skip rebase (fails if not already rebased)
-  [2mremove = false  # Keep worktree after merge (--no-remove)
-  [2mverify = false  # Skip hooks (--no-verify)
+  [2m[list][0m
+  [2mfull = false       # Show CI status and main…± diffstat columns (--full)[0m
+  [2mbranches = false   # Include branches without worktrees (--branches)[0m
+  [2mremotes = false    # Include remote-only branches (--remotes)[0m
 
-[1mLLM commit messages
+[32mCommit[0m
 
-Configure automatic commit message generation. Requires an external tool like llm:
+Shared by [2mwt step commit[0m, [2mwt step squash[0m, and [2mwt merge[0m.
 
-  [2m[commit-generation]
-  [2mcommand = "llm"
-  [2margs = ["-m", "claude-haiku-4.5"]
+  [2m[commit][0m
+  [2mstage = "all"      # What to stage before commit: "all", "tracked", or "none"[0m
 
-See LLM Commit Messages for setup details and template customization.
+[32mMerge[0m
 
-[1mApproved commands
+All flags are on by default. Set to false to change default behavior.
 
-When project hooks run for the first time, Worktrunk prompts for approval. Approved commands are saved here automatically:
+  [2m[merge][0m
+  [2msquash = true      # Squash commits into one (--no-squash to preserve history)[0m
+  [2mcommit = true      # Commit uncommitted changes first (--no-commit to skip)[0m
+  [2mrebase = true      # Rebase onto target before merge (--no-rebase to skip)[0m
+  [2mremove = true      # Remove worktree after merge (--no-remove to keep)[0m
+  [2mverify = true      # Run project hooks (--no-verify to skip)[0m
 
-  [2m[projects."my-project"]
-  [2mapproved-commands = ["npm ci", "npm test"]
+[32mSelect[0m
 
-Manage approvals with [2mwt hook approvals add[0m to review and pre-approve commands, and [2mwt hook approvals clear[0m to reset (add [2m--global[0m to clear all projects).
+Pager behavior for [2mwt select[0m diff previews.
 
-[1mUser hooks
+  [2m[select][0m
+  [2m# Pager command with flags for diff preview (overrides git's core.pager)[0m
+  [2m# Use this to specify pager flags needed for non-TTY contexts[0m
+  [2m# Example:[0m
+  [2m# pager = "delta --paging=never"[0m
 
-Personal hooks that run for all repositories. Use the same syntax as project hooks:
+[32mUser project-specific settings[0m
 
-  [2m[post-create]
-  [2msetup = "echo 'Setting up worktree...'"
-  [2m
-  [2m[pre-merge]
-  [2mnotify = "notify-send 'Merging {{ branch }}'"
+For context:
 
-User hooks run before project hooks and don't require approval. Skip with [2m--no-verify[0m.
+- Project config settings are shared with teammates.
+- User configs generally apply to all projects.
+- User configs _also_ has a [2m[projects][0m table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.
 
-See [2mwt hook[0m for complete documentation.
+Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m).
 
-[32mProject config
+[1mApproved hook commands[0m
 
-The project config defines lifecycle hooks and project-specific settings. This file is checked into version control and shared across the team.
+When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.
 
-Create [2m.config/wt.toml[0m in the repository root:
+  [2m[projects."github.com/user/repo"][0m
+  [2mapproved-commands = ["npm ci", "npm test"][0m
 
-  [2m[post-create]
-  [2minstall = "npm ci"
-  [2m
-  [2m[pre-merge]
-  [2mtest = "npm test"
-  [2mlint = "npm run lint"
+To reset, delete the entry or run [2mwt hook approvals clear[0m.
 
-See [2mwt hook[0m for complete documentation on hook types, execution order, template variables, and JSON context.
+[1mSetting overrides (Experimental)[0m
 
-[1mDev server URL
+Override global user config for a specific project. Scalar values (like [2mworktree-path[0m) replace the global value. Hooks append — both global and per-project hooks run.
 
-The [2m[list][0m section adds a URL column to [2mwt list[0m:
+  [2m[projects."github.com/user/repo"][0m
+  [2mworktree-path = ".worktrees/{{ branch | sanitize }}"[0m
+  [2mlist.full = true[0m
+  [2mmerge.squash = false[0m
+  [2mpost-create.env = "cp .env.example .env"[0m
 
-  [2m[list]
-  [2murl = "http://localhost:{{ branch | hash_port }}"
+[32mCustom prompt templates[0m
 
-URLs are dimmed when the port isn't listening.
+Templates use minijinja syntax.
 
-[1mCI platform override
+[1mCommit template[0m
 
-The [2m[ci][0m section overrides CI platform detection for GitHub Enterprise or self-hosted GitLab with custom domains:
+Available variables:
 
-  [2m[ci]
-  [2mplatform = "github"  # or "gitlab"
+- [2m{{ git_diff }}[0m, [2m{{ git_diff_stat }}[0m — diff content
+- [2m{{ branch }}[0m, [2m{{ repo }}[0m — context
+- [2m{{ recent_commits }}[0m — recent commit messages
 
-By default, the platform is detected from the remote URL. Use this when URL detection fails (e.g., [2mgit.mycompany.com[0m instead of [2mgithub.mycompany.com[0m).
+Default template:
 
-[32mShell integration
+  [2m[commit.generation][0m
+  [2mtemplate = """[0m
+  [2mWrite a commit message for the staged changes below.[0m
+  [2m[0m
+  [2m<format>[0m
+  [2m- Subject line under 50 chars[0m
+  [2m- For material changes, add a blank line then a body paragraph explaining the change[0m
+  [2m- Output only the commit message, no quotes or code blocks[0m
+  [2m</format>[0m
+  [2m[0m
+  [2m<style>[0m
+  [2m- Imperative mood: "Add feature" not "Added feature"[0m
+  [2m- Match recent commit style (conventional commits if used)[0m
+  [2m- Describe the change, not the intent or benefit[0m
+  [2m</style>[0m
+  [2m[0m
+  [2m<diffstat>[0m
+  [2m{{ git_diff_stat }}[0m
+  [2m</diffstat>[0m
+  [2m[0m
+  [2m<diff>[0m
+  [2m{{ git_diff }}[0m
+  [2m</diff>[0m
+  [2m[0m
+  [2m<context>[0m
+  [2mBranch: {{ branch }}[0m
+  [2m{% if recent_commits %}<recent_commits>[0m
+  [2m{% for commit in recent_commits %}- {{ commit }}[0m
+  [2m{% endfor %}</recent_commits>{% endif %}[0m
+  [2m</context>[0m
+  [2m[0m
+  [2m"""[0m
+
+[1mSquash template[0m
+
+Available variables (in addition to commit template variables):
+
+- [2m{{ commits }}[0m — list of commits being squashed
+- [2m{{ target_branch }}[0m — merge target branch
+
+Default template:
+
+  [2m[commit.generation][0m
+  [2msquash-template = """[0m
+  [2mCombine these commits into a single commit message.[0m
+  [2m[0m
+  [2m<format>[0m
+  [2m- Subject line under 50 chars[0m
+  [2m- For material changes, add a blank line then a body paragraph explaining the change[0m
+  [2m- Output only the commit message, no quotes or code blocks[0m
+  [2m</format>[0m
+  [2m[0m
+  [2m<style>[0m
+  [2m- Imperative mood: "Add feature" not "Added feature"[0m
+  [2m- Match the style of commits being squashed (conventional commits if used)[0m
+  [2m- Describe the change, not the intent or benefit[0m
+  [2m</style>[0m
+  [2m[0m
+  [2m<commits branch="{{ branch }}" target="{{ target_branch }}">[0m
+  [2m{% for commit in commits %}- {{ commit }}[0m
+  [2m{% endfor %}</commits>[0m
+  [2m[0m
+  [2m<diffstat>[0m
+  [2m{{ git_diff_stat }}[0m
+  [2m</diffstat>[0m
+  [2m[0m
+  [2m<diff>[0m
+  [2m{{ git_diff }}[0m
+  [2m</diff>[0m
+  [2m[0m
+  [2m"""[0m
+
+[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+
+[32mPROJECT CONFIGURATION[0m
+
+Project config ([2m.config/wt.toml[0m) defines lifecycle hooks and project-specific settings. This file is checked into version control and shared with the team. Create with [2mwt config create --project[0m.
+
+See [2mwt hook[0m for hook types, execution order, template variables, and examples.
+
+[32mNon-hook settings[0m
+
+  [2m# .config/wt.toml[0m
+  [2m[0m
+  [2m# URL column in wt list (dimmed when port not listening)[0m
+  [2m[list][0m
+  [2murl = "http://localhost:{{ branch | hash_port }}"[0m
+  [2m[0m
+  [2m# Override CI platform detection for self-hosted instances[0m
+  [2m[ci][0m
+  [2mplatform = "github"  # or "gitlab"[0m
+
+[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+
+[32mSHELL INTEGRATION[0m
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
-  [2mwt config shell install
+  [2mwt config shell install[0m
 
 Or manually add to the shell config:
 
-  [2m# For bash: add to ~/.bashrc
-  [2meval "$(wt config shell init bash)"
-  [2m
-  [2m# For zsh: add to ~/.zshrc
-  [2meval "$(wt config shell init zsh)"
-  [2m
-  [2m# For fish: add to ~/.config/fish/config.fish
-  [2mwt config shell init fish | source
+  [2m# For bash: add to ~/.bashrc[0m
+  [2meval "$(wt config shell init bash)"[0m
+  [2m[0m
+  [2m# For zsh: add to ~/.zshrc[0m
+  [2meval "$(wt config shell init zsh)"[0m
+  [2m[0m
+  [2m# For fish: add to ~/.config/fish/config.fish[0m
+  [2mwt config shell init fish | source[0m
 
 Without shell integration, [2mwt switch[0m prints the target directory but cannot [2mcd[0m into it.
 
-[1mSkip first-run prompt
+[32mFirst-run prompts[0m
 
-On first run without shell integration, Worktrunk offers to install it. Suppress this prompt in CI or automated environments:
+On first run without shell integration, Worktrunk offers to install it. Similarly, on first commit without LLM configuration, it offers to configure a detected tool ([2mclaude[0m, [2mcodex[0m). Declining sets [2mskip-shell-integration-prompt[0m or [2mskip-commit-generation-prompt[0m automatically.
 
-  [2mskip-shell-integration-prompt = true
+[32mOTHER[0m
 
-Or via environment variable:
-
-  [2mexport WORKTRUNK_SKIP_SHELL_INTEGRATION_PROMPT=true
-
-[32mEnvironment variables
+[1m[32mEnvironment variables[0m
 
 All user config options can be overridden with environment variables using the [2mWORKTRUNK_[0m prefix.
 
-[1mNaming convention
+[32mNaming convention[0m
 
 Config keys use kebab-case ([2mworktree-path[0m), while env vars use SCREAMING_SNAKE_CASE ([2mWORKTRUNK_WORKTREE_PATH[0m). The conversion happens automatically.
 
 For nested config sections, use double underscores to separate levels:
 
-            Config                   Environment Variable         
-   ───────────────────────── ──────────────────────────────────── 
-   worktree-path             WORKTRUNK_WORKTREE_PATH              
-   commit-generation.command WORKTRUNK_COMMIT_GENERATION__COMMAND 
-   commit-generation.args    WORKTRUNK_COMMIT_GENERATION__ARGS    
+            Config                   Environment Variable          
+   ───────────────────────── ───────────────────────────────────── 
+   worktree-path             WORKTRUNK_WORKTREE_PATH               
+   commit.generation.command WORKTRUNK_COMMIT__GENERATION__COMMAND 
+   commit.stage              WORKTRUNK_COMMIT__STAGE               
 
 Note the single underscore after [2mWORKTRUNK[0m and double underscores between nested keys.
 
-[1mArray values
-
-Array config values like [2margs = ["-m", "claude-haiku"][0m can be specified as a single string in environment variables:
-
-  [2mexport WORKTRUNK_COMMIT_GENERATION__ARGS="-m claude-haiku"
-
-[1mExample: CI/testing override
+[32mExample: CI/testing override[0m
 
 Override the LLM command in CI to use a mock:
 
-  [2mWORKTRUNK_COMMIT_GENERATION__COMMAND=echo \
-  [2mWORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
-  [2m  wt merge
+  [2mWORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge[0m
 
-[1mOther environment variables
+[32mOther environment variables[0m
 
                Variable                                                   Purpose                                      
    ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────── 

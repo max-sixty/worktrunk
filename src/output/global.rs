@@ -1,7 +1,8 @@
 //! Global output context with file-based directive passing
 //!
-//! This provides a logging-like API where you configure output once
-//! at program start, then use output functions anywhere without passing parameters.
+//! This module handles shell integration directives (cd, exec) that need to be
+//! communicated to the parent shell. For regular output, use `eprintln!`/`println!`
+//! directly (from `worktrunk::styling` for color support).
 //!
 //! # Implementation
 //!
@@ -15,28 +16,27 @@
 //! When `WORKTRUNK_DIRECTIVE_FILE` is set (by the shell wrapper), wt writes shell commands
 //! (like `cd '/path'`) to that file. The shell wrapper sources the file after wt exits.
 //! This allows the parent shell to change directory.
-//!
-//! # Trade-offs
-//!
-//! - Zero parameter threading - call from anywhere
-//! - Lazy initialization - state initialized on first use
-//! - Spawned threads automatically use correct context
-//! - Simple implementation - no traits, no handler structs
-//! - stdout always available for data output (JSON, etc.)
 
 use std::fs::OpenOptions;
 use std::io::{self, Write};
-use std::path::Path;
-use std::path::PathBuf;
 #[cfg(unix)]
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
+
+#[cfg(not(unix))]
+use worktrunk::git::WorktrunkError;
+#[cfg(not(unix))]
+use worktrunk::shell_exec::Cmd;
 use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 #[cfg(unix)]
 use worktrunk::shell_exec::ShellConfig;
-#[cfg(not(unix))]
-use worktrunk::shell_exec::execute_streaming;
-use worktrunk::styling::{eprintln, stderr};
+
+// Re-export set_verbosity from the library's styling module.
+// This ensures the binary and library share the same global state.
+// Library code (like expansion.rs) accesses verbosity() directly from styling.
+pub use worktrunk::styling::set_verbosity;
 
 /// Global output state, lazily initialized on first access.
 ///
@@ -83,42 +83,6 @@ fn has_directive_file() -> bool {
         .expect("OUTPUT_STATE lock poisoned")
         .directive_file
         .is_some()
-}
-
-/// Print a message to stderr (written as-is)
-///
-/// Use with message formatting functions for semantic output:
-/// ```ignore
-/// use worktrunk::styling::{error_message, success_message, hint_message};
-/// output::print(error_message("Failed to create branch"))?;
-/// output::print(success_message("Branch created"))?;
-/// output::print(hint_message("Use --force to override"))?;
-/// ```
-pub fn print(message: impl Into<String>) -> io::Result<()> {
-    eprintln!("{}", message.into());
-    stderr().flush()
-}
-
-/// Emit a blank line for visual separation
-pub fn blank() -> io::Result<()> {
-    eprintln!();
-    stderr().flush()
-}
-
-/// Write to stdout (pipeable output)
-///
-/// Used for primary command output: table rows, JSON, prompts, statuslines.
-/// This is pipeable — `wt list | grep feature` works because stdout data
-/// goes to stdout while progress/warnings go to stderr.
-///
-/// Example:
-/// ```rust,ignore
-/// output::stdout(json_string)?;
-/// output::stdout(layout.format_header_line())?;
-/// ```
-pub fn stdout(content: impl Into<String>) -> io::Result<()> {
-    println!("{}", content.into());
-    io::stdout().flush()
 }
 
 /// Write a directive to the directive file (if set)
@@ -197,8 +161,6 @@ pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
 /// Execute a command in the given directory (Unix: exec, non-Unix: spawn)
 #[cfg(unix)]
 fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result<()> {
-    use std::os::unix::process::CommandExt;
-
     let exec_dir = target_dir.unwrap_or_else(|| Path::new("."));
     let shell = ShellConfig::get();
 
@@ -225,12 +187,12 @@ fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result
 /// Execute a command in the given directory (non-Unix: spawn and wait)
 #[cfg(not(unix))]
 fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result<()> {
-    use worktrunk::git::WorktrunkError;
+    let mut cmd = Cmd::shell(&command).stdin(Stdio::inherit());
+    if let Some(dir) = target_dir {
+        cmd = cmd.current_dir(dir);
+    }
 
-    // On non-Unix platforms, fall back to spawn-and-wait.
-    // This uses the shell abstraction (Git Bash if available).
-    let exec_dir = target_dir.unwrap_or_else(|| Path::new("."));
-    if let Err(err) = execute_streaming(&command, exec_dir, false, None, true, false) {
+    if let Err(err) = cmd.stream() {
         // If the command failed with an exit code, just exit with that code.
         // This matches Unix behavior where exec() replaces the process and
         // the shell's exit code becomes the process exit code (no error message).
@@ -242,14 +204,6 @@ fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result
         return Err(err);
     }
     Ok(())
-}
-
-/// Flush any buffered output (both stdout and stderr)
-///
-/// Call before interactive prompts to prevent stream interleaving.
-pub fn flush() -> io::Result<()> {
-    io::stdout().flush()?;
-    io::stderr().flush()
 }
 
 /// Terminate command output
@@ -297,7 +251,18 @@ pub fn compute_hooks_display_path<'a>(
     hooks_run_at: &'a std::path::Path,
     user_location: &std::path::Path,
 ) -> Option<&'a std::path::Path> {
-    if hooks_run_at == user_location {
+    // Canonicalize both paths for comparison to handle relative vs absolute paths
+    // (e.g., "." vs "/absolute/path/to/cwd"). Fall back to direct comparison if
+    // canonicalization fails (e.g., path doesn't exist).
+    let same_location = match (
+        dunce::canonicalize(hooks_run_at),
+        dunce::canonicalize(user_location),
+    ) {
+        (Ok(h), Ok(u)) => h == u,
+        _ => hooks_run_at == user_location,
+    };
+
+    if same_location {
         None
     } else {
         Some(hooks_run_at)
@@ -354,7 +319,6 @@ pub fn post_hook_display_path(destination: &std::path::Path) -> Option<&std::pat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_compute_hooks_display_path_same_location() {
@@ -434,7 +398,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             // Access output system in spawned thread
-            let _ = flush();
+            let _ = is_shell_integration_active();
             tx.send(()).unwrap();
         })
         .join()
@@ -505,7 +469,7 @@ mod tests {
         // This is the bug: {:#} on empty style produces empty string!
         assert_eq!(
             output, "",
-            "BUG: Empty style reset produces empty string, not \\x1b[0m"
+            "BUG: Empty style reset produces empty string, not ANSI reset"
         );
 
         // This means colors can leak: "text in color{:#}" where # is on empty Style
@@ -519,10 +483,11 @@ mod tests {
 
         let output = format!("{}", Reset);
 
-        // This should produce the actual reset escape code
+        // This should produce an actual ANSI escape sequence (starts with ESC)
         assert!(
-            output.contains("\x1b[0m") || output == "\x1b[0m",
-            "Reset should produce actual ANSI reset code"
+            output.starts_with('\x1b'),
+            "Reset should produce ANSI escape code, got: {:?}",
+            output
         );
     }
 

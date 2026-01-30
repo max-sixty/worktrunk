@@ -2,9 +2,8 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::CommitGenerationConfig;
-use worktrunk::git::Repository;
 use worktrunk::styling::{
-    format_with_gutter, hint_message, info_message, progress_message, success_message,
+    eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
 };
 
 use super::command_executor::CommandContext;
@@ -66,76 +65,88 @@ impl<'a> CommitGenerator<'a> {
         result
     }
 
-    pub fn emit_hint_if_needed(&self) -> anyhow::Result<()> {
+    pub fn emit_hint_if_needed(&self) {
         if !self.config.is_configured() {
-            crate::output::print(hint_message(cformat!(
-                "Using fallback commit message. Run <bright-black>wt config --help</> for LLM setup guide"
-            )))?;
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "Using fallback commit message. For LLM setup guide, run <bright-black>wt config --help</>"
+                ))
+            );
         }
-        Ok(())
     }
 
+    /// Commit staged changes in the given worktree.
+    ///
+    /// When `show_progress` is true, displays a progress message with diff stats
+    /// before committing. Set to false for bulk operations where each worktree
+    /// is handled individually (e.g., `step relocate --commit`).
     pub fn commit_staged_changes(
         &self,
+        wt: &worktrunk::git::WorkingTree<'_>,
+        show_progress: bool,
         show_no_squash_note: bool,
         stage_mode: StageMode,
     ) -> anyhow::Result<()> {
-        let repo = Repository::current()?;
-
         // Fail early if nothing is staged (avoids confusing LLM prompt with empty diff)
-        if !repo.has_staged_changes()? {
+        if !wt.has_staged_changes()? {
             anyhow::bail!("Nothing to commit");
         }
 
-        let stats_parts = repo.diff_stats_summary(&["diff", "--staged", "--shortstat"]);
+        if show_progress {
+            let stats_parts = wt
+                .repo()
+                .diff_stats_summary(&["diff", "--staged", "--shortstat"]);
 
-        let changes_type = match stage_mode {
-            StageMode::Tracked => "tracked changes",
-            _ => "changes",
-        };
+            let changes_type = match stage_mode {
+                StageMode::Tracked => "tracked changes",
+                _ => "changes",
+            };
 
-        let action = if self.config.is_configured() {
-            format!("Generating commit message and committing {changes_type}...")
-        } else {
-            format!("Committing {changes_type} with default message...")
-        };
+            let action = if self.config.is_configured() {
+                format!("Generating commit message and committing {changes_type}...")
+            } else {
+                format!("Committing {changes_type} with default message...")
+            };
 
-        let mut parts = vec![];
-        if !stats_parts.is_empty() {
-            parts.extend(stats_parts);
+            let mut parts = vec![];
+            if !stats_parts.is_empty() {
+                parts.extend(stats_parts);
+            }
+            if show_no_squash_note {
+                parts.push("no squashing needed".to_string());
+            }
+
+            let full_progress_msg = if parts.is_empty() {
+                action
+            } else {
+                // Gray parenthetical with separate cformat for closing paren (avoids optimizer)
+                let parts_str = parts.join(", ");
+                let paren_close = cformat!("<bright-black>)</>");
+                cformat!("{action} <bright-black>({parts_str}</>{paren_close}")
+            };
+
+            eprintln!("{}", progress_message(full_progress_msg));
         }
-        if show_no_squash_note {
-            parts.push("no squashing needed".to_string());
-        }
 
-        let full_progress_msg = if parts.is_empty() {
-            action
-        } else {
-            // Gray parenthetical with separate cformat for closing paren (avoids optimizer)
-            let parts_str = parts.join(", ");
-            let paren_close = cformat!("<bright-black>)</>");
-            cformat!("{action} <bright-black>({parts_str}</>{paren_close}")
-        };
-
-        crate::output::print(progress_message(full_progress_msg))?;
-
-        self.emit_hint_if_needed()?;
+        self.emit_hint_if_needed();
         let commit_message = crate::llm::generate_commit_message(self.config)?;
 
         let formatted_message = self.format_message_for_display(&commit_message);
-        crate::output::print(format_with_gutter(&formatted_message, None))?;
+        eprintln!("{}", format_with_gutter(&formatted_message, None));
 
-        repo.run_command(&["commit", "-m", &commit_message])
+        wt.run_command(&["commit", "-m", &commit_message])
             .context("Failed to commit")?;
 
-        let commit_hash = repo
+        let commit_hash = wt
             .run_command(&["rev-parse", "--short", "HEAD"])?
             .trim()
             .to_string();
 
-        crate::output::print(success_message(cformat!(
-            "Committed changes @ <dim>{commit_hash}</>"
-        )))?;
+        eprintln!(
+            "{}",
+            success_message(cformat!("Committed changes @ <dim>{commit_hash}</>"))
+        );
 
         Ok(())
     }
@@ -145,7 +156,8 @@ impl<'a> CommitGenerator<'a> {
 impl CommitOptions<'_> {
     pub fn commit(self) -> anyhow::Result<()> {
         let project_config = self.ctx.repo.load_project_config()?;
-        let user_hooks_exist = self.ctx.config.hooks.pre_commit.is_some();
+        let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
+        let user_hooks_exist = user_hooks.pre_commit.is_some();
         let project_hooks_exist = project_config
             .as_ref()
             .map(|c| c.hooks.pre_commit.is_some())
@@ -154,7 +166,10 @@ impl CommitOptions<'_> {
 
         // Show skip message
         if self.no_verify && any_hooks_exist {
-            crate::output::print(info_message("Skipping pre-commit hooks (--no-verify)"))?;
+            eprintln!(
+                "{}",
+                info_message("Skipping pre-commit hooks (--no-verify)")
+            );
         }
 
         if !self.no_verify {
@@ -167,7 +182,7 @@ impl CommitOptions<'_> {
             // Run pre-commit hooks (user first, then project)
             super::hooks::run_hook_with_filter(
                 self.ctx,
-                self.ctx.config.hooks.pre_commit.as_ref(),
+                user_hooks.pre_commit.as_ref(),
                 project_config
                     .as_ref()
                     .and_then(|c| c.hooks.pre_commit.as_ref()),
@@ -205,15 +220,20 @@ impl CommitOptions<'_> {
             }
         }
 
-        CommitGenerator::new(&self.ctx.config.commit_generation)
-            .commit_staged_changes(self.show_no_squash_note, self.stage_mode)
+        let effective_config = self.ctx.commit_generation();
+        let wt = self.ctx.repo.current_worktree();
+        CommitGenerator::new(&effective_config).commit_staged_changes(
+            &wt,
+            true, // show_progress
+            self.show_no_squash_note,
+            self.stage_mode,
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use worktrunk::config::CommitGenerationConfig;
 
     #[test]
     fn test_format_message_for_display_single_line() {

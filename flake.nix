@@ -85,10 +85,8 @@
           // {
             inherit cargoArtifacts;
 
-            # Skip tests during package build - they require:
-            # - Snapshot files (insta) which bloat the source
-            # - Real system time (SOURCE_DATE_EPOCH breaks some tests)
-            # Tests should run in CI instead
+            # Skip tests during package build - they require snapshot files (insta)
+            # which bloat the source. Tests should run in CI instead.
             doCheck = false;
 
             meta = with pkgs.lib; {

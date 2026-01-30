@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 
 use super::{DiffStats, LineDiff, Repository};
 
@@ -91,6 +91,23 @@ impl Repository {
         Ok(stdout.trim().to_owned())
     }
 
+    /// Get commit timestamp and message in a single git command.
+    ///
+    /// More efficient than calling `commit_timestamp` and `commit_message` separately.
+    pub fn commit_details(&self, commit: &str) -> anyhow::Result<(i64, String)> {
+        // Use space separator - timestamps don't contain spaces, and %s (subject)
+        // is the first line only (no embedded newlines). Split on first space.
+        let stdout = self.run_command(&["show", "-s", "--format=%ct %s", commit])?;
+        // Only strip trailing newline, not spaces (empty subject = "timestamp ")
+        let line = stdout.trim_end_matches('\n');
+        let (timestamp_str, message) = line
+            .split_once(' ')
+            .context("Failed to parse commit details")?;
+        let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
+        // Trim the message to match commit_message() behavior
+        Ok((timestamp, message.trim().to_owned()))
+    }
+
     /// Get commit subjects (first line of commit message) from a range.
     pub fn commit_subjects(&self, range: &str) -> anyhow::Result<Vec<String>> {
         let output = self.run_command(&["log", "--format=%s", range])?;
@@ -123,10 +140,13 @@ impl Repository {
 
     /// Get the merge base between two commits.
     ///
+    /// Returns `Ok(Some(sha))` if a merge base exists, `Ok(None)` for orphan branches
+    /// with no common ancestor (git exit code 1), or `Err` for invalid refs.
+    ///
     /// Results are cached in the shared repo cache to avoid redundant git commands
     /// when multiple tasks need the same merge-base (e.g., parallel `wt list` tasks).
     /// The cache key is normalized (sorted) since merge-base(A, B) == merge-base(B, A).
-    pub fn merge_base(&self, commit1: &str, commit2: &str) -> anyhow::Result<String> {
+    pub fn merge_base(&self, commit1: &str, commit2: &str) -> anyhow::Result<Option<String>> {
         // Normalize key order since merge-base is symmetric: merge-base(A, B) == merge-base(B, A)
         let key = if commit1 <= commit2 {
             (commit1.to_string(), commit2.to_string())
@@ -134,16 +154,28 @@ impl Repository {
             (commit2.to_string(), commit1.to_string())
         };
 
-        Ok(self
-            .cache
-            .merge_base
-            .entry(key)
-            .or_insert_with(|| {
-                self.run_command(&["merge-base", commit1, commit2])
-                    .map(|output| output.trim().to_owned())
-                    .unwrap_or_default()
-            })
-            .clone())
+        // Check cache first
+        if let Some(cached) = self.cache.merge_base.get(&key) {
+            return Ok(cached.clone());
+        }
+
+        // Exit codes: 0 = found, 1 = no common ancestor, 128+ = invalid ref
+        let output = self.run_command_output(&["merge-base", commit1, commit2])?;
+
+        let result = if output.status.success() {
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        } else if output.status.code() == Some(1) {
+            None
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "git merge-base failed for {commit1} {commit2}: {}",
+                stderr.trim()
+            );
+        };
+
+        self.cache.merge_base.insert(key, result.clone());
+        Ok(result)
     }
 
     /// Calculate commits ahead and behind between two refs.
@@ -151,26 +183,40 @@ impl Repository {
     /// Returns (ahead, behind) where ahead is commits in head not in base,
     /// and behind is commits in base not in head.
     ///
+    /// For orphan branches with no common ancestor, returns `(0, 0)`.
+    /// Caller should check for orphan status separately via `merge_base()`.
+    ///
     /// Uses `merge_base()` internally (which is cached) to compute the common
     /// ancestor, then counts commits using two-dot syntax. This allows the
     /// merge-base result to be reused across multiple operations.
     pub fn ahead_behind(&self, base: &str, head: &str) -> anyhow::Result<(usize, usize)> {
         // Get merge-base (cached in shared repo cache)
-        let merge_base = self.merge_base(base, head)?;
+        let Some(merge_base) = self.merge_base(base, head)? else {
+            // Orphan branch - no common ancestor
+            return Ok((0, 0));
+        };
 
         // Count commits using two-dot syntax (faster when merge-base is cached)
         // ahead = commits in head but not in merge_base
         // behind = commits in base but not in merge_base
-        let ahead_output =
-            self.run_command(&["rev-list", "--count", &format!("{}..{}", merge_base, head)])?;
+        //
+        // Skip rev-list when merge_base equals head (count would be 0).
+        // Note: we don't check merge_base == base because base is typically a
+        // refname like "main" while merge_base is a SHA.
+        let ahead = if merge_base == head {
+            0
+        } else {
+            let output =
+                self.run_command(&["rev-list", "--count", &format!("{}..{}", merge_base, head)])?;
+            output
+                .trim()
+                .parse()
+                .context("Failed to parse ahead count")?
+        };
+
         let behind_output =
             self.run_command(&["rev-list", "--count", &format!("{}..{}", merge_base, base)])?;
-
-        let ahead: usize = ahead_output
-            .trim()
-            .parse()
-            .context("Failed to parse ahead count")?;
-        let behind: usize = behind_output
+        let behind = behind_output
             .trim()
             .parse()
             .context("Failed to parse behind count")?;
@@ -237,12 +283,16 @@ impl Repository {
     /// Uses merge-base (cached) to find common ancestor, then two-dot diff
     /// to get the stats. This allows the merge-base result to be reused
     /// across multiple operations.
+    ///
+    /// For orphan branches with no common ancestor, returns zeros.
     pub fn branch_diff_stats(&self, base: &str, head: &str) -> anyhow::Result<LineDiff> {
         // Limit concurrent diff operations to reduce mmap thrash on pack files
         let _guard = super::super::HEAVY_OPS_SEMAPHORE.acquire();
 
         // Get merge-base (cached in shared repo cache)
-        let merge_base = self.merge_base(base, head)?;
+        let Some(merge_base) = self.merge_base(base, head)? else {
+            return Ok(LineDiff::default());
+        };
 
         // Use two-dot syntax with the cached merge-base
         let range = format!("{}..{}", merge_base, head);
@@ -255,78 +305,24 @@ impl Repository {
     /// Returns a vector of formatted strings like ["3 files", "+45", "-12"].
     /// Returns empty vector if diff command fails or produces no output.
     ///
-    /// This method combines git diff --shortstat, parsing, and formatting into a single call.
+    /// Callers should pass `--shortstat` in args for compatibility; this method
+    /// internally replaces it with `--numstat` for locale-independent parsing.
     pub fn diff_stats_summary(&self, args: &[&str]) -> Vec<String> {
-        self.run_command(args)
+        // Replace --shortstat with --numstat for locale-independent parsing
+        let args: Vec<&str> = args
+            .iter()
+            .map(|&arg| {
+                if arg == "--shortstat" {
+                    "--numstat"
+                } else {
+                    arg
+                }
+            })
+            .collect();
+
+        self.run_command(&args)
             .ok()
-            .map(|output| DiffStats::from_shortstat(&output).format_summary())
+            .map(|output| DiffStats::from_numstat(&output).format_summary())
             .unwrap_or_default()
-    }
-
-    /// Determine whether there are staged changes in the index.
-    ///
-    /// Returns `Ok(true)` when staged changes are present, `Ok(false)` otherwise.
-    pub fn has_staged_changes(&self) -> anyhow::Result<bool> {
-        Ok(!self.run_command_check(&["diff", "--cached", "--quiet", "--exit-code"])?)
-    }
-
-    /// Create a safety backup of current working tree state without affecting the working tree.
-    ///
-    /// This creates a backup commit containing all changes (staged, unstaged, and untracked files)
-    /// and stores it in a custom ref (`refs/wt-backup/<branch>`). This creates a reflog entry
-    /// for recovery without polluting the stash list. The working tree remains unchanged.
-    ///
-    /// Users can find safety backups with: `git reflog show refs/wt-backup/<branch>`
-    ///
-    /// Returns the short SHA of the backup commit.
-    ///
-    /// # Example
-    /// ```no_run
-    /// use worktrunk::git::Repository;
-    ///
-    /// let repo = Repository::current()?;
-    /// let sha = repo.create_safety_backup("feature → main (squash)")?;
-    /// println!("Backup created: {}", sha);
-    /// # Ok::<(), anyhow::Error>(())
-    /// ```
-    pub fn create_safety_backup(&self, message: &str) -> anyhow::Result<String> {
-        // Create a backup commit using git stash create (without storing it in the stash list)
-        let backup_sha = self
-            .run_command(&["stash", "create", "--include-untracked"])?
-            .trim()
-            .to_string();
-
-        // Validate that we got a SHA back
-        if backup_sha.is_empty() {
-            return Err(super::super::GitError::Other {
-                message: "git stash create returned empty SHA - no changes to backup".into(),
-            }
-            .into());
-        }
-
-        // Get current branch name to use in the ref name
-        let branch = self
-            .run_command(&["rev-parse", "--abbrev-ref", "HEAD"])?
-            .trim()
-            .to_string();
-
-        // Sanitize branch name for use in ref path (replace / with -)
-        let safe_branch = branch.replace('/', "-");
-
-        // Update a custom ref to point to this commit
-        // --create-reflog ensures the reflog is created for this custom ref
-        // This creates a reflog entry but doesn't add to the stash list
-        let ref_name = format!("refs/wt-backup/{}", safe_branch);
-        self.run_command(&[
-            "update-ref",
-            "--create-reflog",
-            "-m",
-            message,
-            &ref_name,
-            &backup_sha,
-        ])
-        .context("Failed to create backup ref")?;
-
-        Ok(backup_sha[..7].to_string())
     }
 }

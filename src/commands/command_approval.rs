@@ -17,17 +17,20 @@
 //! This ensures approval happens exactly once at the command entry point,
 //! eliminating the need to thread `auto_trust` through execution layers.
 
-use super::hook_filter::{HookSource, ParsedFilter};
-use super::project_config::{HookCommand, collect_commands_for_hooks};
-use crate::output;
+use std::io::{self, IsTerminal, Write};
+use std::path::Path;
+
 use anyhow::Context;
 use color_print::cformat;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::{GitError, HookType};
 use worktrunk::styling::{
-    INFO_SYMBOL, PROMPT_SYMBOL, WARNING_SYMBOL, eprint, format_bash_with_gutter, hint_message,
-    stderr, warning_message,
+    INFO_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_bash_with_gutter, hint_message,
+    prompt_message, stderr, warning_message,
 };
+
+use super::hook_filter::{HookSource, ParsedFilter};
+use super::project_config::{HookCommand, collect_commands_for_hooks};
 
 /// Batch approval helper used when multiple commands are queued for execution.
 /// Returns `Ok(true)` when execution may continue, `Ok(false)` when the user
@@ -41,7 +44,7 @@ use worktrunk::styling::{
 pub fn approve_command_batch(
     commands: &[HookCommand],
     project_id: &str,
-    config: &WorktrunkConfig,
+    config: &UserConfig,
     yes: bool,
     commands_already_filtered: bool,
 ) -> anyhow::Result<bool> {
@@ -69,7 +72,7 @@ pub fn approve_command_batch(
 
     // Only save approvals when interactively approved, not when using --yes
     if !yes {
-        let mut fresh_config = WorktrunkConfig::load().context("Failed to reload config")?;
+        let mut fresh_config = UserConfig::load().context("Failed to reload config")?;
 
         let project_entry = fresh_config
             .projects
@@ -90,10 +93,14 @@ pub fn approve_command_batch(
         }
 
         if updated && let Err(e) = fresh_config.save() {
-            let _ = output::print(warning_message(format!(
-                "Failed to save command approval: {e}"
-            )));
-            let _ = output::print(hint_message("Approval will be requested again next time."));
+            eprintln!(
+                "{}",
+                warning_message(format!("Failed to save command approval: {e}"))
+            );
+            eprintln!(
+                "{}",
+                hint_message("Approval will be requested again next time.")
+            );
         }
     }
 
@@ -101,20 +108,20 @@ pub fn approve_command_batch(
 }
 
 fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> anyhow::Result<bool> {
-    use std::io::{self, IsTerminal, Write};
-
-    let project_name = project_id.split('/').next_back().unwrap_or(project_id);
+    // Extract just the directory name for display
+    let project_name = Path::new(project_id)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(project_id);
     let count = commands.len();
     let plural = if count == 1 { "" } else { "s" };
 
-    // CRITICAL: Flush stdout before writing to stderr to prevent stream interleaving
-    // Flushes both stdout (for data output) and stderr (for messages)
-    crate::output::flush()?;
-
-    output::print(cformat!(
-        "{WARNING_SYMBOL} <yellow><bold>{project_name}</> needs approval to execute <bold>{count}</> command{plural}:</>"
-    ))?;
-    output::blank()?;
+    eprintln!(
+        "{}",
+        cformat!(
+            "{WARNING_SYMBOL} <yellow><bold>{project_name}</> needs approval to execute <bold>{count}</> command{plural}:</>"
+        )
+    );
 
     for cmd in commands {
         // Format as: {phase} {bold}{name}{bold:#}:
@@ -125,8 +132,8 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
             Some(name) => cformat!("{INFO_SYMBOL} {phase} <bold>{name}</>:"),
             None => format!("{INFO_SYMBOL} {phase}:"),
         };
-        output::print(label)?;
-        output::print(format_bash_with_gutter(&cmd.command.template))?;
+        eprintln!("{}", label);
+        eprintln!("{}", format_bash_with_gutter(&cmd.command.template));
     }
 
     // Check if stdin is a TTY before attempting to prompt
@@ -136,19 +143,21 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
         return Err(GitError::NotInteractive.into());
     }
 
-    // Flush stderr before showing prompt to ensure all output is visible
+    // Blank line before prompt for visual separation
+    worktrunk::styling::eprintln!();
     stderr().flush()?;
 
     eprint!(
-        "{}",
-        cformat!("{PROMPT_SYMBOL} Allow and remember? <bold>[y/N]</> ")
+        "{} ",
+        prompt_message(cformat!("Allow and remember? <bold>[y/N]</>"))
     );
     stderr().flush()?;
 
     let mut response = String::new();
     io::stdin().read_line(&mut response)?;
 
-    output::blank()?;
+    // End the prompt line on stderr (user's input went to stdin, not stderr)
+    worktrunk::styling::eprintln!();
 
     Ok(response.trim().eq_ignore_ascii_case("y"))
 }
@@ -167,7 +176,7 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
 /// # Example
 ///
 /// ```ignore
-/// let ctx = CommandContext::new(&repo, &config, &branch, &worktree_path, &repo_root, yes);
+/// let ctx = CommandContext::new(&repo, &config, &branch, &worktree_path, yes);
 /// let approved = approve_hooks(&ctx, &[HookType::PostCreate, HookType::PostStart])?;
 /// ```
 pub fn approve_hooks(

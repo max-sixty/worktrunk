@@ -13,6 +13,7 @@
 //! - `test_diagnostic_verbose_log_contains_git_commands`: Log has useful data
 //! - `test_diagnostic_saved_message_with_vv`: Output shows "Diagnostic saved" with -vv
 //! - `test_diagnostic_written_to_correct_location`: File in .git/wt-logs/
+//! - `test_diagnostic_gh_hint_with_vv`: Hint shows gist and issue URL when gh installed
 
 use std::fs;
 use std::path::PathBuf;
@@ -248,8 +249,8 @@ fn test_diagnostic_verbose_log_contains_git_commands(mut repo: TestRepo) {
         "Verbose log should contain wt-trace entries"
     );
     assert!(
-        verbose_section.contains("dur="),
-        "Verbose log should contain command durations"
+        verbose_section.contains("dur_us="),
+        "Verbose log should contain command durations in microseconds"
     );
     assert!(
         verbose_section.contains("ok="),
@@ -396,35 +397,27 @@ fn test_vv_writes_diagnostic_on_error(mut repo: TestRepo) {
     );
 }
 
-/// With just -v (not -vv), diagnostic should NOT be written on successful commands.
-/// Diagnostics are only written when -vv is explicitly used (via main.rs hook).
+/// With just -v (not -vv), no logging files should be written.
+/// -v is reserved for future use; -vv is required for debug logging.
 #[rstest]
-fn test_v_does_not_write_diagnostic_without_error(repo: TestRepo) {
+fn test_v_does_not_enable_logging(repo: TestRepo) {
     // Run a successful command with just -v
     let output = repo.wt_command().args(["list", "-v"]).output().unwrap();
 
     assert!(output.status.success(), "Command should succeed");
 
-    // Diagnostic file should NOT exist (no error, not -vv)
-    let diagnostic_path = repo
-        .root_path()
-        .join(".git")
-        .join("wt-logs")
-        .join("diagnostic.md");
+    // Neither diagnostic.md nor verbose.log should exist with just -v
+    let wt_logs = repo.root_path().join(".git").join("wt-logs");
+    let diagnostic_path = wt_logs.join("diagnostic.md");
+    let verbose_log_path = wt_logs.join("verbose.log");
+
     assert!(
         !diagnostic_path.exists(),
-        "Diagnostic file should NOT be created with just -v on success"
+        "Diagnostic file should NOT be created with just -v"
     );
-
-    // But verbose.log should exist
-    let verbose_log_path = repo
-        .root_path()
-        .join(".git")
-        .join("wt-logs")
-        .join("verbose.log");
     assert!(
-        verbose_log_path.exists(),
-        "verbose.log should be created with -v"
+        !verbose_log_path.exists(),
+        "verbose.log should NOT be created with just -v (requires -vv)"
     );
 }
 
@@ -454,6 +447,35 @@ fn test_vv_outside_repo_no_crash() {
         !diagnostic_path.exists(),
         "Diagnostic file should NOT be created outside a git repo"
     );
+}
+
+/// When gh is installed, the hint should show gist creation and issue URL.
+#[rstest]
+fn test_diagnostic_gh_hint_with_vv(mut repo: TestRepo) {
+    // Setup mock gh so it appears installed
+    repo.setup_mock_gh();
+
+    let output = repo.wt_command().args(["list", "-vv"]).output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Extract the hint line (starts with ↳)
+    let hint_line = stderr
+        .lines()
+        .find(|line| line.contains("report a bug"))
+        .expect("Should have hint about reporting a bug");
+
+    // Normalize the path in the hint. The path may be:
+    // - Quoted on Windows (drive letter colon requires POSIX escaping): 'D:/a/.../diagnostic.md'
+    // - Unquoted on Unix (no special chars): _REPO_/.git/wt-logs/diagnostic.md
+    let normalized = regex::Regex::new(r"--web '?[^' \x1b]*diagnostic\.md'?")
+        .unwrap()
+        .replace(hint_line, "--web [DIAGNOSTIC_PATH]");
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("diagnostic_gh_hint", normalized);
+    });
 }
 
 /// Normalize the report for snapshot comparison.

@@ -120,9 +120,8 @@
 
 pub mod ci_status;
 pub(crate) mod collect;
-mod collect_progressive_impl;
 pub(crate) mod columns;
-mod json_output;
+pub mod json_output;
 pub(crate) mod layout;
 pub mod model;
 pub mod progressive;
@@ -133,10 +132,16 @@ pub(crate) mod render;
 mod spacing_test;
 
 // Layout is calculated in collect.rs
+use std::collections::HashSet;
+
+use anstyle::Style;
 use anyhow::Context;
 use model::{ListData, ListItem};
 use progressive::RenderMode;
 use worktrunk::git::Repository;
+use worktrunk::styling::INFO_SYMBOL;
+
+use collect::TaskKind;
 
 // Re-export for statusline and other consumers
 pub use collect::{CollectOptions, build_worktree_item, populate_item};
@@ -148,19 +153,14 @@ pub fn handle_list(
     show_remotes: bool,
     show_full: bool,
     render_mode: RenderMode,
-    config: &worktrunk::config::WorktrunkConfig,
+    config: &worktrunk::config::UserConfig,
 ) -> anyhow::Result<()> {
-    use collect::TaskKind;
-
     let repo = Repository::current()?;
 
     // Build skip set based on flags
     // Without --full: skip expensive operations (BranchDiff, CiStatus, WorkingTreeConflicts)
-    // TODO: WouldMergeAdd (~500ms-2s per worktree) is currently enabled for ⊂ detection.
-    // If this causes performance issues, consider adding it back to skip_tasks or
-    // implementing a timeout for the merge simulation.
-    let skip_tasks: std::collections::HashSet<TaskKind> = if show_full {
-        std::collections::HashSet::new() // Compute everything
+    let skip_tasks: HashSet<TaskKind> = if show_full {
+        HashSet::new() // Compute everything
     } else {
         [
             TaskKind::BranchDiff,
@@ -173,15 +173,33 @@ pub fn handle_list(
 
     // Progressive rendering only for table format with Progressive mode
     let show_progress = match format {
-        crate::OutputFormat::Table => render_mode == RenderMode::Progressive,
+        crate::OutputFormat::Table | crate::OutputFormat::ClaudeCode => {
+            render_mode == RenderMode::Progressive
+        }
         crate::OutputFormat::Json => false, // JSON never shows progress
     };
 
     // Render table in collect() for all table modes (progressive + buffered)
-    let render_table = matches!(format, crate::OutputFormat::Table);
+    let render_table = matches!(
+        format,
+        crate::OutputFormat::Table | crate::OutputFormat::ClaudeCode
+    );
 
     // For testing: allow enabling skip_expensive_for_stale via env var
     let skip_expensive_for_stale = std::env::var("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD").is_ok();
+
+    // Per-task timeout from config (disabled with --full or timeout-ms = 0)
+    let command_timeout = if show_full {
+        None // --full disables timeout for complete data collection
+    } else {
+        config
+            .configs
+            .list
+            .as_ref()
+            .and_then(|l| l.timeout_ms)
+            .filter(|&ms| ms > 0) // 0 means "no timeout" (explicit disable)
+            .map(std::time::Duration::from_millis)
+    };
 
     let list_data = collect::collect(
         &repo,
@@ -191,7 +209,7 @@ pub fn handle_list(
         show_progress,
         render_table,
         config,
-        None, // No timeout for wt list
+        command_timeout,
         skip_expensive_for_stale,
     )?;
 
@@ -205,9 +223,9 @@ pub fn handle_list(
             let json_items = json_output::to_json_items(&items);
             let json =
                 serde_json::to_string_pretty(&json_items).context("Failed to serialize to JSON")?;
-            crate::output::stdout(json)?;
+            println!("{}", json);
         }
-        crate::OutputFormat::Table => {
+        crate::OutputFormat::Table | crate::OutputFormat::ClaudeCode => {
             // Table and summary already rendered in collect() for all modes
             // Nothing to do here - collect() handles the complete table rendering
         }
@@ -256,8 +274,7 @@ impl SummaryMetrics {
             }
         }
 
-        let counts = item.counts();
-        if counts.ahead > 0 {
+        if item.counts.is_some_and(|c| c.ahead > 0) {
             self.ahead_items += 1;
         }
     }
@@ -308,16 +325,33 @@ pub(crate) fn format_summary_message(
     items: &[ListItem],
     show_branches: bool,
     hidden_column_count: usize,
+    error_count: usize,
+    timed_out_count: usize,
 ) -> String {
-    use anstyle::Style;
-    use worktrunk::styling::INFO_SYMBOL;
-
     let metrics = SummaryMetrics::from_items(items);
     let dim = Style::new().dimmed();
     let summary = metrics
         .summary_parts(show_branches, hidden_column_count)
         .join(", ");
-    format!("{INFO_SYMBOL} {dim}Showing {summary}{dim:#}")
+
+    if error_count > 0 {
+        let failure_msg = if error_count == timed_out_count {
+            // All failures are timeouts
+            let plural = if timed_out_count == 1 { "" } else { "s" };
+            format!("{timed_out_count} task{plural} timed out")
+        } else if timed_out_count > 0 {
+            // Mix of timeouts and other errors
+            let plural = if error_count == 1 { "" } else { "s" };
+            format!("{error_count} task{plural} failed ({timed_out_count} timed out)")
+        } else {
+            // No timeouts, just other errors
+            let plural = if error_count == 1 { "" } else { "s" };
+            format!("{error_count} task{plural} failed")
+        };
+        format!("{INFO_SYMBOL} {dim}Showing {summary}. {failure_msg}{dim:#}")
+    } else {
+        format!("{INFO_SYMBOL} {dim}Showing {summary}{dim:#}")
+    }
 }
 
 #[cfg(test)]
@@ -452,5 +486,48 @@ mod tests {
                 "2 columns hidden"
             ]
         );
+    }
+
+    #[test]
+    fn test_format_summary_message_no_errors() {
+        let msg = format_summary_message(&[], false, 0, 0, 0);
+        assert!(msg.contains("Showing 0 worktrees"));
+        assert!(!msg.contains("failed"));
+        assert!(!msg.contains("timed out"));
+    }
+
+    #[test]
+    fn test_format_summary_message_all_timeouts() {
+        // 3 errors, all timeouts
+        let msg = format_summary_message(&[], false, 0, 3, 3);
+        assert!(msg.contains("3 tasks timed out"));
+        assert!(!msg.contains("failed"));
+    }
+
+    #[test]
+    fn test_format_summary_message_mixed_errors() {
+        // 5 errors, 3 are timeouts
+        let msg = format_summary_message(&[], false, 0, 5, 3);
+        assert!(msg.contains("5 tasks failed (3 timed out)"));
+    }
+
+    #[test]
+    fn test_format_summary_message_no_timeouts() {
+        // 2 errors, none are timeouts
+        let msg = format_summary_message(&[], false, 0, 2, 0);
+        assert!(msg.contains("2 tasks failed"));
+        assert!(!msg.contains("timed out"));
+    }
+
+    #[test]
+    fn test_format_summary_message_single_error() {
+        let msg = format_summary_message(&[], false, 0, 1, 0);
+        assert!(msg.contains("1 task failed"));
+    }
+
+    #[test]
+    fn test_format_summary_message_single_timeout() {
+        let msg = format_summary_message(&[], false, 0, 1, 1);
+        assert!(msg.contains("1 task timed out"));
     }
 }

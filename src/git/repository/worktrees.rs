@@ -2,9 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
+use color_print::cformat;
+use dunce::canonicalize;
 use normalize_path::NormalizePath;
 
 use super::{GitError, Repository, ResolvedWorktree, WorktreeInfo};
+use crate::path::format_path_for_display;
 
 impl Repository {
     /// List all worktrees for this repository.
@@ -29,12 +32,18 @@ impl Repository {
     /// Note: For worktree-specific operations, use [`current_worktree()`](Self::current_worktree)
     /// to get a [`WorkingTree`](super::WorkingTree) instead.
     pub fn current_worktree_info(&self) -> anyhow::Result<Option<WorktreeInfo>> {
+        // root() returns canonicalized path, so canonicalize worktree paths for comparison
+        // to handle symlinks (e.g., macOS /var -> /private/var)
         let current_path = match self.current_worktree().root() {
-            Ok(p) => p.to_path_buf(),
+            Ok(p) => p,
             Err(_) => return Ok(None),
         };
         let worktrees = self.list_worktrees()?;
-        Ok(worktrees.into_iter().find(|wt| wt.path == current_path))
+        Ok(worktrees.into_iter().find(|wt| {
+            canonicalize(&wt.path)
+                .map(|p| p == current_path)
+                .unwrap_or(false)
+        }))
     }
 
     /// Find the worktree path for a given branch, if one exists.
@@ -45,6 +54,21 @@ impl Repository {
             .iter()
             .find(|wt| wt.branch.as_deref() == Some(branch))
             .map(|wt| wt.path.clone()))
+    }
+
+    /// The "home" worktree — main worktree for normal repos, default branch worktree for bare.
+    ///
+    /// Used as the default source for `copy-ignored` and the `{{ primary_worktree_path }}` template.
+    /// Returns `None` for bare repos when no worktree has the default branch.
+    pub fn primary_worktree(&self) -> anyhow::Result<Option<PathBuf>> {
+        if self.is_bare() {
+            let Some(branch) = self.default_branch() else {
+                return Ok(None);
+            };
+            self.worktree_for_branch(&branch)
+        } else {
+            Ok(Some(self.repo_path().to_path_buf()))
+        }
     }
 
     /// Find the worktree at a given path, returning its branch if known.
@@ -65,6 +89,16 @@ impl Repository {
             .map(|wt| (wt.path.clone(), wt.branch.clone())))
     }
 
+    /// Prune worktree entries whose directories no longer exist.
+    ///
+    /// Git tracks worktrees in `.git/worktrees/`. If a worktree directory is deleted
+    /// externally (e.g., `rm -rf`), this method runs `git worktree prune` to clean
+    /// up the entries.
+    pub fn prune_worktrees(&self) -> anyhow::Result<()> {
+        self.run_command(&["worktree", "prune"])?;
+        Ok(())
+    }
+
     /// Remove a worktree at the specified path.
     ///
     /// When `force` is true, passes `--force` to `git worktree remove`,
@@ -73,7 +107,10 @@ impl Repository {
     pub fn remove_worktree(&self, path: &std::path::Path, force: bool) -> anyhow::Result<()> {
         let path_str = path.to_str().ok_or_else(|| {
             anyhow::Error::from(GitError::Other {
-                message: format!("Worktree path contains invalid UTF-8: {}", path.display()),
+                message: format!(
+                    "Worktree path contains invalid UTF-8: {}",
+                    format_path_for_display(path)
+                ),
             })
         })?;
         let mut args = vec!["worktree", "remove"];
@@ -111,18 +148,20 @@ impl Repository {
             }),
             "-" => {
                 // Read from worktrunk.history (recorded by wt switch operations)
-                self.get_switch_previous().ok_or_else(|| {
+                self.switch_previous().ok_or_else(|| {
                     GitError::Other {
-                        message:
-                            "No previous branch found in history. Use 'wt list' to see available worktrees."
-                                .into(),
+                        message: cformat!(
+                            "No previous branch found in history. Run <bright-black>wt list</> to see available worktrees."
+                        ),
                     }
                     .into()
                 })
             }
             "^" => self.default_branch().ok_or_else(|| {
                 GitError::Other {
-                    message: "Cannot determine default branch. Specify target explicitly or run 'wt config state default-branch set <branch>'.".into(),
+                    message: cformat!(
+                        "Cannot determine default branch. Specify target explicitly or run <bright-black>wt config state default-branch set <bold>BRANCH</></>"
+                    ),
                 }
                 .into()
             }),
@@ -158,15 +197,14 @@ impl Repository {
                     .map_err(|_| GitError::NotInWorktree {
                         action: Some("resolve '@'".into()),
                     })?;
+                // root() returns canonicalized path, so canonicalize worktree paths
+                // for comparison to handle symlinks (e.g., macOS /var -> /private/var)
                 let worktrees = self.list_worktrees()?;
                 let branch = worktrees
                     .iter()
-                    .find(|wt| wt.path == path)
+                    .find(|wt| canonicalize(&wt.path).map(|p| p == path).unwrap_or(false))
                     .and_then(|wt| wt.branch.clone());
-                Ok(ResolvedWorktree::Worktree {
-                    path: path.to_path_buf(),
-                    branch,
-                })
+                Ok(ResolvedWorktree::Worktree { path, branch })
             }
             _ => {
                 // Resolve to branch name first, then find its worktree
@@ -184,20 +222,12 @@ impl Repository {
 
     /// Find the "home" path - where to cd when leaving a worktree.
     ///
-    /// This is the preferred destination after removing the current worktree
-    /// or after merge removes the worktree. Priority:
-    /// 1. The default branch's worktree (if it exists)
-    /// 2. The first worktree in the list
-    /// 3. The repo base directory (for bare repos with no worktrees)
+    /// Returns the primary worktree if it exists, otherwise the repo root.
+    /// - Normal repos: the main worktree (repo root)
+    /// - Bare repos: the default branch's worktree, or the bare repo directory
     pub fn home_path(&self) -> anyhow::Result<PathBuf> {
-        let worktrees = self.list_worktrees()?;
-        let default_branch = self.default_branch().unwrap_or_default();
-
-        if let Some(home) = WorktreeInfo::find_home(&worktrees, &default_branch) {
-            return Ok(home.path.clone());
-        }
-
-        // No worktrees - fall back to repo base (bare repo case)
-        self.worktree_base()
+        Ok(self
+            .primary_worktree()?
+            .unwrap_or_else(|| self.repo_path().to_path_buf()))
     }
 }

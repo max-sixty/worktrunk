@@ -8,7 +8,7 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt remove --help-page` — edit cli.rs to update -->
 
-Removes worktrees and their branches (if merged), returning to the main worktree. Defaults to removing the current worktree.
+Remove worktree; delete branch if merged. Defaults to the current worktree.
 
 ## Examples
 
@@ -49,19 +49,34 @@ Worktrunk checks five conditions (in order of cost):
 4. **Trees match** — Branch tree SHA equals target tree SHA. Shows `⊂`.
 5. **Merge adds nothing** — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows `⊂`.
 
-The "same commit" check uses the local default branch; for other checks, **target** means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
+The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 
 Branches showing `_` or `⊂` are dimmed as safe to delete.
 
-Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of status.
+## Force flags
+
+Worktrunk has two force flags for different situations:
+
+| Flag | Scope | When to use |
+|------|-------|-------------|
+| `--force` (`-f`) | Worktree | Worktree has untracked files (build artifacts, IDE config) |
+| `--force-delete` (`-D`) | Branch | Branch has unmerged commits |
+
+```bash
+wt remove feature --force       # Remove worktree with untracked files
+wt remove feature -D            # Delete unmerged branch
+wt remove feature --force -D    # Both
+```
+
+Without `--force`, removal fails if the worktree contains untracked files. Without `-D`, removal keeps branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of merge status.
 
 ## Background removal
 
 Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
 
-## Shortcuts
+## Hooks
 
-`@` (current), `-` (previous), `^` (default branch). See [`wt switch`](@/switch.md#shortcuts).
+`pre-remove` hooks run before the worktree is deleted (with access to worktree files). `post-remove` hooks run after removal. See [`wt hook`](@/hook.md) for configuration.
 
 ## See also
 
@@ -72,6 +87,8 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 {% terminal() %}
 wt remove - Remove worktree; delete branch if merged
+
+Defaults to the current worktree.
 
 Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <span class=c>[BRANCHES]...</span>
 
@@ -112,7 +129,7 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Show debug info (-v), or also write diagnostic report (-vv)
+          Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
 <!-- END AUTO-GENERATED from `wt remove --help-page` -->

@@ -1,7 +1,7 @@
 use crate::common::{
-    TestRepo, make_snapshot_cmd, repo, repo_with_remote, resolve_git_common_dir, set_temp_home_env,
-    setup_snapshot_settings, wait_for_file, wait_for_file_content, wait_for_file_count,
-    wait_for_file_lines, wait_for_valid_json,
+    TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, repo_with_remote,
+    resolve_git_common_dir, set_temp_home_env, setup_snapshot_settings, wait_for_file,
+    wait_for_file_content, wait_for_file_count, wait_for_file_lines, wait_for_valid_json,
 };
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
@@ -51,7 +51,7 @@ fn test_post_create_single_command(repo: TestRepo) {
 
     // Pre-approve the command by writing to the isolated test config
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = ["echo 'Setup complete'"]
 "#,
     );
@@ -78,7 +78,7 @@ setup = "echo 'Running setup'"
 
     // Pre-approve both commands in temp HOME
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = [
     "echo 'Installing deps'",
     "echo 'Running setup'",
@@ -103,7 +103,7 @@ fn test_post_create_failing_command(repo: TestRepo) {
 
     // Pre-approve the command in temp HOME
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = ["exit 1"]
 "#,
     );
@@ -136,7 +136,7 @@ root = "echo 'Root: {{ repo_path }}' >> info.txt"
     repo.write_test_config(
         r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 
-[projects."repo"]
+[projects."../origin"]
 approved-commands = [
     "echo 'Repo: {{ repo }}' > info.txt",
     "echo 'Branch: {{ branch }}' >> info.txt",
@@ -199,6 +199,45 @@ approved-commands = [
 }
 
 #[rstest]
+fn test_post_create_verbose_template_expansion(repo: TestRepo) {
+    // Test that -v shows template expansion for post-create hooks
+    repo.write_project_config(
+        r#"[post-create]
+setup = "echo 'Setting up {{ branch | sanitize }} in {{ worktree_path }}'"
+"#,
+    );
+
+    repo.commit("Add config with templates");
+
+    // Pre-approve commands
+    repo.write_test_config(
+        r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+[projects."../origin"]
+approved-commands = [
+    "echo 'Setting up {{ branch | sanitize }} in {{ worktree_path }}'",
+]
+"#,
+    );
+
+    // Create isolated HOME to ensure test determinism
+    let temp_home = tempfile::TempDir::new().unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd_with_global_flags(
+            &repo,
+            "switch",
+            &["--create", "verbose-hooks"],
+            None,
+            &["-v"],
+        );
+        set_temp_home_env(&mut cmd, temp_home.path());
+        assert_cmd_snapshot!("post_create_verbose_template_expansion", cmd);
+    });
+}
+
+#[rstest]
 fn test_post_create_default_branch_template(repo: TestRepo) {
     // Create project config with default_branch template variable
     repo.write_project_config(
@@ -209,7 +248,7 @@ fn test_post_create_default_branch_template(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = ["echo 'Default: {{ default_branch }}' > default.txt"]
 "#,
     );
@@ -320,33 +359,75 @@ fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) 
         .expect("failed to push main");
 
     // Create project config with upstream template variable
+    // Note: {{ upstream }} errors when the new branch has no upstream tracking.
+    // The new feature branch won't have an upstream until it's pushed with -u.
+    // This test verifies the error case - see test_post_create_upstream_conditional for the fix.
     repo.write_project_config(r#"post-create = "echo 'Upstream: {{ upstream }}' > upstream.txt""#);
 
     repo.commit("Add config with upstream template");
 
-    // Create a feature branch based on main (which has upstream tracking)
-    // The new branch will inherit upstream since it's created from main
+    // Create a feature branch - it won't have upstream tracking configured yet
     snapshot_switch(
         "post_create_upstream_template",
         &repo,
         &["--create", "feature", "--yes"],
     );
 
-    // Verify template expansion actually worked
+    // Hook command should have errored due to undefined `upstream` variable
+    // (new branches don't have upstream tracking until pushed with -u)
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let upstream_file = worktree_path.join("upstream.txt");
+
+    assert!(
+        !upstream_file.exists(),
+        "upstream.txt should NOT have been created (command errored)"
+    );
+}
+
+#[rstest]
+fn test_post_create_upstream_conditional(#[from(repo_with_remote)] repo: TestRepo) {
+    // Push main to set up tracking
+    repo.git_command()
+        .args(["push", "-u", "origin", "main"])
+        .output()
+        .expect("failed to push main");
+
+    // Create project config with conditional upstream check
+    // Using {% if not upstream %} allows safe handling of undefined variables
+    repo.write_project_config(
+        r#"post-create = "{% if not upstream %}echo 'no-upstream' > upstream.txt{% else %}echo '{{ upstream }}' > upstream.txt{% endif %}""#,
+    );
+
+    repo.commit("Add config with conditional upstream");
+
+    // Pre-approve the command
+    repo.write_test_config(
+        r#"[projects."../origin"]
+approved-commands = ["{% if not upstream %}echo 'no-upstream' > upstream.txt{% else %}echo '{{ upstream }}' > upstream.txt{% endif %}"]
+"#,
+    );
+
+    // Create a feature branch - it won't have upstream tracking configured yet
+    snapshot_switch(
+        "post_create_upstream_conditional",
+        &repo,
+        &["--create", "feature", "--yes"],
+    );
+
+    // Verify the conditional worked - new branch has no upstream, so "no-upstream" should be written
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let upstream_file = worktree_path.join("upstream.txt");
 
     assert!(
         upstream_file.exists(),
-        "upstream.txt should have been created in the worktree"
+        "upstream.txt should have been created (conditional worked)"
     );
 
     let contents = fs::read_to_string(&upstream_file).unwrap();
-    // New branches don't have upstream until pushed - upstream should be empty
-    assert!(
-        contents.contains("Upstream: "),
-        "Should have upstream line (possibly empty), got: {}",
-        contents
+    assert_eq!(
+        contents.trim(),
+        "no-upstream",
+        "Should contain 'no-upstream' since feature branch has no upstream tracking"
     );
 }
 
@@ -364,7 +445,7 @@ base_path = "echo 'Base Path: {{ base_worktree_path }}' >> base_info.txt"
 
     // Pre-approve the commands
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = [
     "echo 'Base: {{ base }}' > base_info.txt",
     "echo 'Base Path: {{ base_worktree_path }}' >> base_info.txt",
@@ -432,7 +513,7 @@ fn test_post_create_json_stdin(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = ["cat > context.json"]
 "#,
     );
@@ -531,7 +612,7 @@ setup = "./scripts/setup.py"
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = ["./scripts/setup.py"]
 "#,
     );
@@ -598,7 +679,7 @@ fn test_post_start_json_stdin(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = ["cat > context.json"]
 "#,
     );
@@ -654,7 +735,7 @@ fn test_post_start_single_background_command(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = ["sleep 0.1 && echo 'Background task done' > background.txt"]
 "#,
     );
@@ -677,6 +758,33 @@ approved-commands = ["sleep 0.1 && echo 'Background task done' > background.txt"
     wait_for_file(output_file.as_path());
 }
 
+/// Test that -v shows verbose per-hook output for background hooks
+#[rstest]
+fn test_post_start_verbose_shows_per_hook_output(repo: TestRepo) {
+    // Create project config with a background command
+    repo.write_project_config(
+        r#"[post-start]
+setup = "echo 'verbose test' > verbose.txt"
+"#,
+    );
+
+    repo.commit("Add background command");
+
+    // Pre-approve the command
+    repo.write_test_config(
+        r#"[projects."../origin"]
+approved-commands = ["echo 'verbose test' > verbose.txt"]
+"#,
+    );
+
+    // With -v, should show detailed per-hook output with command in gutter
+    snapshot_switch(
+        "post_start_verbose_output",
+        &repo,
+        &["-v", "--create", "feature"],
+    );
+}
+
 #[rstest]
 fn test_post_start_multiple_background_commands(repo: TestRepo) {
     // Create project config with multiple background commands (table format)
@@ -691,7 +799,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
     // Pre-approve both commands
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = [
     "echo 'Task 1 running' > task1.txt",
     "echo 'Task 2 running' > task2.txt",
@@ -727,7 +835,7 @@ server = "sleep 0.05 && echo 'Server running' > server.txt"
 
     // Pre-approve all commands
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = [
     "echo 'Setup done' > setup.txt",
     "sleep 0.05 && echo 'Server running' > server.txt",
@@ -773,7 +881,7 @@ fn test_post_start_log_file_captures_output(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
 "#,
     );
@@ -827,7 +935,7 @@ fn test_post_start_invalid_command_handling(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = ["echo 'unclosed quote"]
 "#,
     );
@@ -862,7 +970,7 @@ task3 = "echo 'TASK3_OUTPUT'"
 
     // Pre-approve all commands
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = [
     "echo 'TASK1_OUTPUT'",
     "echo 'TASK2_OUTPUT'",
@@ -935,7 +1043,7 @@ fn test_execute_flag_with_post_start_commands(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = ["echo 'Background task' > background.txt"]
 "#,
     );
@@ -975,7 +1083,7 @@ fn test_post_start_complex_shell_commands(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = ["echo 'line1\nline2\nline3' | grep line2 > filtered.txt"]
 "#,
     );
@@ -1013,7 +1121,7 @@ echo 'third line' >> multiline.txt
     repo.write_test_config(&format!(
         r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
-[projects."repo"]
+[projects."../origin"]
 approved-commands = ["""
 {}"""]
 "#,
@@ -1065,7 +1173,7 @@ fi
     repo.write_test_config(&format!(
         r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
-[projects."repo"]
+[projects."../origin"]
 approved-commands = ["""
 {}"""]
 "#,
@@ -1106,7 +1214,7 @@ fn test_post_start_skipped_on_existing_worktree(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"[projects."repo"]
+        r#"[projects."../origin"]
 approved-commands = ["echo 'POST-START-RAN' > post_start_marker.txt"]
 "#,
     );

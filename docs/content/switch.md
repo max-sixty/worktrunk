@@ -8,7 +8,9 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt switch --help-page` — edit cli.rs to update -->
 
-Change directory to a worktree, creating one if needed.
+Switch to a worktree. Creates one if needed.
+
+Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
 
 <figure class="demo">
 <picture>
@@ -17,8 +19,6 @@ Change directory to a worktree, creating one if needed.
 </picture>
 </figure>
 
-Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
-
 ## Examples
 
 ```bash
@@ -26,11 +26,16 @@ wt switch feature-auth           # Switch to worktree
 wt switch -                      # Previous worktree (like cd -)
 wt switch --create new-feature   # Create new branch and worktree
 wt switch --create hotfix --base production
+wt switch pr:123                 # Switch to PR #123's branch
 ```
 
 ## Creating a branch
 
 The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist.
+
+**Upstream tracking:** Branches created with `--create` have no upstream tracking configured. This prevents accidental pushes to the wrong branch — for example, `--base origin/main` would otherwise make `git push` target `main`. Use `git push -u origin <branch>` to set up tracking when you're ready.
+
+Without `--create`, switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local branch tracking the remote — this is the standard git behavior and is preserved.
 
 ## Creating worktrees
 
@@ -57,12 +62,40 @@ wt switch --create temp --no-verify      # Skip hooks
 | `^` | Default branch (`main`/`master`) |
 | `@` | Current branch/worktree |
 | `-` | Previous worktree (like `cd -`) |
+| `pr:{N}` | GitHub PR #N's branch |
+| `mr:{N}` | GitLab MR !N's branch |
 
 ```bash
 wt switch -                      # Back to previous
 wt switch ^                      # Default branch worktree
 wt switch --create fix --base=@  # Branch from current HEAD
+wt switch pr:123                 # PR #123's branch
+wt switch mr:101                 # MR !101's branch
 ```
+
+## GitHub pull requests (experimental)
+
+The `pr:<number>` syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches `refs/pull/N/head` and configures `pushRemote` to the fork URL.
+
+```bash
+wt switch pr:101                 # Checkout PR #101
+```
+
+Requires `gh` CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:` syntax since the branch already exists.
+
+**Fork PRs:** The local branch uses the PR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
+
+## GitLab merge requests (experimental)
+
+The `mr:<number>` syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches `refs/merge-requests/N/head` and configures `pushRemote` to the fork URL.
+
+```bash
+wt switch mr:101                 # Checkout MR !101
+```
+
+Requires `glab` CLI to be installed and authenticated. The `--create` flag cannot be used with `mr:` syntax since the branch already exists.
+
+**Fork MRs:** The local branch uses the MR's branch name directly, so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
 ## When wt switch fails
 
@@ -84,19 +117,22 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 {% terminal() %}
 wt switch - Switch to a worktree
 
+Creates one if needed.
+
 Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;BRANCH&gt;</span> <b><span class=c>[--</span></b> <span class=c>&lt;EXECUTE_ARGS&gt;...</span><b><span class=c>]</span></b>
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>&lt;BRANCH&gt;</span>
-          Branch name
+          Branch name or shortcut
 
-          Shortcuts: &#39;^&#39; (default branch), &#39;-&#39; (previous), &#39;@&#39; (current)
+          Shortcuts: &#39;^&#39; (default branch), &#39;-&#39; (previous), &#39;@&#39; (current),
+          &#39;pr:{N}&#39; (GitHub PR), &#39;mr:{N}&#39; (GitLab MR)
 
   <span class=c>[EXECUTE_ARGS]...</span>
           Additional arguments for --execute command (after --)
 
           Arguments after <b>--</b> are appended to the execute command. Each argument
-          is POSIX shell-escaped before appending.
+          is expanded for templates, then POSIX shell-escaped.
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-c</span></b>, <b><span class=c>--create</span></b>
@@ -114,6 +150,10 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           full terminal control. Useful for launching editors, AI agents, or
           other interactive tools.
 
+          Supports <u>hook template variables</u> (<b>{{ branch }}</b>, <b>{{ worktree_path }}</b>,
+          etc.) and filters. <b>{{ base }}</b> and <b>{{ base_worktree_path }}</b> require
+          --create.
+
           Especially useful with shell aliases:
 
             <b>alias wsc=&#39;wt switch --create -x claude&#39;</b>
@@ -122,6 +162,10 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Then <b>wsc feature-branch</b> creates the worktree and launches Claude Code.
           Arguments after <b>--</b> are passed to the command, so <b>wsc feature -- &#39;Fix</b>
           GH #322&#39; runs <b>claude &#39;Fix GH #322&#39;</b>, starting Claude with a prompt.
+
+          Template example: <b>-x &#39;code {{ worktree_path }}&#39;</b> opens VS Code at the
+          worktree, <b>-x &#39;tmux new -s {{ branch | sanitize }}&#39;</b> starts a tmux
+          session named after the branch.
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -143,7 +187,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Show debug info (-v), or also write diagnostic report (-vv)
+          Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
 <!-- END AUTO-GENERATED from `wt switch --help-page` -->

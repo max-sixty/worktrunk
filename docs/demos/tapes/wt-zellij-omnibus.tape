@@ -42,14 +42,17 @@ Sleep 5s
 # Start Zellij before showing
 Type "zellij"
 Enter
-Sleep 4s
+Sleep 3s
 # Dismiss plugin permission dialog (zellij-tab-name asks for permissions on first run)
+# The permission is cached per-plugin-path, but on macOS Zellij uses native cache APIs
+# that ignore $HOME, so we can't pre-populate the cache in the demo's temp directory.
+# If no dialog appears (cache hit), "y" goes to shell, so we follow with Enter + clear.
 Type "y"
-Sleep 1s
-# Clear any leftover characters from the permission dialog (before recording starts)
+Enter
+Sleep 500ms
 Type "clear"
 Enter
-Sleep 1s
+Sleep 500ms
 Show
 Sleep 500ms
 

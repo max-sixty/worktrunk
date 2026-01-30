@@ -4,9 +4,9 @@ How Worktrunk's shell integration works and how to debug issues.
 
 ## Why Shell Integration Exists
 
-Subprocesses cannot change the parent shell's current directory. When you run
-`wt switch feature`, the `wt` binary runs as a child process and cannot `cd`
-your terminal.
+Subprocesses cannot change the parent shell's current directory. When
+`wt switch feature` runs, the `wt` binary runs as a child process and cannot
+`cd` the terminal.
 
 Worktrunk solves this with **directive file passing**:
 
@@ -16,7 +16,7 @@ Worktrunk solves this with **directive file passing**:
 4. Shell sources the file after `wt` exits, executing the commands
 5. Shell removes the temp file
 
-This allows `wt switch` to change your terminal's directory.
+This allows `wt switch` to change the terminal's directory.
 
 ## Installation
 
@@ -24,7 +24,7 @@ This allows `wt switch` to change your terminal's directory.
 # Auto-install for all shells (bash, zsh, fish, PowerShell)
 wt config shell install
 
-# Or manual installation - add to your shell config:
+# Or manual installation - add to the shell config:
 # bash (~/.bashrc):
 eval "$(wt config shell init bash)"
 
@@ -67,31 +67,30 @@ started before installation. The shell function isn't loaded yet.
 
 ### "ran ./path/to/wt; shell integration wraps wt"
 
-**Meaning**: You invoked the binary with an explicit path (like `./target/debug/wt`
+**Meaning**: The binary was invoked with an explicit path (like `./target/debug/wt`
 or `/usr/local/bin/wt`) instead of just `wt`. The shell wrapper only intercepts
 the bare command `wt`.
 
 **Fix**: Use `wt` without a path. For testing dev builds, set `WORKTRUNK_BIN`:
 ```bash
 export WORKTRUNK_BIN=./target/debug/wt
-wt switch feature  # Now uses your dev build with shell integration
+wt switch feature  # Now uses the dev build with shell integration
 ```
 
 ### "ran git wt; running through git prevents cd"
 
-**Meaning**: You ran `git wt` (git alias) instead of `wt`. Git runs worktrunk as
+**Meaning**: `git wt` (git alias) was used instead of `wt`. Git runs worktrunk as
 a subprocess, bypassing the shell wrapper.
 
-**Fix**: Use `wt` directly instead of `git wt` when you need directory switching.
+**Fix**: Use `wt` directly instead of `git wt` when directory switching is needed.
 
 ### "Alias bypasses shell integration"
 
-**Meaning**: You have an alias like `alias gwt="/usr/bin/wt"` or
-`alias gwt="wt.exe"` that points directly to the binary instead of the shell
-function.
+**Meaning**: An alias like `alias gwt="/usr/bin/wt"` or `alias gwt="wt.exe"`
+points directly to the binary instead of the shell function.
 
 When shell integration is installed, it creates a shell function named `wt` (or
-`git-wt`). If your alias points to the binary path, it bypasses this function
+`git-wt`). If the alias points to the binary path, it bypasses this function
 and shell integration won't work.
 
 **Examples that bypass** (won't auto-cd):

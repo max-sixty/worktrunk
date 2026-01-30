@@ -1,6 +1,6 @@
 ---
 name: worktrunk
-description: Guidance for Worktrunk, a CLI tool for managing git worktrees. Covers configuration (user config at ~/.config/worktrunk/config.toml and project hooks at .config/wt.toml), usage, and troubleshooting. Use for "setting up LLM", "configuring hooks", "automating tasks", or general worktrunk questions.
+description: Guidance for Worktrunk, a CLI tool for managing git worktrees. Covers configuration (user config at ~/.config/worktrunk/config.toml and project hooks at .config/wt.toml), usage, and troubleshooting. Use for "setting up commit message generation", "configuring hooks", "automating tasks", or general worktrunk questions.
 ---
 
 <!-- worktrunk-skill-version: 0.9.3 -->
@@ -57,50 +57,38 @@ When a user asks for configuration help, determine which type based on:
 - "run tests before merge"
 - Affects the entire team
 
-**Both configs may be needed**: For example, setting up LLM integration requires user config, but automating quality checks requires project config.
+**Both configs may be needed**: For example, setting up commit message generation requires user config, but automating quality checks requires project config.
 
 ## Core Workflows
 
-### Setting Up LLM Integration (User Config)
+### Setting Up Commit Message Generation (User Config)
 
-Most common request. Follow this sequence:
+Most common request. See `reference/llm-commits.md` for supported tools and exact command syntax.
 
-1. **Check if LLM tool exists**
+1. **Detect available tools**
    ```bash
-   which llm  # or: which aichat
+   which claude codex llm aichat 2>/dev/null
    ```
 
-2. **If not installed, guide installation (don't run it)**
-   ```bash
-   uv tool install -U llm
-   ```
+2. **If none installed, recommend Claude Code** (already available in Claude Code sessions)
 
-3. **Guide API key setup (don't run it)**
-   ```bash
-   llm install llm-anthropic
-   llm keys set anthropic
-   llm models default claude-haiku-4.5
-   ```
-
-4. **Propose config change**
+3. **Propose config change** — Get the exact command from `reference/llm-commits.md`
    ```toml
-   [commit-generation]
-   command = "llm"
+   [commit.generation]
+   command = "..."  # see reference/llm-commits.md for tool-specific commands
    ```
    Ask: "Should I add this to your config?"
 
-5. **After approval, apply**
+4. **After approval, apply**
    - Check if config exists: `wt config show`
    - If not, guide through `wt config create`
    - Read, modify, write preserving structure
 
-6. **Suggest testing**
+5. **Suggest testing**
    ```bash
-   llm "say hello"
+   wt step commit --show-prompt | head  # verify prompt builds
    wt merge  # in a repo with uncommitted changes
    ```
-
-**See `reference/config.md` and `reference/llm-commits.md` for complete details.**
 
 ### Setting Up Project Hooks (Project Config)
 
@@ -221,7 +209,7 @@ bash -n -c "if [ true ]; then echo ok; fi"
 ## Common Tasks Reference
 
 ### User Config Tasks
-- Set up LLM integration → `reference/llm-commits.md`
+- Set up commit message generation → `reference/llm-commits.md`
 - Customize worktree paths → `reference/config.md#worktree-path-template`
 - Custom commit templates → `reference/llm-commits.md#templates`
 - Configure command defaults → `reference/config.md#command-settings`
@@ -255,4 +243,37 @@ Find specific sections with grep:
 grep -A 20 "## Setup" reference/llm-commits.md
 grep -A 30 "### post-create" reference/hook.md
 grep -A 20 "## Warning Messages" reference/shell-integration.md
+```
+
+## Advanced: Agent Handoffs
+
+When the user requests spawning a worktree with Claude in a background session ("spawn a worktree for...", "hand off to another agent"), use the appropriate pattern for their terminal multiplexer:
+
+**tmux** (check `$TMUX` env var):
+```bash
+tmux new-session -d -s <branch-name> "wt switch --create <branch-name> -x claude -- '<task description>'"
+```
+
+**Zellij** (check `$ZELLIJ` env var):
+```bash
+zellij run -- wt switch --create <branch-name> -x claude -- '<task description>'
+```
+
+**Requirements** (all must be true):
+- User explicitly requests spawning/handoff
+- User is in a supported multiplexer (tmux or Zellij)
+- User's CLAUDE.md or explicit instruction authorizes this pattern
+
+**Do not use this pattern** for normal worktree operations.
+
+Example (tmux):
+```bash
+tmux new-session -d -s fix-auth-bug "wt switch --create fix-auth-bug -x claude -- \
+  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'"
+```
+
+Example (Zellij):
+```bash
+zellij run -- wt switch --create fix-auth-bug -x claude -- \
+  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'
 ```

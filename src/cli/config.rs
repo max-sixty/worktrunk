@@ -69,6 +69,10 @@ Use --yes to skip confirmation."#
         #[arg(short, long)]
         yes: bool,
 
+        /// Show what would be changed
+        #[arg(long)]
+        dry_run: bool,
+
         /// Command name for shell integration (defaults to binary name)
         ///
         /// Use this to create shell integration for an alternate command name.
@@ -113,6 +117,10 @@ Detects various forms of the integration pattern regardless of:
         /// Skip confirmation prompt
         #[arg(short, long)]
         yes: bool,
+
+        /// Show what would be changed
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Show output theme samples
@@ -126,6 +134,19 @@ Detects various forms of the integration pattern regardless of:
 - Prompts for user input"#
     )]
     ShowTheme,
+
+    /// Generate static shell completions for package managers
+    ///
+    /// Outputs static completion scripts for Homebrew and other package managers.
+    /// Only completes commands and flags, not branch names.
+    /// This is predominantly for package managers. Users should run
+    /// `wt config shell install` instead.
+    #[command(hide = true)]
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
 }
 
 #[derive(Subcommand)]
@@ -253,13 +274,9 @@ Clear all stored state:
 ```console
 wt config state clear
 ```
-
 <!-- subdoc: default-branch -->
-
 <!-- subdoc: ci-status -->
-
 <!-- subdoc: marker -->
-
 <!-- subdoc: logs -->"#
     )]
     State {
@@ -270,7 +287,7 @@ wt config state clear
 
 #[derive(Subcommand)]
 pub enum StateCommand {
-    /// Default branch setting
+    /// Default branch detection and override
     #[command(
         name = "default-branch",
         after_long_help = r#"Useful in scripts to avoid hardcoding `main` or `master`:
@@ -324,12 +341,11 @@ Without a subcommand, runs `get`. Use `set` to override or `clear` to reset."#
         name = "ci-status",
         after_long_help = r#"Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 
-## How it works
+Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `ci.platform = "github"` in `.config/wt.toml` for self-hosted instances.
 
-1. **Platform detection** — From `[ci] platform` in project config, or detected from remote URL (github.com → GitHub, gitlab.com → GitLab)
-2. **CLI requirement** — Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated
-3. **What's checked** — PRs/MRs first, then branch pipelines for branches with upstream
-4. **Caching** — Results cached 30-60 seconds per branch+commit
+Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
+
+Results cache for 30-60 seconds. Indicators dim when local changes haven't been pushed.
 
 ## Status values
 
@@ -675,18 +691,50 @@ wt config state marker clear --all
 
 #[derive(Subcommand)]
 pub enum LogsAction {
-    /// List background operation log files
+    /// Get log file paths
     #[command(
-        after_long_help = r#"Lists log files from background operations like post-start commands and worktree removal.
+        after_long_help = r#"Lists log files, or gets the path to a specific log.
 
 ## Examples
 
-List log files:
+List all log files:
 ```console
 wt config state logs
+```
+
+Get path to a specific hook log:
+```console
+wt config state logs get --hook=user:post-start:server
+```
+
+Stream a hook's log output:
+```console
+tail -f "$(wt config state logs get --hook=user:post-start:server)"
+```
+
+Get log for background worktree removal:
+```console
+wt config state logs get --hook=internal:remove
+```
+
+Get log for a different branch:
+```console
+wt config state logs get --hook=user:post-start:server --branch=feature
 ```"#
     )]
-    Get,
+    Get {
+        /// Get path for a specific log file
+        ///
+        /// Format: source:hook-type:name (e.g., user:post-start:server) for
+        /// hook commands, or internal:op (e.g., internal:remove) for internal
+        /// operations.
+        #[arg(long)]
+        hook: Option<String>,
+
+        /// Target branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        branch: Option<String>,
+    },
 
     /// Clear background operation logs
     Clear,

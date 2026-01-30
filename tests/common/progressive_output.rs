@@ -98,8 +98,7 @@
 //! - `with_byte_interval(n)` - Capture every n bytes (deterministic)
 //! - `default()` - Time-based capture every 50ms (less deterministic)
 
-use crate::common::{ExponentialBackoff, TestRepo};
-use insta_cmd::get_cargo_bin;
+use crate::common::{ExponentialBackoff, TestRepo, wt_bin};
 use portable_pty::CommandBuilder;
 use std::io::Read;
 use std::time::{Duration, Instant};
@@ -334,7 +333,7 @@ pub fn capture_progressive_output(
     let pair = super::open_pty_with_size(options.terminal_size.0, options.terminal_size.1);
 
     // Build command
-    let mut cmd = CommandBuilder::new(get_cargo_bin("wt"));
+    let mut cmd = CommandBuilder::new(wt_bin());
     cmd.arg(subcommand);
     for arg in args {
         cmd.arg(arg);

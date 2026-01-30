@@ -15,9 +15,9 @@ The plugin installs Claude Code hooks that track session activity per branch. Wh
 
 These markers appear in `wt list` output, making it easy to see which worktrees have active Claude sessions — useful when running multiple instances in parallel.
 
-**Set up LLM for commit message generation**
+**Set up LLM commit message generation**
 
-The configuration skill guides through installing the `llm` CLI tool, setting API keys, and adding `[commit-generation]` to the user config so `wt merge` can auto-generate commit messages.
+The configuration skill guides through configuring an AI tool (Claude Code, Codex, llm, or aichat) and adding `[commit.generation]` to the user config so `wt merge` can auto-generate commit messages.
 
 **Add post-create hooks to run npm install automatically**
 

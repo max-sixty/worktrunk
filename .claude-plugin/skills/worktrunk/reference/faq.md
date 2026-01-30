@@ -1,32 +1,5 @@
 # FAQ
 
-## What commands does Worktrunk execute?
-
-Worktrunk executes commands in four contexts:
-
-1. **User hooks** (`~/.config/worktrunk/config.toml`) — Personal automation for all repositories
-2. **Project hooks** (`.config/wt.toml`) — Repository-specific automation
-3. **LLM commands** (`~/.config/worktrunk/config.toml`) — Commit message generation
-4. **--execute flag** — Explicitly provided commands
-
-User hooks don't require approval (you defined them). Commands from project hooks require approval on first run. Approved commands are saved to user config. If a command changes, Worktrunk requires new approval.
-
-### Example approval prompt
-
-```
-▲ repo needs approval to execute 3 commands:
-
-○ post-create install:
-  echo 'Installing dependencies...'
-○ post-create build:
-  echo 'Building project...'
-○ post-create test:
-  echo 'Running tests...'
-❯ Allow and remember? [y/N]
-```
-
-Use `--yes` to bypass prompts (useful for CI/automation).
-
 ## How does Worktrunk compare to alternatives?
 
 ### vs. branch switching
@@ -78,58 +51,16 @@ These tools can be used together—run git-machete or git-town inside individual
 
 Git TUIs operate on a single repository. Worktrunk manages multiple worktrees, runs automation hooks, and aggregates status across branches. TUIs work inside each worktree directory.
 
-## How does Worktrunk determine the default branch?
+## There's an issue with my shell setup
 
-Worktrunk checks the local git cache first, queries the remote if needed, and falls back to local inference when no remote exists. The result is cached for fast subsequent lookups.
+If shell integration isn't working (auto-cd not happening, completions missing, `wt` not found as a function), the fastest path to a fix is using Claude Code with the Worktrunk plugin:
 
-If the remote's default branch has changed (e.g., renamed from master to main), clear the cache with `wt config state default-branch clear`.
+1. Install the [Worktrunk plugin](https://worktrunk.dev/claude-code/) in Claude Code
+2. Ask Claude to debug the Worktrunk shell integration
 
-For full details on the detection mechanism, see `wt config state default-branch --help`.
+Claude will run `wt config show`, inspect the shell config files, and identify the issue.
 
-## On Windows, `wt` conflicts with Windows Terminal
-
-Windows Terminal uses `wt` as its command-line launcher, so running `wt` invokes Terminal instead of Worktrunk.
-
-As an immediate workaround, install as `git-wt`:
-
-```bash
-cargo install worktrunk --features git-wt
-git-wt config shell install
-```
-
-This creates a `git-wt` shell function with directory changing and completions.
-
-`git wt` (as a git subcommand) also works but cannot change directories since git runs subcommands as subprocesses.
-
-We're considering better solutions — a better name, anyone?
-
-## Does Worktrunk work on Windows?
-
-**Experimental.** Core functionality works, but some features are unavailable.
-
-| Feature | Git Bash | PowerShell |
-|---------|----------|------------|
-| Core commands (`list`, `switch`, `merge`, etc.) | ✅ | ✅ |
-| Shell integration | ✅ | ✅ |
-| Tab completion | ✅ | ✅ |
-| Hooks | ✅ | ❌ (bash syntax) |
-| `wt select` | ❌ | ❌ |
-
-**Git for Windows** is required — it provides Git Bash, which Worktrunk uses for hook execution. [Download here](https://gitforwindows.org/).
-
-**PowerShell** works as the interactive shell for core commands, shell integration, and tab completion. Hooks use bash syntax and run via Git Bash, so Git for Windows must be installed even when PowerShell is the interactive shell.
-
-**`wt select`** uses [skim](https://github.com/skim-rs/skim), which only supports Unix. Use `wt list` and `wt switch <branch>` instead.
-
-## Installation fails with C compilation errors
-
-Errors related to tree-sitter or C compilation (C99 mode, `le16toh` undefined) can be avoided by installing without syntax highlighting:
-
-```bash
-$ cargo install worktrunk --no-default-features
-```
-
-This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
+If Claude can't fix it, please [open an issue](https://github.com/max-sixty/worktrunk/issues/new?title=Shell%20setup%20issue&body=%23%23%20Shell%20and%20OS%0A%0A-%20Shell%3A%20%0A-%20OS%3A%20%0A%0A%23%23%20Output%20of%20%60wt%20config%20show%60%0A%0A%60%60%60%0A%0A%60%60%60%0A%0A%23%23%20What%20Claude%20found%20%28if%20available%29%0A%0A) with the output of `wt config show`, the shell (bash/zsh/fish), and OS. (And even if it fixes the problem, feel free to open an issue: non-standard success cases are useful for ensuring Worktrunk is easy to set up for others.)
 
 ## What files does Worktrunk create?
 
@@ -158,18 +89,23 @@ Created by `wt config shell install`:
 
 - **Bash**: adds line to `~/.bashrc`
 - **Zsh**: adds line to `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
-- **Fish**: creates `~/.config/fish/conf.d/wt.fish` and `~/.config/fish/completions/wt.fish`
+- **Fish**: creates `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish`
+- **PowerShell** (Windows): creates both profile files if they don't exist:
+  - `Documents/PowerShell/Microsoft.PowerShell_profile.ps1` (PowerShell 7+)
+  - `Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1` (Windows PowerShell 5.1)
+
+**PowerShell detection on Windows:** When running from cmd.exe or PowerShell, both PowerShell profile files are created automatically. When running from Git Bash or MSYS2, PowerShell is skipped (use `wt config shell install powershell` to create the profiles explicitly).
 
 **To remove:** `wt config shell uninstall`.
 
 ### 4. Metadata in `.git/` (automatic)
 
-Worktrunk stores small amounts of cache and log data in your repository's `.git/` directory:
+Worktrunk stores small amounts of cache and log data in the repository's `.git/` directory:
 
 | Location | Purpose | Created by |
 |----------|---------|------------|
 | `.git/config` keys under `worktrunk.*` | Cached default branch, switch history, branch markers | Various commands |
-| `.git/wt-cache/ci-status/*.json` | CI status cache (~1KB each) | `wt list` when `gh` CLI is installed |
+| `.git/wt-cache/ci-status/*.json` | CI status cache (~1KB each) | `wt list` when `gh` or `glab` CLI is installed |
 | `.git/wt-logs/*.log` | Background command output | Hooks, background `wt remove` |
 
 None of this is tracked by git or pushed to remotes.
@@ -213,6 +149,59 @@ Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch
 - `wt config shell uninstall` — removes shell integration from rc files
 
 See [What files does Worktrunk create?](#what-files-does-worktrunk-create) for details.
+
+## What commands does Worktrunk execute?
+
+Worktrunk runs `git` commands internally and optionally runs `gh` (GitHub) or `glab` (GitLab) for CI status. Beyond that, user-defined commands execute in four contexts:
+
+1. **User hooks** (`~/.config/worktrunk/config.toml`) — Personal automation for all repositories
+2. **Project hooks** (`.config/wt.toml`) — Repository-specific automation
+3. **LLM commands** (`~/.config/worktrunk/config.toml`) — Commit message generation
+4. **--execute flag** — Explicitly provided commands
+
+User hooks don't require approval (you defined them). Commands from project hooks require approval on first run. Approved commands are saved to user config. If a command changes, Worktrunk requires new approval.
+
+### Example approval prompt
+
+```
+▲ repo needs approval to execute 3 commands:
+
+○ post-create install:
+  echo 'Installing dependencies...'
+○ post-create build:
+  echo 'Building project...'
+○ post-create test:
+  echo 'Running tests...'
+❯ Allow and remember? [y/N]
+```
+
+Use `--yes` to bypass prompts (useful for CI/automation).
+
+## Does Worktrunk work on Windows?
+
+Yes. Core commands, shell integration, and tab completion work in both Git Bash and PowerShell. See [installation](https://worktrunk.dev/worktrunk/#install) for setup details, including avoiding the Windows Terminal `wt` conflict.
+
+**Git for Windows required** — Hooks use bash syntax and execute via Git Bash, so [Git for Windows](https://gitforwindows.org/) must be installed even when PowerShell is the interactive shell.
+
+**`wt select` unavailable** — Uses [skim](https://github.com/skim-rs/skim), which doesn't support Windows. Use `wt list` and `wt switch <branch>` instead.
+
+## How does Worktrunk determine the default branch?
+
+Worktrunk checks the local git cache first, queries the remote if needed, and falls back to local inference when no remote exists. The result is cached for fast subsequent lookups.
+
+If the remote's default branch has changed (e.g., renamed from master to main), clear the cache with `wt config state default-branch clear`.
+
+For full details on the detection mechanism, see `wt config state default-branch --help`.
+
+## Installation fails with C compilation errors
+
+Errors related to tree-sitter or C compilation (C99 mode, `le16toh` undefined) can be avoided by installing without syntax highlighting:
+
+```bash
+$ cargo install worktrunk --no-default-features
+```
+
+This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
 
 ## Running tests (for contributors)
 

@@ -18,6 +18,27 @@ fn get_branch_sha(repo: &TestRepo, branch: &str) -> String {
     repo.git_output(&["rev-parse", branch])
 }
 
+/// Set up tracking for all branches so @{push} resolves correctly.
+///
+/// @{push} requires both tracking config AND the remote-tracking ref to exist.
+/// This is normally done by fetch/push, but in tests we create refs manually.
+fn setup_tracking_for_all_branches(repo: &TestRepo, remote: &str) {
+    for branch in ["feature", "feature-a", "feature-b", "feature-c", "main"] {
+        repo.run_git(&["config", &format!("branch.{}.remote", branch), remote]);
+        repo.run_git(&[
+            "config",
+            &format!("branch.{}.merge", branch),
+            &format!("refs/heads/{}", branch),
+        ]);
+        // Create the remote-tracking ref
+        repo.run_git(&[
+            "update-ref",
+            &format!("refs/remotes/{}/{}", remote, branch),
+            branch,
+        ]);
+    }
+}
+
 /// Helper to run a CI status test with the given mock data
 fn run_ci_status_test(repo: &mut TestRepo, snapshot_name: &str, pr_json: &str, run_json: &str) {
     repo.setup_mock_gh_with_ci_data(pr_json, run_json);
@@ -32,13 +53,15 @@ fn run_ci_status_test(repo: &mut TestRepo, snapshot_name: &str, pr_json: &str, r
 
 /// Setup a repo with GitHub remote and feature worktree, returns head SHA
 fn setup_github_repo_with_feature(repo: &mut TestRepo) -> String {
+    // Set origin URL (origin already exists from fixture, just update URL)
     repo.run_git(&[
         "remote",
-        "add",
+        "set-url",
         "origin",
         "https://github.com/test-owner/test-repo.git",
     ]);
     repo.add_worktree("feature");
+    setup_tracking_for_all_branches(repo, "origin");
     get_branch_sha(repo, "feature")
 }
 
@@ -220,11 +243,12 @@ fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
     // Use different org name
     repo.run_git(&[
         "remote",
-        "add",
+        "set-url",
         "origin",
         "https://github.com/my-org/test-repo.git",
     ]);
     repo.add_worktree("feature");
+    setup_tracking_for_all_branches(&repo, "origin");
     let head_sha = get_branch_sha(&repo, "feature");
 
     // Multiple PRs - only one from our org (should filter to my-org's PR)
@@ -253,12 +277,21 @@ fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
 
 #[rstest]
 fn test_list_full_with_platform_override_github(mut repo: TestRepo) {
-    // Add a non-GitHub remote (bitbucket) - platform won't be auto-detected
+    // Set a non-GitHub remote (bitbucket) as origin - platform won't be auto-detected
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://bitbucket.org/test-owner/test-repo.git",
+    ]);
+
+    // Add a GitHub remote for PR detection (platform override needs a GitHub remote
+    // to determine which repo's PRs to check)
     repo.run_git(&[
         "remote",
         "add",
-        "origin",
-        "https://bitbucket.org/test-owner/test-repo.git",
+        "github",
+        "https://github.com/test-owner/test-repo.git",
     ]);
 
     // Set platform override in project config
@@ -269,8 +302,9 @@ platform = "github"
 "#,
     );
 
-    // Create a feature branch
+    // Create a feature branch with tracking to the github remote
     repo.add_worktree("feature");
+    setup_tracking_for_all_branches(&repo, "github");
 
     // Get actual commit SHA
     let head_sha = get_branch_sha(&repo, "feature");
@@ -302,10 +336,10 @@ platform = "github"
 
 #[rstest]
 fn test_list_full_with_gitlab_remote(mut repo: TestRepo) {
-    // Add GitLab remote - tests get_gitlab_host_for_repo path
+    // Set GitLab remote URL - tests get_gitlab_host_for_repo path
     repo.run_git(&[
         "remote",
-        "add",
+        "set-url",
         "origin",
         "https://gitlab.example.com/test-owner/test-repo.git",
     ]);
@@ -327,10 +361,10 @@ fn test_list_full_with_gitlab_remote(mut repo: TestRepo) {
 
 #[rstest]
 fn test_list_full_with_invalid_platform_override(mut repo: TestRepo) {
-    // Add GitHub remote
+    // Set GitHub remote URL
     repo.run_git(&[
         "remote",
-        "add",
+        "set-url",
         "origin",
         "https://github.com/test-owner/test-repo.git",
     ]);
@@ -343,8 +377,9 @@ platform = "invalid_platform"
 "#,
     );
 
-    // Create a feature branch
+    // Create a feature branch with tracking
     repo.add_worktree("feature");
+    setup_tracking_for_all_branches(&repo, "origin");
     let head_sha = get_branch_sha(&repo, "feature");
 
     // Setup mock gh - platform should fall back to GitHub via URL detection
@@ -370,5 +405,360 @@ platform = "invalid_platform"
         repo.configure_mock_commands(&mut cmd);
         // Invalid platform should fall back to URL detection (GitHub)
         assert_cmd_snapshot!(cmd);
+    });
+}
+
+// =============================================================================
+// GitLab MR status tests
+// =============================================================================
+
+/// Helper to run a GitLab CI status test with the given mock data
+fn run_gitlab_ci_status_test(
+    repo: &mut TestRepo,
+    snapshot_name: &str,
+    mr_json: &str,
+    project_id: Option<u64>,
+) {
+    repo.setup_mock_glab_with_ci_data(mr_json, project_id);
+
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!(snapshot_name, cmd);
+    });
+}
+
+/// Setup a repo with GitLab remote and feature worktree, returns head SHA
+fn setup_gitlab_repo_with_feature(repo: &mut TestRepo) -> String {
+    // Set origin URL (origin already exists from fixture, just update URL)
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/test-group/test-project.git",
+    ]);
+    repo.add_worktree("feature");
+    setup_tracking_for_all_branches(repo, "origin");
+    get_branch_sha(repo, "feature")
+}
+
+#[rstest]
+#[case::passed("success", false, "gitlab_mr_passed")]
+#[case::failed("failed", false, "gitlab_mr_failed")]
+#[case::running("running", false, "gitlab_mr_running")]
+#[case::pending("pending", false, "gitlab_mr_pending")]
+#[case::conflicts("success", true, "gitlab_mr_conflicts")]
+fn test_list_full_with_gitlab_mr_status(
+    mut repo: TestRepo,
+    #[case] pipeline_status: &str,
+    #[case] has_conflicts: bool,
+    #[case] snapshot_name: &str,
+) {
+    let head_sha = setup_gitlab_repo_with_feature(&mut repo);
+
+    let mr_json = format!(
+        r#"[{{
+        "iid": 1,
+        "sha": "{}",
+        "has_conflicts": {},
+        "detailed_merge_status": null,
+        "head_pipeline": {{"status": "{}"}},
+        "source_project_id": 12345,
+        "web_url": "https://gitlab.com/test-group/test-project/-/merge_requests/1"
+    }}]"#,
+        head_sha, has_conflicts, pipeline_status
+    );
+
+    run_gitlab_ci_status_test(&mut repo, snapshot_name, &mr_json, Some(12345));
+}
+
+#[rstest]
+fn test_list_full_with_gitlab_stale_mr(mut repo: TestRepo) {
+    setup_gitlab_repo_with_feature(&mut repo);
+
+    // Make additional commit locally (not pushed)
+    let worktree_path = repo.worktrees.get("feature").unwrap().clone();
+    std::fs::write(worktree_path.join("new_file.txt"), "new content").unwrap();
+    repo.stage_all(&worktree_path);
+    repo.run_git_in(&worktree_path, &["commit", "-m", "Local commit"]);
+
+    // MR HEAD differs from local HEAD - simulates stale MR
+    let mr_json = r#"[{
+        "iid": 1,
+        "sha": "old_sha_from_before_local_commit",
+        "has_conflicts": false,
+        "detailed_merge_status": null,
+        "head_pipeline": {"status": "success"},
+        "source_project_id": 12345,
+        "web_url": "https://gitlab.com/test-group/test-project/-/merge_requests/1"
+    }]"#;
+
+    run_gitlab_ci_status_test(&mut repo, "gitlab_stale_mr", mr_json, Some(12345));
+}
+
+#[rstest]
+fn test_list_full_with_gitlab_no_ci(mut repo: TestRepo) {
+    let head_sha = setup_gitlab_repo_with_feature(&mut repo);
+
+    // MR with no pipeline
+    let mr_json = format!(
+        r#"[{{
+        "iid": 1,
+        "sha": "{}",
+        "has_conflicts": false,
+        "detailed_merge_status": null,
+        "head_pipeline": null,
+        "source_project_id": 12345,
+        "web_url": "https://gitlab.com/test-group/test-project/-/merge_requests/1"
+    }}]"#,
+        head_sha
+    );
+
+    run_gitlab_ci_status_test(&mut repo, "gitlab_no_ci", &mr_json, Some(12345));
+}
+
+#[rstest]
+fn test_list_full_with_gitlab_filters_by_project_id(mut repo: TestRepo) {
+    // Use a specific project for our repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/my-group/my-project.git",
+    ]);
+    repo.add_worktree("feature");
+    setup_tracking_for_all_branches(&repo, "origin");
+    let head_sha = get_branch_sha(&repo, "feature");
+
+    // Multiple MRs - only one from our project (should filter to project 99999)
+    // The "other" MR is listed first to prove filtering works (not just taking first element)
+    let mr_json = format!(
+        r#"[
+        {{
+            "iid": 99,
+            "sha": "wrong_sha",
+            "has_conflicts": false,
+            "detailed_merge_status": null,
+            "head_pipeline": {{"status": "failed"}},
+            "source_project_id": 11111,
+            "web_url": "https://gitlab.com/other-group/other-project/-/merge_requests/99"
+        }},
+        {{
+            "iid": 1,
+            "sha": "{}",
+            "has_conflicts": false,
+            "detailed_merge_status": null,
+            "head_pipeline": {{"status": "success"}},
+            "source_project_id": 99999,
+            "web_url": "https://gitlab.com/my-group/my-project/-/merge_requests/1"
+        }}
+    ]"#,
+        head_sha
+    );
+
+    run_gitlab_ci_status_test(
+        &mut repo,
+        "gitlab_filters_by_project_id",
+        &mr_json,
+        Some(99999),
+    );
+}
+
+// =============================================================================
+// GitLab project ID edge cases (PR #846 panic prevention)
+// =============================================================================
+
+/// Test that single MR without project ID works (unambiguous case).
+///
+/// When `glab repo view` fails to return a project ID but there's only one MR,
+/// we can safely use it since there's no ambiguity.
+#[rstest]
+fn test_list_full_with_gitlab_single_mr_no_project_id(mut repo: TestRepo) {
+    let head_sha = setup_gitlab_repo_with_feature(&mut repo);
+
+    // Single MR - should work even without project ID to filter by
+    let mr_json = format!(
+        r#"[{{
+        "iid": 1,
+        "sha": "{}",
+        "has_conflicts": false,
+        "detailed_merge_status": null,
+        "head_pipeline": {{"status": "success"}},
+        "source_project_id": 12345,
+        "web_url": "https://gitlab.com/test-group/test-project/-/merge_requests/1"
+    }}]"#,
+        head_sha
+    );
+
+    // Pass None for project_id to trigger "no project ID" path
+    run_gitlab_ci_status_test(&mut repo, "gitlab_single_mr_no_project_id", &mr_json, None);
+}
+
+/// Test that empty MR list without project ID returns None gracefully.
+///
+/// When no MRs are found and we don't have a project ID, the code should
+/// return None without panicking. This falls through to pipeline detection.
+#[rstest]
+fn test_list_full_with_gitlab_empty_mr_list_no_project_id(mut repo: TestRepo) {
+    setup_gitlab_repo_with_feature(&mut repo);
+
+    // Empty MR list + no project ID -> falls through to pipeline check
+    run_gitlab_ci_status_test(
+        &mut repo,
+        "gitlab_empty_mr_list_no_project_id",
+        "[]", // Empty MR list
+        None, // No project ID
+    );
+}
+
+/// Test that multiple MRs without project ID are skipped (ambiguous case).
+///
+/// When there are multiple MRs with the same branch name and we can't determine
+/// which project we're in, we skip CI detection rather than showing the wrong one.
+/// This falls through to pipeline detection via `glab ci list`.
+#[rstest]
+fn test_list_full_with_gitlab_multiple_mrs_no_project_id(mut repo: TestRepo) {
+    let head_sha = setup_gitlab_repo_with_feature(&mut repo);
+
+    // Multiple MRs from different projects - ambiguous without project ID
+    let mr_json = format!(
+        r#"[
+        {{
+            "iid": 1,
+            "sha": "{}",
+            "has_conflicts": false,
+            "detailed_merge_status": null,
+            "head_pipeline": {{"status": "failed"}},
+            "source_project_id": 11111,
+            "web_url": "https://gitlab.com/org-a/project/-/merge_requests/1"
+        }},
+        {{
+            "iid": 2,
+            "sha": "{}",
+            "has_conflicts": false,
+            "detailed_merge_status": null,
+            "head_pipeline": {{"status": "success"}},
+            "source_project_id": 22222,
+            "web_url": "https://gitlab.com/org-b/project/-/merge_requests/2"
+        }}
+    ]"#,
+        head_sha, head_sha
+    );
+
+    // Pass None for project_id - should skip MR detection due to ambiguity
+    // and fall through to pipeline detection (which will show NoCI since
+    // our mock returns empty pipeline list)
+    run_gitlab_ci_status_test(
+        &mut repo,
+        "gitlab_multiple_mrs_no_project_id",
+        &mr_json,
+        None,
+    );
+}
+
+// =============================================================================
+// URL-based pushremote tests (gh pr checkout scenario)
+// =============================================================================
+
+/// Test that CI status works when pushremote is a URL instead of a remote name.
+///
+/// This simulates the `gh pr checkout` scenario where git sets:
+/// - branch.<name>.pushremote = https://github.com/fork-owner/repo.git (a URL)
+/// - branch.<name>.merge = refs/pull/123/head (a PR ref)
+///
+/// Git's @{push} syntax fails with URLs, so we fall back to reading the config directly.
+#[rstest]
+fn test_list_full_with_url_based_pushremote(mut repo: TestRepo) {
+    // Set origin URL (the upstream repo where PRs are opened)
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/upstream-owner/test-repo.git",
+    ]);
+    repo.add_worktree("feature");
+    let head_sha = get_branch_sha(&repo, "feature");
+
+    // Simulate `gh pr checkout` behavior:
+    // - Sets pushremote to the fork URL (not a remote name)
+    // - Sets merge to a PR ref (not a normal branch ref)
+    repo.run_git(&[
+        "config",
+        "branch.feature.pushremote",
+        "https://github.com/fork-owner/test-repo.git", // URL, not remote name
+    ]);
+    repo.run_git(&[
+        "config",
+        "branch.feature.merge",
+        "refs/pull/123/head", // PR ref, not branch ref
+    ]);
+
+    // The PR comes from the fork owner (matches pushremote URL)
+    let pr_json = format!(
+        r#"[{{
+        "headRefOid": "{}",
+        "mergeStateStatus": "CLEAN",
+        "statusCheckRollup": [
+            {{"status": "COMPLETED", "conclusion": "SUCCESS"}}
+        ],
+        "url": "https://github.com/upstream-owner/test-repo/pull/123",
+        "headRepositoryOwner": {{"login": "fork-owner"}}
+    }}]"#,
+        head_sha
+    );
+
+    run_ci_status_test(&mut repo, "url_based_pushremote", &pr_json, "[]");
+}
+
+// =============================================================================
+// GitLab error path tests
+// =============================================================================
+
+/// Test that when `glab mr view` fails after finding an MR, we show error status (not NoCI).
+#[rstest]
+fn test_list_full_with_gitlab_mr_view_failure(mut repo: TestRepo) {
+    let head_sha = setup_gitlab_repo_with_feature(&mut repo);
+
+    // Set up mock where mr list succeeds but mr view fails
+    let mr_list_json = format!(
+        r#"[{{
+        "iid": 1,
+        "sha": "{}",
+        "has_conflicts": false,
+        "detailed_merge_status": null,
+        "source_project_id": 12345,
+        "web_url": "https://gitlab.com/test/repo/-/merge_requests/1"
+    }}]"#,
+        head_sha
+    );
+
+    repo.setup_mock_glab_with_failing_mr_view(&mr_list_json, Some(12345));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("gitlab_mr_view_failure", cmd);
+    });
+}
+
+/// Test that rate limit errors in `glab ci list` show error status (not NoCI).
+///
+/// This exercises the `is_retriable_error` check in `detect_gitlab_pipeline`,
+/// which is the fallback path when no MR exists for a branch.
+#[rstest]
+fn test_list_full_with_gitlab_ci_rate_limit(mut repo: TestRepo) {
+    setup_gitlab_repo_with_feature(&mut repo);
+
+    // Mock returns empty MR list (no MRs), so we fall through to ci list,
+    // which returns a rate limit error
+    repo.setup_mock_glab_with_ci_rate_limit(Some(12345));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("gitlab_ci_rate_limit", cmd);
     });
 }

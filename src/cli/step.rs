@@ -3,9 +3,46 @@ use clap::Subcommand;
 /// Run individual operations
 #[derive(Subcommand)]
 pub enum StepCommand {
-    /// Commit changes with LLM commit message
-    ///
-    /// Stages working tree changes and commits with an LLM-generated message.
+    /// Stage and commit with LLM-generated message
+    #[command(
+        after_long_help = r#"Stages all changes (including untracked files) and commits with an [LLM-generated message](@/llm-commits.md).
+
+## Options
+
+### `--stage`
+
+Controls what to stage before committing:
+
+| Value | Behavior |
+|-------|----------|
+| `all` | Stage all changes including untracked files (default) |
+| `tracked` | Stage only modified tracked files |
+| `none` | Don't stage anything, commit only what's already staged |
+
+```console
+wt step commit --stage=tracked
+```
+
+Configure the default in user config:
+
+```toml
+[commit]
+stage = "tracked"
+```
+
+### `--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+```console
+# Inspect the rendered prompt
+wt step commit --show-prompt | less
+
+# Pipe to a different LLM
+wt step commit --show-prompt | llm -m gpt-5-nano
+```
+"#
+    )]
     Commit {
         /// Skip approval prompts
         #[arg(short, long)]
@@ -28,7 +65,42 @@ pub enum StepCommand {
 
     /// Squash commits since branching
     ///
-    /// Stages working tree changes, squashes all commits since diverging from target into one, generates message with LLM.
+    /// Stages changes and generates message with LLM.
+    #[command(
+        after_long_help = r#"Stages all changes (including untracked files), then squashes all commits since diverging from the target branch into a single commit with an [LLM-generated message](@/llm-commits.md).
+
+## Options
+
+### `--stage`
+
+Controls what to stage before squashing:
+
+| Value | Behavior |
+|-------|----------|
+| `all` | Stage all changes including untracked files (default) |
+| `tracked` | Stage only modified tracked files |
+| `none` | Don't stage anything, squash only committed changes |
+
+```console
+wt step squash --stage=none
+```
+
+Configure the default in user config:
+
+```toml
+[commit]
+stage = "tracked"
+```
+
+### `--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+```console
+wt step squash --show-prompt | less
+```
+"#
+    )]
     Squash {
         /// Target branch
         ///
@@ -56,10 +128,19 @@ pub enum StepCommand {
     },
 
     /// Fast-forward target to current branch
-    ///
-    /// Updates the local target branch (e.g., `main`) to include current commits.
-    /// Similar to `git push . HEAD:<target>`, but uses
-    /// `receive.denyCurrentBranch=updateInstead` internally.
+    #[command(
+        after_long_help = r#"Updates the local target branch (e.g., `main`) to include current commits.
+
+## Examples
+
+```console
+wt step push             # Fast-forward main to current branch
+wt step push develop     # Fast-forward develop instead
+```
+
+Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updateInstead` internally.
+"#
+    )]
     Push {
         /// Target branch
         ///
@@ -69,6 +150,17 @@ pub enum StepCommand {
     },
 
     /// Rebase onto target
+    #[command(
+        after_long_help = r#"Rebases the current branch onto the target branch. Conflicts abort immediately; use `git rebase --abort` to recover.
+
+## Examples
+
+```console
+wt step rebase            # Rebase onto default branch
+wt step rebase develop    # Rebase onto develop
+```
+"#
+    )]
     Rebase {
         /// Target branch
         ///
@@ -79,36 +171,32 @@ pub enum StepCommand {
 
     /// Copy gitignored files to another worktree
     ///
-    /// Copies gitignored files to another worktree. By default copies all
-    /// gitignored files; use `.worktreeinclude` to limit what gets copied.
-    /// Useful in post-create hooks to sync local config files (`.env`, IDE
-    /// settings) to new worktrees. Skips symlinks and existing files.
+    /// Eliminates cold starts by copying build caches and dependencies.
     #[command(
         after_long_help = r#"Git worktrees share the repository but not untracked files. This command copies gitignored files to another worktree, eliminating cold starts.
 
 ## Setup
 
-Add to your project config:
+Add to the project config:
 
 ```toml
 # .config/wt.toml
-[post-create]
+[post-start]
 copy = "wt step copy-ignored"
-```
-
-All gitignored files are copied by default, as if `.worktreeinclude` contained `**`. To copy only specific patterns, create a `.worktreeinclude` file using gitignore syntax:
-
-```gitignore
-# .worktreeinclude — optional, limits what gets copied
-.env
-node_modules/
-target/
-.cache/
 ```
 
 ## What gets copied
 
-Only gitignored files are copied — tracked files are never touched. If `.worktreeinclude` exists, files must match **both** `.worktreeinclude` **and** be gitignored.
+All gitignored files are copied by default. Tracked files are never touched.
+
+To limit what gets copied, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
+
+```gitignore
+# .worktreeinclude
+.env
+node_modules/
+target/
+```
 
 ## Common patterns
 
@@ -121,10 +209,23 @@ Only gitignored files are copied — tracked files are never touched. If `.workt
 
 ## Features
 
-- Uses copy-on-write (reflink) when available for instant, space-efficient copies
+- Uses copy-on-write (reflink) when available for space-efficient copies
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files (safe to re-run)
-- Skips symlinks and `.git` entries
+- Skips `.git` entries and other worktrees
+
+## Performance
+
+Reflink copies share disk blocks until modified — no data is actually copied. For a 14GB `target/` directory:
+
+| Command | Time |
+|---------|------|
+| `cp -R` (full copy) | 2m |
+| `cp -Rc` / `wt step copy-ignored` | 20s |
+
+Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
+
+Use the `post-start` hook so the copy runs in the background. Use `post-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
 ## Language-specific notes
 
@@ -138,12 +239,20 @@ The `target/` directory is huge (often 1-10GB). Copying with reflink cuts first 
 
 ```toml
 [post-create]
-deps = "ln -sf {{ main_worktree_path }}/node_modules ."
+deps = "ln -sf {{ primary_worktree_path }}/node_modules ."
 ```
 
 ### Python
 
 Virtual environments contain absolute paths and can't be copied. Use `uv sync` instead — it's fast enough that copying isn't worth it.
+
+## Behavior vs Claude Code on desktop
+
+The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://code.claude.com/docs/en/desktop), which copies matching files when creating worktrees. Differences:
+
+- worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`
+- worktrunk uses copy-on-write for large directories like `target/` — potentially 30x faster on macOS, 6x on Linux
+- worktrunk runs as a configurable hook in the worktree lifecycle
 "#
     )]
     CopyIgnored {
@@ -165,6 +274,8 @@ Virtual environments contain absolute paths and can't be copied. Use `uv sync` i
     },
 
     /// \[experimental\] Run command in each worktree
+    ///
+    /// Executes sequentially with real-time output; continues on failure.
     #[command(
         after_long_help = r#"Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.
 
@@ -172,25 +283,7 @@ Context JSON is piped to stdin for scripts that need structured data.
 
 ## Template variables
 
-All variables are shell-escaped:
-
-| Variable | Description |
-|----------|-------------|
-| `{{ branch }}` | Branch name (raw, e.g., `feature/auth`) |
-| `{{ branch \| sanitize }}` | Branch name with `/` and `\` replaced by `-` |
-| `{{ repo }}` | Repository directory name (e.g., `myproject`) |
-| `{{ repo_path }}` | Absolute path to repository root |
-| `{{ worktree_name }}` | Worktree directory name |
-| `{{ worktree_path }}` | Absolute path to current worktree |
-| `{{ main_worktree_path }}` | Default branch worktree path |
-| `{{ commit }}` | Current HEAD commit SHA (full) |
-| `{{ short_commit }}` | Current HEAD commit SHA (7 chars) |
-| `{{ default_branch }}` | Default branch name (e.g., "main") |
-| `{{ remote }}` | Primary remote name (e.g., "origin") |
-| `{{ remote_url }}` | Primary remote URL |
-| `{{ upstream }}` | Upstream tracking branch, if configured |
-
-**Deprecated:** `repo_root` (use `repo_path`), `worktree` (use `worktree_path`), `main_worktree` (use `repo`).
+All variables are shell-escaped. See [`wt hook` template variables](@/hook.md#template-variables) for the complete list and filters.
 
 ## Examples
 
@@ -225,5 +318,84 @@ Note: This command is experimental and may change in future versions.
         /// Command template (see --help for all variables)
         #[arg(required = true, last = true, num_args = 1..)]
         args: Vec<String>,
+    },
+
+    /// \[experimental\] Move worktrees to expected paths
+    ///
+    /// Relocates worktrees whose path doesn't match the `worktree-path` template.
+    #[command(
+        after_long_help = r#"Moves worktrees to match the configured `worktree-path` template.
+
+## Examples
+
+Preview what would be moved:
+
+```console
+wt step relocate --dry-run
+```
+
+Move all mismatched worktrees:
+
+```console
+wt step relocate
+```
+
+Auto-commit and clobber blockers (never fails):
+
+```console
+wt step relocate --commit --clobber
+```
+
+Move specific worktrees:
+
+```console
+wt step relocate feature bugfix
+```
+
+## Swap handling
+
+When worktrees are at each other's expected locations (e.g., `alpha` at
+`repo.beta` and `beta` at `repo.alpha`), relocate automatically resolves
+this by using a temporary location.
+
+## Clobbering
+
+With `--clobber`, non-worktree paths at target locations are moved to
+`<path>.bak-<timestamp>` before relocating.
+
+## Main worktree behavior
+
+The main worktree can't be moved with `git worktree move`. Instead, relocate
+switches it to the default branch and creates a new linked worktree at the
+expected path. Untracked and gitignored files remain at the original location.
+
+## Skipped worktrees
+
+- **Dirty** (without `--commit`) — use `--commit` to auto-commit first
+- **Locked** — unlock with `git worktree unlock`
+- **Target blocked** (without `--clobber`) — use `--clobber` to backup blocker
+- **Detached HEAD** — no branch to compute expected path
+
+Note: This command is experimental and may change in future versions.
+"#
+    )]
+    Relocate {
+        /// Worktrees to relocate (defaults to all mismatched)
+        #[arg(add = crate::completion::worktree_only_completer())]
+        branches: Vec<String>,
+
+        /// Show what would be moved
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Commit uncommitted changes before relocating
+        #[arg(long)]
+        commit: bool,
+
+        /// Backup non-worktree paths at target locations
+        ///
+        /// Moves blocking paths to `<path>.bak-<timestamp>`.
+        #[arg(long)]
+        clobber: bool,
     },
 }

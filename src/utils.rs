@@ -13,23 +13,28 @@ pub fn format_timestamp_iso8601(timestamp: u64) -> String {
         .to_string()
 }
 
-/// Format the current time as ISO 8601 string, respecting `SOURCE_DATE_EPOCH`.
+/// Format the current time as ISO 8601 string.
 ///
 /// Convenience function combining `get_now()` and `format_timestamp_iso8601()`.
 pub fn now_iso8601() -> String {
     format_timestamp_iso8601(get_now())
 }
 
-/// Get current Unix timestamp in seconds, respecting `SOURCE_DATE_EPOCH`.
+/// Get current Unix timestamp in seconds.
 ///
-/// When `SOURCE_DATE_EPOCH` environment variable is set, returns that value
-/// instead of the actual current time. This enables reproducible builds and
-/// deterministic test snapshots.
+/// When `WT_TEST_EPOCH` environment variable is set (by tests), returns that
+/// value instead of the actual current time. This enables deterministic test
+/// snapshots.
+///
+/// Note: We use `WT_TEST_EPOCH` rather than `SOURCE_DATE_EPOCH` because the
+/// latter is a build-time standard for reproducible builds, commonly set by
+/// NixOS/direnv in development shells. Using it at runtime causes incorrect
+/// age display. See: <https://github.com/max-sixty/worktrunk/issues/763>
 ///
 /// All code that needs timestamps for display or storage should use this
 /// function rather than `SystemTime::now()` directly.
 pub fn get_now() -> u64 {
-    std::env::var("SOURCE_DATE_EPOCH")
+    std::env::var("WT_TEST_EPOCH")
         .ok()
         .and_then(|val| val.parse::<u64>().ok())
         .unwrap_or_else(|| {
@@ -52,9 +57,9 @@ mod tests {
     }
 
     #[test]
-    fn test_get_now_respects_source_date_epoch() {
-        // When SOURCE_DATE_EPOCH is set (by test harness), get_now() returns it
-        if let Ok(epoch) = std::env::var("SOURCE_DATE_EPOCH") {
+    fn test_get_now_respects_wt_test_epoch() {
+        // When WT_TEST_EPOCH is set (by test harness), get_now() returns it
+        if let Ok(epoch) = std::env::var("WT_TEST_EPOCH") {
             let expected: u64 = epoch.parse().unwrap();
             assert_eq!(get_now(), expected);
         }

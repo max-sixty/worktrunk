@@ -1,0 +1,10 @@
+---
+source: src/config/deprecation.rs
+expression: "migration_diff(content, &result)"
+---
+ 
+-[commit-generation]
+-command = "llm"
+-args = ["-m", "claude-haiku-4.5"]
++[commit.generation]
++command = "llm -m claude-haiku-4.5"

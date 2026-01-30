@@ -59,8 +59,7 @@ Measures pure skeleton latency. Target: <60ms.
 
 ## Code Structure
 
-- `collect.rs` — orchestrates collection, manages pre/post-skeleton phases (see module docstring for phase details)
-- `collect_progressive_impl.rs` — background task definitions and execution
+- `collect.rs` — orchestrates collection, manages pre/post-skeleton phases, task definitions and execution (see module docstring for phase details)
 - `render.rs` — row formatting, skeleton rows, cell rendering
 - `layout.rs` — column width calculation
 - `progressive_table.rs` — terminal rendering with in-place updates

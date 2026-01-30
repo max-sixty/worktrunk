@@ -1,6 +1,6 @@
 use anyhow::Context;
 use std::path::PathBuf;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 
 use super::command_executor::CommandContext;
@@ -19,9 +19,8 @@ pub struct CommandEnv {
     pub repo: Repository,
     /// Current branch name, if on a branch (None in detached HEAD state).
     pub branch: Option<String>,
-    pub config: WorktrunkConfig,
+    pub config: UserConfig,
     pub worktree_path: PathBuf,
-    pub repo_root: PathBuf,
 }
 
 impl CommandEnv {
@@ -29,21 +28,16 @@ impl CommandEnv {
     ///
     /// `action` describes what command is running (e.g., "merge", "squash").
     /// Used in error messages when the environment can't be loaded.
-    pub fn for_action(action: &str) -> anyhow::Result<Self> {
+    pub fn for_action(action: &str, config: UserConfig) -> anyhow::Result<Self> {
         let repo = Repository::current()?;
-        let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
+        let worktree_path = repo.current_worktree().path().to_path_buf();
         let branch = repo.require_current_branch(action)?;
-        let config = WorktrunkConfig::load().context("Failed to load config")?;
-        let repo_root = repo
-            .worktree_base()
-            .context("Failed to determine repository root")?;
 
         Ok(Self {
             repo,
             branch: Some(branch),
             config,
             worktree_path,
-            repo_root,
         })
     }
 
@@ -53,23 +47,19 @@ impl CommandEnv {
     /// such as running hooks (where `{{ branch }}` expands to "HEAD" if detached).
     pub fn for_action_branchless() -> anyhow::Result<Self> {
         let repo = Repository::current()?;
-        let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
+        let current_wt = repo.current_worktree();
+        let worktree_path = current_wt.path().to_path_buf();
         // Propagate git errors (broken repo, missing git) but allow None for detached HEAD
-        let branch = repo
-            .current_worktree()
+        let branch = current_wt
             .branch()
             .context("Failed to determine current branch")?;
-        let config = WorktrunkConfig::load().context("Failed to load config")?;
-        let repo_root = repo
-            .worktree_base()
-            .context("Failed to determine repository root")?;
+        let config = UserConfig::load().context("Failed to load config")?;
 
         Ok(Self {
             repo,
             branch,
             config,
             worktree_path,
-            repo_root,
         })
     }
 
@@ -80,7 +70,6 @@ impl CommandEnv {
             &self.config,
             self.branch.as_deref(),
             &self.worktree_path,
-            &self.repo_root,
             yes,
         )
     }
@@ -93,5 +82,18 @@ impl CommandEnv {
             }
             .into()
         })
+    }
+
+    /// Get the project identifier for per-project config lookup.
+    ///
+    /// Uses the remote URL if available, otherwise the canonical repository path.
+    /// Returns None only if the path is not valid UTF-8.
+    pub fn project_id(&self) -> Option<String> {
+        self.repo.project_identifier().ok()
+    }
+
+    /// Get all resolved config with defaults applied.
+    pub fn resolved(&self) -> worktrunk::config::ResolvedConfig {
+        self.config.resolved(self.project_id().as_deref())
     }
 }

@@ -6,25 +6,18 @@
 //!
 //! All templates support Jinja2 syntax including filters, conditionals, and loops.
 //!
-//! # Custom Filters
-//!
-//! - `sanitize` — Replace `/` and `\` with `-` for filesystem-safe names
-//!   ```text
-//!   {{ branch | sanitize }} → feature-foo
-//!   ```
-//!
-//! - `sanitize_db` — Transform to database-safe identifier (`[a-z0-9_]`, max 63 chars)
-//!   ```text
-//!   {{ branch | sanitize_db }} → feature_auth_oauth2
-//!   ```
-//!
-//! - `hash_port` — Hash a string to a deterministic port number (10000-19999)
-//!   ```text
-//!   {{ branch | hash_port }}              → 12472
-//!   {{ (repo ~ "-" ~ branch) | hash_port }} → 15839
-//!   ```
+//! See `wt hook --help` for available filters and functions.
 
-use minijinja::{Environment, Value};
+use std::borrow::Cow;
+
+use color_print::cformat;
+use minijinja::{Environment, UndefinedBehavior, Value};
+use regex::Regex;
+use shell_escape::escape;
+
+use crate::git::Repository;
+use crate::path::to_posix_path;
+use crate::styling::{eprintln, format_with_gutter, info_message, verbosity};
 
 /// Known template variables available in hook commands.
 ///
@@ -39,13 +32,15 @@ pub const TEMPLATE_VARS: &[&str] = &[
     "repo_path",
     "worktree_path",
     "default_branch",
-    "main_worktree_path",
+    "primary_worktree_path",
     "commit",
     "short_commit",
     "remote",
     "remote_url",
     "upstream",
-    "target", // Added by merge/rebase hooks via extra_vars
+    "target",             // Added by merge/rebase hooks via extra_vars
+    "base",               // Added by creation hooks via extra_vars
+    "base_worktree_path", // Added by creation hooks via extra_vars
 ];
 
 /// Deprecated template variable aliases (still valid for backward compatibility).
@@ -54,7 +49,13 @@ pub const TEMPLATE_VARS: &[&str] = &[
 /// - `main_worktree` → `repo`
 /// - `repo_root` → `repo_path`
 /// - `worktree` → `worktree_path`
-pub const DEPRECATED_TEMPLATE_VARS: &[&str] = &["main_worktree", "repo_root", "worktree"];
+/// - `main_worktree_path` → `primary_worktree_path`
+pub const DEPRECATED_TEMPLATE_VARS: &[&str] = &[
+    "main_worktree",
+    "repo_root",
+    "worktree",
+    "main_worktree_path",
+];
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -158,7 +159,8 @@ pub fn sanitize_db(s: &str) -> String {
 /// Generate a 3-character hash suffix from a string.
 ///
 /// Uses base36 (0-9, a-z) for a compact representation with 46,656 unique values.
-fn short_hash(s: &str) -> String {
+/// Used by `sanitize_db` and `sanitize_for_filename` to avoid collisions.
+pub fn short_hash(s: &str) -> String {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     s.hash(&mut h);
     let hash = h.finish();
@@ -171,6 +173,39 @@ fn short_hash(s: &str) -> String {
     String::from_utf8(vec![c0, c1, c2]).unwrap()
 }
 
+/// Redact credentials from URLs for safe logging.
+///
+/// URLs with embedded credentials (e.g., `https://token@github.com/...`) have
+/// the credential portion replaced with `[REDACTED]`.
+///
+/// # Examples
+/// ```
+/// use worktrunk::config::redact_credentials;
+///
+/// // URLs with credentials are redacted
+/// assert_eq!(
+///     redact_credentials("https://ghp_token123@github.com/owner/repo"),
+///     "https://[REDACTED]@github.com/owner/repo"
+/// );
+///
+/// // URLs without credentials are unchanged
+/// assert_eq!(
+///     redact_credentials("https://github.com/owner/repo"),
+///     "https://github.com/owner/repo"
+/// );
+///
+/// // Non-URL values pass through unchanged
+/// assert_eq!(redact_credentials("main"), "main");
+/// ```
+pub fn redact_credentials(s: &str) -> String {
+    // Pattern: scheme://credentials@host where credentials don't contain @
+    // This matches URLs like https://token@github.com or https://user:pass@host.com
+    thread_local! {
+        static CREDENTIAL_URL: Regex = Regex::new(r"^([a-z][a-z0-9+.-]*://)([^@/]+)@").unwrap();
+    }
+    CREDENTIAL_URL.with(|re| re.replace(s, "${1}[REDACTED]@").into_owned())
+}
+
 /// Expand a template with variable substitution.
 ///
 /// # Arguments
@@ -178,39 +213,25 @@ fn short_hash(s: &str) -> String {
 /// * `vars` - Variables to substitute
 /// * `shell_escape` - If true, shell-escape all values for safe command execution.
 ///   If false, substitute values literally (for filesystem paths).
+/// * `repo` - Repository for looking up worktree paths
 ///
 /// # Filters
 /// - `sanitize` — Replace `/` and `\` with `-` for filesystem-safe paths
 /// - `sanitize_db` — Transform to database-safe identifier (`[a-z0-9_]`, max 63 chars)
 /// - `hash_port` — Hash to deterministic port number (10000-19999)
 ///
-/// # Examples
-/// ```
-/// use worktrunk::config::expand_template;
-/// use std::collections::HashMap;
+/// # Functions
+/// - `worktree_path_of_branch(branch)` — Look up the filesystem path of a branch's worktree
+///   Returns empty string if branch has no worktree.
 ///
-/// // Raw branch name
-/// let mut vars = HashMap::new();
-/// vars.insert("branch", "feature/foo");
-/// vars.insert("repo", "myrepo");
-/// let cmd = expand_template("echo {{ branch }} in {{ repo }}", &vars, true).unwrap();
-/// assert_eq!(cmd, "echo feature/foo in myrepo");
-///
-/// // Sanitized branch name for filesystem paths
-/// let mut vars = HashMap::new();
-/// vars.insert("branch", "feature/foo");
-/// vars.insert("main_worktree", "myrepo");
-/// let path = expand_template("{{ main_worktree }}.{{ branch | sanitize }}", &vars, false).unwrap();
-/// assert_eq!(path, "myrepo.feature-foo");
-/// ```
+/// The `name` parameter appears in error messages to help identify which template failed.
 pub fn expand_template(
     template: &str,
     vars: &HashMap<&str, &str>,
     shell_escape: bool,
+    repo: &Repository,
+    name: &str,
 ) -> Result<String, String> {
-    use shell_escape::escape;
-    use std::borrow::Cow;
-
     // Build context map, optionally shell-escaping values
     let mut context = HashMap::new();
     for (key, value) in vars {
@@ -224,6 +245,9 @@ pub fn expand_template(
 
     // Render template with minijinja
     let mut env = Environment::new();
+    // SemiStrict: errors on undefined variable use (printing, iteration) but allows
+    // truthiness checks ({% if var %}). This catches typos while supporting optional vars.
+    env.set_undefined_behavior(UndefinedBehavior::SemiStrict);
     if shell_escape {
         // Preserve trailing newlines in templates (important for multiline shell commands)
         env.set_keep_trailing_newline(true);
@@ -238,17 +262,102 @@ pub fn expand_template(
     });
     env.add_filter("hash_port", |value: String| string_to_port(&value));
 
+    // Register worktree_path_of_branch function for looking up branch worktree paths
+    // The function returns shell-escaped paths when shell_escape is true, matching
+    // how regular template variables are handled.
+    let repo_clone = repo.clone();
+    env.add_function("worktree_path_of_branch", move |branch: String| -> String {
+        let path = repo_clone
+            .worktree_for_branch(&branch)
+            .ok()
+            .flatten()
+            .map(|p| to_posix_path(&p.to_string_lossy()))
+            .unwrap_or_default();
+        if shell_escape && !path.is_empty() {
+            escape(Cow::Borrowed(&path)).to_string()
+        } else {
+            path
+        }
+    });
+
+    // Cache verbosity level for consistent behavior within this call
+    let verbose = verbosity();
+
+    // -vv: Full debug logging with vars
+    // Redact credentials from values to prevent leaking tokens in logs
+    if verbose >= 2 {
+        log::debug!("[template:{name}] template={template:?}");
+        // Sort keys for deterministic output in tests
+        let mut sorted_vars: Vec<_> = vars.iter().collect();
+        sorted_vars.sort_by_key(|(k, _)| *k);
+        log::debug!(
+            "[template:{name}] vars={{{}}}",
+            sorted_vars
+                .iter()
+                .map(|(k, v)| format!("{k}={:?}", redact_credentials(v)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+
     let tmpl = env
-        .template_from_str(template)
+        .template_from_named_str(name, template)
         .map_err(|e| format!("Template syntax error: {}", e))?;
 
-    tmpl.render(minijinja::Value::from_object(context))
-        .map_err(|e| format!("Template render error: {}", e))
+    let result = tmpl
+        .render(minijinja::Value::from_object(context))
+        .map_err(|e| format!("Template render error: {}", e))?;
+
+    // -vv: Full debug logging with result
+    // Redact credentials from result to prevent leaking tokens in logs
+    if verbose >= 2 {
+        log::debug!("[template:{name}] result={:?}", redact_credentials(&result));
+    }
+
+    // -v: Nice styled output showing template expansion
+    // Info message for header, gutter for quoted content (template → result)
+    // Single atomic write to avoid interleaving in multi-threaded execution
+    if verbose == 1 {
+        let header = info_message(cformat!("Expanding <bold>{name}</>"));
+        let content = if template.contains('\n') || result.contains('\n') {
+            // Multiline: template lines, dim →, result lines
+            cformat!("{template}\n<dim>→</>\n{result}")
+        } else {
+            // Single line: template → result
+            cformat!("{template} <dim>→</> {result}")
+        };
+        let gutter = format_with_gutter(&content, None);
+        eprintln!("{header}\n{gutter}");
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test fixture that creates a real temporary git repository.
+    struct TestRepo {
+        _dir: tempfile::TempDir,
+        repo: Repository,
+    }
+
+    impl TestRepo {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            std::process::Command::new("git")
+                .args(["init"])
+                .current_dir(dir.path())
+                .output()
+                .unwrap();
+            let repo = Repository::at(dir.path()).unwrap();
+            Self { _dir: dir, repo }
+        }
+    }
+
+    fn test_repo() -> TestRepo {
+        TestRepo::new()
+    }
 
     #[test]
     fn test_sanitize_branch_name() {
@@ -381,157 +490,293 @@ mod tests {
 
     #[test]
     fn test_expand_template_basic() {
+        let test = test_repo();
+
         // Single variable
         let mut vars = HashMap::new();
         vars.insert("name", "world");
         assert_eq!(
-            expand_template("Hello {{ name }}", &vars, false).unwrap(),
+            expand_template("Hello {{ name }}", &vars, false, &test.repo, "test").unwrap(),
             "Hello world"
         );
 
         // Multiple variables
         vars.insert("repo", "myrepo");
         assert_eq!(
-            expand_template("{{ repo }}/{{ name }}", &vars, false).unwrap(),
+            expand_template("{{ repo }}/{{ name }}", &vars, false, &test.repo, "test").unwrap(),
             "myrepo/world"
         );
 
         // Empty/static cases
         let empty: HashMap<&str, &str> = HashMap::new();
-        assert_eq!(expand_template("", &empty, false).unwrap(), "");
         assert_eq!(
-            expand_template("static text", &empty, false).unwrap(),
-            "static text"
+            expand_template("", &empty, false, &test.repo, "test").unwrap(),
+            ""
         );
         assert_eq!(
-            expand_template("no {{ variables }} here", &empty, false).unwrap(),
-            "no  here"
+            expand_template("static text", &empty, false, &test.repo, "test").unwrap(),
+            "static text"
+        );
+        // Undefined variables now error in SemiStrict mode
+        assert!(
+            expand_template("no {{ variables }} here", &empty, false, &test.repo, "test")
+                .unwrap_err()
+                .contains("undefined")
         );
     }
 
     #[test]
     fn test_expand_template_shell_escape() {
+        let test = test_repo();
         let mut vars = HashMap::new();
         vars.insert("path", "my path");
-        let expanded = expand_template("cd {{ path }}", &vars, true).unwrap();
+        let expanded = expand_template("cd {{ path }}", &vars, true, &test.repo, "test").unwrap();
         assert!(expanded.contains("'my path'") || expanded.contains("my\\ path"));
 
         // Command injection prevention
         vars.insert("arg", "test;rm -rf");
-        let expanded = expand_template("echo {{ arg }}", &vars, true).unwrap();
+        let expanded = expand_template("echo {{ arg }}", &vars, true, &test.repo, "test").unwrap();
         assert!(!expanded.contains(";rm") || expanded.contains("'"));
 
         // No escape for literal mode
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch }}", &vars, false).unwrap(),
+            expand_template("{{ branch }}", &vars, false, &test.repo, "test").unwrap(),
             "feature/foo"
         );
     }
 
     #[test]
     fn test_expand_template_errors() {
+        let test = test_repo();
         let vars = HashMap::new();
         assert!(
-            expand_template("{{ unclosed", &vars, false)
+            expand_template("{{ unclosed", &vars, false, &test.repo, "test")
                 .unwrap_err()
                 .contains("syntax error")
         );
-        assert!(expand_template("{{ 1 + }}", &vars, false).is_err());
+        assert!(expand_template("{{ 1 + }}", &vars, false, &test.repo, "test").is_err());
     }
 
     #[test]
     fn test_expand_template_jinja_features() {
+        let test = test_repo();
         let mut vars = HashMap::new();
         vars.insert("debug", "true");
         assert_eq!(
-            expand_template("{% if debug %}DEBUG{% endif %}", &vars, false).unwrap(),
+            expand_template(
+                "{% if debug %}DEBUG{% endif %}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "DEBUG"
         );
 
         vars.insert("debug", "");
         assert_eq!(
-            expand_template("{% if debug %}DEBUG{% endif %}", &vars, false).unwrap(),
+            expand_template(
+                "{% if debug %}DEBUG{% endif %}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             ""
         );
 
         let empty: HashMap<&str, &str> = HashMap::new();
         assert_eq!(
-            expand_template("{{ missing | default('fallback') }}", &empty, false).unwrap(),
+            expand_template(
+                "{{ missing | default('fallback') }}",
+                &empty,
+                false,
+                &test.repo,
+                "test",
+            )
+            .unwrap(),
             "fallback"
         );
 
         vars.insert("name", "hello");
         assert_eq!(
-            expand_template("{{ name | upper }}", &vars, false).unwrap(),
+            expand_template("{{ name | upper }}", &vars, false, &test.repo, "test").unwrap(),
             "HELLO"
         );
     }
 
     #[test]
+    fn test_expand_template_strip_prefix() {
+        let test = test_repo();
+        let mut vars = HashMap::new();
+
+        // Built-in replace filter strips prefix (replaces all occurrences)
+        vars.insert("branch", "feature/foo");
+        assert_eq!(
+            expand_template(
+                "{{ branch | replace('feature/', '') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "foo"
+        );
+
+        // Replace + sanitize for worktree paths
+        assert_eq!(
+            expand_template(
+                "{{ branch | replace('feature/', '') | sanitize }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "foo"
+        );
+
+        // Branch without prefix passes through unchanged
+        vars.insert("branch", "main");
+        assert_eq!(
+            expand_template(
+                "{{ branch | replace('feature/', '') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "main"
+        );
+
+        // Slicing for prefix-only removal (avoids replacing mid-string)
+        vars.insert("branch", "feature/nested/feature/deep");
+        assert_eq!(
+            expand_template("{{ branch[8:] }}", &vars, false, &test.repo, "test").unwrap(),
+            "nested/feature/deep"
+        );
+
+        // Conditional slicing for safe prefix removal
+        assert_eq!(
+            expand_template(
+                "{% if branch[:8] == 'feature/' %}{{ branch[8:] }}{% else %}{{ branch }}{% endif %}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "nested/feature/deep"
+        );
+
+        // Conditional passes through non-matching branches
+        vars.insert("branch", "bugfix/bar");
+        assert_eq!(
+            expand_template(
+                "{% if branch[:8] == 'feature/' %}{{ branch[8:] }}{% else %}{{ branch }}{% endif %}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "bugfix/bar"
+        );
+    }
+
+    #[test]
     fn test_expand_template_sanitize_filter() {
+        let test = test_repo();
         let mut vars = HashMap::new();
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch | sanitize }}", &vars, false).unwrap(),
+            expand_template("{{ branch | sanitize }}", &vars, false, &test.repo, "test").unwrap(),
             "feature-foo"
         );
 
         // Backslashes are also sanitized
         vars.insert("branch", "feature\\bar");
         assert_eq!(
-            expand_template("{{ branch | sanitize }}", &vars, false).unwrap(),
+            expand_template("{{ branch | sanitize }}", &vars, false, &test.repo, "test").unwrap(),
             "feature-bar"
         );
 
         // Multiple slashes
         vars.insert("branch", "user/feature/task");
         assert_eq!(
-            expand_template("{{ branch | sanitize }}", &vars, false).unwrap(),
+            expand_template("{{ branch | sanitize }}", &vars, false, &test.repo, "test").unwrap(),
             "user-feature-task"
         );
 
         // Raw branch is unchanged
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch }}", &vars, false).unwrap(),
+            expand_template("{{ branch }}", &vars, false, &test.repo, "test").unwrap(),
             "feature/foo"
         );
     }
 
     #[test]
     fn test_expand_template_sanitize_db_filter() {
+        let test = test_repo();
         let mut vars = HashMap::new();
 
         // Basic transformation (with hash suffix)
         vars.insert("branch", "feature/auth-oauth2");
-        let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+        let result = expand_template(
+            "{{ branch | sanitize_db }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert!(result.starts_with("feature_auth_oauth2_"), "got: {result}");
 
         // Leading digit gets underscore prefix
         vars.insert("branch", "123-bug-fix");
-        let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+        let result = expand_template(
+            "{{ branch | sanitize_db }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert!(result.starts_with("_123_bug_fix_"), "got: {result}");
 
         // Uppercase conversion
         vars.insert("branch", "UPPERCASE.Branch");
-        let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+        let result = expand_template(
+            "{{ branch | sanitize_db }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert!(result.starts_with("uppercase_branch_"), "got: {result}");
 
         // Raw branch is unchanged
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch }}", &vars, false).unwrap(),
+            expand_template("{{ branch }}", &vars, false, &test.repo, "test").unwrap(),
             "feature/foo"
         );
     }
 
     #[test]
     fn test_expand_template_trailing_newline() {
+        let test = test_repo();
         let mut vars = HashMap::new();
         vars.insert("cmd", "echo hello");
         assert!(
-            expand_template("{{ cmd }}\n", &vars, true)
+            expand_template("{{ cmd }}\n", &vars, true, &test.repo, "test")
                 .unwrap()
                 .ends_with('\n')
         );
@@ -549,24 +794,104 @@ mod tests {
 
     #[test]
     fn test_hash_port_filter() {
+        let test = test_repo();
         let mut vars = HashMap::new();
         vars.insert("branch", "feature-foo");
         vars.insert("repo", "myrepo");
 
         // Filter produces a number in range
-        let result = expand_template("{{ branch | hash_port }}", &vars, false).unwrap();
+        let result =
+            expand_template("{{ branch | hash_port }}", &vars, false, &test.repo, "test").unwrap();
         let port: u16 = result.parse().expect("should be a number");
         assert!((10000..20000).contains(&port));
 
         // Concatenation produces different (but deterministic) result
-        let r1 = expand_template("{{ (repo ~ '-' ~ branch) | hash_port }}", &vars, false).unwrap();
+        let r1 = expand_template(
+            "{{ (repo ~ '-' ~ branch) | hash_port }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         let r1_port: u16 = r1.parse().expect("should be a number");
-        let r2 = expand_template("{{ (repo ~ '-' ~ branch) | hash_port }}", &vars, false).unwrap();
+        let r2 = expand_template(
+            "{{ (repo ~ '-' ~ branch) | hash_port }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         let r2_port: u16 = r2.parse().expect("should be a number");
 
         assert!((10000..20000).contains(&r1_port));
         assert!((10000..20000).contains(&r2_port));
 
         assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn test_redact_credentials_https_token() {
+        // GitHub-style personal access token
+        assert_eq!(
+            redact_credentials("https://ghp_token123@github.com/owner/repo"),
+            "https://[REDACTED]@github.com/owner/repo"
+        );
+        // GitLab-style token
+        assert_eq!(
+            redact_credentials("https://glpat-xxxxxxxxxxxx@gitlab.com/owner/repo.git"),
+            "https://[REDACTED]@gitlab.com/owner/repo.git"
+        );
+    }
+
+    #[test]
+    fn test_redact_credentials_https_user_pass() {
+        // Username:password format
+        assert_eq!(
+            redact_credentials("https://user:password123@github.com/owner/repo"),
+            "https://[REDACTED]@github.com/owner/repo"
+        );
+    }
+
+    #[test]
+    fn test_redact_credentials_no_credentials() {
+        // Normal HTTPS URL without credentials - unchanged
+        assert_eq!(
+            redact_credentials("https://github.com/owner/repo"),
+            "https://github.com/owner/repo"
+        );
+        // SSH URL - unchanged (no credentials in URL format)
+        assert_eq!(
+            redact_credentials("git@github.com:owner/repo.git"),
+            "git@github.com:owner/repo.git"
+        );
+    }
+
+    #[test]
+    fn test_redact_credentials_non_url() {
+        // Non-URL values pass through unchanged
+        assert_eq!(redact_credentials("main"), "main");
+        assert_eq!(redact_credentials("feature/auth"), "feature/auth");
+        assert_eq!(redact_credentials("/path/to/worktree"), "/path/to/worktree");
+        assert_eq!(redact_credentials(""), "");
+    }
+
+    #[test]
+    fn test_redact_credentials_git_protocol() {
+        // git:// protocol with credentials
+        assert_eq!(
+            redact_credentials("git://token@github.com/owner/repo.git"),
+            "git://[REDACTED]@github.com/owner/repo.git"
+        );
+    }
+
+    #[test]
+    fn test_redact_credentials_preserves_path() {
+        // Full URL with path and query should preserve everything after host
+        assert_eq!(
+            redact_credentials("https://token@github.com/owner/repo.git?ref=main"),
+            "https://[REDACTED]@github.com/owner/repo.git?ref=main"
+        );
     }
 }

@@ -170,15 +170,16 @@
 //! - `fit_header()`: Ensures column width ≥ header width to prevent overflow
 //! - `try_allocate()`: Attempts to allocate space, returns 0 if insufficient
 
-use crate::display::get_terminal_width;
-use anstyle::Style;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+use anstyle::Style;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::styling::{ADDITION, DELETION, Stream, supports_hyperlinks};
 
-use super::collect::TaskKind;
-use super::collect_progressive_impl::parse_port_from_url;
+use crate::display::{get_terminal_width, shorten_path};
+
+use super::collect::{TaskKind, parse_port_from_url};
 use super::columns::{COLUMN_SPECS, ColumnKind, ColumnSpec, column_display_index};
 
 // Re-export DiffVariant for external use (e.g., select command)
@@ -196,7 +197,6 @@ const COMMIT_HASH_WIDTH: usize = 8;
 /// columns to be allocated at low priority (base_priority + EMPTY_PENALTY) for
 /// visual consistency on wide terminals.
 fn fit_header(header: &str, data_width: usize) -> usize {
-    use unicode_width::UnicodeWidthStr;
     data_width.max(header.width())
 }
 
@@ -416,30 +416,44 @@ impl ColumnKind {
         }
     }
 
+    /// Returns the ideal (width, format) for this column, or None if width is 0 or Message.
     fn ideal(
         self,
         widths: &ColumnWidths,
         max_path_width: usize,
         commit_width: usize,
-    ) -> Option<ColumnIdeal> {
+    ) -> Option<(usize, ColumnFormat)> {
+        let text = |w: usize| (w > 0).then_some((w, ColumnFormat::Text));
+        let diff = |dw: DiffWidths| -> Option<(usize, ColumnFormat)> {
+            if dw.total == 0 {
+                return None;
+            }
+            let display = self.diff_display_config()?;
+            Some((
+                dw.total,
+                ColumnFormat::Diff(DiffColumnConfig {
+                    positive_digits: dw.positive_digits,
+                    negative_digits: dw.negative_digits,
+                    total_width: dw.total,
+                    display,
+                }),
+            ))
+        };
+
         match self {
-            ColumnKind::Gutter => ColumnIdeal::text(2), // Fixed width: symbol (1 char) + space (1 char)
-            ColumnKind::Branch => ColumnIdeal::text(widths.branch),
-            ColumnKind::Status => ColumnIdeal::text(widths.status),
-            ColumnKind::Path => ColumnIdeal::text(max_path_width),
-            ColumnKind::Time => ColumnIdeal::text(widths.time),
-            ColumnKind::Url => ColumnIdeal::text(widths.url),
-            ColumnKind::CiStatus => ColumnIdeal::text(widths.ci_status),
-            ColumnKind::Commit => ColumnIdeal::text(commit_width),
+            ColumnKind::Gutter => text(2), // Fixed width: symbol (1 char) + space (1 char)
+            ColumnKind::Branch => text(widths.branch),
+            ColumnKind::Status => text(widths.status),
+            ColumnKind::Path => text(max_path_width),
+            ColumnKind::Time => text(widths.time),
+            ColumnKind::Url => text(widths.url),
+            ColumnKind::CiStatus => text(widths.ci_status),
+            ColumnKind::Commit => text(commit_width),
             ColumnKind::Message => None,
-            ColumnKind::WorkingDiff => {
-                ColumnIdeal::diff(widths.working_diff, ColumnKind::WorkingDiff)
-            }
-            ColumnKind::AheadBehind => {
-                ColumnIdeal::diff(widths.ahead_behind, ColumnKind::AheadBehind)
-            }
-            ColumnKind::BranchDiff => ColumnIdeal::diff(widths.branch_diff, ColumnKind::BranchDiff),
-            ColumnKind::Upstream => ColumnIdeal::diff(widths.upstream, ColumnKind::Upstream),
+            ColumnKind::WorkingDiff => diff(widths.working_diff),
+            ColumnKind::AheadBehind => diff(widths.ahead_behind),
+            ColumnKind::BranchDiff => diff(widths.branch_diff),
+            ColumnKind::Upstream => diff(widths.upstream),
         }
     }
 }
@@ -473,43 +487,6 @@ pub struct LayoutConfig {
     pub max_message_len: usize,
     pub hidden_column_count: usize,
     pub status_position_mask: super::model::PositionMask,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ColumnIdeal {
-    width: usize,
-    format: ColumnFormat,
-}
-
-impl ColumnIdeal {
-    fn text(width: usize) -> Option<Self> {
-        if width == 0 {
-            None
-        } else {
-            Some(Self {
-                width,
-                format: ColumnFormat::Text,
-            })
-        }
-    }
-
-    fn diff(widths: DiffWidths, kind: ColumnKind) -> Option<Self> {
-        if widths.total == 0 {
-            return None;
-        }
-
-        let display = kind.diff_display_config()?;
-
-        Some(Self {
-            width: widths.total,
-            format: ColumnFormat::Diff(DiffColumnConfig {
-                positive_digits: widths.positive_digits,
-                negative_digits: widths.negative_digits,
-                total_width: widths.total,
-                display,
-            }),
-        })
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -736,20 +713,20 @@ fn allocate_columns_with_priority(
         }
 
         // For non-message columns
-        let Some(ideal) = spec
-            .kind
-            .ideal(&metadata.widths, max_path_width, commit_width)
+        let Some((ideal_width, format)) =
+            spec.kind
+                .ideal(&metadata.widths, max_path_width, commit_width)
         else {
             continue;
         };
 
         let skip_spacing = !needs_spacing(&pending);
-        let allocated = try_allocate(&mut remaining, ideal.width, spacing, skip_spacing);
+        let allocated = try_allocate(&mut remaining, ideal_width, spacing, skip_spacing);
         if allocated > 0 {
             pending.push(PendingColumn {
                 spec,
                 width: allocated,
-                format: ideal.format,
+                format,
             });
         }
     }
@@ -875,10 +852,7 @@ pub fn calculate_layout_with_width(
     let path_data_width = items
         .iter()
         .filter_map(|item| item.worktree_path())
-        .map(|path| {
-            use crate::display::shorten_path;
-            shorten_path(path.as_path(), main_worktree_path).width()
-        })
+        .map(|path| shorten_path(path.as_path(), main_worktree_path).width())
         .max()
         .unwrap_or(0);
     let max_path_width = fit_header(ColumnKind::Path.header(), path_data_width);
@@ -916,8 +890,6 @@ pub fn calculate_layout_with_width(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::list::columns::ColumnKind;
-    use std::path::PathBuf;
     use worktrunk::git::LineDiff;
 
     #[test]
@@ -1037,38 +1009,6 @@ mod tests {
     }
 
     #[test]
-    fn test_column_ideal_text() {
-        // Zero width returns None
-        assert!(ColumnIdeal::text(0).is_none());
-
-        // Non-zero width returns Some with text format
-        let ideal = ColumnIdeal::text(10).unwrap();
-        assert_eq!(ideal.width, 10);
-        assert!(matches!(ideal.format, ColumnFormat::Text));
-    }
-
-    #[test]
-    fn test_column_ideal_diff() {
-        // Zero total returns None
-        let zero_widths = DiffWidths {
-            total: 0,
-            positive_digits: 0,
-            negative_digits: 0,
-        };
-        assert!(ColumnIdeal::diff(zero_widths, ColumnKind::WorkingDiff).is_none());
-
-        // Non-zero returns Some with diff format
-        let widths = DiffWidths {
-            total: 9,
-            positive_digits: 3,
-            negative_digits: 3,
-        };
-        let ideal = ColumnIdeal::diff(widths, ColumnKind::WorkingDiff).unwrap();
-        assert_eq!(ideal.width, 9);
-        assert!(matches!(ideal.format, ColumnFormat::Diff(_)));
-    }
-
-    #[test]
     fn test_column_kind_ideal() {
         let widths = ColumnWidths {
             branch: 15,
@@ -1099,38 +1039,74 @@ mod tests {
             },
         };
 
-        // Text columns
-        assert_eq!(
-            ColumnKind::Gutter.ideal(&widths, 20, 8).map(|i| i.width),
-            Some(2)
-        );
-        assert_eq!(
-            ColumnKind::Branch.ideal(&widths, 20, 8).map(|i| i.width),
-            Some(15)
-        );
-        assert_eq!(
-            ColumnKind::Status.ideal(&widths, 20, 8).map(|i| i.width),
-            Some(8)
-        );
-        assert_eq!(
-            ColumnKind::Path.ideal(&widths, 20, 8).map(|i| i.width),
-            Some(20)
-        );
-        assert_eq!(
-            ColumnKind::Time.ideal(&widths, 20, 8).map(|i| i.width),
-            Some(4)
-        );
-        assert_eq!(
-            ColumnKind::Commit.ideal(&widths, 20, 8).map(|i| i.width),
-            Some(8)
-        );
+        // Text columns return (width, ColumnFormat::Text)
+        let (w, fmt) = ColumnKind::Gutter.ideal(&widths, 20, 8).unwrap();
+        assert_eq!(w, 2);
+        assert!(matches!(fmt, ColumnFormat::Text));
+
+        let (w, fmt) = ColumnKind::Branch.ideal(&widths, 20, 8).unwrap();
+        assert_eq!(w, 15);
+        assert!(matches!(fmt, ColumnFormat::Text));
+
+        let (w, fmt) = ColumnKind::Status.ideal(&widths, 20, 8).unwrap();
+        assert_eq!(w, 8);
+        assert!(matches!(fmt, ColumnFormat::Text));
+
+        let (w, fmt) = ColumnKind::Path.ideal(&widths, 20, 8).unwrap();
+        assert_eq!(w, 20);
+        assert!(matches!(fmt, ColumnFormat::Text));
+
+        let (w, fmt) = ColumnKind::Time.ideal(&widths, 20, 8).unwrap();
+        assert_eq!(w, 4);
+        assert!(matches!(fmt, ColumnFormat::Text));
+
+        let (w, fmt) = ColumnKind::Commit.ideal(&widths, 20, 8).unwrap();
+        assert_eq!(w, 8);
+        assert!(matches!(fmt, ColumnFormat::Text));
 
         // Message returns None (handled specially)
         assert!(ColumnKind::Message.ideal(&widths, 20, 8).is_none());
 
-        // Diff columns
-        assert!(ColumnKind::WorkingDiff.ideal(&widths, 20, 8).is_some());
-        assert!(ColumnKind::AheadBehind.ideal(&widths, 20, 8).is_some());
+        // Diff columns return (width, ColumnFormat::Diff(_))
+        let (w, fmt) = ColumnKind::WorkingDiff.ideal(&widths, 20, 8).unwrap();
+        assert_eq!(w, 9);
+        assert!(matches!(fmt, ColumnFormat::Diff(_)));
+
+        let (w, fmt) = ColumnKind::AheadBehind.ideal(&widths, 20, 8).unwrap();
+        assert_eq!(w, 7);
+        assert!(matches!(fmt, ColumnFormat::Diff(_)));
+
+        // Zero width returns None
+        let zero_widths = ColumnWidths {
+            branch: 0,
+            status: 0,
+            time: 0,
+            url: 0,
+            ci_status: 0,
+            message: 0,
+            ahead_behind: DiffWidths {
+                total: 0,
+                positive_digits: 0,
+                negative_digits: 0,
+            },
+            working_diff: DiffWidths {
+                total: 0,
+                positive_digits: 0,
+                negative_digits: 0,
+            },
+            branch_diff: DiffWidths {
+                total: 0,
+                positive_digits: 0,
+                negative_digits: 0,
+            },
+            upstream: DiffWidths {
+                total: 0,
+                positive_digits: 0,
+                negative_digits: 0,
+            },
+        };
+        assert!(ColumnKind::Branch.ideal(&zero_widths, 0, 0).is_none());
+        assert!(ColumnKind::WorkingDiff.ideal(&zero_widths, 0, 0).is_none());
     }
 
     #[test]
@@ -1206,7 +1182,7 @@ mod tests {
     #[test]
     fn test_visible_columns_follow_gap_rule() {
         use crate::commands::list::model::{
-            AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields, GitOperationState,
+            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields,
             ItemKind, ListItem, StatusSymbols, UpstreamStatus, WorktreeData,
         };
 
@@ -1229,7 +1205,12 @@ mod tests {
             has_file_changes: Some(true),
             would_merge_add: None,
             is_ancestor: None,
-            upstream: Some(UpstreamStatus::from_parts(Some("origin".to_string()), 4, 2)),
+            is_orphan: None,
+            upstream: Some(UpstreamStatus {
+                remote: Some("origin".to_string()),
+                ahead: 4,
+                behind: 2,
+            }),
             pr_status: None,
             url: None,
             url_active: None,
@@ -1241,8 +1222,7 @@ mod tests {
                 locked: None,
                 prunable: None,
                 working_tree_diff: Some(LineDiff::from((100, 50))),
-                working_tree_diff_with_main: Some(Some(LineDiff::default())),
-                git_operation: GitOperationState::None,
+                git_operation: ActiveGitOperation::None,
                 is_main: false,
                 is_current: false,
                 is_previous: false,
@@ -1304,7 +1284,7 @@ mod tests {
     #[test]
     fn test_column_positions_with_empty_columns() {
         use crate::commands::list::model::{
-            AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields, GitOperationState,
+            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields,
             ItemKind, ListItem, StatusSymbols, UpstreamStatus, WorktreeData,
         };
 
@@ -1327,6 +1307,7 @@ mod tests {
             has_file_changes: Some(true),
             would_merge_add: None,
             is_ancestor: None,
+            is_orphan: None,
             upstream: Some(UpstreamStatus::default()),
             pr_status: None,
             url: None,
@@ -1339,8 +1320,7 @@ mod tests {
                 locked: None,
                 prunable: None,
                 working_tree_diff: Some(LineDiff::default()),
-                working_tree_diff_with_main: Some(Some(LineDiff::default())),
-                git_operation: GitOperationState::None,
+                git_operation: ActiveGitOperation::None,
                 is_main: true, // Primary worktree: no ahead/behind shown
                 is_current: false,
                 is_previous: false,

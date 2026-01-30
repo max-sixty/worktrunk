@@ -1,9 +1,10 @@
 //! WorkingTree - a borrowed handle for worktree-specific git operations.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, bail};
+
+use crate::shell_exec::Cmd;
 use dunce::canonicalize;
 
 use super::{GitError, LineDiff, Repository};
@@ -51,23 +52,26 @@ pub struct WorkingTree<'a> {
 }
 
 impl<'a> WorkingTree<'a> {
+    /// Get a reference to the repository this worktree belongs to.
+    pub fn repo(&self) -> &Repository {
+        self.repo
+    }
+
+    /// Get the path this WorkingTree was created with.
+    ///
+    /// This is the path passed to `worktree_at()` or `base_path()` for `current_worktree()`.
+    /// For the canonical git-determined root, use [`root()`](Self::root) instead.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     /// Run a git command in this worktree and return stdout.
     pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
-        use crate::shell_exec::run;
-
-        let mut cmd = Command::new("git");
-        cmd.args(args);
-        cmd.current_dir(&self.path);
-
-        let output = run(&mut cmd, Some(&path_to_logging_context(&self.path)))
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
+        let output = self.run_command_output(args)?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stderr = stderr.replace('\r', "\n");
-            for line in stderr.trim().lines() {
-                log::debug!("  ! {}", line);
-            }
             let stdout = String::from_utf8_lossy(&output.stdout);
             let error_msg = [stderr.trim(), stdout.trim()]
                 .into_iter()
@@ -78,12 +82,20 @@ impl<'a> WorkingTree<'a> {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        if !stdout.is_empty() {
-            for line in stdout.trim().lines() {
-                log::debug!("  {}", line);
-            }
-        }
         Ok(stdout)
+    }
+
+    /// Run a git command in this worktree and return the raw Output.
+    ///
+    /// Use this when you need to check exit codes directly (e.g., for commands
+    /// where non-zero exit is not an error condition).
+    pub fn run_command_output(&self, args: &[&str]) -> anyhow::Result<std::process::Output> {
+        Cmd::new("git")
+            .args(args.iter().copied())
+            .current_dir(&self.path)
+            .context(path_to_logging_context(&self.path))
+            .run()
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
 
     // =========================================================================
@@ -93,28 +105,42 @@ impl<'a> WorkingTree<'a> {
     /// Get the branch checked out in this worktree, or None if in detached HEAD state.
     ///
     /// Result is cached in the repository's shared cache (keyed by worktree path).
+    /// Errors (e.g., permission denied, corrupted `.git`) are propagated, not swallowed.
     pub fn branch(&self) -> anyhow::Result<Option<String>> {
-        Ok(self
-            .repo
+        // Check cache first
+        if let Some(cached) = self.repo.cache.current_branches.get(&self.path) {
+            return Ok(cached.clone());
+        }
+
+        // Not cached - run git command and propagate errors
+        let stdout = self
+            .run_command(&["branch", "--show-current"])
+            .context("Failed to determine current branch")?;
+
+        let branch = stdout.trim();
+        let result = if branch.is_empty() {
+            None // Detached HEAD
+        } else {
+            Some(branch.to_string())
+        };
+
+        // Cache the successful result
+        self.repo
             .cache
             .current_branches
-            .entry(self.path.clone())
-            .or_insert_with(|| {
-                self.run_command(&["branch", "--show-current"])
-                    .ok()
-                    .and_then(|s| {
-                        let branch = s.trim();
-                        if branch.is_empty() {
-                            None // Detached HEAD
-                        } else {
-                            Some(branch.to_string())
-                        }
-                    })
-            })
-            .clone())
+            .insert(self.path.clone(), result.clone());
+
+        Ok(result)
     }
 
     /// Check if the working tree has uncommitted changes.
+    ///
+    /// Note: This does NOT detect files hidden via `git update-index --assume-unchanged`
+    /// or `--skip-worktree`. We intentionally skip that check because:
+    /// 1. Detecting hidden files requires `git ls-files -v` which lists ALL tracked files
+    /// 2. On large repos (70k+ files), this adds noticeable latency to every clean check
+    /// 3. Users who use skip-worktree are power users who understand the implications
+    /// 4. A warning wouldn't prevent data loss anyway — it's informational only
     pub fn is_dirty(&self) -> anyhow::Result<bool> {
         let stdout = self.run_command(&["status", "--porcelain"])?;
         Ok(!stdout.trim().is_empty())
@@ -143,17 +169,19 @@ impl<'a> WorkingTree<'a> {
 
     /// Get the git directory (may be different from common-dir in worktrees).
     ///
-    /// Always returns an absolute path, resolving any relative paths returned by git.
+    /// Always returns a canonicalized absolute path, resolving symlinks.
+    /// This ensures consistent comparison with `git_common_dir()`.
     pub fn git_dir(&self) -> anyhow::Result<PathBuf> {
         let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
         let path = PathBuf::from(stdout.trim());
 
-        // Resolve relative paths against the worktree's directory
-        if path.is_relative() {
-            canonicalize(self.path.join(&path)).context("Failed to resolve git directory")
+        // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
+        let absolute_path = if path.is_relative() {
+            self.path.join(&path)
         } else {
-            Ok(path)
-        }
+            path
+        };
+        canonicalize(&absolute_path).context("Failed to resolve git directory")
     }
 
     /// Check if a rebase is in progress.
@@ -189,14 +217,22 @@ impl<'a> WorkingTree<'a> {
     /// Returns an error if there are uncommitted changes.
     /// - `action` describes what was blocked (e.g., "remove worktree").
     /// - `branch` identifies which branch for multi-worktree operations.
-    pub fn ensure_clean(&self, action: &str, branch: Option<&str>) -> anyhow::Result<()> {
+    /// - `force_hint` when true, the error hint mentions `--force` as an alternative.
+    pub fn ensure_clean(
+        &self,
+        action: &str,
+        branch: Option<&str>,
+        force_hint: bool,
+    ) -> anyhow::Result<()> {
         if self.is_dirty()? {
             return Err(GitError::UncommittedChanges {
                 action: Some(action.into()),
                 branch: branch.map(String::from),
+                force_hint,
             }
             .into());
         }
+
         Ok(())
     }
 
@@ -212,44 +248,79 @@ impl<'a> WorkingTree<'a> {
         LineDiff::from_numstat(&stdout)
     }
 
-    /// Get working tree diff stats vs a base branch, if trees differ.
+    /// Determine whether there are staged changes in the index.
     ///
-    /// When `base_branch` is `None` (main worktree), returns `Some(LineDiff::default())`.
-    /// If the base branch tree matches HEAD and the working tree is dirty, computes
-    /// the precise diff; otherwise returns zero to indicate trees match.
-    /// When trees differ, returns `None` so callers can skip expensive comparisons.
-    pub fn working_tree_diff_with_base(
-        &self,
-        base_branch: Option<&str>,
-        working_tree_dirty: bool,
-    ) -> anyhow::Result<Option<LineDiff>> {
-        let Some(branch) = base_branch else {
-            // Main worktree has no base to compare against
-            return Ok(Some(LineDiff::default()));
-        };
+    /// Returns `Ok(true)` when staged changes are present, `Ok(false)` otherwise.
+    ///
+    /// Note: The index is per-worktree in git, so this checks this specific
+    /// worktree's staging area.
+    pub fn has_staged_changes(&self) -> anyhow::Result<bool> {
+        // Exit code 0 = no diff (no staged changes), exit code 1 = diff exists (has staged changes)
+        // run_command returns Ok on exit 0, Err on non-zero
+        // So: Err means has changes
+        Ok(self
+            .run_command(&["diff", "--cached", "--quiet", "--exit-code"])
+            .is_err())
+    }
 
-        // Check if branch exists
-        if self
-            .run_command(&["rev-parse", "--verify", branch])
-            .is_err()
-        {
-            return Ok(None);
-        }
+    /// Create a safety backup of current working tree state without affecting the working tree.
+    ///
+    /// This creates a backup commit containing all changes (staged, unstaged, and untracked files)
+    /// and stores it in a custom ref (`refs/wt-backup/<branch>`). This creates a reflog entry
+    /// for recovery without polluting the stash list. The working tree remains unchanged.
+    ///
+    /// Users can find safety backups with: `git reflog show refs/wt-backup/<branch>`
+    ///
+    /// Returns the short SHA of the backup commit.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use worktrunk::git::Repository;
+    ///
+    /// let repo = Repository::current()?;
+    /// let wt = repo.current_worktree();
+    /// let sha = wt.create_safety_backup("feature → main (squash)")?;
+    /// println!("Backup created: {}", sha);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn create_safety_backup(&self, message: &str) -> anyhow::Result<String> {
+        // Create a backup commit using git stash create (without storing it in the stash list)
+        let backup_sha = self
+            .run_command(&["stash", "create", "--include-untracked"])?
+            .trim()
+            .to_string();
 
-        // Check if trees match
-        let trees_match = self
-            .run_command(&["diff-tree", "--quiet", "HEAD", branch])
-            .is_ok();
-
-        if trees_match {
-            // Trees identical - if working tree is dirty, compute the diff
-            if working_tree_dirty {
-                Ok(Some(self.working_tree_diff_vs_ref(branch)?))
-            } else {
-                Ok(Some(LineDiff::default()))
+        // Validate that we got a SHA back
+        if backup_sha.is_empty() {
+            return Err(GitError::Other {
+                message: "git stash create returned empty SHA - no changes to backup".into(),
             }
-        } else {
-            Ok(None)
+            .into());
         }
+
+        // Get current branch name to use in the ref name
+        let branch = self
+            .run_command(&["rev-parse", "--abbrev-ref", "HEAD"])?
+            .trim()
+            .to_string();
+
+        // Sanitize branch name for use in ref path (replace / with -)
+        let safe_branch = branch.replace('/', "-");
+
+        // Update a custom ref to point to this commit
+        // --create-reflog ensures the reflog is created for this custom ref
+        // This creates a reflog entry but doesn't add to the stash list
+        let ref_name = format!("refs/wt-backup/{}", safe_branch);
+        self.run_command(&[
+            "update-ref",
+            "--create-reflog",
+            "-m",
+            message,
+            &ref_name,
+            &backup_sha,
+        ])
+        .context("Failed to create backup ref")?;
+
+        Ok(backup_sha[..7].to_string())
     }
 }

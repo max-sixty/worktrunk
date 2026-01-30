@@ -2,15 +2,16 @@
 //!
 //! # Architecture
 //!
-//! Global context-based output system similar to logging frameworks (`log`, `tracing`).
-//! State is lazily initialized on first use — no explicit initialization required.
+//! For regular output, use `eprintln!`/`println!` directly (from `worktrunk::styling`
+//! for color support). This module handles shell integration directives (cd, exec)
+//! that need to be communicated to the parent shell.
 //!
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use worktrunk::styling::{success_message, error_message, hint_message};
+//! use worktrunk::styling::{success_message, error_message, hint_message, eprintln};
 //!
-//! output::print(success_message("Operation complete"));
+//! eprintln!("{}", success_message("Operation complete"));
 //! output::change_directory(&path);
 //! output::execute("git pull");
 //! ```
@@ -28,20 +29,24 @@
 //!
 //! See [`shell_integration`] module for the complete spec of warning messages.
 
+pub(crate) mod commit_generation;
 mod global;
-pub mod handlers;
-pub mod shell_integration;
+pub(crate) mod handlers;
+pub(crate) mod prompt;
+pub(crate) mod shell_integration;
 
 // Re-export the public API
-pub use global::{
-    blank, change_directory, execute, flush, is_shell_integration_active, post_hook_display_path,
-    pre_hook_display_path, print, stdout, terminate_output,
+pub(crate) use global::{
+    change_directory, execute, is_shell_integration_active, post_hook_display_path,
+    pre_hook_display_path, set_verbosity, terminate_output,
 };
 // Re-export output handlers
-pub use handlers::{
+pub(crate) use handlers::{
     execute_command_in_worktree, execute_user_command, handle_remove_output, handle_switch_output,
 };
 // Re-export shell integration functions
-pub use shell_integration::{
+pub(crate) use shell_integration::{
     print_shell_install_result, print_skipped_shells, prompt_shell_integration,
 };
+// Re-export commit generation functions
+pub(crate) use commit_generation::prompt_commit_generation;

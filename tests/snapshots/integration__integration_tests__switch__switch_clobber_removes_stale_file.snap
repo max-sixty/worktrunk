@@ -20,13 +20,16 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
     RUST_LOG: warn
-    SOURCE_DATE_EPOCH: "1735776000"
+    SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -35,7 +38,7 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mMoving [1m_REPO_.clobber-file-test[22m to [1m_REPO_.clobber-file-test.bak.20250102-000000[22m (--clobber)[39m
-[32m✓[39m [32mCreated branch [1mclobber-file-test[22m and worktree from [1mmain[22m @ [1m_REPO_.clobber-file-test[22m[39m
-[2m↳[22m [2mCustomize worktree locations: [90mwt config create[39m[22m
+[32m✓[39m [32mCreated branch [1mclobber-file-test[22m from [1mmain[22m and worktree @ [1m_REPO_.clobber-file-test[22m[39m
+[2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

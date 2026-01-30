@@ -6,6 +6,7 @@ use std::path::PathBuf;
 mod diff;
 mod error;
 mod parse;
+pub mod remote_ref;
 mod repository;
 mod url;
 
@@ -29,20 +30,25 @@ use std::sync::LazyLock;
 static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
 
 // Re-exports from submodules
-pub use diff::{DiffStats, LineDiff, parse_numstat_line};
+pub(crate) use diff::DiffStats;
+pub use diff::{LineDiff, parse_numstat_line};
 pub use error::{
     // Typed error enum (Display produces styled output)
     GitError,
     // Special-handling error enum (Display produces styled output)
     HookErrorWithHint,
+    // Platform-specific reference type (PR vs MR)
+    RefContext,
+    RefType,
     WorktrunkError,
     // Error inspection functions
     add_hook_skip_hint,
     exit_code,
 };
 pub use parse::{parse_porcelain_z, parse_untracked_files};
-pub use repository::{Repository, ResolvedWorktree, WorkingTree, set_base_path};
-pub use url::{GitRemoteUrl, parse_owner_repo, parse_remote_host, parse_remote_owner};
+pub use repository::{Branch, Repository, ResolvedWorktree, WorkingTree, set_base_path};
+pub use url::GitRemoteUrl;
+pub use url::{parse_owner_repo, parse_remote_owner};
 /// Why branch content is considered integrated into the target branch.
 ///
 /// Used by both `wt list` (for status symbols) and `wt remove` (for messages).
@@ -120,138 +126,103 @@ impl IntegrationReason {
     }
 }
 
-/// Provider of integration signals for checking if a branch is integrated into target.
+/// Integration signals for checking if a branch is integrated into target.
 ///
-/// This trait enables short-circuit evaluation: methods are called in priority order,
-/// and expensive checks (like `would_merge_add`) are skipped if cheaper checks succeed.
+/// `None` means "unknown/failed to check". The check functions treat `None`
+/// conservatively (as if not integrated).
 ///
-/// Implementations:
-/// - [`LazyGitIntegration`]: Makes fresh git calls (for `wt remove`)
-/// - [`PrecomputedIntegration`]: Uses cached data (for `wt list` progressive rendering)
-pub trait IntegrationProvider {
-    fn is_same_commit(&mut self) -> bool;
-    fn is_ancestor(&mut self) -> bool;
-    fn has_added_changes(&mut self) -> bool;
-    fn trees_match(&mut self) -> bool;
-    fn would_merge_add(&mut self) -> bool;
+/// Used by:
+/// - `wt list`: Built from parallel task results
+/// - `wt remove`/`wt merge`: Built via [`compute_integration_lazy`]
+#[derive(Debug, Default)]
+pub struct IntegrationSignals {
+    pub is_same_commit: Option<bool>,
+    pub is_ancestor: Option<bool>,
+    pub has_added_changes: Option<bool>,
+    pub trees_match: Option<bool>,
+    pub would_merge_add: Option<bool>,
 }
 
-/// Canonical integration check with short-circuit evaluation.
+/// Canonical integration check using pre-computed signals.
 ///
 /// Checks signals in priority order (cheapest first). Returns as soon as any
-/// integration reason is found, avoiding expensive checks when possible.
+/// integration reason is found.
 ///
-/// This is the single source of truth for integration priority logic,
-/// used by both `wt list` and `wt remove`.
-pub fn check_integration(provider: &mut impl IntegrationProvider) -> Option<IntegrationReason> {
+/// `None` values are treated conservatively: unknown signals don't match.
+/// This is the single source of truth for integration priority logic.
+pub fn check_integration(signals: &IntegrationSignals) -> Option<IntegrationReason> {
     // Priority 1 (cheapest): Same commit as target
-    if provider.is_same_commit() {
+    if signals.is_same_commit == Some(true) {
         return Some(IntegrationReason::SameCommit);
     }
 
     // Priority 2 (cheap): Branch is ancestor of target (target has moved past)
-    if provider.is_ancestor() {
+    if signals.is_ancestor == Some(true) {
         return Some(IntegrationReason::Ancestor);
     }
 
     // Priority 3: No file changes beyond merge-base (empty three-dot diff)
-    if !provider.has_added_changes() {
+    if signals.has_added_changes == Some(false) {
         return Some(IntegrationReason::NoAddedChanges);
     }
 
     // Priority 4: Tree SHA matches target (handles squash merge/rebase)
-    if provider.trees_match() {
+    if signals.trees_match == Some(true) {
         return Some(IntegrationReason::TreesMatch);
     }
 
     // Priority 5 (most expensive ~500ms-2s): Merge would not add anything
-    if !provider.would_merge_add() {
+    if signals.would_merge_add == Some(false) {
         return Some(IntegrationReason::MergeAddsNothing);
     }
 
     None
 }
 
-/// Lazy integration provider that makes fresh git calls.
+/// Compute integration signals lazily with short-circuit evaluation.
 ///
-/// Used by `wt remove` where short-circuit evaluation matters:
-/// expensive checks are skipped if cheaper ones succeed.
-pub struct LazyGitIntegration<'a> {
-    repo: &'a Repository,
-    branch: &'a str,
-    target: &'a str,
-}
-
-impl<'a> LazyGitIntegration<'a> {
-    pub fn new(repo: &'a Repository, branch: &'a str, target: &'a str) -> Self {
-        Self {
-            repo,
-            branch,
-            target,
-        }
-    }
-}
-
-impl IntegrationProvider for LazyGitIntegration<'_> {
-    fn is_same_commit(&mut self) -> bool {
-        self.repo
-            .same_commit(self.branch, self.target)
-            .unwrap_or(false)
-    }
-
-    fn is_ancestor(&mut self) -> bool {
-        self.repo
-            .is_ancestor(self.branch, self.target)
-            .unwrap_or(false)
-    }
-
-    fn has_added_changes(&mut self) -> bool {
-        self.repo
-            .has_added_changes(self.branch, self.target)
-            .unwrap_or(true) // Conservative: assume has changes
-    }
-
-    fn trees_match(&mut self) -> bool {
-        self.repo
-            .trees_match(self.branch, self.target)
-            .unwrap_or(false)
-    }
-
-    fn would_merge_add(&mut self) -> bool {
-        self.repo
-            .would_merge_add_to_target(self.branch, self.target)
-            .unwrap_or(true) // Conservative: assume would add
-    }
-}
-
-/// Pre-computed integration provider for cached data.
+/// Runs git commands in priority order, stopping as soon as integration is
+/// confirmed. This avoids expensive checks (like `would_merge_add` which
+/// takes ~500ms-2s) when cheaper checks succeed.
 ///
-/// Used by `wt list` where signals are pre-computed during progressive rendering.
-/// Short-circuit doesn't help here since data is already computed.
-pub struct PrecomputedIntegration {
-    pub is_same_commit: bool,
-    pub is_ancestor: bool,
-    pub has_added_changes: bool,
-    pub trees_match: bool,
-    pub would_merge_add: bool,
-}
+/// Used by `wt remove` and `wt merge` for single-branch checks.
+/// For batch operations, use parallel tasks to build [`IntegrationSignals`] directly.
+#[allow(clippy::field_reassign_with_default)] // Intentional: short-circuit populates fields incrementally
+pub fn compute_integration_lazy(
+    repo: &Repository,
+    branch: &str,
+    target: &str,
+) -> anyhow::Result<IntegrationSignals> {
+    let mut signals = IntegrationSignals::default();
 
-impl IntegrationProvider for PrecomputedIntegration {
-    fn is_same_commit(&mut self) -> bool {
-        self.is_same_commit
+    // Priority 1: Same commit
+    signals.is_same_commit = Some(repo.same_commit(branch, target)?);
+    if signals.is_same_commit == Some(true) {
+        return Ok(signals);
     }
-    fn is_ancestor(&mut self) -> bool {
-        self.is_ancestor
+
+    // Priority 2: Ancestor
+    signals.is_ancestor = Some(repo.is_ancestor(branch, target)?);
+    if signals.is_ancestor == Some(true) {
+        return Ok(signals);
     }
-    fn has_added_changes(&mut self) -> bool {
-        self.has_added_changes
+
+    // Priority 3: No added changes
+    signals.has_added_changes = Some(repo.has_added_changes(branch, target)?);
+    if signals.has_added_changes == Some(false) {
+        return Ok(signals);
     }
-    fn trees_match(&mut self) -> bool {
-        self.trees_match
+
+    // Priority 4: Trees match
+    signals.trees_match = Some(repo.trees_match(branch, target)?);
+    if signals.trees_match == Some(true) {
+        return Ok(signals);
     }
-    fn would_merge_add(&mut self) -> bool {
-        self.would_merge_add
-    }
+
+    // Priority 5: Would merge add (most expensive)
+    signals.would_merge_add = Some(repo.would_merge_add_to_target(branch, target)?);
+
+    Ok(signals)
 }
 
 /// Category of branch for completion display
@@ -261,8 +232,8 @@ pub enum BranchCategory {
     Worktree,
     /// Local branch without worktree
     Local,
-    /// Remote-only branch (includes remote name)
-    Remote(String),
+    /// Remote-only branch (includes remote names — multiple if same branch on multiple remotes)
+    Remote(Vec<String>),
 }
 
 /// Branch information for shell completions
@@ -278,6 +249,58 @@ pub struct CompletionBranch {
 
 // Re-export parsing helpers for internal use
 pub(crate) use parse::DefaultBranchName;
+
+use crate::shell_exec::Cmd;
+
+/// Check if a local branch is tracking a specific remote ref.
+///
+/// Returns `Some(true)` if the branch is configured to track the given ref.
+/// Returns `Some(false)` if the branch exists but tracks something else (or nothing).
+/// Returns `None` if the branch doesn't exist.
+///
+/// Used by PR/MR checkout to detect when a branch name collision exists.
+///
+/// TODO: This only checks `branch.<name>.merge`, not `branch.<name>.remote`. A branch
+/// could track the right ref but have the wrong remote configured, which matters for
+/// fork PRs/MRs where refs live on the target repo. Consider checking both values.
+///
+/// # Arguments
+/// * `repo_root` - Path to run git commands from
+/// * `branch` - Local branch name to check
+/// * `expected_ref` - Full ref path (e.g., `refs/pull/101/head` or `refs/merge-requests/42/head`)
+pub fn branch_tracks_ref(
+    repo_root: &std::path::Path,
+    branch: &str,
+    expected_ref: &str,
+) -> Option<bool> {
+    let config_key = format!("branch.{}.merge", branch);
+    let output = Cmd::new("git")
+        .args(["config", "--get", &config_key])
+        .current_dir(repo_root)
+        .run()
+        .ok()?;
+
+    if !output.status.success() {
+        // Config key doesn't exist - branch might not track anything
+        // Check if branch exists at all
+        let branch_exists = Cmd::new("git")
+            .args([
+                "show-ref",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{}", branch),
+            ])
+            .current_dir(repo_root)
+            .run()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        return if branch_exists { Some(false) } else { None };
+    }
+
+    let merge_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Some(merge_ref == expected_ref)
+}
 
 // Note: HookType and WorktreeInfo are defined in this module and are already public.
 // They're accessible as git::HookType and git::WorktreeInfo without needing re-export.
@@ -303,6 +326,7 @@ pub enum HookType {
     PreMerge,
     PostMerge,
     PreRemove,
+    PostRemove,
 }
 
 /// Reference to a branch for parallel task execution.
@@ -314,7 +338,8 @@ pub enum HookType {
 /// # Construction
 ///
 /// - From a worktree: `BranchRef::from(&worktree_info)`
-/// - For a branch-only item: `BranchRef::branch_only("feature", "abc123")`
+/// - For a local branch: `BranchRef::local_branch("feature", "abc123")`
+/// - For a remote branch: `BranchRef::remote_branch("origin/feature", "abc123")`
 ///
 /// # Working Tree Access
 ///
@@ -322,7 +347,7 @@ pub enum HookType {
 /// which returns `Some(WorkingTree)` only when this ref has a worktree path.
 #[derive(Debug, Clone)]
 pub struct BranchRef {
-    /// Branch name (e.g., "main", "feature/auth").
+    /// Branch name (e.g., "main", "feature/auth", "origin/feature").
     /// None for detached HEAD.
     pub branch: Option<String>,
     /// Commit SHA this branch/worktree points to.
@@ -330,17 +355,35 @@ pub struct BranchRef {
     /// Path to worktree, if this branch has one.
     /// None for branch-only items (remote branches, local branches without worktrees).
     pub worktree_path: Option<PathBuf>,
+    /// True if this is a remote-tracking ref (e.g., "origin/feature").
+    /// Remote branches inherently exist on the remote and don't need push config.
+    // TODO(full-refs): Consider refactoring to store full refs (e.g., "refs/remotes/origin/feature"
+    // or "refs/heads/feature") instead of short names + is_remote flag. Full refs are self-describing
+    // and unambiguous, but would require changes throughout the codebase and user input resolution.
+    pub is_remote: bool,
 }
 
 impl BranchRef {
-    /// Create a BranchRef for a branch without a worktree.
-    ///
-    /// Used for remote-only branches or local branches that don't have a worktree.
-    pub fn branch_only(branch: &str, commit_sha: &str) -> Self {
+    /// Create a BranchRef for a local branch without a worktree.
+    pub fn local_branch(branch: &str, commit_sha: &str) -> Self {
         Self {
             branch: Some(branch.to_string()),
             commit_sha: commit_sha.to_string(),
             worktree_path: None,
+            is_remote: false,
+        }
+    }
+
+    /// Create a BranchRef for a remote-tracking branch.
+    ///
+    /// Remote branches (e.g., "origin/feature") are refs under refs/remotes/.
+    /// They inherently exist on the remote and don't need upstream tracking config.
+    pub fn remote_branch(branch: &str, commit_sha: &str) -> Self {
+        Self {
+            branch: Some(branch.to_string()),
+            commit_sha: commit_sha.to_string(),
+            worktree_path: None,
+            is_remote: true,
         }
     }
 
@@ -366,6 +409,7 @@ impl From<&WorktreeInfo> for BranchRef {
             branch: wt.branch.clone(),
             commit_sha: wt.head.clone(),
             worktree_path: Some(wt.path.clone()),
+            is_remote: false, // Worktrees are always local
         }
     }
 }
@@ -412,35 +456,6 @@ impl WorktreeInfo {
     /// use `worktree_display_name()` from the commands module instead.
     pub fn dir_name(&self) -> &str {
         path_dir_name(&self.path)
-    }
-
-    /// Find the "home" worktree - the default branch's worktree if it exists,
-    /// otherwise the first non-prunable worktree in the list.
-    ///
-    /// This is the preferred destination when we need to cd somewhere
-    /// (e.g., after removing the current worktree, or after merge removes the worktree).
-    ///
-    /// Prunable worktrees (directory deleted but git still tracks metadata) are
-    /// excluded since we can't cd to a directory that doesn't exist.
-    ///
-    /// For normal repos, `worktrees[0]` is usually the default branch's worktree,
-    /// so the fallback rarely matters. For bare repos, there's no semantic "main"
-    /// worktree, so preferring the default branch's worktree provides consistency.
-    ///
-    /// Returns `None` if all worktrees are prunable or `worktrees` is empty.
-    /// If `default_branch` doesn't match any non-prunable worktree, returns the
-    /// first non-prunable worktree.
-    pub fn find_home<'a>(
-        worktrees: &'a [WorktreeInfo],
-        default_branch: &str,
-    ) -> Option<&'a WorktreeInfo> {
-        // Filter out prunable worktrees (directory deleted but git still tracks metadata).
-        // Can't cd to a worktree that doesn't exist.
-        worktrees
-            .iter()
-            .filter(|wt| !wt.is_prunable())
-            .find(|wt| wt.branch.as_deref() == Some(default_branch))
-            .or_else(|| worktrees.iter().find(|wt| !wt.is_prunable()))
     }
 }
 
@@ -494,35 +509,63 @@ mod tests {
     #[test]
     fn test_check_integration() {
         // Each integration reason + not integrated
+        // Tuple: (is_same_commit, is_ancestor, has_added_changes, trees_match, would_merge_add)
         let cases = [
             (
-                (true, false, true, false, true),
+                (Some(true), Some(false), Some(true), Some(false), Some(true)),
                 Some(IntegrationReason::SameCommit),
             ),
             (
-                (false, true, true, false, true),
+                (Some(false), Some(true), Some(true), Some(false), Some(true)),
                 Some(IntegrationReason::Ancestor),
             ),
             (
-                (false, false, false, false, true),
+                (
+                    Some(false),
+                    Some(false),
+                    Some(false),
+                    Some(false),
+                    Some(true),
+                ),
                 Some(IntegrationReason::NoAddedChanges),
             ),
             (
-                (false, false, true, true, true),
+                (Some(false), Some(false), Some(true), Some(true), Some(true)),
                 Some(IntegrationReason::TreesMatch),
             ),
             (
-                (false, false, true, false, false),
+                (
+                    Some(false),
+                    Some(false),
+                    Some(true),
+                    Some(false),
+                    Some(false),
+                ),
                 Some(IntegrationReason::MergeAddsNothing),
             ),
-            ((false, false, true, false, true), None), // Not integrated
             (
-                (true, true, false, true, false),
+                (
+                    Some(false),
+                    Some(false),
+                    Some(true),
+                    Some(false),
+                    Some(true),
+                ),
+                None,
+            ), // Not integrated
+            (
+                (Some(true), Some(true), Some(false), Some(true), Some(false)),
                 Some(IntegrationReason::SameCommit),
-            ), // Priority test
+            ), // Priority test: is_same_commit wins
+            // None values are treated conservatively (as if not integrated)
+            ((None, None, None, None, None), None),
+            (
+                (None, Some(true), Some(false), Some(true), Some(false)),
+                Some(IntegrationReason::Ancestor),
+            ),
         ];
         for ((same, ancestor, added, trees, merge), expected) in cases {
-            let mut provider = PrecomputedIntegration {
+            let signals = IntegrationSignals {
                 is_same_commit: same,
                 is_ancestor: ancestor,
                 has_added_changes: added,
@@ -530,9 +573,9 @@ mod tests {
                 would_merge_add: merge,
             };
             assert_eq!(
-                check_integration(&mut provider),
+                check_integration(&signals),
                 expected,
-                "case: {same},{ancestor},{added},{trees},{merge}"
+                "case: {same:?},{ancestor:?},{added:?},{trees:?},{merge:?}"
             );
         }
     }
@@ -592,50 +635,6 @@ mod tests {
     }
 
     #[test]
-    fn test_find_home() {
-        let make_wt = |branch: Option<&str>| WorktreeInfo {
-            path: PathBuf::from(format!("/repo.{}", branch.unwrap_or("detached"))),
-            head: "abc123".into(),
-            branch: branch.map(String::from),
-            bare: false,
-            detached: branch.is_none(),
-            locked: None,
-            prunable: None,
-        };
-
-        // Empty list returns None
-        assert!(WorktreeInfo::find_home(&[], "main").is_none());
-
-        // Single worktree on default branch
-        let wts = vec![make_wt(Some("main"))];
-        assert_eq!(
-            WorktreeInfo::find_home(&wts, "main").unwrap().path.to_str(),
-            Some("/repo.main")
-        );
-
-        // Default branch not first - should still find it
-        let wts = vec![make_wt(Some("feature")), make_wt(Some("main"))];
-        assert_eq!(
-            WorktreeInfo::find_home(&wts, "main").unwrap().path.to_str(),
-            Some("/repo.main")
-        );
-
-        // No default branch match - returns first
-        let wts = vec![make_wt(Some("feature")), make_wt(Some("bugfix"))];
-        assert_eq!(
-            WorktreeInfo::find_home(&wts, "main").unwrap().path.to_str(),
-            Some("/repo.feature")
-        );
-
-        // Empty default branch - returns first
-        let wts = vec![make_wt(Some("feature"))];
-        assert_eq!(
-            WorktreeInfo::find_home(&wts, "").unwrap().path.to_str(),
-            Some("/repo.feature")
-        );
-    }
-
-    #[test]
     fn test_branch_ref_from_worktree_info() {
         let wt = WorktreeInfo {
             path: PathBuf::from("/repo.feature"),
@@ -656,16 +655,29 @@ mod tests {
             Some(PathBuf::from("/repo.feature"))
         );
         assert!(branch_ref.has_worktree());
+        assert!(!branch_ref.is_remote); // Worktrees are always local
     }
 
     #[test]
-    fn test_branch_ref_branch_only() {
-        let branch_ref = BranchRef::branch_only("feature", "abc123");
+    fn test_branch_ref_local_branch() {
+        let branch_ref = BranchRef::local_branch("feature", "abc123");
 
         assert_eq!(branch_ref.branch, Some("feature".to_string()));
         assert_eq!(branch_ref.commit_sha, "abc123");
         assert_eq!(branch_ref.worktree_path, None);
         assert!(!branch_ref.has_worktree());
+        assert!(!branch_ref.is_remote);
+    }
+
+    #[test]
+    fn test_branch_ref_remote_branch() {
+        let branch_ref = BranchRef::remote_branch("origin/feature", "abc123");
+
+        assert_eq!(branch_ref.branch, Some("origin/feature".to_string()));
+        assert_eq!(branch_ref.commit_sha, "abc123");
+        assert_eq!(branch_ref.worktree_path, None);
+        assert!(!branch_ref.has_worktree());
+        assert!(branch_ref.is_remote);
     }
 
     #[test]

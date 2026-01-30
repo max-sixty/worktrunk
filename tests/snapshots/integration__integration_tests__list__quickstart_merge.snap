@@ -1,0 +1,50 @@
+---
+source: tests/integration_tests/list.rs
+info:
+  program: wt
+  args:
+    - merge
+    - main
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    PATH: "[PATH]"
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_COMMIT__GENERATION__COMMAND: /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmplWLZUt/mock-llm.sh
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_DIRECTIVE_FILE: "[DIRECTIVE_FILE]"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+[36m◎[39m [36mGenerating commit message and committing changes... [90m(2 files, [32m+53[39m, no squashing needed[39m[90m)[39m[39m
+[107m [0m [1mAdd authentication module[22m
+[32m✓[39m [32mCommitted changes @ [2m[HASH][22m[39m
+[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no rebase needed)[39m
+[107m [0m * [33m[HASH][m Add authentication module
+[107m [0m  auth.rs | 51 [32m+++++++++++++++++++++++++++++++++++++++++++++++++++[m
+[107m [0m  lib.rs  |  2 [32m++[m
+[107m [0m  2 files changed, 53 insertions(+)
+[32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 2 files, [32m+53[39m[39m[90m)[39m[39m
+[36m◎ Removing [1mfeature-auth[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
+[2m○[22m Switched to worktree for [1mmain[22m @ [1m_REPO_[22m

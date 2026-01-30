@@ -4,6 +4,8 @@
 //! of worktree and merge operations.
 
 use indexmap::IndexMap;
+use schemars::JsonSchema;
+use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 
 /// Represents a command with its template and optionally expanded form
@@ -59,6 +61,15 @@ impl CommandConfig {
     pub fn commands(&self) -> &[Command] {
         &self.commands
     }
+
+    /// Merge two configs by appending commands (base commands first, then overlay).
+    ///
+    /// Used for per-project hook overrides where both global and project hooks run.
+    pub fn merge_append(&self, other: &Self) -> Self {
+        let mut commands = self.commands.clone();
+        commands.extend(other.commands.iter().cloned());
+        Self { commands }
+    }
 }
 
 // Custom deserialization to handle 2 TOML formats
@@ -82,6 +93,15 @@ impl<'de> Deserialize<'de> for CommandConfig {
             }
             CommandConfigToml::Named(map) => {
                 // IndexMap preserves insertion order from TOML
+                // Validate hook names don't contain colons (would break log spec parsing)
+                for name in map.keys() {
+                    if name.contains(':') {
+                        return Err(serde::de::Error::custom(format!(
+                            "hook name '{}' cannot contain colons",
+                            name
+                        )));
+                    }
+                }
                 map.into_iter()
                     .map(|(name, template)| Command::new(Some(name), template))
                     .collect()
@@ -91,24 +111,49 @@ impl<'de> Deserialize<'de> for CommandConfig {
     }
 }
 
+// JsonSchema for CommandConfig - describes the two TOML formats
+impl JsonSchema for CommandConfig {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "CommandConfig".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // CommandConfig accepts either a string or an object with string values
+        // We just need this for schema generation, not validation
+        schemars::json_schema!({
+            "oneOf": [
+                { "type": "string" },
+                { "type": "object", "additionalProperties": { "type": "string" } }
+            ]
+        })
+    }
+}
+
 // Serialize back to most appropriate format
 impl Serialize for CommandConfig {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeMap;
-
         // If single unnamed command, serialize as string
         if self.commands.len() == 1 && self.commands[0].name.is_none() {
             return self.commands[0].template.serialize(serializer);
         }
 
-        // Serialize as named map (all commands from Named format have names)
+        // Serialize as named map. Generate keys for unnamed commands (can happen
+        // when merging unnamed global hooks with named project hooks, though
+        // merged configs are only used for execution, never serialized in production).
         let mut map = serializer.serialize_map(Some(self.commands.len()))?;
+        let mut unnamed_counter = 0u32;
         for cmd in &self.commands {
-            let key = cmd.name.as_ref().unwrap();
-            map.serialize_entry(key, &cmd.template)?;
+            let key = match &cmd.name {
+                Some(name) => name.clone(),
+                None => {
+                    unnamed_counter += 1;
+                    format!("_{unnamed_counter}")
+                }
+            };
+            map.serialize_entry(&key, &cmd.template)?;
         }
         map.end()
     }
@@ -212,6 +257,30 @@ third = "echo 3"
         assert_eq!(commands[0].name, Some("first".to_string()));
         assert_eq!(commands[1].name, Some("second".to_string()));
         assert_eq!(commands[2].name, Some("third".to_string()));
+    }
+
+    #[test]
+    fn test_deserialize_rejects_colons_in_name() {
+        // Hook names cannot contain colons (would break log spec parsing)
+        let toml_str = r#"
+[command]
+"my:server" = "npm start"
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            #[serde(rename = "command")]
+            _command: CommandConfig,
+        }
+
+        let result: Result<Wrapper, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("cannot contain colons"),
+            "Expected colon rejection error: {}",
+            err
+        );
     }
 
     // ============================================================================
@@ -328,5 +397,85 @@ third = "echo 3"
             commands: vec![Command::new(None, "test".to_string())],
         };
         assert_eq!(config1, config2);
+    }
+
+    #[test]
+    fn test_command_config_merge_append() {
+        let base = CommandConfig {
+            commands: vec![
+                Command::new(None, "echo base1".to_string()),
+                Command::new(Some("named".to_string()), "echo base2".to_string()),
+            ],
+        };
+        let overlay = CommandConfig {
+            commands: vec![Command::new(None, "echo overlay".to_string())],
+        };
+
+        let merged = base.merge_append(&overlay);
+        assert_eq!(merged.commands.len(), 3);
+        assert_eq!(merged.commands[0].template, "echo base1");
+        assert_eq!(merged.commands[1].template, "echo base2");
+        assert_eq!(merged.commands[2].template, "echo overlay");
+    }
+
+    #[test]
+    fn test_command_config_merge_append_empty_base() {
+        let base = CommandConfig { commands: vec![] };
+        let overlay = CommandConfig {
+            commands: vec![Command::new(None, "echo overlay".to_string())],
+        };
+
+        let merged = base.merge_append(&overlay);
+        assert_eq!(merged.commands.len(), 1);
+        assert_eq!(merged.commands[0].template, "echo overlay");
+    }
+
+    #[test]
+    fn test_command_config_merge_append_empty_overlay() {
+        let base = CommandConfig {
+            commands: vec![Command::new(None, "echo base".to_string())],
+        };
+        let overlay = CommandConfig { commands: vec![] };
+
+        let merged = base.merge_append(&overlay);
+        assert_eq!(merged.commands.len(), 1);
+        assert_eq!(merged.commands[0].template, "echo base");
+    }
+
+    // ============================================================================
+    // Serialization Edge Cases (merged configs)
+    // ============================================================================
+    //
+    // Note: Merged configs (from merge_append) are only used for execution,
+    // never serialized in production. These tests verify serialization doesn't
+    // panic, but round-trip fidelity isn't required.
+
+    /// Serializing a merged config with mixed named/unnamed commands doesn't panic.
+    #[test]
+    fn test_serialize_mixed_named_unnamed_succeeds() {
+        #[derive(Serialize)]
+        struct Wrapper {
+            cmd: CommandConfig,
+        }
+
+        // Simulate merge of unnamed global + named project hooks
+        let global = CommandConfig {
+            commands: vec![Command::new(None, "npm install".to_string())],
+        };
+        let per_project = CommandConfig {
+            commands: vec![Command::new(
+                Some("setup".to_string()),
+                "echo setup".to_string(),
+            )],
+        };
+
+        let merged = global.merge_append(&per_project);
+        assert_eq!(merged.commands.len(), 2);
+
+        // Should not panic - generates "_1" for unnamed command
+        let wrapper = Wrapper { cmd: merged };
+        let serialized = toml::to_string(&wrapper).unwrap();
+        assert!(serialized.contains("npm install"), "{serialized}");
+        assert!(serialized.contains("echo setup"), "{serialized}");
     }
 }

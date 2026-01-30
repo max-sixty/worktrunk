@@ -1,0 +1,13 @@
+---
+source: src/config/deprecation.rs
+expression: "migration_diff(content, &result)"
+---
+ 
+ [projects."github.com/user/repo"]
+ approved-commands = ["npm test"]
+ 
+-[projects."github.com/user/repo".commit-generation]
+-command = "llm"
+-args = ["-m", "gpt-4"]
++[projects."github.com/user/repo".commit.generation]
++command = "llm -m gpt-4"

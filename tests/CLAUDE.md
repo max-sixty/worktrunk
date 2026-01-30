@@ -266,7 +266,7 @@ crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
 
 ## Deterministic Time in Tests
 
-Tests use `TEST_EPOCH` (2025-01-01) for reproducible timestamps. The constant is defined in `tests/common/mod.rs` and automatically set as `SOURCE_DATE_EPOCH` in the test environment.
+Tests use `TEST_EPOCH` (2025-01-01) for reproducible timestamps. The constant is defined in `tests/common/mod.rs` and automatically set as `WT_TEST_EPOCH` in the test environment.
 
 **For test data with timestamps** (cache entries, etc.), use the constant:
 
@@ -279,4 +279,4 @@ repo.git_command(&[
 ]);
 ```
 
-**For production code** that needs timestamps, use `worktrunk::utils::get_now()` which respects `SOURCE_DATE_EPOCH`. Using `SystemTime::now()` directly causes flaky tests.
+**For production code** that needs timestamps, use `worktrunk::utils::get_now()` which respects `WT_TEST_EPOCH`. Using `SystemTime::now()` directly causes flaky tests.

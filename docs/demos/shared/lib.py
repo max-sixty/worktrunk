@@ -58,16 +58,21 @@ def _detect_platform() -> str:
 
 
 def _download_file(url: str, dest: Path) -> None:
-    """Download a file from URL to destination (atomic)."""
+    """Download a file from URL to destination (parallel-safe).
+
+    Uses PID-unique temp file to avoid races when multiple processes download
+    simultaneously. Only moves to dest if dest doesn't exist at move time.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"Downloading {dest.name}...")
-    temp = dest.with_suffix(".tmp")
+    temp = dest.with_suffix(f".{os.getpid()}.tmp")
     try:
         urllib.request.urlretrieve(url, temp)
-        temp.rename(dest)
-    except BaseException:
+        # Only move if dest doesn't exist (another process may have finished first)
+        if not dest.exists():
+            temp.rename(dest)
+    finally:
         temp.unlink(missing_ok=True)
-        raise
 
 
 def _ensure_claude_binary() -> Path:
@@ -329,6 +334,8 @@ def prepare_base_repo(env: DemoEnv, repo_root: Path):
     git(["-C", str(env.repo), "config", "user.name", "Worktrunk Demo"])
     git(["-C", str(env.repo), "config", "user.email", "demo@example.com"])
     git(["-C", str(env.repo), "config", "commit.gpgsign", "false"])
+    # Suppress wt hints in demo output (hints are stored in git config)
+    git(["-C", str(env.repo), "config", "worktrunk.hints.worktree-path", "true"])
 
     # Initial commit
     (env.repo / "README.md").write_text("# Acme App\n\nA demo application.\n")
@@ -470,7 +477,7 @@ def setup_claude_code_config(
         "model": "claude-opus-4-5-20251101",
         "statusLine": {
             "type": "command",
-            "command": "wt list statusline --claude-code",
+            "command": "wt list statusline --format=claude-code",
         },
     }
     (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2))
@@ -497,6 +504,22 @@ def setup_zellij_config(env: DemoEnv, default_cwd: str = None) -> None:
 
     default_cwd_line = f'default_cwd "{default_cwd}"' if default_cwd else ""
 
+    # Pre-populate Zellij permissions cache to avoid permission dialog
+    # On macOS, cache is at $HOME/Library/Caches/org.Zellij-Contributors.Zellij/
+    # On Linux, it would be at $HOME/.cache/zellij/
+    plugin_dest = zellij_plugins_dir / "zellij-tab-name.wasm"
+    if platform.system() == "Darwin":
+        zellij_cache_dir = env.home / "Library" / "Caches" / "org.Zellij-Contributors.Zellij"
+    else:
+        zellij_cache_dir = env.home / ".cache" / "zellij"
+    zellij_cache_dir.mkdir(parents=True, exist_ok=True)
+    permissions_file = zellij_cache_dir / "permissions.kdl"
+    permissions_file.write_text(f'''"{plugin_dest}" {{
+    ReadApplicationState
+    ChangeApplicationState
+}}
+''')
+
     zellij_config = zellij_config_dir / "config.kdl"
     zellij_config.write_text(f"""// Demo Zellij config
 default_shell "fish"
@@ -505,6 +528,11 @@ pane_frames false
 show_startup_tips false
 show_release_notes false
 theme "warm-gold"
+
+// Load the tab-name plugin
+load_plugins {{
+    "file:{zellij_plugins_dir}/zellij-tab-name.wasm"
+}}
 
 // Warm gold theme to match the demo aesthetic
 themes {{
@@ -521,10 +549,6 @@ themes {{
         white "#57534e"
         orange "#d97706"
     }}
-}}
-
-load_plugins {{
-  "file:{zellij_plugins_dir}/zellij-tab-name.wasm"
 }}
 
 keybinds clear-defaults=true {{
@@ -927,6 +951,163 @@ def record_text(
         raise RuntimeError(f"VHS succeeded but output file not created: {temp_txt}")
     shutil.copy(temp_txt, output_txt)
     temp_txt.unlink()
+
+
+def extract_commands_from_tape(
+    tape_path: Path, repo_root: Path, command_prefixes: tuple[str, ...] = ("wt", "git")
+) -> list[str]:
+    """Extract shell commands from a VHS tape file.
+
+    Parses the tape looking for Type "command" followed by Enter patterns,
+    filtering to commands that start with specified prefixes (default: wt, git).
+
+    Only extracts commands after Show directive (visible part of demo).
+    Skips commands in Hide blocks.
+
+    Args:
+        tape_path: Path to the .tape template file
+        repo_root: Root of the repository (for resolving Source paths)
+        command_prefixes: Tuple of command prefixes to extract (default: wt, git)
+
+    Returns:
+        List of commands in order they appear in the tape
+    """
+    # Render tape with dummy replacements to inline Source directives
+    rendered = render_tape(tape_path, {}, repo_root)
+    if not rendered:
+        return []
+
+    commands = []
+    in_visible_section = False
+    lines = rendered.split("\n")
+    i = 0
+
+    while i < len(lines):
+        line = lines[i].strip()
+
+        # Track visibility
+        if line == "Show":
+            in_visible_section = True
+        elif line == "Hide":
+            in_visible_section = False
+
+        # Look for Type "command" pattern
+        if in_visible_section and line.startswith("Type "):
+            # Extract command from Type "..." or Type '...'
+            match = re.match(r'Type\s+["\'](.+)["\']', line)
+            if match:
+                cmd = match.group(1)
+                # Check if Enter follows (possibly with Sleep in between)
+                j = i + 1
+                while j < len(lines):
+                    next_line = lines[j].strip()
+                    if not next_line:
+                        j += 1
+                        continue
+                    if next_line.startswith("Sleep "):
+                        j += 1
+                        continue
+                    if next_line == "Enter":
+                        # Only include commands with specified prefixes
+                        if any(cmd.startswith(prefix) for prefix in command_prefixes):
+                            commands.append(cmd)
+                    break
+        i += 1
+
+    return commands
+
+
+def record_snapshot(
+    demo_env: "DemoEnv",
+    tape_path: Path,
+    output_snap: Path,
+    repo_root: Path,
+) -> None:
+    """Record command output snapshot for regression testing.
+
+    Extracts commands from the tape and runs them in a fish shell with full
+    shell integration (just like the GIF demos). The snapshot format is:
+
+        $ wt list
+        <output>
+
+        $ wt switch alpha
+        <output>
+
+    This captures semantic output (what commands produce) rather than visual
+    rendering (how it looks in a terminal). Small diffs are expected when
+    output formats change; the goal is catching unexpected regressions like
+    new hints or warnings creeping in.
+
+    Args:
+        demo_env: Demo environment with repo and home paths
+        tape_path: Path to the .tape template file
+        output_snap: Path to write snapshot output
+        repo_root: Root of the repository
+
+    Raises:
+        RuntimeError: If no commands found in tape
+    """
+    commands = extract_commands_from_tape(tape_path, repo_root)
+    if not commands:
+        raise RuntimeError(f"No snapshotable commands found in {tape_path.name}")
+
+    # Build environment matching the GIF demos
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(demo_env.home),
+            "XDG_CONFIG_HOME": str(demo_env.home / ".config"),
+            "PATH": f"{repo_root / 'target' / 'debug'}:{demo_env.home / '.local' / 'bin'}:{os.environ.get('PATH', '')}",
+            "TERM": "xterm-256color",
+            "LANG": "en_US.UTF-8",
+            "LC_ALL": "en_US.UTF-8",
+        }
+    )
+
+    # Generate a fish script that:
+    # 1. Initializes shell integration (like shared-commands.tape)
+    # 2. Runs each command, printing "$ cmd" before and blank line after
+    script_lines = [
+        "# Initialize shell integration",
+        "wt config shell init fish | source",
+        "source ~/.config/fish/completions/wt.fish",
+        f"cd {demo_env.repo}",
+        "",
+    ]
+
+    for i, cmd in enumerate(commands):
+        # Echo the command prompt, run command (merging stderr)
+        script_lines.append(f"echo '$ {cmd}'")
+        script_lines.append(f"{cmd} 2>&1")
+        # Blank line between commands (not after last)
+        if i < len(commands) - 1:
+            script_lines.append("echo ''")
+
+    script_content = "\n".join(script_lines)
+    script_path = demo_env.out_dir / ".snapshot-script.fish"
+    script_path.write_text(script_content)
+
+    # Run the script in fish
+    result = subprocess.run(
+        ["fish", str(script_path)],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    # Combine stdout and stderr
+    output = (result.stdout + result.stderr).rstrip()
+
+    # Normalize temp paths to stable placeholder
+    temp_path = str(demo_env.out_dir)
+    temp_path_real = str(demo_env.out_dir.resolve())
+    output = output.replace(temp_path_real, "<DEMO_DIR>")
+    output = output.replace(temp_path, "<DEMO_DIR>")
+
+    # Write snapshot
+    output_snap.parent.mkdir(parents=True, exist_ok=True)
+    output_snap.write_text(output + "\n")
 
 
 @dataclass

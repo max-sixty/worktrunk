@@ -19,10 +19,22 @@ use rstest::rstest;
 fn snapshot_help(test_name: &str, args: &[&str]) {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
-    // Remove trailing ANSI reset codes at end of lines for cross-platform consistency
-    settings.add_filter(r"\x1b\[0m$", "");
-    settings.add_filter(r"\x1b\[0m\n", "\n");
     settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.args(args);
+
+        // Check for double blank lines before snapshotting.
+        // Double blanks indicate formatting issues (e.g., HTML comments like
+        // `<!-- demo: file.gif -->` with blank lines on both sides).
+        let output = cmd.output().expect("failed to run command");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("\n\n\n"),
+            "Double blank line in help output for `wt {}`",
+            args.join(" ")
+        );
+
+        // Re-run for snapshot (assert_cmd_snapshot needs the Command)
         let mut cmd = wt_command();
         cmd.args(args);
         assert_cmd_snapshot!(test_name, cmd);
@@ -118,50 +130,6 @@ fn test_help_md_subcommand() {
     });
 }
 
-#[test]
-fn test_help_page_merge() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        cmd.args(["merge", "--help-page"]);
-        assert_cmd_snapshot!("help_page_merge", cmd);
-    });
-}
-
-#[test]
-fn test_help_page_switch() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        cmd.args(["switch", "--help-page"]);
-        assert_cmd_snapshot!("help_page_switch", cmd);
-    });
-}
-
-#[test]
-fn test_help_page_no_subcommand() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        cmd.arg("--help-page");
-        assert_cmd_snapshot!("help_page_no_subcommand", cmd);
-    });
-}
-
-#[test]
-fn test_help_page_unknown_command() {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        cmd.args(["nonexistent", "--help-page"]);
-        assert_cmd_snapshot!("help_page_unknown", cmd);
-    });
-}
-
 /// Verifies that markdown tables remain intact (no mid-row breaks) even when
 /// table width exceeds terminal width. Tables should extend past 80 columns
 /// rather than wrap incorrectly.
@@ -169,13 +137,50 @@ fn test_help_page_unknown_command() {
 fn test_help_list_narrow_terminal() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
-    // Remove trailing ANSI reset codes for cross-platform consistency
-    settings.add_filter(r"\x1b\[0m$", "");
-    settings.add_filter(r"\x1b\[0m\n", "\n");
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.env("COLUMNS", "80");
         cmd.args(["list", "--help"]);
         assert_cmd_snapshot!("help_list_narrow_80", cmd);
+    });
+}
+
+/// Tests that using a nested subcommand at the top level suggests the correct command.
+///
+/// When users type `wt squash` instead of `wt step squash`, or `wt pre-merge` instead
+/// of `wt hook pre-merge`, they should get a helpful suggestion.
+#[rstest]
+#[case("nested_subcommand_step_squash", "squash", "wt step squash")]
+#[case("nested_subcommand_step_commit", "commit", "wt step commit")]
+#[case("nested_subcommand_hook_pre_merge", "pre-merge", "wt hook pre-merge")]
+#[case(
+    "nested_subcommand_hook_post_create",
+    "post-create",
+    "wt hook post-create"
+)]
+fn test_nested_subcommand_suggestion(
+    #[case] test_name: &str,
+    #[case] subcommand: &str,
+    #[case] expected_suggestion: &str,
+) {
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.arg(subcommand);
+        let output = cmd.output().expect("failed to run wt");
+
+        // Should fail (exit code 2)
+        assert_eq!(output.status.code(), Some(2));
+
+        // Should contain the suggestion
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected_suggestion),
+            "Expected stderr to contain '{expected_suggestion}', got:\n{stderr}"
+        );
+
+        // Snapshot the full error output
+        assert_cmd_snapshot!(test_name, cmd);
     });
 }

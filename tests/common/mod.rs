@@ -42,8 +42,11 @@ pub mod list_snapshots;
 // Progressive output tests use PTY and are Unix-only for now
 #[cfg(unix)]
 pub mod progressive_output;
-// Shell integration tests are Unix-only for now (Windows support planned)
-#[cfg(all(unix, feature = "shell-integration-tests"))]
+// PTY execution helpers - cross-platform (uses portable_pty with ConPTY on Windows)
+#[cfg(feature = "shell-integration-tests")]
+pub mod pty;
+// Shell integration tests - cross-platform with PTY support
+#[cfg(feature = "shell-integration-tests")]
 pub mod shell;
 
 // Cross-platform mock command helpers
@@ -172,7 +175,7 @@ pub fn repo_with_remote(mut repo: TestRepo) -> TestRepo {
     repo
 }
 
-/// Repo with main branch available for merge operations.
+/// Repo with default branch available for merge operations.
 ///
 /// The primary worktree is already on main, so no separate worktree is needed.
 /// This fixture exists for compatibility with tests that expect it.
@@ -351,19 +354,23 @@ pub fn merge_scenario_multi_commit(mut repo: TestRepo) -> (TestRepo, PathBuf) {
     (repo, feature_wt)
 }
 
-/// Returns a PTY system with a guard that restores the TTY foreground pgrp on drop.
+/// Returns a PTY system with platform-appropriate setup.
 ///
-/// Use this instead of `portable_pty::native_pty_system()` directly to ensure:
-/// 1. PTY tests work in background process groups (signals blocked)
-/// 2. SIGTTIN/SIGTTOU are blocked to prevent test processes from being stopped
+/// On Unix, this blocks SIGTTIN/SIGTTOU signals to prevent test processes from
+/// being stopped when PTY operations interact with terminal control.
+///
+/// On Windows, this returns the native ConPTY system directly.
+///
+/// Use this instead of `portable_pty::native_pty_system()` directly to ensure
+/// PTY tests work correctly across platforms.
 ///
 /// NOTE: PTY tests are behind the `shell-integration-tests` feature because they can
 /// trigger a nextest bug where its InputHandler cleanup receives SIGTTOU. This happens
 /// when tests spawn interactive shells (zsh -ic, bash -ic) which take control of the
 /// foreground process group. See https://github.com/nextest-rs/nextest/issues/2878
 /// Workaround: run with NEXTEST_NO_INPUT_HANDLER=1. See CLAUDE.md for details.
-#[cfg(unix)]
 pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
+    #[cfg(unix)]
     ignore_tty_signals();
     portable_pty::native_pty_system()
 }
@@ -371,13 +378,11 @@ pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
 /// Open a PTY pair with default size (48 rows x 200 cols).
 ///
 /// Most PTY tests use this standard size. Returns the master/slave pair.
-#[cfg(unix)]
 pub fn open_pty() -> portable_pty::PtyPair {
     open_pty_with_size(48, 200)
 }
 
 /// Open a PTY pair with specified size.
-#[cfg(unix)]
 pub fn open_pty_with_size(rows: u16, cols: u16) -> portable_pty::PtyPair {
     native_pty_system()
         .openpty(portable_pty::PtySize {
@@ -389,57 +394,152 @@ pub fn open_pty_with_size(rows: u16, cols: u16) -> portable_pty::PtyPair {
         .unwrap()
 }
 
-use insta_cmd::get_cargo_bin;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// Path to the `wt` binary built by Cargo.
+///
+/// Uses `env!()` (compile-time) rather than runtime lookup so Cargo knows to
+/// build the binary when compiling tests. This works with both `cargo test`
+/// and `cargo nextest`.
+pub fn wt_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_wt"))
+}
 use tempfile::TempDir;
 use worktrunk::config::sanitize_branch_name;
 use worktrunk::path::to_posix_path;
 
-/// Path to the fixture template repo (relative to crate root).
-/// Contains `_git/` (renamed .git) and `gitconfig`.
-fn fixture_template_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/template-repo")
+/// Path to the standard fixture (relative to crate root).
+/// Contains repo/, repo.feature-a/, repo.feature-b/, repo.feature-c/, origin_git/.
+fn standard_fixture_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/standard")
 }
 
-/// Copy the fixture template to create a new test repo.
+/// Worktree info returned from fixture copy.
+struct FixtureWorktrees {
+    worktrees: HashMap<String, PathBuf>,
+    remote: PathBuf,
+}
+
+/// Copy the standard fixture to create a new test repo with worktrees and remote.
 ///
-/// The fixture contains a git repo with one initial commit (on `main` branch).
-/// Copies `_git/` to `.git/`, `file.txt`, and `gitconfig` to `test-gitconfig`.
-/// Uses `cp -r` which benchmarks faster than native Rust fs operations.
-fn copy_fixture_template(dest: &Path) {
-    let template = fixture_template_path();
+/// The fixture contains:
+/// - Main repo on `main` branch with one commit
+/// - Remote (origin) bare repository
+/// - Three feature worktrees (feature-a, feature-b, feature-c) each with one commit
+///
+/// Pure Rust recursive copy - 2.5x faster than spawning cp/robocopy.
+/// Benchmarked at 21ms vs 53ms per fixture copy on macOS.
+fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
+    fn copy_dir_recursive(src: &Path, dest: &Path) {
+        std::fs::create_dir_all(dest).unwrap();
+        for entry in std::fs::read_dir(src).unwrap() {
+            let entry = entry.unwrap();
+            let file_type = entry.file_type().unwrap();
+            let src_path = entry.path();
+            let dest_path = dest.join(entry.file_name());
+            if file_type.is_dir() {
+                copy_dir_recursive(&src_path, &dest_path);
+            } else if file_type.is_file() {
+                std::fs::copy(&src_path, &dest_path).unwrap();
+            }
+            // Skip symlinks, sockets, etc (shouldn't be in fixture)
+        }
+    }
 
-    // Create repo subdirectory
-    let repo_path = dest.join("repo");
-    std::fs::create_dir(&repo_path).unwrap();
+    let fixture = standard_fixture_path();
+    copy_dir_recursive(&fixture, dest);
 
-    // Copy _git to repo/.git (suppress stderr for socket file warnings)
-    let output = Command::new("cp")
-        .args(["-r", "--"])
-        .arg(template.join("_git"))
-        .arg(repo_path.join(".git"))
-        .stderr(std::process::Stdio::null())
-        .output()
-        .unwrap();
+    // Verify essential directories exist after copy
+    let essential = ["repo/_git", "origin_git", "repo.feature-a/_git"];
+    for path in essential {
+        let full_path = dest.join(path);
+        assert!(
+            full_path.exists(),
+            "Essential fixture path missing after copy: {:?}",
+            full_path
+        );
+    }
+
+    // Rename _git to .git in all locations
+    let renames = [
+        ("repo/_git", "repo/.git"),
+        ("origin_git", "origin.git"),
+        ("repo.feature-a/_git", "repo.feature-a/.git"),
+        ("repo.feature-b/_git", "repo.feature-b/.git"),
+        ("repo.feature-c/_git", "repo.feature-c/.git"),
+    ];
+    for (from, to) in renames {
+        let from_path = dest.join(from);
+        let to_path = dest.join(to);
+        if from_path.exists() {
+            std::fs::rename(&from_path, &to_path).unwrap_or_else(|e| {
+                panic!("Failed to rename {:?} to {:?}: {}", from_path, to_path, e)
+            });
+        }
+    }
+
+    // Verify origin.git is a valid bare repository
+    let origin_git = dest.join("origin.git");
     assert!(
-        output.status.success(),
-        "Failed to copy template _git directory"
+        origin_git.join("HEAD").exists(),
+        "origin.git is not a valid git repository (missing HEAD): {:?}",
+        origin_git
     );
 
-    // Copy file.txt (part of the initial commit)
-    std::fs::copy(template.join("file.txt"), repo_path.join("file.txt")).unwrap();
+    // Canonicalize dest for worktrees map (on macOS /var -> /private/var)
+    let canonical_dest = canonicalize(dest).unwrap();
 
-    // Copy .gitattributes (forces LF line endings on all platforms)
-    std::fs::copy(
-        template.join(".gitattributes"),
-        repo_path.join(".gitattributes"),
+    // Fix gitdir files - fixture uses _git which we rename to .git
+    // Paths are relative so no absolute path replacement needed
+    for wt in ["feature-a", "feature-b", "feature-c"] {
+        let gitdir_path = dest.join(format!("repo.{wt}/.git"));
+        if gitdir_path.exists() {
+            let content = std::fs::read_to_string(&gitdir_path).unwrap();
+            let fixed = content.replace("_git", ".git");
+            std::fs::write(&gitdir_path, fixed).unwrap();
+        }
+
+        // Fix main repo's worktree gitdir reference
+        let main_gitdir = dest.join(format!("repo/.git/worktrees/repo.{wt}/gitdir"));
+        if main_gitdir.exists() {
+            let content = std::fs::read_to_string(&main_gitdir).unwrap();
+            let fixed = content.replace("_git", ".git");
+            std::fs::write(&main_gitdir, fixed).unwrap();
+        }
+    }
+
+    // Fix remote URL in config (origin_git -> origin.git)
+    let config_path = dest.join("repo/.git/config");
+    if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        let fixed = content.replace("origin_git", "origin.git");
+        std::fs::write(&config_path, fixed).unwrap();
+    }
+
+    // Build worktrees map using canonical paths
+    let mut worktrees = HashMap::new();
+    for wt in ["feature-a", "feature-b", "feature-c"] {
+        worktrees.insert(wt.to_string(), canonical_dest.join(format!("repo.{wt}")));
+    }
+
+    let remote = canonical_dest.join("origin.git");
+
+    FixtureWorktrees { worktrees, remote }
+}
+
+/// Write a gitconfig file for tests.
+fn write_test_gitconfig(path: &Path) {
+    std::fs::write(
+        path,
+        "[user]\n\tname = Test User\n\temail = test@example.com\n\
+         [advice]\n\tmergeConflict = false\n\tresolveConflict = false\n\
+         [init]\n\tdefaultBranch = main\n\
+         [commit]\n\tgpgsign = false\n\
+         [rerere]\n\tenabled = true\n",
     )
     .unwrap();
-
-    // Copy gitconfig
-    std::fs::copy(template.join("gitconfig"), dest.join("test-gitconfig")).unwrap();
 }
 
 /// Canonicalize a path without Windows verbatim prefix (`\\?\`).
@@ -465,6 +565,33 @@ pub const TEST_EPOCH: u64 = 1735776000;
 /// Generous to avoid flakiness under CI load; exponential backoff means fast tests when things work.
 const BG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
+/// Static environment variables shared by all test isolation helpers.
+///
+/// These are used by both `configure_cli_command()` (for Command-based tests)
+/// and `TestRepo::test_env_vars()` (for PTY tests). Adding a variable here
+/// ensures consistency across both test infrastructure paths.
+///
+/// NOTE: Path-dependent variables (HOME, WORKTRUNK_CONFIG_PATH, GIT_CONFIG_*)
+/// are NOT included here because they depend on the TestRepo instance.
+const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
+    ("CLICOLOR_FORCE", "1"),
+    // Terminal width for PTY tests. configure_cli_command() overrides to 500 for longer paths.
+    ("COLUMNS", "150"),
+    // Deterministic locale settings
+    ("LC_ALL", "C"),
+    ("LANG", "C"),
+    // Skip URL health checks to avoid flaky tests from random local processes
+    ("WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK", "1"),
+    // Disable delayed streaming for deterministic output across platforms.
+    // Without this, slow CI triggers progress messages that don't appear on faster systems.
+    ("WT_TEST_DELAYED_STREAM_MS", "-1"),
+];
+
+// NOTE: TERM is intentionally NOT in STATIC_TEST_ENV_VARS because:
+// - configure_cli_command() sets TERM=alacritty for hyperlink detection testing
+// - PTY tests (especially skim-based select tests) need a TERM with valid terminfo
+// - macOS CI doesn't have alacritty terminfo, causing skim to fail
+
 /// Null device path, platform-appropriate.
 /// Use this for GIT_CONFIG_SYSTEM to disable system config in tests.
 #[cfg(windows)]
@@ -480,7 +607,7 @@ const NULL_DEVICE: &str = "/dev/null";
 /// - Terminal width set to 150 columns (`COLUMNS=150`)
 #[must_use]
 pub fn wt_command() -> Command {
-    let mut cmd = Command::new(get_cargo_bin("wt"));
+    let mut cmd = Command::new(wt_bin());
     configure_cli_command(&mut cmd);
     cmd
 }
@@ -539,6 +666,16 @@ pub fn configure_completion_invocation_for_shell(cmd: &mut Command, words: &[&st
 /// This helper mirrors the environment preparation performed by `wt_command`
 /// and is intended for cases where tests need to construct the command manually
 /// (e.g., to execute shell pipelines).
+///
+/// ## Related: `TestRepo::test_env_vars()`
+///
+/// PTY tests use `test_env_vars()` which returns env vars as a Vec. Both functions
+/// share common variables via `STATIC_TEST_ENV_VARS`. Key differences:
+/// - This function uses COLUMNS=500 (wider for long macOS paths in error messages)
+/// - `test_env_vars()` uses COLUMNS=150 (narrower for PTY snapshot consistency)
+/// - This function sets TERM=alacritty; PTY tests don't (skim needs valid terminfo)
+/// - This function enables RUST_LOG=warn; PTY tests don't (too noisy in combined output)
+/// - This function clears host GIT_*/WORKTRUNK_* vars; PTY tests start with clean env
 pub fn configure_cli_command(cmd: &mut Command) {
     for (key, _) in std::env::vars() {
         if key.starts_with("GIT_") || key.starts_with("WORKTRUNK_") {
@@ -550,18 +687,32 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // Note: env_remove above may cause insta-cmd to capture empty values in snapshots,
     // but correctness (isolating from host WORKTRUNK_* vars) trumps snapshot aesthetics.
     cmd.env("WORKTRUNK_CONFIG_PATH", "/nonexistent/test/config.toml");
-    cmd.env("CLICOLOR_FORCE", "1");
-    cmd.env("SOURCE_DATE_EPOCH", TEST_EPOCH.to_string());
-    // Use wide terminal to prevent wrapping differences across platforms.
+    // Remove $SHELL to avoid platform-dependent diagnostic output (macOS has /bin/zsh,
+    // Linux has /bin/bash). Tests that need SHELL should set it explicitly.
+    cmd.env_remove("SHELL");
+    // Remove PSModulePath to prevent false PowerShell detection on CI environments
+    // where PowerShell Core is installed but not being used.
+    cmd.env_remove("PSModulePath");
+    // Disable auto PowerShell detection (tests that need it should set to "1")
+    cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "0");
+    cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
+    // Enable warn-level logging so diagnostics show up in test failures
+    cmd.env("RUST_LOG", "warn");
+    // Treat Claude as not installed by default (tests can override with "1")
+    cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "0");
+
+    // Apply shared static env vars (see STATIC_TEST_ENV_VARS)
+    for &(key, value) in STATIC_TEST_ENV_VARS {
+        cmd.env(key, value);
+    }
+
+    // Override COLUMNS to 500 (wider than STATIC_TEST_ENV_VARS default) for long paths.
     // macOS temp paths (~80 chars) are much longer than Linux (~10 chars),
     // so error messages containing paths need room to avoid platform-specific line breaks.
     cmd.env("COLUMNS", "500");
-    // Set consistent terminal type for hyperlink detection via supports-hyperlinks crate
+    // Set consistent terminal type for hyperlink detection via supports-hyperlinks crate.
+    // Not in STATIC_TEST_ENV_VARS because PTY tests need a TERM with valid terminfo.
     cmd.env("TERM", "alacritty");
-    // Enable warn-level logging so diagnostics show up in test failures
-    cmd.env("RUST_LOG", "warn");
-    // Skip URL health checks to avoid flaky tests from random local processes
-    cmd.env("WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK", "1");
 
     // Pass through LLVM coverage profiling environment for subprocess coverage collection.
     // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record
@@ -595,7 +746,7 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
     cmd.env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z");
     cmd.env("LC_ALL", "C");
     cmd.env("LANG", "C");
-    cmd.env("SOURCE_DATE_EPOCH", TEST_EPOCH.to_string());
+    cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
     cmd.env("GIT_TERMINAL_PROMPT", "0");
 }
 
@@ -691,14 +842,46 @@ pub fn configure_pty_command(cmd: &mut portable_pty::CommandBuilder) {
     cmd.env_clear();
 
     // Minimal environment for shells/binaries to function
-    cmd.env(
-        "HOME",
-        home::home_dir().unwrap().to_string_lossy().to_string(),
-    );
+    let home_dir = home::home_dir().unwrap().to_string_lossy().to_string();
+    cmd.env("HOME", &home_dir);
     cmd.env(
         "PATH",
         std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
     );
+
+    // Windows-specific env vars required for processes to run
+    #[cfg(windows)]
+    {
+        // USERPROFILE is Windows equivalent of HOME
+        cmd.env("USERPROFILE", &home_dir);
+
+        // SystemRoot is critical - many DLLs and system components need this
+        if let Ok(val) = std::env::var("SystemRoot") {
+            cmd.env("SystemRoot", &val);
+            cmd.env("windir", &val); // Alias used by some programs
+        }
+
+        // SystemDrive (usually C:)
+        if let Ok(val) = std::env::var("SystemDrive") {
+            cmd.env("SystemDrive", val);
+        }
+
+        // TEMP/TMP directories
+        if let Ok(val) = std::env::var("TEMP") {
+            cmd.env("TEMP", &val);
+            cmd.env("TMP", val);
+        }
+
+        // COMSPEC (cmd.exe path) - needed by some programs
+        if let Ok(val) = std::env::var("COMSPEC") {
+            cmd.env("COMSPEC", val);
+        }
+
+        // PSModulePath for PowerShell
+        if let Ok(val) = std::env::var("PSModulePath") {
+            cmd.env("PSModulePath", val);
+        }
+    }
 
     // Pass through LLVM coverage profiling environment for subprocess coverage.
     // Without this, spawned binaries can't write coverage data.
@@ -784,11 +967,17 @@ pub fn shell_command(
 ///
 /// Sets both Unix (`HOME`, `XDG_CONFIG_HOME`) and Windows (`USERPROFILE`) variables
 /// so the `home` crate can find the temp home directory on all platforms.
+///
+/// Canonicalizes the path on macOS to handle `/var` → `/private/var` symlinks.
+/// This ensures `format_path_for_display()` can correctly convert paths to `~/...`.
 pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
-    cmd.env("HOME", home);
+    // Canonicalize to resolve macOS symlinks (/var -> /private/var)
+    // This ensures paths match when format_path_for_display() compares against HOME
+    let home = canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    cmd.env("HOME", &home);
     cmd.env("XDG_CONFIG_HOME", home.join(".config"));
     // Windows: the `home` crate uses USERPROFILE for home_dir()
-    cmd.env("USERPROFILE", home);
+    cmd.env("USERPROFILE", &home);
     // Windows: etcetera uses APPDATA for config_dir() (AppData\Roaming)
     // Map it to .config to match Unix XDG_CONFIG_HOME behavior
     cmd.env("APPDATA", home.join(".config"));
@@ -825,6 +1014,8 @@ pub struct TestRepo {
     git_config_path: PathBuf,
     /// Path to mock bin directory for gh/glab commands
     mock_bin_path: Option<PathBuf>,
+    /// Whether Claude CLI should be treated as installed
+    claude_installed: bool,
     /// Snapshot settings guard - keeps insta filters active for this repo's lifetime
     _snapshot_guard: insta::internals::SettingsBindDropGuard,
 }
@@ -832,18 +1023,21 @@ pub struct TestRepo {
 impl TestRepo {
     /// Create a new test repository with isolated git environment.
     ///
-    /// The repo is initialized on `main` branch with one initial commit.
-    /// Uses a fixture template for fast initialization - copies a pre-initialized
-    /// git repo from `tests/fixtures/template-repo/` instead of running `git init`.
-    /// This saves ~10ms per test by avoiding process spawns.
+    /// The repo includes:
+    /// - Main branch with one initial commit
+    /// - Remote (origin) bare repository
+    /// - Three feature worktrees (feature-a, feature-b, feature-c) each with one commit
+    ///
+    /// Uses a pre-created fixture for fast initialization - copies the fixture
+    /// from `tests/fixtures/standard/` instead of running git commands.
     ///
     /// Also sets up mock gh/glab commands that appear authenticated to prevent
     /// CI status hints from appearing in test output.
     pub fn new() -> Self {
         let temp_dir = TempDir::new().unwrap();
 
-        // Copy from fixture template (includes initial commit)
-        copy_fixture_template(temp_dir.path());
+        // Copy from standard fixture (includes worktrees and remote)
+        let fixture = copy_standard_fixture(temp_dir.path());
 
         // Canonicalize to resolve symlinks (important on macOS where /var is symlink to /private/var)
         let root = canonicalize(&temp_dir.path().join("repo")).unwrap();
@@ -852,18 +1046,22 @@ impl TestRepo {
         let test_config_path = temp_dir.path().join("test-config.toml");
         let git_config_path = temp_dir.path().join("test-gitconfig");
 
+        // Write gitconfig for tests
+        write_test_gitconfig(&git_config_path);
+
         // Bind full snapshot settings (including ANSI cleanup) for all tests
-        let worktrees = HashMap::new();
-        let snapshot_guard = setup_snapshot_settings_for_paths(&root, &worktrees).bind_to_scope();
+        let snapshot_guard =
+            setup_snapshot_settings_for_paths(&root, &fixture.worktrees).bind_to_scope();
 
         let mut repo = Self {
             temp_dir,
             root,
-            worktrees,
-            remote: None,
+            worktrees: fixture.worktrees,
+            remote: Some(fixture.remote),
             test_config_path,
             git_config_path,
             mock_bin_path: None,
+            claude_installed: false,
             _snapshot_guard: snapshot_guard,
         };
 
@@ -907,6 +1105,7 @@ impl TestRepo {
             test_config_path,
             git_config_path,
             mock_bin_path: None,
+            claude_installed: false,
             _snapshot_guard: snapshot_guard,
         };
 
@@ -924,15 +1123,25 @@ impl TestRepo {
         configure_git_cmd(cmd, &self.git_config_path);
     }
 
-    /// Get standard test environment variables as a vector
+    /// Get standard test environment variables as a vector.
     ///
     /// This is useful for PTY tests and other cases where you need environment variables
     /// as a vector rather than setting them on a Command.
+    ///
+    /// ## Related: `configure_cli_command()`
+    ///
+    /// Command-based tests use `configure_cli_command()`. Both functions share common
+    /// variables via `STATIC_TEST_ENV_VARS`. See that function's docs for differences.
     #[cfg_attr(windows, allow(dead_code))] // Used only by unix PTY tests
     pub fn test_env_vars(&self) -> Vec<(String, String)> {
-        vec![
-            ("CLICOLOR_FORCE".to_string(), "1".to_string()),
-            ("COLUMNS".to_string(), "150".to_string()),
+        // Start with shared static env vars
+        let mut vars: Vec<(String, String)> = STATIC_TEST_ENV_VARS
+            .iter()
+            .map(|&(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+
+        // Add path-dependent variables specific to this TestRepo
+        vars.extend([
             (
                 "GIT_CONFIG_GLOBAL".to_string(),
                 self.git_config_path.display().to_string(),
@@ -954,14 +1163,14 @@ impl TestRepo {
                 "XDG_CONFIG_HOME".to_string(),
                 self.home_path().join(".config").display().to_string(),
             ),
-            ("LC_ALL".to_string(), "C".to_string()),
-            ("LANG".to_string(), "C".to_string()),
-            ("SOURCE_DATE_EPOCH".to_string(), TEST_EPOCH.to_string()),
+            ("WT_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
             (
                 "WORKTRUNK_CONFIG_PATH".to_string(),
                 self.test_config_path().display().to_string(),
             ),
-        ]
+        ]);
+
+        vars
     }
 
     /// Configure shell integration for test environment.
@@ -1028,6 +1237,36 @@ impl TestRepo {
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
+    /// Remove fixture worktrees to get a clean state for tests.
+    ///
+    /// The standard fixture includes worktrees for feature-a, feature-b, feature-c.
+    /// Call this method in tests that need a specific worktree state. Also clears
+    /// the worktrees map so `add_worktree` can recreate them if needed.
+    pub fn remove_fixture_worktrees(&mut self) {
+        for branch in &["feature-a", "feature-b", "feature-c"] {
+            let worktree_path = self
+                .root_path()
+                .parent()
+                .unwrap()
+                .join(format!("repo.{}", branch));
+            if worktree_path.exists() {
+                let _ = self
+                    .git_command()
+                    .args([
+                        "worktree",
+                        "remove",
+                        "--force",
+                        worktree_path.to_str().unwrap(),
+                    ])
+                    .output();
+            }
+            // Delete the branch after removing the worktree
+            let _ = self.git_command().args(["branch", "-D", branch]).output();
+            // Remove from worktrees map so add_worktree() can recreate if needed
+            self.worktrees.remove(*branch);
+        }
+    }
+
     /// Stage all changes in a directory.
     pub fn stage_all(&self, dir: &Path) {
         self.run_git_in(dir, &["add", "."]);
@@ -1084,7 +1323,7 @@ impl TestRepo {
     /// ```
     #[must_use]
     pub fn wt_command(&self) -> Command {
-        let mut cmd = Command::new(get_cargo_bin("wt"));
+        let mut cmd = Command::new(wt_bin());
         self.configure_wt_cmd(&mut cmd);
         cmd.current_dir(self.root_path());
         cmd
@@ -1127,6 +1366,29 @@ impl TestRepo {
         &self.root
     }
 
+    /// Get the path to the bare remote repository, if created.
+    pub fn remote_path(&self) -> Option<&Path> {
+        self.remote.as_deref()
+    }
+
+    /// Get the project identifier (canonical path) for this test repo.
+    ///
+    /// Returns the full canonical path of the repository. The standard fixture uses a local
+    /// path remote (`../origin_git`) which doesn't parse as a proper git URL, causing
+    /// worktrunk to fall back to the full canonical path.
+    ///
+    /// Use with TOML literal strings (single quotes) to avoid backslash escaping:
+    /// ```ignore
+    /// format!(r#"[projects.'{}']"#, repo.project_id())
+    /// ```
+    pub fn project_id(&self) -> String {
+        dunce::canonicalize(&self.root)
+            .unwrap_or_else(|_| self.root.clone())
+            .to_str()
+            .unwrap_or("")
+            .to_string()
+    }
+
     /// Get the path to the isolated test config file
     ///
     /// This config path is automatically set via WORKTRUNK_CONFIG_PATH when using
@@ -1143,8 +1405,12 @@ impl TestRepo {
     }
 
     /// Overwrite the isolated WORKTRUNK_CONFIG_PATH used during tests.
+    ///
+    /// Automatically prepends `skip-commit-generation-prompt = true` to prevent
+    /// interactive prompts from appearing in test output.
     pub fn write_test_config(&self, contents: &str) {
-        std::fs::write(&self.test_config_path, contents).unwrap();
+        let full_contents = format!("skip-commit-generation-prompt = true\n{}", contents);
+        std::fs::write(&self.test_config_path, full_contents).unwrap();
     }
 
     /// Get the path to a named worktree
@@ -1188,7 +1454,7 @@ impl TestRepo {
             .unwrap();
     }
 
-    /// Create a commit with a specific age relative to SOURCE_DATE_EPOCH
+    /// Create a commit with a specific age relative to TEST_EPOCH
     ///
     /// This allows creating commits that display specific relative ages
     /// in the Age column (e.g., "10m", "1h", "1d").
@@ -1252,7 +1518,15 @@ impl TestRepo {
     ///
     /// The worktree path follows the default template format: `repo.{branch}`
     /// (sanitized, with slashes replaced by dashes).
+    ///
+    /// If the worktree already exists (from the standard fixture), returns its path
+    /// without creating a new one.
     pub fn add_worktree(&mut self, branch: &str) -> PathBuf {
+        // If worktree already exists (from fixture), just return its path
+        if let Some(path) = self.worktrees.get(branch) {
+            return path.clone();
+        }
+
         let safe_branch = sanitize_branch_name(branch);
         // Use default template path format: ../{{ repo }}.{{ branch }}
         // From {temp_dir}/repo, this resolves to {temp_dir}/repo.{branch}
@@ -1269,9 +1543,24 @@ impl TestRepo {
         canonical_path
     }
 
-    /// Creates a worktree for the main branch (required for merge operations)
+    /// Creates a worktree at a custom path (for testing nested worktrees).
     ///
-    /// This is a convenience method that creates a worktree for the main branch
+    /// Unlike `add_worktree`, this places the worktree at the specified path
+    /// rather than using the default sibling layout.
+    pub fn add_worktree_at_path(&mut self, branch: &str, path: &Path) -> PathBuf {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let path_str = path.to_str().unwrap();
+        self.run_git(&["worktree", "add", "-b", branch, path_str]);
+
+        let canonical_path = canonicalize(path).unwrap();
+        self.worktrees
+            .insert(branch.to_string(), canonical_path.clone());
+        canonical_path
+    }
+
+    /// Creates a worktree for the default branch (required for merge operations)
+    ///
+    /// This is a convenience method that creates a worktree for the default branch
     /// in the standard location expected by merge tests. Returns the path to the
     /// created worktree.
     ///
@@ -1422,9 +1711,23 @@ impl TestRepo {
     /// This creates a bare git repository in the temp directory and configures
     /// it with the specified remote name. The remote will have the same default
     /// branch as the local repository.
+    ///
+    /// If the remote already exists (from fixture), this is a no-op.
     pub fn setup_custom_remote(&mut self, remote_name: &str, default_branch: &str) {
+        // If origin remote already exists (from fixture), just ensure HEAD is set
+        if remote_name == "origin" && self.remote.is_some() {
+            // Set origin/HEAD (fixture may not have this set)
+            self.run_git(&["remote", "set-head", "origin", default_branch]);
+            return;
+        }
+
         // Create bare remote repository
         let remote_path = self.temp_dir.path().join(format!("{}.git", remote_name));
+        if remote_path.exists() {
+            // Remote directory already exists, just use it
+            self.remote = Some(canonicalize(&remote_path).unwrap());
+            return;
+        }
         std::fs::create_dir(&remote_path).unwrap();
 
         self.run_git_in(
@@ -1465,7 +1768,7 @@ impl TestRepo {
     /// Switch the primary worktree to a different branch
     ///
     /// Creates a new branch and switches to it in the primary worktree.
-    /// This is useful for testing scenarios where the primary worktree is not on the main branch.
+    /// This is useful for testing scenarios where the primary worktree is not on the default branch.
     pub fn switch_primary_to(&self, branch: &str) {
         self.run_git(&["switch", "-c", branch]);
     }
@@ -1502,67 +1805,24 @@ impl TestRepo {
     /// - `glab --version`: succeeds (installed)
     /// - `glab auth status`: fails (not authenticated)
     pub fn setup_mock_ci_tools_unauthenticated(&mut self) {
-        use crate::common::mock_commands::write_mock_script;
+        use crate::common::mock_commands::{MockConfig, MockResponse};
 
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
-        // Create mock gh script - installed but not authenticated
-        write_mock_script(
-            &mock_bin,
-            "gh",
-            r#"#!/bin/sh
-# Mock gh: installed but not authenticated
+        // gh: installed but not authenticated
+        MockConfig::new("gh")
+            .version("gh version 2.0.0 (mock)")
+            .command("auth", MockResponse::exit(1))
+            .write(&mock_bin);
 
-case "$1" in
-    --version)
-        echo "gh version 2.0.0 (mock)"
-        exit 0
-        ;;
-    auth)
-        # gh auth status - fail (not authenticated)
-        exit 1
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-"#,
-        );
+        // glab: installed but not authenticated
+        MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(1))
+            .write(&mock_bin);
 
-        // Create mock glab script - installed but not authenticated
-        write_mock_script(
-            &mock_bin,
-            "glab",
-            r#"#!/bin/sh
-# Mock glab: installed but not authenticated
-
-case "$1" in
-    --version)
-        echo "glab version 1.0.0 (mock)"
-        exit 0
-        ;;
-    auth)
-        # glab auth status - fail (not authenticated)
-        exit 1
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-"#,
-        );
-
-        // Create mock claude script - not installed (exit 1 on --version)
-        // Tests can override with setup_mock_claude_installed() if needed
-        write_mock_script(
-            &mock_bin,
-            "claude",
-            r#"#!/bin/sh
-# Mock claude: not installed
-exit 1
-"#,
-        );
+        // claude: not installed (don't create mock - which::which won't find it)
 
         self.mock_bin_path = Some(mock_bin);
     }
@@ -1572,29 +1832,8 @@ exit 1
     /// Call this after setup_mock_ci_tools_unauthenticated() to simulate
     /// Claude Code being available on the system.
     pub fn setup_mock_claude_installed(&mut self) {
-        use crate::common::mock_commands::write_mock_script;
-
-        let mock_bin = self
-            .mock_bin_path
-            .as_ref()
-            .expect("Call setup_mock_ci_tools_unauthenticated first");
-
-        write_mock_script(
-            mock_bin,
-            "claude",
-            r#"#!/bin/sh
-# Mock claude: installed
-case "$1" in
-    --version)
-        echo "Claude Code 1.0.0 (mock)"
-        exit 0
-        ;;
-    *)
-        exit 0
-        ;;
-esac
-"#,
-        );
+        // Mark Claude as installed for test environment
+        self.claude_installed = true;
     }
 
     /// Setup the worktrunk plugin as installed in Claude Code
@@ -1611,6 +1850,20 @@ esac
         .unwrap();
     }
 
+    /// Setup the statusline as configured in Claude Code settings
+    ///
+    /// Creates the settings.json file with the wt statusline command.
+    /// The temp_home must already be set up (via set_temp_home_env on the command).
+    pub fn setup_statusline_configured(temp_home: &std::path::Path) {
+        let claude_dir = temp_home.join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(
+            claude_dir.join("settings.json"),
+            r#"{"statusLine":{"type":"command","command":"wt list statusline --format=claude-code"}}"#,
+        )
+        .unwrap();
+    }
+
     /// Setup mock `gh` that returns configurable PR/CI data
     ///
     /// Use this for testing CI status parsing code. The mock returns JSON data
@@ -1620,83 +1873,175 @@ esac
     /// * `pr_json` - JSON string to return for `gh pr list --json ...`
     /// * `run_json` - JSON string to return for `gh run list --json ...`
     pub fn setup_mock_gh_with_ci_data(&mut self, pr_json: &str, run_json: &str) {
-        use crate::common::mock_commands::write_mock_script;
+        use crate::common::mock_commands::{MockConfig, MockResponse};
 
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
-        // Write JSON to separate files to avoid all escaping issues
-        let pr_json_file = mock_bin.join("pr_data.json");
-        let run_json_file = mock_bin.join("run_data.json");
-        std::fs::write(&pr_json_file, pr_json).unwrap();
-        std::fs::write(&run_json_file, run_json).unwrap();
+        // Write JSON data files
+        std::fs::write(mock_bin.join("pr_data.json"), pr_json).unwrap();
+        std::fs::write(mock_bin.join("run_data.json"), run_json).unwrap();
 
-        // Convert mock_bin path to a format bash can read.
-        // On Windows, convert D:\foo\bar to /d/foo/bar (MSYS2 style).
-        // On Unix, just use the path as-is.
-        let script_dir = {
-            let path_str = mock_bin.to_string_lossy();
-            #[cfg(windows)]
-            {
-                let chars: Vec<char> = path_str.chars().collect();
-                if chars.len() >= 2 && chars[1] == ':' {
-                    // D:\foo\bar -> /d/foo/bar
-                    let drive = chars[0].to_ascii_lowercase();
-                    format!("/{}{}", drive, path_str[2..].replace('\\', "/"))
-                } else {
-                    path_str.replace('\\', "/")
+        // Configure gh mock
+        MockConfig::new("gh")
+            .version("gh version 2.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("pr", MockResponse::file("pr_data.json"))
+            .command("run", MockResponse::file("run_data.json"))
+            .write(&mock_bin);
+
+        // Configure glab mock (fails - no GitLab support)
+        MockConfig::new("glab")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Setup mock `glab` that returns configurable MR/CI data for GitLab
+    ///
+    /// Use this for testing GitLab CI status parsing code. The mock handles the
+    /// two-step MR resolution process:
+    /// - `glab mr list` returns basic MR info (iid, sha, conflicts, etc.)
+    /// - `glab mr view <iid>` returns full MR info including head_pipeline
+    ///
+    /// # Arguments
+    /// * `mr_json` - JSON string for MR data. Should include an `iid` field and
+    ///   optionally `head_pipeline`. This data is used for both `mr list` and
+    ///   `mr view` responses.
+    /// * `project_id` - Optional project ID to return from `glab repo view`
+    ///
+    /// # Note
+    /// The mock automatically handles the compound command matching:
+    /// - "mr list" → returns MR list data
+    /// - "mr view" → returns same data (works because glab mr view returns same fields)
+    pub fn setup_mock_glab_with_ci_data(&mut self, mr_json: &str, project_id: Option<u64>) {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        // Parse the MR JSON to create separate list and view responses
+        // mr list needs: iid (for two-step lookup), sha, has_conflicts, detailed_merge_status, source_project_id, web_url
+        // mr view needs: sha, has_conflicts, detailed_merge_status, head_pipeline, pipeline, web_url
+        //
+        // Since we provide the same JSON for both, we need to ensure iid is present.
+        // The actual glab mr list doesn't return head_pipeline, but our mock can return
+        // it harmlessly - the code will ignore it and do a second lookup.
+
+        // Write JSON data files - same data for list (array) and view (single object)
+        std::fs::write(mock_bin.join("mr_list_data.json"), mr_json).unwrap();
+
+        // For mr view, create separate files for each MR by iid
+        // This allows triple-matching "mr view <iid>" to return the correct MR
+        let mut mock_config = MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("mr list", MockResponse::file("mr_list_data.json"));
+
+        // Parse MR array and create iid-specific view commands
+        // Triple match: "mr view 1" matches before "mr view" (see mock-stub)
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(mr_json)
+            && let Some(arr) = parsed.as_array()
+        {
+            for mr in arr {
+                if let Some(iid) = mr.get("iid").and_then(|v| v.as_u64()) {
+                    let filename = format!("mr_view_{}.json", iid);
+                    let json = serde_json::to_string(mr).unwrap_or_default();
+                    std::fs::write(mock_bin.join(&filename), json).unwrap();
+                    mock_config = mock_config
+                        .command(&format!("mr view {}", iid), MockResponse::file(&filename));
                 }
             }
-            #[cfg(not(windows))]
-            {
-                path_str.to_string()
-            }
+        }
+
+        // Build project ID response
+        let project_id_response = match project_id {
+            Some(id) => format!(r#"{{"id": {}}}"#, id),
+            None => r#"{"error": "not found"}"#.to_string(),
         };
 
-        // Embed SCRIPT_DIR directly to avoid path resolution issues on Windows.
-        // Debug mode: set MOCK_GH_DEBUG=1 to see path resolution info.
-        let script = format!(
-            r#"#!/bin/bash
-# Mock gh command that returns configured JSON data
-# JSON files are in the same directory as this script
-SCRIPT_DIR="{script_dir}"
+        // Configure glab mock with compound command matching
+        // "mr view <iid>" is matched before "mr view" (see mock-stub triple matching)
+        mock_config
+            .command("repo", MockResponse::output(&project_id_response))
+            .command("ci", MockResponse::output("[]"))
+            .write(&mock_bin);
 
-case "$1" in
-    --version)
-        echo "gh version 2.0.0 (mock)"
-        exit 0
-        ;;
-    auth)
-        # gh auth status - succeed immediately
-        exit 0
-        ;;
-    pr)
-        # gh pr list - return PR data from file
-        cat "$SCRIPT_DIR/pr_data.json"
-        exit 0
-        ;;
-    run)
-        # gh run list - return run data from file
-        cat "$SCRIPT_DIR/run_data.json"
-        exit 0
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-"#
-        );
-        write_mock_script(&mock_bin, "gh", &script);
+        // Configure gh mock (fails - no GitHub support)
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
 
-        // Create mock glab script (fails immediately - no GitLab support in this mock)
-        write_mock_script(
-            &mock_bin,
-            "glab",
-            r#"#!/bin/sh
-# Mock glab command that fails fast
-exit 1
-"#,
-        );
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Setup mock glab where mr list succeeds but mr view fails.
+    ///
+    /// Use this to test the error path when `glab mr view` fails after finding an MR.
+    /// The mock returns the MR from mr list but exits with error for mr view.
+    pub fn setup_mock_glab_with_failing_mr_view(&mut self, mr_json: &str, project_id: Option<u64>) {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        std::fs::write(mock_bin.join("mr_list_data.json"), mr_json).unwrap();
+
+        let project_id_response = match project_id {
+            Some(id) => format!(r#"{{"id": {}}}"#, id),
+            None => r#"{"error": "not found"}"#.to_string(),
+        };
+
+        // glab mock: mr list succeeds, but NO mr view commands registered
+        // (falls back to exit code 1)
+        MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("mr list", MockResponse::file("mr_list_data.json"))
+            // No "mr view" commands - will fall back to default exit code 1
+            .command("repo", MockResponse::output(&project_id_response))
+            .command("ci", MockResponse::output("[]"))
+            .write(&mock_bin);
+
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Set up mock glab that returns a rate limit error on `ci list`.
+    ///
+    /// Used to test the `is_retriable_error` path in `detect_gitlab_pipeline`.
+    /// MR list returns empty (no MRs), so the code falls through to pipeline detection
+    /// which then hits the rate limit error.
+    pub fn setup_mock_glab_with_ci_rate_limit(&mut self, project_id: Option<u64>) {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        let project_id_response = match project_id {
+            Some(id) => format!(r#"{{"id": {}}}"#, id),
+            None => r#"{"error": "not found"}"#.to_string(),
+        };
+
+        // glab mock: mr list returns empty (no MRs), ci list fails with rate limit
+        MockConfig::new("glab")
+            .version("glab version 1.0.0 (mock)")
+            .command("auth", MockResponse::exit(0))
+            .command("mr list", MockResponse::output("[]")) // No MRs - triggers ci list fallback
+            .command("repo", MockResponse::output(&project_id_response))
+            .command(
+                "ci",
+                MockResponse::stderr("API rate limit exceeded").with_exit_code(1),
+            )
+            .write(&mock_bin);
+
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
 
         self.mock_bin_path = Some(mock_bin);
     }
@@ -1713,6 +2058,9 @@ exit 1
     /// caller's PATH instead of a hardcoded minimal list.
     pub fn configure_mock_commands(&self, cmd: &mut Command) {
         if let Some(mock_bin) = &self.mock_bin_path {
+            // Tell mock-stub where to find config files directly, avoiding PATH search
+            cmd.env("MOCK_CONFIG_DIR", mock_bin);
+
             // On Windows, env vars are case-insensitive but Rust stores them
             // case-sensitively. Find the actual PATH variable name to avoid
             // creating a duplicate with different case.
@@ -1730,6 +2078,11 @@ exit 1
             paths.insert(0, mock_bin.clone());
             let new_path = std::env::join_paths(&paths).unwrap();
             cmd.env(&path_var_name, new_path);
+        }
+
+        // Override Claude installed status if setup_mock_claude_installed() was called
+        if self.claude_installed {
+            cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "1");
         }
     }
 
@@ -1898,6 +2251,8 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     // Windows: etcetera uses APPDATA for config_dir()
     settings.add_redaction(".env.APPDATA", "[TEST_CONFIG_HOME]");
     settings.add_redaction(".env.PATH", "[PATH]");
+    // Mock commands directory (temp path for mock gh/glab binaries)
+    settings.add_redaction(".env.MOCK_CONFIG_DIR", "[MOCK_CONFIG_DIR]");
 }
 
 /// Create configured insta Settings for snapshot tests
@@ -1905,7 +2260,14 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
 /// This extracts the common settings configuration while allowing the
 /// `assert_cmd_snapshot!` macro to remain in test files for correct module path capture.
 pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
-    setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees)
+    setup_snapshot_settings_impl(repo.root_path(), None)
+}
+
+/// Internal implementation that optionally includes temp_home filter.
+/// The temp_home filter MUST be added before PROJECT_ID filters to take precedence.
+fn setup_snapshot_settings_impl(root: &Path, temp_home: Option<&Path>) -> insta::Settings {
+    let worktrees = HashMap::new(); // Caller doesn't need worktree filters
+    setup_snapshot_settings_for_paths_with_home(root, &worktrees, temp_home)
 }
 
 /// Full snapshot settings - path filters AND ANSI cleanup.
@@ -1915,7 +2277,26 @@ fn setup_snapshot_settings_for_paths(
     root: &Path,
     worktrees: &HashMap<String, PathBuf>,
 ) -> insta::Settings {
-    let mut settings = insta::Settings::clone_current();
+    setup_snapshot_settings_for_paths_with_home(root, worktrees, None)
+}
+
+/// Internal implementation with optional temp_home support.
+///
+/// When `temp_home` is provided, we create fresh settings rather than cloning current settings.
+/// This is critical because TestRepo's snapshot guard may have already added PROJECT_ID filters,
+/// and cloning would inherit those filters which would be applied BEFORE our TEMP_HOME filter.
+fn setup_snapshot_settings_for_paths_with_home(
+    root: &Path,
+    worktrees: &HashMap<String, PathBuf>,
+    temp_home: Option<&Path>,
+) -> insta::Settings {
+    // When temp_home is provided, start fresh to ensure TEMP_HOME filter is applied before
+    // any inherited PROJECT_ID filters. Otherwise, clone current settings for consistency.
+    let mut settings = if temp_home.is_some() {
+        insta::Settings::new()
+    } else {
+        insta::Settings::clone_current()
+    };
     settings.set_snapshot_path("../snapshots");
 
     // Normalize project root path (for test fixtures)
@@ -1993,11 +2374,65 @@ fn setup_snapshot_settings_for_paths(
     );
 
     // Final cleanup: strip any remaining quotes around placeholders.
-    // shell_escape may quote paths, and ANSI codes may appear between quotes and content.
-    // This unified pattern matches all placeholder types: _REPO_, _REPO_.suffix, _WORKTREE_X_
+    // shell_escape may quote paths containing ~ (Windows short path notation like RUNNER~1).
+    // ANSI codes may appear between quotes and content.
+    // This pattern matches placeholders with optional suffixes and subpaths:
+    // - '_REPO_' -> _REPO_
+    // - '_REPO_.feat' -> _REPO_.feat
+    // - '_REPO_.name.bak.20250102-000000' -> _REPO_.name.bak.20250102-000000
+    // - '_REPO_/.config/wt.toml' -> _REPO_/.config/wt.toml
+    // - '_WORKTREE_A_/subpath' -> _WORKTREE_A_/subpath
     settings.add_filter(
-        r"'(?:\x1b\[[0-9;]*m)*(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?)(?:\x1b\[[0-9;]*m)*'",
+        r"'(?:\x1b\[[0-9;]*m)*(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_.-]+)?(?:/[^']*)?)(?:\x1b\[[0-9;]*m)*'",
         "$1",
+    );
+
+    // Also strip quotes around bracket placeholders like [PROJECT_ID]
+    // NOTE: This filter runs BEFORE PROJECT_ID replacement, so it handles
+    // cases where ANSI codes appear between quotes and placeholders.
+    // A simpler post-replacement filter is added after PROJECT_ID filters.
+    settings.add_filter(
+        r"'(?:\x1b\[[0-9;]*m)*(\[[A-Z_]+\])(?:\x1b\[[0-9;]*m)*'",
+        "$1",
+    );
+    // Also strip quotes around paths that include subdirectories (e.g., '_REPO_/.config/wt.toml')
+    // On Windows, shell_escape quotes paths containing ':' so full paths get quoted.
+    settings.add_filter(
+        r"'(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?/[^']+)'",
+        "$1",
+    );
+    // Normalize git diff header prefixes: a/_REPO_ -> a_REPO_, b/_REPO_ -> b_REPO_
+    // On Windows, git diff --no-index with absolute paths produces a/C:/... which becomes a/_REPO_
+    // On Unix, relative paths produce a/repo/... which becomes a_REPO_
+    // Note: [TEMP_HOME] filters are added later, after TEMP_HOME replacement happens.
+    settings.add_filter(r"(diff --git )a/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1a$2");
+    settings.add_filter(r" b/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", " b$1");
+    settings.add_filter(r"(--- )a/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1a$2");
+    settings.add_filter(r"(\+\+\+ )b/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1b$2");
+
+    // Windows git diff may produce headers without "diff --git a" prefix.
+    // Pattern: _REPO_/path1 b_REPO_/path2 (just paths with b prefix for second)
+    // Match bold ANSI + _REPO_ path + space + b + _REPO_ path
+    settings.add_filter(
+        r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+) b(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+)",
+        "$1diff --git a$2 b$3",
+    );
+    // Windows may have "  --git a_REPO_" with leading spaces after ANSI reset (missing "diff" and bold).
+    // Match: ANSI reset + one or more spaces + "--git a" pattern
+    // Replace with: ANSI reset + space + bold + "diff --git a" to match Unix format
+    settings.add_filter(
+        r"(\x1b\[0m) +--git a(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)",
+        "$1 \x1b[1mdiff --git a$2",
+    );
+    // Windows may also omit --- a prefix on the source file line
+    settings.add_filter(r"(--- )(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)", "$1a$2");
+    // Windows may also omit +++ b prefix on the destination file line
+    settings.add_filter(r"(\+\+\+ )(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)", "$1b$2");
+    // Windows may output bare path for --- line: \x1b[1m_REPO_/...\x1b[m (no "--- a")
+    // Add the missing "--- a" prefix.
+    settings.add_filter(
+        r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\x1b]+\.toml)(\x1b\[m)",
+        "$1--- a$2$3",
     );
 
     // Normalize syntax highlighting around placeholders.
@@ -2009,6 +2444,15 @@ fn setup_snapshot_settings_for_paths(
     settings.add_filter(
         r"\x1b\[2m \x1b\[0m\x1b\[2m(?:\x1b\[32m)?(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?)(?:\x1b\[0m)?\x1b\[2m \x1b\[0m",
         "\x1b[2m $1 \x1b[0m",
+    );
+
+    // Strip green ANSI highlighting from _REPO_ paths.
+    // On Windows, tree-sitter may highlight paths with green (\x1b[32m) even when not quoted.
+    // Example: \x1b[0m\x1b[2m\x1b[32m_REPO_/.config/wt.toml\x1b[0m\x1b[2m
+    // Strip ANSI codes before/after the path when green highlighting is present.
+    settings.add_filter(
+        r"(?:\x1b\[\d+m)*\x1b\[32m(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:/[^\x1b\s]+)?)(?:\x1b\[\d+m)*",
+        "$1",
     );
 
     // Normalize WORKTRUNK_CONFIG_PATH temp paths in stdout/stderr output
@@ -2024,6 +2468,14 @@ fn setup_snapshot_settings_for_paths(
         r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-config\.toml'?",
         "[TEST_CONFIG]",
     );
+    // Strip ANSI codes that may wrap [TEST_CONFIG*] placeholders.
+    // On Windows, tree-sitter may add ANSI codes around paths even without quotes.
+    // Example: \x1b[0m\x1b[2m[TEST_CONFIG_NEW]\x1b[2m
+    // Match: optional ANSI codes + [TEST_CONFIG...] + optional ANSI codes -> just the placeholder
+    settings.add_filter(
+        r"(?:\x1b\[\d+m)+(\[TEST_CONFIG(?:_NEW)?\])(?:\x1b\[\d+m)+",
+        "$1",
+    );
 
     // Normalize GIT_CONFIG_GLOBAL temp paths
     // (?:[A-Z]:)? handles Windows drive letters
@@ -2031,6 +2483,123 @@ fn setup_snapshot_settings_for_paths(
         r"(?:[A-Z]:)?/[^\s]+/\.tmp[^/]+/test-gitconfig",
         "[TEST_GIT_CONFIG]",
     );
+
+    // TEMP_HOME filter MUST come before PROJECT_ID filters to take precedence.
+    // Otherwise, paths like /tmp/.tmpXXX/.config/worktrunk/config.toml would match
+    // the PROJECT_ID filter first.
+    //
+    // We replace the full temp_home path prefix with [TEMP_HOME], so paths like
+    // /tmp/.tmpABC/.config/worktrunk/config.toml become [TEMP_HOME]/.config/worktrunk/config.toml
+    if let Some(temp_home) = temp_home {
+        // Get both the original path and the canonicalized path - they may differ on Windows
+        // due to short path names (e.g., RUNNER~1 vs runneradmin) or other normalization.
+        let temp_home_original = temp_home.to_string_lossy().replace('\\', "/");
+        let temp_home_canonical =
+            canonicalize(temp_home).unwrap_or_else(|_| temp_home.to_path_buf());
+        let temp_home_str = temp_home_canonical.to_string_lossy().replace('\\', "/");
+
+        // On Windows, paths may be quoted by shell_escape due to ':' in drive letters.
+        // Add filters for both quoted and unquoted variants, for both original and canonical paths.
+        if temp_home_str.contains(':') {
+            // Quoted canonical path
+            settings.add_filter(
+                &format!("'{}", regex::escape(&temp_home_str)),
+                "'[TEMP_HOME]",
+            );
+            // Quoted original path (may differ from canonical)
+            if temp_home_original != temp_home_str {
+                settings.add_filter(
+                    &format!("'{}", regex::escape(&temp_home_original)),
+                    "'[TEMP_HOME]",
+                );
+            }
+        }
+        // Unquoted canonical path
+        settings.add_filter(&regex::escape(&temp_home_str), "[TEMP_HOME]");
+        // Unquoted original path (may differ from canonical)
+        if temp_home_original != temp_home_str {
+            settings.add_filter(&regex::escape(&temp_home_original), "[TEMP_HOME]");
+        }
+
+        // On macOS, canonicalize returns /private/var/... but git diff output shows /var/...
+        // Add both variants to catch all cases
+        if temp_home_str.starts_with("/private/") {
+            let without_private = &temp_home_str["/private".len()..];
+            settings.add_filter(&regex::escape(without_private), "[TEMP_HOME]");
+        }
+
+        // [TEMP_HOME] post-processing filters - must run AFTER the replacement above.
+
+        // Strip ANSI sequences immediately before [TEMP_HOME] paths.
+        // On Windows, tree-sitter highlights paths with green (\x1b[32m) inside mv commands.
+        // The output has: ...code (space) code code [TEMP_HOME]/path code code...
+        // We strip ONLY the codes between space and [TEMP_HOME], keeping codes elsewhere.
+        // Pattern: (space)(ANSI codes)(optional quote)([TEMP_HOME]) -> (space)(quote)([TEMP_HOME])
+        // The optional quote handles Windows where paths may be quoted: 'C:/...'
+        settings.add_filter(r"( )(?:\x1b\[[0-9;]*m)+('?)(\[TEMP_HOME\]/)", "$1$2$3");
+        // Strip trailing ANSI codes after [TEMP_HOME] paths.
+        // Match path followed by one or more ANSI codes.
+        settings.add_filter(r"(\[TEMP_HOME\]/[^\x1b\s]+)(?:\x1b\[[0-9;]*m)+", "$1");
+
+        // Strip quotes around [TEMP_HOME] paths (Windows shell_escape quotes paths with ':')
+        // Also handles git diff quoted format which lacks a/b prefixes.
+        settings.add_filter(r"'\[TEMP_HOME\](/[^']+)'", "[TEMP_HOME]$1");
+
+        // Normalize git diff header prefixes for [TEMP_HOME]:
+        // Unix: a/[TEMP_HOME] -> a[TEMP_HOME], b/[TEMP_HOME] -> b[TEMP_HOME]
+        settings.add_filter(r"(diff --git )a/(\[TEMP_HOME\])", "$1a$2");
+        settings.add_filter(r" b/(\[TEMP_HOME\])", " b$1");
+        settings.add_filter(r"(--- )a/(\[TEMP_HOME\])", "$1a$2");
+        settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\])", "$1b$2");
+
+        // Windows git diff uses different format for absolute paths.
+        // After quote stripping, the diff header may or may not have "diff --git " prefix,
+        // and may or may not have a/b prefixes. Normalize to Unix format.
+
+        // Pattern 1: Has "diff --git " but no a/b prefixes
+        // diff --git [TEMP_HOME]/a [TEMP_HOME]/b -> diff --git a[TEMP_HOME]/a b[TEMP_HOME]/b
+        settings.add_filter(
+            r"(diff --git )(\[TEMP_HOME\]/[^\s]+) (\[TEMP_HOME\]/)",
+            "$1a$2 b$3",
+        );
+
+        // Pattern 2: Windows git diff header with only b prefix present.
+        // Windows git diff --no-index may produce: path1 bpath2 (without diff --git a)
+        // After path replacement: [TEMP_HOME]/a b[TEMP_HOME]/b
+        // Add the full header format to match Unix.
+        settings.add_filter(
+            r"(\x1b\[1m)(\[TEMP_HOME\]/[^\s]+) b(\[TEMP_HOME\]/[^\s]+)",
+            "$1diff --git a$2 b$3",
+        );
+
+        // Pattern 3: Windows may have "  --git a[path]" with leading spaces after ANSI (missing "diff" and bold).
+        // Match: ANSI reset + one or more spaces + "--git a" pattern
+        // Replace with: ANSI reset + space + bold + "diff --git a" to match Unix format
+        settings.add_filter(
+            r"(\x1b\[0m) +--git a(\[TEMP_HOME\]/)",
+            "$1 \x1b[1mdiff --git a$2",
+        );
+
+        // --- [TEMP_HOME]/... -> --- a[TEMP_HOME]/... (Unix has slash, remove it)
+        settings.add_filter(r"(--- )a/(\[TEMP_HOME\]/)", "$1a$2");
+        // --- [TEMP_HOME]/... -> --- a[TEMP_HOME]/... (Windows: add missing a prefix)
+        settings.add_filter(r"(--- )(\[TEMP_HOME\]/)", "$1a$2");
+
+        // +++ [TEMP_HOME]/... -> +++ b[TEMP_HOME]/... (Unix has slash, remove it)
+        settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\]/)", "$1b$2");
+        // +++ [TEMP_HOME]/... -> +++ b[TEMP_HOME]/... (Windows: add missing b prefix)
+        settings.add_filter(r"(\+\+\+ )(\[TEMP_HOME\]/)", "$1b$2");
+
+        // Windows git diff may have bare path without --- prefix at all.
+        // Match: bold ANSI + bare [TEMP_HOME] path that's NOT preceded by diff/---/+++
+        // This catches the case where git outputs just the path on its own line.
+        // Look for standalone [TEMP_HOME]/...config.toml (trailing ANSI codes may be stripped).
+        // Use negative lookbehind (not supported) - instead match newline + gutter + bold.
+        settings.add_filter(
+            r"(\x1b\[1m)(\[TEMP_HOME\]/[^\s\x1b]+\.toml)(\x1b\[m|\n|$)",
+            "$1--- a$2$3",
+        );
+    }
 
     // Normalize temp directory paths in project identifiers (approval prompts)
     // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]
@@ -2047,12 +2616,24 @@ fn setup_snapshot_settings_for_paths(
         r"[A-Z]:/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/[^)'\s\x1b]+",
         "[PROJECT_ID]",
     );
+    // Windows quoted paths: shell_escape quotes paths containing ':' (drive letter)
+    // Example: 'C:/Users/user/AppData/Local/Temp/.tmpXXXXXX/repo/.config/wt.toml' -> [PROJECT_ID]
+    settings.add_filter(
+        r"'[A-Z]:/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/[^']+'",
+        "[PROJECT_ID]",
+    );
 
     // Generic tilde-prefixed paths that aren't repo or worktree paths.
     // On CI, HOME is a temp directory, so paths under HOME become ~/something.
     // This catches paths like ~/wrong-path that don't follow the repo naming convention.
     // MUST come AFTER specific ~/repo patterns so they match first.
-    settings.add_filter(r"~/[a-zA-Z0-9_-]+", "[PROJECT_ID]");
+    // Uses _PARENT_ prefix (matching _REPO_ convention) and preserves directory name.
+    settings.add_filter(r"~/([a-zA-Z0-9_-]+)", "_PARENT_/$1");
+
+    // Strip quotes around [PROJECT_ID] after replacement.
+    // On Windows, paths inside quotes get replaced but quotes remain: 'C:/...' -> '[PROJECT_ID]'
+    // This filter MUST come AFTER PROJECT_ID filters to clean up the result.
+    settings.add_filter(r"'\[PROJECT_ID\]'", "[PROJECT_ID]");
 
     // Normalize HOME temp directory in snapshots (stdout/stderr content)
     // Matches any temp directory path (without trailing filename)
@@ -2184,13 +2765,12 @@ fn setup_snapshot_settings_for_paths(
 ///
 /// This extends `setup_snapshot_settings` by adding a filter for the temporary home directory.
 /// Use this for tests that need both a TestRepo and a temporary home (for user config testing).
+///
+/// IMPORTANT: The temp_home filter is passed to setup_snapshot_settings_impl so it gets added
+/// BEFORE the generic [PROJECT_ID] filters. Otherwise, paths like /tmp/.tmpXXX/.config/worktrunk/config.toml
+/// would match [PROJECT_ID] first.
 pub fn setup_snapshot_settings_with_home(repo: &TestRepo, temp_home: &TempDir) -> insta::Settings {
-    let mut settings = setup_snapshot_settings(repo);
-    settings.add_filter(
-        &regex::escape(&temp_home.path().to_string_lossy()),
-        "[TEMP_HOME]",
-    );
-    settings
+    setup_snapshot_settings_impl(repo.root_path(), Some(temp_home.path()))
 }
 
 /// Create configured insta Settings for snapshot tests with only a temporary home directory
@@ -2200,8 +2780,11 @@ pub fn setup_snapshot_settings_with_home(repo: &TestRepo, temp_home: &TempDir) -
 pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
+    // Canonicalize to match paths in output (macOS /var -> /private/var)
+    let canonical_home =
+        canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().to_path_buf());
     settings.add_filter(
-        &regex::escape(&temp_home.path().to_string_lossy()),
+        &regex::escape(&canonical_home.to_string_lossy()),
         "[TEMP_HOME]",
     );
     settings.add_filter(r"\\", "/");
@@ -2235,6 +2818,58 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     settings
 }
 
+// =============================================================================
+// PTY Test Filters
+// =============================================================================
+//
+// PTY-based tests (shell wrappers, approval prompts, TUI select) capture output
+// from pseudo-terminals. This output has platform-specific artifacts that need
+// normalization for stable snapshots.
+//
+// These filters consolidate patterns that were previously scattered across
+// individual `normalize_*` functions in each test file. Using insta filters
+// instead of custom normalization functions:
+// - Reduces code duplication
+// - Ensures consistent normalization across all PTY tests
+// - Makes it easier to add new normalizations in one place
+//
+// Usage:
+//   let mut settings = insta::Settings::clone_current();
+//   add_pty_filters(&mut settings);
+//   settings.bind(|| {
+//       assert_snapshot!(output);
+//   });
+
+/// Add filters for PTY-specific artifacts that vary between platforms.
+///
+/// This handles:
+/// - macOS PTY control sequences (^D followed by backspaces)
+/// - Leading ANSI reset codes that vary between macOS and Linux
+///
+/// Note: CRLF normalization is done eagerly in PTY exec functions, not here.
+pub fn add_pty_filters(settings: &mut insta::Settings) {
+    // macOS PTYs emit ^D (literal caret-D) followed by backspaces (0x08)
+    // when EOF is signaled. Linux PTYs don't. Strip these for consistency.
+    settings.add_filter(r"\^D\x08+", "");
+
+    // Remove redundant leading reset codes per line.
+    // macOS and Linux PTYs generate ANSI codes slightly differently.
+    // This handles lines that start with ESC[0m (reset).
+    settings.add_filter(r"(?m)^\x1b\[0m", "");
+}
+
+/// Add filters for binary paths (target/debug/wt) in PTY output.
+///
+/// Test binaries are run from the cargo target directory, which varies.
+pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
+    // Match paths ending in target/debug/wt or target/release/wt
+    // Also handles llvm-cov-target used by cargo-llvm-cov
+    settings.add_filter(
+        r"[^\s]+/target/(?:llvm-cov-target/)?(?:debug|release)/wt",
+        "[BIN]",
+    );
+}
+
 /// Create a configured Command for snapshot testing
 ///
 /// This extracts the common command setup while allowing the test file
@@ -2253,7 +2888,7 @@ pub fn make_snapshot_cmd_with_global_flags(
     cwd: Option<&Path>,
     global_flags: &[&str],
 ) -> Command {
-    let mut cmd = Command::new(insta_cmd::get_cargo_bin("wt"));
+    let mut cmd = Command::new(wt_bin());
     repo.configure_wt_cmd(&mut cmd);
     cmd.args(global_flags)
         .arg(subcommand)
@@ -2593,7 +3228,7 @@ mod tests {
     fn test_unix_to_iso8601() {
         // 2025-01-01T00:00:00Z
         assert_eq!(unix_to_iso8601(1735689600), "2025-01-01T00:00:00Z");
-        // 2025-01-02T00:00:00Z (SOURCE_DATE_EPOCH)
+        // 2025-01-02T00:00:00Z (TEST_EPOCH)
         assert_eq!(unix_to_iso8601(1735776000), "2025-01-02T00:00:00Z");
         // 2024-12-31T00:00:00Z (one day before 2025-01-01)
         assert_eq!(unix_to_iso8601(1735603200), "2024-12-31T00:00:00Z");

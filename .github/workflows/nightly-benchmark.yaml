@@ -1,4 +1,5 @@
 name: nightly-benchmark
+# Runner versions pinned; see ci.yaml header comment for rationale.
 
 on:
   schedule:
@@ -11,7 +12,7 @@ env:
 
 jobs:
   benchmark:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
       uses: actions/checkout@v6
@@ -20,7 +21,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: 💰 Rust repo cache
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: target/bench-repos
         key: bench-repos-rust-${{ runner.os }}

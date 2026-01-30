@@ -15,17 +15,17 @@ branch refs/heads/feature
 ";
 
     let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-    assert_eq!(worktrees.len(), 2);
+    let [main_wt, feature_wt]: [WorktreeInfo; 2] = worktrees.try_into().unwrap();
 
-    assert_eq!(worktrees[0].path, PathBuf::from("/path/to/main"));
-    assert_eq!(worktrees[0].head, "abcd1234");
-    assert_eq!(worktrees[0].branch, Some("main".to_string()));
-    assert!(!worktrees[0].bare);
-    assert!(!worktrees[0].detached);
+    assert_eq!(main_wt.path, PathBuf::from("/path/to/main"));
+    assert_eq!(main_wt.head, "abcd1234");
+    assert_eq!(main_wt.branch, Some("main".to_string()));
+    assert!(!main_wt.bare);
+    assert!(!main_wt.detached);
 
-    assert_eq!(worktrees[1].path, PathBuf::from("/path/to/feature"));
-    assert_eq!(worktrees[1].head, "efgh5678");
-    assert_eq!(worktrees[1].branch, Some("feature".to_string()));
+    assert_eq!(feature_wt.path, PathBuf::from("/path/to/feature"));
+    assert_eq!(feature_wt.head, "efgh5678");
+    assert_eq!(feature_wt.branch, Some("feature".to_string()));
 }
 
 #[test]
@@ -37,9 +37,9 @@ detached
 ";
 
     let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-    assert_eq!(worktrees.len(), 1);
-    assert!(worktrees[0].detached);
-    assert_eq!(worktrees[0].branch, None);
+    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
+    assert!(wt.detached);
+    assert_eq!(wt.branch, None);
 }
 
 #[test]
@@ -108,8 +108,8 @@ locked reason for lock
 ";
 
     let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-    assert_eq!(worktrees.len(), 1);
-    assert_eq!(worktrees[0].locked, Some("reason for lock".to_string()));
+    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
+    assert_eq!(wt.locked, Some("reason for lock".to_string()));
 }
 
 #[test]
@@ -121,8 +121,8 @@ bare
 ";
 
     let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-    assert_eq!(worktrees.len(), 1);
-    assert!(worktrees[0].bare);
+    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
+    assert!(wt.bare);
 }
 
 #[test]
@@ -332,9 +332,9 @@ locked
 ";
 
     let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-    assert_eq!(worktrees.len(), 1);
+    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
     // Empty lock reason should still be recorded
-    assert_eq!(worktrees[0].locked, Some(String::new()));
+    assert_eq!(wt.locked, Some(String::new()));
 }
 
 #[test]
@@ -347,15 +347,9 @@ prunable gitdir file points to non-existent location
 ";
 
     let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-    assert_eq!(worktrees.len(), 1);
-    assert!(worktrees[0].prunable.is_some());
-    assert!(
-        worktrees[0]
-            .prunable
-            .as_ref()
-            .unwrap()
-            .contains("non-existent")
-    );
+    let [wt]: [WorktreeInfo; 1] = worktrees.try_into().unwrap();
+    assert!(wt.prunable.is_some());
+    assert!(wt.prunable.as_ref().unwrap().contains("non-existent"));
 }
 
 #[test]
@@ -379,12 +373,13 @@ detached
 ";
 
     let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
-    assert_eq!(worktrees.len(), 4);
-    assert_eq!(worktrees[0].branch, Some("main".to_string()));
-    assert_eq!(worktrees[1].branch, Some("feature-a".to_string()));
-    assert_eq!(worktrees[2].branch, Some("feature-b".to_string()));
-    assert!(worktrees[3].detached);
-    assert_eq!(worktrees[3].branch, None);
+    let [main_wt, feature_a, feature_b, detached_wt]: [WorktreeInfo; 4] =
+        worktrees.try_into().unwrap();
+    assert_eq!(main_wt.branch, Some("main".to_string()));
+    assert_eq!(feature_a.branch, Some("feature-a".to_string()));
+    assert_eq!(feature_b.branch, Some("feature-b".to_string()));
+    assert!(detached_wt.detached);
+    assert_eq!(detached_wt.branch, None);
 }
 
 #[test]

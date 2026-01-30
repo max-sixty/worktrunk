@@ -1,7 +1,9 @@
 use crate::common::{
-    DAY, HOUR, MINUTE, TestRepo, list_snapshots, repo, repo_with_remote, wt_command,
+    DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd,
+    mock_commands::create_mock_llm_quickstart, repo, repo_with_remote, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
+use path_slash::PathExt as _;
 use rstest::rstest;
 
 /// Creates worktrees with specific timestamps for ordering tests.
@@ -125,7 +127,8 @@ fn test_list_previous_worktree_gutter(mut repo: TestRepo) {
     cmd.args(["switch", "main"]).current_dir(&feature_path);
     cmd.output().unwrap();
 
-    // Now list should show `-` for feature (the previous worktree, target of `wt switch -`)
+    // List shows previous worktree with `+` (same as regular worktrees).
+    // The previous worktree is the target of `wt switch -`.
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
@@ -398,6 +401,83 @@ fn test_list_with_remotes_filters_tracked_branches(#[from(repo_with_remote)] rep
 }
 
 #[rstest]
+fn test_list_with_remotes_and_full(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create remote-only branches (no local tracking)
+    repo.create_branch("feature-remote");
+    repo.push_branch("feature-remote");
+    repo.run_git(&["branch", "-D", "feature-remote"]);
+
+    // Set a GitHub-style URL AFTER pushing so platform detection works
+    // This exercises the remote_hint path in get_platform_for_repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // Run with --full to trigger CiBranchName::from_branch_ref for remote branches
+    // This exercises the is_remote=true code path even without gh/glab auth
+    // (CI detection will return None, but the branch parsing is still covered)
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.args(["--remotes", "--full"]);
+        cmd
+    });
+}
+
+#[rstest]
+fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a remote-tracking ref for a non-existent remote to exercise the
+    // fallback path in CiBranchName::from_branch_ref (lines 64-75)
+    // This simulates a ref that remains after a remote is deleted
+    let head_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap()
+        .stdout;
+    let head_sha = String::from_utf8_lossy(&head_sha);
+    let head_sha = head_sha.trim();
+    repo.run_git(&[
+        "update-ref",
+        "refs/remotes/deleted-remote/orphaned-branch",
+        head_sha,
+    ]);
+
+    // Verify the ref exists but the remote doesn't
+    let remotes = repo.git_command().args(["remote"]).output().unwrap().stdout;
+    let remotes = String::from_utf8_lossy(&remotes);
+    assert!(
+        !remotes.contains("deleted-remote"),
+        "deleted-remote should not exist"
+    );
+
+    // Run with --remotes --full to trigger the fallback path
+    // The orphaned ref should be parsed using split_once('/') as fallback
+    // Note: We don't use snapshot testing here because the spinner character
+    // in stderr is non-deterministic (timing-dependent)
+    let output = repo
+        .wt_command()
+        .args(["list", "--remotes", "--full"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "command should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("deleted-remote/orphaned-branch"),
+        "should show orphaned remote branch in output: {stdout}"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown remote 'deleted-remote'"),
+        "should warn about unknown remote: {stderr}"
+    );
+}
+
+#[rstest]
 fn test_list_json_with_display_fields(mut repo: TestRepo) {
     repo.commit("Initial commit on main");
 
@@ -517,8 +597,34 @@ fn test_list_primary_on_different_branch(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
+/// NOTE: This test is used for doc generation (claude-code.md). It removes fixture
+/// worktrees to produce clean output.
+/// TODO: Consider extracting fixture cleanup into a helper function shared with
+/// setup_readme_example_repo.
 #[rstest]
 fn test_list_with_user_marker(mut repo: TestRepo) {
+    // Remove fixture worktrees for clean doc output (used by claude-code.md)
+    for branch in &["feature-a", "feature-b", "feature-c"] {
+        let worktree_path = repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{}", branch));
+        if worktree_path.exists() {
+            let _ = repo
+                .git_command()
+                .args([
+                    "worktree",
+                    "remove",
+                    "--force",
+                    worktree_path.to_str().unwrap(),
+                ])
+                .output();
+        }
+        // Delete the branch after removing the worktree
+        let _ = repo.git_command().args(["branch", "-D", branch]).output();
+    }
+
     repo.commit_with_age("Initial commit", DAY);
 
     // Branch ahead of main with commits and user marker 🤖
@@ -652,6 +758,175 @@ fn test_list_user_marker_with_special_characters(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
+// =============================================================================
+// Quick Start Examples
+// =============================================================================
+//
+// These functions create minimal repos for Quick Start documentation.
+// The examples show the simplest workflow: create → list → merge.
+
+/// Remove fixture worktrees to start with a clean main-only repo.
+///
+/// The standard TestRepo fixture includes feature-a, feature-b, feature-c.
+/// Doc examples need clean output without these.
+fn remove_fixture_worktrees(repo: &mut TestRepo) {
+    for branch in &["feature-a", "feature-b", "feature-c"] {
+        let worktree_path = repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{}", branch));
+        if worktree_path.exists() {
+            let _ = repo
+                .git_command()
+                .args([
+                    "worktree",
+                    "remove",
+                    "--force",
+                    worktree_path.to_str().unwrap(),
+                ])
+                .output();
+        }
+        let _ = repo.git_command().args(["branch", "-D", branch]).output();
+    }
+}
+
+/// Set up a minimal repo with just main branch.
+///
+/// Creates a simple codebase:
+/// - README.md with project description
+/// - lib.rs with a simple function
+/// - Remote configured and pushed
+///
+/// Used as base for both Quick Start and full README examples.
+fn setup_quickstart_base(repo: &mut TestRepo) {
+    remove_fixture_worktrees(repo);
+
+    // Suppress the "customize worktree locations" hint for clean snapshots
+    repo.run_git(&["config", "worktrunk.hints.worktree-path", "true"]);
+
+    // Simple README
+    std::fs::write(
+        repo.root_path().join("README.md"),
+        "# My Project\n\nA Rust application.\n",
+    )
+    .unwrap();
+
+    // Simple lib.rs
+    std::fs::write(
+        repo.root_path().join("lib.rs"),
+        r#"/// Adds two numbers.
+pub fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_add() {
+        assert_eq!(add(2, 3), 5);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    repo.run_git(&["add", "README.md", "lib.rs"]);
+    repo.commit_staged_with_age("Initial commit", DAY, repo.root_path());
+    repo.setup_remote("main");
+}
+
+/// Set up a Quick Start example repo with main + feature-auth.
+///
+/// Creates a simple scenario:
+/// - main: Initial codebase
+/// - feature-auth: Uncommitted changes adding authentication (WIP state)
+///
+/// Returns the feature-auth worktree path.
+fn setup_quickstart_repo(repo: &mut TestRepo) -> std::path::PathBuf {
+    setup_quickstart_base(repo);
+
+    // Create feature-auth worktree
+    let feature_auth = repo.add_worktree("feature-auth");
+
+    // Add authentication module (not committed - realistic WIP state)
+    std::fs::write(
+        feature_auth.join("auth.rs"),
+        r#"//! Authentication module for user session management.
+
+use std::time::{Duration, SystemTime};
+
+/// A user session with token and expiry.
+pub struct Session {
+    token: String,
+    expires_at: SystemTime,
+}
+
+impl Session {
+    /// Creates a new session with the given token and TTL.
+    pub fn new(token: String, ttl: Duration) -> Self {
+        Self {
+            token,
+            expires_at: SystemTime::now() + ttl,
+        }
+    }
+
+    /// Returns true if the session has not expired.
+    pub fn is_valid(&self) -> bool {
+        SystemTime::now() < self.expires_at
+    }
+
+    /// Validates the token format.
+    pub fn validate_token(token: &str) -> bool {
+        token.len() >= 32 && token.chars().all(|c| c.is_ascii_alphanumeric())
+    }
+}
+
+/// Checks if user is authenticated with a valid session.
+pub fn is_authenticated(session: Option<&Session>) -> bool {
+    session.map(|s| s.is_valid()).unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_session_validity() {
+        let session = Session::new("a".repeat(32), Duration::from_secs(3600));
+        assert!(session.is_valid());
+    }
+
+    #[test]
+    fn test_validate_token() {
+        assert!(!Session::validate_token("short"));
+        assert!(Session::validate_token(&"x".repeat(32)));
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    // Update lib.rs to include the new module
+    let lib_content = std::fs::read_to_string(feature_auth.join("lib.rs")).unwrap();
+    std::fs::write(
+        feature_auth.join("lib.rs"),
+        format!("mod auth;\n\n{}", lib_content),
+    )
+    .unwrap();
+
+    // Stage all changes (but don't commit - WIP state for wt list demo)
+    repo.run_git_in(&feature_auth, &["add", "auth.rs", "lib.rs"]);
+
+    feature_auth
+}
+
+// =============================================================================
+// Full README Examples
+// =============================================================================
+
 /// Set up a repo for README examples showing realistic worktree states.
 ///
 /// **Project context**: API modernization — migrating from legacy handlers to REST,
@@ -691,7 +966,14 @@ fn test_list_user_marker_with_special_characters(mut repo: TestRepo) {
 ///   - `⎇` branch without worktree
 ///
 /// Returns feature_api_path for running commands from feature-api.
+///
+/// NOTE: This function is used for doc generation. It removes fixture worktrees
+/// to produce clean output for README/docs. If you need the fixture worktrees,
+/// use a different setup function.
 fn setup_readme_example_repo(repo: &mut TestRepo) -> std::path::PathBuf {
+    // Start with clean base (removes fixture worktrees)
+    remove_fixture_worktrees(repo);
+
     // === Set up main branch with initial codebase ===
     // Main has a working API with security issues that fix-auth will harden
     std::fs::write(
@@ -1455,7 +1737,7 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
 
     // Build the cache JSON (matches CachedCiStatus struct)
     let cache_json = format!(
-        r#"{{"status":{{"ci_status":"{}","source":"{}","is_stale":{}}},"checked_at":{},"head":"{}"}}"#,
+        r#"{{"status":{{"ci_status":"{}","source":"{}","is_stale":{}}},"checked_at":{},"head":"{}","branch":"{}"}}"#,
         status,
         source,
         is_stale,
@@ -1463,7 +1745,8 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs(),
-        head
+        head,
+        branch
     );
 
     // Get git common dir for cache location
@@ -1485,14 +1768,173 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     let cache_dir = git_path.join("wt-cache").join("ci-status");
     std::fs::create_dir_all(&cache_dir).unwrap();
 
-    // Sanitize branch name for filename (replace / and \ with -)
-    let safe_branch: String = branch
-        .chars()
-        .map(|c| if c == '/' || c == '\\' { '-' } else { c })
-        .collect();
+    // Use the same sanitization as production code for cache filenames
+    let safe_branch = worktrunk::path::sanitize_for_filename(branch);
     let cache_file = cache_dir.join(format!("{safe_branch}.json"));
     std::fs::write(&cache_file, &cache_json).unwrap();
 }
+
+// =============================================================================
+// Quick Start Snapshot Tests
+// =============================================================================
+
+/// Generate Quick Start example: `wt switch --create feature-auth` output
+///
+/// Shows the switch output when creating a new worktree from main.
+/// Sets WORKTRUNK_DIRECTIVE_FILE to simulate shell integration being active,
+/// which suppresses the "Cannot change directory" warning.
+/// Output: tests/snapshots/integration__integration_tests__list__quickstart_switch.snap
+#[rstest]
+fn test_quickstart_switch(mut repo: TestRepo) {
+    setup_quickstart_base(&mut repo);
+    // Create a temp file for the directive outside the repo to avoid making main dirty
+    let directive_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(".wt-directive-temp");
+    std::fs::write(&directive_file, "").unwrap();
+    assert_cmd_snapshot!("quickstart_switch", {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature-auth"], None);
+        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
+        cmd
+    });
+}
+
+/// Generate Quick Start example: Simple `wt list` output
+///
+/// Shows minimal 2-worktree scenario: main + feature-auth.
+/// Output: tests/snapshots/integration__integration_tests__list__quickstart_list.snap
+#[rstest]
+fn test_quickstart_list(mut repo: TestRepo) {
+    let feature_auth = setup_quickstart_repo(&mut repo);
+    assert_cmd_snapshot!(
+        "quickstart_list",
+        list_snapshots::command_readme(&repo, &feature_auth)
+    );
+}
+
+/// Generate Quick Start example: `wt merge` output
+///
+/// Shows merge output when merging feature-auth into main.
+/// Sets WORKTRUNK_DIRECTIVE_FILE to simulate shell integration being active,
+/// which suppresses the "Cannot change directory" warning.
+/// Output: tests/snapshots/integration__integration_tests__list__quickstart_merge.snap
+#[rstest]
+fn test_quickstart_merge(mut repo: TestRepo) {
+    setup_quickstart_base(&mut repo);
+
+    // Ensure main worktree is completely clean (no staged or unstaged changes)
+    repo.run_git(&["checkout", "--", "."]);
+    repo.run_git(&["clean", "-fd"]);
+
+    // Create feature-auth worktree with one commit
+    let feature_auth = repo.add_worktree("feature-auth");
+
+    // Add authentication module (same as setup_quickstart_repo)
+    std::fs::write(
+        feature_auth.join("auth.rs"),
+        r#"//! Authentication module for user session management.
+
+use std::time::{Duration, SystemTime};
+
+/// A user session with token and expiry.
+pub struct Session {
+    token: String,
+    expires_at: SystemTime,
+}
+
+impl Session {
+    /// Creates a new session with the given token and TTL.
+    pub fn new(token: String, ttl: Duration) -> Self {
+        Self {
+            token,
+            expires_at: SystemTime::now() + ttl,
+        }
+    }
+
+    /// Returns true if the session has not expired.
+    pub fn is_valid(&self) -> bool {
+        SystemTime::now() < self.expires_at
+    }
+
+    /// Validates the token format.
+    pub fn validate_token(token: &str) -> bool {
+        token.len() >= 32 && token.chars().all(|c| c.is_ascii_alphanumeric())
+    }
+}
+
+/// Checks if user is authenticated with a valid session.
+pub fn is_authenticated(session: Option<&Session>) -> bool {
+    session.map(|s| s.is_valid()).unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_session_validity() {
+        let session = Session::new("a".repeat(32), Duration::from_secs(3600));
+        assert!(session.is_valid());
+    }
+
+    #[test]
+    fn test_validate_token() {
+        assert!(!Session::validate_token("short"));
+        assert!(Session::validate_token(&"x".repeat(32)));
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    // Update lib.rs to include the new module
+    let lib_content = std::fs::read_to_string(feature_auth.join("lib.rs")).unwrap();
+    std::fs::write(
+        feature_auth.join("lib.rs"),
+        format!("mod auth;\n\n{}", lib_content),
+    )
+    .unwrap();
+
+    // Stage files but don't commit - let wt merge do the committing
+    repo.run_git_in(&feature_auth, &["add", "auth.rs", "lib.rs"]);
+
+    // Create a temp file for the directive outside the repo to avoid making main dirty
+    let directive_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(".wt-directive-temp");
+    std::fs::write(&directive_file, "").unwrap();
+
+    // Create a cross-platform mock LLM command (uses mock-stub binary system)
+    // The mock-bin directory is already created by setup_mock_gh() via the repo fixture
+    let mock_bin_dir = repo.root_path().parent().unwrap().join("mock-bin");
+    create_mock_llm_quickstart(&mock_bin_dir);
+
+    // Configure the LLM path (Windows needs .exe extension)
+    let llm_name = if cfg!(windows) { "llm.exe" } else { "llm" };
+    let llm_path = mock_bin_dir.join(llm_name);
+
+    // Merge feature-auth into main
+    assert_cmd_snapshot!("quickstart_merge", {
+        let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_auth));
+        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
+        // Set MOCK_CONFIG_DIR so mock-stub can find llm.json
+        cmd.env("MOCK_CONFIG_DIR", &mock_bin_dir);
+        // Use to_slash_lossy() for Windows compatibility - bash can't handle backslash paths
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            llm_path.to_slash_lossy().as_ref(),
+        );
+        cmd
+    });
+}
+
+// =============================================================================
+// Full README Snapshot Tests
+// =============================================================================
 
 /// Generate README example: Basic `wt list` output
 ///
@@ -2433,4 +2875,56 @@ fn test_list_full_with_nonexistent_default_branch(repo: TestRepo) {
         cmd.arg("--full");
         cmd
     });
+}
+
+/// Tests that the current worktree indicator (@) is correct for nested worktrees.
+///
+/// When worktrees are placed inside other worktrees (e.g., `.worktrees/` layout),
+/// the current detection must use git rev-parse --show-toplevel to correctly identify
+/// which worktree contains the cwd, rather than prefix matching which would match
+/// the parent worktree first.
+///
+/// Regression test for: prefix matching with starts_with would incorrectly match
+/// the main worktree when running from a nested worktree.
+#[rstest]
+fn test_list_nested_worktree_current_indicator(mut repo: TestRepo) {
+    // Create a worktree nested inside the main repo (like .worktrees/ layout)
+    let nested_path = repo.root_path().join(".worktrees").join("feature");
+    let nested_worktree = repo.add_worktree_at_path("feature", &nested_path);
+
+    // Run wt list from inside the nested worktree
+    // The @ indicator should appear on "feature", not on "main"
+    assert_cmd_snapshot!(list_snapshots::command(&repo, &nested_worktree));
+}
+
+/// Tests JSON output for nested worktrees shows is_current on the correct worktree.
+#[rstest]
+fn test_list_nested_worktree_json_is_current(mut repo: TestRepo) {
+    // Create a worktree nested inside the main repo
+    let nested_path = repo.root_path().join(".worktrees").join("feature");
+    let nested_worktree = repo.add_worktree_at_path("feature", &nested_path);
+
+    // Run wt list --format=json from inside the nested worktree
+    let output = repo
+        .wt_command()
+        .current_dir(&nested_worktree)
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+
+    // Find the worktree entries
+    let main_wt = json.iter().find(|w| w["branch"] == "main").unwrap();
+    let feature_wt = json.iter().find(|w| w["branch"] == "feature").unwrap();
+
+    // feature should be current, main should not
+    assert_eq!(
+        feature_wt["is_current"], true,
+        "Nested worktree 'feature' should be marked as current"
+    );
+    assert_eq!(
+        main_wt["is_current"], false,
+        "Parent worktree 'main' should NOT be marked as current"
+    );
 }

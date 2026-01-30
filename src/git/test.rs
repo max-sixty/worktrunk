@@ -36,17 +36,14 @@ fn test_parse_worktree_list_no_trailing_blank_line() {
 #[test]
 fn test_parse_worktree_list_multiple_worktrees() {
     let output = "worktree /path/to/main\nHEAD abc123\nbranch refs/heads/main\n\nworktree /path/to/feature\nHEAD def456\nbranch refs/heads/feature\ndetached\n\n";
-    let result = WorktreeInfo::parse_porcelain_list(output);
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+    let [main_wt, feature_wt]: [WorktreeInfo; 2] = worktrees.try_into().unwrap();
 
-    assert!(result.is_ok());
-    let worktrees = result.unwrap();
-    assert_eq!(worktrees.len(), 2);
+    assert_eq!(main_wt.branch, Some("main".to_string()));
+    assert!(!main_wt.detached);
 
-    assert_eq!(worktrees[0].branch, Some("main".to_string()));
-    assert!(!worktrees[0].detached);
-
-    assert_eq!(worktrees[1].branch, Some("feature".to_string()));
-    assert!(worktrees[1].detached);
+    assert_eq!(feature_wt.branch, Some("feature".to_string()));
+    assert!(feature_wt.detached);
 }
 
 #[rstest]

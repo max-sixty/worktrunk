@@ -42,4 +42,4 @@ The hooks track Claude Code activity via git config (`worktrunk.status.{branch}`
 
 **Problem**: If the user interrupts Claude Code (Escape/Ctrl+C), the 🤖 status persists because there's no `UserInterrupt` hook. The `Stop` hook explicitly does not fire on user interrupt.
 
-**Tracking**: https://github.com/anthropics/claude-code/issues/9516
+**Tracking**: [claude-code#9516](https://github.com/anthropics/claude-code/issues/9516)

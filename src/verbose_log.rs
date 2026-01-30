@@ -27,7 +27,7 @@ struct VerboseLog {
 ///
 /// Should be called early in main() when `--verbose` is set.
 /// Tries to find a git repo and create the log file.
-pub fn init() {
+pub(crate) fn init() {
     let mutex = VERBOSE_LOG.get_or_init(|| Mutex::new(None));
     let Ok(mut guard) = mutex.lock() else { return };
 
@@ -41,7 +41,7 @@ pub fn init() {
 ///
 /// Call this from the log format function. The line should be
 /// plain text (no ANSI codes) for readability in issue reports.
-pub fn write_line(line: &str) {
+pub(crate) fn write_line(line: &str) {
     if let Some(mutex) = VERBOSE_LOG.get()
         && let Ok(mut guard) = mutex.lock()
         && let Some(log) = guard.as_mut()
@@ -55,7 +55,7 @@ pub fn write_line(line: &str) {
 /// Get the path to the verbose log file, if it was created.
 ///
 /// Used by the diagnostic module to include log contents.
-pub fn log_file_path() -> Option<PathBuf> {
+pub(crate) fn log_file_path() -> Option<PathBuf> {
     VERBOSE_LOG.get().and_then(|mutex| {
         mutex
             .lock()

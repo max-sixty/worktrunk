@@ -17,6 +17,7 @@
 
 use std::path::PathBuf;
 
+use schemars::JsonSchema;
 use serde::Serialize;
 use worktrunk::git::LineDiff;
 
@@ -24,7 +25,7 @@ use super::ci_status::{CiSource, PrStatus};
 use super::model::{ItemKind, ListItem, UpstreamStatus};
 
 /// JSON output for a single list item
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonItem {
     /// Branch name, null for detached HEAD
     pub branch: Option<String>,
@@ -100,7 +101,7 @@ pub struct JsonItem {
 }
 
 /// Commit information
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonCommit {
     /// Full commit SHA
     pub sha: String,
@@ -116,7 +117,7 @@ pub struct JsonCommit {
 }
 
 /// Working tree state
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonWorkingTree {
     /// Has staged files (+)
     pub staged: bool,
@@ -136,14 +137,10 @@ pub struct JsonWorkingTree {
     /// Lines added/deleted in working tree vs HEAD
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff: Option<JsonDiff>,
-
-    /// Lines added/deleted in working tree vs default branch
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub diff_vs_main: Option<JsonDiff>,
 }
 
 /// Line diff statistics
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonDiff {
     pub added: usize,
     pub deleted: usize,
@@ -159,7 +156,7 @@ impl From<LineDiff> for JsonDiff {
 }
 
 /// Relationship to default branch
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonMain {
     /// Commits ahead of default branch
     pub ahead: usize,
@@ -173,7 +170,7 @@ pub struct JsonMain {
 }
 
 /// Relationship to remote tracking branch
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonRemote {
     /// Remote name (e.g., "origin")
     pub name: String,
@@ -189,7 +186,7 @@ pub struct JsonRemote {
 }
 
 /// Worktree-specific state
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonWorktree {
     /// Worktree state: "branch_worktree_mismatch", "prunable", "locked" (absent when normal)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -204,7 +201,7 @@ pub struct JsonWorktree {
 }
 
 /// CI status from PR or branch workflow
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonCi {
     /// CI status: "passed", "running", "failed", "conflicts", "no-ci", "error"
     pub status: &'static str,
@@ -254,12 +251,6 @@ impl JsonItem {
         let working_tree = worktree_data.and_then(|data| {
             item.status_symbols.as_ref().map(|symbols| {
                 let wt = &symbols.working_tree;
-                // working_tree_diff_with_main is Option<Option<LineDiff>>:
-                // None = not computed, Some(None) = skipped, Some(Some(diff)) = computed
-                let diff_vs_main = data
-                    .working_tree_diff_with_main
-                    .flatten()
-                    .map(JsonDiff::from);
                 JsonWorkingTree {
                     staged: wt.staged,
                     modified: wt.modified,
@@ -267,7 +258,6 @@ impl JsonItem {
                     renamed: wt.renamed,
                     deleted: wt.deleted,
                     diff: data.working_tree_diff.map(JsonDiff::from),
-                    diff_vs_main,
                 }
             })
         });
@@ -464,12 +454,11 @@ pub fn to_json_items(items: &[ListItem]) -> Vec<JsonItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::list::ci_status::{CiSource, CiStatus};
+    use crate::commands::list::ci_status::CiStatus;
     use crate::commands::list::model::{
-        Divergence, GitOperationState, MainState, OperationState, StatusSymbols, WorkingTreeStatus,
-        WorktreeData, WorktreeState,
+        ActiveGitOperation, Divergence, MainState, OperationState, StatusSymbols,
+        WorkingTreeStatus, WorktreeData, WorktreeState,
     };
-    use std::path::PathBuf;
 
     // ============================================================================
     // JsonDiff Tests
@@ -588,7 +577,11 @@ mod tests {
 
     #[test]
     fn test_upstream_to_json_with_remote() {
-        let upstream = UpstreamStatus::from_parts(Some("origin".to_string()), 3, 2);
+        let upstream = UpstreamStatus {
+            remote: Some("origin".to_string()),
+            ahead: 3,
+            behind: 2,
+        };
         let branch = Some("feature".to_string());
         let json = upstream_to_json(&upstream, &branch);
         assert!(json.is_some());
@@ -601,7 +594,11 @@ mod tests {
 
     #[test]
     fn test_upstream_to_json_no_remote() {
-        let upstream = UpstreamStatus::from_parts(None, 0, 0);
+        let upstream = UpstreamStatus {
+            remote: None,
+            ahead: 0,
+            behind: 0,
+        };
         let branch = Some("feature".to_string());
         let json = upstream_to_json(&upstream, &branch);
         assert!(json.is_none());
@@ -609,7 +606,11 @@ mod tests {
 
     #[test]
     fn test_upstream_to_json_no_branch() {
-        let upstream = UpstreamStatus::from_parts(Some("origin".to_string()), 1, 0);
+        let upstream = UpstreamStatus {
+            remote: Some("origin".to_string()),
+            ahead: 1,
+            behind: 0,
+        };
         let branch = None;
         let json = upstream_to_json(&upstream, &branch);
         assert!(json.is_some());
@@ -631,8 +632,7 @@ mod tests {
             locked: None,
             prunable: None,
             working_tree_diff: None,
-            working_tree_diff_with_main: None,
-            git_operation: GitOperationState::None,
+            git_operation: ActiveGitOperation::None,
             branch_worktree_mismatch: false,
             working_diff_display: None,
         }
@@ -833,7 +833,6 @@ mod tests {
                 added: 10,
                 deleted: 5,
             }),
-            diff_vs_main: None,
         };
         let json = serde_json::to_string(&wt).unwrap();
         assert!(json.contains("\"staged\":true"));

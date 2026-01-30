@@ -1,0 +1,499 @@
+# https://taskfile.dev
+version: "3"
+
+vars:
+  REPO_ROOT:
+    sh: pwd
+  STATIC_DIR: "{{.REPO_ROOT}}/docs/static"
+  ASSETS_DIR: "{{.STATIC_DIR}}/assets"
+
+tasks:
+  # Development
+  coverage:
+    desc: Run tests with coverage report
+    cmd: cargo llvm-cov --html --features shell-integration-tests {{.CLI_ARGS}}
+
+  setup-web:
+    desc: Setup Claude Code web environment for development
+    platforms: [linux]
+    cmds:
+      - |
+        set -e
+        echo "========================================"
+        echo "Claude Code Web - Worktrunk Setup"
+        echo "========================================"
+
+        # Check project root
+        if [ ! -f "Cargo.toml" ] || ! grep -q 'name = "worktrunk"' Cargo.toml; then
+            echo "Error: Must be run from worktrunk project root"
+            exit 1
+        fi
+        echo "Found worktrunk project"
+
+        # Check/install Rust
+        echo ""
+        echo "Checking Rust toolchain..."
+        if ! command -v cargo &> /dev/null; then
+            echo "Cargo not found. Installing Rust..."
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            source "$HOME/.cargo/env"
+        fi
+        echo "Rust version: $(rustc --version | awk '{print $2}')"
+
+        # Install shells
+        echo ""
+        echo "Installing shells for integration tests..."
+        if command -v apt-get &> /dev/null; then
+            export DEBIAN_FRONTEND=noninteractive
+            for f in /etc/apt/sources.list.d/*.list; do
+                [ -f "$f" ] && grep -q '^\[' "$f" 2>/dev/null && rm -f "$f"
+            done
+            if ! command -v zsh &> /dev/null || ! command -v fish &> /dev/null; then
+                apt-get update -qq
+                apt-get install -y -qq zsh fish
+            fi
+        fi
+        for shell in bash zsh fish; do
+            command -v "$shell" &> /dev/null || { echo "Error: $shell not found"; exit 1; }
+            echo "$shell available"
+        done
+
+        # Install gh CLI
+        echo ""
+        echo "Installing GitHub CLI..."
+        if command -v gh &> /dev/null; then
+            echo "gh already installed"
+        else
+            GH_VERSION="2.63.2"
+            ARCH="linux_amd64"
+            URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_${ARCH}.tar.gz"
+            mkdir -p ~/bin
+            TEMP=$(mktemp -d)
+            curl -fsSL "$URL" | tar -xz -C "$TEMP"
+            mv "$TEMP/gh_${GH_VERSION}_${ARCH}/bin/gh" ~/bin/gh
+            chmod +x ~/bin/gh
+            rm -rf "$TEMP"
+            export PATH="$HOME/bin:$PATH"
+            echo "gh installed to ~/bin/gh"
+        fi
+
+        # Build
+        echo ""
+        echo "Building worktrunk..."
+        cargo build 2>&1 | tail -5
+        echo "Build successful"
+
+        # Install dev tools
+        echo ""
+        echo "Installing development tools..."
+        cargo install cargo-insta cargo-nextest --quiet
+        cargo install --path . --quiet
+        echo "Installed cargo-insta, cargo-nextest, worktrunk"
+
+        echo ""
+        echo "Setup complete! Run 'wt --help' to get started."
+
+  # Assets
+  fetch-assets:
+    desc: Fetch assets from worktrunk-assets repo
+    cmds:
+      - |
+        set -euo pipefail
+        echo "Fetching assets..."
+        rm -rf "{{.ASSETS_DIR}}"
+        mkdir -p "{{.ASSETS_DIR}}"
+        TMPFILE=$(mktemp)
+        curl -fsSL "https://github.com/max-sixty/worktrunk-assets/archive/refs/heads/main.tar.gz" -o "$TMPFILE"
+        tar -xzf "$TMPFILE" --strip-components=2 -C "{{.ASSETS_DIR}}" "worktrunk-assets-main/assets"
+        rm "$TMPFILE"
+        echo "Done. Assets in {{.ASSETS_DIR}}/"
+
+  publish-assets:
+    desc: Publish assets to worktrunk-assets repo
+    dir: "{{.REPO_ROOT}}"
+    cmds:
+      - |
+        set -euo pipefail
+        ASSETS_REPO="../worktrunk-assets"
+        LOCAL_ASSETS="{{.ASSETS_DIR}}"
+
+        # Clone if needed
+        if [[ ! -d "$ASSETS_REPO/.git" ]]; then
+            if ! command -v gh &>/dev/null; then
+                echo "Error: gh CLI required. Install from https://cli.github.com/"
+                exit 1
+            fi
+            echo "Cloning assets repo..."
+            gh repo clone max-sixty/worktrunk-assets "$ASSETS_REPO" || {
+                echo "Failed to clone assets repo"
+                exit 1
+            }
+        fi
+
+        cd "$ASSETS_REPO"
+        git pull --ff-only || {
+            echo "Failed to update assets repo. Check for uncommitted changes."
+            exit 1
+        }
+
+        rsync -av --delete "$LOCAL_ASSETS/" "$ASSETS_REPO/assets/"
+
+        if git diff --quiet; then
+            echo "No changes to publish"
+            exit 0
+        fi
+
+        # Check for deletions - require manual publish if files were removed
+        if git status --porcelain | grep -q '^ D'; then
+            echo "Deletions detected:"
+            git status --porcelain | grep '^ D'
+            echo ""
+            echo "Publish manually in $ASSETS_REPO if this is correct"
+            exit 1
+        fi
+
+        git diff --stat
+        git add -A
+        git commit -m "Update assets"
+        git push
+
+        echo ""
+        echo "Published: https://github.com/max-sixty/worktrunk-assets"
+
+  # Social cards and logo
+  build-social-cards:
+    desc: Build social card ONGs from SVG sources
+    dir: "{{.STATIC_DIR}}"
+    preconditions:
+      - sh: command -v rsvg-convert
+        msg: "rsvg-convert required. Install with: brew install librsvg"
+    cmds:
+      - |
+        set -euo pipefail
+        FONT_DIR="{{.REPO_ROOT}}/.fonts"
+        OUTPUT_DIR="{{.ASSETS_DIR}}/social"
+
+        ensure_font() {
+            local name="$1"
+            local url="$2"
+            if fc-list | grep -qi "$name"; then
+                return 0
+            fi
+            echo "Downloading $name..."
+            mkdir -p "$FONT_DIR"
+            local zip="$FONT_DIR/${name// /_}.zip"
+            curl -fsSL "$url" -o "$zip"
+            unzip -qo "$zip" -d "$FONT_DIR"
+            rm "$zip"
+        }
+
+        ensure_font "Inter" "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip"
+        ensure_font "Plus Jakarta Sans" "https://github.com/tokotype/PlusJakartaSans/releases/download/2.7.1/PlusJakartaSans-2.7.1.zip"
+
+        # Fontconfig setup
+        export FONTCONFIG_FILE="$FONT_DIR/fonts.conf"
+        cat > "$FONT_DIR/fonts.conf" << EOF
+        <?xml version="1.0"?>
+        <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+        <fontconfig>
+          <dir>$FONT_DIR</dir>
+          <cachedir>$FONT_DIR/cache</cachedir>
+          <include ignore_missing="yes">/etc/fonts/fonts.conf</include>
+        </fontconfig>
+        EOF
+        mkdir -p "$FONT_DIR/cache"
+        fc-cache -f "$FONT_DIR" 2>/dev/null
+
+        for font in "Inter" "Plus Jakarta Sans"; do
+            if ! fc-list : family | grep -qi "$font"; then
+                echo "Error: Font '$font' not found after download" >&2
+                exit 1
+            fi
+        done
+
+        mkdir -p "$OUTPUT_DIR"
+        echo "Building social cards..."
+        rsvg-convert social-card.svg -o "$OUTPUT_DIR/social-card.png"
+        rsvg-convert github-social-card.svg -o "$OUTPUT_DIR/github-social-card.png"
+        echo "Done:"
+        ls -lh "$OUTPUT_DIR"/*.png
+
+  test:create-standard-fixture:
+    desc: Create/recreate the standard test fixture (repo + worktrees + remote)
+    dir: "{{.REPO_ROOT}}"
+    cmds:
+      - |
+        set -euo pipefail
+
+        FIXTURE_DIR="tests/fixtures/standard"
+        TIMESTAMP="2025-01-01T00:00:00"
+
+        echo "Creating standard test fixture..."
+
+        # Clean slate
+        rm -rf "$FIXTURE_DIR"
+        mkdir -p "$FIXTURE_DIR"
+        cd "$FIXTURE_DIR"
+
+        # Create the main repo
+        git init repo
+        cd repo
+
+        # Configure for deterministic output (disable GPG signing)
+        git config user.name "Test User"
+        git config user.email "test@example.com"
+        git config commit.gpgsign false
+
+        # Initial commit on main
+        echo "initial content" > file.txt
+        cat > .gitattributes << 'EOF'
+        * text=auto eol=lf
+        EOF
+        git add -A
+        GIT_AUTHOR_DATE="$TIMESTAMP" GIT_COMMITTER_DATE="$TIMESTAMP" \
+            git commit -m "Initial commit"
+
+        # Create bare remote and push
+        cd ..
+        git clone --bare repo origin.git
+        cd repo
+        git remote add origin ../origin.git
+        git push -u origin main
+
+        # Create worktrees with commits
+        for branch in feature-a feature-b feature-c; do
+            git worktree add -b "$branch" "../repo.$branch"
+            echo "$branch content" > "../repo.$branch/$branch.txt"
+            git -C "../repo.$branch" add "$branch.txt"
+            GIT_AUTHOR_DATE="$TIMESTAMP" GIT_COMMITTER_DATE="$TIMESTAMP" \
+                git -C "../repo.$branch" commit -m "Add $branch file"
+        done
+
+        cd ..
+
+        # Rename .git directories to _git to avoid git treating fixture as repo
+        mv repo/.git repo/_git
+        mv origin.git origin_git
+        for wt in repo.feature-a repo.feature-b repo.feature-c; do
+            # Worktrees have .git files pointing to main repo, rename those too
+            mv "$wt/.git" "$wt/_git"
+        done
+
+        # Update worktree gitdir references (they point to .git, need to point to _git)
+        for wt in feature-a feature-b feature-c; do
+            # Fix the gitdir file in worktree (it's a file, not a directory)
+            sed -i.bak 's/\.git/_git/g' "repo.$wt/_git"
+            rm -f "repo.$wt/_git.bak"
+            # Fix the worktree config in main repo (worktree dir is repo.$wt)
+            sed -i.bak 's/\.git/_git/g' "repo/_git/worktrees/repo.$wt/gitdir"
+            rm -f "repo/_git/worktrees/repo.$wt/gitdir.bak"
+        done
+
+        # Fix remote URL (origin.git -> origin_git)
+        sed -i.bak 's/origin\.git/origin_git/g' "repo/_git/config"
+        rm -f "repo/_git/config.bak"
+
+        echo ""
+        echo "Created fixture structure:"
+        find . -maxdepth 2 -type d | head -20
+        echo ""
+        echo "Done! Fixture at: tests/fixtures/standard/"
+
+  bench-llm-commits:
+    desc: Benchmark LLM commit message tools (claude, llm, aichat, codex)
+    silent: true
+    cmds:
+      - |
+        set -euo pipefail
+
+        # Test prompts
+        SMALL_PROMPT=$(cat <<'EOF'
+        Write a commit message for the staged changes below.
+
+        <format>
+        - Subject under 50 chars, blank line, then optional body
+        - Output only the commit message, no quotes or code blocks
+        </format>
+
+        <diffstat>
+         src/config.rs | 2 ++
+         1 file changed, 2 insertions(+)
+        </diffstat>
+
+        <diff>
+        diff --git a/src/config.rs b/src/config.rs
+        @@ -10,6 +10,8 @@ pub struct Config {
+             pub debug: bool,
+        +    /// Enable verbose logging
+        +    pub verbose: bool,
+         }
+        </diff>
+
+        <context>
+        Branch: feature/logging
+        </context>
+        EOF
+        )
+
+        MEDIUM_PROMPT=$(cat <<'EOF'
+        Write a commit message for the staged changes below.
+
+        <format>
+        - Subject under 50 chars, blank line, then optional body
+        - Output only the commit message, no quotes or code blocks
+        </format>
+
+        <style>
+        - Imperative mood: "Add feature" not "Added feature"
+        - Match recent commit style (conventional commits if used)
+        </style>
+
+        <diffstat>
+         src/auth/jwt.rs    | 45 +++++++++++++++++++++++++++++++++
+         src/auth/mod.rs    |  2 ++
+         src/middleware.rs  | 12 +++++++++
+         tests/auth_test.rs | 28 +++++++++++++++++++++
+         4 files changed, 87 insertions(+)
+        </diffstat>
+
+        <diff>
+        diff --git a/src/auth/jwt.rs b/src/auth/jwt.rs
+        new file mode 100644
+        +use jsonwebtoken::{encode, decode, Header, Validation};
+        +
+        +pub struct Claims { pub sub: String, pub exp: usize }
+        +
+        +pub fn create_token(user_id: &str, secret: &[u8]) -> Result<String, Error> {
+        +    let claims = Claims { sub: user_id.to_owned(), exp: ... };
+        +    encode(&Header::default(), &claims, &EncodingKey::from_secret(secret))
+        +}
+        +
+        +pub fn validate_token(token: &str, secret: &[u8]) -> Result<Claims, Error> {
+        +    decode::<Claims>(token, &DecodingKey::from_secret(secret), &Validation::default())
+        +}
+        </diff>
+
+        <context>
+        Branch: feature/auth
+        <recent_commits>
+        - feat(api): add user registration endpoint
+        - fix(db): handle connection pool exhaustion
+        </recent_commits>
+        </context>
+        EOF
+        )
+
+        # Documented commands from llm-commits.md
+        declare -A COMMANDS
+        COMMANDS["claude"]='MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='"'"''"'"' --disable-slash-commands --setting-sources='"'"''"'"' --system-prompt='"'"''"'"''
+        COMMANDS["llm"]='llm -m claude-haiku-4.5'
+        COMMANDS["aichat"]='aichat -m claude:claude-haiku-4.5'
+        COMMANDS["codex"]='codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='"'"'low'"'"' --sandbox=read-only --json - | jq -sr '"'"'[.[] | select(.item.type? == "agent_message")] | last.item.text'"'"''
+
+        # Check which tools are available
+        echo "=== LLM Commit Message Benchmark ==="
+        echo ""
+        echo "Checking available tools..."
+        AVAILABLE=()
+        for tool in claude llm aichat codex; do
+          if command -v "$tool" &>/dev/null; then
+            echo "  ✓ $tool"
+            AVAILABLE+=("$tool")
+          else
+            echo "  ✗ $tool (not installed)"
+          fi
+        done
+        if command -v jq &>/dev/null; then
+          echo "  ✓ jq (required for codex)"
+        else
+          echo "  ✗ jq (required for codex)"
+          AVAILABLE=("${AVAILABLE[@]/codex}")
+        fi
+        echo ""
+
+        if [ ${#AVAILABLE[@]} -eq 0 ]; then
+          echo "No tools available. Install at least one:"
+          echo "  claude: https://docs.anthropic.com/en/docs/claude-code"
+          echo "  llm: uv tool install llm llm-anthropic"
+          echo "  aichat: https://github.com/sigoden/aichat"
+          echo "  codex: npm install -g @openai/codex"
+          exit 1
+        fi
+
+        # Benchmark function
+        bench() {
+          local name="$1"
+          local cmd="$2"
+          local prompt="$3"
+          local start end elapsed output first_line
+
+          start=$(date +%s)
+          output=$(echo "$prompt" | eval "$cmd" 2>/dev/null) || output="[error]"
+          end=$(date +%s)
+          elapsed=$((end - start))
+          first_line=$(echo "$output" | head -1 | cut -c1-50)
+
+          printf "  %-8s %3ds  %s\n" "$name:" "$elapsed" "$first_line"
+        }
+
+        # Run benchmarks
+        for size in small medium; do
+          if [ "$size" = "small" ]; then
+            PROMPT="$SMALL_PROMPT"
+            echo "### Small diff (add verbose flag) ###"
+          else
+            PROMPT="$MEDIUM_PROMPT"
+            echo "### Medium diff (JWT auth module) ###"
+          fi
+          echo ""
+
+          for tool in "${AVAILABLE[@]}"; do
+            bench "$tool" "${COMMANDS[$tool]}" "$PROMPT"
+          done
+          echo ""
+        done
+
+        echo "Commands used (from docs/content/llm-commits.md):"
+        for tool in "${AVAILABLE[@]}"; do
+          echo "  $tool: ${COMMANDS[$tool]}"
+        done
+
+  generate-logo:
+    desc: Generate logo using Gemini AI
+    dir: "{{.REPO_ROOT}}"
+    preconditions:
+      - sh: command -v gemimg
+        msg: "gemimg required. Install with: uv tool install gemimg"
+      - sh: command -v magick
+        msg: "imagemagick required. Install with: brew install imagemagick"
+      - sh: command -v rembg
+        msg: "rembg required. Install with: uv tool install rembg[cli]"
+      - sh: test -f dev/logo-prompt.json
+        msg: "dev/logo-prompt.json not found"
+    cmds:
+      - |
+        set -euo pipefail
+        RAW_FILE=".tmp/logo-raw.png"
+        SIZE_1X=512
+        SIZE_2X=1024
+        SIZE_FAVICON=32
+
+        mkdir -p .tmp
+
+        echo "Generating logo..."
+        gemimg "$(cat dev/logo-prompt.json)" \
+            --model gemini-3-pro-image-preview \
+            --aspect-ratio 1:1 \
+            -o "$RAW_FILE"
+
+        echo "Removing background..."
+        rembg i "$RAW_FILE" "$RAW_FILE"
+
+        echo "Processing sizes..."
+        magick "$RAW_FILE" -resize "${SIZE_1X}x${SIZE_1X}" "{{.STATIC_DIR}}/logo.png"
+        magick "$RAW_FILE" -resize "${SIZE_2X}x${SIZE_2X}" "{{.STATIC_DIR}}/logo@2x.png"
+        magick "$RAW_FILE" -resize "${SIZE_FAVICON}x${SIZE_FAVICON}" "{{.STATIC_DIR}}/favicon.png"
+        rm "$RAW_FILE"
+
+        echo "Done. Generated:"
+        ls -la "{{.STATIC_DIR}}"/logo.png "{{.STATIC_DIR}}"/logo@2x.png "{{.STATIC_DIR}}"/favicon.png

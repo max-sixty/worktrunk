@@ -1,14 +1,17 @@
+use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+
+use anstyle::Style;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
 use worktrunk::styling::{
-    INFO_SYMBOL, PROMPT_SYMBOL, SUCCESS_SYMBOL, format_bash_with_gutter, format_with_gutter,
-    warning_message,
+    INFO_SYMBOL, SUCCESS_SYMBOL, eprint, eprintln, format_bash_with_gutter, format_with_gutter,
+    prompt_message, warning_message,
 };
 
-use crate::output;
+use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
 pub struct ConfigureResult {
     pub shell: Shell,
@@ -21,6 +24,8 @@ pub struct UninstallResult {
     pub shell: Shell,
     pub path: PathBuf,
     pub action: UninstallAction,
+    /// Path that replaces this one (for deprecated location cleanup)
+    pub superseded_by: Option<PathBuf>,
 }
 
 pub struct UninstallScanResult {
@@ -44,6 +49,8 @@ pub struct ScanResult {
     pub skipped: Vec<(Shell, PathBuf)>, // Shell + first path that was checked
     /// Zsh was configured but compinit is missing (completions won't work without it)
     pub zsh_needs_compinit: bool,
+    /// Legacy files that were cleaned up (e.g., fish conf.d/wt.fish -> functions/wt.fish migration)
+    pub legacy_cleanups: Vec<PathBuf>,
 }
 
 pub struct CompletionResult {
@@ -104,9 +111,75 @@ impl ConfigAction {
     }
 }
 
+/// Check if file content appears to be worktrunk-managed (contains our markers)
+///
+/// Used to identify files safe to delete during migration/uninstall.
+/// Requires both the init command AND pipe to source, to avoid false positives.
+fn is_worktrunk_managed_content(content: &str, cmd: &str) -> bool {
+    content.contains(&format!("{cmd} config shell init")) && content.contains("| source")
+}
+
+/// Clean up legacy fish conf.d file after installing to functions/
+///
+/// Previously, fish shell integration was installed to `~/.config/fish/conf.d/{cmd}.fish`.
+/// This caused issues with Homebrew PATH setup (see issue #566). We now install to
+/// `functions/{cmd}.fish` instead. This function removes the legacy file if it exists.
+///
+/// Returns the paths of files that were cleaned up.
+fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<PathBuf> {
+    let mut cleaned = Vec::new();
+
+    // Clean up if fish was part of the install (regardless of whether it already existed)
+    // This handles the case where user manually created functions/wt.fish but still has
+    // the old conf.d/wt.fish hanging around
+    let fish_targeted = configured.iter().any(|r| r.shell == Shell::Fish);
+
+    if !fish_targeted {
+        return cleaned;
+    }
+
+    // Check for legacy conf.d file
+    let Ok(legacy_path) = Shell::legacy_fish_conf_d_path(cmd) else {
+        return cleaned;
+    };
+
+    if !legacy_path.exists() {
+        return cleaned;
+    }
+
+    // Only remove if the file contains worktrunk integration markers
+    // to avoid deleting user's custom wt.fish that isn't from worktrunk
+    let Ok(content) = fs::read_to_string(&legacy_path) else {
+        return cleaned;
+    };
+
+    if !is_worktrunk_managed_content(&content, cmd) {
+        return cleaned;
+    }
+
+    match fs::remove_file(&legacy_path) {
+        Ok(()) => {
+            cleaned.push(legacy_path);
+        }
+        Err(e) => {
+            // Warn but don't fail - the new integration will still work
+            eprintln!(
+                "{}",
+                warning_message(format!(
+                    "Failed to remove deprecated {}: {e}",
+                    format_path_for_display(&legacy_path)
+                ))
+            );
+        }
+    }
+
+    cleaned
+}
+
 pub fn handle_configure_shell(
     shell_filter: Option<Shell>,
     skip_confirmation: bool,
+    dry_run: bool,
     cmd: String,
 ) -> Result<ScanResult, String> {
     // First, do a dry-run to see what would be changed
@@ -123,6 +196,7 @@ pub fn handle_configure_shell(
             completion_results: completion_preview,
             skipped: preview.skipped,
             zsh_needs_compinit: false,
+            legacy_cleanups: Vec::new(),
         });
     }
 
@@ -135,13 +209,28 @@ pub fn handle_configure_shell(
         .iter()
         .any(|r| !matches!(r.action, ConfigAction::AlreadyExists));
 
-    // If nothing needs to be changed, just return the preview results
-    if !needs_shell_changes && !needs_completion_changes {
+    // For --dry-run, show preview and return without modifying anything
+    if dry_run {
+        show_install_preview(&preview.configured, &completion_preview, &cmd);
         return Ok(ScanResult {
             configured: preview.configured,
             completion_results: completion_preview,
             skipped: preview.skipped,
             zsh_needs_compinit: false,
+            legacy_cleanups: Vec::new(),
+        });
+    }
+
+    // If nothing needs to be changed, still clean up legacy fish conf.d files
+    // A user might have upgraded and have both functions/wt.fish and conf.d/wt.fish
+    if !needs_shell_changes && !needs_completion_changes {
+        let legacy_cleanups = cleanup_legacy_fish_conf_d(&preview.configured, &cmd);
+        return Ok(ScanResult {
+            configured: preview.configured,
+            completion_results: completion_preview,
+            skipped: preview.skipped,
+            zsh_needs_compinit: false,
+            legacy_cleanups,
         });
     }
 
@@ -190,12 +279,49 @@ pub fn handle_configure_shell(
     // If detection fails (None), stay silent - we can't be sure.
     let zsh_needs_compinit = should_check_compinit && shell::detect_zsh_compinit() == Some(false);
 
+    // Clean up legacy fish conf.d file if we just installed to functions/
+    // This handles migration from the old conf.d location (issue #566)
+    let legacy_cleanups = cleanup_legacy_fish_conf_d(&result.configured, &cmd);
+
     Ok(ScanResult {
         configured: result.configured,
         completion_results,
         skipped: result.skipped,
         zsh_needs_compinit,
+        legacy_cleanups,
     })
+}
+
+/// Check if we should auto-configure PowerShell profiles.
+///
+/// **Non-Windows:** PowerShell Core sets PSModulePath, which we use to detect
+/// PowerShell sessions. This is reliable because PowerShell must be explicitly
+/// installed on these platforms.
+///
+/// **Windows:** We check that `SHELL` is NOT set. The `SHELL` env var is set by
+/// Git Bash, MSYS2, and Cygwin, but NOT by cmd.exe or PowerShell. When `SHELL`
+/// is absent on Windows, the user is likely in a Windows-native shell (cmd or
+/// PowerShell), so we auto-configure both PowerShell profiles. This avoids the
+/// PSModulePath false-positive issue (issue #885) while still supporting
+/// PowerShell users who haven't created a profile yet.
+fn should_auto_configure_powershell() -> bool {
+    // Allow tests to override detection (set via Command::env() in integration tests)
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_POWERSHELL_ENV") {
+        return val == "1";
+    }
+
+    #[cfg(windows)]
+    {
+        // On Windows, SHELL is set by Git Bash/MSYS2/Cygwin but not by cmd/PowerShell.
+        // If SHELL is absent, we're likely in a Windows-native shell.
+        std::env::var_os("SHELL").is_none()
+    }
+
+    #[cfg(not(windows))]
+    {
+        // On non-Windows, PSModulePath reliably indicates PowerShell Core
+        std::env::var_os("PSModulePath").is_some()
+    }
 }
 
 pub fn scan_shell_configs(
@@ -203,10 +329,16 @@ pub fn scan_shell_configs(
     dry_run: bool,
     cmd: &str,
 ) -> Result<ScanResult, String> {
-    #[cfg(windows)]
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
-    #[cfg(not(windows))]
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
+    // Base shells to check
+    let mut default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
+
+    // Add PowerShell if we detect we're in a PowerShell-compatible environment.
+    // - Non-Windows: PSModulePath reliably indicates PowerShell Core
+    // - Windows: SHELL not set indicates Windows-native shell (cmd or PowerShell)
+    let in_powershell_env = should_auto_configure_powershell();
+    if in_powershell_env {
+        default_shells.push(Shell::PowerShell);
+    }
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
@@ -216,12 +348,12 @@ pub fn scan_shell_configs(
     for shell in shells {
         let paths = shell
             .config_paths(cmd)
-            .map_err(|e| format!("Failed to get config paths for {}: {}", shell, e))?;
+            .map_err(|e| format!("Failed to get config paths for {shell}: {e}"))?;
 
         // Find the first existing config file
         let target_path = paths.iter().find(|p| p.exists());
 
-        // For Fish, also check if the parent directory (conf.d/) exists
+        // For Fish, also check if the parent directory (functions/) exists
         // since we create the file there rather than modifying an existing one
         let has_config_location = if matches!(shell, Shell::Fish) {
             paths
@@ -234,25 +366,38 @@ pub fn scan_shell_configs(
             target_path.is_some()
         };
 
+        // Auto-configure PowerShell when user is in a PowerShell-compatible environment,
+        // even if the profile doesn't exist yet (issue #885). PowerShell doesn't create
+        // a profile by default, so most users won't have one until they create it.
+        // Detection:
+        // - Non-Windows: PSModulePath indicates PowerShell Core
+        // - Windows: SHELL not set indicates Windows-native shell (not Git Bash/MSYS2)
+        let in_detected_shell = matches!(shell, Shell::PowerShell) && in_powershell_env;
+
         // Only configure if explicitly targeting this shell OR if config file/location exists
-        let should_configure = shell_filter.is_some() || has_config_location;
+        // OR if we detected we're running in this shell's environment
+        let should_configure = shell_filter.is_some() || has_config_location || in_detected_shell;
+
+        // Allow creating the config file if explicitly targeting this shell,
+        // or if we detected we're in this shell's environment
+        let allow_create = shell_filter.is_some() || in_detected_shell;
 
         if should_configure {
             let path = target_path.or_else(|| paths.first());
             if let Some(path) = path {
-                match configure_shell_file(shell, path, dry_run, shell_filter.is_some(), cmd) {
+                match configure_shell_file(shell, path, dry_run, allow_create, cmd) {
                     Ok(Some(result)) => results.push(result),
                     Ok(None) => {} // No action needed
                     Err(e) => {
                         // For non-critical errors, we could continue with other shells
                         // but for now we'll fail fast
-                        return Err(format!("Failed to configure {}: {}", shell, e));
+                        return Err(format!("Failed to configure {shell}: {e}"));
                     }
                 }
             }
         } else if shell_filter.is_none() {
             // Track skipped shells (only when not explicitly filtering)
-            // For Fish, we check for conf.d directory; for others, the config file
+            // For Fish, we check for functions/ directory; for others, the config file
             let skipped_path = if matches!(shell, Shell::Fish) {
                 paths
                     .first()
@@ -276,7 +421,8 @@ pub fn scan_shell_configs(
         configured: results,
         completion_results: Vec::new(), // Completions handled separately in handle_configure_shell
         skipped,
-        zsh_needs_compinit: false, // Caller handles compinit detection
+        zsh_needs_compinit: false,   // Caller handles compinit detection
+        legacy_cleanups: Vec::new(), // Caller handles legacy cleanup
     })
 }
 
@@ -284,20 +430,26 @@ fn configure_shell_file(
     shell: Shell,
     path: &Path,
     dry_run: bool,
-    explicit_shell: bool,
+    allow_create: bool,
     cmd: &str,
 ) -> Result<Option<ConfigureResult>, String> {
     // The line we write to the config file (also used for display)
     let config_line = shell.config_line(cmd);
 
-    // For Fish, we write to a separate conf.d/ file
+    // For Fish, we write a minimal wrapper to functions/{cmd}.fish that sources the
+    // full function from the binary. This allows updates to worktrunk to automatically
+    // provide the latest wrapper logic without requiring reinstall.
     if matches!(shell, Shell::Fish) {
+        let init = shell::ShellInit::with_prefix(shell, cmd.to_string());
+        let fish_wrapper = init
+            .generate_fish_wrapper()
+            .map_err(|e| format!("Failed to generate fish wrapper: {e}"))?;
         return configure_fish_file(
             shell,
             path,
-            &config_line,
+            &fish_wrapper,
             dry_run,
-            explicit_shell,
+            allow_create,
             &config_line,
         );
     }
@@ -367,8 +519,8 @@ fn configure_shell_file(
         }))
     } else {
         // File doesn't exist
-        // Only create if explicitly targeting this shell
-        if explicit_shell {
+        // Only create if allowed (explicitly targeting this shell or detected environment)
+        if allow_create {
             if dry_run {
                 return Ok(Some(ConfigureResult {
                     shell,
@@ -381,7 +533,11 @@ fn configure_shell_file(
             // Create parent directories if they don't exist
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).map_err(|e| {
-                    format!("Failed to create directory {}: {}", parent.display(), e)
+                    format!(
+                        "Failed to create directory {}: {}",
+                        format_path_for_display(parent),
+                        e
+                    )
                 })?;
             }
 
@@ -412,18 +568,23 @@ fn configure_fish_file(
     path: &Path,
     content: &str,
     dry_run: bool,
-    explicit_shell: bool,
+    allow_create: bool,
     config_line: &str,
 ) -> Result<Option<ConfigureResult>, String> {
-    // For Fish, we write to conf.d/{cmd}.fish (separate file)
+    // For Fish, we write a minimal wrapper to functions/{cmd}.fish that sources
+    // the full function from `{cmd} config shell init fish` at runtime.
+    // Fish autoloads these files on first invocation of the command.
 
     // Check if it already exists and has our integration
-    if path.exists() {
-        let existing_content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
-
+    // Use .ok() for read errors - treat as "not configured" rather than failing
+    if let Some(existing_content) = path
+        .exists()
+        .then(|| fs::read_to_string(path).ok())
+        .flatten()
+    {
         // Canonical detection: check if the file matches exactly what we write
-        if existing_content.trim() == content {
+        // Trim both sides to handle trailing newlines consistently across platforms
+        if existing_content.trim() == content.trim() {
             return Ok(Some(ConfigureResult {
                 shell,
                 path: path.to_path_buf(),
@@ -434,10 +595,10 @@ fn configure_fish_file(
     }
 
     // File doesn't exist or doesn't have our integration
-    // For Fish, create if parent directory exists or if explicitly targeting this shell
-    // This is different from other shells because Fish uses conf.d/ which may exist
+    // For Fish, create if parent directory exists or if explicitly allowed
+    // This is different from other shells because Fish uses functions/ which may exist
     // even if the specific wt.fish file doesn't
-    if !explicit_shell && !path.exists() {
+    if !allow_create && !path.exists() {
         // Check if parent directory exists
         if !path.parent().is_some_and(|p| p.exists()) {
             return Ok(None);
@@ -445,32 +606,33 @@ fn configure_fish_file(
     }
 
     if dry_run {
+        // Fish writes the complete file - use WouldAdd if file exists, WouldCreate if new
+        let action = if path.exists() {
+            ConfigAction::WouldAdd
+        } else {
+            ConfigAction::WouldCreate
+        };
         return Ok(Some(ConfigureResult {
             shell,
             path: path.to_path_buf(),
-            action: if path.exists() {
-                ConfigAction::WouldAdd
-            } else {
-                ConfigAction::WouldCreate
-            },
+            action,
             config_line: config_line.to_string(),
         }));
     }
 
     // Create parent directories if they don't exist
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed to create directory {}: {e}",
+                format_path_for_display(parent)
+            )
+        })?;
     }
 
-    // Write the conditional wrapper (short one-liner that calls wt init fish | source)
-    fs::write(path, format!("{}\n", content)).map_err(|e| {
-        format!(
-            "Failed to write to {}: {}",
-            format_path_for_display(path),
-            e
-        )
-    })?;
+    // Write the complete fish function file
+    fs::write(path, format!("{}\n", content))
+        .map_err(|e| format!("Failed to write {}: {e}", format_path_for_display(path)))?;
 
     Ok(Some(ConfigureResult {
         shell,
@@ -492,8 +654,6 @@ pub fn show_install_preview(
     completion_results: &[CompletionResult],
     cmd: &str,
 ) {
-    use anstyle::Style;
-
     let bold = Style::new().bold();
 
     // Show shell extension changes
@@ -505,22 +665,31 @@ pub fn show_install_preview(
 
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
-        // Bash/Zsh: inline completions; Fish: separate completion file
-        let what = if matches!(shell, Shell::Fish) {
-            "shell extension"
-        } else {
+        // Bash/Zsh: inline completions; Fish/PowerShell: separate or no completions
+        let what = if matches!(shell, Shell::Bash | Shell::Zsh) {
             "shell extension & completions"
+        } else {
+            "shell extension"
         };
 
-        let _ = output::print(format!(
+        eprintln!(
             "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        ));
+        );
 
-        // Show the config line that will be added with gutter
-        let _ = output::print(format_bash_with_gutter(&result.config_line));
-        let _ = output::blank(); // Blank line after each shell block
+        // Show the config content that will be added with gutter
+        // Fish: show the wrapper (it's a complete file that sources the full function)
+        // Other shells: show the one-liner that gets appended
+        let content = if matches!(shell, Shell::Fish) {
+            shell::ShellInit::with_prefix(shell, cmd.to_string())
+                .generate_fish_wrapper()
+                .unwrap_or_else(|_| result.config_line.clone())
+        } else {
+            result.config_line.clone()
+        };
+        eprintln!("{}", format_bash_with_gutter(&content));
+        eprintln!(); // Blank line after each shell block
     }
 
     // Show completion changes (only fish has separate completion files)
@@ -532,16 +701,68 @@ pub fn show_install_preview(
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
 
-        let _ = output::print(format!(
+        eprintln!(
             "{} {} completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        ));
+        );
 
         // Show the completion content that will be written
         let fish_completion = fish_completion_content(cmd);
-        let _ = output::print(format_bash_with_gutter(fish_completion.trim()));
-        let _ = output::blank(); // Blank line after
+        eprintln!("{}", format_bash_with_gutter(fish_completion.trim()));
+        eprintln!(); // Blank line after
+    }
+}
+
+/// Display what will be uninstalled (shell extensions and completions)
+///
+/// Shows the files that will be modified without prompting.
+/// Used for --dry-run mode.
+///
+/// Note: I/O errors are intentionally ignored - preview is best-effort
+/// and shouldn't block the flow.
+pub fn show_uninstall_preview(
+    results: &[UninstallResult],
+    completion_results: &[CompletionUninstallResult],
+) {
+    let bold = Style::new().bold();
+
+    for result in results {
+        let shell = result.shell;
+        let path = format_path_for_display(&result.path);
+
+        // Deprecated files get a different message format
+        if let Some(canonical) = &result.superseded_by {
+            let canonical_path = format_path_for_display(canonical);
+            eprintln!(
+                "{INFO_SYMBOL} {} {bold}{path}{bold:#} (deprecated; now using {bold}{canonical_path}{bold:#})",
+                result.action.description(),
+            );
+        } else {
+            // Bash/Zsh: inline completions; Fish: separate completion file
+            let what = if matches!(shell, Shell::Fish) {
+                "shell extension"
+            } else {
+                "shell extension & completions"
+            };
+
+            eprintln!(
+                "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
+                result.action.symbol(),
+                result.action.description(),
+            );
+        }
+    }
+
+    for result in completion_results {
+        let shell = result.shell;
+        let path = format_path_for_display(&result.path);
+
+        eprintln!(
+            "{} {} completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
+            result.action.symbol(),
+            result.action.description(),
+        );
     }
 }
 
@@ -556,51 +777,22 @@ pub fn prompt_for_install(
     cmd: &str,
     prompt_text: &str,
 ) -> Result<bool, String> {
-    use std::io::Write;
+    let response = prompt_yes_no_preview(prompt_text, || {
+        show_install_preview(results, completion_results, cmd);
+    })
+    .map_err(|e| e.to_string())?;
 
-    // Flush before interactive prompt
-    crate::output::flush().map_err(|e| e.to_string())?;
-
-    loop {
-        eprint!(
-            "{}",
-            color_print::cformat!("{} {} <bold>[y/N/?]</> ", PROMPT_SYMBOL, prompt_text)
-        );
-        io::stderr().flush().map_err(|e| e.to_string())?;
-
-        let mut input = String::new();
-        io::stdin()
-            .read_line(&mut input)
-            .map_err(|e| e.to_string())?;
-
-        let response = input.trim().to_lowercase();
-        match response.as_str() {
-            "y" | "yes" => {
-                eprintln!();
-                return Ok(true);
-            }
-            "?" => {
-                eprintln!();
-                show_install_preview(results, completion_results, cmd);
-                // Loop back to prompt again
-            }
-            _ => {
-                // Empty, "n", "no", or anything else is decline
-                eprintln!();
-                return Ok(false);
-            }
-        }
-    }
+    Ok(response == PromptResponse::Accepted)
 }
 
 /// Prompt user for yes/no confirmation (simple [y/N] prompt)
 fn prompt_yes_no() -> Result<bool, String> {
-    use anstyle::Style;
-    use std::io::Write;
-    use worktrunk::styling::eprint;
-
-    let bold = Style::new().bold();
-    eprint!("{PROMPT_SYMBOL} Proceed? {bold}[y/N]{bold:#} ");
+    // Blank line before prompt for visual separation
+    eprintln!();
+    eprint!(
+        "{} ",
+        prompt_message(color_print::cformat!("Proceed? <bold>[y/N]</>"))
+    );
     io::stderr().flush().map_err(|e| e.to_string())?;
 
     let mut input = String::new();
@@ -608,7 +800,8 @@ fn prompt_yes_no() -> Result<bool, String> {
         .read_line(&mut input)
         .map_err(|e| e.to_string())?;
 
-    crate::output::blank().map_err(|e| e.to_string())?;
+    // End the prompt line on stderr (user's input went to stdin, not stderr)
+    eprintln!();
 
     let response = input.trim().to_lowercase();
     Ok(response == "y" || response == "yes")
@@ -618,7 +811,7 @@ fn prompt_yes_no() -> Result<bool, String> {
 fn fish_completion_content(cmd: &str) -> String {
     format!(
         r#"# worktrunk completions for fish
-complete --keep-order --exclusive --command {cmd} --arguments "(test -n \"\$WORKTRUNK_BIN\"; or set -l WORKTRUNK_BIN (type -P {cmd}); COMPLETE=fish \$WORKTRUNK_BIN -- (commandline --current-process --tokenize --cut-at-cursor) (commandline --current-token))"
+complete --keep-order --exclusive --command {cmd} --arguments "(test -n \"\$WORKTRUNK_BIN\"; or set -l WORKTRUNK_BIN (type -P {cmd} 2>/dev/null); and COMPLETE=fish \$WORKTRUNK_BIN -- (commandline --current-process --tokenize --cut-at-cursor) (commandline --current-token))"
 "#
     )
 }
@@ -644,20 +837,22 @@ pub fn process_shell_completions(
 
         let completion_path = shell
             .completion_path(cmd)
-            .map_err(|e| format!("Failed to get completion path for {}: {}", shell, e))?;
+            .map_err(|e| format!("Failed to get completion path for {shell}: {e}"))?;
 
         // Check if completions already exist with correct content
-        if completion_path.exists() {
-            let existing = fs::read_to_string(&completion_path)
-                .map_err(|e| format!("Failed to read {}: {}", completion_path.display(), e))?;
-            if existing == fish_completion {
-                results.push(CompletionResult {
-                    shell,
-                    path: completion_path,
-                    action: ConfigAction::AlreadyExists,
-                });
-                continue;
-            }
+        // Use .ok() for read errors - treat as "not configured" rather than failing
+        if let Some(existing) = completion_path
+            .exists()
+            .then(|| fs::read_to_string(&completion_path).ok())
+            .flatten()
+            && existing == fish_completion
+        {
+            results.push(CompletionResult {
+                shell,
+                path: completion_path,
+                action: ConfigAction::AlreadyExists,
+            });
+            continue;
         }
 
         if dry_run {
@@ -676,13 +871,21 @@ pub fn process_shell_completions(
 
         // Create parent directory if needed
         if let Some(parent) = completion_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+            fs::create_dir_all(parent).map_err(|e| {
+                format!(
+                    "Failed to create directory {}: {e}",
+                    format_path_for_display(parent)
+                )
+            })?;
         }
 
         // Write the completion file
-        fs::write(&completion_path, &fish_completion)
-            .map_err(|e| format!("Failed to write {}: {}", completion_path.display(), e))?;
+        fs::write(&completion_path, &fish_completion).map_err(|e| {
+            format!(
+                "Failed to write {}: {e}",
+                format_path_for_display(&completion_path)
+            )
+        })?;
 
         results.push(CompletionResult {
             shell,
@@ -697,6 +900,7 @@ pub fn process_shell_completions(
 pub fn handle_unconfigure_shell(
     shell_filter: Option<Shell>,
     skip_confirmation: bool,
+    dry_run: bool,
     cmd: &str,
 ) -> Result<UninstallScanResult, String> {
     // First, do a dry-run to see what would be changed
@@ -704,6 +908,12 @@ pub fn handle_unconfigure_shell(
 
     // If nothing to do, return early
     if preview.results.is_empty() && preview.completion_results.is_empty() {
+        return Ok(preview);
+    }
+
+    // For --dry-run, show preview and return without prompting or applying
+    if dry_run {
+        show_uninstall_preview(&preview.results, &preview.completion_results);
         return Ok(preview);
     }
 
@@ -723,10 +933,8 @@ fn scan_for_uninstall(
     dry_run: bool,
     cmd: &str,
 ) -> Result<UninstallScanResult, String> {
-    #[cfg(windows)]
+    // For uninstall, always include PowerShell to clean up any existing profiles
     let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
-    #[cfg(not(windows))]
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
@@ -736,17 +944,29 @@ fn scan_for_uninstall(
     for &shell in &shells {
         let paths = shell
             .config_paths(cmd)
-            .map_err(|e| format!("Failed to get config paths for {}: {}", shell, e))?;
+            .map_err(|e| format!("Failed to get config paths for {shell}: {e}"))?;
 
-        // For Fish, delete entire {cmd}.fish file
+        // For Fish, delete entire {cmd}.fish file (check both canonical and legacy locations)
         if matches!(shell, Shell::Fish) {
-            if let Some(fish_path) = paths.first() {
-                if fish_path.exists() {
+            let mut found_any = false;
+
+            // Check canonical location (functions/)
+            // Only remove if it contains worktrunk markers to avoid deleting user's custom file
+            if let Some(fish_path) = paths.first()
+                && fish_path.exists()
+            {
+                let is_worktrunk_managed = fs::read_to_string(fish_path)
+                    .map(|content| is_worktrunk_managed_content(&content, cmd))
+                    .unwrap_or(false);
+
+                if is_worktrunk_managed {
+                    found_any = true;
                     if dry_run {
                         results.push(UninstallResult {
                             shell,
                             path: fish_path.clone(),
                             action: UninstallAction::WouldRemove,
+                            superseded_by: None,
                         });
                     } else {
                         fs::remove_file(fish_path).map_err(|e| {
@@ -760,11 +980,50 @@ fn scan_for_uninstall(
                             shell,
                             path: fish_path.clone(),
                             action: UninstallAction::Removed,
+                            superseded_by: None,
                         });
                     }
-                } else {
-                    not_found.push((shell, fish_path.clone()));
                 }
+            }
+
+            // Also check legacy location (conf.d/) - issue #566
+            // Only remove if it contains worktrunk markers to avoid deleting user's custom file
+            let canonical_path = paths.first().cloned();
+            if let Ok(legacy_path) = Shell::legacy_fish_conf_d_path(cmd)
+                && legacy_path.exists()
+            {
+                let is_worktrunk_managed = fs::read_to_string(&legacy_path)
+                    .map(|content| is_worktrunk_managed_content(&content, cmd))
+                    .unwrap_or(false);
+
+                if is_worktrunk_managed {
+                    found_any = true;
+                    if dry_run {
+                        results.push(UninstallResult {
+                            shell,
+                            path: legacy_path.clone(),
+                            action: UninstallAction::WouldRemove,
+                            superseded_by: canonical_path.clone(),
+                        });
+                    } else {
+                        fs::remove_file(&legacy_path).map_err(|e| {
+                            format!(
+                                "Failed to remove {}: {e}",
+                                format_path_for_display(&legacy_path)
+                            )
+                        })?;
+                        results.push(UninstallResult {
+                            shell,
+                            path: legacy_path,
+                            action: UninstallAction::Removed,
+                            superseded_by: canonical_path,
+                        });
+                    }
+                }
+            }
+
+            if !found_any && let Some(fish_path) = paths.first() {
+                not_found.push((shell, fish_path.clone()));
             }
             continue;
         }
@@ -815,7 +1074,11 @@ fn scan_for_uninstall(
                 });
             } else {
                 fs::remove_file(&completion_path).map_err(|e| {
-                    format!("Failed to remove {}: {}", completion_path.display(), e)
+                    format!(
+                        "Failed to remove {}: {}",
+                        format_path_for_display(&completion_path),
+                        e
+                    )
                 })?;
                 completion_results.push(CompletionUninstallResult {
                     shell,
@@ -849,7 +1112,7 @@ fn uninstall_from_file(
     let integration_lines: Vec<(usize, &str)> = lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| shell::is_shell_integration_line(line, cmd))
+        .filter(|(_, line)| shell::is_shell_integration_line_for_uninstall(line, cmd))
         .map(|(i, line)| (i, *line))
         .collect();
 
@@ -862,13 +1125,13 @@ fn uninstall_from_file(
             shell,
             path: path.to_path_buf(),
             action: UninstallAction::WouldRemove,
+            superseded_by: None,
         }));
     }
 
     // Remove matching lines and any immediately preceding blank line
     // (install adds "\n{line}\n", so we remove both the blank and the integration line)
-    let mut indices_to_remove: std::collections::HashSet<usize> =
-        integration_lines.iter().map(|(i, _)| *i).collect();
+    let mut indices_to_remove: HashSet<usize> = integration_lines.iter().map(|(i, _)| *i).collect();
     for &(i, _) in &integration_lines {
         if i > 0 && lines[i - 1].trim().is_empty() {
             indices_to_remove.insert(i - 1);
@@ -896,6 +1159,7 @@ fn uninstall_from_file(
         shell,
         path: path.to_path_buf(),
         action: UninstallAction::Removed,
+        superseded_by: None,
     }))
 }
 
@@ -903,27 +1167,22 @@ fn prompt_for_uninstall_confirmation(
     results: &[UninstallResult],
     completion_results: &[CompletionUninstallResult],
 ) -> Result<bool, String> {
-    use anstyle::Style;
-
-    crate::output::flush().map_err(|e| e.to_string())?;
-
     for result in results {
         let bold = Style::new().bold();
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
-        // Bash/Zsh: inline completions; Fish: separate completion file
-        let what = if matches!(shell, Shell::Fish) {
-            "shell extension"
-        } else {
+        // Bash/Zsh: inline completions; Fish/PowerShell: separate or no completions
+        let what = if matches!(shell, Shell::Bash | Shell::Zsh) {
             "shell extension & completions"
+        } else {
+            "shell extension"
         };
 
-        crate::output::print(format!(
+        eprintln!(
             "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        ))
-        .map_err(|e| e.to_string())?;
+        );
     }
 
     for result in completion_results {
@@ -931,84 +1190,86 @@ fn prompt_for_uninstall_confirmation(
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
 
-        crate::output::print(format!(
+        eprintln!(
             "{} {} completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        ))
-        .map_err(|e| e.to_string())?;
+        );
     }
 
     prompt_yes_no()
 }
 
 /// Show samples of all output message types
-pub fn handle_show_theme() -> Result<(), String> {
+pub fn handle_show_theme() {
     use color_print::cformat;
     use worktrunk::styling::{
         error_message, hint_message, info_message, progress_message, success_message,
     };
 
     // Progress
-    crate::output::print(progress_message(cformat!(
-        "Rebasing <bold>feature</> onto <bold>main</>..."
-    )))
-    .map_err(|e| e.to_string())?;
+    eprintln!(
+        "{}",
+        progress_message(cformat!("Rebasing <bold>feature</> onto <bold>main</>..."))
+    );
 
     // Success
-    crate::output::print(success_message(cformat!(
-        "Created worktree for <bold>feature</> @ <bold>/path/to/worktree</>"
-    )))
-    .map_err(|e| e.to_string())?;
+    eprintln!(
+        "{}",
+        success_message(cformat!(
+            "Created worktree for <bold>feature</> @ <bold>/path/to/worktree</>"
+        ))
+    );
 
     // Error
-    crate::output::print(error_message(cformat!("Branch <bold>feature</> not found")))
-        .map_err(|e| e.to_string())?;
+    eprintln!(
+        "{}",
+        error_message(cformat!("Branch <bold>feature</> not found"))
+    );
 
     // Warning
-    crate::output::print(warning_message(cformat!(
-        "Branch <bold>feature</> has uncommitted changes"
-    )))
-    .map_err(|e| e.to_string())?;
+    eprintln!(
+        "{}",
+        warning_message(cformat!("Branch <bold>feature</> has uncommitted changes"))
+    );
 
     // Hint
-    crate::output::print(hint_message(cformat!(
-        "To rebase onto main, run <bright-black>wt merge</>"
-    )))
-    .map_err(|e| e.to_string())?;
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "To rebase onto main, run <bright-black>wt merge</>"
+        ))
+    );
 
     // Info
-    crate::output::print(info_message(cformat!("Showing <bold>5</> worktrees")))
-        .map_err(|e| e.to_string())?;
+    eprintln!("{}", info_message(cformat!("Showing <bold>5</> worktrees")));
 
-    crate::output::blank().map_err(|e| e.to_string())?;
+    eprintln!();
 
     // Gutter - quoted content
-    crate::output::print(info_message("Gutter formatting (quoted content):"))
-        .map_err(|e| e.to_string())?;
-    crate::output::print(format_with_gutter(
-        "[commit-generation]\ncommand = \"llm --model claude\"",
-        None,
-    ))
-    .map_err(|e| e.to_string())?;
+    eprintln!("{}", info_message("Gutter formatting (quoted content):"));
+    eprintln!(
+        "{}",
+        format_with_gutter(
+            "[commit-generation]\ncommand = \"llm --model claude\"",
+            None,
+        )
+    );
 
-    crate::output::blank().map_err(|e| e.to_string())?;
+    eprintln!();
 
     // Gutter - bash code
-    crate::output::print(info_message("Gutter formatting (shell code):"))
-        .map_err(|e| e.to_string())?;
-    crate::output::print(format_bash_with_gutter(
-        "eval \"$(wt config shell init bash)\"",
-    ))
-    .map_err(|e| e.to_string())?;
+    eprintln!("{}", info_message("Gutter formatting (shell code):"));
+    eprintln!(
+        "{}",
+        format_bash_with_gutter("eval \"$(wt config shell init bash)\"",)
+    );
 
-    crate::output::blank().map_err(|e| e.to_string())?;
+    eprintln!();
 
     // Prompt
-    crate::output::print(info_message("Prompt formatting:")).map_err(|e| e.to_string())?;
-    crate::output::print(format!("{PROMPT_SYMBOL} Proceed? [y/N] ")).map_err(|e| e.to_string())?;
-
-    Ok(())
+    eprintln!("{}", info_message("Prompt formatting:"));
+    eprintln!("{} ", prompt_message("Proceed? [y/N]"));
 }
 
 #[cfg(test)]
@@ -1104,4 +1365,7 @@ mod tests {
     fn test_fish_completion_content_custom_cmd() {
         insta::assert_snapshot!(fish_completion_content("myapp"));
     }
+
+    // Note: should_auto_configure_powershell() is tested via WORKTRUNK_TEST_POWERSHELL_ENV
+    // override in tests/integration_tests/configure_shell.rs.
 }

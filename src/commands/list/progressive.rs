@@ -1,3 +1,5 @@
+use std::io::IsTerminal;
+
 /// Rendering mode for list command
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderMode {
@@ -25,7 +27,6 @@ impl RenderMode {
         }
 
         // Priority 2: Auto-detect based on stdout TTY
-        use std::io::IsTerminal;
         if std::io::stdout().is_terminal() {
             // TODO: Check for pager in environment
             RenderMode::Progressive

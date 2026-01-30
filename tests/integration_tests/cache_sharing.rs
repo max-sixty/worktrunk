@@ -64,7 +64,7 @@ fn test_merge_base_cache_shared(mut repo: TestRepo) {
 
     assert_eq!(base1, base2);
     // The merge base should be main's HEAD since feature branched from there
-    assert_eq!(base1, main_head);
+    assert_eq!(base1, Some(main_head));
 }
 
 /// Test that parallel tasks share the cache when cloning Repository.

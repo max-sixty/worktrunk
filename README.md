@@ -9,7 +9,7 @@
 [![Codecov](https://img.shields.io/codecov/c/github/max-sixty/worktrunk?style=for-the-badge&logo=codecov)](https://codecov.io/gh/max-sixty/worktrunk)
 [![Stars](https://img.shields.io/github/stars/max-sixty/worktrunk?style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/stargazers)
 
-> **January 2026**: Worktrunk was [released](https://x.com/max_sixty/status/2006077845391724739?s=20) over the holidays, and lots of folks seem to be using it. It's built with love (there's no slop!). If social proof is helpful: I also created [PRQL](https://github.com/PRQL/prql) (10k stars) and am a maintainer of [Xarray](https://github.com/pydata/xarray) (4k stars), [Insta](https://github.com/mitsuhiko/insta), & [Numbagg](https://github.com/numbagg/numbagg). Please let me know any frictions at all; I'm intensely focused on Worktrunk's excellence, and the biggest gap is how others experience using it.
+> **January 2026**: Worktrunk was [released](https://x.com/max_sixty/status/2006077845391724739?s=20) over the holidays, and lots of folks seem to be using it. It's built with love (there's no slop!). If social proof is helpful: I also created [PRQL](https://github.com/PRQL/prql) (10k stars) and am a maintainer of [Xarray](https://github.com/pydata/xarray) (4k stars), [Insta](https://github.com/mitsuhiko/insta), & [Numbagg](https://github.com/numbagg/numbagg). Please let me know any frictions at all; I'm intensely focused on making Worktrunk excellent, and the biggest gap is understanding how others experience using it.
 
 Worktrunk is a CLI for git worktree management, designed for running AI agents in parallel.
 
@@ -83,7 +83,7 @@ git branch -d feat</pre></td>
 > Expand into the more advanced commands as needed
 
 - **[Hooks](https://worktrunk.dev/hook/)** — run commands on create, pre-merge, post-merge, etc
-- **[LLM commit messages](https://worktrunk.dev/llm-commits/)** — generate commit messages from diffs via [llm](https://llm.datasette.io/)
+- **[LLM commit messages](https://worktrunk.dev/llm-commits/)** — generate commit messages from diffs
 - **[Merge workflow](https://worktrunk.dev/merge/)** — squash, rebase, merge, clean up in one command
 - ...and **[lots more](#next-steps)**
 
@@ -100,7 +100,7 @@ A demo with some advanced features:
 **Homebrew (macOS & Linux):**
 
 ```bash
-brew install max-sixty/worktrunk/wt && wt config shell install
+brew install worktrunk && wt config shell install
 ```
 
 Shell integration allows commands to change directories.
@@ -110,6 +110,88 @@ Shell integration allows commands to change directories.
 ```bash
 cargo install worktrunk && wt config shell install
 ```
+
+<details>
+<summary><strong>Windows</strong></summary>
+
+On Windows, `wt` defaults to Windows Terminal's command. Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
+
+```bash
+winget install max-sixty.worktrunk
+git-wt config shell install
+```
+
+Alternatively, disable Windows Terminal's alias (Settings → Privacy & security → For developers → App Execution Aliases → disable "Windows Terminal") to use `wt` directly.
+
+</details>
+
+**Arch Linux:**
+
+```bash
+paru worktrunk-bin && wt config shell install
+```
+
+## Quick start
+
+Create a worktree for a new feature:
+
+```console
+$ wt switch --create feature-auth
+✓ Created branch feature-auth from main and worktree @ repo.feature-auth
+
+```
+
+This creates a new branch and worktree, then switches to it. Do your work, then check all worktrees with [`wt list`](https://worktrunk.dev/list/):
+
+```console
+$ wt list
+  Branch        Status        HEAD±    main↕  Remote⇅  Commit    Age   Message
+@ feature-auth  +   –      +53                         0e631add  1d    Initial commit
+^ main              ^⇡                         ⇡1      0e631add  1d    Initial commit
+
+○ Showing 2 worktrees, 1 with changes, 1 column hidden
+
+```
+
+The `@` marks the current worktree. `+` means uncommitted changes, `↕` means unpushed commits.
+
+When done, either:
+
+**PR workflow** — commit, push, open a PR, merge via GitHub/GitLab, then clean up:
+
+```bash
+wt step commit                    # commit staged changes
+gh pr create                      # or glab mr create
+wt remove                         # after PR is merged
+```
+
+**Local merge** — squash, rebase onto main, fast-forward merge, clean up:
+
+```console
+$ wt merge main
+◎ Generating commit message and committing changes... (2 files, +53, no squashing needed)
+  Add authentication module
+✓ Committed changes @ a1b2c3d
+◎ Merging 1 commit to main @ a1b2c3d (no rebase needed)
+  * a1b2c3d Add authentication module
+   auth.rs | 51 +++++++++++++++++++++++++++++++++++++++++++++++++++
+   lib.rs  |  2 ++
+   2 files changed, 53 insertions(+)
+✓ Merged to main (1 commit, 2 files, +53)
+◎ Removing feature-auth worktree & branch in background (same commit as main, _)
+○ Switched to worktree for main @ repo
+
+```
+
+For parallel agents, create multiple worktrees and launch an agent in each:
+
+```bash
+wt switch -x claude -c feature-a -- 'Add user authentication'
+wt switch -x claude -c feature-b -- 'Fix the pagination bug'
+wt switch -x claude -c feature-c -- 'Write tests for the API'
+```
+
+The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](https://worktrunk.dev/hook/) to automate setup (install deps, start dev servers).
 
 ## Next steps
 
@@ -132,7 +214,14 @@ cargo install worktrunk && wt config shell install
 ## Contributing
 
 - ⭐ Star the repo
+- Tell a friend about Worktrunk
 - [Open an issue](https://github.com/max-sixty/worktrunk/issues/new?title=&body=%23%23%20Description%0A%0A%3C!--%20Describe%20the%20bug%20or%20feature%20request%20--%3E%0A%0A%23%23%20Context%0A%0A%3C!--%20Any%20relevant%20context%3A%20your%20workflow%2C%20what%20you%20were%20trying%20to%20do%2C%20etc.%20--%3E) — feedback, feature requests, even a small friction or imperfect user message, or [a worktree pain not yet solved](https://github.com/max-sixty/worktrunk/issues/new?title=Worktree%20friction%3A%20&body=%23%23%20The%20friction%0A%0A%3C!--%20What%20worktree-related%20task%20is%20still%20painful%3F%20--%3E%0A%0A%23%23%20Current%20workaround%0A%0A%3C!--%20How%20do%20you%20handle%20this%20today%3F%20--%3E%0A%0A%23%23%20Ideal%20solution%0A%0A%3C!--%20What%20would%20make%20this%20easier%3F%20--%3E)
 - Share: [X](https://twitter.com/intent/tweet?text=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management&url=https%3A%2F%2Fworktrunk.dev) · [Reddit](https://www.reddit.com/submit?url=https%3A%2F%2Fworktrunk.dev&title=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management) · [LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fworktrunk.dev)
 
 > ### 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚
+
+### Star history
+
+<a href="https://star-history.com/#max-sixty/worktrunk&Date">
+  <img src="https://api.star-history.com/svg?repos=max-sixty/worktrunk&type=Date" width="500" alt="Star History Chart">
+</a>

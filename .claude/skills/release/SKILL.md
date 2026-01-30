@@ -93,7 +93,24 @@ For fixes that reference issues:
 - **Bug fix**: Description. Fixes [#123](https://github.com/user/repo/issues/123). (thanks @reporter)
 ```
 
-**Finding reporters:** Check PR bodies for "Fixes #N", "Closes #N", or issue references. Then look up the issue author with `gh issue view N --json author`.
+**Finding reporters:**
+
+1. **Check for explicit references:** Look for "Fixes #N", "Closes #N", or issue links in PR bodies and commit messages.
+
+2. **Review issues since last release:** List all issues opened or closed since the last release tag:
+   ```bash
+   # Get last release date
+   git log -1 --format=%cs v<last-version>
+   # List issues closed since then (bugs that got fixed)
+   gh issue list --state closed --search "closed:>=<date>" --json number,title,author
+   # List issues opened since then (new reports that might have been addressed)
+   gh issue list --state all --search "created:>=<date>" --json number,title,author
+   ```
+   Scan these for issues that match changes in this release — even if the PR didn't reference them.
+
+3. **Look up issue authors:** `gh issue view N --json author`.
+
+PRs often fix issues without explicit "Fixes #N" — especially when the fix approach differs from the issue's suggested solution, or when the fixer discovered the issue independently.
 
 **When to credit:**
 - Bug reports with clear reproduction steps
@@ -102,6 +119,16 @@ For fixes that reference issues:
 - Users who helped diagnose issues through discussion
 
 Skip credit for: issues opened by the repo owner, trivial reports, or issues that were substantially different from what was implemented.
+
+### Link Significant Features to Docs
+
+For major features with dedicated documentation, include a docs link. Use full URLs so links work from GitHub releases:
+
+```markdown
+- **Hook system**: Shell commands that run at key points in worktree lifecycle. [Docs](https://worktrunk.dev/hook/) ([#234](https://github.com/user/repo/pull/234), thanks @contributor for the suggestion)
+```
+
+Link when there's substantial documentation the user would benefit from reading — new commands, feature pages, or Tips & Patterns sections. Skip for minor improvements.
 
 ### MANDATORY: Verify Each Changelog Entry
 

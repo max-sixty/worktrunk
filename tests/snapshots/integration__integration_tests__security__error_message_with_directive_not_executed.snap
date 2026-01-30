@@ -8,7 +8,7 @@ info:
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -18,13 +18,17 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
     RUST_LOG: warn
-    SOURCE_DATE_EPOCH: "1735776000"
+    SHELL: ""
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_DIRECTIVE_FILE: "[DIRECTIVE_FILE]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: false
@@ -32,5 +36,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mBranch [1m__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked6[22m not found[39m
+[31m✗[39m [31mNo branch named [1m__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked6[22m[39m
 [2m↳[22m [2mTo create a new branch, run [90mwt switch '__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked6' --create[39m; to list branches, run [90mwt list --branches --remotes[39m[22m

@@ -1,6 +1,6 @@
 # wt select
 
-Interactive worktree picker with live preview. Navigate worktrees with keyboard shortcuts and press Enter to switch.
+Interactive worktree selector. Browse and switch worktrees with live preview.
 
 ## Examples
 
@@ -72,4 +72,4 @@ Usage: <b><span class=c>wt select</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Show debug info (-v), or also write diagnostic report (-vv)
+          Verbose output (-v: hooks, templates; -vv: debug report)

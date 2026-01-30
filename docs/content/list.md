@@ -8,7 +8,9 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt list --help-page` — edit cli.rs to update -->
 
-Show all worktrees with their status. The table includes uncommitted changes, divergence from the default branch and remote, and optional CI status.
+List worktrees and their status.
+
+Shows uncommitted changes, divergence from the default branch and remote, and optional CI status.
 
 <figure class="demo">
 <picture>
@@ -26,11 +28,11 @@ List all worktrees:
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_list.snap — edit source to update -->
 
 {% terminal() %}
-<span class="prompt">$</span> <span class="cmd">wt list</span>
+<span class="cmd">wt list</span>
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>⇡3</span>      <span class=d>ec97decc</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>6088adb3</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth: hardened to…</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>     <span class=d>|</span>     <span class=d>127407de</span>  <span class=d>5h</span>    <span class=d>Add secure token storage</span>
+@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>⇡3</span>      <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
+^ main             <span class=d>^</span><span class=d>⇅</span>                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth: hardened to…</span>
++ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>     <span class=d>|</span>     <span class=d>b772e68b</span>  <span class=d>5h</span>    <span class=d>Add secure token storage</span>
 
 <span class=d>○</span> <span class=d>Showing 3 worktrees, 1 with changes, 2 ahead, 1 column hidden</span>
 {% end %}
@@ -42,11 +44,11 @@ Include CI status and line diffs:
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_list_full.snap — edit source to update -->
 
 {% terminal() %}
-<span class="prompt">$</span> <span class="cmd">wt list --full</span>
+<span class="cmd">wt list --full</span>
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>ec97decc</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>6088adb3</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=g>●</span>   <span class=d>127407de</span>  <span class=d>5h</span>    <span class=d>Add secure t…</span>
+@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
+^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
++ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=g>●</span>   <span class=d>b772e68b</span>  <span class=d>5h</span>    <span class=d>Add secure t…</span>
 
 <span class=d>○</span> <span class=d>Showing 3 worktrees, 1 with changes, 2 ahead, 1 column hidden</span>
 {% end %}
@@ -58,13 +60,13 @@ Include branches that don't have worktrees:
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_list_branches.snap — edit source to update -->
 
 {% terminal() %}
-<span class="prompt">$</span> <span class="cmd">wt list --branches --full</span>
+<span class="cmd">wt list --branches --full</span>
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>ec97decc</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>6088adb3</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=g>●</span>   <span class=d>127407de</span>  <span class=d>5h</span>    <span class=d>Add secure t…</span>
-  exp             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+137</span>                    <span class=d>99e114de</span>  <span class=d>2d</span>    <span class=d>Add GraphQL…</span>
-  wip             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑1</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+33</span>                    <span class=d>d62fd0e8</span>  <span class=d>3d</span>    <span class=d>Start API do…</span>
+@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
+^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
++ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=g>●</span>   <span class=d>b772e68b</span>  <span class=d>5h</span>    <span class=d>Add secure t…</span>
+  exp             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+137</span>                    <span class=d>96379229</span>  <span class=d>2d</span>    <span class=d>Add GraphQL…</span>
+  wip             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑1</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+33</span>                    <span class=d>b40716dc</span>  <span class=d>3d</span>    <span class=d>Start API do…</span>
 
 <span class=d>○</span> <span class=d>Showing 3 worktrees, 2 branches, 1 with changes, 4 ahead, 1 column hidden</span>
 {% end %}
@@ -110,7 +112,7 @@ The CI column shows GitHub/GitLab pipeline status:
 | <span style='color:#a60'>⚠</span> yellow | Fetch error (rate limit, network) |
 | (blank) | No upstream or no PR/MR |
 
-CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
+CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches (visible with `--remotes`) get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
 ## Status symbols
 
@@ -129,6 +131,7 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⊟` | Prunable (directory missing) |
 | | `⊞` | Locked worktree |
 | Default branch | `^` | Is the default branch |
+| | `∅` | Orphan branch (no common ancestor with the default branch) |
 | | `✗` | Would conflict if merged to the default branch (with `--full`, includes uncommitted changes) |
 | | `_` | Same commit as the default branch, clean |
 | | `–` | Same commit as the default branch, uncommitted changes |
@@ -142,6 +145,8 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⇣` | Behind remote |
 
 Rows are dimmed when [safe to delete](@/remove.md#branch-cleanup) (`_` same commit with clean working tree or `⊂` content integrated).
+
+---
 
 ## JSON output
 
@@ -197,7 +202,7 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 
-### commit object
+### Commit object
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -216,7 +221,6 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `renamed` | boolean | Has renamed files |
 | `deleted` | boolean | Has deleted files |
 | `diff` | object | Lines changed vs HEAD: `{added, deleted}` |
-| `diff_vs_main` | object | Lines changed vs the default branch: `{added, deleted}` |
 
 ### main object
 
@@ -239,7 +243,7 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `state` | string | `"branch_worktree_mismatch"`, `"prunable"`, `"locked"` (absent when normal) |
+| `state` | string | `"no_worktree"`, `"branch_worktree_mismatch"`, `"prunable"`, `"locked"` (absent when normal) |
 | `reason` | string | Reason for locked/prunable state |
 | `detached` | boolean | HEAD is detached |
 
@@ -254,9 +258,9 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 
 ### main_state values
 
-These values describe relation to the default branch.
+These values describe the relation to the default branch.
 
-`"is_main"` `"would_conflict"` `"empty"` `"same_commit"` `"integrated"` `"diverged"` `"ahead"` `"behind"`
+`"is_main"` `"orphan"` `"would_conflict"` `"empty"` `"same_commit"` `"integrated"` `"diverged"` `"ahead"` `"behind"`
 
 ### integration_reason values
 
@@ -315,7 +319,7 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Show debug info (-v), or also write diagnostic report (-vv)
+          Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
 <!-- END AUTO-GENERATED from `wt list --help-page` -->

@@ -1,0 +1,7 @@
+---
+source: tests/integration_tests/git_error_display.rs
+expression: "format!(\"{}\\n{}\", header, gutter)"
+---
+[31m✗[39m [31mCommand failed[39m
+[107m [0m fatal: Unable to read current working directory
+[107m [0m error: Could not determine cwd

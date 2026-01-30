@@ -1,4 +1,5 @@
 name: claude-mention
+# Runner versions pinned; see ci.yaml header comment for rationale.
 
 on:
   issue_comment:
@@ -19,7 +20,7 @@ jobs:
     if: |
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write # Allow pushing commits
       pull-requests: write # Allow commenting and updating PRs
@@ -69,6 +70,7 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
+          model: opus
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Use bot token so pushed commits trigger CI workflows
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
@@ -93,8 +95,9 @@ jobs:
             - Check the test output for detailed failure information
             - When fixing issues, verify changes with the appropriate test commands
             - Once local test commands work, push to the PR
-            - Then: iterate between monitoring CI, fixing any remaining issues, monitoring CI
-            - Don't return until we're confident that we've done everything we can
+            - After pushing, MUST monitor CI until all checks complete (CI tests on Linux, Windows, macOS)
+            - Local tests passing is not sufficient — use 'gh pr checks' to monitor actual CI
+            - If CI fails, fix and push again. Do not return until CI is green.
 
             Available test commands:
             - 'cargo insta test --dnd --test-runner=nextest' - Run all tests with snapshot testing
@@ -103,4 +106,17 @@ jobs:
             - 'cargo doc --no-deps' - Build documentation
 
             This project is a git worktree manager that integrates with shells (bash, zsh, fish).
-            Pay attention to shell integration, output formatting (anstyle), and snapshot tests."
+            Pay attention to shell integration, output formatting (anstyle), and snapshot tests.
+
+            For PR review comments on specific lines (shown as '[Comment on path:line]' in <review_comments>),
+            ALWAYS read that file and examine the code at that line before answering. The question is about
+            that specific code, not about the PR in general."
+
+      - name: 📋 Upload Claude Code session logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: claude-session-logs
+          path: ~/.claude/
+          retention-days: 30
+          if-no-files-found: warn

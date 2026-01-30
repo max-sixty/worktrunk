@@ -8,7 +8,7 @@ info:
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -18,12 +18,16 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
     RUST_LOG: warn
-    SOURCE_DATE_EPOCH: "1735776000"
+    SHELL: ""
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WT_TEST_DELAYED_STREAM_MS: "-1"
+    WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -35,8 +39,8 @@ exit_code: 0
     "path": "_REPO_",
     "kind": "worktree",
     "commit": {
-      "sha": "33244e69fc0c568ce7cffd49b04c9c89ffb22510",
-      "short_sha": "33244e6",
+      "sha": "c6dc8c756334d089aa446e014cb1d2fda29eb129",
+      "short_sha": "c6dc8c7",
       "message": "Main conflicting changes",
       "timestamp": 1735689600
     },
@@ -49,31 +53,33 @@ exit_code: 0
       "diff": {
         "added": 0,
         "deleted": 0
-      },
-      "diff_vs_main": {
-        "added": 0,
-        "deleted": 0
       }
     },
     "main_state": "is_main",
+    "remote": {
+      "name": "origin",
+      "branch": "main",
+      "ahead": 2,
+      "behind": 0
+    },
     "worktree": {
       "detached": false
     },
     "is_main": true,
     "is_current": true,
     "is_previous": false,
-    "statusline": "main  /u001b[2m^/u001b[22m",
-    "symbols": "^"
+    "statusline": "main  /u001b[2m^/u001b[22m/u001b[2m⇡/u001b[22m  /u001b[32m⇡2/u001b[0m",
+    "symbols": "^⇡"
   },
   {
-    "branch": "feature",
-    "path": "_REPO_.feature",
+    "branch": "feature-a",
+    "path": "_REPO_.feature-a",
     "kind": "worktree",
     "commit": {
-      "sha": "33244e69fc0c568ce7cffd49b04c9c89ffb22510",
-      "short_sha": "33244e6",
-      "message": "Main conflicting changes",
-      "timestamp": 1735689600
+      "sha": "1b87d4731ea707905d15a726e193531c20affa14",
+      "short_sha": "1b87d47",
+      "message": "Add feature-a file",
+      "timestamp": 1735718400
     },
     "working_tree": {
       "staged": false,
@@ -84,8 +90,109 @@ exit_code: 0
       "diff": {
         "added": 0,
         "deleted": 0
-      },
-      "diff_vs_main": {
+      }
+    },
+    "main_state": "diverged",
+    "main": {
+      "ahead": 1,
+      "behind": 2
+    },
+    "worktree": {
+      "detached": false
+    },
+    "is_main": false,
+    "is_current": false,
+    "is_previous": false,
+    "statusline": "feature-a  /u001b[2m↕/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓2/u001b[0m",
+    "symbols": "↕"
+  },
+  {
+    "branch": "feature-b",
+    "path": "_REPO_.feature-b",
+    "kind": "worktree",
+    "commit": {
+      "sha": "f62940fcec424585adf98625e722fdf990810614",
+      "short_sha": "f62940f",
+      "message": "Add feature-b file",
+      "timestamp": 1735718400
+    },
+    "working_tree": {
+      "staged": false,
+      "modified": false,
+      "untracked": false,
+      "renamed": false,
+      "deleted": false,
+      "diff": {
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "main_state": "diverged",
+    "main": {
+      "ahead": 1,
+      "behind": 2
+    },
+    "worktree": {
+      "detached": false
+    },
+    "is_main": false,
+    "is_current": false,
+    "is_previous": false,
+    "statusline": "feature-b  /u001b[2m↕/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓2/u001b[0m",
+    "symbols": "↕"
+  },
+  {
+    "branch": "feature-c",
+    "path": "_REPO_.feature-c",
+    "kind": "worktree",
+    "commit": {
+      "sha": "345c7c93ad7c3d8f5b08380898d78e024019599c",
+      "short_sha": "345c7c9",
+      "message": "Add feature-c file",
+      "timestamp": 1735718400
+    },
+    "working_tree": {
+      "staged": false,
+      "modified": false,
+      "untracked": false,
+      "renamed": false,
+      "deleted": false,
+      "diff": {
+        "added": 0,
+        "deleted": 0
+      }
+    },
+    "main_state": "diverged",
+    "main": {
+      "ahead": 1,
+      "behind": 2
+    },
+    "worktree": {
+      "detached": false
+    },
+    "is_main": false,
+    "is_current": false,
+    "is_previous": false,
+    "statusline": "feature-c  /u001b[2m↕/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓2/u001b[0m",
+    "symbols": "↕"
+  },
+  {
+    "branch": "feature",
+    "path": "_REPO_.feature",
+    "kind": "worktree",
+    "commit": {
+      "sha": "c6dc8c756334d089aa446e014cb1d2fda29eb129",
+      "short_sha": "c6dc8c7",
+      "message": "Main conflicting changes",
+      "timestamp": 1735689600
+    },
+    "working_tree": {
+      "staged": false,
+      "modified": false,
+      "untracked": false,
+      "renamed": false,
+      "deleted": false,
+      "diff": {
         "added": 0,
         "deleted": 0
       }

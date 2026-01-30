@@ -1,14 +1,44 @@
 use anyhow::Context;
-use std::io::Write;
+use shell_escape::escape;
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
-use std::process::{self, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::warning_message;
+use worktrunk::shell_exec::{Cmd, ShellConfig};
+use worktrunk::styling::{eprintln, warning_message};
 
 use minijinja::Environment;
+
+/// Characters that require shell wrapping when used in a command.
+/// If a command contains any of these, it needs `sh -c '...'` to execute correctly.
+const SHELL_METACHARACTERS: &[char] = &[
+    '&', '|', ';', '<', '>', '$', '`', '\'', '"', '(', ')', '{', '}', '*', '?', '[', ']', '~', '!',
+    '\\',
+];
+
+/// Format a reproduction command, only wrapping with `sh -c` if needed.
+///
+/// Simple commands like `llm -m haiku` are shown as-is.
+/// Complex commands with shell syntax are wrapped: `sh -c 'complex && command'`
+fn format_reproduction_command(base_cmd: &str, llm_command: &str) -> String {
+    let needs_shell = llm_command.contains(SHELL_METACHARACTERS)
+        || llm_command
+            .split_whitespace()
+            .next()
+            .is_some_and(|first| first.contains('='));
+
+    if needs_shell {
+        format!(
+            "{} | sh -c {}",
+            base_cmd,
+            escape(Cow::Borrowed(llm_command))
+        )
+    } else {
+        format!("{} | {}", base_cmd, llm_command)
+    }
+}
 
 /// Track whether template-file deprecation warning has been shown this session
 static TEMPLATE_FILE_WARNING_SHOWN: AtomicBool = AtomicBool::new(false);
@@ -188,22 +218,14 @@ struct TemplateContext<'a> {
     target_branch: Option<&'a str>,
 }
 
-/// Format a command and its arguments into a display string
-fn format_command_display(command: &str, args: &[String]) -> String {
-    if args.is_empty() {
-        command.to_string()
-    } else {
-        format!("{} {}", command, args.join(" "))
-    }
-}
-
 /// Default template for commit message prompts
 ///
 /// Synced to dev/config.example.toml by `cargo test readme_sync`
 const DEFAULT_TEMPLATE: &str = r#"Write a commit message for the staged changes below.
 
 <format>
-- Subject under 50 chars, blank line, then optional body
+- Subject line under 50 chars
+- For material changes, add a blank line then a body paragraph explaining the change
 - Output only the commit message, no quotes or code blocks
 </format>
 
@@ -235,7 +257,8 @@ Branch: {{ branch }}
 const DEFAULT_SQUASH_TEMPLATE: &str = r#"Combine these commits into a single commit message.
 
 <format>
-- Subject under 50 chars, blank line, then optional body
+- Subject line under 50 chars
+- For material changes, add a blank line then a body paragraph explaining the change
 - Output only the commit message, no quotes or code blocks
 </format>
 
@@ -260,46 +283,45 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"Combine these commits into a single com
 
 /// Execute an LLM command with the given prompt via stdin.
 ///
+/// The command is a shell string executed via the platform shell (sh on Unix,
+/// Git Bash on Windows), allowing environment variables to be set inline
+/// (e.g., `MAX_THINKING_TOKENS=0 claude -p ...`).
+///
 /// This is the canonical way to execute LLM commands in this codebase.
 /// All LLM execution should go through this function to maintain consistency.
-fn execute_llm_command(command: &str, args: &[String], prompt: &str) -> anyhow::Result<String> {
-    // Build command args
-    let mut cmd = process::Command::new(command);
-    cmd.args(args);
-
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        // Prevent subprocesses from writing to the directive file
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR);
-
-    // Log execution
-    log::debug!("$ {} {}", command, args.join(" "));
+fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result<String> {
+    // Log prompt for debugging (Cmd logs the command itself)
     log::debug!("  Prompt (stdin):");
     for line in prompt.lines() {
         log::debug!("    {}", line);
     }
 
-    let mut child = cmd.spawn().context("Failed to spawn LLM command")?;
-
-    // Write prompt to stdin
-    // Note: We ignore BrokenPipe errors because some commands (like `echo`) exit
-    // immediately without reading stdin. This is fine as long as they produce output.
-    if let Some(mut stdin) = child.stdin.take()
-        && let Err(e) = stdin.write_all(prompt.as_bytes())
-        && e.kind() != std::io::ErrorKind::BrokenPipe
-    {
-        return Err(e).context("Failed to write prompt to LLM stdin");
-    }
-    // stdin is dropped here, closing the pipe
-
-    let output = child
-        .wait_with_output()
-        .context("Failed to wait for LLM output")?;
+    let shell = ShellConfig::get();
+    let output = Cmd::new(shell.executable.to_string_lossy())
+        .args(&shell.args)
+        .arg(command)
+        .stdin_bytes(prompt)
+        .run()
+        .context("Failed to spawn LLM command")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("{}", stderr.trim());
+        let stderr = stderr.trim();
+        if stderr.is_empty() {
+            // Fall back to stdout or exit code when stderr is empty
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stdout = stdout.trim();
+            if stdout.is_empty() {
+                anyhow::bail!(
+                    "LLM command failed with exit code {}",
+                    output.status.code().unwrap_or(-1)
+                );
+            } else {
+                anyhow::bail!("{}", stdout);
+            }
+        } else {
+            anyhow::bail!("{}", stderr);
+        }
     }
 
     let message = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -431,20 +453,21 @@ fn build_prompt(
     Ok(rendered)
 }
 
-pub fn generate_commit_message(
+pub(crate) fn generate_commit_message(
     commit_generation_config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
         let command = commit_generation_config.command.as_ref().unwrap();
-        let args = &commit_generation_config.args;
         // Commit generation is explicitly configured - fail if it doesn't work
-        let llm_command = format_command_display(command, args);
-        return try_generate_commit_message(command, args, commit_generation_config).map_err(|e| {
+        return try_generate_commit_message(command, commit_generation_config).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
-                command: llm_command.clone(),
+                command: command.clone(),
                 error: e.to_string(),
-                reproduction_command: Some(format!("wt step commit --show-prompt | {llm_command}")),
+                reproduction_command: Some(format_reproduction_command(
+                    "wt step commit --show-prompt",
+                    command,
+                )),
             }
             .into()
         });
@@ -482,18 +505,17 @@ pub fn generate_commit_message(
 
 fn try_generate_commit_message(
     command: &str,
-    args: &[String],
     config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
     let prompt = build_commit_prompt(config)?;
-    execute_llm_command(command, args, &prompt)
+    execute_llm_command(command, &prompt)
 }
 
 /// Build the commit prompt from staged changes.
 ///
 /// Gathers the staged diff, branch name, repo name, and recent commits, then renders
 /// the prompt template. Used by both normal commit generation and `--show-prompt`.
-pub fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<String> {
+pub(crate) fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<String> {
     let repo = Repository::current()?;
 
     // Get staged diff and diffstat
@@ -513,14 +535,10 @@ pub fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<St
     // Prepare diff (may filter if too large)
     let prepared = prepare_diff(diff_output, diff_stat);
 
-    // Get current branch
-    let current_branch = repo
-        .current_worktree()
-        .branch()?
-        .unwrap_or_else(|| "HEAD".to_string());
-
-    // Get repo name from directory
-    let repo_root = repo.current_worktree().root()?;
+    // Get current branch and repo root
+    let wt = repo.current_worktree();
+    let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
+    let repo_root = wt.root()?;
     let repo_name = repo_root
         .file_name()
         .and_then(|n| n.to_str())
@@ -540,7 +558,7 @@ pub fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<St
     build_prompt(config, TemplateType::Commit, &context)
 }
 
-pub fn generate_squash_message(
+pub(crate) fn generate_squash_message(
     target_branch: &str,
     merge_base: &str,
     subjects: &[String],
@@ -551,7 +569,6 @@ pub fn generate_squash_message(
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
         let command = commit_generation_config.command.as_ref().unwrap();
-        let args = &commit_generation_config.args;
 
         let prompt = build_squash_prompt(
             target_branch,
@@ -562,12 +579,14 @@ pub fn generate_squash_message(
             commit_generation_config,
         )?;
 
-        let llm_command = format_command_display(command, args);
-        return execute_llm_command(command, args, &prompt).map_err(|e| {
+        return execute_llm_command(command, &prompt).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
-                command: llm_command.clone(),
+                command: command.clone(),
                 error: e.to_string(),
-                reproduction_command: Some(format!("wt step squash --show-prompt | {llm_command}")),
+                reproduction_command: Some(format_reproduction_command(
+                    "wt step squash --show-prompt",
+                    command,
+                )),
             }
             .into()
         });
@@ -587,7 +606,7 @@ pub fn generate_squash_message(
 ///
 /// Gathers the combined diff, commit subjects, branch names, and recent commits, then
 /// renders the prompt template. Used by both normal squash generation and `--show-prompt`.
-pub fn build_squash_prompt(
+pub(crate) fn build_squash_prompt(
     target_branch: &str,
     merge_base: &str,
     subjects: &[String],
@@ -649,17 +668,16 @@ const SYNTHETIC_DIFF_STAT: &str = " src/main.rs | 4 ++++
 ///
 /// Returns Ok(message) if the LLM command succeeds, or an error describing
 /// what went wrong (command not found, API error, empty response, etc.)
-pub fn test_commit_generation(
+pub(crate) fn test_commit_generation(
     commit_generation_config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
     if !commit_generation_config.is_configured() {
         anyhow::bail!(
-            "Commit generation is not configured. Add [commit-generation] to the config."
+            "Commit generation is not configured. Add [commit.generation] to the config."
         );
     }
 
     let command = commit_generation_config.command.as_ref().unwrap();
-    let args = &commit_generation_config.args;
 
     // Build prompt with synthetic data
     let recent_commits = vec![
@@ -678,9 +696,9 @@ pub fn test_commit_generation(
     };
     let prompt = build_prompt(commit_generation_config, TemplateType::Commit, &context)?;
 
-    execute_llm_command(command, args, &prompt).map_err(|e| {
+    execute_llm_command(command, &prompt).map_err(|e| {
         worktrunk::git::GitError::LlmCommandFailed {
-            command: format_command_display(command, args),
+            command: command.clone(),
             error: e.to_string(),
             reproduction_command: None, // Already a test command
         }
@@ -775,7 +793,6 @@ mod tests {
     fn test_build_commit_prompt_with_custom_template() {
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: Some("Branch: {{ branch }}\nDiff: {{ git_diff }}".to_string()),
             template_file: None,
             squash_template: None,
@@ -791,7 +808,6 @@ mod tests {
     fn test_build_commit_prompt_malformed_jinja() {
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: Some("{{ unclosed".to_string()),
             template_file: None,
             squash_template: None,
@@ -806,7 +822,6 @@ mod tests {
     fn test_build_commit_prompt_empty_template() {
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: Some("   ".to_string()),
             template_file: None,
             squash_template: None,
@@ -827,7 +842,6 @@ mod tests {
     fn test_build_commit_prompt_with_all_variables() {
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: Some(
                 "Repo: {{ repo }}\nBranch: {{ branch }}\nDiff: {{ git_diff }}\n{% for c in recent_commits %}{{ c }}\n{% endfor %}"
                     .to_string(),
@@ -867,7 +881,6 @@ mod tests {
     fn test_build_squash_prompt_with_custom_template() {
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: None,
             template_file: None,
             squash_template: Some(
@@ -897,7 +910,6 @@ mod tests {
     fn test_build_squash_prompt_malformed_jinja() {
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: None,
             template_file: None,
             squash_template: Some("{% for x in commits %}{{ x }".to_string()),
@@ -913,7 +925,6 @@ mod tests {
     fn test_build_squash_prompt_empty_template() {
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: None,
             template_file: None,
             squash_template: Some("  \n  ".to_string()),
@@ -936,7 +947,6 @@ mod tests {
         // Test that squash templates now have access to ALL variables including git_diff and recent_commits
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: None,
             template_file: None,
             squash_template: Some(
@@ -969,7 +979,6 @@ mod tests {
         // Test advanced jinja features: filters, length, conditionals, whitespace control
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: Some(
                 r#"=== {{ repo | upper }} ===
 Branch: {{ branch }}
@@ -1023,7 +1032,6 @@ Diff follows:
         // Test the else branch of conditionals
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: Some(
                 r#"Repo: {{ repo | upper }}
 {%- if recent_commits %}
@@ -1052,7 +1060,6 @@ No recent commits
         // Test sophisticated jinja in squash templates
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: None,
             template_file: None,
             squash_template: Some(
@@ -1112,7 +1119,6 @@ Single commit: {{ commits[0] }}
 
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: None,
             template_file: Some(template_path.to_string_lossy().to_string()),
             squash_template: None,
@@ -1134,7 +1140,6 @@ Single commit: {{ commits[0] }}
     fn test_build_commit_prompt_with_missing_template_file() {
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: None,
             template_file: Some("/nonexistent/path/template.txt".to_string()),
             squash_template: None,
@@ -1158,7 +1163,6 @@ Single commit: {{ commits[0] }}
 
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: None,
             template_file: None,
             squash_template: None,
@@ -1181,7 +1185,6 @@ Single commit: {{ commits[0] }}
         // from the expanded home directory path
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: None,
             template_file: Some("~/nonexistent_template_for_test.txt".to_string()),
             squash_template: None,
@@ -1203,7 +1206,6 @@ Single commit: {{ commits[0] }}
         // (they're empty/None for regular commits, but shouldn't cause template errors)
         let config = CommitGenerationConfig {
             command: None,
-            args: vec![],
             template: Some(
                 "Branch: {{ branch }}\nTarget: {{ target_branch }}\nCommits: {{ commits | length }}"
                     .to_string(),
@@ -1341,26 +1343,6 @@ diff --git a/Cargo.lock b/Cargo.lock
     }
 
     #[test]
-    fn test_format_command_display_no_args() {
-        let result = format_command_display("echo", &[]);
-        assert_eq!(result, "echo");
-    }
-
-    #[test]
-    fn test_format_command_display_with_args() {
-        let args = vec!["--model".to_string(), "gpt-4".to_string()];
-        let result = format_command_display("llm", &args);
-        assert_eq!(result, "llm --model gpt-4");
-    }
-
-    #[test]
-    fn test_format_command_display_single_arg() {
-        let args = vec!["--help".to_string()];
-        let result = format_command_display("wt", &args);
-        assert_eq!(result, "wt --help");
-    }
-
-    #[test]
     fn test_parse_diff_sections_empty() {
         let sections = parse_diff_sections("");
         assert!(sections.is_empty());
@@ -1389,5 +1371,42 @@ diff --git a/Cargo.lock b/Cargo.lock
         let truncated = truncate_diff_section(section, 3);
         assert!(truncated.contains("line1"));
         assert!(truncated.contains("lines omitted"));
+    }
+
+    #[test]
+    fn test_format_reproduction_command_simple() {
+        // Simple command without shell metacharacters - no wrapping needed
+        let result = format_reproduction_command("git diff", "llm -m haiku");
+        assert_eq!(result, "git diff | llm -m haiku");
+    }
+
+    #[test]
+    fn test_format_reproduction_command_with_env_var() {
+        // Command starting with env var assignment needs shell wrapping
+        let result = format_reproduction_command("git diff", "MAX_THINKING_TOKENS=0 claude -p");
+        assert!(result.contains("sh -c"));
+        assert!(result.contains("git diff |"));
+    }
+
+    #[test]
+    fn test_format_reproduction_command_with_metacharacters() {
+        // Commands with shell metacharacters need wrapping
+        let result = format_reproduction_command("git diff", "cmd1 && cmd2");
+        assert!(result.contains("sh -c"));
+    }
+
+    #[test]
+    fn test_is_lock_file_matches() {
+        assert!(is_lock_file("Cargo.lock"));
+        assert!(is_lock_file("package-lock.json"));
+        assert!(is_lock_file("yarn-lock.yaml"));
+        assert!(is_lock_file("terraform.lock.hcl"));
+    }
+
+    #[test]
+    fn test_is_lock_file_non_matches() {
+        assert!(!is_lock_file("main.rs"));
+        assert!(!is_lock_file("README.md"));
+        assert!(!is_lock_file("config.toml"));
     }
 }
