@@ -248,21 +248,20 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
     let bash_language = tree_sitter_bash::LANGUAGE.into();
     let bash_highlights = tree_sitter_bash::HIGHLIGHT_QUERY;
 
-    let Ok(mut config) = HighlightConfiguration::new(
+    let mut config = HighlightConfiguration::new(
         bash_language,
         "bash",
         bash_highlights,
         "", // injections query
         "", // locals query
-    ) else {
-        return format_with_gutter(content, width_override);
-    };
+    )
+    .expect("tree-sitter-bash HIGHLIGHT_QUERY should be valid");
     config.configure(&highlight_names);
 
     let mut highlighter = Highlighter::new();
-    let Ok(highlights) = highlighter.highlight(&config, content.as_bytes(), None, |_| None) else {
-        return format_with_gutter(content, width_override);
-    };
+    let highlights = highlighter
+        .highlight(&config, content.as_bytes(), None, |_| None)
+        .expect("highlighting valid UTF-8 should not fail");
 
     let content_bytes = content.as_bytes();
 

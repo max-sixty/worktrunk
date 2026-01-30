@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.21.0
+
+### Improved
+
+- **Absolute paths in `worktree-path` templates**: New `{{ repo_path }}` variable enables absolute path configurations like `{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}`. Tilde expansion is also supported (`~/worktrees/{{ repo }}/{{ branch }}`). Fixes [#902](https://github.com/max-sixty/worktrunk/issues/902). (thanks @bingryan for reporting) ([#904](https://github.com/max-sixty/worktrunk/pull/904))
+
+### Documentation
+
+- Documented prefix stripping in `worktree-path` templates using minijinja's built-in `replace` filter and slicing syntax. Closes [#900](https://github.com/max-sixty/worktrunk/issues/900). (thanks @laurentkempe for requesting) ([#903](https://github.com/max-sixty/worktrunk/pull/903))
+
 ## 0.20.3
 
 ### Fixed
