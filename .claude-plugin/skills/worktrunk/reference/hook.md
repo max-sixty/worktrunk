@@ -48,7 +48,7 @@ Triggers on all switch results: creating new worktrees, switching to existing on
 
 ```toml
 [post-switch]
-tmux = "[ -n \"$TMUX\" ] && tmux rename-window '{{ branch | sanitize }}'"
+tmux = "[ -n \"$TMUX\" ] && tmux rename-window {{ branch | sanitize }}"
 ```
 
 ### pre-commit
@@ -223,6 +223,8 @@ Hash any string, including concatenations:
 dev = "npm run dev --port {{ (repo ~ '-' ~ branch) | hash_port }}"
 ```
 
+Variables are shell-escaped automatically — quotes around `{{ ... }}` are unnecessary and can cause issues with special characters.
+
 ### Worktrunk functions
 
 Templates also support functions for dynamic lookups:
@@ -378,9 +380,9 @@ Different actions for production vs staging:
 
 ```toml
 post-merge = """
-if [ "{{ target }}" = "main" ]; then
+if [ {{ target }} = main ]; then
     npm run deploy:production
-elif [ "{{ target }}" = "staging" ]; then
+elif [ {{ target }} = staging ]; then
     npm run deploy:staging
 fi
 """
@@ -428,6 +430,8 @@ Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span 
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
+
+# Subcommands
 
 ## wt hook approvals
 

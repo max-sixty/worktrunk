@@ -25,6 +25,7 @@ info:
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
     WT_TEST_EPOCH: "1735776000"
@@ -37,7 +38,7 @@ exit_code: 0
 ----- stderr -----
 [36m◎[39m [36mFetching MR !42...[39m
 [107m [0m [1mAdd feature fix for edge case[22m (!42)
-[107m [0m by @contributor · opened · contributor:feature-fix · [90mhttps://gitlab.com/owner/test-repo/-/merge_requests/42[39m
+[107m [0m by @contributor · opened · feature-fix · [90mhttps://gitlab.com/owner/test-repo/-/merge_requests/42[39m
 [2m○[22m Push configured to fork: [90mhttps://gitlab.com/contributor/test-repo.git[39m
 [32m✓[39m [32mCreated branch [1mfeature-fix[22m (tracking [1mMR !42[22m) and worktree @ [1m_REPO_.feature-fix[22m[39m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m

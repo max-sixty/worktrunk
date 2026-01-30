@@ -669,6 +669,102 @@ fn test_skip_shell_integration_prompt_idempotent() {
     assert_eq!(count, 1, "Flag should appear exactly once");
 }
 
+#[test]
+fn test_skip_commit_generation_prompt_saves_to_disk() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("worktrunk").join("config.toml");
+
+    let mut config = UserConfig::default();
+    config
+        .set_skip_commit_generation_prompt(Some(&config_path))
+        .unwrap();
+
+    // Verify file was created
+    assert!(
+        config_path.exists(),
+        "Config file was not created at {:?}",
+        config_path
+    );
+
+    // Verify TOML structure
+    let toml_content = fs::read_to_string(&config_path).unwrap();
+    assert_snapshot!(toml_content, @"skip-commit-generation-prompt = true");
+}
+
+#[test]
+fn test_skip_commit_generation_prompt_idempotent() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+
+    let mut config = UserConfig::default();
+
+    // Call twice - should not error
+    config
+        .set_skip_commit_generation_prompt(Some(&config_path))
+        .unwrap();
+    config
+        .set_skip_commit_generation_prompt(Some(&config_path))
+        .unwrap();
+
+    // Field should still be true
+    assert!(config.skip_commit_generation_prompt);
+
+    // File should have the flag exactly once
+    let toml_content = fs::read_to_string(&config_path).unwrap();
+    let count = toml_content
+        .matches("skip-commit-generation-prompt")
+        .count();
+    assert_eq!(count, 1, "Flag should appear exactly once");
+}
+
+#[test]
+fn test_set_commit_generation_command_saves_to_disk() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("worktrunk").join("config.toml");
+
+    let mut config = UserConfig::default();
+    config
+        .set_commit_generation_command("llm -m haiku".to_string(), Some(&config_path))
+        .unwrap();
+
+    // Verify file was created
+    assert!(
+        config_path.exists(),
+        "Config file was not created at {:?}",
+        config_path
+    );
+
+    // Verify TOML structure - should have [commit.generation] section with command
+    let toml_content = fs::read_to_string(&config_path).unwrap();
+    assert_snapshot!(toml_content, @r#"
+    [commit.generation]
+    command = "llm -m haiku"
+    "#);
+}
+
+#[test]
+fn test_set_commit_generation_command_with_special_chars() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+
+    let mut config = UserConfig::default();
+    // Command with quotes and environment variables (like claude config)
+    let command =
+        "MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --system-prompt=''".to_string();
+    config
+        .set_commit_generation_command(command, Some(&config_path))
+        .unwrap();
+
+    // Verify TOML can be parsed back
+    let toml_content = fs::read_to_string(&config_path).unwrap();
+    let parsed: UserConfig = toml::from_str(&toml_content).unwrap();
+    let gen_config = parsed.commit_generation(None);
+    assert_eq!(
+        gen_config.command.as_deref(),
+        Some("MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --system-prompt=''")
+    );
+}
+
 ///
 /// When the config file is a symlink (e.g., user has config.toml -> dotfiles/worktrunk.toml),
 /// saving should write to the target file without destroying the symlink.
@@ -746,5 +842,68 @@ command = "llm -m claude-haiku-4.5"
     assert_eq!(
         target_content, symlink_content,
         "Content should be identical whether read through symlink or target"
+    );
+}
+
+/// Test that set_commit_generation_command persists to an existing config file
+/// while preserving other content.
+///
+/// This is a regression test for a bug where the "file exists" branch in save_to()
+/// didn't know about the commit.generation section, so setting the command would
+/// succeed in memory but not persist to disk.
+#[test]
+fn test_set_commit_generation_command_preserves_existing_content() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+
+    // Create existing config with other sections
+    let initial_content = r#"# My settings
+worktree-path = "../{{ repo }}.{{ branch }}"
+
+[projects."github.com/user/repo"]
+approved-commands = [
+    "npm install",
+]
+"#;
+    fs::write(&config_path, initial_content).unwrap();
+
+    // Load the config and set the commit generation command
+    let toml_str = fs::read_to_string(&config_path).unwrap();
+    let mut config: UserConfig = toml::from_str(&toml_str).unwrap();
+
+    config
+        .set_commit_generation_command("llm -m haiku".to_string(), Some(&config_path))
+        .unwrap();
+
+    // Read back what was saved
+    let saved = fs::read_to_string(&config_path).unwrap();
+
+    // Original content should be preserved
+    assert!(
+        saved.contains("worktree-path = \"../{{ repo }}.{{ branch }}\""),
+        "worktree-path should be preserved. Saved content:\n{saved}"
+    );
+    assert!(
+        saved.contains("npm install"),
+        "approved-commands should be preserved. Saved content:\n{saved}"
+    );
+    assert!(
+        saved.contains("# My settings"),
+        "Comments should be preserved. Saved content:\n{saved}"
+    );
+
+    // New section should be added
+    assert!(
+        saved.contains("[commit.generation]"),
+        "[commit.generation] section should be added. Saved content:\n{saved}"
+    );
+    assert!(
+        saved.contains("llm -m haiku"),
+        "command should be saved. Saved content:\n{saved}"
+    );
+    // When only generation is set (no stage), [commit] header should be implicit
+    assert!(
+        !saved.contains("[commit]\n"),
+        "Should not have standalone [commit] header when only generation is set:\n{saved}"
     );
 }

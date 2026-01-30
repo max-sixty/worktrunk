@@ -52,7 +52,7 @@ The URL column in `wt list` shows each worktree's dev server:
 <!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__tips_dev_server_workflow.snap — edit source to update -->
 
 {% terminal() %}
-<span class="prompt">$</span> <span class="cmd">wt list</span>
+<span class="cmd">wt list</span>
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>URL</b>                     <b>Commit</b>    <b>Age</b>
 @ main           <span class=c>?</span> <span class=d>^</span><span class=d>⇅</span>                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>http://localhost:12107</span>  <span class=d>41ee0834</span>  <span class=d>4d</span>
 + feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>⇡3</span>      <span class=d>http://localhost:10703</span>  <span class=d>6814f02a</span>  <span class=d>30m</span>
@@ -224,8 +224,8 @@ Each worktree gets its own tmux session with a multi-pane layout. Sessions are n
 # .config/wt.toml
 [post-create]
 tmux = """
-S="{{ branch | sanitize }}"
-W="{{ worktree_path }}"
+S={{ branch | sanitize }}
+W={{ worktree_path }}
 tmux new-session -d -s "$S" -c "$W" -n dev
 
 # Create 4-pane layout: shell | backend / claude | frontend
@@ -243,7 +243,7 @@ echo "✓ Session '$S' — attach with: tmux attach -t $S"
 """
 
 [pre-remove]
-tmux = "tmux kill-session -t '{{ branch | sanitize }}' 2>/dev/null || true"
+tmux = "tmux kill-session -t {{ branch | sanitize }} 2>/dev/null || true"
 ```
 
 `pre-remove` stops all services when the worktree is removed.
@@ -328,7 +328,7 @@ Configure worktrunk to create worktrees as subdirectories:
 
 ```toml
 # ~/.config/worktrunk/config.toml
-worktree-path = "{{ branch | sanitize }}"
+worktree-path = "../{{ branch | sanitize }}"
 ```
 
 Create the first worktree:

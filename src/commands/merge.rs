@@ -1,7 +1,6 @@
-use std::path::Path;
-
+use anyhow::Context;
 use worktrunk::HookType;
-use worktrunk::config::ProjectConfig;
+use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, info_message};
 
@@ -9,7 +8,7 @@ use super::command_approval::approve_command_batch;
 use super::command_executor::CommandContext;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
-use super::hooks::{HookFailureStrategy, run_hook_with_filter};
+use super::hooks::{HookFailureStrategy, execute_hook};
 use super::project_config::{HookCommand, collect_commands_for_hooks};
 use super::repository_ext::RepositoryCliExt;
 use super::worktree::{
@@ -50,7 +49,7 @@ fn collect_merge_commands(
     let mut all_commands = Vec::new();
     let project_config = match repo.load_project_config()? {
         Some(cfg) => cfg,
-        None => return Ok((all_commands, repo.project_identifier()?.to_string())),
+        None => return Ok((all_commands, repo.project_identifier()?)),
     };
 
     let mut hooks = Vec::new();
@@ -73,7 +72,7 @@ fn collect_merge_commands(
 
     all_commands.extend(collect_commands_for_hooks(&project_config, &hooks));
 
-    let project_id = repo.project_identifier()?.to_string();
+    let project_id = repo.project_identifier()?;
     Ok((all_commands, project_id))
 }
 
@@ -89,36 +88,29 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         stage,
     } = opts;
 
-    let env = CommandEnv::for_action("merge")?;
+    // Load config once, run LLM setup prompt if committing, then reuse config
+    let mut config = UserConfig::load().context("Failed to load config")?;
+    if commit_opt.unwrap_or(true) {
+        // One-time LLM setup prompt (errors logged internally; don't block merge)
+        let _ = crate::output::prompt_commit_generation(&mut config);
+    }
+
+    let env = CommandEnv::for_action("merge", config)?;
     let repo = &env.repo;
     let config = &env.config;
     // Merge requires being on a branch (can't merge from detached HEAD)
     let current_branch = env.require_branch("merge")?.to_string();
 
-    // Get effective merge config (project-specific merged with global)
-    let merge_config = env.merge();
+    // Get effective settings (project-specific merged with global, defaults applied)
+    let resolved = env.resolved();
 
-    // Determine final values: CLI > project config > global config > default (true)
-    let squash = squash_opt
-        .or_else(|| merge_config.as_ref().and_then(|m| m.squash))
-        .unwrap_or(true);
-    let commit = commit_opt
-        .or_else(|| merge_config.as_ref().and_then(|m| m.commit))
-        .unwrap_or(true);
-    let rebase = rebase_opt
-        .or_else(|| merge_config.as_ref().and_then(|m| m.rebase))
-        .unwrap_or(true);
-    let remove = remove_opt
-        .or_else(|| merge_config.as_ref().and_then(|m| m.remove))
-        .unwrap_or(true);
-    let verify = verify_opt
-        .or_else(|| merge_config.as_ref().and_then(|m| m.verify))
-        .unwrap_or(true);
-
-    // Stage mode: CLI > project commit config > global commit config > default
-    let stage_mode = stage
-        .or_else(|| env.commit().and_then(|c| c.stage))
-        .unwrap_or_default();
+    // CLI flags override config values
+    let squash = squash_opt.unwrap_or(resolved.merge.squash());
+    let commit = commit_opt.unwrap_or(resolved.merge.commit());
+    let rebase = rebase_opt.unwrap_or(resolved.merge.rebase());
+    let remove = remove_opt.unwrap_or(resolved.merge.remove());
+    let verify = verify_opt.unwrap_or(resolved.merge.verify());
+    let stage_mode = stage.unwrap_or(resolved.commit.stage());
 
     // Cache current worktree for multiple queries
     let current_wt = repo.current_worktree();
@@ -127,7 +119,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     if !commit && current_wt.is_dirty()? {
         return Err(worktrunk::git::GitError::UncommittedChanges {
             action: Some("merge with --no-commit".into()),
-            branch: Some(current_branch.clone()),
+            branch: Some(current_branch),
             force_hint: false,
         }
         .into());
@@ -207,10 +199,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     } else {
         // --no-rebase: verify already rebased, fail if not
         if !repo.is_rebased_onto(&target_branch)? {
-            return Err(worktrunk::git::GitError::NotRebased {
-                target_branch: target_branch.clone(),
-            }
-            .into());
+            return Err(worktrunk::git::GitError::NotRebased { target_branch }.into());
         }
         false // Already rebased, no rebase occurred
     };
@@ -219,8 +208,14 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Do this after commit/squash/rebase to validate the final state that will be pushed
     if verify {
         let ctx = env.context(yes);
-        let project_config = repo.load_project_config()?.unwrap_or_default();
-        run_pre_merge_commands(&project_config, &ctx, &target_branch, None, &[])?;
+        execute_hook(
+            &ctx,
+            HookType::PreMerge,
+            &[("target", target_branch.as_str())],
+            HookFailureStrategy::FailFast,
+            None,
+            crate::output::pre_hook_display_path(ctx.worktree_path),
+        )?;
     }
 
     // Fast-forward push to target branch with commit/squash/rebase info for consolidated message
@@ -247,7 +242,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         current_wt.ensure_clean("remove worktree after merge", Some(&current_branch), false)?;
 
         // STEP 2: Remove worktree via shared remove output handler so final message matches wt remove
-        let worktree_root = current_wt.root()?.to_path_buf();
+        let worktree_root = current_wt.root()?;
         // After a successful merge, get integration reason
         let (_, integration_reason) = repo.integration_reason(&current_branch, &target_branch)?;
         // Compute expected_path for path mismatch detection
@@ -299,104 +294,15 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             // or worktree preserved so they stay in feature)
             crate::output::pre_hook_display_path(&destination_path)
         };
-        execute_post_merge_commands(&ctx, &target_branch, None, display_path, &[])?;
+        execute_hook(
+            &ctx,
+            HookType::PostMerge,
+            &[("target", target_branch.as_str())],
+            HookFailureStrategy::Warn,
+            None,
+            display_path,
+        )?;
     }
 
     Ok(())
-}
-
-/// Run pre-merge commands sequentially (blocking, fail-fast)
-///
-/// Runs user hooks first, then project hooks.
-/// Approval is handled at the gate (command entry point).
-pub fn run_pre_merge_commands(
-    project_config: &ProjectConfig,
-    ctx: &CommandContext,
-    target_branch: &str,
-    name_filter: Option<&str>,
-    extra_vars: &[(&str, &str)],
-) -> anyhow::Result<()> {
-    // Combine target with any custom vars (custom vars take precedence, added last)
-    let mut vars = vec![("target", target_branch)];
-    vars.extend_from_slice(extra_vars);
-    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-    run_hook_with_filter(
-        ctx,
-        user_hooks.pre_merge.as_ref(),
-        project_config.hooks.pre_merge.as_ref(),
-        HookType::PreMerge,
-        &vars,
-        HookFailureStrategy::FailFast,
-        name_filter,
-        crate::output::pre_hook_display_path(ctx.worktree_path),
-    )
-    .map_err(worktrunk::git::add_hook_skip_hint)
-}
-
-/// Execute post-merge commands sequentially in the target worktree (blocking)
-///
-/// Runs user hooks first, then project hooks.
-/// Approval is handled at the gate (command entry point).
-///
-/// `display_path`: Pass `ctx.hooks_display_path()` for automatic detection, or
-/// explicit `Some(path)` when hooks run somewhere the user won't be cd'd to.
-pub fn execute_post_merge_commands(
-    ctx: &CommandContext,
-    target_branch: &str,
-    name_filter: Option<&str>,
-    display_path: Option<&Path>,
-    extra_vars: &[(&str, &str)],
-) -> anyhow::Result<()> {
-    // Load project config from the main worktree path
-    let project_config = ctx.repo.load_project_config()?;
-
-    // Combine target with any custom vars (custom vars take precedence, added last)
-    let mut vars = vec![("target", target_branch)];
-    vars.extend_from_slice(extra_vars);
-    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-    run_hook_with_filter(
-        ctx,
-        user_hooks.post_merge.as_ref(),
-        project_config
-            .as_ref()
-            .and_then(|c| c.hooks.post_merge.as_ref()),
-        HookType::PostMerge,
-        &vars,
-        HookFailureStrategy::Warn,
-        name_filter,
-        display_path,
-    )
-    .map_err(worktrunk::git::add_hook_skip_hint)
-}
-
-/// Execute pre-remove commands sequentially in the worktree (blocking)
-///
-/// Runs user hooks first, then project hooks.
-/// Runs before a worktree is removed. Non-zero exit aborts the removal.
-/// Approval is handled at the gate (command entry point).
-///
-/// `display_path`: Pass `ctx.hooks_display_path()` for automatic detection, or
-/// explicit `Some(path)` when hooks run somewhere the user won't be cd'd to.
-pub fn execute_pre_remove_commands(
-    ctx: &CommandContext,
-    name_filter: Option<&str>,
-    display_path: Option<&Path>,
-    extra_vars: &[(&str, &str)],
-) -> anyhow::Result<()> {
-    let project_config = ctx.repo.load_project_config()?;
-    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-
-    run_hook_with_filter(
-        ctx,
-        user_hooks.pre_remove.as_ref(),
-        project_config
-            .as_ref()
-            .and_then(|c| c.hooks.pre_remove.as_ref()),
-        HookType::PreRemove,
-        extra_vars,
-        HookFailureStrategy::FailFast,
-        name_filter,
-        display_path,
-    )
-    .map_err(worktrunk::git::add_hook_skip_hint)
 }

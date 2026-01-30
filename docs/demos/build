@@ -43,13 +43,22 @@ from shared import (  # noqa: E402
     SIZE_DOCS,
     SIZE_SOCIAL,
     record_text,
+    record_snapshot,
     build_tape_replacements,
     ensure_vhs_binary,
+)
+from shared.validation import (  # noqa: E402
+    TUI_CHECKPOINTS,
+    validate_tui_demo_verbose,
 )
 
 REPO_ROOT = SCRIPT_DIR.parent.parent
 OUT_DIR = SCRIPT_DIR.parent / "static" / "assets"
 TAPES_DIR = SCRIPT_DIR / "tapes"
+SNAPSHOTS_DIR = SCRIPT_DIR / "snapshots"
+
+# Demos that use TUI or interactive input - not suitable for command snapshots
+TUI_DEMOS = {"wt-select", "wt-switch", "wt-statusline", "wt-zellij-omnibus"}
 
 
 # =============================================================================
@@ -83,9 +92,8 @@ def _write_user_config(
 
     content = ""
     if commit_generation:
-        content += """[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
+        content += """[commit.generation]
+command = "llm -m claude-haiku-4.5"
 
 """
     content += f'[projects."{project_id}"]\n'
@@ -343,6 +351,7 @@ def record_demo(
     demo_size: DemoSize,
     vhs_binary: str,
     text_mode: bool = False,
+    snapshot_mode: bool = False,
 ):
     """Record a single demo (runs in subprocess for parallel execution)."""
     tape_path = TAPES_DIR / tape_file
@@ -357,7 +366,11 @@ def record_demo(
 
     replacements = build_tape_replacements(env, REPO_ROOT)
 
-    if text_mode:
+    if snapshot_mode:
+        output_snap = SNAPSHOTS_DIR / f"{output_name}.snap"
+        record_snapshot(env, tape_path, output_snap, REPO_ROOT)
+        print(f"✓ {output_name}: Snapshot saved to {output_snap}")
+    elif text_mode:
         output_txt = mode_out_dir / f"{output_name}.txt"
         record_text(env, tape_path, output_txt, replacements, REPO_ROOT)
         print(f"✓ {output_name}: Text saved to {output_txt}")
@@ -376,7 +389,23 @@ def record_demo(
             vhs_binary=vhs_binary,
             size=demo_size,
         )
-        print(f"✓ {output_name}: GIFs saved: {', '.join(themes)}")
+
+        # Validate TUI demos with OCR after recording
+        if output_name in TUI_CHECKPOINTS:
+            # Use the light theme GIF for validation
+            gif_path = output_gifs.get("light", list(output_gifs.values())[0])
+            success, output = validate_tui_demo_verbose(output_name, gif_path)
+            if success:
+                print(f"✓ {output_name}: GIFs saved + validation passed")
+            else:
+                print(f"✓ {output_name}: GIFs saved")
+                print(f"✗ {output_name}: Validation failed")
+                for line in output.split("\n"):
+                    if line.startswith("  "):
+                        print(line)
+                raise RuntimeError(f"TUI validation failed for {output_name}")
+        else:
+            print(f"✓ {output_name}: GIFs saved: {', '.join(themes)}")
 
 
 # =============================================================================
@@ -433,6 +462,11 @@ Examples:
         "--text", action="store_true", help="Record text output instead of GIFs"
     )
     parser.add_argument(
+        "--snapshot",
+        action="store_true",
+        help="Record command output snapshots for regression testing (non-TUI demos only)",
+    )
+    parser.add_argument(
         "--sequential",
         action="store_true",
         help="Record demos sequentially instead of in parallel",
@@ -445,6 +479,14 @@ Examples:
 
     if args.shell and args.text:
         print("--shell and --text are mutually exclusive")
+        return
+
+    if args.shell and args.snapshot:
+        print("--shell and --snapshot are mutually exclusive")
+        return
+
+    if args.text and args.snapshot:
+        print("--text and --snapshot are mutually exclusive")
         return
 
     # Check dependencies (VHS is built from source, not required in PATH)
@@ -476,6 +518,17 @@ Examples:
             print(f"Available for {args.target}: {', '.join(all_names)}")
             return
 
+    # In snapshot mode, skip TUI demos (they validate via checkpoints during GIF recording)
+    if args.snapshot:
+        original_count = len(demos)
+        demos = [(t, n, s) for t, n, s in demos if n not in TUI_DEMOS]
+        skipped = original_count - len(demos)
+        if skipped:
+            print(f"Skipping {skipped} TUI demo(s) (validate during GIF recording instead)")
+        if not demos:
+            print("No snapshotable demos found")
+            return
+
     # Handle --shell mode (interactive, must be sequential)
     if args.shell:
         tape_file, output_name, setup_func = demos[0]
@@ -502,6 +555,7 @@ Examples:
                     demo_size,
                     vhs_binary,
                     args.text,
+                    args.snapshot,
                 )
             except Exception as e:
                 print(f"✗ {output_name}: {e}")
@@ -522,6 +576,7 @@ Examples:
                     demo_size,
                     vhs_binary,
                     args.text,
+                    args.snapshot,
                 ): output_name
                 for tape_file, output_name, setup_func in demos
             }

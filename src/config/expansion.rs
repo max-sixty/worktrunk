@@ -263,14 +263,21 @@ pub fn expand_template(
     env.add_filter("hash_port", |value: String| string_to_port(&value));
 
     // Register worktree_path_of_branch function for looking up branch worktree paths
+    // The function returns shell-escaped paths when shell_escape is true, matching
+    // how regular template variables are handled.
     let repo_clone = repo.clone();
     env.add_function("worktree_path_of_branch", move |branch: String| -> String {
-        repo_clone
+        let path = repo_clone
             .worktree_for_branch(&branch)
             .ok()
             .flatten()
             .map(|p| to_posix_path(&p.to_string_lossy()))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if shell_escape && !path.is_empty() {
+            escape(Cow::Borrowed(&path)).to_string()
+        } else {
+            path
+        }
     });
 
     // Cache verbosity level for consistent behavior within this call
@@ -598,6 +605,87 @@ mod tests {
         assert_eq!(
             expand_template("{{ name | upper }}", &vars, false, &test.repo, "test").unwrap(),
             "HELLO"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_strip_prefix() {
+        let test = test_repo();
+        let mut vars = HashMap::new();
+
+        // Built-in replace filter strips prefix (replaces all occurrences)
+        vars.insert("branch", "feature/foo");
+        assert_eq!(
+            expand_template(
+                "{{ branch | replace('feature/', '') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "foo"
+        );
+
+        // Replace + sanitize for worktree paths
+        assert_eq!(
+            expand_template(
+                "{{ branch | replace('feature/', '') | sanitize }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "foo"
+        );
+
+        // Branch without prefix passes through unchanged
+        vars.insert("branch", "main");
+        assert_eq!(
+            expand_template(
+                "{{ branch | replace('feature/', '') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "main"
+        );
+
+        // Slicing for prefix-only removal (avoids replacing mid-string)
+        vars.insert("branch", "feature/nested/feature/deep");
+        assert_eq!(
+            expand_template("{{ branch[8:] }}", &vars, false, &test.repo, "test").unwrap(),
+            "nested/feature/deep"
+        );
+
+        // Conditional slicing for safe prefix removal
+        assert_eq!(
+            expand_template(
+                "{% if branch[:8] == 'feature/' %}{{ branch[8:] }}{% else %}{{ branch }}{% endif %}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "nested/feature/deep"
+        );
+
+        // Conditional passes through non-matching branches
+        vars.insert("branch", "bugfix/bar");
+        assert_eq!(
+            expand_template(
+                "{% if branch[:8] == 'feature/' %}{{ branch[8:] }}{% else %}{{ branch }}{% endif %}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "bugfix/bar"
         );
     }
 

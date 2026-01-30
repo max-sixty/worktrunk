@@ -319,4 +319,83 @@ Note: This command is experimental and may change in future versions.
         #[arg(required = true, last = true, num_args = 1..)]
         args: Vec<String>,
     },
+
+    /// \[experimental\] Move worktrees to expected paths
+    ///
+    /// Relocates worktrees whose path doesn't match the `worktree-path` template.
+    #[command(
+        after_long_help = r#"Moves worktrees to match the configured `worktree-path` template.
+
+## Examples
+
+Preview what would be moved:
+
+```console
+wt step relocate --dry-run
+```
+
+Move all mismatched worktrees:
+
+```console
+wt step relocate
+```
+
+Auto-commit and clobber blockers (never fails):
+
+```console
+wt step relocate --commit --clobber
+```
+
+Move specific worktrees:
+
+```console
+wt step relocate feature bugfix
+```
+
+## Swap handling
+
+When worktrees are at each other's expected locations (e.g., `alpha` at
+`repo.beta` and `beta` at `repo.alpha`), relocate automatically resolves
+this by using a temporary location.
+
+## Clobbering
+
+With `--clobber`, non-worktree paths at target locations are moved to
+`<path>.bak-<timestamp>` before relocating.
+
+## Main worktree behavior
+
+The main worktree can't be moved with `git worktree move`. Instead, relocate
+switches it to the default branch and creates a new linked worktree at the
+expected path. Untracked and gitignored files remain at the original location.
+
+## Skipped worktrees
+
+- **Dirty** (without `--commit`) — use `--commit` to auto-commit first
+- **Locked** — unlock with `git worktree unlock`
+- **Target blocked** (without `--clobber`) — use `--clobber` to backup blocker
+- **Detached HEAD** — no branch to compute expected path
+
+Note: This command is experimental and may change in future versions.
+"#
+    )]
+    Relocate {
+        /// Worktrees to relocate (defaults to all mismatched)
+        #[arg(add = crate::completion::worktree_only_completer())]
+        branches: Vec<String>,
+
+        /// Show what would be moved
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Commit uncommitted changes before relocating
+        #[arg(long)]
+        commit: bool,
+
+        /// Backup non-worktree paths at target locations
+        ///
+        /// Moves blocking paths to `<path>.bak-<timestamp>`.
+        #[arg(long)]
+        clobber: bool,
+    },
 }

@@ -85,32 +85,47 @@ use super::paths::{home_dir_required, powershell_profile_paths};
 /// This means false negatives only cause incorrect messaging in `wt config show`
 /// and when users run the binary directly before restarting their shell.
 pub fn is_shell_integration_line(line: &str, cmd: &str) -> bool {
+    is_shell_integration_line_impl(line, cmd, true)
+}
+
+/// Permissive version for uninstall - matches old PowerShell configs without `| Out-String`.
+///
+/// Used by `wt config shell uninstall` to find and remove outdated config lines
+/// that would otherwise be left behind.
+pub fn is_shell_integration_line_for_uninstall(line: &str, cmd: &str) -> bool {
+    is_shell_integration_line_impl(line, cmd, false)
+}
+
+fn is_shell_integration_line_impl(line: &str, cmd: &str, strict: bool) -> bool {
     let trimmed = line.trim();
 
-    // Skip comments (# for POSIX shells, <# #> for PowerShell)
-    if trimmed.starts_with('#') {
+    // Skip comments (# for POSIX shells, <# #> for PowerShell block comments)
+    if trimmed.starts_with('#') || trimmed.starts_with("<#") {
         return false;
     }
 
     // Check for eval/source line pattern
-    has_init_invocation(trimmed, cmd)
+    has_init_invocation(trimmed, cmd, strict)
 }
 
 /// Check if line contains `{cmd} config shell init` as a command invocation.
 ///
 /// For `wt`: matches `wt config shell init` but NOT `git wt` or `git-wt`.
 /// For `git-wt`: matches `git-wt config shell init` OR `git wt config shell init`.
-fn has_init_invocation(line: &str, cmd: &str) -> bool {
+///
+/// When `strict` is true, PowerShell lines must include `| Out-String` to match.
+/// When `strict` is false (for uninstall), old PowerShell lines without it also match.
+fn has_init_invocation(line: &str, cmd: &str, strict: bool) -> bool {
     // For git-wt, we need to match both "git-wt config shell init" AND "git wt config shell init"
     // because users invoke it both ways (and git dispatches "git wt" to "git-wt")
     if cmd == "git-wt" {
         // Match either form, with boundary check for "git" in "git wt" form
-        return has_init_pattern_with_prefix_check(line, "git-wt")
-            || has_init_pattern_with_prefix_check(line, "git wt");
+        return has_init_pattern_with_prefix_check(line, "git-wt", strict)
+            || has_init_pattern_with_prefix_check(line, "git wt", strict);
     }
 
     // For other commands, use normal matching with prefix exclusion
-    has_init_pattern_with_prefix_check(line, cmd)
+    has_init_pattern_with_prefix_check(line, cmd, strict)
 }
 
 /// Check if line has the init pattern, with prefix exclusion for non-git-wt commands.
@@ -120,7 +135,10 @@ fn has_init_invocation(line: &str, cmd: &str) -> bool {
 /// ```text
 /// eval "$(git-wt.exe config shell init bash)"
 /// ```
-fn has_init_pattern_with_prefix_check(line: &str, cmd: &str) -> bool {
+///
+/// When `strict` is true, PowerShell lines must include `| Out-String`.
+/// When `strict` is false (for uninstall), old PowerShell lines also match.
+fn has_init_pattern_with_prefix_check(line: &str, cmd: &str, strict: bool) -> bool {
     // Search for both plain command and .exe variant (Windows Git Bash)
     let patterns = [
         format!("{cmd} config shell init"),
@@ -142,12 +160,35 @@ fn has_init_pattern_with_prefix_check(line: &str, cmd: &str) -> bool {
 
             // Check what precedes the match
             if is_valid_command_position(line, absolute_pos, &cmd_in_line) {
-                // Must be in an execution context
-                if line.contains("eval")
+                // Must be in an execution context (eval, source, dot command, PowerShell, etc.)
+                //
+                // PowerShell detection is checked FIRST and uses case-insensitive matching.
+                // PowerShell requires | Out-String to work correctly (issue #885).
+                // Without it, Invoke-Expression fails with "Cannot convert 'System.Object[]'".
+                // In strict mode, we don't detect old configs without Out-String so that
+                // `wt config shell install` will update them.
+                // In permissive mode (uninstall), we match old configs so they can be removed.
+                let line_lower = line.to_lowercase();
+                let has_invoke =
+                    line_lower.contains("invoke-expression") || line_lower.contains("iex");
+                if has_invoke {
+                    // PowerShell line
+                    if !strict || line_lower.contains("out-string") {
+                        return true;
+                    }
+                    // Strict mode: old PowerShell config without Out-String, don't detect
+                    // Skip to next pattern search position
+                    search_start = absolute_pos + 1;
+                    continue;
+                }
+
+                // POSIX shells (bash, zsh, fish)
+                let is_posix_shell = line.contains("eval")
                     || line.contains("source")
-                    || line.contains("Invoke-Expression")
-                    || line.contains("if ")
-                {
+                    || line.contains(". <(") // POSIX dot command with process substitution
+                    || line.contains(". =("); // zsh dot command with =() substitution
+
+                if is_posix_shell {
                     return true;
                 }
             }
@@ -188,9 +229,9 @@ fn is_valid_command_position(line: &str, pos: usize, cmd: &str) -> bool {
         return false;
     }
 
-    // Valid if preceded by: whitespace, $(, (, ", ', or `command `
+    // Valid if preceded by: whitespace, $(, (, ", ', `, or / (for absolute paths)
     let last_char = before.chars().last().unwrap();
-    matches!(last_char, ' ' | '\t' | '$' | '(' | '"' | '\'' | '`')
+    matches!(last_char, ' ' | '\t' | '$' | '(' | '"' | '\'' | '`' | '/')
 }
 
 /// Check if a line contains the command name at a word boundary.
@@ -638,25 +679,25 @@ mod tests {
     // FALSE NEGATIVE: dot (.) command as source equivalent
     // ------------------------------------------------------------------------
 
-    /// The `.` command is POSIX-equivalent to `source` but NOT detected
+    /// The `.` command is POSIX-equivalent to `source` - now detected
     #[test]
-    fn test_fn_dot_command_process_substitution() {
+    fn test_dot_command_process_substitution() {
         // . <(wt config shell init bash) is equivalent to source <(...)
         // This is a common POSIX pattern
-        assert_not_detects(
+        assert_detects(
             ". <(wt config shell init bash)",
             "wt",
-            "CONFIRMED FALSE NEGATIVE: dot command with process substitution",
+            "dot command with process substitution",
         );
     }
 
     #[test]
-    fn test_fn_dot_command_zsh_equals() {
+    fn test_dot_command_zsh_equals() {
         // . =(wt config shell init zsh) is zsh-specific
-        assert_not_detects(
+        assert_detects(
             ". =(wt config shell init zsh)",
             "wt",
-            "CONFIRMED FALSE NEGATIVE: dot command with zsh =() substitution",
+            "dot command with zsh =() substitution",
         );
     }
 
@@ -664,23 +705,79 @@ mod tests {
     // FALSE NEGATIVE: PowerShell iex alias
     // ------------------------------------------------------------------------
 
-    /// iex is PowerShell's alias for Invoke-Expression
+    /// iex is PowerShell's alias for Invoke-Expression - now detected
+    /// Must include | Out-String to be detected (issue #885)
     #[test]
-    fn test_fn_powershell_iex_alias() {
-        // Common in PowerShell profiles
-        assert_not_detects(
-            "iex (wt config shell init powershell)",
+    fn test_powershell_iex_alias() {
+        // Common in PowerShell profiles - must have | Out-String
+        assert_detects(
+            "iex (wt config shell init powershell | Out-String)",
             "wt",
-            "CONFIRMED FALSE NEGATIVE: PowerShell iex alias",
+            "PowerShell iex alias",
         );
     }
 
     #[test]
-    fn test_fn_powershell_iex_with_ampersand() {
-        assert_not_detects(
-            "iex (& wt config shell init powershell)",
+    fn test_powershell_iex_with_ampersand() {
+        assert_detects(
+            "iex (& wt config shell init powershell | Out-String)",
             "wt",
-            "CONFIRMED FALSE NEGATIVE: PowerShell iex with &",
+            "PowerShell iex with &",
+        );
+    }
+
+    /// PowerShell lines without | Out-String should NOT be detected (strict mode)
+    /// This ensures old configs are treated as "not installed" so users get the fix
+    #[test]
+    fn test_powershell_without_out_string_not_detected() {
+        assert_not_detects(
+            "iex (wt config shell init powershell)",
+            "wt",
+            "PowerShell without Out-String (outdated config)",
+        );
+        assert_not_detects(
+            "Invoke-Expression (& wt config shell init powershell)",
+            "wt",
+            "Invoke-Expression without Out-String (outdated config)",
+        );
+        // This is the exact old canonical PowerShell line that users have
+        assert_not_detects(
+            "if (Get-Command wt -ErrorAction SilentlyContinue) { Invoke-Expression (& wt config shell init powershell) }",
+            "wt",
+            "exact old canonical PowerShell line (must not detect)",
+        );
+    }
+
+    /// Permissive mode (for uninstall) SHOULD detect old PowerShell lines without | Out-String
+    #[test]
+    fn test_powershell_permissive_mode_for_uninstall() {
+        // Old configs should be detected by the permissive function (for uninstall)
+        assert!(
+            is_shell_integration_line_for_uninstall("iex (wt config shell init powershell)", "wt"),
+            "Permissive mode should detect old PowerShell config"
+        );
+        assert!(
+            is_shell_integration_line_for_uninstall(
+                "Invoke-Expression (& wt config shell init powershell)",
+                "wt"
+            ),
+            "Permissive mode should detect old Invoke-Expression config"
+        );
+        // The exact old canonical line
+        assert!(
+            is_shell_integration_line_for_uninstall(
+                "if (Get-Command wt -ErrorAction SilentlyContinue) { Invoke-Expression (& wt config shell init powershell) }",
+                "wt"
+            ),
+            "Permissive mode should detect exact old canonical PowerShell line"
+        );
+        // New configs should also be detected
+        assert!(
+            is_shell_integration_line_for_uninstall(
+                "iex (wt config shell init powershell | Out-String)",
+                "wt"
+            ),
+            "Permissive mode should also detect new PowerShell config"
         );
     }
 
@@ -690,28 +787,22 @@ mod tests {
     // ------------------------------------------------------------------------
 
     #[test]
-    fn test_fn_powershell_block_comment() {
-        // PowerShell block comments <# #> should NOT match
-        // But current code doesn't skip them
+    fn test_powershell_block_comment() {
+        // PowerShell block comments <# #> should NOT match - now correctly skipped
         let line = "<# Invoke-Expression (wt config shell init powershell) #>";
-        let result = is_shell_integration_line(line, "wt");
-        // This DOES match (false positive) - documenting the behavior
-        assert!(
-            result,
-            "PowerShell block comment currently matches (false positive risk)"
-        );
+        assert_not_detects(line, "wt", "PowerShell block comment should not match");
     }
 
     // ------------------------------------------------------------------------
     // FALSE NEGATIVE: zsh =() process substitution without source/eval
     // ------------------------------------------------------------------------
 
-    /// Zsh allows sourcing with just =() which creates a temp file
+    /// Zsh allows sourcing with just =() which creates a temp file - now detected
     #[test]
-    fn test_fn_zsh_bare_equals_substitution() {
+    fn test_zsh_bare_equals_substitution() {
         // Some zsh configs might use: . =(command)
         // Already covered above, but this is a variant
-        assert_not_detects(
+        assert_detects(
             ". =(command wt config shell init zsh)",
             "wt",
             "dot with command prefix",
@@ -749,30 +840,30 @@ mod tests {
     // ------------------------------------------------------------------------
 
     #[test]
-    fn test_fn_absolute_path() {
-        // Path-prefixed binary invocation - NOT detected because '/' not in allowed chars
-        assert_not_detects(
+    fn test_absolute_path() {
+        // Path-prefixed binary invocation - now detected with '/' in allowed chars
+        assert_detects(
             r#"eval "$(/usr/local/bin/wt config shell init bash)""#,
             "wt",
-            "CONFIRMED FALSE NEGATIVE: absolute path to binary",
+            "absolute path to binary",
         );
     }
 
     #[test]
-    fn test_fn_home_path() {
-        assert_not_detects(
+    fn test_home_path() {
+        assert_detects(
             r#"eval "$(~/.cargo/bin/wt config shell init bash)""#,
             "wt",
-            "CONFIRMED FALSE NEGATIVE: home-relative path",
+            "home-relative path",
         );
     }
 
     #[test]
-    fn test_fn_env_var_path() {
-        assert_not_detects(
+    fn test_env_var_path() {
+        assert_detects(
             r#"eval "$($HOME/.cargo/bin/wt config shell init bash)""#,
             "wt",
-            "CONFIRMED FALSE NEGATIVE: env var in path",
+            "env var in path",
         );
     }
 

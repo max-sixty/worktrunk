@@ -35,10 +35,20 @@ fn trace_epoch() -> &'static Instant {
 /// (file descriptors, process limits) while maintaining good parallelism.
 const DEFAULT_CONCURRENT_COMMANDS: usize = 32;
 
+/// Parse the concurrency limit from a string value.
+/// Returns None if invalid (not a number), otherwise applies the 0 = unlimited rule.
+fn parse_concurrent_limit(value: &str) -> Option<usize> {
+    value
+        .parse::<usize>()
+        .ok()
+        // 0 = no limit (use usize::MAX as effectively unlimited)
+        .map(|n| if n == 0 { usize::MAX } else { n })
+}
+
 fn max_concurrent_commands() -> usize {
     std::env::var("WORKTRUNK_MAX_CONCURRENT_COMMANDS")
         .ok()
-        .and_then(|s| s.parse().ok())
+        .and_then(|s| parse_concurrent_limit(&s))
         .unwrap_or(DEFAULT_CONCURRENT_COMMANDS)
 }
 
@@ -889,6 +899,34 @@ fn forward_signal_with_escalation(pgid: i32, sig: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_max_concurrent_commands_defaults() {
+        // When no env var is set, default should be used
+        assert!(max_concurrent_commands() >= 1, "Default should be >= 1");
+        assert_eq!(
+            max_concurrent_commands(),
+            DEFAULT_CONCURRENT_COMMANDS,
+            "Without env var, should use default"
+        );
+    }
+
+    #[test]
+    fn test_parse_concurrent_limit() {
+        // Normal values pass through unchanged
+        assert_eq!(parse_concurrent_limit("1"), Some(1));
+        assert_eq!(parse_concurrent_limit("32"), Some(32));
+        assert_eq!(parse_concurrent_limit("100"), Some(100));
+
+        // 0 means unlimited (maps to usize::MAX)
+        assert_eq!(parse_concurrent_limit("0"), Some(usize::MAX));
+
+        // Invalid values return None
+        assert_eq!(parse_concurrent_limit(""), None);
+        assert_eq!(parse_concurrent_limit("abc"), None);
+        assert_eq!(parse_concurrent_limit("-1"), None);
+        assert_eq!(parse_concurrent_limit("1.5"), None);
+    }
 
     #[test]
     fn test_shell_config_is_available() {

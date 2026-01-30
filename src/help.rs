@@ -127,6 +127,14 @@ pub fn maybe_handle_help_with_pager() -> bool {
 /// If `width` is provided, wraps text at that width (for web docs); otherwise uses default.
 /// Always preserves ANSI color codes for HTML conversion.
 fn get_help_reference(command_path: &[&str], width: Option<usize>) -> String {
+    let output = get_help_reference_inner(command_path, width);
+    // Strip OSC 8 hyperlinks. Clap generates these from markdown links like [text](url),
+    // but web docs convert ANSI to HTML via ansi_to_html which only handles SGR codes
+    // (colors), not OSC sequences - hyperlinks leak through as garbage.
+    worktrunk::styling::strip_osc8_hyperlinks(&output)
+}
+
+fn get_help_reference_inner(command_path: &[&str], width: Option<usize>) -> String {
     // Build args: ["wt", "config", "create", "--help"]
     let mut args: Vec<String> = vec!["wt".to_string()];
     args.extend(command_path.iter().map(|s| s.to_string()));
@@ -300,6 +308,8 @@ Commands with pages: merge, switch, remove, list"
     if let Some(subdocs) = subdoc_content {
         let subdocs_expanded = expand_subdoc_placeholders(subdocs, sub, &parent_name);
         let subdocs_processed = colorize_ci_status_for_html(&subdocs_expanded);
+        std::println!();
+        std::println!("# Subcommands");
         std::println!();
         std::println!("{}", subdocs_processed.trim());
     }
@@ -552,9 +562,9 @@ fn expand_demo_placeholders(text: &str) -> String {
             // Use figure.demo class for proper mobile styling (no shrink, horizontal scroll)
             // Generate <picture> element for light/dark theme switching
             // Assets are organized as: /assets/docs/{light,dark}/filename.gif
-            // Blank line after is already in source; blank line before comes from section separation
+            // Add trailing newline for markdown paragraph separation after the figure
             let replacement = format!(
-                "<figure class=\"demo\">\n<picture>\n  <source srcset=\"/assets/docs/dark/{filename}\" media=\"(prefers-color-scheme: dark)\">\n  <img src=\"/assets/docs/light/{filename}\" alt=\"{alt_text} demo\"{dim_attrs}>\n</picture>\n</figure>"
+                "<figure class=\"demo\">\n<picture>\n  <source srcset=\"/assets/docs/dark/{filename}\" media=\"(prefers-color-scheme: dark)\">\n  <img src=\"/assets/docs/light/{filename}\" alt=\"{alt_text} demo\"{dim_attrs}>\n</picture>\n</figure>\n"
             );
             let end = after_prefix + end_offset + SUFFIX.len();
             result.replace_range(start..end, &replacement);

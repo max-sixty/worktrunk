@@ -1,6 +1,12 @@
 # Worktrunk Development Guidelines
 
-> **Note**: This CLAUDE.md is just getting started. More guidelines will be added as patterns emerge.
+## Quick Start
+
+```bash
+cargo run -- hook pre-merge --yes   # run all tests + lints (do this before committing)
+```
+
+For Claude Code web environments, run `task setup-web` first. See [Testing](#testing) for more commands.
 
 ## Project Status
 
@@ -50,40 +56,33 @@ Key skills:
 ### Running Tests
 
 ```bash
-# Run all tests + lints (recommended before committing)
+# All tests + lints (recommended before committing)
 cargo run -- hook pre-merge --yes
+
+# Tests with coverage report → target/llvm-cov/html/index.html
+task coverage
 ```
 
 **For faster iteration:**
 
 ```bash
-# Lints only
-pre-commit run --all-files
-
-# Unit tests only
-cargo test --lib --bins
-
-# Integration tests (no shell tests)
-cargo test --test integration
-
-# Integration tests with shell tests (requires bash/zsh/fish)
-cargo test --test integration --features shell-integration-tests
+pre-commit run --all-files              # lints only
+cargo test --lib --bins                 # unit tests only
+cargo test --test integration           # integration tests (no shell tests)
+cargo test --test integration --features shell-integration-tests  # with shell tests
 ```
 
 ### Claude Code Web Environment
 
-When working in Claude Code web, install the task runner and run setup:
+Run `task setup-web` to install required shells (zsh, fish), `gh`, and other dev tools. Install `task` first if needed:
 
 ```bash
-# Install task (go-task) - https://taskfile.dev
 sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin
 export PATH="$HOME/bin:$PATH"
-
-# Run setup
 task setup-web
 ```
 
-This installs required shells (zsh, fish) for shell integration tests and builds the project. Also installs `gh` and other dev tools—run this if any command is not found. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) automatically skip when running as root, which is common in containerized environments.
+The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) skip automatically when running as root.
 
 ### Shell/PTY Integration Tests
 
@@ -247,61 +246,34 @@ Examples: `feature-user-post-start-npm.log`, `feature-project-post-start-build.l
 
 ## Coverage
 
+**NEVER merge a PR with failing `codecov/patch` without explicit user approval.** The check is marked "not required" in GitHub but it requires user approval to merge. When codecov fails:
+
+1. Investigate and fix the coverage gap (see below)
+2. If you believe the failure is a false positive, ask the user before merging
+
 The `codecov/patch` CI check enforces coverage on changed lines — respond to failures by writing tests, not by ignoring them. If code is unused, remove it. This includes specialized error handlers for rare cases when falling through to a more general handler is sufficient.
-
-### Running Coverage Locally
-
-```bash
-task coverage   # includes --features shell-integration-tests
-# Report: target/llvm-cov/html/index.html
-```
-
-Install once: `cargo install cargo-llvm-cov`
 
 ### Investigating codecov/patch Failures
 
-When CI shows a codecov/patch failure, investigate before declaring "ready to merge" — even if the check is marked "not required":
+When CI shows a codecov/patch failure, investigate before declaring "ready to merge":
 
-1. Identify uncovered lines in your changes:
-   ```bash
-   task coverage                                          # run tests, generate coverage
-   cargo llvm-cov report --show-missing-lines | grep <file>   # query the report
-   git diff main...HEAD -- path/to/file.rs
-   ```
+```bash
+task coverage                                              # run tests, generate coverage
+cargo llvm-cov report --show-missing-lines | grep <file>   # find uncovered lines
+```
 
-2. For each uncovered function/method you added, either:
-   - Write a test that exercises it, or
-   - Document why it's intentionally untested (e.g., error paths requiring external system mocks)
-
-### How Coverage Works with Integration Tests
-
-Coverage is collected via `cargo llvm-cov` which instruments the binary. **Subprocess execution IS captured** — when tests spawn `wt` via `assert_cmd_snapshot!`, the instrumented binary writes coverage data to profile files that get merged into the report.
-
-When investigating uncovered lines:
-
-1. Run `task coverage` first to see actual coverage % (~92% is normal)
-2. Use `cargo llvm-cov report --show-missing-lines | grep <file>` to find specific uncovered lines
-3. **Check if tests already exist** for that functionality before writing new ones
-4. Remaining uncovered lines are typically:
-   - Error handling paths requiring mocked git failures
-   - Edge cases in shell integration states (e.g., running as `git wt`)
-   - Test assertion code (only executes when tests fail)
-
-Code that only runs on test failure (assertion messages, custom panic handlers) shows as uncovered since tests pass. Keep this code minimal — useful for debugging but a rarely-traveled path.
+For each uncovered function/method, either write a test or document why it's intentionally untested. Integration tests (via `assert_cmd_snapshot!`) do capture subprocess coverage.
 
 ## Benchmarks
 
-See `benches/CLAUDE.md` for details.
+Benchmarks measure `wt list` performance across worktree counts and repository sizes.
 
 ```bash
-# Fast synthetic benchmarks (skip slow ones)
-cargo bench --bench list -- --skip cold --skip real
-
-# Specific benchmark
-cargo bench --bench list bench_list_by_worktree_count
+cargo bench --bench list -- --skip cold --skip real   # fast synthetic benchmarks
+cargo bench --bench list bench_list_by_worktree_count # specific benchmark
 ```
 
-Real repo benchmarks clone rust-lang/rust (~2-5 min first run, cached thereafter). Skip with `--skip real`.
+Real repo benchmarks clone rust-lang/rust (~2-5 min first run, cached thereafter). Skip with `--skip real`. See `benches/CLAUDE.md` for methodology and adding new benchmarks.
 
 ## JSON Output Format
 
@@ -315,6 +287,18 @@ Use `wt list --format=json` for structured data access. See `wt list --help` for
 
 ## Code Quality
 
+### Use Existing Dependencies
+
+Never hand-roll utilities that already exist as crate dependencies. Check `Cargo.toml` before implementing:
+
+| Need | Use | Not |
+|------|-----|-----|
+| Path normalization | `path_slash::PathExt::to_slash_lossy()` | `.to_string_lossy().replace('\\', "/")` |
+| Shell escaping | `shell_escape::unix::escape()` | Manual quoting |
+| ANSI colors | `color_print::cformat!()` | Raw escape codes |
+
+### Don't Suppress Warnings
+
 Don't suppress warnings with `#[allow(dead_code)]` — either delete the code or add a TODO explaining when it will be used:
 
 ```rust
@@ -325,6 +309,44 @@ fn validate_config() { ... }
 ### No Test Code in Library Code
 
 Never use `#[cfg(test)]` to add test-only convenience methods to library code. Tests should call the real API directly. If tests need helpers, define them in the test module.
+
+## Error Handling
+
+Use `anyhow` for error propagation with context:
+
+```rust
+use anyhow::{bail, Context, Result};
+
+// Prefer .context() for adding helpful error messages
+let data = std::fs::read_to_string(path)
+    .context("Failed to read config file")?;
+
+// Use bail! for early returns with formatted errors
+if worktree.is_dirty() {
+    bail!("worktree has uncommitted changes");
+}
+```
+
+**Patterns:**
+
+- **Use `bail!`** for business logic errors (dirty worktree, missing branch, invalid state)
+- **Use `.context()`** for wrapping I/O and external command failures
+- **Don't `logger.error` before raising** — include context in the error message itself
+- **Let errors propagate** — don't catch and re-raise without adding information
+
+## Adding CLI Commands
+
+CLI commands live in `src/cli/` with implementations in `src/commands/`.
+
+1. **Add subcommand** to `Cli` enum in `src/cli/mod.rs`
+2. **Create command module** in `src/commands/` (e.g., `src/commands/mycommand.rs`)
+3. **Add `after_long_help`** attribute for extended help that syncs to docs
+4. **Run doc sync** after adding help text:
+   ```bash
+   cargo test --test integration test_command_pages_and_skill_files_are_in_sync
+   ```
+
+Help text in `after_long_help` is the source of truth for `docs/content/{command}.md`.
 
 ## Accessor Function Naming Conventions
 
@@ -353,69 +375,16 @@ Function prefixes signal return behavior and side effects.
 - Don't use `load_*` for computed values (use bare nouns)
 - Don't use `get_*` prefix — use bare nouns instead (Rust convention)
 
-## Repository Caching Strategy
+## Repository Caching
 
-Most data is stable for the duration of a command. The only things worktrunk modifies are:
+Most data is stable for the duration of a command. `Repository` caches read-only values (remote URLs, config, branch metadata) via `Arc<RepoCache>` — cloning a Repository shares the cache.
 
-- **Worktree list** — `wt switch --create`, `wt remove` create/remove worktrees
-- **Working tree state** — `wt merge` commits, stages files
-- **Git config** — `wt config` modifies settings
-
-Everything else (remote URLs, project config, branch metadata) is read-only.
-
-### Caching Implementation
-
-`Repository` holds its cache directly via `Arc<RepoCache>`. Cloning a Repository shares the cache — all clones see the same cached values.
-
-**Key patterns:**
-
-- **Command entry points** create Repository via `Repository::current()` or `Repository::at(path)`
-- **Parallel tasks** (e.g., `wt list`) clone the Repository, sharing the cache
-- **Tests** naturally get isolation since each test creates its own Repository
-
-**Currently cached:**
-
-- `git_common_dir` — computed at construction, stored on struct
-- `worktree_root()` — per-worktree, keyed by path
-- `repo_path()` — derived from git_common_dir and is_bare
-- `is_bare()` — git config, doesn't change
-- `current_branch()` — per-worktree, keyed by path
-- `project_identifier()` — derived from remote URL
-- `primary_remote()` — git config, doesn't change
-- `primary_remote_url()` — derived from primary_remote, doesn't change
-- `default_branch()` — from git config or detection, doesn't change
-- `integration_target()` — effective target for integration checks (local default or upstream if ahead)
-- `merge_base()` — keyed by (commit1, commit2) pair
-- `ahead_behind` — keyed by (base_ref, branch_name), populated by `batch_ahead_behind()`
-- `project_config` — loaded from .config/wt.toml
-
-**Not cached (intentionally):**
-
+**Not cached (changes during command execution):**
 - `is_dirty()` — changes as we stage/commit
 - `list_worktrees()` — changes as we create/remove worktrees
 
-### Adding New Cached Methods
+When adding new cached methods, see `RepoCache` in `src/git/repository/mod.rs` for patterns (repo-wide via `OnceCell`, per-worktree via `DashMap`).
 
-1. Add field to `RepoCache` struct: `field_name: OnceCell<T>`
-2. Access via `self.cache.field_name`
-3. Return owned values (String, PathBuf, bool)
+## Releases
 
-```rust
-// For repo-wide values (same for all clones)
-pub fn cached_value(&self) -> anyhow::Result<String> {
-    self.cache
-        .field_name
-        .get_or_init(|| { /* compute value */ })
-        .clone()
-}
-
-// For per-worktree values (different per worktree path)
-// Use DashMap for concurrent access
-pub fn cached_per_worktree(&self, path: &Path) -> String {
-    self.cache
-        .field_name
-        .entry(path.to_path_buf())
-        .or_insert_with(|| { /* compute value */ })
-        .clone()
-}
-```
+Use the `release` skill for cutting releases. It handles version bumping, changelog generation, crates.io publishing, and GitHub releases.

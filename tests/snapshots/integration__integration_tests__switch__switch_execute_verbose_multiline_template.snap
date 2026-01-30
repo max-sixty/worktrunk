@@ -24,11 +24,14 @@ info:
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
+    PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
     WT_TEST_EPOCH: "1735776000"
@@ -42,7 +45,7 @@ repo=repo
 
 ----- stderr -----
 [2m○[22m Expanding [1mworktree-path[22m
-[107m [0m ../{{ repo }}.{{ branch | sanitize }} [2m→[22m ../repo.multiline-test
+[107m [0m {{ repo_path }}/../{{ repo }}.{{ branch | sanitize }} [2m→[22m _REPO_/../repo.multiline-test
 [32m✓[39m [32mCreated branch [1mmultiline-test[22m from [1mmain[22m and worktree @ [1m_REPO_.multiline-test[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m

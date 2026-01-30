@@ -9,6 +9,8 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
@@ -35,6 +37,7 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36mrebase[0m        Rebase onto target
   [1m[36mcopy-ignored[0m  Copy gitignored files to another worktree
   [1m[36mfor-each[0m      [experimental] Run command in each worktree
+  [1m[36mrelocate[0m      [experimental] Move worktrees to expected paths
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m

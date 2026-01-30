@@ -54,6 +54,7 @@ exit_code: 0
 [107m [0m [32m+[m[32m[commit.generation][m
 [107m [0m [32m+[m[32mcommand = "claude"[m
 [33m▲[39m [33mKey [1mcommit-generation[22m belongs in user config (will be ignored)[39m
+[2m○[22m Current config:
 [107m [0m [1m[36m[commit-generation]
 [107m [0m command = [32m"claude"
 
@@ -61,9 +62,9 @@ exit_code: 0
 [33m▲[39m [33mShell integration not active[39m
 [107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
 
-[2m○[22m [2mSkipped bash; ~/.bashrc not found[22m
-[2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
-[2m○[22m [2mSkipped fish; ~/.config/fish/functions not found[22m
+[2m○[22m [2mbash: Skipped; ~/.bashrc not found[22m
+[2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
+[2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
 
 [36mCLAUDE CODE[39m
 [2m○[22m [1mclaude[22m CLI not installed

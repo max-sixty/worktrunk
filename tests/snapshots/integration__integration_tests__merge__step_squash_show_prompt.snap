@@ -37,7 +37,8 @@ exit_code: 0
 Combine these commits into a single commit message.
 
 <format>
-- Subject under 50 chars, blank line, then optional body
+- Subject line under 50 chars
+- For material changes, add a blank line then a body paragraph explaining the change
 - Output only the commit message, no quotes or code blocks
 </format>
 

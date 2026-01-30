@@ -74,9 +74,13 @@ impl WorktrunkConfig for ProjectConfig {
 // Re-export public types
 pub use commands::{Command, CommandConfig};
 pub use deprecation::DeprecationInfo;
+pub use deprecation::Deprecations;
 pub use deprecation::check_and_migrate;
+pub use deprecation::detect_deprecations;
+pub use deprecation::format_brief_warning;
 pub use deprecation::format_deprecation_details;
 pub use deprecation::normalize_template_vars;
+pub use deprecation::write_migration_file;
 pub use deprecation::{DEPRECATED_SECTION_KEYS, key_belongs_in, warn_unknown_fields};
 pub use expansion::{
     DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, expand_template, redact_credentials,
@@ -88,9 +92,9 @@ pub use project::{
     find_unknown_keys as find_unknown_project_keys,
 };
 pub use user::{
-    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig, SelectConfig,
-    StageMode, UserConfig, UserProjectOverrides, find_unknown_keys as find_unknown_user_keys,
-    get_config_path, set_config_path,
+    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig,
+    ResolvedConfig, SelectConfig, StageMode, UserConfig, UserProjectOverrides,
+    find_unknown_keys as find_unknown_user_keys, get_config_path, set_config_path,
 };
 
 #[cfg(test)]
@@ -153,7 +157,7 @@ mod tests {
         assert!(config.configs.worktree_path.is_none());
         assert_eq!(
             config.worktree_path(),
-            "../{{ repo }}.{{ branch | sanitize }}"
+            "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
         );
         // commit_generation is None by default
         assert!(config.commit_generation.is_none());

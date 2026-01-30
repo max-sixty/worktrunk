@@ -412,11 +412,12 @@ impl StashData {
             ))
         );
 
+        // Don't use --quiet so git shows conflicts if any
         let success = Repository::current()
             .ok()
             .and_then(|repo| {
                 repo.worktree_at(&self.path)
-                    .run_command(&["stash", "pop", "--quiet", &self.stash_ref])
+                    .run_command(&["stash", "pop", &self.stash_ref])
                     .ok()
             })
             .is_some();

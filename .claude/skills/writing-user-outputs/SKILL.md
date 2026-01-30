@@ -30,22 +30,38 @@ if is_shell_integration_active() {
 }
 
 // ALWAYS DO THIS - just call output functions
-output::print(success_message("Created worktree"))?;
+eprintln!("{}", success_message("Created worktree"));
 output::change_directory(&path)?;  // Writes to directive file if set, else no-op
 ```
 
-**Output functions** (`src/output/global.rs`):
+**Printing output:**
 
-| Function | Destination | Purpose |
-|----------|-------------|---------|
-| `print(message)` | stderr | Status messages (use with formatting functions) |
-| `blank()` | stderr | Visual separation |
-| `stdout(content)` | stdout | Primary output (tables, JSON, pipeable) |
-| `change_directory(path)` | directive file | Shell cd after wt exits |
-| `execute(command)` | directive file | Shell command after wt exits |
-| `flush()` | both | Flush buffers (call before interactive prompts) |
-| `terminate_output()` | stderr | Reset ANSI state on stderr |
-| `is_shell_integration_active()` | — | Check if directive file set (rarely needed) |
+Use `eprintln!` and `println!` from `worktrunk::styling` (re-exported from
+`anstream` for automatic color support and TTY detection):
+
+```rust
+use worktrunk::styling::{eprintln, println, stderr};
+
+// Status messages to stderr
+eprintln!("{}", success_message("Created worktree"));
+
+// Primary output to stdout (tables, JSON, pipeable)
+println!("{}", table_output);
+
+// Flush before interactive prompts
+stderr().flush()?;
+```
+
+**Shell integration functions** (`src/output/global.rs`):
+
+| Function | Purpose |
+|----------|---------|
+| `change_directory(path)` | Shell cd after wt exits (writes to directive file if set) |
+| `execute(command)` | Shell command after wt exits |
+| `terminate_output()` | Reset ANSI state on stderr |
+| `is_shell_integration_active()` | Check if directive file set (rarely needed) |
+| `pre_hook_display_path(path)` | Compute display path for pre-hooks |
+| `post_hook_display_path(path)` | Compute display path for post-hooks |
 
 **Message formatting functions** (`worktrunk::styling`):
 
@@ -53,10 +69,24 @@ output::change_directory(&path)?;  // Writes to directive file if set, else no-o
 |----------|--------|-------|
 | `success_message()` | ✓ | green |
 | `progress_message()` | ◎ | cyan |
-| `info_message()` | ○ | — |
+| `info_message()` | ○ | symbol dim, text plain |
 | `warning_message()` | ▲ | yellow |
 | `hint_message()` | ↳ | dim |
 | `error_message()` | ✗ | red |
+| `prompt_message()` | ❯ | cyan |
+
+**Section headings** (`worktrunk::styling`):
+
+```rust
+use worktrunk::styling::format_heading;
+
+// Plain heading
+format_heading("BINARIES", None)  // => "BINARIES" (cyan)
+
+// Heading with suffix
+format_heading("USER CONFIG", Some("~/.config/wt.toml"))
+// => "USER CONFIG  ~/.config/wt.toml" (title cyan, suffix plain)
+```
 
 ## stdout vs stderr
 
@@ -83,37 +113,10 @@ On Windows with Git Bash, `mktemp` returns POSIX-style paths like `/tmp/tmp.xxx`
 The native Windows binary (`wt.exe`) needs a Windows path to write to the
 directive file.
 
-**No explicit path conversion is needed.** MSYS2 (which Git Bash uses)
-automatically converts POSIX paths in environment variables when spawning native
-Windows binaries. When the shell wrapper sets `WORKTRUNK_DIRECTIVE_FILE=/tmp/...`
-and runs `wt.exe`, MSYS2 translates this to `C:\Users\...\Temp\...` before the
-binary sees it.
-
-See: https://www.msys2.org/docs/filesystem-paths/
-
-This means the shell wrapper templates can use `$directive_file` directly without
-calling `cygpath -w`. The conversion happens automatically in the MSYS2 runtime.
-
-## Simplification Notes
-
-The output system was originally more complex to handle shell integration
-edge cases. After consolidation, the thin wrappers (`print`, `stdout`,
-`blank`) are essentially `eprintln!`/`println!` + flush.
-
-**What still provides value:**
-
-- `change_directory()`, `execute()` — IPC with shell wrapper via directive file
-- `terminate_output()` — ANSI reset when needed
-
-**What could be further simplified:**
-
-- `print()` → `eprintln!()` + flush (callers must remember to flush)
-- `stdout()` → `println!()` + flush
-- `blank()` → `eprintln!()` + flush
-
-The abstraction cost is low, but if we wanted to reduce indirection, these
-wrappers could be removed. The main value they provide is consistency (correct
-stream, always flushing).
+**No explicit path conversion is needed.** MSYS2 automatically converts POSIX
+paths in environment variables when spawning native Windows binaries — shell
+wrappers can use `$directive_file` directly. See:
+https://www.msys2.org/docs/filesystem-paths/
 
 ---
 
@@ -137,15 +140,8 @@ address the user. Imperatives like "Run", "Use", "Add" are fine — they're
 concise CLI idiom.
 
 ```rust
-// BAD - possessive pronoun
-"Use 'wt merge' to rebase your changes onto main"
-// GOOD - refers to the thing directly
-"Use 'wt merge' to rebase onto main"
-
-// BAD - possessive pronoun
-"Add one line to your shell config"
-// GOOD - refers to the thing directly
-"Add one line to the shell config"
+// BAD - "Use 'wt merge' to rebase your changes onto main"
+// GOOD - "Use 'wt merge' to rebase onto main"
 ```
 
 **Avoid redundant parenthesized content:** Parenthesized text should add new
@@ -197,17 +193,7 @@ run_hook_with_filter(..., crate::output::pre_hook_display_path(ctx.worktree_path
 
 // Post-hooks: user will cd to destination if shell integration active
 ctx.spawn_post_start_commands(crate::output::post_hook_display_path(&destination))?;
-
-// Complex case: cd only happens under certain conditions
-let display_path = if will_cd_to_destination {
-    crate::output::post_hook_display_path(&destination_path)
-} else {
-    crate::output::pre_hook_display_path(&destination_path)
-};
 ```
-
-These helpers encapsulate the shell integration check internally, so callers
-don't need to check `is_shell_integration_active()` directly.
 
 **Avoid pronouns with cross-message referents:** Hints appear as separate
 messages from errors. Don't use pronouns like "it" that refer to something
@@ -274,15 +260,10 @@ modifies.
 
 ```rust
 // GOOD - parallel structure with integration reason explaining branch deletion
-// Both wt merge and wt remove show integration reason when branch is deleted
 // Target branch is bold; symbol uses its standard styling (dim for _ and ⊂)
-"Removing feature worktree & branch in background (same commit as <bold>main</>, <dim>_</>)"        // SameCommit
-"Removing feature worktree & branch in background (ancestor of <bold>main</>, <dim>⊂</>)"           // Ancestor (main moved past)
-"Removing feature worktree & branch in background (no added changes on <bold>main</>, <dim>⊂</>)"   // NoAddedChanges (empty 3-dot diff)
-"Removing feature worktree & branch in background (tree matches <bold>main</>, <dim>⊂</>)"          // TreesMatch (squash/rebase)
-"Removing feature worktree & branch in background (all changes in <bold>main</>, <dim>⊂</>)"        // MergeAddsNothing (squash + main advanced)
-"Removing feature worktree in background; retaining unmerged branch"                         // Unmerged (system keeps)
-"Removing feature worktree in background; retaining branch (--no-delete-branch)"             // User flag (user keeps)
+"Removing feature worktree & branch in background (same commit as <bold>main</>, <dim>_</>)"  // Integrated
+"Removing feature worktree in background; retaining unmerged branch"                          // Unmerged
+"Removing feature worktree in background; retaining branch (--no-delete-branch)"              // User flag
 ```
 
 **Symbol styling:** Symbols are atomic with their color — the styling is part of
@@ -295,7 +276,9 @@ appearance that must be preserved in all contexts:
 When a symbol appears in a colored message (cyan progress, green success), close
 the message color before the symbol so it renders in its native styling. This
 requires breaking out of the message color and reopening it after the symbol.
-See `FlagNote` in `src/output/handlers.rs` for the implementation pattern.
+See `FlagNote` in `src/output/handlers.rs` for an example — it handles flag
+acknowledgment notes (like integration reasons) with proper color transitions
+via `after_cyan()` and `after_green()` methods.
 
 **Comma + "but" + em-dash for limitations:** When stating an outcome with a
 limitation and its reason:
@@ -310,7 +293,7 @@ This pattern:
 - Uses "but" to introduce what didn't work (cannot cd)
 - Uses em-dash to explain why (shell integration status)
 
-See `compute_shell_warning_reason()` in `src/output/handlers.rs` for the
+See `compute_shell_warning_reason()` in `src/output/shell_integration.rs` for the
 complete spec of shell integration warning messages and hints
 
 **Compute decisions once:** For background operations, check conditions upfront,
@@ -348,23 +331,6 @@ Not:
 ◎ Removing feature worktree & branch in background (same commit as main, _)
 ▲ Branch-worktree mismatch; expected feature @ ~/workspace/project.feature ⚑
 ```
-
-**Why this ordering matters:** The action message announces a decision. Warnings
-discovered while making that decision should precede the announcement — they
-explain what we found before we decided to proceed. Showing warnings after the
-action makes them feel like afterthoughts rather than considered observations.
-
-**The pattern:**
-
-1. Evaluate state and gather information (discovery phase)
-2. Show warnings about unexpected state discovered during evaluation
-3. Show the action message (what we decided to do)
-4. Show hints about what the user might do next
-
-This applies to warnings that are:
-- Pre-computed during command evaluation (path mismatches, state anomalies)
-- About the state we found, not about the action we're taking
-- Informational rather than blocking (we proceed despite the warning)
 
 Warnings that result from the action itself (something failed during execution)
 naturally come after the action.
@@ -426,20 +392,6 @@ shouldn't clutter user output:
 | JSON parse error (API changed) | Requires code fix |
 | Internal invariant violated | Developer bug |
 
-```rust
-// Inline - temporary issue affecting this command
-if is_rate_limited(&stderr) {
-    return Some(CiStatus::Error);  // Shows in CI column
-}
-
-// config show - permanent, user-fixable (checked on-demand by wt config show)
-// Shell integration status is probed by wt config show, not cached
-
-// log::warn! - not user-fixable, for developer debugging
-log::warn!("Failed to parse CI JSON for {}: {}", branch, e);
-return None;
-```
-
 **Command suggestions in hints:** When a hint includes a runnable command, use
 "To X, run Y" pattern. End with the command for easy copying:
 
@@ -499,8 +451,8 @@ Use `suggest_command()` from `worktrunk::styling` for proper shell escaping.
 
 **Every user-facing message requires either a symbol or a gutter.**
 
-**Section titles** (experimental): For sectioned output (`wt hook show`,
-`wt config show`), use `<cyan>SECTION TITLE</>`.
+**Section titles:** For sectioned output (`wt hook show`, `wt config show`), use
+`format_heading()` from `worktrunk::styling` (documented above).
 
 ## Blank Line Principles
 
@@ -511,23 +463,34 @@ parsing.
 Specific rules:
 
 - **No leading/trailing blanks** — Start immediately, end cleanly
-- **One blank after prompts** — Separate user input from results
+- **Blank before prompts, not after** — Signal "pause, something interactive is
+  happening" before the prompt; once the user responds, output flows continuously
+- **One blank between phases** — When a sub-operation completes and a different
+  operation begins, add a blank line to visually separate them
 - **Never double blanks** — One blank line maximum between elements
 
-## Output System
+**Prompt spacing:** A blank line before the prompt signals "something different
+is about to happen" and gives the user's eye a natural stopping point before they
+need to read and respond. No blank line after — the user's input ends the
+interactive moment and subsequent output flows naturally from that decision.
 
-Use `output::` functions for consistency.
+```
+◎ Detecting available LLM tools...
 
-```rust
-// Preferred - consistent routing and flushing
-output::print(success_message("Branch created"))?;
+❯ Configure claude for commit messages? [y/N/?] y
+✓ Added to user config:
+   ┃ [commit.generation]
+   ┃ command = "..."
+↳ View config: wt config show
 
-// Acceptable for simple cases - just remember to flush if needed
-eprintln!("{}", success_message("Branch created"));
+▲ Auto-staging 1 untracked path:
+   ┃ a
+◎ Generating commit message...
 ```
 
-**Note:** The output wrappers are thin (`eprintln!` + flush). The main value is
-consistency, not complex logic.
+**Phase separation:** A "phase" is a logically distinct operation. The blank
+line between the hint and warning above signals "config setup is done, now we're
+doing the main command workflow."
 
 **Interactive prompts** must flush stderr before blocking on stdin:
 
@@ -547,9 +510,9 @@ Sequential operations should show immediate feedback:
 
 ```rust
 for item in items {
-    output::print(progress_message(format!("Removing {item}...")))?;
+    eprintln!("{}", progress_message(format!("Removing {item}...")));
     perform_operation(item)?;
-    output::print(success_message(format!("Removed {item}")))?;  // Immediate feedback
+    eprintln!("{}", success_message(format!("Removed {item}")));  // Immediate feedback
 }
 ```
 
@@ -574,9 +537,9 @@ completion with reference info (hash, path).
 
 ```rust
 // GOOD - detailed progress, minimal success
-output::print(progress_message("Squashing 3 commits & working tree changes into a single commit (5 files, +60)..."))?;
+eprintln!("{}", progress_message("Squashing 3 commits & working tree changes into a single commit (5 files, +60)..."));
 perform_squash()?;
-output::print(success_message("Squashed @ a1b2c3d"))?;
+eprintln!("{}", success_message("Squashed @ a1b2c3d"));
 ```
 
 ## Style Constants
@@ -591,12 +554,11 @@ For everything else, use `cformat!` tags.
 
 ## Styling in Command Code
 
-Use `output::print()` with formatting functions. Use `cformat!` for inner
-styling:
+Use `eprintln!` with formatting functions. Use `cformat!` for inner styling:
 
 ```rust
-output::print(success_message(cformat!("Created <bold>{branch}</> from <bold>{base}</>")))?;
-output::print(hint_message(cformat!("Run <bright-black>wt merge</> to continue")))?;
+eprintln!("{}", success_message(cformat!("Created <bold>{branch}</> from <bold>{base}</>")));
+eprintln!("{}", hint_message(cformat!("Run <bright-black>wt merge</> to continue")));
 ```
 
 **color-print tags:** `<bold>`, `<dim>`, `<bright-black>`, `<red>`, `<green>`,
@@ -622,16 +584,11 @@ Never quote commands or branch names. Use styling to make them stand out:
 
 ```rust
 // GOOD - bold in normal context
-output::print(info_message(cformat!("Use <bold>wt merge</> to continue")))?;
-
+eprintln!("{}", info_message(cformat!("Use <bold>wt merge</> to continue")));
 // GOOD - bright-black for commands in hints
-output::print(hint_message(cformat!("Run <bright-black>wt list</> to see worktrees")))?;
-
-// GOOD - plain hint without commands
-output::print(hint_message("No changes to commit"))?;
-
+eprintln!("{}", hint_message(cformat!("Run <bright-black>wt list</> to see worktrees")));
 // BAD - quoted commands
-output::print(hint_message("Run 'wt list' to see worktrees"))?;
+eprintln!("{}", hint_message("Run 'wt list' to see worktrees"));
 ```
 
 ## Design Principles
@@ -642,7 +599,6 @@ output::print(hint_message("Run 'wt list' to see worktrees"))?;
   content (branch names, commit messages, paths, shell commands with `<`/`>`
   redirects) can be interpolated directly without escaping. Do NOT escape
   `<`/`>` in variables — it adds extra chars.
-- **`output::` for printing** — Preferred for consistency; direct `println!`/`eprintln!` acceptable
 - **YAGNI** — Most output needs no styling
 - **Graceful degradation** — Colors auto-adjust (NO_COLOR, TTY detection)
 - **Unicode-aware** — Width calculations respect symbols and CJK (via `StyledLine`)
@@ -731,11 +687,11 @@ This applies to:
 - Message functions: `error_message()`, `success_message()`, `hint_message()`, etc.
 - Gutter functions: `format_with_gutter()`, `format_bash_with_gutter()`
 
-**With `output::print()`:** Adds trailing newline automatically (uses `eprintln!`).
+**With `eprintln!`:** Adds trailing newline automatically.
 
 ```rust
-output::print(progress_message("Merging..."))?;
-output::print(format_with_gutter(&log, None))?;
+eprintln!("{}", progress_message("Merging..."));
+eprintln!("{}", format_with_gutter(&log, None));
 ```
 
 **In Display impls:** Use explicit newlines for element separation.
@@ -754,34 +710,15 @@ write!(f, "\n{}", hint_message(...))            // hint after blank line
 **Don't add trailing `\n` to content:**
 
 ```rust
-// GOOD - output::print adds newline
-output::print(progress_message("Merging..."))?;
+// GOOD - eprintln! adds newline
+eprintln!("{}", progress_message("Merging..."));
 
 // BAD - double newline
-output::print(progress_message("Merging...\n"))?;
+eprintln!("{}", progress_message("Merging...\n"));
 ```
 
-**Avoid bullets — use gutter instead:**
-
-```rust
-// BAD - bullet list
-let mut warning = String::from("Some git operations failed:");
-for error in &errors {
-    warning.push_str(&format!("\n  - {}: {}", name, msg));
-}
-output::print(warning_message(warning))?;
-
-// GOOD - gutter formatting
-let error_lines: Vec<String> = errors
-    .iter()
-    .map(|e| cformat!("<bold>{}</>: {}", e.name, e.msg))
-    .collect();
-let warning = format!(
-    "Some git operations failed:\n{}",
-    format_with_gutter(&error_lines.join("\n"), None)
-);
-output::print(warning_message(warning))?;
-```
+**Avoid bullets — use gutter instead.** Instead of `"\n  - {}: {}"` bullet
+formatting, use `format_with_gutter()` to present lists.
 
 ## Error Formatting
 
@@ -852,7 +789,7 @@ std::fs::read_to_string(&path).context("Failed to read config")?
 // NOT: ✗ ... failed: LLM command failed: Error: [Errno 8]...
 ```
 
-See `format_error_block()` in `src/git/error.rs`.
+See `src/git/error.rs` for examples of this pattern in `GitError` Display impls.
 
 ## Verbose Output (`-v` and `-vv`)
 
@@ -873,6 +810,41 @@ Format for template expansion:
 **`-vv` (debug):** Developer-facing logging output. MAY violate these guidelines.
 Uses `log::debug!()` with structured format for deep debugging. Not intended for
 regular users.
+
+## Path Formatting
+
+**All user-facing paths must use `format_path_for_display()`** from
+`worktrunk::path`. This function replaces home directory prefixes with `~` for
+readability (e.g., `/Users/alex/projects/repo` → `~/projects/repo`).
+
+```rust
+use worktrunk::path::format_path_for_display;
+
+// GOOD - uses format_path_for_display
+eprintln!("{}", success_message(cformat!(
+    "Created worktree at {}",
+    format_path_for_display(&worktree_path)
+)));
+
+// GOOD - error messages too
+.map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?
+
+// BAD - raw path.display()
+eprintln!("{}", success_message(format!(
+    "Created worktree at {}",
+    worktree_path.display()  // Shows /Users/alex/... instead of ~/...
+)));
+```
+
+**Applies to:**
+- Success/info/warning/error messages
+- Hints suggesting paths
+- Progress messages
+- Dry-run previews
+
+**Exceptions:**
+- Debug logging (`log::debug!`) — full paths help debugging
+- Paths passed to git commands — must be real paths
 
 ## Table Column Alignment
 

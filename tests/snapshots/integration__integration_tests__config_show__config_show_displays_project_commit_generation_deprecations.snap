@@ -50,6 +50,7 @@ exit_code: 0
 [107m [0m [31m-[projects."github.com/example/repo".commit-generation][m
 [107m [0m [32m+[m[32m[projects."github.com/example/repo".commit.generation][m
 [107m [0m  command = "llm -m gpt-4"[m
+[2m○[22m Current config:
 [107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 [107m [0m 
 [107m [0m [1m[36m[projects."github.com/example/repo".commit-generation]
@@ -62,9 +63,9 @@ exit_code: 0
 [33m▲[39m [33mShell integration not active[39m
 [107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
 
-[2m○[22m [2mSkipped bash; ~/.bashrc not found[22m
-[2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
-[2m○[22m [2mSkipped fish; ~/.config/fish/functions not found[22m
+[2m○[22m [2mbash: Skipped; ~/.bashrc not found[22m
+[2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
+[2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
 
 [36mCLAUDE CODE[39m
 [2m○[22m [1mclaude[22m CLI not installed

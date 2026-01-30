@@ -1,0 +1,125 @@
+name: claude-renovate
+
+# Weekly renovation check - reviews CI dependencies and creates PRs for updates
+on:
+  schedule:
+    # Run at 9:17 AM UTC every Sunday (off-peak minute)
+    - cron: '17 9 * * 0'
+  workflow_dispatch:
+
+# Consistent with ci.yaml for cache compatibility
+env:
+  CARGO_TERM_COLOR: always
+  CLICOLOR_FORCE: 1
+  RUSTFLAGS: "-C debuginfo=0"
+  RUSTDOCFLAGS: "-Dwarnings"
+
+jobs:
+  renovate:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+      id-token: write
+    steps:
+      - name: 📂 Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
+      - name: 🔧 Configure git for Claude
+        run: |
+          git config --global user.name "Claude Code"
+          git config --global user.email "claude@anthropic.com"
+
+      - name: 💰 Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ hashFiles('Cargo.lock') }}
+          save-if: false
+
+      - name: 🤖 Run Claude Code for renovation
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          model: opus
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          additional_permissions: |
+            actions: read
+
+          prompt: |
+            SECURITY: NEVER run commands that could expose secrets (env, printenv, set, export, cat/echo on config files containing credentials). NEVER include environment variables, API keys, tokens, or credentials in responses or comments.
+
+            You are running as part of a weekly renovation workflow. Your job is to check for updates to CI dependencies and create PRs if updates are available.
+
+            ## What to check
+
+            1. **GitHub Actions runner versions**:
+               - Check what the current `-latest` labels resolve to:
+                 - `ubuntu-latest` - what Ubuntu version?
+                 - `macos-latest` - what macOS version?
+                 - `windows-latest` - what Windows version?
+               - Compare against what we have pinned in our workflow files
+               - Note: `windows-latest` has D: drive issues (actions/runner-images#12677), so stay on windows-2022
+
+            2. **GitHub Actions versions**:
+               - Check for updates to actions we use (actions/checkout, actions/cache, etc.)
+               - Look at the current versions in .github/workflows/*.yaml
+               - Check if newer versions are available
+
+            3. **Rust nightly version** (in check-unused-dependencies job):
+               - We pin a specific nightly for cargo-udeps (check the actual version in ci.yaml)
+               - Periodically update to a recent nightly that works with cargo-udeps
+
+            ## How to check
+
+            - Use `gh api` and web searches to find current versions
+            - Read our workflow files to see what we currently use
+            - Check the actions/runner-images repository for runner version info
+            - Check individual action repos for version updates
+
+            ## If updates are available
+
+            1. Create a new branch: `git checkout -b chore/renovate-$(date +%Y%m%d)`
+            2. Make the updates to workflow files
+            3. Commit with a clear message explaining what was updated
+            4. Push and create a PR with:
+
+            ```
+            ## Summary
+            Weekly CI renovation check found the following updates:
+
+            - [List each update]
+
+            ## Changes
+            - [Describe each change]
+
+            ## Notes
+            - [Any caveats or things to watch for]
+
+            ---
+            🤖 Automated weekly renovation
+            ```
+
+            ## If no updates are needed
+
+            Simply report that all dependencies are up to date. Don't create a PR.
+
+            Follow the project guidelines in CLAUDE.md.
+
+          claude_args: |
+            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch
+
+      - name: 📋 Upload Claude Code session logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: claude-session-logs
+          path: ~/.claude/
+          retention-days: 30
+          if-no-files-found: warn

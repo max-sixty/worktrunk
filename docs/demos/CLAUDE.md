@@ -43,6 +43,51 @@ Regenerate a single demo:
 | docs | wt-core, wt-switch, wt-list, wt-commit, wt-statusline, wt-merge, wt-select, wt-zellij-omnibus |
 | social | wt-switch, wt-statusline, wt-list, wt-list-remove, wt-hooks, wt-devserver, wt-commit, wt-merge, wt-select, wt-core, wt-zellij-omnibus |
 
+## Snapshot testing
+
+```bash
+./docs/demos/build docs --snapshot           # Generate all snapshots
+./docs/demos/build docs --snapshot --only wt-list  # Single demo
+```
+
+Snapshots capture command output (not terminal rendering) and are committed to `docs/demos/snapshots/`. Use them to catch regressions like new hints creeping in.
+
+**How to use:**
+1. After changing wt output, regenerate snapshots: `./docs/demos/build docs --snapshot`
+2. Review the diff - small changes (commit hashes, minor formatting) are expected
+3. Commit the updated snapshots alongside your changes
+
+**What changes are expected:**
+- Commit hashes change each run (demo repo is recreated)
+- Column widths may shift slightly
+
+**What changes indicate regressions:**
+- New hints or warnings appearing
+- Output format changes you didn't intend
+- New lines or missing output
+
+**TUI demo validation:**
+
+TUI demos (Zellij, Claude UI) can't use text snapshots because VHS only captures the outer terminal, not content inside terminal multiplexers. Instead, they use OCR-based validation:
+
+1. After recording, specific frames are extracted from the GIF using ffmpeg
+2. Tesseract OCR extracts text from those frames
+3. The text is validated for expected/forbidden patterns
+4. Validation runs automatically when building TUI demos with defined checkpoints
+
+Checkpoints are defined in `docs/demos/shared/validation.py`. To add validation to a TUI demo:
+1. Identify key frame numbers by examining the GIF (30fps, so frame 90 = 3 seconds)
+2. Define checkpoint patterns in `validation.py` with frame numbers, expected patterns, and forbidden patterns
+
+Currently `wt-zellij-omnibus` has checkpoints; other TUI demos are skipped until checkpoints are added.
+
+**Prerequisites for TUI validation:** `ffmpeg` and `tesseract` must be installed.
+
+**Limitations:**
+- Tab completion sequences are not replayed; only `Type "command"` + `Enter` patterns are extracted
+- TUI demos without defined checkpoints are skipped
+- OCR accuracy depends on font rendering quality
+
 ## Prerequisites
 
 **Requires Go** — The VHS fork is built from source ([install Go](https://go.dev/dl/)).

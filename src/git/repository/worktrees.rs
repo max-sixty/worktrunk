@@ -7,6 +7,7 @@ use dunce::canonicalize;
 use normalize_path::NormalizePath;
 
 use super::{GitError, Repository, ResolvedWorktree, WorktreeInfo};
+use crate::path::format_path_for_display;
 
 impl Repository {
     /// List all worktrees for this repository.
@@ -106,7 +107,10 @@ impl Repository {
     pub fn remove_worktree(&self, path: &std::path::Path, force: bool) -> anyhow::Result<()> {
         let path_str = path.to_str().ok_or_else(|| {
             anyhow::Error::from(GitError::Other {
-                message: format!("Worktree path contains invalid UTF-8: {}", path.display()),
+                message: format!(
+                    "Worktree path contains invalid UTF-8: {}",
+                    format_path_for_display(path)
+                ),
             })
         })?;
         let mut args = vec!["worktree", "remove"];

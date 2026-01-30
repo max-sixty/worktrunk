@@ -204,9 +204,8 @@ fn test_switch_no_shell_env_shows_hint(repo: TestRepo) {
 mod pty_tests {
     use super::*;
     use crate::common::pty::exec_in_pty_with_home;
-    use crate::common::{add_pty_filters, setup_snapshot_settings};
+    use crate::common::{add_pty_filters, setup_snapshot_settings, wt_bin};
     use insta::assert_snapshot;
-    use insta_cmd::get_cargo_bin;
     use std::path::Path;
     use tempfile::TempDir;
 
@@ -252,7 +251,7 @@ mod pty_tests {
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
         let (output, exit_code) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
@@ -297,7 +296,7 @@ mod pty_tests {
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
         let (output, exit_code) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
@@ -353,7 +352,7 @@ mod pty_tests {
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
         let (output, exit_code) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
@@ -410,7 +409,7 @@ mod pty_tests {
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
         let (output, exit_code) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
@@ -466,7 +465,7 @@ mod pty_tests {
 
         // First switch - decline the prompt
         let (_, _) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature1"],
             repo.root_path(),
             &env_vars,
@@ -476,7 +475,7 @@ mod pty_tests {
 
         // Second switch - should NOT prompt again
         let (output, exit_code) = exec_in_pty_with_home(
-            get_cargo_bin("wt").to_str().unwrap(),
+            wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature2"],
             repo.root_path(),
             &env_vars,
@@ -489,6 +488,179 @@ mod pty_tests {
         assert!(
             !output.contains("Install shell integration"),
             "Should not prompt on second switch: {output}"
+        );
+    }
+}
+
+/// Tests for commit generation prompt (similar to shell integration prompt)
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+mod commit_generation_prompt_tests {
+    use super::*;
+    use crate::common::pty::exec_in_pty_with_home;
+    use crate::common::wt_bin;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+    use tempfile::TempDir;
+
+    fn setup_fake_claude(temp_home: &Path) -> PathBuf {
+        // Create a fake claude executable that does nothing
+        let bin_dir = temp_home.join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let claude_path = bin_dir.join("claude");
+        fs::write(&claude_path, "#!/bin/sh\nexit 0\n").unwrap();
+        // Make executable
+        let mut perms = fs::metadata(&claude_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&claude_path, perms).unwrap();
+        bin_dir
+    }
+
+    /// Test: No LLM tool available, prompt is skipped and skip flag is set
+    #[rstest]
+    fn test_no_llm_tool_sets_skip_flag(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+
+        // Stage a change so commit has something to do
+        let test_file = repo.root_path().join("test.txt");
+        fs::write(&test_file, "test content\n").unwrap();
+        repo.run_git(&["add", "test.txt"]);
+
+        let mut env_vars = repo.test_env_vars();
+        // Use minimal PATH to ensure claude/codex aren't found
+        env_vars.push(("PATH".to_string(), "/usr/bin:/bin".to_string()));
+
+        let (output, exit_code) = exec_in_pty_with_home(
+            wt_bin().to_str().unwrap(),
+            &["step", "commit"],
+            repo.root_path(),
+            &env_vars,
+            "", // No input needed - prompt should be skipped
+            temp_home.path(),
+        );
+
+        // Should succeed (using fallback commit message)
+        assert_eq!(exit_code, 0, "Command should succeed: {output}");
+
+        // Config should have skip-commit-generation-prompt = true (no tool found)
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+        assert!(
+            config_content.contains("skip-commit-generation-prompt = true"),
+            "Should set skip flag when no tool found: {config_content}"
+        );
+    }
+
+    /// Test: LLM tool available, user declines prompt
+    #[rstest]
+    fn test_user_declines_llm_prompt(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let bin_dir = setup_fake_claude(temp_home.path());
+
+        // Stage a change
+        let test_file = repo.root_path().join("test.txt");
+        fs::write(&test_file, "test content\n").unwrap();
+        repo.run_git(&["add", "test.txt"]);
+
+        let mut env_vars = repo.test_env_vars();
+        // Add our fake claude to PATH
+        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        env_vars.push(("PATH".to_string(), path));
+
+        let (output, exit_code) = exec_in_pty_with_home(
+            wt_bin().to_str().unwrap(),
+            &["step", "commit"],
+            repo.root_path(),
+            &env_vars,
+            "n\n", // Decline the prompt
+            temp_home.path(),
+        );
+
+        assert_eq!(exit_code, 0, "Command should succeed: {output}");
+
+        // Should show the prompt
+        assert!(
+            output.contains("Configure") && output.contains("claude"),
+            "Should show LLM config prompt: {output}"
+        );
+
+        // Config should have skip-commit-generation-prompt = true
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+        assert!(
+            config_content.contains("skip-commit-generation-prompt = true"),
+            "Should set skip flag when declined: {config_content}"
+        );
+    }
+
+    /// Test: LLM tool available, user accepts prompt
+    #[rstest]
+    fn test_user_accepts_llm_prompt(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let bin_dir = setup_fake_claude(temp_home.path());
+
+        // Stage a change
+        let test_file = repo.root_path().join("test.txt");
+        fs::write(&test_file, "test content\n").unwrap();
+        repo.run_git(&["add", "test.txt"]);
+
+        let mut env_vars = repo.test_env_vars();
+        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        env_vars.push(("PATH".to_string(), path));
+
+        let (output, _exit_code) = exec_in_pty_with_home(
+            wt_bin().to_str().unwrap(),
+            &["step", "commit"],
+            repo.root_path(),
+            &env_vars,
+            "y\n", // Accept the prompt
+            temp_home.path(),
+        );
+
+        // Note: exit_code may be non-zero because our fake claude doesn't generate
+        // a real commit message. We're testing the prompt flow, not the LLM result.
+
+        // Should show success message for config save
+        assert!(
+            output.contains("Added to user config"),
+            "Should show config added message: {output}"
+        );
+
+        // Config should have the command configured
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+        assert!(
+            config_content.contains("[commit.generation]") && config_content.contains("command"),
+            "Should add commit generation config: {config_content}"
+        );
+    }
+
+    /// Test: User requests preview (?)
+    #[rstest]
+    fn test_user_requests_preview(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        let bin_dir = setup_fake_claude(temp_home.path());
+
+        // Stage a change
+        let test_file = repo.root_path().join("test.txt");
+        fs::write(&test_file, "test content\n").unwrap();
+        repo.run_git(&["add", "test.txt"]);
+
+        let mut env_vars = repo.test_env_vars();
+        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        env_vars.push(("PATH".to_string(), path));
+
+        let (output, exit_code) = exec_in_pty_with_home(
+            wt_bin().to_str().unwrap(),
+            &["step", "commit"],
+            repo.root_path(),
+            &env_vars,
+            "?\nn\n", // Request preview, then decline
+            temp_home.path(),
+        );
+
+        assert_eq!(exit_code, 0, "Command should succeed: {output}");
+
+        // Should show the preview
+        assert!(
+            output.contains("Would add to") && output.contains("[commit.generation]"),
+            "Should show preview: {output}"
         );
     }
 }

@@ -25,8 +25,8 @@ use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{GitError, HookType};
 use worktrunk::styling::{
-    INFO_SYMBOL, PROMPT_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_bash_with_gutter,
-    hint_message, stderr, warning_message,
+    INFO_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_bash_with_gutter, hint_message,
+    prompt_message, stderr, warning_message,
 };
 
 use super::hook_filter::{HookSource, ParsedFilter};
@@ -122,7 +122,6 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
             "{WARNING_SYMBOL} <yellow><bold>{project_name}</> needs approval to execute <bold>{count}</> command{plural}:</>"
         )
     );
-    eprintln!();
 
     for cmd in commands {
         // Format as: {phase} {bold}{name}{bold:#}:
@@ -144,19 +143,21 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
         return Err(GitError::NotInteractive.into());
     }
 
-    // Flush stderr before showing prompt to ensure all output is visible
+    // Blank line before prompt for visual separation
+    worktrunk::styling::eprintln!();
     stderr().flush()?;
 
     eprint!(
-        "{}",
-        cformat!("{PROMPT_SYMBOL} Allow and remember? <bold>[y/N]</> ")
+        "{} ",
+        prompt_message(cformat!("Allow and remember? <bold>[y/N]</>"))
     );
     stderr().flush()?;
 
     let mut response = String::new();
     io::stdin().read_line(&mut response)?;
 
-    eprintln!();
+    // End the prompt line on stderr (user's input went to stdin, not stderr)
+    worktrunk::styling::eprintln!();
 
     Ok(response.trim().eq_ignore_ascii_case("y"))
 }

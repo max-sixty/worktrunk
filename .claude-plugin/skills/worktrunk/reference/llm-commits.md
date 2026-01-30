@@ -10,7 +10,7 @@ Any command that reads a prompt from stdin and outputs a commit message works. A
 
 ```toml
 [commit.generation]
-command = "MAX_THINKING_TOKENS=0 claude -p --model haiku --tools '' --disable-slash-commands --setting-sources '' --system-prompt ''"
+command = "MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 ```
 
 The flags disable tools, skills, settings, and system prompt for fast text-only output. See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
@@ -37,7 +37,7 @@ See [aichat docs](https://github.com/sigoden/aichat).
 
 ```toml
 [commit.generation]
-command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' --sandbox read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
 Uses the fast mini model with low reasoning effort. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
@@ -84,22 +84,9 @@ See [`wt merge`](https://worktrunk.dev/merge/) and [`wt step`](https://worktrunk
 
 Worktrunk uses [minijinja](https://docs.rs/minijinja/) templates (Jinja2-like syntax) to build prompts. There are sensible defaults, but templates are fully customizable.
 
-### Template variables
-
-All variables are available in both templates:
-
-| Variable | Description |
-|----------|-------------|
-| `{{ git_diff }}` | The diff (staged changes or combined diff for squash) |
-| `{{ branch }}` | Current branch name |
-| `{{ recent_commits }}` | Recent commit subjects (for style reference) |
-| `{{ repo }}` | Repository name |
-| `{{ commits }}` | Commit messages being squashed (chronological order) |
-| `{{ target_branch }}` | Branch being merged into |
-
 ### Custom templates
 
-Override the defaults with inline templates or external files:
+Override the defaults with inline templates:
 
 ```toml
 [commit.generation]
@@ -123,6 +110,18 @@ Diff:
 {{ git_diff }}
 """
 ```
+
+### Template variables
+
+| Variable | Description |
+|----------|-------------|
+| `{{ git_diff }}` | The diff (staged changes or combined diff for squash) |
+| `{{ git_diff_stat }}` | Diff statistics (files changed, insertions, deletions) |
+| `{{ branch }}` | Current branch name |
+| `{{ repo }}` | Repository name |
+| `{{ recent_commits }}` | Recent commit subjects (for style reference) |
+| `{{ commits }}` | Commits being squashed (squash template only) |
+| `{{ target_branch }}` | Merge target branch (squash template only) |
 
 ### Template syntax
 

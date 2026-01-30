@@ -121,7 +121,7 @@
 pub mod ci_status;
 pub(crate) mod collect;
 pub(crate) mod columns;
-mod json_output;
+pub mod json_output;
 pub(crate) mod layout;
 pub mod model;
 pub mod progressive;
@@ -173,12 +173,17 @@ pub fn handle_list(
 
     // Progressive rendering only for table format with Progressive mode
     let show_progress = match format {
-        crate::OutputFormat::Table => render_mode == RenderMode::Progressive,
+        crate::OutputFormat::Table | crate::OutputFormat::ClaudeCode => {
+            render_mode == RenderMode::Progressive
+        }
         crate::OutputFormat::Json => false, // JSON never shows progress
     };
 
     // Render table in collect() for all table modes (progressive + buffered)
-    let render_table = matches!(format, crate::OutputFormat::Table);
+    let render_table = matches!(
+        format,
+        crate::OutputFormat::Table | crate::OutputFormat::ClaudeCode
+    );
 
     // For testing: allow enabling skip_expensive_for_stale via env var
     let skip_expensive_for_stale = std::env::var("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD").is_ok();
@@ -220,7 +225,7 @@ pub fn handle_list(
                 serde_json::to_string_pretty(&json_items).context("Failed to serialize to JSON")?;
             println!("{}", json);
         }
-        crate::OutputFormat::Table => {
+        crate::OutputFormat::Table | crate::OutputFormat::ClaudeCode => {
             // Table and summary already rendered in collect() for all modes
             // Nothing to do here - collect() handles the complete table rendering
         }

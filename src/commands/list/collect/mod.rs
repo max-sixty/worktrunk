@@ -299,10 +299,11 @@ pub fn collect(
     // Detect current worktree using git rev-parse --show-toplevel (via WorkingTree::root).
     // This correctly handles worktrees placed inside other worktrees (e.g., .worktrees/ layout)
     // by letting git resolve the actual worktree root rather than using prefix matching.
+    // Canonicalize both paths to handle symlinks (e.g., macOS /var -> /private/var).
     let current_worktree_path = repo.current_worktree().root().ok().and_then(|root| {
         worktrees
             .iter()
-            .find(|wt| wt.path == root)
+            .find(|wt| canonicalize(&wt.path).map(|p| p == root).unwrap_or(false))
             .map(|wt| wt.path.clone())
     });
     // Show warning if user configured a default branch that doesn't exist locally

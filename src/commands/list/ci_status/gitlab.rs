@@ -139,14 +139,21 @@ pub(super) fn detect_gitlab(
             );
         }
         matched
+    } else if mr_list.len() == 1 {
+        // If we can't determine project ID but there's only one MR, it's unambiguous
+        mr_list.first()
+    } else if mr_list.is_empty() {
+        // No MRs found
+        None
     } else {
-        // If we can't determine project ID, fall back to first MR
+        // Multiple MRs exist but we can't determine which project we're in.
+        // Don't guess - return None to avoid showing wrong project's CI status.
         log::debug!(
-            "No project ID for {}, using first MR for branch {}",
-            repo_root.display(),
+            "Found {} MRs for branch {} but no project ID to filter - skipping to avoid ambiguity",
+            mr_list.len(),
             branch.full_name
         );
-        mr_list.first()
+        None
     }?;
 
     // Step 2: Fetch full MR details to get pipeline status.

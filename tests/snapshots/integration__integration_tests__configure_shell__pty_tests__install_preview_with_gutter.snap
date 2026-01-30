@@ -3,7 +3,7 @@ source: tests/integration_tests/configure_shell.rs
 expression: "output.trim_start_matches('\\n')"
 ---
 
-❯ Install shell integration? [y/N/?] 
+[36m❯[39m Install shell integration? [1m[y/N/?][22m 
 ✓ Added shell extension & completions for zsh @ ~/.zshrc
 ↳ Skipped bash; ~/.bashrc not found
 ↳ Skipped fish; ~/.config/fish/functions not found

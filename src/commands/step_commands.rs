@@ -48,13 +48,16 @@ pub fn step_commit(
         return Ok(());
     }
 
-    let env = CommandEnv::for_action("commit")?;
+    // Load config once, run LLM setup prompt, then reuse config
+    let mut config = UserConfig::load().context("Failed to load config")?;
+    // One-time LLM setup prompt (errors logged internally; don't block commit)
+    let _ = crate::output::prompt_commit_generation(&mut config);
+
+    let env = CommandEnv::for_action("commit", config)?;
     let ctx = env.context(yes);
 
-    // Determine effective stage mode: CLI > project config > global config > default
-    let stage_mode = stage
-        .or_else(|| env.commit().and_then(|c| c.stage))
-        .unwrap_or_default();
+    // CLI flag overrides config value
+    let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
 
     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
     // Shadow no_verify: if user declines approval, skip hooks but continue commit
@@ -63,7 +66,7 @@ pub fn step_commit(
         if !approved {
             eprintln!(
                 "{}",
-                worktrunk::styling::info_message("Commands declined, committing without hooks")
+                info_message("Commands declined, committing without hooks",)
             );
             true // Skip hooks
         } else {
@@ -99,26 +102,61 @@ pub enum SquashResult {
 /// Handle shared squash workflow (used by `wt step squash` and `wt merge`)
 ///
 /// # Arguments
-/// * `skip_pre_commit` - If true, skip all pre-commit hooks (both user and project)
+/// * `no_verify` - If true, skip all pre-commit hooks (from --no-verify flag)
 /// * `stage` - CLI-provided stage mode. If None, uses the effective config default.
 pub fn handle_squash(
     target: Option<&str>,
     yes: bool,
-    skip_pre_commit: bool,
+    no_verify: bool,
     stage: Option<StageMode>,
 ) -> anyhow::Result<SquashResult> {
-    let env = CommandEnv::for_action("squash")?;
+    // Load config once, run LLM setup prompt, then reuse config
+    let mut config = UserConfig::load().context("Failed to load config")?;
+    // One-time LLM setup prompt (errors logged internally; don't block commit)
+    let _ = crate::output::prompt_commit_generation(&mut config);
+
+    let env = CommandEnv::for_action("squash", config)?;
     let repo = &env.repo;
     // Squash requires being on a branch (can't squash in detached HEAD)
     let current_branch = env.require_branch("squash")?.to_string();
     let ctx = env.context(yes);
-    let effective_config = env.commit_generation();
-    let generator = CommitGenerator::new(&effective_config);
+    let resolved = env.resolved();
+    let generator = CommitGenerator::new(&resolved.commit_generation);
 
-    // Determine effective stage mode: CLI > project config > global config > default
-    let stage_mode = stage
-        .or_else(|| env.commit().and_then(|c| c.stage))
-        .unwrap_or_default();
+    // CLI flag overrides config value
+    let stage_mode = stage.unwrap_or(resolved.commit.stage());
+
+    // Check if any pre-commit hooks exist (needed for skip message and approval)
+    let project_config = repo.load_project_config()?;
+    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
+    let any_hooks_exist = user_hooks.pre_commit.is_some()
+        || project_config
+            .as_ref()
+            .is_some_and(|c| c.hooks.pre_commit.is_some());
+
+    // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
+    // Shadow no_verify: if user declines approval, skip hooks but continue squash
+    let no_verify = if !no_verify {
+        let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
+        if !approved {
+            eprintln!(
+                "{}",
+                info_message("Commands declined, squashing without hooks")
+            );
+            true // Skip hooks
+        } else {
+            false // Run hooks
+        }
+    } else {
+        // Show skip message when --no-verify was passed and hooks exist
+        if any_hooks_exist {
+            eprintln!(
+                "{}",
+                info_message("Skipping pre-commit hooks (--no-verify)")
+            );
+        }
+        true // --no-verify was passed
+    };
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
     let integration_target = repo.require_target_ref(target)?;
@@ -139,25 +177,8 @@ pub fn handle_squash(
         }
     }
 
-    // Run pre-commit hooks unless explicitly skipped
-    let project_config = repo.load_project_config()?;
-    let has_project_pre_commit = project_config
-        .as_ref()
-        .map(|c| c.hooks.pre_commit.is_some())
-        .unwrap_or(false);
-    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-    let has_user_pre_commit = user_hooks.pre_commit.is_some();
-    let has_any_pre_commit = has_project_pre_commit || has_user_pre_commit;
-
-    if skip_pre_commit && has_any_pre_commit {
-        eprintln!(
-            "{}",
-            info_message("Skipping pre-commit hooks (--no-verify)")
-        );
-    }
-
     // Run pre-commit hooks (user first, then project)
-    if !skip_pre_commit {
+    if !no_verify {
         let extra_vars = [("target", integration_target.as_str())];
         run_hook_with_filter(
             &ctx,
@@ -194,7 +215,7 @@ pub fn handle_squash(
 
     if commit_count == 0 && has_staged {
         // Just staged changes, no commits - commit them directly (no squashing needed)
-        generator.commit_staged_changes(true, stage_mode)?;
+        generator.commit_staged_changes(&wt, true, true, stage_mode)?;
         return Ok(SquashResult::Squashed);
     }
 
@@ -275,7 +296,7 @@ pub fn handle_squash(
         &subjects,
         &current_branch,
         repo_name,
-        &effective_config,
+        &resolved.commit_generation,
     )?;
 
     // Display the generated commit message
@@ -283,6 +304,12 @@ pub fn handle_squash(
     eprintln!("{}", format_with_gutter(&formatted_message, None));
 
     // Reset to merge base (soft reset stages all changes, including any already-staged uncommitted changes)
+    //
+    // TOCTOU note: Between this reset and the commit below, an external process could
+    // modify the staging area. This is extremely unlikely (requires precise timing) and
+    // the consequence is minor (unexpected content in squash commit). The commit message
+    // generated above accurately reflects the original commits being squashed, so any
+    // discrepancy would be visible in the diff. Considered acceptable risk.
     repo.run_command(&["reset", "--soft", &merge_base])
         .context("Failed to reset to merge base")?;
 
@@ -399,13 +426,15 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 
     // If rebase failed, check if it's due to conflicts
     if let Err(e) = rebase_result {
-        if let Some(state) = repo.worktree_state()?
-            && state.starts_with("REBASING")
-        {
+        // Check if it's a rebase conflict
+        let is_rebasing = repo
+            .worktree_state()?
+            .is_some_and(|s| s.starts_with("REBASING"));
+        if is_rebasing {
             // Extract git's stderr output from the error
             let git_output = e.to_string();
             return Err(worktrunk::git::GitError::RebaseConflict {
-                target_branch: integration_target.clone(),
+                target_branch: integration_target,
                 git_output,
             }
             .into());
@@ -422,27 +451,21 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     }
 
     // Verify rebase completed successfully (safety check for edge cases)
-    if let Some(state) = repo.worktree_state()? {
-        let _ = state; // used for diagnostics
+    if repo.worktree_state()?.is_some() {
         return Err(worktrunk::git::GitError::RebaseConflict {
-            target_branch: integration_target.clone(),
+            target_branch: integration_target,
             git_output: String::new(),
         }
         .into());
     }
 
     // Success
-    if is_fast_forward {
-        eprintln!(
-            "{}",
-            success_message(cformat!("Fast-forwarded to <bold>{integration_target}</>"))
-        );
+    let msg = if is_fast_forward {
+        cformat!("Fast-forwarded to <bold>{integration_target}</>")
     } else {
-        eprintln!(
-            "{}",
-            success_message(cformat!("Rebased onto <bold>{integration_target}</>"))
-        );
-    }
+        cformat!("Rebased onto <bold>{integration_target}</>")
+    };
+    eprintln!("{}", success_message(msg));
 
     Ok(RebaseResult::Rebased)
 }
@@ -493,7 +516,7 @@ pub fn step_copy_ignored(
                 branch: branch.to_string(),
             }
         })?,
-        None => repo.current_worktree().root()?.to_path_buf(),
+        None => repo.current_worktree().root()?,
     };
 
     if source_path == dest_path {
@@ -727,6 +750,79 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Move worktrees to their expected paths based on the `worktree-path` template.
+///
+/// See `src/commands/relocate.rs` for the implementation details and algorithm.
+///
+/// # Flags
+///
+/// | Flag | Purpose |
+/// |------|---------|
+/// | `--dry-run` | Show what would be moved without moving |
+/// | `--commit` | Auto-commit dirty worktrees with LLM-generated messages before relocating |
+/// | `--clobber` | Move non-worktree paths out of the way (`<path>.bak-<timestamp>`) |
+/// | `[branches...]` | Specific branches to relocate (default: all mismatched) |
+pub fn step_relocate(
+    branches: Vec<String>,
+    dry_run: bool,
+    commit: bool,
+    clobber: bool,
+) -> anyhow::Result<()> {
+    use super::relocate::{
+        GatherResult, RelocationExecutor, ValidationResult, gather_candidates, show_all_skipped,
+        show_dry_run_preview, show_no_relocations_needed, show_summary, validate_candidates,
+    };
+
+    let repo = Repository::current()?;
+    let config = UserConfig::load()?;
+    let default_branch = repo.default_branch().unwrap_or_default();
+
+    // Validate default branch early - needed for main worktree relocation
+    if default_branch.is_empty() {
+        anyhow::bail!(
+            "Cannot determine default branch; set with: wt config state default-branch set main"
+        );
+    }
+    let repo_path = repo.repo_path().to_path_buf();
+
+    // Phase 1: Gather candidates (worktrees not at expected paths)
+    let GatherResult {
+        candidates,
+        template_errors,
+    } = gather_candidates(&repo, &config, &branches)?;
+
+    if candidates.is_empty() {
+        show_no_relocations_needed(template_errors);
+        return Ok(());
+    }
+
+    // Dry run: show preview and exit
+    if dry_run {
+        show_dry_run_preview(&candidates);
+        return Ok(());
+    }
+
+    // Phase 2: Validate candidates (check locked/dirty, optionally auto-commit)
+    let ValidationResult { validated, skipped } =
+        validate_candidates(&repo, &config, candidates, commit, &repo_path)?;
+
+    if validated.is_empty() {
+        show_all_skipped(skipped);
+        return Ok(());
+    }
+
+    // Phase 3 & 4: Create executor (classifies targets) and execute relocations
+    let mut executor = RelocationExecutor::new(&repo, validated, clobber)?;
+    let cwd = std::env::current_dir().ok();
+    executor.execute(&repo_path, &default_branch, cwd.as_deref())?;
+
+    // Show summary
+    let total_skipped = skipped + executor.skipped;
+    show_summary(executor.relocated, total_skipped);
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,13 +846,6 @@ mod tests {
         let result = SquashResult::NoNetChanges;
         let debug = format!("{:?}", result);
         assert!(debug.contains("NoNetChanges"));
-    }
-
-    #[test]
-    fn test_squash_result_clone() {
-        let original = SquashResult::NoCommitsAhead("develop".to_string());
-        let cloned = original.clone();
-        assert!(matches!(cloned, SquashResult::NoCommitsAhead(ref s) if s == "develop"));
     }
 
     #[test]

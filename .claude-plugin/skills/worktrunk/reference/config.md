@@ -41,9 +41,8 @@ wt config show
 # ~/.config/worktrunk/config.toml
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 
-[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
+[commit.generation]
+command = "MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 ```
 
 **Project config** — shared team settings:
@@ -60,7 +59,7 @@ test = "npm test"
 ---
 
 <!-- USER_CONFIG_START -->
-## Worktrunk User Configuration
+# User Configuration
 
 Create with `wt config create`.
 
@@ -71,11 +70,12 @@ Location:
 
 ## Worktree path template
 
-Controls where new worktrees are created. Paths are relative to the repository root.
+Controls where new worktrees are created.
 
 **Variables:**
 
-- `{{ repo }}` — repository directory name
+- `{{ repo_path }}` — absolute path to the repository (e.g., `/Users/me/code/myproject`)
+- `{{ repo }}` — repository directory name (e.g., `myproject`)
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
@@ -83,22 +83,20 @@ Controls where new worktrees are created. Paths are relative to the repository r
 **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 
 ```toml
-# Default — siblings in parent directory
+# Default — sibling directory
 # Creates: ~/code/myproject.feature-auth
-worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+# worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
 
 # Inside the repository
 # Creates: ~/code/myproject/.worktrees/feature-auth
-worktree-path = ".worktrees/{{ branch | sanitize }}"
+worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
 
-# Namespaced (useful when multiple repos share a parent directory)
-# Creates: ~/code/worktrees/myproject/feature-auth
-worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
-
-# Nested bare repo (git clone --bare <url> project/.git)
-# Creates: ~/code/project/feature-auth (sibling to .git)
-worktree-path = "../{{ branch | sanitize }}"
+# Centralized worktrees directory
+# Creates: ~/worktrees/myproject/feature-auth
+worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
 ```
+
+`~` expands to the home directory. Relative paths are relative to the repository root.
 
 ## LLM commit messages
 
@@ -106,7 +104,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 
 See [LLM commits docs](https://worktrunk.dev/llm-commits/) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
 
-## Commands
+## Command config
 
 ### List
 
@@ -157,7 +155,7 @@ Pager behavior for `wt select` diff previews.
 
 For context:
 
-- [Project config](https://worktrunk.dev/config/#worktrunk-project-configuration) settings are shared with teammates.
+- [Project config](https://worktrunk.dev/config/#project-configuration) settings are shared with teammates.
 - User configs generally apply to all projects.
 - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.
 
@@ -207,7 +205,8 @@ template = """
 Write a commit message for the staged changes below.
 
 <format>
-- Subject under 50 chars, blank line, then optional body
+- Subject line under 50 chars
+- For material changes, add a blank line then a body paragraph explaining the change
 - Output only the commit message, no quotes or code blocks
 </format>
 
@@ -252,7 +251,8 @@ squash-template = """
 Combine these commits into a single commit message.
 
 <format>
-- Subject under 50 chars, blank line, then optional body
+- Subject line under 50 chars
+- For material changes, add a blank line then a body paragraph explaining the change
 - Output only the commit message, no quotes or code blocks
 </format>
 
@@ -281,48 +281,29 @@ Combine these commits into a single commit message.
 
 ---
 
-## Worktrunk Project Configuration
+# Project Configuration
 
-The project config defines lifecycle hooks and project-specific settings. This file is checked into version control and shared across the team.
+Project config (`.config/wt.toml`) defines lifecycle hooks and project-specific settings. This file is checked into version control and shared with the team. Create with `wt config create --project`.
 
-Create `.config/wt.toml` in the repository root:
+See [`wt hook`](https://worktrunk.dev/hook/) for hook types, execution order, template variables, and examples.
 
-```toml
-[post-create]
-install = "npm ci"
-
-[pre-merge]
-test = "npm test"
-lint = "npm run lint"
-```
-
-See [`wt hook`](https://worktrunk.dev/hook/) for complete documentation on hook types, execution order, template variables, and [JSON context](https://worktrunk.dev/hook/#json-context).
-
-### Dev server URL
-
-The `[list]` section adds a URL column to `wt list`:
+### Non-hook settings
 
 ```toml
+# .config/wt.toml
+
+# URL column in wt list (dimmed when port not listening)
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
-```
 
-URLs are dimmed when the port isn't listening.
-
-### CI platform override
-
-The `[ci]` section overrides CI platform detection for GitHub Enterprise or self-hosted GitLab with custom domains:
-
-```toml
+# Override CI platform detection for self-hosted instances
 [ci]
 platform = "github"  # or "gitlab"
 ```
 
-By default, the platform is detected from the remote URL. Use this when URL detection fails (e.g., `git.mycompany.com` instead of `github.mycompany.com`).
-
 ---
 
-## Shell integration
+# Shell Integration
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
@@ -345,19 +326,11 @@ wt config shell init fish | source
 
 Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
 
-### Skip first-run prompt
+### First-run prompts
 
-On first run without shell integration, Worktrunk offers to install it. Suppress this prompt in CI or automated environments:
+On first run without shell integration, Worktrunk offers to install it. Similarly, on first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
 
-```toml
-skip-shell-integration-prompt = true
-```
-
-Or via environment variable:
-
-```bash
-export WORKTRUNK_SKIP_SHELL_INTEGRATION_PROMPT=true
-```
+# Other
 
 ## Environment variables
 
@@ -424,6 +397,8 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
+
+# Subcommands
 
 ## wt config show
 

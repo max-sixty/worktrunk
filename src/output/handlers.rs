@@ -12,7 +12,7 @@ use crate::commands::branch_deletion::{
     BranchDeletionOutcome, BranchDeletionResult, delete_branch_if_safe,
 };
 use crate::commands::command_executor::CommandContext;
-use crate::commands::execute_pre_remove_commands;
+use crate::commands::hooks::{HookFailureStrategy, execute_hook, spawn_hook_background};
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, generate_removing_path,
     spawn_detached,
@@ -593,10 +593,10 @@ fn handle_branch_only_output(
             ))
         );
     } else {
-        // No worktree at all - warn since user asked to remove something that doesn't exist
+        // No worktree at all, but branch exists - informational since branch removal will proceed
         eprintln!(
             "{}",
-            warning_message(cformat!(
+            info_message(cformat!(
                 "No worktree found for branch <bold>{branch_name}</>"
             ))
         );
@@ -705,7 +705,13 @@ fn spawn_post_switch_after_remove(
         false, // yes=false for CommandContext
     );
     // No base context for remove-triggered switch (we're returning to main, not creating)
-    ctx.spawn_post_switch_commands(&[], super::post_hook_display_path(main_path))
+    spawn_hook_background(
+        &ctx,
+        worktrunk::HookType::PostSwitch,
+        &[],
+        None,
+        super::post_hook_display_path(main_path),
+    )
 }
 
 // ============================================================================
@@ -940,7 +946,14 @@ fn handle_removed_worktree_output(
         } else {
             Some(worktree_path) // Show path when user is elsewhere
         };
-        execute_pre_remove_commands(&ctx, None, display_path, &[])?;
+        execute_hook(
+            &ctx,
+            worktrunk::HookType::PreRemove,
+            &[],
+            HookFailureStrategy::FailFast,
+            None,
+            display_path,
+        )?;
     }
 
     // Emit cd directive only after pre-remove hooks succeed
