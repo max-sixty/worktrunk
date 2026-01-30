@@ -1,6 +1,6 @@
 //! Hook execution for worktree operations.
 //!
-//! CommandContext implementations for post-create, post-start, post-switch, and post-remove hooks.
+//! CommandContext implementations for post-create and post-remove hooks.
 
 use std::path::Path;
 
@@ -9,8 +9,7 @@ use worktrunk::path::to_posix_path;
 
 use crate::commands::command_executor::CommandContext;
 use crate::commands::hooks::{
-    HookFailureStrategy, execute_hook, prepare_hook_commands, spawn_hook_background,
-    spawn_hook_commands_background,
+    HookFailureStrategy, execute_hook, prepare_hook_commands, spawn_background_hooks,
 };
 
 impl<'a> CommandContext<'a> {
@@ -30,24 +29,6 @@ impl<'a> CommandContext<'a> {
             None,
             crate::output::post_hook_display_path(self.worktree_path),
         )
-    }
-
-    /// Spawn post-start commands in parallel as background processes (non-blocking)
-    pub fn spawn_post_start_commands(
-        &self,
-        extra_vars: &[(&str, &str)],
-        display_path: Option<&Path>,
-    ) -> anyhow::Result<()> {
-        spawn_hook_background(self, HookType::PostStart, extra_vars, None, display_path)
-    }
-
-    /// Spawn post-switch commands in parallel as background processes (non-blocking)
-    pub fn spawn_post_switch_commands(
-        &self,
-        extra_vars: &[(&str, &str)],
-        display_path: Option<&Path>,
-    ) -> anyhow::Result<()> {
-        spawn_hook_background(self, HookType::PostSwitch, extra_vars, None, display_path)
     }
 
     /// Spawn post-remove commands in parallel as background processes (non-blocking)
@@ -108,6 +89,6 @@ impl<'a> CommandContext<'a> {
             display_path,
         )?;
 
-        spawn_hook_commands_background(self, commands, HookType::PostRemove)
+        spawn_background_hooks(self, commands)
     }
 }

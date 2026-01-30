@@ -1297,6 +1297,32 @@ fn test_switch_post_hook_no_path_with_shell_integration(repo: TestRepo) {
     );
 }
 
+/// When both post-switch and post-start hooks are configured, they should be combined
+/// into a single output line with format: "Running post-switch: {names}; post-start: {names} @ path"
+#[rstest]
+fn test_switch_combined_post_switch_and_post_start_hooks(repo: TestRepo) {
+    // Create project config with both post-switch and post-start hooks
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        r#"post-switch = "echo switched"
+post-start = "echo started"
+"#,
+    )
+    .unwrap();
+
+    repo.commit("Add config");
+
+    // Run switch --create (triggers both post-switch and post-start)
+    // Should show a single combined line: "Running post-switch: project; post-start: project @ path"
+    snapshot_switch(
+        "switch_combined_hooks",
+        &repo,
+        &["--create", "combined-hooks-test", "--yes"],
+    );
+}
+
 #[rstest]
 fn test_switch_clobber_path_with_extension(repo: TestRepo) {
     // Calculate where the worktree would be created

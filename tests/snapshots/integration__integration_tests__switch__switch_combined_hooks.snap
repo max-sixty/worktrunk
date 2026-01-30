@@ -1,11 +1,12 @@
 ---
-source: tests/integration_tests/user_hooks.rs
+source: tests/integration_tests/switch.rs
 info:
   program: wt
   args:
-    - remove
-    - feature
-    - "--force-delete"
+    - switch
+    - "--create"
+    - combined-hooks-test
+    - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -39,5 +40,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎ Removing [1mfeature[22m worktree & branch in background (--force-delete)[39m
-[36m◎[39m [36mRunning post-remove: [1muser:cleanup[22m[39m
+[32m✓[39m [32mCreated branch [1mcombined-hooks-test[22m from [1mmain[22m and worktree @ [1m_REPO_.combined-hooks-test[22m[39m
+[2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
+[33m▲[39m [33mCannot change directory — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
+[36m◎[39m [36mRunning post-switch: [1mproject[22m; post-start: [1mproject[22m @ [1m_REPO_.combined-hooks-test[22m[39m

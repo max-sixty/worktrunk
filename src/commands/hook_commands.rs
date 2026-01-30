@@ -29,7 +29,7 @@ use super::context::CommandEnv;
 use super::hooks::execute_hook;
 use super::hooks::{
     HookFailureStrategy, check_name_filter_matched, prepare_hook_commands, run_hook_with_filter,
-    spawn_hook_commands_background,
+    spawn_background_hooks,
 };
 use super::project_config::collect_commands_for_hooks;
 
@@ -141,7 +141,7 @@ pub fn run_hook(
                     user_config,
                     project_config,
                 )?;
-                spawn_hook_commands_background(&ctx, commands, hook_type)
+                spawn_background_hooks(&ctx, commands)
             } else {
                 run_hook_with_filter(
                     &ctx,
@@ -180,7 +180,7 @@ pub fn run_hook(
                     user_config,
                     project_config,
                 )?;
-                spawn_hook_commands_background(&ctx, commands, hook_type)
+                spawn_background_hooks(&ctx, commands)
             } else {
                 run_hook_with_filter(
                     &ctx,
@@ -283,7 +283,7 @@ pub fn run_hook(
                     user_config,
                     project_config,
                 )?;
-                spawn_hook_commands_background(&ctx, commands, hook_type)
+                spawn_background_hooks(&ctx, commands)
             } else {
                 run_hook_with_filter(
                     &ctx,
