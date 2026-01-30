@@ -21,11 +21,14 @@ info:
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
+    PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
     WT_TEST_EPOCH: "1735776000"
@@ -37,11 +40,12 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRunning post-create project hook @ [1m_REPO_.feature[22m:[39m
-[107m [0m [2m[0m[2m[35mif[0m[2m [ ! -f test.txt ]; [0m[2m[35mthen[0m[2m[0m[2m
+[107m [0m [2m[0m[2m[35mif[0m[2m [ ! -f test.txt ]; [0m[2m[35mthen[0m[2m
 [107m [0m [2m  [0m[2m[34mecho[0m[2m [0m[2m[32m'File does not exist'[0m[2m [0m[2m[36m>[0m[2m result.txt
-[107m [0m [2m[0m[2m[34melse[0m[2m
+[107m [0m [2m[0m[2m[35melse[0m[2m
 [107m [0m [2m  [0m[2m[34mecho[0m[2m [0m[2m[32m'File exists'[0m[2m [0m[2m[36m>[0m[2m result.txt
-[107m [0m [2m[0m[2m[34mfi[0m[2m
+[107m [0m [2m[0m[2m[35mfi[0m[2m
+[107m [0m [2m
 [0m[32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

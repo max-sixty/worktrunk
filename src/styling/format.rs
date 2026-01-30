@@ -248,109 +248,79 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
     let bash_language = tree_sitter_bash::LANGUAGE.into();
     let bash_highlights = tree_sitter_bash::HIGHLIGHT_QUERY;
 
-    let mut config = match HighlightConfiguration::new(
+    let Ok(mut config) = HighlightConfiguration::new(
         bash_language,
-        "bash", // language name
+        "bash",
         bash_highlights,
         "", // injections query
         "", // locals query
-    ) {
-        Ok(config) => config,
-        Err(_) => {
-            // Fallback: if tree-sitter fails, use plain gutter formatting
-            HighlightConfiguration::new(
-                tree_sitter_bash::LANGUAGE.into(),
-                "bash", // language name
-                "",     // empty query
-                "",
-                "",
-            )
-            .unwrap()
-        }
+    ) else {
+        return format_with_gutter(content, width_override);
     };
-
     config.configure(&highlight_names);
 
     let mut highlighter = Highlighter::new();
+    let Ok(highlights) = highlighter.highlight(&config, content.as_bytes(), None, |_| None) else {
+        return format_with_gutter(content, width_override);
+    };
 
-    // Build lines without trailing newline - caller is responsible for element separation
-    let mut output_lines: Vec<String> = Vec::new();
+    let content_bytes = content.as_bytes();
 
-    // Process each line separately - this is required because tree-sitter's bash
-    // grammar fails to highlight multi-line commands when `&&` appears at line ends.
-    // Per-line processing gives proper highlighting for each line's content.
-    for line in content.lines() {
-        let mut styled_line = format!("{dim}");
+    // Phase 1: Build styled content with ANSI codes, restoring style after newlines
+    let mut styled = format!("{dim}");
+    let mut pending_highlight: Option<usize> = None;
+    let mut active_style: Option<anstyle::Style> = None;
 
-        let Ok(highlights) = highlighter.highlight(&config, line.as_bytes(), None, |_| None) else {
-            // Fallback: if highlighting fails, use plain dim
-            styled_line.push_str(line);
-            for wrapped in wrap_styled_text(&styled_line, available_width) {
-                output_lines.push(format!("{gutter} {gutter:#} {wrapped}{reset}"));
-            }
-            continue;
-        };
-
-        let line_bytes = line.as_bytes();
-
-        // Track the current highlight type so we can decide styling when we see the actual text
-        let mut pending_highlight: Option<usize> = None;
-
-        for event in highlights {
-            match event.unwrap() {
-                HighlightEvent::Source { start, end } => {
-                    // Output the text for this source region
-                    if let Ok(text) = std::str::from_utf8(&line_bytes[start..end]) {
-                        // Apply pending highlight style, but skip command styling for template syntax
-                        // (tree-sitter misinterprets `}}` at line start as a command)
-                        if let Some(idx) = pending_highlight.take() {
-                            let is_template_syntax =
-                                text.starts_with("}}") || text.starts_with("{{");
-                            let is_function = highlight_names
-                                .get(idx)
-                                .is_some_and(|name| *name == "function");
-
-                            // Skip command styling for template syntax, apply normal styling otherwise
-                            if !(is_function && is_template_syntax)
-                                && let Some(name) = highlight_names.get(idx)
-                                && let Some(style) = bash_token_style(name)
-                            {
-                                // Reset before applying style to clear the base dim, then apply token style.
-                                // Token styles use dim+color (not bold) because bold (SGR 1) and dim (SGR 2)
-                                // are mutually exclusive in some terminals like Alacritty.
-                                styled_line.push_str(&format!("{reset}{style}"));
-                            }
-                        }
-
-                        styled_line.push_str(text);
+    for event in highlights {
+        match event.unwrap() {
+            HighlightEvent::Source { start, end } => {
+                if let Ok(text) = std::str::from_utf8(&content_bytes[start..end]) {
+                    // Apply pending highlight (skip function styling for template syntax)
+                    if let Some(idx) = pending_highlight.take()
+                        && let Some(name) = highlight_names.get(idx)
+                        && let Some(style) = bash_token_style(name)
+                        && !(name == &"function"
+                            && (text.starts_with("}}") || text.starts_with("{{")))
+                    {
+                        styled.push_str(&format!("{reset}{style}"));
+                        active_style = Some(style);
                     }
-                }
-                HighlightEvent::HighlightStart(idx) => {
-                    // Remember the highlight type - we'll decide on styling when we see the text
-                    pending_highlight = Some(idx.0);
-                }
-                HighlightEvent::HighlightEnd => {
-                    // End of highlighted region - reset and restore dim for unhighlighted text
-                    pending_highlight = None;
-                    styled_line.push_str(&format!("{reset}{dim}"));
+
+                    // Insert style restore after each newline so lines are self-contained
+                    let style_restore = match active_style {
+                        Some(style) => format!("{dim}{reset}{style}"),
+                        None => format!("{dim}"),
+                    };
+                    styled.push_str(&text.replace('\n', &format!("\n{style_restore}")));
                 }
             }
-        }
-
-        // Wrap and collect gutter lines
-        for wrapped in wrap_styled_text(&styled_line, available_width) {
-            output_lines.push(format!("{gutter} {gutter:#} {wrapped}{reset}"));
+            HighlightEvent::HighlightStart(idx) => {
+                pending_highlight = Some(idx.0);
+            }
+            HighlightEvent::HighlightEnd => {
+                pending_highlight = None;
+                active_style = None;
+                styled.push_str(&format!("{reset}{dim}"));
+            }
         }
     }
 
-    output_lines.join("\n")
+    // Phase 2: Split into lines, wrap each, add gutters
+    styled
+        .lines()
+        .flat_map(|line| wrap_styled_text(line, available_width))
+        .map(|wrapped| format!("{gutter} {gutter:#} {wrapped}{reset}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Formats bash/shell commands with syntax highlighting and gutter
 ///
-/// Processes each line separately for highlighting (required for multi-line commands
-/// with `&&` at line ends), then applies template syntax detection to avoid
-/// misinterpreting `}}` as a command when it appears at line start.
+/// Uses unified highlighting (entire command at once) to preserve context across
+/// line breaks. Multi-line strings are correctly highlighted.
+///
+/// Template syntax (`{{ }}`) is detected to avoid misinterpreting Jinja variables
+/// as shell commands.
 ///
 /// # Example
 /// ```

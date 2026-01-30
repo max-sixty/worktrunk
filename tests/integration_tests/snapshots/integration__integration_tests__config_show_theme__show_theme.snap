@@ -42,9 +42,9 @@ exit_code: 0
 [2m○[22m Gutter formatting (shell code):
 [107m [0m [2m[0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mwt[0m[2m config shell init bash)"[0m[2m[0m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'This is a long command that will wrap to the next line when the terminal is narrow enough to require wrapping.'[0m[2m[0m
-[107m [0m [2m[0m[2m[34mecho[0m[2m 'hello[0m
-[107m [0m [2m[0m[2m[34mworld[0m[2m'[0m
-[107m [0m [2m[0m[2m[34mcargo[0m[2m build [0m[2m[36m--release[0m[2m [0m[2m[36m&&[0m[2m[0m[2m[0m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'hello[0m
+[107m [0m [2m[0m[2m[32mworld'[0m[2m[0m
+[107m [0m [2m[0m[2m[34mcargo[0m[2m build [0m[2m[36m--release[0m[2m [0m[2m[36m&&[0m[2m[0m
 [107m [0m [2m[0m[2m[34mcargo[0m[2m test[0m
 
 [2m○[22m Prompt formatting:
