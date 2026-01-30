@@ -12,10 +12,13 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
     WT_TEST_EPOCH: "1735776000"
@@ -32,9 +35,12 @@ exit_code: 0
 [2m↳[22m [2mTo rebase onto main, run [90mwt merge[39m[22m
 [2m○[22m Showing [1m5[22m worktrees
 
-[2m○[22m Gutter formatting (quoted content):
-[107m [0m [commit-generation]
-[107m [0m command = "llm --model claude"
+[2m○[22m Gutter formatting (error details):
+[107m [0m expected `=`, found newline at line 3 column 1
+
+[2m○[22m Gutter formatting (config):
+[107m [0m [1m[36m[commit.generation][0m
+[107m [0m command = [32m"llm --model claude"[0m
 
 [2m○[22m Gutter formatting (shell code):
 [107m [0m [2m[0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mwt[0m[2m config shell init bash)"[0m[2m[0m

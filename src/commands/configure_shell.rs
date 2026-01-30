@@ -7,8 +7,8 @@ use anstyle::Style;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
 use worktrunk::styling::{
-    INFO_SYMBOL, SUCCESS_SYMBOL, eprint, eprintln, format_bash_with_gutter, format_with_gutter,
-    prompt_message, warning_message,
+    INFO_SYMBOL, SUCCESS_SYMBOL, eprint, eprintln, format_bash_with_gutter, format_toml,
+    format_with_gutter, prompt_message, warning_message,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -1246,19 +1246,25 @@ pub fn handle_show_theme() {
 
     eprintln!();
 
-    // Gutter - quoted content
-    eprintln!("{}", info_message("Gutter formatting (quoted content):"));
+    // Gutter - error details (plain text, no syntax highlighting)
+    eprintln!("{}", info_message("Gutter formatting (error details):"));
     eprintln!(
         "{}",
-        format_with_gutter(
-            "[commit-generation]\ncommand = \"llm --model claude\"",
-            None,
-        )
+        format_with_gutter("expected `=`, found newline at line 3 column 1", None,)
     );
 
     eprintln!();
 
-    // Gutter - bash code
+    // Gutter - TOML config (syntax highlighted)
+    eprintln!("{}", info_message("Gutter formatting (config):"));
+    eprintln!(
+        "{}",
+        format_toml("[commit.generation]\ncommand = \"llm --model claude\"")
+    );
+
+    eprintln!();
+
+    // Gutter - bash code (syntax highlighted)
     eprintln!("{}", info_message("Gutter formatting (shell code):"));
     eprintln!(
         "{}",

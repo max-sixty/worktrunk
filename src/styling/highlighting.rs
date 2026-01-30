@@ -87,6 +87,9 @@ pub(super) fn bash_token_style(kind: &str) -> Option<Style> {
 // ============================================================================
 
 /// Formats TOML content with syntax highlighting using synoptic
+///
+/// Returns formatted output without trailing newline (consistent with format_with_gutter
+/// and format_bash_with_gutter).
 pub fn format_toml(content: &str) -> String {
     // synoptic has built-in TOML support, so this always succeeds
     let mut highlighter = from_extension("toml", 4).expect("synoptic supports TOML");
@@ -97,29 +100,33 @@ pub fn format_toml(content: &str) -> String {
     highlighter.run(&lines);
 
     // Render each line with gutter and appropriate styling
-    let mut output = String::new();
-    for (y, line) in lines.iter().enumerate() {
-        output.push_str(&format!("{gutter} {gutter:#} "));
+    // Build lines without trailing newline - caller is responsible for element separation
+    let output_lines: Vec<String> = lines
+        .iter()
+        .enumerate()
+        .map(|(y, line)| {
+            let mut line_output = format!("{gutter} {gutter:#} ");
 
-        for token in highlighter.line(y, line) {
-            match token {
-                TokOpt::Some(text, kind) => {
-                    if let Some(s) = toml_token_style(&kind) {
-                        output.push_str(&format!("{s}{text}{s:#}"));
-                    } else {
-                        output.push_str(&text);
+            for token in highlighter.line(y, line) {
+                match token {
+                    TokOpt::Some(text, kind) => {
+                        if let Some(s) = toml_token_style(&kind) {
+                            line_output.push_str(&format!("{s}{text}{s:#}"));
+                        } else {
+                            line_output.push_str(&text);
+                        }
+                    }
+                    TokOpt::None(text) => {
+                        line_output.push_str(&text);
                     }
                 }
-                TokOpt::None(text) => {
-                    output.push_str(&text);
-                }
             }
-        }
 
-        output.push('\n');
-    }
+            line_output
+        })
+        .collect();
 
-    output
+    output_lines.join("\n")
 }
 
 /// Maps TOML token kinds to anstyle styles
