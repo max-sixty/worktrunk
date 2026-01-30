@@ -451,7 +451,7 @@ pub fn execute_hook(
 ///
 /// Use this to collect hooks from multiple types, then call `spawn_background_hooks`
 /// once to spawn them all with a unified message.
-pub fn prepare_background_hooks(
+pub(crate) fn prepare_background_hooks(
     ctx: &CommandContext,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
