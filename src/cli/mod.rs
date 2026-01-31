@@ -1510,8 +1510,6 @@ deps = "npm ci"
 test = "npm test"
 ```
 
----
-
 <!-- USER_CONFIG_START -->
 # User Configuration
 
@@ -1733,8 +1731,6 @@ Combine these commits into a single commit message.
 <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 <!-- USER_CONFIG_END -->
 
----
-
 # Project Configuration
 
 Project config (`.config/wt.toml`) defines lifecycle hooks and project-specific settings. This file is checked into version control and shared with the team. Create with `wt config create --project`.
@@ -1754,8 +1750,6 @@ url = "http://localhost:{{ branch | hash_port }}"
 [ci]
 platform = "github"  # or "gitlab"
 ```
-
----
 
 # Shell Integration
 
