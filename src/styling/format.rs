@@ -227,7 +227,14 @@ pub fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
 fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) -> String {
     // Normalize CRLF to LF for consistent output across platforms
     let content = content.replace("\r\n", "\n");
-    let content = content.as_str();
+
+    // Replace Jinja template delimiters with bash-valid placeholders before parsing.
+    // Tree-sitter can't parse `{{` and `}}` (especially when split across lines),
+    // so we swap them out and restore after highlighting.
+    const TPL_OPEN: &str = "_WT_OPEN_";
+    const TPL_CLOSE: &str = "_WT_CLOSE_";
+    let normalized = content.replace("{{", TPL_OPEN).replace("}}", TPL_CLOSE);
+    let content = normalized.as_str();
 
     let gutter = super::GUTTER;
     let reset = anstyle::Reset;
@@ -278,16 +285,13 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
         match event.unwrap() {
             HighlightEvent::Source { start, end } => {
                 if let Ok(text) = std::str::from_utf8(&content_bytes[start..end]) {
-                    // Apply pending highlight, but skip function styling for Jinja template
-                    // delimiters. Hook commands use templates like `echo {{ branch }}`, and
-                    // tree-sitter's bash parser misidentifies `{{` and `}}` as commands when
-                    // they appear at token boundaries. Without this check, template syntax
-                    // would be incorrectly highlighted as shell commands.
+                    // Apply pending highlight style, but skip function styling for
+                    // template placeholders (tree-sitter misidentifies them as commands)
                     if let Some(idx) = pending_highlight.take()
                         && let Some(name) = highlight_names.get(idx)
                         && let Some(style) = bash_token_style(name)
                         && !(name == &"function"
-                            && (text.starts_with("}}") || text.starts_with("{{")))
+                            && (text.starts_with(TPL_CLOSE) || text.starts_with(TPL_OPEN)))
                     {
                         styled.push_str(&format!("{reset}{style}"));
                         active_style = Some(style);
@@ -313,12 +317,15 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
     }
 
     // Phase 2: Split into lines, wrap each, add gutters
-    styled
+    let mut result = styled
         .lines()
         .flat_map(|line| wrap_styled_text(line, available_width))
         .map(|wrapped| format!("{gutter} {gutter:#} {wrapped}{reset}"))
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n");
+
+    // Phase 3: Restore original template delimiters from placeholders
+    result.replace(TPL_OPEN, "{{").replace(TPL_CLOSE, "}}")
 }
 
 /// Formats bash/shell commands with syntax highlighting and gutter
