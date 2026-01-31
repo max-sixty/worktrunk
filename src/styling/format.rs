@@ -232,12 +232,12 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
     let content = content.replace("\r\n", "\n");
     let content = content.trim_end_matches('\n');
 
-    // Replace Jinja template delimiters with bash-valid placeholders before parsing.
+    // Replace Jinja template delimiters with quoted string placeholders before parsing.
     // Tree-sitter can't parse `{{` and `}}` (especially when split across lines),
-    // so we swap them out and restore after highlighting. Using plain identifiers
-    // (no special chars like `$`) ensures ANSI codes don't break up the placeholder.
-    const TPL_OPEN: &str = "WT_TPL_OPEN";
-    const TPL_CLOSE: &str = "WT_TPL_CLOSE";
+    // so we swap them out and restore after highlighting. Using quoted strings
+    // ensures consistent "string" styling regardless of position in the line.
+    const TPL_OPEN: &str = "\"WTO\"";
+    const TPL_CLOSE: &str = "\"WTC\"";
     let normalized = content.replace("{{", TPL_OPEN).replace("}}", TPL_CLOSE);
     let content = normalized.as_str();
 

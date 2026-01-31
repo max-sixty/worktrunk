@@ -2,11 +2,11 @@
 source: src/styling/mod.rs
 expression: result
 ---
-[107m [0m [2m[ -d {{ repo_root }}/target/debug/deps ] [0m[2m[36m&&[0m[2m [ ! -e {{ worktree }}/target ] [0m[2m[36m&&[0m[2m[0m
-[107m [0m [2m[0m[2m[34mmkdir[0m[2m [0m[2m[36m-p[0m[2m {{ worktree }}/target/debug/deps [0m[2m[36m&&[0m[2m[0m
-[107m [0m [2m[0m[2m[34mcp[0m[2m [0m[2m[36m-c[0m[2m {{ repo_root }}/target/debug/deps/*.rlib {{ repo_root [0m
-[107m [0m [2m}}/target/debug/deps/*.rmeta {{ worktree[0m
-[107m [0m [2m[0m[2m[34m}}/target/debug/deps/[0m[2m [0m[2m[36m&&[0m[2m[0m
-[107m [0m [2m[0m[2m[34mcp[0m[2m [0m[2m[36m-cR[0m[2m {{ repo_root }}/target/debug/.fingerprint {{ repo_root [0m
-[107m [0m [2m}}/target/debug/build {{ worktree[0m
-[107m [0m [2m[0m[2m[34m}}/target/debug/[0m[2m[0m
+[107m [0m [2m[ -d [0m[2m[32m{{[0m[2m repo_root [0m[2m[32m}}[0m[2m/target/debug/deps ] [0m[2m[36m&&[0m[2m [ ! -e [0m[2m[32m{{[0m[2m worktree [0m[2m[32m}}[0m[2m/target ] [0m[2m[36m&&[0m[2m[0m
+[107m [0m [2m[0m[2m[34mmkdir[0m[2m [0m[2m[36m-p[0m[2m [0m[2m[32m{{[0m[2m worktree [0m[2m[32m}}[0m[2m/target/debug/deps [0m[2m[36m&&[0m[2m[0m
+[107m [0m [2m[0m[2m[34mcp[0m[2m [0m[2m[36m-c[0m[2m [0m[2m[32m{{[0m[2m repo_root [0m[2m[32m}}[0m[2m/target/debug/deps/*.rlib [0m[2m[32m{{[0m[2m repo_root [0m
+[107m [0m [2m[0m[2m[32m}}[0m[2m/target/debug/deps/*.rmeta [0m[2m[32m{{[0m[2m worktree[0m
+[107m [0m [2m[0m[2m[32m}}[0m[2m/target/debug/deps/[0m[2m [0m[2m[36m&&[0m[2m[0m
+[107m [0m [2m[0m[2m[34mcp[0m[2m [0m[2m[36m-cR[0m[2m [0m[2m[32m{{[0m[2m repo_root [0m[2m[32m}}[0m[2m/target/debug/.fingerprint [0m[2m[32m{{[0m[2m repo_root [0m
+[107m [0m [2m[0m[2m[32m}}[0m[2m/target/debug/build [0m[2m[32m{{[0m[2m worktree[0m
+[107m [0m [2m[0m[2m[32m}}[0m[2m/target/debug/[0m[2m[0m
