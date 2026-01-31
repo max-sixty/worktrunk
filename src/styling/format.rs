@@ -5,15 +5,7 @@
 #[cfg(feature = "syntax-highlighting")]
 use super::highlighting::bash_token_style;
 #[cfg(feature = "syntax-highlighting")]
-use std::sync::LazyLock;
-#[cfg(feature = "syntax-highlighting")]
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
-
-/// Regex to match ANSI escape codes for color/style (e.g., `\x1b[32m`).
-/// Used to detect lines that contain only styling with no visible content.
-#[cfg(feature = "syntax-highlighting")]
-static ANSI_CODE_PATTERN: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap());
 
 // Import canonical implementations from parent module
 use super::{get_terminal_width, visual_width};
@@ -233,14 +225,19 @@ pub fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
 
 #[cfg(feature = "syntax-highlighting")]
 fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) -> String {
-    // Normalize CRLF to LF for consistent output across platforms
+    // Normalize line endings: CRLF to LF, and trim trailing newlines.
+    // Trailing newlines would create spurious blank gutter lines because
+    // style restoration after newlines produces `\n[DIM]` which becomes
+    // its own line when split.
     let content = content.replace("\r\n", "\n");
+    let content = content.trim_end_matches('\n');
 
     // Replace Jinja template delimiters with bash-valid placeholders before parsing.
     // Tree-sitter can't parse `{{` and `}}` (especially when split across lines),
-    // so we swap them out and restore after highlighting.
-    const TPL_OPEN: &str = "_WT_OPEN_";
-    const TPL_CLOSE: &str = "_WT_CLOSE_";
+    // so we swap them out and restore after highlighting. Using plain identifiers
+    // (no special chars like `$`) ensures ANSI codes don't break up the placeholder.
+    const TPL_OPEN: &str = "WT_TPL_OPEN";
+    const TPL_CLOSE: &str = "WT_TPL_CLOSE";
     let normalized = content.replace("{{", TPL_OPEN).replace("}}", TPL_CLOSE);
     let content = normalized.as_str();
 
@@ -293,13 +290,10 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
         match event.unwrap() {
             HighlightEvent::Source { start, end } => {
                 if let Ok(text) = std::str::from_utf8(&content_bytes[start..end]) {
-                    // Apply pending highlight style, but skip function styling for
-                    // template placeholders (tree-sitter misidentifies them as commands)
+                    // Apply pending highlight style
                     if let Some(idx) = pending_highlight.take()
                         && let Some(name) = highlight_names.get(idx)
                         && let Some(style) = bash_token_style(name)
-                        && !(name == &"function"
-                            && (text.starts_with(TPL_CLOSE) || text.starts_with(TPL_OPEN)))
                     {
                         styled.push_str(&format!("{reset}{style}"));
                         active_style = Some(style);
@@ -329,12 +323,9 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
     // instead of the longer placeholders.
     let styled = styled.replace(TPL_OPEN, "{{").replace(TPL_CLOSE, "}}");
 
-    // Phase 3: Split into lines, wrap each, add gutters.
-    // Filter out lines that are only ANSI codes (no visible content) to avoid
-    // spurious gutter lines from style restoration after trailing newlines.
+    // Phase 3: Split into lines, wrap each, add gutters
     styled
         .lines()
-        .filter(|line| !ANSI_CODE_PATTERN.replace_all(line, "").is_empty())
         .flat_map(|line| wrap_styled_text(line, available_width))
         .map(|wrapped| format!("{gutter} {gutter:#} {wrapped}{reset}"))
         .collect::<Vec<_>>()

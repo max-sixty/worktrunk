@@ -46,6 +46,7 @@ exit_code: 0
 [107m [0m [2m# Sources full integration from binary on first use.[0m[2m
 [107m [0m [2m# Docs: https://worktrunk.dev/config/#shell-integration[0m[2m
 [107m [0m [2m# Check: wt config show | Uninstall: wt config shell uninstall[0m[2m
+[107m [0m [2m
 [107m [0m [2m[0m[2m[35mfunction[0m[2m wt
 [107m [0m [2m    command wt config shell init fish [0m[2m[36m|[0m[2m source
 [107m [0m [2m    # Check both command exit code ($pipestatus[1]) and source exit code ($pipestatus[2])[0m[2m

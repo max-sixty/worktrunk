@@ -60,5 +60,6 @@ repo=repo
 [107m [0m echo 'branch=multiline-test'
 [107m [0m echo 'repo=repo'
 [36m◎[39m [36mExecuting (--execute) @ [1m_REPO_.multiline-test[22m:[39m
+[107m [0m [2m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'branch=multiline-test'[0m[2m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'repo=repo'[0m[2m
