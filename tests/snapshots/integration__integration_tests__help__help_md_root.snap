@@ -7,6 +7,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     PSModulePath: ""
@@ -32,7 +33,6 @@ Commands:
   list    List worktrees and their status
   remove  Remove worktree; delete branch if merged
   merge   Merge current branch into target
-  select  Interactive worktree selector
   step    Run individual operations
   hook    Run configured hooks
   config  Manage user & project configs

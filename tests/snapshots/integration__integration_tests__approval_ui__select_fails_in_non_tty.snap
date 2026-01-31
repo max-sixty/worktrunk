@@ -12,6 +12,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -36,4 +37,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mwt select requires an interactive terminal[39m
+[33m▲[39m [33mwt select is deprecated; use wt switch instead[39m
+[31m✗[39m [31mInteractive picker requires an interactive terminal[39m
