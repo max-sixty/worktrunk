@@ -225,6 +225,10 @@ pub fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
 
 #[cfg(feature = "syntax-highlighting")]
 fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) -> String {
+    // Normalize CRLF to LF for consistent output across platforms
+    let content = content.replace("\r\n", "\n");
+    let content = content.as_str();
+
     let gutter = super::GUTTER;
     let reset = anstyle::Reset;
     let dim = anstyle::Style::new().dimmed();
@@ -274,7 +278,11 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
         match event.unwrap() {
             HighlightEvent::Source { start, end } => {
                 if let Ok(text) = std::str::from_utf8(&content_bytes[start..end]) {
-                    // Apply pending highlight (skip function styling for template syntax)
+                    // Apply pending highlight, but skip function styling for Jinja template
+                    // delimiters. Hook commands use templates like `echo {{ branch }}`, and
+                    // tree-sitter's bash parser misidentifies `{{` and `}}` as commands when
+                    // they appear at token boundaries. Without this check, template syntax
+                    // would be incorrectly highlighted as shell commands.
                     if let Some(idx) = pending_highlight.take()
                         && let Some(name) = highlight_names.get(idx)
                         && let Some(style) = bash_token_style(name)
