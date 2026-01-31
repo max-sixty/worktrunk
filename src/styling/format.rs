@@ -5,7 +5,15 @@
 #[cfg(feature = "syntax-highlighting")]
 use super::highlighting::bash_token_style;
 #[cfg(feature = "syntax-highlighting")]
+use std::sync::LazyLock;
+#[cfg(feature = "syntax-highlighting")]
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
+
+/// Regex to match ANSI escape codes for color/style (e.g., `\x1b[32m`).
+/// Used to detect lines that contain only styling with no visible content.
+#[cfg(feature = "syntax-highlighting")]
+static ANSI_CODE_PATTERN: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap());
 
 // Import canonical implementations from parent module
 use super::{get_terminal_width, visual_width};
@@ -321,9 +329,12 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
     // instead of the longer placeholders.
     let styled = styled.replace(TPL_OPEN, "{{").replace(TPL_CLOSE, "}}");
 
-    // Phase 3: Split into lines, wrap each, add gutters
+    // Phase 3: Split into lines, wrap each, add gutters.
+    // Filter out lines that are only ANSI codes (no visible content) to avoid
+    // spurious gutter lines from style restoration after trailing newlines.
     styled
         .lines()
+        .filter(|line| !ANSI_CODE_PATTERN.replace_all(line, "").is_empty())
         .flat_map(|line| wrap_styled_text(line, available_width))
         .map(|wrapped| format!("{gutter} {gutter:#} {wrapped}{reset}"))
         .collect::<Vec<_>>()
