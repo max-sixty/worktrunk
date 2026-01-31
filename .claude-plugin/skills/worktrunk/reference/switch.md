@@ -58,38 +58,6 @@ wt switch pr:123                 # PR #123's branch
 wt switch mr:101                 # MR !101's branch
 ```
 
-## GitHub pull requests (experimental)
-
-The `pr:<number>` syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches `refs/pull/N/head` and configures `pushRemote` to the fork URL.
-
-```bash
-wt switch pr:101                 # Checkout PR #101
-```
-
-Requires `gh` CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:` syntax since the branch already exists.
-
-**Fork PRs:** The local branch uses the PR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
-
-## GitLab merge requests (experimental)
-
-The `mr:<number>` syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches `refs/merge-requests/N/head` and configures `pushRemote` to the fork URL.
-
-```bash
-wt switch mr:101                 # Checkout MR !101
-```
-
-Requires `glab` CLI to be installed and authenticated. The `--create` flag cannot be used with `mr:` syntax since the branch already exists.
-
-**Fork MRs:** The local branch uses the MR's branch name directly, so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
-
-## When wt switch fails
-
-- **Branch doesn't exist** — Use `--create`, or check `wt list --branches`
-- **Path occupied** — Another worktree is at the target path; switch to it or remove it
-- **Stale directory** — Use `--clobber` to remove a non-worktree directory at the target path
-
-To change which branch a worktree is on, use `git switch` inside that worktree.
-
 ## Interactive picker
 
 When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview. The picker requires a TTY.
@@ -121,6 +89,38 @@ pager = "delta --paging=never"
 ```
 
 Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <branch>` directly.
+
+## GitHub pull requests (experimental)
+
+The `pr:<number>` syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches `refs/pull/N/head` and configures `pushRemote` to the fork URL.
+
+```bash
+wt switch pr:101                 # Checkout PR #101
+```
+
+Requires `gh` CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:` syntax since the branch already exists.
+
+**Fork PRs:** The local branch uses the PR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
+
+## GitLab merge requests (experimental)
+
+The `mr:<number>` syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches `refs/merge-requests/N/head` and configures `pushRemote` to the fork URL.
+
+```bash
+wt switch mr:101                 # Checkout MR !101
+```
+
+Requires `glab` CLI to be installed and authenticated. The `--create` flag cannot be used with `mr:` syntax since the branch already exists.
+
+**Fork MRs:** The local branch uses the MR's branch name directly, so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
+
+## When wt switch fails
+
+- **Branch doesn't exist** — Use `--create`, or check `wt list --branches`
+- **Path occupied** — Another worktree is at the target path; switch to it or remove it
+- **Stale directory** — Use `--clobber` to remove a non-worktree directory at the target path
+
+To change which branch a worktree is on, use `git switch` inside that worktree.
 
 ## Command reference
 
