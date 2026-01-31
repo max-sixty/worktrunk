@@ -316,16 +316,18 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
         }
     }
 
-    // Phase 2: Split into lines, wrap each, add gutters
-    let result = styled
+    // Phase 2: Restore original template delimiters before wrapping.
+    // This ensures line width calculations use the actual 2-char `{{`/`}}`
+    // instead of the longer placeholders.
+    let styled = styled.replace(TPL_OPEN, "{{").replace(TPL_CLOSE, "}}");
+
+    // Phase 3: Split into lines, wrap each, add gutters
+    styled
         .lines()
         .flat_map(|line| wrap_styled_text(line, available_width))
         .map(|wrapped| format!("{gutter} {gutter:#} {wrapped}{reset}"))
         .collect::<Vec<_>>()
-        .join("\n");
-
-    // Phase 3: Restore original template delimiters from placeholders
-    result.replace(TPL_OPEN, "{{").replace(TPL_CLOSE, "}}")
+        .join("\n")
 }
 
 /// Formats bash/shell commands with syntax highlighting and gutter
