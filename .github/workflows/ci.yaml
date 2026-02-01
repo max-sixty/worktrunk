@@ -89,7 +89,7 @@ jobs:
       shell: pwsh
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v7.2.1
       with:
         # Silence "no file matched" warning; uv is only used to install pre-commit
         cache-dependency-glob: ".pre-commit-config.yaml"
@@ -121,7 +121,7 @@ jobs:
 
     - name: 📊 Upload test results to Codecov
       if: ${{ !cancelled() && github.repository_owner == 'max-sixty' }}
-      uses: codecov/test-results-action@v1
+      uses: codecov/test-results-action@v1.2.1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: target/nextest/default/junit.xml
@@ -173,7 +173,7 @@ jobs:
       uses: actions/checkout@v6
 
     # cargo-udeps requires nightly; update date periodically
-    - run: rustup override set nightly-2025-11-10
+    - run: rustup override set nightly-2026-01-15
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -182,7 +182,7 @@ jobs:
       with:
         crate: cargo-udeps
 
-    - uses: clechasseur/rs-cargo@v4
+    - uses: clechasseur/rs-cargo@v4.0.1
       with:
         command: udeps
         args: --all-targets
@@ -251,7 +251,7 @@ jobs:
     - name: Upload to codecov.io
       # Codecov action raises errors on forks; allow running on PRs to main repo
       if: github.repository_owner == 'max-sixty'
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v5.5.2
       with:
         files: cobertura.xml
         fail_ci_if_error: true
