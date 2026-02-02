@@ -45,6 +45,7 @@ exclude = [
     "npmjs\\.com",
     "incident\\.io",
     "git-scm\\.com",
+    "api\\.star-history\\.com",
 
     # Package registries and badges (frequently return 429 or block CI)
     "crates\\.io",
