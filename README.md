@@ -9,7 +9,7 @@
 [![Codecov](https://img.shields.io/codecov/c/github/max-sixty/worktrunk?style=for-the-badge&logo=codecov)](https://codecov.io/gh/max-sixty/worktrunk)
 [![Stars](https://img.shields.io/github/stars/max-sixty/worktrunk?style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/stargazers)
 
-> **January 2026**: Worktrunk was [released](https://x.com/max_sixty/status/2006077845391724739?s=20) over the holidays, and lots of folks seem to be using it. It's built with love (there's no slop!). If social proof is helpful: I also created [PRQL](https://github.com/PRQL/prql) (10k stars) and am a maintainer of [Xarray](https://github.com/pydata/xarray) (4k stars), [Insta](https://github.com/mitsuhiko/insta), & [Numbagg](https://github.com/numbagg/numbagg). Please let me know any frictions at all; I'm intensely focused on making Worktrunk excellent, and the biggest gap is understanding how others experience using it.
+> **February 2026**: Worktrunk was [released](https://x.com/max_sixty/status/2006077845391724739?s=20) over the holidays, and lots of folks seem to be using it. It's built with love (there's no slop!). If social proof is helpful: I also created [PRQL](https://github.com/PRQL/prql) (10k stars) and am a maintainer of [Xarray](https://github.com/pydata/xarray) (4k stars), [Insta](https://github.com/mitsuhiko/insta), & [Numbagg](https://github.com/numbagg/numbagg). Please let me know any frictions at all; I'm intensely focused on making Worktrunk excellent, and the biggest gap is understanding how others experience using it.
 
 Worktrunk is a CLI for git worktree management, designed for running AI agents in parallel.
 
