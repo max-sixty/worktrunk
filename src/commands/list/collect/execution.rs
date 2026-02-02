@@ -145,24 +145,32 @@ pub fn work_items_for_worktree(
 
     let skip = &options.skip_tasks;
 
-    // Expand URL template for this item
-    let item_url = options.url_template.as_ref().and_then(|template| {
-        wt.branch.as_ref().and_then(|branch| {
-            let mut vars = std::collections::HashMap::new();
-            vars.insert("branch", branch.as_str());
-            worktrunk::config::expand_template(template, &vars, false, repo, "url-template").ok()
+    let include_url = !skip.contains(&TaskKind::UrlStatus);
+
+    // Expand URL template for this item (only if URL status is enabled).
+    let item_url = if include_url {
+        options.url_template.as_ref().and_then(|template| {
+            wt.branch.as_ref().and_then(|branch| {
+                let mut vars = std::collections::HashMap::new();
+                vars.insert("branch", branch.as_str());
+                worktrunk::config::expand_template(template, &vars, false, repo, "url-template").ok()
+            })
         })
-    });
+    } else {
+        None
+    };
 
     // Send URL immediately (before health check) so it appears right away.
     // The UrlStatusTask will later update with active status.
-    if let Some(ref url) = item_url {
-        expected_results.expect(item_idx, TaskKind::UrlStatus);
-        let _ = tx.send(Ok(TaskResult::UrlStatus {
-            item_idx,
-            url: Some(url.clone()),
-            active: None,
-        }));
+    if include_url {
+        if let Some(ref url) = item_url {
+            expected_results.expect(item_idx, TaskKind::UrlStatus);
+            let _ = tx.send(Ok(TaskResult::UrlStatus {
+                item_idx,
+                url: Some(url.clone()),
+                active: None,
+            }));
+        }
     }
 
     let ctx = TaskContext {
@@ -218,7 +226,7 @@ pub fn work_items_for_worktree(
     // Note: We already registered and sent an immediate UrlStatus above with url + active=None.
     // This work item will send a second UrlStatus with active=Some(bool) after health check.
     // Both results must be registered and expected.
-    if !skip.contains(&TaskKind::UrlStatus) && ctx.item_url.is_some() {
+    if include_url && ctx.item_url.is_some() {
         expected_results.expect(item_idx, TaskKind::UrlStatus);
         items.push(WorkItem {
             ctx: ctx.clone(),
@@ -227,6 +235,66 @@ pub fn work_items_for_worktree(
     }
 
     items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::process::Command;
+
+    #[test]
+    fn test_skip_url_status_suppresses_placeholder_and_task() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        Command::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .output()
+            .expect("git init");
+
+        let repo = Repository::at(dir.path()).expect("repo");
+        let wt = WorktreeInfo {
+            path: dir.path().to_path_buf(),
+            head: "deadbeef".to_string(),
+            branch: Some("main".to_string()),
+            bare: false,
+            detached: false,
+            locked: None,
+            prunable: None,
+        };
+
+        let skip_tasks: HashSet<TaskKind> = [TaskKind::UrlStatus].into_iter().collect();
+        let options = CollectOptions {
+            skip_tasks,
+            url_template: Some("http://localhost/{{ branch }}".to_string()),
+            stale_branches: HashSet::new(),
+        };
+
+        let expected_results = Arc::new(ExpectedResults::default());
+        let (tx, rx) = chan::unbounded::<Result<TaskResult, TaskError>>();
+
+        let items =
+            work_items_for_worktree(&repo, &wt, 0, &options, &expected_results, &tx);
+
+        assert!(
+            rx.try_recv().is_err(),
+            "UrlStatus placeholder should not be sent when UrlStatus is skipped"
+        );
+        assert!(
+            !items.iter().any(|item| item.kind == TaskKind::UrlStatus),
+            "UrlStatus work item should not be created when skipped"
+        );
+        assert!(
+            !expected_results
+                .results_for(0)
+                .contains(&TaskKind::UrlStatus),
+            "Expected results should not include UrlStatus when skipped"
+        );
+        assert!(
+            items.iter().all(|item| item.ctx.item_url.is_none()),
+            "item_url should be None when UrlStatus is skipped"
+        );
+    }
 }
 
 /// Generate work items for a branch (no worktree).

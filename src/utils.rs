@@ -5,12 +5,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Format a Unix timestamp as ISO 8601 string (e.g., "2025-01-01T00:00:00Z").
 ///
 /// Used for human-readable timestamps in diagnostic reports and logs.
+///
+/// If the timestamp is out of range for chrono's date handling, returns an
+/// explicit placeholder string rather than a misleading value.
 pub fn format_timestamp_iso8601(timestamp: u64) -> String {
-    let timestamp = timestamp as i64;
+    let Ok(timestamp) = i64::try_from(timestamp) else {
+        return format!("invalid-timestamp({timestamp})");
+    };
+
     chrono::DateTime::from_timestamp(timestamp, 0)
-        .unwrap_or_else(chrono::Utc::now)
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string()
+        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .unwrap_or_else(|| format!("invalid-timestamp({timestamp})"))
 }
 
 /// Format the current time as ISO 8601 string.
@@ -63,5 +68,16 @@ mod tests {
             let expected: u64 = epoch.parse().unwrap();
             assert_eq!(get_now(), expected);
         }
+    }
+
+    #[test]
+    fn test_format_timestamp_iso8601_out_of_range() {
+        let too_large = (i64::MAX as u64) + 1;
+        let formatted = format_timestamp_iso8601(too_large);
+        assert_eq!(
+            formatted,
+            format!("invalid-timestamp({too_large})"),
+            "Out-of-range timestamps should not silently format to a real date"
+        );
     }
 }
