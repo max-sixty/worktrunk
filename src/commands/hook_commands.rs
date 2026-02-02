@@ -26,7 +26,6 @@ use super::command_executor::build_hook_context;
 
 use super::command_executor::CommandContext;
 use super::context::CommandEnv;
-use super::hooks::execute_hook;
 use super::hooks::{
     HookFailureStrategy, check_name_filter_matched, prepare_hook_commands, run_hook_with_filter,
     spawn_background_hooks,
@@ -222,12 +221,19 @@ pub fn run_hook(
             )
         }
         HookType::PreMerge => {
+            let user_config = user_hooks.pre_merge.as_ref();
+            let project_config = project_config
+                .as_ref()
+                .and_then(|c| c.hooks.pre_merge.as_ref());
+            require_hooks(user_config, project_config, hook_type)?;
             // Use current branch as target (matches approval prompt for wt hook)
             let mut vars = vec![("target", ctx.branch_or_head())];
             vars.extend(custom_vars_refs.iter().cloned());
-            execute_hook(
+            run_hook_with_filter(
                 &ctx,
-                HookType::PreMerge,
+                user_config,
+                project_config,
+                hook_type,
                 &vars,
                 HookFailureStrategy::FailFast,
                 name_filter,
@@ -235,12 +241,19 @@ pub fn run_hook(
             )
         }
         HookType::PostMerge => {
+            let user_config = user_hooks.post_merge.as_ref();
+            let project_config = project_config
+                .as_ref()
+                .and_then(|c| c.hooks.post_merge.as_ref());
+            require_hooks(user_config, project_config, hook_type)?;
             // Manual wt hook: user stays at cwd (no cd happens)
             let mut vars = vec![("target", ctx.branch_or_head())];
             vars.extend(custom_vars_refs.iter().cloned());
-            execute_hook(
+            run_hook_with_filter(
                 &ctx,
-                HookType::PostMerge,
+                user_config,
+                project_config,
+                hook_type,
                 &vars,
                 HookFailureStrategy::Warn,
                 name_filter,
@@ -248,10 +261,17 @@ pub fn run_hook(
             )
         }
         HookType::PreRemove => {
+            let user_config = user_hooks.pre_remove.as_ref();
+            let project_config = project_config
+                .as_ref()
+                .and_then(|c| c.hooks.pre_remove.as_ref());
+            require_hooks(user_config, project_config, hook_type)?;
             // Manual wt hook: user stays at cwd (no cd happens)
-            execute_hook(
+            run_hook_with_filter(
                 &ctx,
-                HookType::PreRemove,
+                user_config,
+                project_config,
+                hook_type,
                 &custom_vars_refs,
                 HookFailureStrategy::FailFast,
                 name_filter,
