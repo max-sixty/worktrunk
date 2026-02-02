@@ -14,6 +14,6 @@ exit_code: 1
 [2m○[22m post-create [1mrepo[22m:
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Repo: {{ repo }}'[0m[2m
 [2m○[22m post-create [1mpwd[22m:
-[107m [0m [2m[0m[2m[34mcd[0m[2m {{ worktree_path }} [0m[2m[36m&&[0m[2m [0m[2m[34mpwd[0m[2m
+[107m [0m [2m[0m[2m[34mcd[0m[2m [0m[2m[32m{{[0m[2m worktree_path [0m[2m[32m}}[0m[2m [0m[2m[36m&&[0m[2m [0m[2m[34mpwd[0m[2m
 [31m✗[39m [31mCannot prompt for approval in non-interactive environment[39m
 [2m↳[22m [2mTo skip prompts in CI/CD, add [90m--yes[39m; to pre-approve commands, run [90mwt hook approvals add[39m[22m

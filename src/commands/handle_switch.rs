@@ -133,16 +133,26 @@ pub fn handle_switch(
     // Spawn background hooks after success message
     // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
     // - post-start: runs only when creating a NEW worktree
+    // Batch hooks into a single message when both types are present
     if !skip_hooks {
         let ctx = CommandContext::new(&repo, config, Some(&branch_info.branch), result.path(), yes);
 
-        // Post-switch runs first (immediate "I'm here" signal)
-        ctx.spawn_post_switch_commands(&extra_vars, hooks_display_path.as_deref())?;
-
-        // Post-start runs only on creation (setup tasks)
+        // Collect hooks from both types, then spawn as a single batch
+        let mut hooks = super::hooks::prepare_background_hooks(
+            &ctx,
+            HookType::PostSwitch,
+            &extra_vars,
+            hooks_display_path.as_deref(),
+        )?;
         if matches!(&result, SwitchResult::Created { .. }) {
-            ctx.spawn_post_start_commands(&extra_vars, hooks_display_path.as_deref())?;
+            hooks.extend(super::hooks::prepare_background_hooks(
+                &ctx,
+                HookType::PostStart,
+                &extra_vars,
+                hooks_display_path.as_deref(),
+            )?);
         }
+        super::hooks::spawn_background_hooks(&ctx, hooks)?;
     }
 
     // Execute user command after post-start hooks have been spawned

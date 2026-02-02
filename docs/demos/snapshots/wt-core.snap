@@ -13,7 +13,7 @@ $ wt switch alpha
 [0m
 $ wt switch --create api
 ✓ Created branch api from main and worktree @ <DEMO_DIR>/.demo-wt-core/w/acme.api
-◎ Running post-start hooks: project:dev
+◎ Running post-start: project:dev
 [0m
 $ wt list --full
   [1mBranch[0m   [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m     [1mmain…±[0m  [1mRemote⇅[0m  [1mCI[0m  [1mCommit[0m    [1mAge[0m
