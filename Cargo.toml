@@ -124,7 +124,7 @@ sanitize-filename = "0.6.0"
 schemars = { version = "1.2.0", features = ["derive"] }
 
 [target.'cfg(unix)'.dependencies]
-skim = "0.20"
+skim = "2.0"
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 signal-hook = "0.4"
 
