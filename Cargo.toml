@@ -121,7 +121,7 @@ reflink-copy = "0.1"
 dashmap = "6.1.0"
 fs2 = "0.4.3"
 sanitize-filename = "0.6.0"
-schemars = { version = "1.2.0", features = ["derive"] }
+schemars = { version = "1.2.1", features = ["derive"] }
 
 [target.'cfg(unix)'.dependencies]
 skim = "0.20"
@@ -132,7 +132,7 @@ signal-hook = "0.4"
 vergen-gitcl = { version = "9.1.0", features = ["build"] }
 
 [dev-dependencies]
-insta = { version = "1.46.1", features = ["yaml", "redactions", "filters"] }
+insta = { version = "1.46.2", features = ["yaml", "redactions", "filters"] }
 insta-cmd = "0.6"
 rstest = "0.26"
 tempfile = "3.24"
