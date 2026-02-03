@@ -86,6 +86,19 @@ pub(super) fn has_explicit_pager_config() -> bool {
         .is_some_and(|p| !p.trim().is_empty())
 }
 
+/// Build the pager command with appropriate flags for width and paging.
+///
+/// When user hasn't set explicit config and the pager is delta/bat/batcat,
+/// automatically adds --paging=never and --width flags.
+fn build_pager_command(pager_cmd: &str, width: usize) -> String {
+    if !has_explicit_pager_config() && pager_needs_paging_disabled(pager_cmd) {
+        // Add both --paging=never and --width for delta/bat to use full preview space
+        format!("{} --paging=never --width={}", pager_cmd, width)
+    } else {
+        pager_cmd.to_string()
+    }
+}
+
 /// Run git diff piped directly through the pager as a streaming pipeline.
 ///
 /// Runs `git <args> | pager` as a single shell command, avoiding intermediate
@@ -104,13 +117,7 @@ pub(super) fn run_git_diff_with_pager(
 
     // Apply auto-detection only when user hasn't set explicit config
     // If config is set, use the value as-is (user has full control)
-    let pager_with_args = if !has_explicit_pager_config() && pager_needs_paging_disabled(pager_cmd)
-    {
-        // Add both --paging=never and --width for delta/bat to use full preview space
-        format!("{} --paging=never --width={}", pager_cmd, width)
-    } else {
-        pager_cmd.to_string()
-    };
+    let pager_with_args = build_pager_command(pager_cmd, width);
 
     // Build shell pipeline: git <args> | pager
     // Shell-escape args to handle paths with spaces
@@ -225,5 +232,104 @@ mod tests {
         // This function loads real config, so we just test that it doesn't panic
         // The behavior is covered by integration tests that set actual config
         let _ = has_explicit_pager_config();
+    }
+
+    #[test]
+    fn test_build_pager_command_with_delta() {
+        // Note: This test assumes no explicit [select] pager config is set
+        // If user has config, the behavior changes (returns pager_cmd as-is)
+        
+        // delta should get --paging=never and --width
+        let result = build_pager_command("delta", 120);
+        if !has_explicit_pager_config() {
+            assert_eq!(result, "delta --paging=never --width=120");
+        }
+        
+        // delta with existing args should append flags
+        let result = build_pager_command("delta --side-by-side", 90);
+        if !has_explicit_pager_config() {
+            assert_eq!(result, "delta --side-by-side --paging=never --width=90");
+        }
+        
+        // Full path to delta
+        let result = build_pager_command("/usr/bin/delta", 100);
+        if !has_explicit_pager_config() {
+            assert_eq!(result, "/usr/bin/delta --paging=never --width=100");
+        }
+    }
+
+    #[test]
+    fn test_build_pager_command_with_bat() {
+        // bat should get --paging=never and --width
+        let result = build_pager_command("bat", 80);
+        if !has_explicit_pager_config() {
+            assert_eq!(result, "bat --paging=never --width=80");
+        }
+        
+        // batcat (Debian package name)
+        let result = build_pager_command("batcat", 110);
+        if !has_explicit_pager_config() {
+            assert_eq!(result, "batcat --paging=never --width=110");
+        }
+        
+        // bat with existing args
+        let result = build_pager_command("bat --style=plain", 95);
+        if !has_explicit_pager_config() {
+            assert_eq!(result, "bat --style=plain --paging=never --width=95");
+        }
+    }
+
+    #[test]
+    fn test_build_pager_command_with_other_pagers() {
+        // Pagers that don't need special handling should be returned as-is
+        
+        // less - no modifications
+        let result = build_pager_command("less -R", 120);
+        assert_eq!(result, "less -R");
+        
+        // diff-so-fancy - no modifications
+        let result = build_pager_command("diff-so-fancy", 100);
+        assert_eq!(result, "diff-so-fancy");
+        
+        // colordiff - no modifications
+        let result = build_pager_command("colordiff | less", 90);
+        assert_eq!(result, "colordiff | less");
+    }
+
+    #[test]
+    fn test_build_pager_command_with_various_widths() {
+        // Test different width values
+        if !has_explicit_pager_config() {
+            // Small width
+            let result = build_pager_command("delta", 40);
+            assert_eq!(result, "delta --paging=never --width=40");
+            
+            // Medium width
+            let result = build_pager_command("bat", 80);
+            assert_eq!(result, "bat --paging=never --width=80");
+            
+            // Large width
+            let result = build_pager_command("delta", 200);
+            assert_eq!(result, "delta --paging=never --width=200");
+            
+            // Very small width (edge case)
+            let result = build_pager_command("bat", 1);
+            assert_eq!(result, "bat --paging=never --width=1");
+        }
+    }
+
+    #[test]
+    fn test_build_pager_command_case_insensitive() {
+        // Windows-style command names should also get width flags
+        if !has_explicit_pager_config() {
+            let result = build_pager_command("Delta", 100);
+            assert_eq!(result, "Delta --paging=never --width=100");
+            
+            let result = build_pager_command("BAT", 100);
+            assert_eq!(result, "BAT --paging=never --width=100");
+            
+            let result = build_pager_command("delta.exe", 100);
+            assert_eq!(result, "delta.exe --paging=never --width=100");
+        }
     }
 }
