@@ -345,23 +345,17 @@ mod tests {
 
         let items = work_items_for_worktree(&repo, &wt, 0, &options, &expected_results, &tx);
 
-        assert!(
-            rx.try_recv().is_err(),
-            "UrlStatus placeholder should not be sent when UrlStatus is skipped"
-        );
-        assert!(
-            !items.iter().any(|item| item.kind == TaskKind::UrlStatus),
-            "UrlStatus work item should not be created when skipped"
-        );
+        // No placeholder sent
+        assert!(rx.try_recv().is_err());
+        // No UrlStatus work item created
+        assert!(!items.iter().any(|item| item.kind == TaskKind::UrlStatus));
+        // No UrlStatus in expected results
         assert!(
             !expected_results
                 .results_for(0)
-                .contains(&TaskKind::UrlStatus),
-            "Expected results should not include UrlStatus when skipped"
+                .contains(&TaskKind::UrlStatus)
         );
-        assert!(
-            items.iter().all(|item| item.ctx.item_url.is_none()),
-            "item_url should be None when UrlStatus is skipped"
-        );
+        // item_url is None for all items
+        assert!(items.iter().all(|item| item.ctx.item_url.is_none()));
     }
 }
