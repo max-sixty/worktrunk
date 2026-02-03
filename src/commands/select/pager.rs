@@ -91,10 +91,14 @@ pub(super) fn has_explicit_pager_config() -> bool {
 /// Runs `git <args> | pager` as a single shell command, avoiding intermediate
 /// buffering. Returns None if pipeline fails or times out (caller should fall back to raw diff).
 ///
-/// When `[select] pager` is not configured, automatically appends `--paging=never` for
-/// delta/bat/batcat pagers to prevent hangs. To override this behavior, set an explicit
-/// pager command in config: `[select] pager = "delta"` (or with custom flags).
-pub(super) fn run_git_diff_with_pager(git_args: &[&str], pager_cmd: &str) -> Option<String> {
+/// When `[select] pager` is not configured, automatically appends `--paging=never` and
+/// `--width` for delta/bat/batcat pagers to prevent hangs and ensure proper width.
+/// To override this behavior, set an explicit pager command in config: `[select] pager = "delta"`.
+pub(super) fn run_git_diff_with_pager(
+    git_args: &[&str],
+    pager_cmd: &str,
+    width: usize,
+) -> Option<String> {
     // Note: pager_cmd is expected to be valid shell code (like git's core.pager).
     // Users with paths containing special chars must quote them in their config.
 
@@ -102,7 +106,8 @@ pub(super) fn run_git_diff_with_pager(git_args: &[&str], pager_cmd: &str) -> Opt
     // If config is set, use the value as-is (user has full control)
     let pager_with_args = if !has_explicit_pager_config() && pager_needs_paging_disabled(pager_cmd)
     {
-        format!("{} --paging=never", pager_cmd)
+        // Add both --paging=never and --width for delta/bat to use full preview space
+        format!("{} --paging=never --width={}", pager_cmd, width)
     } else {
         pager_cmd.to_string()
     };
@@ -117,12 +122,15 @@ pub(super) fn run_git_diff_with_pager(git_args: &[&str], pager_cmd: &str) -> Opt
 
     log::debug!("Running pager pipeline: {}", pipeline);
 
-    // Spawn pipeline
+    // Spawn pipeline with COLUMNS set to preview width
+    // This ensures pagers that don't support --width can still detect the correct width
     let mut child = match Command::new("sh")
         .arg("-c")
         .arg(&pipeline)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        // Set COLUMNS so pagers can detect preview width
+        .env("COLUMNS", width.to_string())
         // Prevent subprocesses from writing to the directive file
         .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .spawn()

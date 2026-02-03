@@ -137,7 +137,7 @@ impl WorktreeSkimItem {
 
             // Try streaming through pager first (git diff | pager), fall back to plain diff
             let diff = get_diff_pager()
-                .and_then(|pager| run_git_diff_with_pager(&diff_args, pager))
+                .and_then(|pager| run_git_diff_with_pager(&diff_args, pager, width))
                 .or_else(|| repo.run_command(&diff_args).ok());
 
             if let Some(diff) = diff {
