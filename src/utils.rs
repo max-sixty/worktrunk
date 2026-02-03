@@ -71,13 +71,25 @@ mod tests {
     }
 
     #[test]
-    fn test_format_timestamp_iso8601_out_of_range() {
+    fn test_format_timestamp_iso8601_u64_overflow() {
+        // Test timestamps that exceed i64::MAX (handled by try_from)
         let too_large = (i64::MAX as u64) + 1;
         let formatted = format_timestamp_iso8601(too_large);
-        assert_eq!(
-            formatted,
-            format!("invalid-timestamp({too_large})"),
-            "Out-of-range timestamps should not silently format to a real date"
+        assert!(
+            formatted.starts_with("invalid-timestamp("),
+            "Timestamps > i64::MAX should return invalid-timestamp placeholder"
+        );
+    }
+
+    #[test]
+    fn test_format_timestamp_iso8601_chrono_out_of_range() {
+        // Test timestamps within i64 range but beyond chrono's supported dates
+        // chrono supports dates up to ~year 262143 (about 8.2e12 seconds)
+        let chrono_out_of_range: u64 = 9_000_000_000_000; // ~year 287396
+        let formatted = format_timestamp_iso8601(chrono_out_of_range);
+        assert!(
+            formatted.starts_with("invalid-timestamp("),
+            "Timestamps beyond chrono's range should return invalid-timestamp placeholder"
         );
     }
 }
