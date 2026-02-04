@@ -2014,8 +2014,10 @@ fn test_reload_projects_from_permission_error() {
     }
     let _guard = RestorePerms(&config_path);
 
-    // Skip this test when running as root (common in CI containers)
-    if std::env::var("USER").as_deref() == Ok("root") {
+    // Test if permissions actually restrict us (skip if running as root)
+    // Root can read any file regardless of permissions, so the test would be meaningless
+    if std::fs::read_to_string(&config_path).is_ok() {
+        eprintln!("Skipping permission test - running with elevated privileges");
         return;
     }
 
