@@ -649,3 +649,77 @@ branches = true
         screen
     );
 }
+
+#[rstest]
+fn test_select_create_worktree_with_alt_c(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so there's no interference from remote branches
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    let env_vars = repo.test_env_vars();
+
+    // Type branch name "new-feature", then press Alt-C (escape + c) to create
+    let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["select"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("new-feature", None), // Type the branch name
+            ("\x1bc", None),       // Alt-C (escape + c) to create worktree
+        ],
+    );
+
+    // Alt-C triggers accept which should exit normally
+    assert_eq!(exit_code, 0, "Expected exit code 0 for successful create");
+
+    let screen = render_terminal_screen(&raw_output);
+
+    // Verify the success message shows the new branch
+    assert!(
+        screen.contains("new-feature") || screen.contains("Switched"),
+        "Expected success message showing new-feature branch.\nScreen:\n{}",
+        screen
+    );
+
+    // Verify the worktree was actually created by checking the branch exists
+    let branch_output = repo
+        .git_command()
+        .args(["branch", "--list", "new-feature"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&branch_output.stdout).contains("new-feature"),
+        "Branch new-feature should have been created"
+    );
+}
+
+#[rstest]
+fn test_select_create_with_empty_query_fails(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so there's no interference from remote branches
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    let env_vars = repo.test_env_vars();
+
+    // Press Alt-C without typing a query - should error
+    let (raw_output, exit_code) = exec_in_pty_with_input(
+        wt_bin().to_str().unwrap(),
+        &["select"],
+        repo.root_path(),
+        &env_vars,
+        "\x1bc", // Alt-C (escape + c) without typing a branch name
+    );
+
+    // Should exit with error (non-zero)
+    assert_ne!(exit_code, 0, "Expected non-zero exit for empty query");
+
+    let screen = render_terminal_screen(&raw_output);
+
+    // Verify the error message
+    assert!(
+        screen.contains("no branch name entered") || screen.contains("Cannot create"),
+        "Expected error message about missing branch name.\nScreen:\n{}",
+        screen
+    );
+}
