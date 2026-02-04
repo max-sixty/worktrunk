@@ -336,7 +336,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 
 ```toml
 [select]
-pager = "delta --paging=never"
+pager = "delta --paging=never --width=$COLUMNS"
 ```
 
 Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <branch>` directly.
