@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use anstyle::Reset;
 use color_print::cformat;
 use skim::prelude::*;
 use worktrunk::git::Repository;
@@ -77,6 +78,12 @@ impl WorktreeSkimItem {
     /// and unselected modes dimmed. Controls shown below in normal text
     /// for visual distinction from inactive tabs.
     pub(super) fn render_preview_tabs(mode: PreviewMode) -> String {
+        // Full SGR reset (\x1b[0m) to ensure clean state between styled elements.
+        // Using anstyle::Reset instead of cformat's </> (\x1b[22m) because some terminals
+        // don't properly handle the intensity-only reset after bold text. This matches
+        // the pattern used in src/styling/format.rs for similar ANSI reset handling.
+        let reset = Reset;
+
         /// Format a tab label with bold (active) or dimmed (inactive) styling
         fn format_tab(label: &str, is_active: bool) -> String {
             if is_active {
@@ -96,9 +103,10 @@ impl WorktreeSkimItem {
             "<dim,yellow>Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle</>"
         );
 
+        // End each tab and controls with full reset to prevent style bleeding
+        // into dividers and preview content
         format!(
-            "{} | {} | {} | {}\n{}\n\n",
-            tab1, tab2, tab3, tab4, controls
+            "{tab1}{reset} | {tab2}{reset} | {tab3}{reset} | {tab4}{reset}\n{controls}{reset}\n\n"
         )
     }
 
@@ -410,5 +418,41 @@ mod tests {
         assert!(output.contains("2: log"));
         assert!(output.contains("3: main…±"));
         assert!(output.contains("4: remote⇅"));
+    }
+
+    #[test]
+    fn test_render_preview_tabs_ansi_codes() {
+        // Test that ANSI escape sequences properly reset to prevent style bleeding
+        let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::WorkingTree);
+
+        let first_line = output.lines().next().unwrap();
+        let second_line = output.lines().nth(1).unwrap();
+
+        // Each styled tab should end with a full reset (\x1b[0m) before the divider
+        // This prevents bold/dim from bleeding into the " | " dividers
+        let full_reset = "\x1b[0m";
+
+        // Count resets - should have one after each of the 4 tabs
+        let reset_count = first_line.matches(full_reset).count();
+        assert_eq!(reset_count, 4, "Each tab should have a full reset after it");
+
+        // The sequence should be: style + text + [22m + [0m + divider
+        // Check that dividers come after full resets
+        let parts: Vec<&str> = first_line.split(" | ").collect();
+        assert_eq!(parts.len(), 4, "Should have 4 tabs separated by dividers");
+        for (i, part) in parts.iter().enumerate() {
+            assert!(
+                part.ends_with(full_reset),
+                "Tab {} should end with full reset, got: {:?}",
+                i + 1,
+                part
+            );
+        }
+
+        // Controls line should end with full reset to ensure clean state for preview content
+        assert!(
+            second_line.ends_with(full_reset),
+            "Controls line should end with full reset for clean preview content"
+        );
     }
 }
