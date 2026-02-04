@@ -305,20 +305,28 @@ fn print_switch_message_if_changed(
 /// **Message order for Created:** Success message first, then warning. Creation
 /// is a real accomplishment, but users still need to know they won't cd there.
 ///
+/// # Arguments
+///
+/// * `change_dir` — When false, skip the directory change (user requested `--no-cd`)
+///
 /// # Return Value
 ///
 /// Returns `Some(path)` when post-switch hooks should show "@ path" in their
 /// announcements (because the user's shell won't be in that directory). This happens when:
 /// - Shell integration is not active (user's shell stays in original directory)
+/// - `change_dir` is false (user explicitly requested no directory change)
 ///
 /// Returns `None` when the user will be in the worktree directory (shell integration
 /// active or already at the worktree), so no path annotation needed.
 pub fn handle_switch_output(
     result: &SwitchResult,
     branch_info: &SwitchBranchInfo,
+    change_dir: bool,
 ) -> anyhow::Result<Option<std::path::PathBuf>> {
     // Set target directory for command execution
-    super::change_directory(result.path())?;
+    if change_dir {
+        super::change_directory(result.path())?;
+    }
 
     let path = result.path();
     let path_display = format_path_for_display(path);
@@ -329,14 +337,19 @@ pub fn handle_switch_output(
 
     // Compute shell warning reason once (only if we'll need it)
     // Git subcommand case is special — needs a hint after the warning
+    // With --no-cd: no warning (user explicitly requested no cd), but hooks still get path
     let is_git_subcommand = crate::is_git_subcommand();
-    let shell_warning_reason: Option<String> = if is_shell_integration_active {
+    let shell_warning_reason: Option<String> = if !change_dir || is_shell_integration_active {
         None
     } else if is_git_subcommand {
         Some("ran git wt; running through git prevents cd".to_string())
     } else {
         Some(compute_shell_warning_reason())
     };
+
+    // When not changing directory, user won't be in the worktree (unless already there)
+    // Used to determine if hooks should show "@ path" annotation
+    let user_wont_be_in_worktree = !change_dir || shell_warning_reason.is_some();
 
     // Compute branch-worktree mismatch warning (shown before action messages)
     let branch_worktree_mismatch_warning = branch_info
@@ -381,10 +394,8 @@ pub fn handle_switch_output(
                 } else if should_show_explicit_path_hint() {
                     eprintln!("{}", hint_message(explicit_path_hint(branch)));
                 }
-                // User won't be there - show path in hook announcements
-                Some(path.clone())
             } else {
-                // Shell integration active — user actually switched
+                // Shell integration active or --no-cd — user switched (or chose not to cd)
                 // Show path mismatch warning first - discovered while evaluating the switch
                 if let Some(warning) = branch_worktree_mismatch_warning {
                     eprintln!("{}", warning);
@@ -397,7 +408,11 @@ pub fn handle_switch_output(
                         None, None,
                     ))
                 );
-                // cd will happen - no path annotation needed
+            }
+            // Return path for hook annotations if user won't be in the worktree
+            if user_wont_be_in_worktree {
+                Some(path.clone())
+            } else {
                 None
             }
         }
@@ -435,7 +450,7 @@ pub fn handle_switch_output(
                 }
             }
 
-            // Warn if shell won't cd to the new worktree
+            // Warn if shell won't cd to the new worktree (but not for --no-cd)
             // (--execute command display is handled by execute_user_command)
             if let Some(reason) = shell_warning_reason {
                 // Don't repeat "Created worktree" — success message above already said that
@@ -450,10 +465,11 @@ pub fn handle_switch_output(
                 } else if should_show_explicit_path_hint() {
                     eprintln!("{}", hint_message(explicit_path_hint(branch)));
                 }
-                // User won't be there - show path in hook announcements
+            }
+            // Return path for hook annotations if user won't be in the worktree
+            if user_wont_be_in_worktree {
                 Some(path.clone())
             } else {
-                // cd will happen - no path annotation needed
                 None
             }
             // Note: No branch_worktree_mismatch_warning — created worktrees are always at

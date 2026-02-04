@@ -4,6 +4,7 @@ use crate::common::{
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
+use std::fs;
 
 // ============================================================================
 // Directive File Tests
@@ -88,6 +89,132 @@ fn test_remove_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
         assert!(
             directives.contains("cd '"),
             "Directive file should contain cd command, got: {}",
+            directives
+        );
+    });
+}
+
+// ============================================================================
+// --no-cd Tests
+// ============================================================================
+// These tests verify that --no-cd suppresses directory changes
+
+#[rstest]
+fn test_switch_no_cd_suppresses_directive(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let _feature_wt = repo.add_worktree("feature");
+    let (directive_path, _guard) = directive_file();
+
+    let settings = setup_snapshot_settings(&repo);
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.args(["switch", "feature", "--no-cd"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+
+        // Verify directive file does NOT contain cd command
+        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        assert!(
+            !directives.contains("cd '"),
+            "Directive file should NOT contain cd command with --no-cd, got: {}",
+            directives
+        );
+    });
+}
+
+#[rstest]
+fn test_switch_no_cd_create_suppresses_directive(#[from(repo_with_remote)] repo: TestRepo) {
+    let (directive_path, _guard) = directive_file();
+
+    let settings = setup_snapshot_settings(&repo);
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.args(["switch", "--create", "new-feature", "--no-cd"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+
+        // Verify directive file does NOT contain cd command
+        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        assert!(
+            !directives.contains("cd '"),
+            "Directive file should NOT contain cd command with --no-cd, got: {}",
+            directives
+        );
+    });
+}
+
+#[rstest]
+fn test_switch_no_cd_hooks_show_path_annotation(#[from(repo_with_remote)] repo: TestRepo) {
+    let (directive_path, _guard) = directive_file();
+
+    // Create project config with a post-switch hook
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "post-switch = \"echo switched\"\n",
+    )
+    .unwrap();
+
+    repo.commit("Add config");
+
+    let settings = setup_snapshot_settings(&repo);
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        configure_directive_file(&mut cmd, &directive_path);
+        // Use --yes to auto-approve the hook command
+        cmd.args(["switch", "--create", "hook-test", "--no-cd", "--yes"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+
+        // Verify directive file does NOT contain cd command
+        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        assert!(
+            !directives.contains("cd '"),
+            "Directive file should NOT contain cd command with --no-cd, got: {}",
+            directives
+        );
+    });
+}
+
+#[rstest]
+fn test_switch_no_cd_execute_runs_in_target_worktree(#[from(repo_with_remote)] repo: TestRepo) {
+    let (directive_path, _guard) = directive_file();
+
+    let settings = setup_snapshot_settings(&repo);
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        configure_directive_file(&mut cmd, &directive_path);
+        // pwd should print the target worktree path, even with --no-cd
+        cmd.args([
+            "switch",
+            "--create",
+            "exec-test",
+            "--no-cd",
+            "--execute",
+            "pwd",
+        ])
+        .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+
+        // Verify directive file does NOT contain cd command
+        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        assert!(
+            !directives.contains("cd '"),
+            "Directive file should NOT contain cd command with --no-cd, got: {}",
             directives
         );
     });

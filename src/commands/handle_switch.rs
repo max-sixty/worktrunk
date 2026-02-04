@@ -25,6 +25,8 @@ pub struct SwitchOptions<'a> {
     pub execute_args: &'a [String],
     pub yes: bool,
     pub clobber: bool,
+    /// Whether to change directory after switching (default: true)
+    pub change_dir: bool,
     pub verify: bool,
 }
 
@@ -42,6 +44,7 @@ pub fn handle_switch(
         execute_args,
         yes,
         clobber,
+        change_dir,
         verify,
     } = opts;
 
@@ -100,7 +103,7 @@ pub fn handle_switch(
     // Show success message (temporal locality: immediately after worktree operation)
     // Returns path to display in hooks when user's shell won't be in the worktree
     // Also shows worktree-path hint on first --create (before shell integration warning)
-    let hooks_display_path = handle_switch_output(&result, &branch_info)?;
+    let hooks_display_path = handle_switch_output(&result, &branch_info, change_dir)?;
 
     // Offer shell integration if not already installed/active
     // (only shows prompt/hint when shell integration isn't working)

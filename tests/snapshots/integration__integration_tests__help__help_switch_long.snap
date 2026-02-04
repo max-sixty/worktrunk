@@ -81,6 +81,11 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
       [1m[36m--clobber[0m
           Remove stale paths at target
 
+      [1m[36m--no-cd[0m
+          Skip directory change after switching[0m
+          
+          Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or for CI/automation.[0m
+
       [1m[36m--no-verify[0m
           Skip hooks
 

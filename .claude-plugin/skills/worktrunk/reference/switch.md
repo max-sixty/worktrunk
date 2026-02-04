@@ -189,6 +189,12 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
       <b><span class=c>--clobber</span></b>
           Remove stale paths at target
 
+      <b><span class=c>--no-cd</span></b>
+          Skip directory change after switching
+
+          Hooks still run normally. Useful when hooks handle navigation (e.g.,
+          tmux workflows) or for CI/automation.
+
       <b><span class=c>--no-verify</span></b>
           Skip hooks
 

@@ -449,6 +449,13 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         #[arg(long, requires = "branch")]
         clobber: bool,
 
+        /// Skip directory change after switching
+        ///
+        /// Hooks still run normally. Useful when hooks handle navigation
+        /// (e.g., tmux workflows) or for CI/automation.
+        #[arg(long)]
+        no_cd: bool,
+
         /// Skip hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,

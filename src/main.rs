@@ -732,6 +732,7 @@ fn main() {
             execute_args,
             yes,
             clobber,
+            no_cd,
             verify,
         } => UserConfig::load()
             .context("Failed to load config")
@@ -786,6 +787,7 @@ fn main() {
                         execute_args: &execute_args,
                         yes,
                         clobber,
+                        change_dir: !no_cd,
                         verify,
                     },
                     &mut config,
