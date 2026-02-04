@@ -206,12 +206,11 @@ pub fn handle_squash_jj(
 // Commit / Describe
 // ============================================================================
 
-/// Handle jj commit/describe workflow
+/// Handle jj commit workflow
 ///
 /// In jj, the working copy is always part of a commit. This function:
 /// 1. Generates a commit message using LLM (if configured)
-/// 2. Describes the current commit with that message
-/// 3. Creates a new empty commit to continue working
+/// 2. Uses `jj commit` to finalize the current commit and start a new one
 pub fn handle_commit_jj(message: Option<&str>, _yes: bool) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let ws = repo.current_workspace();
@@ -247,15 +246,11 @@ pub fn handle_commit_jj(message: Option<&str>, _yes: bool) -> anyhow::Result<()>
         }
     };
 
-    // Describe the current commit
-    ws.run_command(&["describe", "-m", &commit_message])
-        .context("Failed to describe commit")?;
+    // Use jj commit which describes the current commit and creates a new working copy
+    ws.run_command(&["commit", "-m", &commit_message])
+        .context("Failed to commit")?;
 
-    // Create a new empty commit to continue working
-    ws.run_command(&["new"])
-        .context("Failed to create new commit")?;
-
-    // Get the commit hash of the described commit (parent of current)
+    // Get the commit hash of the just-committed change (parent of current)
     let commit_hash = ws
         .run_command(&["log", "-r", "@-", "--no-graph", "-T", "commit_id.short()"])?
         .trim()
