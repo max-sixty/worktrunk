@@ -3,7 +3,7 @@ source: tests/integration_tests/select.rs
 expression: normalized
 ---
 > [QUERY]                                                     │[PREVIEW_HEADER]
-    Branch           Status        HEAD±    main↕  Remote⇅  │Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: tog
+    Branch           Status        HEAD±    main↕  Remote⇅  │Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
 > @ main                 ^                                  │
   + active-worktree      _                                  │○ main has no uncommitted changes
     orphan-branch       /_                                  │

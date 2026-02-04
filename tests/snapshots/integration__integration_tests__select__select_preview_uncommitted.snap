@@ -3,7 +3,7 @@ source: tests/integration_tests/select.rs
 expression: normalized
 ---
 > [QUERY]                                                     │[PREVIEW_HEADER]
-    Branch   Status        HEAD±    main↕  Remote⇅  Commit  │Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: tog
+    Branch   Status        HEAD±    main↕  Remote⇅  Commit  │Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
 > + feature   !  ↑       +3   -1   ↑1               c605f9..│
                                                             │ tracked.txt | 4 +++-
                                                             │ 1 file changed, 3 insertions(+), 1 deletion(-)

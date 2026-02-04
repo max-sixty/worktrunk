@@ -3,7 +3,7 @@ source: tests/integration_tests/select.rs
 expression: normalized
 ---
 > [QUERY]                                                     │[PREVIEW_HEADER]
-    Branch       Status        HEAD±    main↕  Remote⇅  Age │Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: tog
+    Branch       Status        HEAD±    main↕  Remote⇅  Age │Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
 > @ main             ^                                  16h │
   + feature-one      _                                  16h │○ main has no uncommitted changes
   + feature-two      _                                  16h │

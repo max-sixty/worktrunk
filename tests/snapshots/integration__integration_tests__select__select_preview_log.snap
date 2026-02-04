@@ -3,7 +3,7 @@ source: tests/integration_tests/select.rs
 expression: normalized
 ---
 > [QUERY]                                                     │[PREVIEW_HEADER]
-    Branch   Status        HEAD±    main↕  Remote⇅  Commit  │Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: tog
+    Branch   Status        HEAD±    main↕  Remote⇅  Commit  │Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
 > + feature      ↑                 ↑5               855962..│
                                                             │* 8559621   +1        1d (feature) Add file 5 with content
                                                             │* b8208db   +1        1d Add file 4 with content

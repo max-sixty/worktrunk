@@ -3,7 +3,7 @@ source: tests/integration_tests/select.rs
 expression: normalized
 ---
 > [QUERY]                                                     │[PREVIEW_HEADER]
-    Branch   Status        HEAD±    main↕  Remote⇅  Commit  │Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: tog
+    Branch   Status        HEAD±    main↕  Remote⇅  Commit  │Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
 > + feature      ↑                 ↑2               d1ceec..│
                                                             │ feature_code.rs | 6 ++++++
                                                             │ tests.rs        | 4 ++++
