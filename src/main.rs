@@ -525,7 +525,22 @@ fn main() {
                 verify,
                 stage,
                 show_prompt,
-            } => step_commit(yes, !verify, stage, show_prompt),
+            } => {
+                // jj mode: use jj commit
+                if detect_vcs() == VcsType::Jj {
+                    if show_prompt {
+                        // TODO: Implement show_prompt for jj
+                        eprintln!(
+                            "{}",
+                            info_message("--show-prompt not yet supported for jj")
+                        );
+                        return;
+                    }
+                    commands::jj_commands::handle_commit_jj(None, yes)
+                } else {
+                    step_commit(yes, !verify, stage, show_prompt)
+                }
+            }
             StepCommand::Squash {
                 target,
                 yes,
@@ -533,42 +548,100 @@ fn main() {
                 stage,
                 show_prompt,
             } => {
-                // Handle --show-prompt early: just build and output the prompt
-                if show_prompt {
-                    commands::step_show_squash_prompt(target.as_deref())
+                // jj mode: use jj squash
+                if detect_vcs() == VcsType::Jj {
+                    if show_prompt {
+                        eprintln!(
+                            "{}",
+                            info_message("--show-prompt not yet supported for jj")
+                        );
+                        return;
+                    }
+                    commands::jj_commands::handle_squash_jj(target.as_deref(), yes, stage)
+                        .map(|result| {
+                            use commands::jj_commands::JjSquashResult;
+                            match result {
+                                JjSquashResult::Squashed | JjSquashResult::NoNetChanges => {}
+                                JjSquashResult::NoCommitsAhead(branch) => {
+                                    eprintln!(
+                                        "{}",
+                                        info_message(format!(
+                                            "Nothing to squash; no commits ahead of {branch}"
+                                        ))
+                                    );
+                                }
+                                JjSquashResult::AlreadySingleCommit => {
+                                    eprintln!(
+                                        "{}",
+                                        info_message("Nothing to squash; already a single commit")
+                                    );
+                                }
+                            }
+                        })
                 } else {
-                    // Approval is handled inside handle_squash (like step_commit)
-                    handle_squash(target.as_deref(), yes, !verify, stage).map(|result| match result
-                    {
-                        SquashResult::Squashed | SquashResult::NoNetChanges => {}
-                        SquashResult::NoCommitsAhead(branch) => {
-                            eprintln!(
-                                "{}",
-                                info_message(format!(
-                                    "Nothing to squash; no commits ahead of {branch}"
-                                ))
-                            );
+                    // Handle --show-prompt early: just build and output the prompt
+                    if show_prompt {
+                        commands::step_show_squash_prompt(target.as_deref())
+                    } else {
+                        // Approval is handled inside handle_squash (like step_commit)
+                        handle_squash(target.as_deref(), yes, !verify, stage).map(|result| {
+                            match result {
+                                SquashResult::Squashed | SquashResult::NoNetChanges => {}
+                                SquashResult::NoCommitsAhead(branch) => {
+                                    eprintln!(
+                                        "{}",
+                                        info_message(format!(
+                                            "Nothing to squash; no commits ahead of {branch}"
+                                        ))
+                                    );
+                                }
+                                SquashResult::AlreadySingleCommit => {
+                                    eprintln!(
+                                        "{}",
+                                        info_message("Nothing to squash; already a single commit")
+                                    );
+                                }
+                            }
+                        })
+                    }
+                }
+            }
+            StepCommand::Push { target } => {
+                // jj mode: use jj git push
+                if detect_vcs() == VcsType::Jj {
+                    commands::jj_commands::handle_push_jj(target.as_deref())
+                } else {
+                    handle_push(target.as_deref(), "Pushed to", None)
+                }
+            }
+            StepCommand::Rebase { target } => {
+                // jj mode: use jj rebase
+                if detect_vcs() == VcsType::Jj {
+                    commands::jj_commands::handle_rebase_jj(target.as_deref()).map(|result| {
+                        use commands::jj_commands::JjRebaseResult;
+                        match result {
+                            JjRebaseResult::Rebased => (),
+                            JjRebaseResult::UpToDate(branch) => {
+                                eprintln!(
+                                    "{}",
+                                    info_message(cformat!(
+                                        "Already up to date with <bold>{branch}</>"
+                                    ))
+                                );
+                            }
                         }
-                        SquashResult::AlreadySingleCommit => {
+                    })
+                } else {
+                    handle_rebase(target.as_deref()).map(|result| match result {
+                        RebaseResult::Rebased => (),
+                        RebaseResult::UpToDate(branch) => {
                             eprintln!(
                                 "{}",
-                                info_message("Nothing to squash; already a single commit")
+                                info_message(cformat!("Already up to date with <bold>{branch}</>"))
                             );
                         }
                     })
                 }
-            }
-            StepCommand::Push { target } => handle_push(target.as_deref(), "Pushed to", None),
-            StepCommand::Rebase { target } => {
-                handle_rebase(target.as_deref()).map(|result| match result {
-                    RebaseResult::Rebased => (),
-                    RebaseResult::UpToDate(branch) => {
-                        eprintln!(
-                            "{}",
-                            info_message(cformat!("Already up to date with <bold>{branch}</>"))
-                        );
-                    }
-                })
             }
             StepCommand::CopyIgnored { from, to, dry_run } => {
                 step_copy_ignored(from.as_deref(), to.as_deref(), dry_run)
@@ -1077,18 +1150,32 @@ fn main() {
                 }
             }
 
-            // Pass CLI flags as options; handle_merge determines effective defaults
-            // using per-project config merged with global config
-            handle_merge(MergeOptions {
-                target: target.as_deref(),
-                squash: flag_pair(squash, no_squash),
-                commit: flag_pair(commit, no_commit),
-                rebase: flag_pair(rebase, no_rebase),
-                remove: flag_pair(remove, no_remove),
-                verify: flag_pair(verify, no_verify),
-                yes,
-                stage,
-            })
+            // jj mode: use jj merge workflow
+            if detect_vcs() == VcsType::Jj {
+                // Note: jj merge doesn't use commit flag (jj always has working copy in a commit)
+                // and verify is not applicable (no hooks yet)
+                let _ = (commit, no_commit, verify, no_verify, stage); // suppress warnings
+                commands::jj_commands::handle_merge_jj(commands::jj_commands::JjMergeOptions {
+                    target: target.as_deref(),
+                    squash: flag_pair(squash, no_squash),
+                    rebase: flag_pair(rebase, no_rebase),
+                    remove: flag_pair(remove, no_remove),
+                    yes,
+                })
+            } else {
+                // Pass CLI flags as options; handle_merge determines effective defaults
+                // using per-project config merged with global config
+                handle_merge(MergeOptions {
+                    target: target.as_deref(),
+                    squash: flag_pair(squash, no_squash),
+                    commit: flag_pair(commit, no_commit),
+                    rebase: flag_pair(rebase, no_rebase),
+                    remove: flag_pair(remove, no_remove),
+                    verify: flag_pair(verify, no_verify),
+                    yes,
+                    stage,
+                })
+            }
         }
     };
 
