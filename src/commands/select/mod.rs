@@ -181,6 +181,8 @@ pub fn handle_select(
                 "4:execute-silent(echo 4 > {0})+refresh-preview",
                 state_path_str
             ),
+            // Create new worktree with query as branch name (alt-c for "create")
+            "alt-c:accept(create)".to_string(),
             // Preview toggle (alt-p shows/hides preview)
             // Note: skim doesn't support change-preview-window like fzf, only toggle
             "alt-p:toggle-preview".to_string(),
@@ -207,18 +209,32 @@ pub fn handle_select(
     // Handle selection
     if let Some(out) = output
         && !out.is_abort
-        && let Some(selected) = out.selected_items.first()
     {
-        // Get branch name or worktree path from selected item
-        // (output() returns the worktree path for existing worktrees, branch name otherwise)
-        let identifier = selected.output().to_string();
+        // Determine if user wants to create a new worktree (alt-n) or switch to existing (enter)
+        let create_new =
+            matches!(out.final_event, Event::EvActAccept(Some(ref label)) if label == "create");
+
+        // Get branch name: from query if creating new, from selected item if switching
+        let (identifier, should_create) = if create_new {
+            let query = out.query.trim().to_string();
+            if query.is_empty() {
+                anyhow::bail!("Cannot create worktree: no branch name entered");
+            }
+            (query, true)
+        } else if let Some(selected) = out.selected_items.first() {
+            // Get branch name or worktree path from selected item
+            // (output() returns the worktree path for existing worktrees, branch name otherwise)
+            (selected.output().to_string(), false)
+        } else {
+            return Ok(());
+        };
 
         // Load config
         let config = UserConfig::load().context("Failed to load config")?;
         let repo = Repository::current().context("Failed to switch worktree")?;
 
-        // Switch to the selected worktree (no creation, no approval prompts)
-        let plan = plan_switch(&repo, &identifier, false, None, false, &config)?;
+        // Switch to existing worktree or create new one
+        let plan = plan_switch(&repo, &identifier, should_create, None, false, &config)?;
         let (result, branch_info) = execute_switch(&repo, plan, &config, false, true)?;
 
         // Clear the terminal screen after skim exits to prevent artifacts

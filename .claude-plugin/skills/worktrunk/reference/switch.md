@@ -67,9 +67,10 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | Key | Action |
 |-----|--------|
 | `↑`/`↓` | Navigate worktree list |
-| `Enter` | Switch to selected worktree |
-| `Esc` | Cancel |
 | (type) | Filter worktrees |
+| `Enter` | Switch to selected worktree |
+| `Alt-c` | Create new worktree from query |
+| `Esc` | Cancel |
 | `1`/`2`/`3`/`4` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |

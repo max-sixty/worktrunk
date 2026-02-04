@@ -153,15 +153,16 @@ When called without arguments, [2mwt switch[0m opens an interactive picker to 
 
 [1mKeybindings:[0m
 
-        Key                Action            
-   ───────────── ─────────────────────────── 
-   ↑/↓           Navigate worktree list      
-   Enter         Switch to selected worktree 
-   Esc           Cancel                      
-   (type)        Filter worktrees            
-   1/2/3/4       Switch preview tab          
-   Alt-p         Toggle preview panel        
-   Ctrl-u/Ctrl-d Scroll preview up/down      
+        Key                  Action             
+   ───────────── ────────────────────────────── 
+   ↑/↓           Navigate worktree list         
+   (type)        Filter worktrees               
+   Enter         Switch to selected worktree    
+   Alt-c         Create new worktree from query 
+   Esc           Cancel                         
+   1/2/3/4       Switch preview tab             
+   Alt-p         Toggle preview panel           
+   Ctrl-u/Ctrl-d Scroll preview up/down         
 
 [1mPreview tabs[0m (toggle with number keys):
 
