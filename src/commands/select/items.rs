@@ -433,26 +433,15 @@ mod tests {
         let full_reset = "\x1b[0m";
 
         // Count resets - should have one after each of the 4 tabs
-        let reset_count = first_line.matches(full_reset).count();
-        assert_eq!(reset_count, 4, "Each tab should have a full reset after it");
+        assert_eq!(first_line.matches(full_reset).count(), 4);
 
         // The sequence should be: style + text + [22m + [0m + divider
         // Check that dividers come after full resets
         let parts: Vec<&str> = first_line.split(" | ").collect();
-        assert_eq!(parts.len(), 4, "Should have 4 tabs separated by dividers");
-        for (i, part) in parts.iter().enumerate() {
-            assert!(
-                part.ends_with(full_reset),
-                "Tab {} should end with full reset, got: {:?}",
-                i + 1,
-                part
-            );
-        }
+        assert_eq!(parts.len(), 4);
+        assert!(parts.iter().all(|part| part.ends_with(full_reset)));
 
         // Controls line should end with full reset to ensure clean state for preview content
-        assert!(
-            second_line.ends_with(full_reset),
-            "Controls line should end with full reset for clean preview content"
-        );
+        assert!(second_line.ends_with(full_reset));
     }
 }
