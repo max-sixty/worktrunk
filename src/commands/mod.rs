@@ -11,6 +11,7 @@ mod hook_commands;
 mod hook_filter;
 pub(crate) mod hooks;
 pub(crate) mod init;
+pub(crate) mod jj_commands; // JJ workspace commands
 pub(crate) mod list;
 pub(crate) mod merge;
 pub(crate) mod process;
