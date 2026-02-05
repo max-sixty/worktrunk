@@ -4,7 +4,9 @@
 //! shell names from paths, and probing shell configuration state.
 
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use wait_timeout::ChildExt;
 
 use super::Shell;
 
@@ -131,29 +133,22 @@ pub fn detect_zsh_compinit() -> Option<bool> {
         .spawn()
         .ok()?;
 
-    let start = Instant::now();
     let timeout = Duration::from_secs(2);
 
-    loop {
-        match child.try_wait() {
-            Ok(Some(_status)) => {
-                // Process finished (exit status is always 0 due to || fallback in probe)
-                // wait_with_output() collects remaining stdout even after try_wait() succeeds
-                let output = child.wait_with_output().ok()?;
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                return Some(stdout.contains("__WT_COMPINIT_YES__"));
-            }
-            Ok(None) => {
-                // Still running - check timeout
-                if start.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait(); // Reap zombie process
-                    return None;
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            Err(_) => return None,
+    match child.wait_timeout(timeout) {
+        Ok(Some(_status)) => {
+            // Process finished - collect stdout
+            let output = child.wait_with_output().ok()?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Some(stdout.contains("__WT_COMPINIT_YES__"))
         }
+        Ok(None) => {
+            // Timed out
+            let _ = child.kill();
+            let _ = child.wait();
+            None
+        }
+        Err(_) => None,
     }
 }
 
