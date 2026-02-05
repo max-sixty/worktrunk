@@ -14,15 +14,16 @@ use worktrunk::shell::extract_filename_from_path;
 
 use crate::pager::{git_config_pager, parse_pager_value};
 
-/// Cached pager command, detected once at startup.
-///
-/// None means no pager should be used (empty config or "cat").
-/// We cache this to avoid running `git config` on every preview render.
-pub(super) static CACHED_PAGER: OnceLock<Option<String>> = OnceLock::new();
+/// Cached pager info, detected once at startup.
+struct CachedPager {
+    /// The pager command. None means no pager (empty config or "cat").
+    command: Option<String>,
+    /// True if pager came from explicit `[select] pager` config.
+    /// When explicit, we use it as-is; otherwise we may add `--paging=never`.
+    is_explicit: bool,
+}
 
-/// Cached flag for whether user has explicit pager config.
-/// Avoids reloading config on every preview render.
-static HAS_EXPLICIT_PAGER_CONFIG: OnceLock<bool> = OnceLock::new();
+static CACHED_PAGER: OnceLock<CachedPager> = OnceLock::new();
 
 /// Maximum time to wait for pager to complete.
 ///
@@ -30,34 +31,43 @@ static HAS_EXPLICIT_PAGER_CONFIG: OnceLock<bool> = OnceLock::new();
 /// If the pager takes longer than this, kill it and fall back to raw diff.
 pub(super) const PAGER_TIMEOUT: Duration = Duration::from_millis(2000);
 
-/// Get the cached pager command, initializing if needed.
+/// Initialize and return cached pager info.
+fn cached_pager() -> &'static CachedPager {
+    CACHED_PAGER.get_or_init(|| {
+        // Check user config first for explicit pager override
+        if let Ok(config) = UserConfig::load()
+            && let Some(select_config) = config.configs.select
+            && let Some(pager) = select_config.pager
+            && !pager.trim().is_empty()
+        {
+            return CachedPager {
+                command: Some(pager),
+                is_explicit: true,
+            };
+        }
+
+        // GIT_PAGER takes precedence over core.pager
+        let command = if let Ok(pager) = std::env::var("GIT_PAGER") {
+            parse_pager_value(&pager)
+        } else {
+            git_config_pager()
+        };
+
+        CachedPager {
+            command,
+            is_explicit: false,
+        }
+    })
+}
+
+/// Get the cached pager command.
 ///
 /// Precedence (highest to lowest):
 /// 1. `[select] pager` in user config (explicit override, used as-is)
 /// 2. `GIT_PAGER` environment variable (with auto-detection applied)
 /// 3. `core.pager` git config (with auto-detection applied)
 pub(super) fn get_diff_pager() -> Option<&'static String> {
-    CACHED_PAGER
-        .get_or_init(|| {
-            // Check user config first for explicit pager override
-            // When set, use exactly as specified (no auto-detection)
-            if let Ok(config) = UserConfig::load()
-                && let Some(select_config) = config.configs.select
-                && let Some(pager) = select_config.pager
-                && !pager.trim().is_empty()
-            {
-                return Some(pager);
-            }
-
-            // GIT_PAGER takes precedence over core.pager
-            if let Ok(pager) = std::env::var("GIT_PAGER") {
-                return parse_pager_value(&pager);
-            }
-
-            // Fall back to core.pager config
-            git_config_pager()
-        })
-        .as_ref()
+    cached_pager().command.as_ref()
 }
 
 /// Check if the pager spawns its own internal pager (e.g., less).
@@ -84,15 +94,8 @@ pub(super) fn pager_needs_paging_disabled(pager_cmd: &str) -> bool {
 }
 
 /// Check if user has explicitly configured a select-specific pager.
-/// Result is cached to avoid reloading config on every preview render.
 pub(super) fn has_explicit_pager_config() -> bool {
-    *HAS_EXPLICIT_PAGER_CONFIG.get_or_init(|| {
-        UserConfig::load()
-            .ok()
-            .and_then(|config| config.configs.select)
-            .and_then(|select| select.pager)
-            .is_some_and(|p| !p.trim().is_empty())
-    })
+    cached_pager().is_explicit
 }
 
 /// Pipe text through the configured pager for display.
