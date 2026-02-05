@@ -226,4 +226,36 @@ mod tests {
         // The behavior is covered by integration tests that set actual config
         let _ = has_explicit_pager_config();
     }
+
+    #[test]
+    fn test_pipe_through_pager_passthrough() {
+        // Use cat as a simple pager that passes through input unchanged
+        let input = "line 1\nline 2\nline 3";
+        let result = pipe_through_pager(input, "cat", 80);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_pipe_through_pager_with_transform() {
+        // Use tr to transform input (proves pager is actually being invoked)
+        let input = "hello world";
+        let result = pipe_through_pager(input, "tr 'a-z' 'A-Z'", 80);
+        assert_eq!(result, "HELLO WORLD");
+    }
+
+    #[test]
+    fn test_pipe_through_pager_invalid_command() {
+        // Invalid pager command should return original text
+        let input = "original text";
+        let result = pipe_through_pager(input, "nonexistent-command-xyz", 80);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_pipe_through_pager_failing_command() {
+        // Pager that exits with error should return original text
+        let input = "original text";
+        let result = pipe_through_pager(input, "false", 80);
+        assert_eq!(result, input);
+    }
 }
