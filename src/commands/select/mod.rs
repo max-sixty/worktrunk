@@ -283,7 +283,8 @@ pub fn handle_select(
 
         // Show success message; emit cd directive if shell integration is active
         // Interactive picker always performs cd (change_dir: true)
-        handle_switch_output(&result, &branch_info, true)?;
+        let source_root = repo.current_worktree().root()?;
+        handle_switch_output(&result, &branch_info, true, Some(&source_root))?;
     }
 
     Ok(())

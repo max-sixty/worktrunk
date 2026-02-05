@@ -95,6 +95,114 @@ fn test_remove_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
 }
 
 // ============================================================================
+// Subdirectory Preservation Tests
+// ============================================================================
+// These tests verify that switching preserves the user's subdirectory position
+
+#[rstest]
+fn test_switch_preserves_subdir(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let (directive_path, _guard) = directive_file();
+
+    // Create the same subdirectory in both worktrees
+    let subdir = "apps/gateway";
+    fs::create_dir_all(repo.root_path().join(subdir)).unwrap();
+    fs::create_dir_all(feature_wt.join(subdir)).unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.arg("switch")
+        .arg("feature")
+        .current_dir(repo.root_path().join(subdir));
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "wt switch failed: {:?}", output);
+
+    // Verify directive file contains cd to the subdirectory, not the root
+    let directives = fs::read_to_string(&directive_path).unwrap_or_default();
+    let expected_subdir = feature_wt.join(subdir);
+    let expected_str = expected_subdir.to_string_lossy();
+    assert!(
+        directives.contains(&*expected_str),
+        "Directive should cd to subdirectory {}, got: {}",
+        expected_str,
+        directives
+    );
+}
+
+#[rstest]
+fn test_switch_falls_back_to_root_when_subdir_missing(
+    #[from(repo_with_remote)] mut repo: TestRepo,
+) {
+    let feature_wt = repo.add_worktree("feature");
+    let (directive_path, _guard) = directive_file();
+
+    // Create subdirectory only in the source worktree, not in the target
+    let subdir = "apps/gateway";
+    fs::create_dir_all(repo.root_path().join(subdir)).unwrap();
+    // Intentionally NOT creating the subdir in feature_wt
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.arg("switch")
+        .arg("feature")
+        .current_dir(repo.root_path().join(subdir));
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "wt switch failed: {:?}", output);
+
+    // Verify directive file contains cd to worktree root (not the missing subdir)
+    let directives = fs::read_to_string(&directive_path).unwrap_or_default();
+    let feature_str = feature_wt.to_string_lossy();
+    assert!(
+        directives.contains(&*feature_str),
+        "Directive should cd to worktree root {}, got: {}",
+        feature_str,
+        directives
+    );
+    // Make sure it doesn't contain the subdir path
+    let subdir_path = feature_wt.join(subdir);
+    let subdir_str = subdir_path.to_string_lossy();
+    assert!(
+        !directives.contains(&*subdir_str),
+        "Directive should NOT cd to missing subdirectory {}, got: {}",
+        subdir_str,
+        directives
+    );
+}
+
+#[rstest]
+fn test_switch_create_preserves_subdir(#[from(repo_with_remote)] repo: TestRepo) {
+    let (directive_path, _guard) = directive_file();
+
+    // Create a subdirectory in the source worktree and commit it so it appears in the new branch
+    let subdir = "apps/gateway";
+    fs::create_dir_all(repo.root_path().join(subdir)).unwrap();
+    // Add a file so git tracks the directory
+    fs::write(repo.root_path().join(subdir).join(".gitkeep"), "").unwrap();
+    repo.commit("Add apps/gateway");
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "new-feature"])
+        .current_dir(repo.root_path().join(subdir));
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "wt switch failed: {:?}", output);
+
+    // The subdirectory was committed, so the new worktree should have it
+    let directives = fs::read_to_string(&directive_path).unwrap_or_default();
+    assert!(
+        directives.contains("apps/gateway"),
+        "New worktree should cd to preserved subdirectory, got: {}",
+        directives
+    );
+}
+
+// ============================================================================
 // --no-cd Tests
 // ============================================================================
 // These tests verify that --no-cd suppresses directory changes

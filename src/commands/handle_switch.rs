@@ -103,7 +103,9 @@ pub fn handle_switch(
     // Show success message (temporal locality: immediately after worktree operation)
     // Returns path to display in hooks when user's shell won't be in the worktree
     // Also shows worktree-path hint on first --create (before shell integration warning)
-    let hooks_display_path = handle_switch_output(&result, &branch_info, change_dir)?;
+    let source_root = repo.current_worktree().root()?;
+    let hooks_display_path =
+        handle_switch_output(&result, &branch_info, change_dir, Some(&source_root))?;
 
     // Offer shell integration if not already installed/active
     // (only shows prompt/hint when shell integration isn't working)
