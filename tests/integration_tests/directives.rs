@@ -5,6 +5,7 @@ use crate::common::{
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
+use std::path::Path;
 
 // ============================================================================
 // Directive File Tests
@@ -193,10 +194,13 @@ fn test_switch_create_preserves_subdir(#[from(repo_with_remote)] repo: TestRepo)
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "wt switch failed: {:?}", output);
 
-    // The subdirectory was committed, so the new worktree should have it
+    // The subdirectory was committed, so the new worktree should have it.
+    // Use Path to construct the expected substring so separators match on Windows.
     let directives = fs::read_to_string(&directive_path).unwrap_or_default();
+    let subdir_suffix = Path::new("apps").join("gateway");
+    let subdir_str = subdir_suffix.to_string_lossy();
     assert!(
-        directives.contains("apps/gateway"),
+        directives.contains(&*subdir_str),
         "New worktree should cd to preserved subdirectory, got: {}",
         directives
     );
