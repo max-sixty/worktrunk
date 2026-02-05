@@ -140,10 +140,11 @@ pub fn detect_zsh_compinit() -> Option<bool> {
 
     match child.wait_timeout(timeout) {
         Ok(Some(_status)) => {
-            // Process finished - read stdout
+            // Process finished - read stdout (use lossy decode for robustness)
             use std::io::Read;
-            let mut stdout = String::new();
-            let _ = stdout_handle.read_to_string(&mut stdout);
+            let mut buf = Vec::new();
+            let _ = stdout_handle.read_to_end(&mut buf);
+            let stdout = String::from_utf8_lossy(&buf);
             Some(stdout.contains("__WT_COMPINIT_YES__"))
         }
         Ok(None) => {

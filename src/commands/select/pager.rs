@@ -20,6 +20,10 @@ use crate::pager::{git_config_pager, parse_pager_value};
 /// We cache this to avoid running `git config` on every preview render.
 pub(super) static CACHED_PAGER: OnceLock<Option<String>> = OnceLock::new();
 
+/// Cached flag for whether user has explicit pager config.
+/// Avoids reloading config on every preview render.
+static HAS_EXPLICIT_PAGER_CONFIG: OnceLock<bool> = OnceLock::new();
+
 /// Maximum time to wait for pager to complete.
 ///
 /// Pager blocking can freeze skim's event loop, making the UI unresponsive.
@@ -80,12 +84,15 @@ pub(super) fn pager_needs_paging_disabled(pager_cmd: &str) -> bool {
 }
 
 /// Check if user has explicitly configured a select-specific pager.
+/// Result is cached to avoid reloading config on every preview render.
 pub(super) fn has_explicit_pager_config() -> bool {
-    UserConfig::load()
-        .ok()
-        .and_then(|config| config.configs.select)
-        .and_then(|select| select.pager)
-        .is_some_and(|p| !p.trim().is_empty())
+    *HAS_EXPLICIT_PAGER_CONFIG.get_or_init(|| {
+        UserConfig::load()
+            .ok()
+            .and_then(|config| config.configs.select)
+            .and_then(|select| select.pager)
+            .is_some_and(|p| !p.trim().is_empty())
+    })
 }
 
 /// Pipe text through the configured pager for display.
