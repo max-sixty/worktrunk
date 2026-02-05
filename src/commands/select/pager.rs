@@ -191,6 +191,13 @@ mod tests {
     }
 
     #[test]
+    fn test_get_diff_pager_initializes() {
+        // Exercise the config initialization path
+        // Returns None or Some depending on user's pager config
+        let _ = get_diff_pager();
+    }
+
+    #[test]
     fn test_pipe_through_pager_passthrough() {
         // Use cat as a simple pager that passes through input unchanged
         let input = "line 1\nline 2\nline 3";
