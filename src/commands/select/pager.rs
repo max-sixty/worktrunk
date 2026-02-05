@@ -127,7 +127,8 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
         }
     };
 
-    // Write input to stdin in a thread to avoid deadlock
+    // Write input to stdin in a thread to avoid deadlock.
+    // Thread will unblock when: (a) write completes, or (b) pipe breaks (pager exits/killed).
     let stdin = child.stdin.take();
     let input = text.to_string();
     let writer_thread = std::thread::spawn(move || {
@@ -147,14 +148,24 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
         })
     });
 
-    // Wait for writer to finish
-    let _ = writer_thread.join();
+    // Helper to clean up threads and reap zombie
+    let cleanup = |mut child: std::process::Child, reader: std::thread::JoinHandle<_>| {
+        let _ = child.kill();
+        let _ = child.wait(); // Reap zombie
+        let _ = reader.join(); // Join reader to avoid thread leak
+        // Writer thread will terminate when pipe breaks from kill()
+    };
 
-    // Wait for pager with timeout
+    // Wait for pager with timeout.
+    // Don't join writer_thread here - if pipe fills and pager isn't reading,
+    // joining would block forever. Instead, let it run in parallel; it will
+    // unblock when we kill() the pager (breaking the pipe).
     let start = Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
+                // Pager exited - join threads and check result
+                let _ = writer_thread.join();
                 if let Ok(Some(output)) = reader_thread.join()
                     && status.success()
                     && let Ok(s) = String::from_utf8(output)
@@ -167,14 +178,14 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
             Ok(None) => {
                 if start.elapsed() > PAGER_TIMEOUT {
                     log::debug!("Pager timed out after {:?}", PAGER_TIMEOUT);
-                    let _ = child.kill();
+                    cleanup(child, reader_thread);
                     return text.to_string();
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
             Err(e) => {
                 log::debug!("Failed to wait for pager: {}", e);
-                let _ = child.kill();
+                cleanup(child, reader_thread);
                 return text.to_string();
             }
         }
