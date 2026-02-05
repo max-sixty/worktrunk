@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use anstyle::Reset;
 use color_print::cformat;
+use dashmap::DashMap;
 use skim::prelude::*;
 use worktrunk::git::Repository;
 use worktrunk::styling::INFO_SYMBOL;
@@ -18,6 +19,13 @@ use super::log_formatter::{
 };
 use super::pager::{get_diff_pager, run_git_diff_with_pager};
 use super::preview::{PreviewMode, PreviewStateData};
+
+/// Cache key for pre-computed previews: (branch_name, mode).
+type PreviewCacheKey = (String, PreviewMode);
+
+/// Cache for pre-computed previews, keyed by (branch_name, mode).
+/// Shared across all WorktreeSkimItems for background pre-computation.
+pub(super) type PreviewCache = Arc<DashMap<PreviewCacheKey, String>>;
 
 /// Header item for column names (non-selectable)
 pub(super) struct HeaderSkimItem {
@@ -39,12 +47,53 @@ impl SkimItem for HeaderSkimItem {
     }
 }
 
+/// Common diff rendering: check stat, show stat + full diff if non-empty.
+fn compute_diff_preview(args: &[&str], no_changes_msg: &str, width: usize) -> String {
+    let mut output = String::new();
+    let Ok(repo) = Repository::current() else {
+        return no_changes_msg.to_string();
+    };
+
+    // Check stat output first
+    let mut stat_args = args.to_vec();
+    stat_args.push("--stat");
+    stat_args.push("--color=always");
+    let stat_width_arg = format!("--stat-width={}", width);
+    stat_args.push(&stat_width_arg);
+
+    if let Ok(stat) = repo.run_command(&stat_args)
+        && !stat.trim().is_empty()
+    {
+        output.push_str(&stat);
+
+        // Build diff args with color
+        let mut diff_args = args.to_vec();
+        diff_args.push("--color=always");
+
+        // Try streaming through pager first (git diff | pager), fall back to plain diff
+        let diff = get_diff_pager()
+            .and_then(|pager| run_git_diff_with_pager(&diff_args, pager, width))
+            .or_else(|| repo.run_command(&diff_args).ok());
+
+        if let Some(diff) = diff {
+            output.push_str(&diff);
+        }
+    } else {
+        output.push_str(no_changes_msg);
+        output.push('\n');
+    }
+
+    output
+}
+
 /// Wrapper to implement SkimItem for ListItem
 pub(super) struct WorktreeSkimItem {
     pub display_text: String,
     pub display_text_with_ansi: String,
     pub branch_name: String,
     pub item: Arc<ListItem>,
+    /// Shared cache for pre-computed previews (all modes)
+    pub preview_cache: PreviewCache,
 }
 
 impl SkimItem for WorktreeSkimItem {
@@ -110,94 +159,73 @@ impl WorktreeSkimItem {
         )
     }
 
-    /// Render preview for the given mode with specified dimensions
+    /// Render preview for the given mode with specified dimensions.
+    /// Uses cache if available, otherwise computes and caches.
     fn preview_for_mode(&self, mode: PreviewMode, width: usize, height: usize) -> String {
+        let cache_key = (self.branch_name.clone(), mode);
+
+        // Check cache first
+        if let Some(cached) = self.preview_cache.get(&cache_key) {
+            return cached.clone();
+        }
+
+        // Compute and cache
+        let result = Self::compute_preview(&self.item, mode, width, height);
+        self.preview_cache.insert(cache_key, result.clone());
+        result
+    }
+
+    /// Compute preview for any mode. Called from cache miss and background pre-computation.
+    pub(super) fn compute_preview(
+        item: &ListItem,
+        mode: PreviewMode,
+        width: usize,
+        height: usize,
+    ) -> String {
         match mode {
-            PreviewMode::WorkingTree => self.render_working_tree_preview(width),
-            PreviewMode::Log => self.render_log_preview(width, height),
-            PreviewMode::BranchDiff => self.render_branch_diff_preview(width),
-            PreviewMode::UpstreamDiff => self.render_upstream_diff_preview(width),
+            PreviewMode::WorkingTree => Self::compute_working_tree_preview(item, width),
+            PreviewMode::Log => Self::compute_log_preview(item, width, height),
+            PreviewMode::BranchDiff => Self::compute_branch_diff_preview(item, width),
+            PreviewMode::UpstreamDiff => Self::compute_upstream_diff_preview(item, width),
         }
     }
 
-    /// Common diff rendering pattern: check stat, show stat + full diff if non-empty
-    fn render_diff_preview(&self, args: &[&str], no_changes_msg: &str, width: usize) -> String {
-        let mut output = String::new();
-        let Ok(repo) = Repository::current() else {
-            return no_changes_msg.to_string();
-        };
-
-        // Check stat output first
-        let mut stat_args = args.to_vec();
-        stat_args.push("--stat");
-        stat_args.push("--color=always");
-        let stat_width_arg = format!("--stat-width={}", width);
-        stat_args.push(&stat_width_arg);
-
-        if let Ok(stat) = repo.run_command(&stat_args)
-            && !stat.trim().is_empty()
-        {
-            output.push_str(&stat);
-
-            // Build diff args with color
-            let mut diff_args = args.to_vec();
-            diff_args.push("--color=always");
-
-            // Try streaming through pager first (git diff | pager), fall back to plain diff
-            let diff = get_diff_pager()
-                .and_then(|pager| run_git_diff_with_pager(&diff_args, pager, width))
-                .or_else(|| repo.run_command(&diff_args).ok());
-
-            if let Some(diff) = diff {
-                output.push_str(&diff);
-            }
-        } else {
-            output.push_str(no_changes_msg);
-            output.push('\n');
-        }
-
-        output
-    }
-
-    /// Render Tab 1: Working tree preview (uncommitted changes vs HEAD)
-    /// Matches `wt list` "HEAD±" column
-    fn render_working_tree_preview(&self, width: usize) -> String {
-        let Some(wt_info) = self.item.worktree_data() else {
-            // Branch without worktree - selecting will create one
-            let branch = self.item.branch_name();
+    /// Compute Tab 1: Working tree preview (uncommitted changes vs HEAD)
+    fn compute_working_tree_preview(item: &ListItem, width: usize) -> String {
+        let Some(wt_info) = item.worktree_data() else {
+            let branch = item.branch_name();
             return format!(
                 "{INFO_SYMBOL} {branch} is branch only — press Enter to create worktree\n"
             );
         };
 
-        let branch = self.item.branch_name();
+        let branch = item.branch_name();
         let path = wt_info.path.display().to_string();
 
-        self.render_diff_preview(
+        compute_diff_preview(
             &["-C", &path, "diff", "HEAD"],
             &cformat!("{INFO_SYMBOL} <bold>{branch}</> has no uncommitted changes"),
             width,
         )
     }
 
-    /// Render Tab 3: Branch diff preview (line diffs in commits ahead of default branch)
-    /// Matches `wt list` "main…± (--full)" column
-    fn render_branch_diff_preview(&self, width: usize) -> String {
-        let branch = self.item.branch_name();
+    /// Compute Tab 3: Branch diff preview (line diffs in commits ahead of default branch)
+    fn compute_branch_diff_preview(item: &ListItem, width: usize) -> String {
+        let branch = item.branch_name();
         let Ok(repo) = Repository::current() else {
             return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of main\n");
         };
         let Some(default_branch) = repo.default_branch() else {
             return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of main\n");
         };
-        if self.item.counts.is_some_and(|c| c.ahead == 0) {
+        if item.counts.is_some_and(|c| c.ahead == 0) {
             return cformat!(
                 "{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of <bold>{default_branch}</>\n"
             );
         }
 
-        let merge_base = format!("{}...{}", default_branch, self.item.head());
-        self.render_diff_preview(
+        let merge_base = format!("{}...{}", default_branch, item.head());
+        compute_diff_preview(
             &["diff", &merge_base],
             &cformat!(
                 "{INFO_SYMBOL} <bold>{branch}</> has no file changes vs <bold>{default_branch}</>"
@@ -206,32 +234,23 @@ impl WorktreeSkimItem {
         )
     }
 
-    /// Render Tab 4: Upstream diff preview (ahead/behind vs tracking branch)
-    /// Matches `wt list` "Remote⇅" column
-    fn render_upstream_diff_preview(&self, width: usize) -> String {
-        let branch = self.item.branch_name();
+    /// Compute Tab 4: Upstream diff preview (ahead/behind vs tracking branch)
+    fn compute_upstream_diff_preview(item: &ListItem, width: usize) -> String {
+        let branch = item.branch_name();
 
-        // Check if this branch has an upstream tracking branch
-        // Use as_ref() to avoid cloning UpstreamStatus on every preview render
-        let Some(active) = self.item.upstream.as_ref().and_then(|u| u.active()) else {
+        let Some(active) = item.upstream.as_ref().and_then(|u| u.active()) else {
             return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no upstream tracking branch\n");
         };
 
-        // Use @{u} syntax for performance (avoids extra git command to resolve upstream ref)
-        // Format: branch@{u} resolves to the upstream tracking branch
         let upstream_ref = format!("{}@{{u}}", branch);
 
         if active.ahead == 0 && active.behind == 0 {
             return cformat!("{INFO_SYMBOL} <bold>{branch}</> is up to date with upstream\n");
         }
 
-        // Handle different states: ahead only, behind only, or diverged
-        // Use ⇡/⇣ symbols to match wt list's Remote⇅ column
         if active.ahead > 0 && active.behind > 0 {
-            // Diverged: show local changes (what would be pushed)
-            // Use three-dot diff to show changes unique to local branch
-            let range = format!("{}...{}", upstream_ref, self.item.head());
-            self.render_diff_preview(
+            let range = format!("{}...{}", upstream_ref, item.head());
+            compute_diff_preview(
                 &["diff", &range],
                 &cformat!(
                     "{INFO_SYMBOL} <bold>{branch}</> has diverged (⇡{} ⇣{}) but no unique file changes",
@@ -241,17 +260,15 @@ impl WorktreeSkimItem {
                 width,
             )
         } else if active.ahead > 0 {
-            // Ahead only: show unpushed commits
-            let range = format!("{}...{}", upstream_ref, self.item.head());
-            self.render_diff_preview(
+            let range = format!("{}...{}", upstream_ref, item.head());
+            compute_diff_preview(
                 &["diff", &range],
                 &cformat!("{INFO_SYMBOL} <bold>{branch}</> has no unpushed file changes"),
                 width,
             )
         } else {
-            // Behind only: show what upstream has that we don't
-            let range = format!("{}...{}", self.item.head(), upstream_ref);
-            self.render_diff_preview(
+            let range = format!("{}...{}", item.head(), upstream_ref);
+            compute_diff_preview(
                 &["diff", &range],
                 &cformat!(
                     "{INFO_SYMBOL} <bold>{branch}</> is behind upstream (⇣{}) but no file changes",
@@ -262,8 +279,9 @@ impl WorktreeSkimItem {
         }
     }
 
-    /// Render Tab 2: Log preview
-    fn render_log_preview(&self, width: usize, height: usize) -> String {
+    /// Compute log preview for a worktree item.
+    /// This can be called from background threads for pre-computation.
+    pub(super) fn compute_log_preview(item: &ListItem, width: usize, height: usize) -> String {
         // Minimum preview width to show timestamps (adds ~7 chars: space + 4-char time + space)
         // Note: preview is typically 50% of terminal width, so 50 = 100-col terminal
         const TIMESTAMP_WIDTH_THRESHOLD: usize = 50;
@@ -274,8 +292,8 @@ impl WorktreeSkimItem {
         let show_timestamps = width >= TIMESTAMP_WIDTH_THRESHOLD;
         // Calculate how many log lines fit in preview (height minus header)
         let log_limit = height.saturating_sub(HEADER_LINES).max(1);
-        let head = self.item.head();
-        let branch = self.item.branch_name();
+        let head = item.head();
+        let branch = item.branch_name();
         let Ok(repo) = Repository::current() else {
             output.push_str(&cformat!(
                 "{INFO_SYMBOL} <bold>{branch}</> has no commits\n"

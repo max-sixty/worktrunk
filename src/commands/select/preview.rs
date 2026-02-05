@@ -18,7 +18,7 @@ use std::path::PathBuf;
 /// - Tab 2 shows commits (related to "main↕" counts)
 /// - Tab 3 corresponds to "main…± (--full)" column
 /// - Tab 4 corresponds to "Remote⇅" column
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum PreviewMode {
     WorkingTree = 1,
     Log = 2,
@@ -54,6 +54,9 @@ pub(super) const LIST_CHROME_LINES: usize = 4;
 
 /// Minimum preview lines to keep usable even with many items.
 pub(super) const MIN_PREVIEW_LINES: usize = 5;
+
+/// Preview width as percentage of terminal width (for Right layout).
+const PREVIEW_WIDTH_PERCENT: usize = 50;
 
 /// Preview layout orientation for the interactive selector
 ///
@@ -95,26 +98,37 @@ impl PreviewLayout {
         }
     }
 
-    /// Calculate the preview window spec for skim
-    ///
-    /// For Right layout: always 50%
-    /// For Down layout: dynamically sized based on item count - list gets
-    /// up to MAX_VISIBLE_ITEMS lines, preview gets the rest (min 5 lines)
+    /// Calculate the preview window spec for skim.
+    /// Derives dimensions from `preview_dimensions` to ensure consistency.
     pub(super) fn to_preview_window_spec(self, num_items: usize) -> String {
+        let (width, height) = self.preview_dimensions(num_items);
         match self {
-            Self::Right => "right:50%".to_string(),
+            Self::Right => format!("right:{}", width),
+            Self::Down => format!("down:{}", height),
+        }
+    }
+
+    /// Calculate preview dimensions (width, height) in characters.
+    /// Single source of truth for preview sizing — used by both skim config
+    /// and background pre-computation.
+    pub(super) fn preview_dimensions(self, num_items: usize) -> (usize, usize) {
+        let (term_width, term_height) = terminal_size::terminal_size()
+            .map(|(terminal_size::Width(w), terminal_size::Height(h))| (w as usize, h as usize))
+            .unwrap_or((80, 24));
+
+        match self {
+            Self::Right => {
+                let width = term_width * PREVIEW_WIDTH_PERCENT / 100;
+                let height = term_height * SKIM_HEIGHT_PERCENT / 100;
+                (width, height)
+            }
             Self::Down => {
-                let height = terminal_size::terminal_size()
-                    .map(|(_, terminal_size::Height(h))| h as usize)
-                    .unwrap_or(24);
-
-                let available = height * SKIM_HEIGHT_PERCENT / 100;
+                let width = term_width;
+                let available = term_height * SKIM_HEIGHT_PERCENT / 100;
                 let list_lines = LIST_CHROME_LINES + num_items.min(MAX_VISIBLE_ITEMS);
-                // Ensure preview doesn't exceed available space while trying to maintain minimum
                 let remaining = available.saturating_sub(list_lines);
-                let preview_lines = remaining.max(MIN_PREVIEW_LINES).min(available);
-
-                format!("down:{}", preview_lines)
+                let height = remaining.max(MIN_PREVIEW_LINES).min(available);
+                (width, height)
             }
         }
     }
@@ -187,8 +201,9 @@ mod tests {
 
     #[test]
     fn test_preview_layout_to_preview_window_spec() {
-        // Right is always 50%
-        assert_eq!(PreviewLayout::Right.to_preview_window_spec(10), "right:50%");
+        // Right uses absolute width derived from terminal size
+        let spec = PreviewLayout::Right.to_preview_window_spec(10);
+        assert!(spec.starts_with("right:"));
 
         // Down calculates based on item count
         let spec = PreviewLayout::Down.to_preview_window_spec(5);

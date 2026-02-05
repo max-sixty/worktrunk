@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use crossterm::{execute, terminal};
+use dashmap::DashMap;
 use skim::prelude::*;
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
@@ -20,8 +21,8 @@ use super::list::collect;
 use super::worktree::{execute_switch, plan_switch};
 use crate::output::handle_switch_output;
 
-use items::{HeaderSkimItem, WorktreeSkimItem};
-use preview::{PreviewLayout, PreviewState};
+use items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
+use preview::{PreviewLayout, PreviewMode, PreviewState};
 
 pub fn handle_select(
     show_branches: bool,
@@ -91,7 +92,12 @@ pub fn handle_select(
     let header_display_text = header_line.render();
     let header_plain_text = header_line.plain_text();
 
+    // Create shared cache for all preview modes (pre-computed in background)
+    let preview_cache: PreviewCache = Arc::new(DashMap::new());
+
     // Convert to skim items using the layout system for rendering
+    // Keep Arc<ListItem> refs for background pre-computation
+    let mut items_for_precompute: Vec<Arc<super::list::model::ListItem>> = Vec::new();
     let mut items: Vec<Arc<dyn SkimItem>> = list_data
         .items
         .into_iter()
@@ -103,11 +109,15 @@ pub fn handle_select(
             let display_text_with_ansi = rendered_line.render();
             let display_text = rendered_line.plain_text();
 
+            let item = Arc::new(item);
+            items_for_precompute.push(Arc::clone(&item));
+
             Arc::new(WorktreeSkimItem {
                 display_text,
                 display_text_with_ansi,
                 branch_name,
-                item: Arc::new(item),
+                item,
+                preview_cache: Arc::clone(&preview_cache),
             }) as Arc<dyn SkimItem>
         })
         .collect();
@@ -203,6 +213,34 @@ pub fn handle_select(
     }
     drop(tx);
 
+    // Spawn background thread to pre-compute all preview modes for all worktrees.
+    // Use same dimension calculation as skim's preview window.
+    // Thread runs until complete or process exits — no join needed since ongoing
+    // git commands are harmless read-only operations even if skim exits early.
+    let (preview_width, preview_height) = state.initial_layout.preview_dimensions(num_items);
+    let precompute_cache = Arc::clone(&preview_cache);
+    std::thread::spawn(move || {
+        let modes = [
+            PreviewMode::WorkingTree,
+            PreviewMode::Log,
+            PreviewMode::BranchDiff,
+            PreviewMode::UpstreamDiff,
+        ];
+        for item in items_for_precompute {
+            let branch_name = item.branch_name().to_string();
+            for mode in modes {
+                let cache_key = (branch_name.clone(), mode);
+                // Skip if already cached (e.g., user viewed it before we got here)
+                if precompute_cache.contains_key(&cache_key) {
+                    continue;
+                }
+                let preview =
+                    WorktreeSkimItem::compute_preview(&item, mode, preview_width, preview_height);
+                precompute_cache.insert(cache_key, preview);
+            }
+        }
+    });
+
     // Run skim
     let output = Skim::run_with(&options, Some(rx));
 
@@ -279,8 +317,9 @@ pub mod tests {
 
     #[test]
     fn test_preview_layout() {
-        // Right is always 50%
-        assert_eq!(PreviewLayout::Right.to_preview_window_spec(10), "right:50%");
+        // Right uses absolute width derived from terminal size
+        let spec = PreviewLayout::Right.to_preview_window_spec(10);
+        assert!(spec.starts_with("right:"));
 
         // Down calculates based on item count
         let spec = PreviewLayout::Down.to_preview_window_spec(5);
