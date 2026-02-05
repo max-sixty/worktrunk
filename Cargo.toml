@@ -127,6 +127,7 @@ schemars = { version = "1.2.1", features = ["derive"] }
 skim = "0.20"
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 signal-hook = "0.4"
+wait-timeout = "0.2"
 
 [build-dependencies]
 vergen-gitcl = { version = "9.1.0", features = ["build"] }

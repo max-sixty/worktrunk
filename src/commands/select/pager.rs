@@ -5,7 +5,9 @@
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use wait_timeout::ChildExt;
 
 use worktrunk::config::UserConfig;
 use worktrunk::shell::extract_filename_from_path;
@@ -138,7 +140,7 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
         }
     });
 
-    // Read output in a thread
+    // Read output in a thread to avoid deadlock (can't read stdout after stdin fills)
     let stdout = child.stdout.take();
     let reader_thread = std::thread::spawn(move || {
         stdout.map(|mut stdout| {
@@ -148,48 +150,35 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
         })
     });
 
-    // Helper to clean up threads and reap zombie
-    let cleanup = |mut child: std::process::Child, reader: std::thread::JoinHandle<_>| {
-        let _ = child.kill();
-        let _ = child.wait(); // Reap zombie
-        let _ = reader.join(); // Join reader to avoid thread leak
-        // Writer thread will terminate when pipe breaks from kill()
-    };
-
-    // Wait for pager with timeout.
-    // Don't join writer_thread here - if pipe fills and pager isn't reading,
-    // joining would block forever. Instead, let it run in parallel; it will
-    // unblock when we kill() the pager (breaking the pipe).
-    let start = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                // Pager exited - join threads and check result
-                let _ = writer_thread.join();
-                if let Ok(Some(output)) = reader_thread.join()
-                    && status.success()
-                    && let Ok(s) = String::from_utf8(output)
-                {
-                    return s;
-                }
-                log::debug!("Pager exited with status: {}", status);
-                return text.to_string();
+    // Wait for pager with timeout
+    match child.wait_timeout(PAGER_TIMEOUT) {
+        Ok(Some(status)) => {
+            // Pager exited within timeout
+            let _ = writer_thread.join();
+            if let Ok(Some(output)) = reader_thread.join()
+                && status.success()
+                && let Ok(s) = String::from_utf8(output)
+            {
+                return s;
             }
-            Ok(None) => {
-                if start.elapsed() > PAGER_TIMEOUT {
-                    log::debug!("Pager timed out after {:?}", PAGER_TIMEOUT);
-                    cleanup(child, reader_thread);
-                    return text.to_string();
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(e) => {
-                log::debug!("Failed to wait for pager: {}", e);
-                cleanup(child, reader_thread);
-                return text.to_string();
-            }
+            log::debug!("Pager exited with status: {}", status);
+        }
+        Ok(None) => {
+            // Timed out - kill pager and clean up
+            log::debug!("Pager timed out after {:?}", PAGER_TIMEOUT);
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader_thread.join();
+        }
+        Err(e) => {
+            log::debug!("Failed to wait for pager: {}", e);
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader_thread.join();
         }
     }
+
+    text.to_string()
 }
 
 #[cfg(test)]
