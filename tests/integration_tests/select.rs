@@ -723,3 +723,39 @@ fn test_select_create_with_empty_query_fails(mut repo: TestRepo) {
         screen
     );
 }
+
+#[rstest]
+fn test_select_switch_to_existing_worktree(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so there's no interference from remote branches
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Create a worktree to switch to
+    repo.add_worktree("target-branch");
+
+    let env_vars = repo.test_env_vars();
+
+    // Navigate to target-branch and press Enter to switch
+    let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["select"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("target", None), // Filter to "target-branch"
+            ("\r", None),     // Enter to switch
+        ],
+    );
+
+    // Should exit successfully
+    assert_eq!(exit_code, 0, "Expected exit code 0 for successful switch");
+
+    let screen = render_terminal_screen(&raw_output);
+
+    // Verify the success message or cd directive
+    assert!(
+        screen.contains("target-branch") || screen.contains("Switched") || screen.contains("cd "),
+        "Expected switch output showing target-branch.\nScreen:\n{}",
+        screen
+    );
+}
