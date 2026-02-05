@@ -17,7 +17,7 @@ use super::super::list::model::ListItem;
 use super::log_formatter::{
     FIELD_DELIM, batch_fetch_stats, format_log_output, process_log_with_dimming, strip_hash_markers,
 };
-use super::pager::{get_diff_pager, run_git_diff_with_pager};
+use super::pager::{get_diff_pager, pipe_through_pager};
 use super::preview::{PreviewMode, PreviewStateData};
 
 /// Cache key for pre-computed previews: (branch_name, mode).
@@ -51,7 +51,7 @@ impl SkimItem for HeaderSkimItem {
 fn compute_diff_preview(args: &[&str], no_changes_msg: &str, width: usize) -> String {
     let mut output = String::new();
     let Ok(repo) = Repository::current() else {
-        return no_changes_msg.to_string();
+        return format!("{no_changes_msg}\n");
     };
 
     // Check stat output first
@@ -70,12 +70,7 @@ fn compute_diff_preview(args: &[&str], no_changes_msg: &str, width: usize) -> St
         let mut diff_args = args.to_vec();
         diff_args.push("--color=always");
 
-        // Try streaming through pager first (git diff | pager), fall back to plain diff
-        let diff = get_diff_pager()
-            .and_then(|pager| run_git_diff_with_pager(&diff_args, pager, width))
-            .or_else(|| repo.run_command(&diff_args).ok());
-
-        if let Some(diff) = diff {
+        if let Ok(diff) = repo.run_command(&diff_args) {
             output.push_str(&diff);
         }
     } else {
@@ -161,17 +156,30 @@ impl WorktreeSkimItem {
 
     /// Render preview for the given mode with specified dimensions.
     /// Uses cache if available, otherwise computes and caches.
+    /// Applies pager at display time for diff modes (not cached).
     fn preview_for_mode(&self, mode: PreviewMode, width: usize, height: usize) -> String {
         let cache_key = (self.branch_name.clone(), mode);
 
-        // Check cache first
-        if let Some(cached) = self.preview_cache.get(&cache_key) {
-            return cached.clone();
+        // Get from cache or compute
+        let result = if let Some(cached) = self.preview_cache.get(&cache_key) {
+            cached.clone()
+        } else {
+            let computed = Self::compute_preview(&self.item, mode, width, height);
+            self.preview_cache.insert(cache_key, computed.clone());
+            computed
+        };
+
+        // Apply pager at display time for diff modes (1, 3, 4)
+        // Log mode (2) doesn't benefit from diff pagers
+        let is_diff_mode = matches!(
+            mode,
+            PreviewMode::WorkingTree | PreviewMode::BranchDiff | PreviewMode::UpstreamDiff
+        );
+
+        if is_diff_mode && let Some(pager_cmd) = get_diff_pager() {
+            return pipe_through_pager(&result, pager_cmd, width);
         }
 
-        // Compute and cache
-        let result = Self::compute_preview(&self.item, mode, width, height);
-        self.preview_cache.insert(cache_key, result.clone());
         result
     }
 

@@ -86,10 +86,11 @@ pub(super) fn has_explicit_pager_config() -> bool {
         .is_some_and(|p| !p.trim().is_empty())
 }
 
-/// Run git diff piped directly through the pager as a streaming pipeline.
+/// Pipe text through the configured pager for display.
 ///
-/// Runs `git <args> | pager` as a single shell command, avoiding intermediate
-/// buffering. Returns None if pipeline fails or times out (caller should fall back to raw diff).
+/// Takes raw diff/text output and pipes it through the user's pager (delta, bat, etc.)
+/// for syntax highlighting and formatting. Returns the paged output, or the original
+/// text if the pager fails or times out.
 ///
 /// Sets `COLUMNS` environment variable to the preview width, allowing pagers to detect
 /// the correct width. For pagers like delta with side-by-side mode, users can reference
@@ -97,16 +98,8 @@ pub(super) fn has_explicit_pager_config() -> bool {
 ///
 /// When `[select] pager` is not configured, automatically appends `--paging=never` for
 /// delta/bat/batcat pagers to prevent hangs.
-pub(super) fn run_git_diff_with_pager(
-    git_args: &[&str],
-    pager_cmd: &str,
-    width: usize,
-) -> Option<String> {
-    // Note: pager_cmd is expected to be valid shell code (like git's core.pager).
-    // Users with paths containing special chars must quote them in their config.
-
+pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> String {
     // Apply auto-detection only when user hasn't set explicit config
-    // If config is set, use the value as-is (user has full control)
     let pager_with_args = if !has_explicit_pager_config() && pager_needs_paging_disabled(pager_cmd)
     {
         format!("{} --paging=never", pager_cmd)
@@ -114,69 +107,75 @@ pub(super) fn run_git_diff_with_pager(
         pager_cmd.to_string()
     };
 
-    // Build shell pipeline: git <args> | pager
-    // Shell-escape args to handle paths with spaces
-    let escaped_args: Vec<String> = git_args
-        .iter()
-        .map(|arg| shlex::try_quote(arg).unwrap_or((*arg).into()).into_owned())
-        .collect();
-    let pipeline = format!("git {} | {}", escaped_args.join(" "), pager_with_args);
+    log::debug!("Piping through pager: {}", pager_with_args);
 
-    log::debug!("Running pager pipeline: {}", pipeline);
-
-    // Spawn pipeline with COLUMNS set to preview width
-    // Pagers can use this directly (e.g., `delta --width=$COLUMNS`)
+    // Spawn pager with stdin piped
     let mut child = match Command::new("sh")
         .arg("-c")
-        .arg(&pipeline)
+        .arg(&pager_with_args)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .env("COLUMNS", width.to_string())
-        // Prevent subprocesses from writing to the directive file
         .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .spawn()
     {
         Ok(child) => child,
         Err(e) => {
-            log::debug!("Failed to spawn pager pipeline: {}", e);
-            return None;
+            log::debug!("Failed to spawn pager: {}", e);
+            return text.to_string();
         }
     };
 
-    // Read output in a thread to avoid blocking
-    let stdout = child.stdout.take()?;
-    let reader_thread = std::thread::spawn(move || {
-        let mut stdout = stdout;
-        let mut output = Vec::new();
-        let _ = stdout.read_to_end(&mut output);
-        output
+    // Write input to stdin in a thread to avoid deadlock
+    let stdin = child.stdin.take();
+    let input = text.to_string();
+    let writer_thread = std::thread::spawn(move || {
+        if let Some(mut stdin) = stdin {
+            use std::io::Write;
+            let _ = stdin.write_all(input.as_bytes());
+        }
     });
 
-    // Wait for pipeline with timeout
+    // Read output in a thread
+    let stdout = child.stdout.take();
+    let reader_thread = std::thread::spawn(move || {
+        stdout.map(|mut stdout| {
+            let mut output = Vec::new();
+            let _ = stdout.read_to_end(&mut output);
+            output
+        })
+    });
+
+    // Wait for writer to finish
+    let _ = writer_thread.join();
+
+    // Wait for pager with timeout
     let start = Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let output = reader_thread.join().ok()?;
-                if status.success() {
-                    return String::from_utf8(output).ok();
-                } else {
-                    log::debug!("Pager pipeline exited with status: {}", status);
-                    return None;
+                if let Ok(Some(output)) = reader_thread.join()
+                    && status.success()
+                    && let Ok(s) = String::from_utf8(output)
+                {
+                    return s;
                 }
+                log::debug!("Pager exited with status: {}", status);
+                return text.to_string();
             }
             Ok(None) => {
                 if start.elapsed() > PAGER_TIMEOUT {
-                    log::debug!("Pager pipeline timed out after {:?}", PAGER_TIMEOUT);
+                    log::debug!("Pager timed out after {:?}", PAGER_TIMEOUT);
                     let _ = child.kill();
-                    return None;
+                    return text.to_string();
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
             Err(e) => {
-                log::debug!("Failed to wait for pager pipeline: {}", e);
+                log::debug!("Failed to wait for pager: {}", e);
                 let _ = child.kill();
-                return None;
+                return text.to_string();
             }
         }
     }
