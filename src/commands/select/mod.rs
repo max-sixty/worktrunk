@@ -221,12 +221,13 @@ pub fn handle_select(
                 anyhow::bail!("Cannot create worktree: no branch name entered");
             }
             (query, true)
-        } else if let Some(selected) = out.selected_items.first() {
-            // Get branch name or worktree path from selected item
-            // (output() returns the worktree path for existing worktrees, branch name otherwise)
-            (selected.output().to_string(), false)
         } else {
-            return Ok(());
+            // Enter pressed: skim accept always includes a selection (abort handled above)
+            let selected = out
+                .selected_items
+                .first()
+                .expect("skim accept has selection");
+            (selected.output().to_string(), false)
         };
 
         // Load config
