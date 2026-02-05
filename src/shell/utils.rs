@@ -133,17 +133,21 @@ pub fn detect_zsh_compinit() -> Option<bool> {
         .spawn()
         .ok()?;
 
+    // Take stdout handle before wait_timeout (which reaps the process)
+    let mut stdout_handle = child.stdout.take()?;
+
     let timeout = Duration::from_secs(2);
 
     match child.wait_timeout(timeout) {
         Ok(Some(_status)) => {
-            // Process finished - collect stdout
-            let output = child.wait_with_output().ok()?;
-            let stdout = String::from_utf8_lossy(&output.stdout);
+            // Process finished - read stdout
+            use std::io::Read;
+            let mut stdout = String::new();
+            let _ = stdout_handle.read_to_string(&mut stdout);
             Some(stdout.contains("__WT_COMPINIT_YES__"))
         }
         Ok(None) => {
-            // Timed out
+            // Timed out - kill and clean up
             let _ = child.kill();
             let _ = child.wait();
             None
