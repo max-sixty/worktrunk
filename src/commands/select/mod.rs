@@ -17,6 +17,9 @@ use skim::prelude::*;
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 
+use super::handle_switch::{
+    approve_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
+};
 use super::list::collect;
 use super::worktree::{execute_switch, plan_switch};
 use crate::output::handle_switch_output;
@@ -272,20 +275,37 @@ pub fn handle_select(
         let config = UserConfig::load().context("Failed to load config")?;
         let repo = Repository::current().context("Failed to switch worktree")?;
 
-        // Switch to existing worktree or create new one
-        let plan = plan_switch(&repo, &identifier, should_create, None, false, &config)?;
-        let (result, branch_info) = execute_switch(&repo, plan, &config, false, true)?;
-
         // Clear the terminal screen after skim exits to prevent artifacts
         // Use stderr for terminal control - stdout is reserved for data output
+        // Done before approval so hook prompts render on a clean terminal
         execute!(stderr(), terminal::Clear(terminal::ClearType::All))?;
         execute!(stderr(), crossterm::cursor::MoveTo(0, 0))?;
+
+        // Switch to existing worktree or create new one
+        let plan = plan_switch(&repo, &identifier, should_create, None, false, &config)?;
+        let skip_hooks = !approve_switch_hooks(&repo, &config, &plan, false, true)?;
+        let (result, branch_info) = execute_switch(&repo, plan, &config, false, skip_hooks)?;
 
         // Show success message; emit cd directive if shell integration is active
         // Interactive picker always performs cd (change_dir: true)
         let cwd = std::env::current_dir().context("Failed to get current directory")?;
         let source_root = repo.current_worktree().root()?;
-        handle_switch_output(&result, &branch_info, true, Some(&source_root), &cwd)?;
+        let hooks_display_path =
+            handle_switch_output(&result, &branch_info, true, Some(&source_root), &cwd)?;
+
+        // Spawn background hooks after success message
+        if !skip_hooks {
+            let extra_vars = switch_extra_vars(&result);
+            spawn_switch_background_hooks(
+                &repo,
+                &config,
+                &result,
+                &branch_info.branch,
+                false,
+                &extra_vars,
+                hooks_display_path.as_deref(),
+            )?;
+        }
     }
 
     Ok(())

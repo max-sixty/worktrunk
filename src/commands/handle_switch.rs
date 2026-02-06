@@ -1,6 +1,7 @@
 //! Switch command handler.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use anyhow::Context;
 use worktrunk::HookType;
@@ -10,7 +11,7 @@ use worktrunk::styling::{eprintln, info_message};
 
 use super::command_approval::approve_hooks;
 use super::command_executor::{CommandContext, build_hook_context};
-use super::worktree::{SwitchResult, execute_switch, plan_switch};
+use super::worktree::{SwitchPlan, SwitchResult, execute_switch, plan_switch};
 use crate::output::{
     execute_user_command, handle_switch_output, is_shell_integration_active,
     prompt_shell_integration,
@@ -28,6 +29,100 @@ pub struct SwitchOptions<'a> {
     /// Whether to change directory after switching (default: true)
     pub change_dir: bool,
     pub verify: bool,
+}
+
+/// Approve switch hooks upfront and show "Commands declined" if needed.
+///
+/// Returns `true` if hooks are approved to run.
+/// Returns `false` if hooks should be skipped (`!verify` or user declined).
+pub(crate) fn approve_switch_hooks(
+    repo: &Repository,
+    config: &UserConfig,
+    plan: &SwitchPlan,
+    yes: bool,
+    verify: bool,
+) -> anyhow::Result<bool> {
+    if !verify {
+        return Ok(false);
+    }
+
+    let ctx = CommandContext::new(repo, config, Some(plan.branch()), plan.worktree_path(), yes);
+    let approved = if plan.is_create() {
+        approve_hooks(
+            &ctx,
+            &[
+                HookType::PostCreate,
+                HookType::PostStart,
+                HookType::PostSwitch,
+            ],
+        )?
+    } else {
+        approve_hooks(&ctx, &[HookType::PostSwitch])?
+    };
+
+    if !approved {
+        eprintln!(
+            "{}",
+            info_message(if plan.is_create() {
+                "Commands declined, continuing worktree creation"
+            } else {
+                "Commands declined"
+            })
+        );
+    }
+
+    Ok(approved)
+}
+
+/// Compute extra template variables from a switch result.
+///
+/// Returns base branch context (`base`, `base_worktree_path`) for hooks and template expansion.
+pub(crate) fn switch_extra_vars(result: &SwitchResult) -> Vec<(&str, &str)> {
+    match result {
+        SwitchResult::Created {
+            base_branch,
+            base_worktree_path,
+            ..
+        } => [
+            base_branch.as_deref().map(|b| ("base", b)),
+            base_worktree_path
+                .as_deref()
+                .map(|p| ("base_worktree_path", p)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+        SwitchResult::Existing { .. } | SwitchResult::AlreadyAt(_) => Vec::new(),
+    }
+}
+
+/// Spawn post-switch (and post-start for creates) background hooks.
+pub(crate) fn spawn_switch_background_hooks(
+    repo: &Repository,
+    config: &UserConfig,
+    result: &SwitchResult,
+    branch: &str,
+    yes: bool,
+    extra_vars: &[(&str, &str)],
+    hooks_display_path: Option<&Path>,
+) -> anyhow::Result<()> {
+    let ctx = CommandContext::new(repo, config, Some(branch), result.path(), yes);
+
+    let mut hooks = super::hooks::prepare_background_hooks(
+        &ctx,
+        HookType::PostSwitch,
+        extra_vars,
+        hooks_display_path,
+    )?;
+    if matches!(result, SwitchResult::Created { .. }) {
+        hooks.extend(super::hooks::prepare_background_hooks(
+            &ctx,
+            HookType::PostStart,
+            extra_vars,
+            hooks_display_path,
+        )?);
+    }
+    super::hooks::spawn_background_hooks(&ctx, hooks)
 }
 
 /// Handle the switch command.
@@ -56,46 +151,7 @@ pub fn handle_switch(
     // "Approve at the Gate": collect and approve hooks upfront
     // This ensures approval happens once at the command entry point
     // If user declines, skip hooks but continue with worktree operation
-    let approved = if verify {
-        let ctx = CommandContext::new(
-            &repo,
-            config,
-            Some(plan.branch()),
-            plan.worktree_path(),
-            yes,
-        );
-        // Approve different hooks based on whether we're creating or switching
-        if plan.is_create() {
-            approve_hooks(
-                &ctx,
-                &[
-                    HookType::PostCreate,
-                    HookType::PostStart,
-                    HookType::PostSwitch,
-                ],
-            )?
-        } else {
-            // When switching to existing, only post-switch needs approval
-            approve_hooks(&ctx, &[HookType::PostSwitch])?
-        }
-    } else {
-        true // --no-verify: skip all hooks
-    };
-
-    // Skip hooks if --no-verify or user declined approval
-    let skip_hooks = !verify || !approved;
-
-    // Show message if user declined approval
-    if !approved {
-        eprintln!(
-            "{}",
-            info_message(if plan.is_create() {
-                "Commands declined, continuing worktree creation"
-            } else {
-                "Commands declined"
-            })
-        );
-    }
+    let skip_hooks = !approve_switch_hooks(&repo, config, &plan, yes, verify)?;
 
     // Execute the validated plan
     let (result, branch_info) = execute_switch(&repo, plan, config, yes, skip_hooks)?;
@@ -120,45 +176,22 @@ pub fn handle_switch(
     // Build extra vars for base branch context (used by both hooks and --execute)
     // "base" is the branch we branched from when creating a new worktree.
     // For existing worktrees, there's no base concept.
-    let (base_branch, base_worktree_path): (Option<&str>, Option<&str>) = match &result {
-        SwitchResult::Created {
-            base_branch,
-            base_worktree_path,
-            ..
-        } => (base_branch.as_deref(), base_worktree_path.as_deref()),
-        SwitchResult::Existing { .. } | SwitchResult::AlreadyAt(_) => (None, None),
-    };
-    let extra_vars: Vec<(&str, &str)> = [
-        base_branch.map(|b| ("base", b)),
-        base_worktree_path.map(|p| ("base_worktree_path", p)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    let extra_vars = switch_extra_vars(&result);
 
     // Spawn background hooks after success message
     // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
     // - post-start: runs only when creating a NEW worktree
     // Batch hooks into a single message when both types are present
     if !skip_hooks {
-        let ctx = CommandContext::new(&repo, config, Some(&branch_info.branch), result.path(), yes);
-
-        // Collect hooks from both types, then spawn as a single batch
-        let mut hooks = super::hooks::prepare_background_hooks(
-            &ctx,
-            HookType::PostSwitch,
+        spawn_switch_background_hooks(
+            &repo,
+            config,
+            &result,
+            &branch_info.branch,
+            yes,
             &extra_vars,
             hooks_display_path.as_deref(),
         )?;
-        if matches!(&result, SwitchResult::Created { .. }) {
-            hooks.extend(super::hooks::prepare_background_hooks(
-                &ctx,
-                HookType::PostStart,
-                &extra_vars,
-                hooks_display_path.as_deref(),
-            )?);
-        }
-        super::hooks::spawn_background_hooks(&ctx, hooks)?;
     }
 
     // Execute user command after post-start hooks have been spawned
