@@ -473,40 +473,6 @@ pub(crate) fn prepare_background_hooks(
     )
 }
 
-/// Spawn hook commands as background processes with automatic config lookup.
-///
-/// This is a convenience wrapper that:
-/// 1. Loads project config from the repository
-/// 2. Looks up user hooks from the config
-/// 3. Prepares and spawns background commands
-///
-/// For spawning multiple hook types in a single message, use `prepare_background_hooks`
-/// to collect hooks, then `spawn_background_hooks` to spawn them.
-pub fn spawn_hook_background(
-    ctx: &CommandContext,
-    hook_type: HookType,
-    extra_vars: &[(&str, &str)],
-    name_filter: Option<&str>,
-    display_path: Option<&Path>,
-) -> anyhow::Result<()> {
-    let project_config = ctx.repo.load_project_config()?;
-    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-    let (user_config, proj_config) =
-        lookup_hook_configs(&user_hooks, project_config.as_ref(), hook_type);
-
-    let commands = prepare_hook_commands(
-        ctx,
-        user_config,
-        proj_config,
-        hook_type,
-        extra_vars,
-        name_filter,
-        display_path,
-    )?;
-
-    spawn_background_hooks(ctx, commands)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

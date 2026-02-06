@@ -9,7 +9,7 @@ use worktrunk::path::to_posix_path;
 
 use crate::commands::command_executor::CommandContext;
 use crate::commands::hooks::{
-    HookFailureStrategy, execute_hook, prepare_hook_commands, spawn_background_hooks,
+    HookFailureStrategy, SourcedCommand, execute_hook, prepare_hook_commands,
 };
 
 impl<'a> CommandContext<'a> {
@@ -31,23 +31,25 @@ impl<'a> CommandContext<'a> {
         )
     }
 
-    /// Spawn post-remove commands in parallel as background processes (non-blocking)
+    /// Prepare post-remove commands for background spawning.
     ///
-    /// Runs after worktree removal. Commands execute from the invoking worktree (where
-    /// the user ends up after removal), but template variables reflect the removed
-    /// worktree so hooks can reference paths and names correctly.
+    /// Returns prepared commands without spawning them, so the caller can batch
+    /// them with other hook types (e.g., post-switch) into a single output line.
+    ///
+    /// Template variables reflect the removed worktree (not where commands run from),
+    /// so hooks can reference the removed path and branch correctly.
     ///
     /// `removed_branch`: The branch that was removed (for `{{ branch }}`).
     /// `removed_worktree_path`: The removed worktree's path (for `{{ worktree_path }}`, etc.).
     /// `removed_commit`: The commit SHA of the removed worktree's HEAD (for `{{ commit }}`).
     /// `display_path`: When `Some`, shows the path in hook announcements.
-    pub fn spawn_post_remove_commands(
+    pub fn prepare_post_remove_commands(
         &self,
         removed_branch: &str,
         removed_worktree_path: &Path,
         removed_commit: Option<&str>,
         display_path: Option<&Path>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Vec<SourcedCommand>> {
         let project_config = self.repo.load_project_config()?;
 
         // Template variables should reflect the removed worktree, not where we run from.
@@ -77,7 +79,7 @@ impl<'a> CommandContext<'a> {
         ];
 
         let user_hooks = self.config.hooks(self.project_id().as_deref());
-        let commands = prepare_hook_commands(
+        prepare_hook_commands(
             self,
             user_hooks.post_remove.as_ref(),
             project_config
@@ -87,8 +89,6 @@ impl<'a> CommandContext<'a> {
             &extra_vars,
             None,
             display_path,
-        )?;
-
-        spawn_background_hooks(self, commands)
+        )
     }
 }
