@@ -283,8 +283,9 @@ pub fn handle_select(
 
         // Show success message; emit cd directive if shell integration is active
         // Interactive picker always performs cd (change_dir: true)
+        let cwd = std::env::current_dir().context("Failed to get current directory")?;
         let source_root = repo.current_worktree().root()?;
-        handle_switch_output(&result, &branch_info, true, Some(&source_root))?;
+        handle_switch_output(&result, &branch_info, true, Some(&source_root), &cwd)?;
     }
 
     Ok(())

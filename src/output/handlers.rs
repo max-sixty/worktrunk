@@ -346,13 +346,13 @@ pub fn handle_switch_output(
     branch_info: &SwitchBranchInfo,
     change_dir: bool,
     source_worktree_root: Option<&Path>,
+    cwd: &Path,
 ) -> anyhow::Result<Option<std::path::PathBuf>> {
     // Set target directory for command execution, preserving subdirectory position.
     // If the user is in apps/gateway/ in the source worktree and that directory exists
     // in the target, cd to apps/gateway/ in the target instead of the root.
     if change_dir {
-        let cwd = std::env::current_dir()?;
-        let cd_target = resolve_subdir_in_target(result.path(), source_worktree_root, &cwd);
+        let cd_target = resolve_subdir_in_target(result.path(), source_worktree_root, cwd);
         super::change_directory(&cd_target)?;
     }
 
