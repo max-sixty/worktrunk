@@ -120,9 +120,10 @@ fn test_switch_preserves_subdir(#[from(repo_with_remote)] mut repo: TestRepo) {
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "wt switch failed: {:?}", output);
 
-    // Verify directive file contains cd to the subdirectory, not the root
+    // Verify directive file contains cd to the subdirectory, not the root.
+    // Use Path::join for each component so separators are native on Windows.
     let directives = fs::read_to_string(&directive_path).unwrap_or_default();
-    let expected_subdir = feature_wt.join(subdir);
+    let expected_subdir = feature_wt.join(Path::new("apps").join("gateway"));
     let expected_str = expected_subdir.to_string_lossy();
     assert!(
         directives.contains(&*expected_str),
@@ -163,8 +164,9 @@ fn test_switch_falls_back_to_root_when_subdir_missing(
         feature_str,
         directives
     );
-    // Make sure it doesn't contain the subdir path
-    let subdir_path = feature_wt.join(subdir);
+    // Make sure it doesn't contain the subdir path.
+    // Use Path::join for each component so separators are native on Windows.
+    let subdir_path = feature_wt.join(Path::new("apps").join("gateway"));
     let subdir_str = subdir_path.to_string_lossy();
     assert!(
         !directives.contains(&*subdir_str),
