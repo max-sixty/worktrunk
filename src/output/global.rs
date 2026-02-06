@@ -305,9 +305,6 @@ pub fn pre_hook_display_path(hooks_run_at: &std::path::Path) -> Option<&std::pat
 /// // Prepare and spawn hooks with display path:
 /// let hooks = prepare_background_hooks(&ctx, HookType::PostStart, &extra_vars, post_hook_display_path(&destination))?;
 /// spawn_background_hooks(&ctx, hooks)?;
-///
-/// // After remove when switching to main:
-/// spawn_hook_background(&ctx, HookType::PostSwitch, &[], None, post_hook_display_path(main_path))?;
 /// ```
 pub fn post_hook_display_path(destination: &std::path::Path) -> Option<&std::path::Path> {
     if is_shell_integration_active() {
