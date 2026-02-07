@@ -746,6 +746,11 @@ mod tests {
             result, "'user'\\''s/feature'",
             "shell escape without filter"
         );
+
+        // Shell-escape formatter handles none values (renders as empty string)
+        let result =
+            expand_template("prefix-{{ none }}-suffix", &vars, true, &test.repo, "test").unwrap();
+        assert_eq!(result, "prefix--suffix", "none renders as empty");
     }
 
     #[test]
