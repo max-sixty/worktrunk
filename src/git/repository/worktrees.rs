@@ -22,7 +22,37 @@ impl Repository {
     pub fn list_worktrees(&self) -> anyhow::Result<Vec<WorktreeInfo>> {
         let stdout = self.run_command(&["worktree", "list", "--porcelain"])?;
         let raw_worktrees = WorktreeInfo::parse_porcelain_list(&stdout)?;
-        Ok(raw_worktrees.into_iter().filter(|wt| !wt.bare).collect())
+
+        // Primary filter: the `bare` flag from porcelain output.
+        // Secondary filter: for bare repos, also filter entries whose path matches
+        // the bare repository directory. Some git versions/configurations don't
+        // consistently set the `bare` flag (e.g., the project/.git bare pattern
+        // where git reports the project dir as a worktree without the bare flag).
+        let is_bare = self.is_bare();
+
+        Ok(raw_worktrees
+            .into_iter()
+            .filter(|wt| {
+                if wt.bare {
+                    return false;
+                }
+                if is_bare {
+                    if let Ok(canonical) = canonicalize(&wt.path) {
+                        // Direct match: path IS the bare repo directory
+                        // (e.g., project/.bare where git_common_dir = project/.bare)
+                        if canonical == self.git_common_dir {
+                            return false;
+                        }
+                        // Parent match: path is the parent of the bare .git directory
+                        // (e.g., project/ where git_common_dir = project/.git)
+                        if self.git_common_dir.parent() == Some(canonical.as_ref()) {
+                            return false;
+                        }
+                    }
+                }
+                true
+            })
+            .collect())
     }
 
     /// Get the WorktreeInfo struct for the current worktree, if we're inside one.
