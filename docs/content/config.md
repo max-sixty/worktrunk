@@ -325,8 +325,11 @@ eval "$(wt config shell init zsh)"
 # For fish: add to ~/.config/fish/config.fish
 wt config shell init fish | source
 
-# For nushell: save to vendor autoload directory
-wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/autoload/wt.nu)
+# For nushell: save to vendor autoload directory, then source from config.nu
+wt config shell init nu | save ($nu.default-config-dir | path join vendor/autoload/wt.nu)
+# Then add to nushell config: config nu
+# source ~/.config/nushell/vendor/autoload/wt.nu
+# Also ensure ~/.cargo/bin is in PATH or set: $env.WORKTRUNK_BIN = "/path/to/wt"
 ```
 
 Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
