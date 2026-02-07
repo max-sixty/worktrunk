@@ -255,7 +255,7 @@ pub fn expand_template(
         // and the escaping is applied to the final output, preventing corruption
         // when filters modify already-escaped strings.
         env.set_formatter(|out, _state, value| {
-            if value.is_undefined() || value.is_none() {
+            if value.is_none() {
                 return Ok(());
             }
             let s = value.to_string();
