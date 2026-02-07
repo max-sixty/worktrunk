@@ -23,8 +23,8 @@ expression: "&output.combined"
 [check2] stderr line 3
 [check2] stdout complete
 [check2] stderr complete
-[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no commit/squash/rebase needed)[39m
-[107m [0m * [33m[HASH][m Add feature file
+[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m22f98df9[22m (no commit/squash/rebase needed)[39m
+[107m [0m * [33m22f98df9[m Add feature file
 [107m [0m  feature.txt | 1 [32m+[m
 [107m [0m  1 file changed, 1 insertion(+)
 [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
