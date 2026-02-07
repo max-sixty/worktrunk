@@ -10,7 +10,14 @@ def --env --wrapped {{ cmd }} [...args: string] {
     let worktrunk_bin = if ($env.WORKTRUNK_BIN? | is-not-empty) {
         $env.WORKTRUNK_BIN
     } else {
-        (which {{ cmd }} | get 0.path)
+        # Find the external binary, not the custom function
+        let external = (which {{ cmd }} | where type == "external")
+        if ($external | is-empty) {
+            error make {
+                msg: "{{ cmd }} binary not found in PATH. Install with 'cargo install --path .' or set $env.WORKTRUNK_BIN"
+            }
+        }
+        ($external | get 0.path)
     }
 
     let directive_file = (mktemp --tmpdir)

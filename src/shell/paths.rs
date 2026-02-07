@@ -18,6 +18,19 @@ pub fn home_dir_required() -> Result<PathBuf, std::io::Error> {
     })
 }
 
+/// Get XDG config home directory.
+///
+/// Checks in order:
+/// 1. etcetera BaseStrategy config_dir (if available)
+/// 2. XDG_CONFIG_HOME environment variable
+/// 3. Falls back to ~/.config
+fn xdg_config_home(home: &std::path::Path, strategy: Option<&dyn BaseStrategy>) -> PathBuf {
+    strategy
+        .map(|s| s.config_dir())
+        .or_else(|| std::env::var("XDG_CONFIG_HOME").ok().map(PathBuf::from))
+        .unwrap_or_else(|| home.join(".config"))
+}
+
 /// Get PowerShell profile paths in order of preference.
 /// On Windows, returns both PowerShell Core (7+) and Windows PowerShell (5.1) paths.
 /// On Unix, uses the conventional ~/.config/powershell location.
@@ -78,9 +91,7 @@ pub fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf>, std:
         super::Shell::Nushell => {
             // Nushell uses ~/.config/nushell/ for config files
             // We write to a vendor autoload directory to avoid modifying config.nu directly
-            let config_home = std::env::var("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home.join(".config"));
+            let config_home = xdg_config_home(&home, None);
             vec![
                 config_home
                     .join("nushell")
@@ -137,10 +148,7 @@ pub fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf, std::i
         super::Shell::Zsh => home.join(".zfunc").join(format!("_{}", cmd)),
         super::Shell::Fish => {
             // XDG_CONFIG_HOME defaults to ~/.config
-            let config_home = strategy
-                .as_ref()
-                .map(|s| s.config_dir())
-                .unwrap_or_else(|| home.join(".config"));
+            let config_home = xdg_config_home(&home, strategy.as_ref().map(|s| s as &dyn BaseStrategy));
             config_home
                 .join("fish")
                 .join("completions")
@@ -149,10 +157,7 @@ pub fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf, std::i
         super::Shell::Nushell => {
             // Nushell completions are defined inline in the init script
             // Return a path in the vendor autoload directory (same as config)
-            let config_home = strategy
-                .as_ref()
-                .map(|s| s.config_dir())
-                .unwrap_or_else(|| home.join(".config"));
+            let config_home = xdg_config_home(&home, strategy.as_ref().map(|s| s as &dyn BaseStrategy));
             config_home
                 .join("nushell")
                 .join("vendor")
