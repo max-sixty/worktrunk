@@ -251,8 +251,9 @@ fn test_expand_template_nested_curly_braces() {
     )
     .unwrap();
 
-    // Renders as {main}
-    assert_eq!(result, "echo {main}");
+    // Renders as '{main}' — curly braces are shell metacharacters (brace expansion)
+    // so the formatter correctly escapes the concatenated result
+    assert_eq!(result, "echo '{main}'");
 }
 
 // Snapshot tests for shell escaping behavior

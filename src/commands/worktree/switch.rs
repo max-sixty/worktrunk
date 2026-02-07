@@ -345,21 +345,22 @@ fn resolve_switch_target(
         .resolve_worktree_name(branch)
         .context("Failed to resolve branch name")?;
 
-    // Resolve and validate base
+    // Resolve and validate base (only when --create is set)
     let resolved_base = if let Some(base_str) = base {
-        let resolved = repo.resolve_worktree_name(base_str)?;
         if !create {
             eprintln!(
                 "{}",
                 warning_message("--base flag is only used with --create, ignoring")
             );
             None
-        } else if !repo.ref_exists(&resolved)? {
-            return Err(GitError::ReferenceNotFound {
-                reference: resolved,
-            }
-            .into());
         } else {
+            let resolved = repo.resolve_worktree_name(base_str)?;
+            if !repo.ref_exists(&resolved)? {
+                return Err(GitError::ReferenceNotFound {
+                    reference: resolved,
+                }
+                .into());
+            }
             Some(resolved)
         }
     } else {
@@ -647,8 +648,6 @@ pub fn execute_switch(
             expected_path,
             new_previous,
         } => {
-            let _ = repo.set_switch_previous(new_previous.as_deref());
-
             let current_dir = std::env::current_dir()
                 .ok()
                 .and_then(|p| canonicalize(&p).ok());
@@ -656,6 +655,13 @@ pub fn execute_switch(
                 .as_ref()
                 .map(|cur| cur == &path)
                 .unwrap_or(false);
+
+            // Only update switch history when actually switching worktrees.
+            // Updating on AlreadyAt would corrupt `wt switch -` by recording
+            // the current branch as "previous" even though no switch occurred.
+            if !already_at_worktree {
+                let _ = repo.set_switch_previous(new_previous.as_deref());
+            }
 
             let mismatch_path = if !paths_match(&path, &expected_path) {
                 Some(expected_path)

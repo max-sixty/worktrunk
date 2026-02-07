@@ -2929,3 +2929,63 @@ fn test_switch_mr_glab_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
         assert_cmd_snapshot!("switch_mr_glab_not_installed", cmd);
     });
 }
+
+/// Bug fix: switching to the current worktree (AlreadyAt) must NOT update switch history.
+///
+/// Previously, `wt switch foo` while already in `foo` would record `foo` as the
+/// previous branch, corrupting `wt switch -` so it pointed to the current branch
+/// instead of the actual previous one.
+#[rstest]
+fn test_switch_already_at_preserves_history(repo: TestRepo) {
+    // Create a feature branch with worktree
+    repo.run_git(&["branch", "hist-feature"]);
+
+    // Step 1: Switch from main to hist-feature (establishes history: previous=main)
+    let feature_path = repo.root_path().parent().unwrap().join(format!(
+        "{}.hist-feature",
+        repo.root_path().file_name().unwrap().to_str().unwrap()
+    ));
+    snapshot_switch_from_dir(
+        "already_at_preserves_history_1_to_feature",
+        &repo,
+        &["hist-feature"],
+        repo.root_path(),
+    );
+
+    // Step 2: Switch to hist-feature again while already there (AlreadyAt)
+    // This should NOT update history
+    snapshot_switch_from_dir(
+        "already_at_preserves_history_2_noop",
+        &repo,
+        &["hist-feature"],
+        &feature_path,
+    );
+
+    // Step 3: `wt switch -` should still go to main (the real previous),
+    // not to hist-feature (which the bug would have recorded)
+    snapshot_switch_from_dir(
+        "already_at_preserves_history_3_dash_to_main",
+        &repo,
+        &["-"],
+        &feature_path,
+    );
+}
+
+/// Bug fix: `--base` without `--create` should warn, not error.
+///
+/// Previously, `--base -` was resolved (calling resolve_worktree_name) before
+/// checking the `--create` flag. When there was no previous branch in history,
+/// this produced "No previous branch found" instead of the expected
+/// "--base flag is only used with --create, ignoring" warning.
+#[rstest]
+fn test_switch_base_without_create_warns_not_errors(repo: TestRepo) {
+    repo.run_git(&["branch", "base-test"]);
+
+    // No switch history exists, so resolving `-` would fail.
+    // But --base without --create should just warn and ignore the flag.
+    snapshot_switch(
+        "switch_base_without_create_warns",
+        &repo,
+        &["base-test", "--base", "-"],
+    );
+}

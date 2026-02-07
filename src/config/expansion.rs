@@ -232,15 +232,13 @@ pub fn expand_template(
     repo: &Repository,
     name: &str,
 ) -> Result<String, String> {
-    // Build context map, optionally shell-escaping values
+    // Build context map with raw values (shell escaping is applied at output time via formatter)
     let mut context = HashMap::new();
     for (key, value) in vars {
-        let val = if shell_escape {
-            escape(Cow::Borrowed(*value)).to_string()
-        } else {
-            (*value).to_string()
-        };
-        context.insert(key.to_string(), minijinja::Value::from(val));
+        context.insert(
+            key.to_string(),
+            minijinja::Value::from((*value).to_string()),
+        );
     }
 
     // Render template with minijinja
@@ -251,6 +249,20 @@ pub fn expand_template(
     if shell_escape {
         // Preserve trailing newlines in templates (important for multiline shell commands)
         env.set_keep_trailing_newline(true);
+
+        // Shell-escape values at output time, not before template rendering.
+        // This ensures filters (sanitize, sanitize_db, etc.) operate on raw values
+        // and the escaping is applied to the final output, preventing corruption
+        // when filters modify already-escaped strings.
+        env.set_formatter(|out, _state, value| {
+            if value.is_undefined() || value.is_none() {
+                return Ok(());
+            }
+            let s = value.to_string();
+            let escaped = escape(Cow::Borrowed(&s));
+            write!(out, "{escaped}")?;
+            Ok(())
+        });
     }
 
     // Register custom filters
@@ -262,22 +274,16 @@ pub fn expand_template(
     });
     env.add_filter("hash_port", |value: String| string_to_port(&value));
 
-    // Register worktree_path_of_branch function for looking up branch worktree paths
-    // The function returns shell-escaped paths when shell_escape is true, matching
-    // how regular template variables are handled.
+    // Register worktree_path_of_branch function for looking up branch worktree paths.
+    // Returns raw paths — shell escaping is applied by the formatter at output time.
     let repo_clone = repo.clone();
     env.add_function("worktree_path_of_branch", move |branch: String| -> String {
-        let path = repo_clone
+        repo_clone
             .worktree_for_branch(&branch)
             .ok()
             .flatten()
             .map(|p| to_posix_path(&p.to_string_lossy()))
-            .unwrap_or_default();
-        if shell_escape && !path.is_empty() {
-            escape(Cow::Borrowed(&path)).to_string()
-        } else {
-            path
-        }
+            .unwrap_or_default()
     });
 
     // Cache verbosity level for consistent behavior within this call
@@ -718,6 +724,27 @@ mod tests {
         assert_eq!(
             expand_template("{{ branch }}", &vars, false, &test.repo, "test").unwrap(),
             "feature/foo"
+        );
+
+        // Shell escaping + sanitize: filters operate on raw values, escaping applied at output.
+        // Previously, shell escaping was applied BEFORE filters, corrupting the result
+        // when values contained shell-special characters (quotes, backslashes).
+        vars.insert("branch", "user's/feature");
+        let result =
+            expand_template("{{ branch | sanitize }}", &vars, true, &test.repo, "test").unwrap();
+        // sanitize replaces / with -, producing "user's-feature"
+        // shell_escape wraps it: 'user'\''s-feature' (valid shell for user's-feature)
+        assert_eq!(result, "'user'\\''s-feature'", "sanitize + shell escape");
+
+        // Without the fix, pre-escaping would produce corrupted output because
+        // sanitize would replace the / and \ in the already-escaped value.
+
+        // Shell escaping without filter: raw value with special chars
+        let result = expand_template("{{ branch }}", &vars, true, &test.repo, "test").unwrap();
+        // shell_escape wraps: 'user'\''s/feature' (valid shell for user's/feature)
+        assert_eq!(
+            result, "'user'\\''s/feature'",
+            "shell escape without filter"
         );
     }
 
