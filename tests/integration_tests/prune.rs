@@ -131,5 +131,10 @@ fn test_prune_force_removes_unmerged(mut repo: TestRepo) {
     repo.run_git(&["switch", "main"]);
 
     // Force removal without merging
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "prune", &["--force", "--yes"], None));
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "prune",
+        &["--force", "--yes"],
+        None
+    ));
 }
