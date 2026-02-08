@@ -57,6 +57,6 @@ exit_code: 0
 [2m↳[22m [2mStatusline not configured. See https://worktrunk.dev/claude-code/#statusline[22m
 
 [36mOTHER[39m
-[2m○[22m wt: [1m[VERSION]-dirty[22m
+[2m○[22m wt: [1m[VERSION][22m
 [2m○[22m git: [1m[VERSION][22m
 [2m○[22m Hyperlinks: [1minactive[22m
