@@ -1,4 +1,4 @@
-use crate::common::{make_snapshot_cmd, repo, TestRepo};
+use crate::common::{TestRepo, make_snapshot_cmd, repo};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
@@ -58,7 +58,12 @@ fn test_prune_pattern_filtering(mut repo: TestRepo) {
     repo.run_git(&["merge", "--no-ff", "--no-edit", "hotfix/critical"]);
 
     // Test pattern filtering - should show only feature/* branches
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "prune", &["--pattern=feature/*", "--dry-run"], None));
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "prune",
+        &["--pattern=feature/*", "--dry-run"],
+        None
+    ));
 }
 
 #[rstest]
@@ -75,7 +80,12 @@ fn test_prune_exclude_patterns(mut repo: TestRepo) {
     repo.run_git(&["merge", "--no-ff", "--no-edit", "feature/remove"]);
 
     // Should show only feature/remove, excluding feature/keep
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "prune", &["--exclude=*keep*", "--dry-run"], None));
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "prune",
+        &["--exclude=*keep*", "--dry-run"],
+        None
+    ));
 }
 
 #[rstest]
@@ -89,7 +99,12 @@ fn test_prune_skips_current_branch(mut repo: TestRepo) {
 
     // Prune from the merged branch's worktree (not via switch, which would fail)
     // The current branch protection should be based on the worktree we're running from
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "prune", &["--dry-run"], Some(&worktree_path)));
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "prune",
+        &["--dry-run"],
+        Some(&worktree_path)
+    ));
 }
 
 #[rstest]

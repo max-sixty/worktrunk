@@ -40,7 +40,10 @@ pub fn execute_prune(candidates: Vec<PruneCandidate>, config: &UserConfig) -> Re
                     }
                     PruneReason::Prunable => "pruned".to_string(),
                 };
-                eprintln!("{}", cformat!("<green>✓</> {} {}", candidate.branch, reason_str));
+                eprintln!(
+                    "{}",
+                    cformat!("<green>✓</> {} {}", candidate.branch, reason_str)
+                );
             }
             Err(e) => {
                 result

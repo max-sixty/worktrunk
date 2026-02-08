@@ -194,7 +194,10 @@ fn report_results(result: &execute::PruneResult) {
 
     eprintln!();
     if result.failed.is_empty() {
-        eprintln!("{}", cformat!("<green>✓</> Removed {} items", result.removed.len()));
+        eprintln!(
+            "{}",
+            cformat!("<green>✓</> Removed {} items", result.removed.len())
+        );
     } else {
         eprintln!(
             "{}",
