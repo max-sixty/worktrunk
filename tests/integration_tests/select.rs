@@ -315,9 +315,10 @@ fn normalize_output(output: &str) -> String {
         .collect();
 
     // Remove trailing blank lines (macOS terminal may not emit padding lines)
-    while lines.last().is_some_and(|line| {
-        line.is_empty() || line.chars().all(|c| c == '│' || c.is_whitespace())
-    }) {
+    while lines
+        .last()
+        .is_some_and(|line| line.is_empty() || line.chars().all(|c| c == '│' || c.is_whitespace()))
+    {
         lines.pop();
     }
 
