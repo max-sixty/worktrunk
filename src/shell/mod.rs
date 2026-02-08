@@ -95,7 +95,7 @@ impl Shell {
             }
             Self::Nushell => {
                 format!(
-                    "if (which {cmd} | is-not-empty) {{ {cmd} config shell init nu | save --force $nu.default-config-dir/vendor/autoload/{cmd}.nu }}",
+                    "if (which {cmd} | is-not-empty) {{ {cmd} config shell init nu | save --force ($nu.default-config-dir | path join vendor/autoload/{cmd}.nu) }}",
                 )
             }
             Self::PowerShell => {
