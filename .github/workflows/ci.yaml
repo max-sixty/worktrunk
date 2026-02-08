@@ -173,7 +173,7 @@ jobs:
       uses: actions/checkout@v6
 
     # cargo-udeps requires nightly; update date periodically
-    - run: rustup override set nightly-2026-01-15
+    - run: rustup override set nightly-2026-02-01
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
