@@ -5,6 +5,7 @@ expression: "String::from_utf8_lossy(&output.stdout)"
 switch
 list
 remove
+prune
 merge
 step
 hook

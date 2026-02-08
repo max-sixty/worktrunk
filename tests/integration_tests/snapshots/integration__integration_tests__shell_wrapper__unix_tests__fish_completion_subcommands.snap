@@ -5,6 +5,7 @@ expression: completions
 switch
 list
 remove
+prune
 merge
 step
 hook
