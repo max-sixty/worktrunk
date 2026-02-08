@@ -11,7 +11,8 @@ def --env --wrapped {{ cmd }} [...args: string] {
         $env.WORKTRUNK_BIN
     } else {
         # Find the external binary, not the custom function
-        let external = (which {{ cmd }} | where type == "external")
+        # `which -a` is needed because `which` alone only returns the custom command
+        let external = (which -a {{ cmd }} | where type == "external")
         if ($external | is-empty) {
             error make {
                 msg: "{{ cmd }} binary not found in PATH. Install with 'cargo install --path .' or set $env.WORKTRUNK_BIN"

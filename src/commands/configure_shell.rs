@@ -436,18 +436,22 @@ fn configure_shell_file(
     // The line we write to the config file (also used for display)
     let config_line = shell.config_line(cmd);
 
-    // For Fish, we write a minimal wrapper to functions/{cmd}.fish that sources the
-    // full function from the binary. This allows updates to worktrunk to automatically
-    // provide the latest wrapper logic without requiring reinstall.
-    if matches!(shell, Shell::Fish) {
+    // For Fish and Nushell, we write the full wrapper to a file that gets autoloaded.
+    // This allows updates to worktrunk to automatically provide the latest wrapper logic
+    // without requiring reinstall.
+    if matches!(shell, Shell::Fish | Shell::Nushell) {
         let init = shell::ShellInit::with_prefix(shell, cmd.to_string());
-        let fish_wrapper = init
-            .generate_fish_wrapper()
-            .map_err(|e| format!("Failed to generate fish wrapper: {e}"))?;
-        return configure_fish_file(
+        let wrapper = if matches!(shell, Shell::Fish) {
+            init.generate_fish_wrapper()
+                .map_err(|e| format!("Failed to generate fish wrapper: {e}"))?
+        } else {
+            init.generate()
+                .map_err(|e| format!("Failed to generate nushell wrapper: {e}"))?
+        };
+        return configure_wrapper_file(
             shell,
             path,
-            &fish_wrapper,
+            &wrapper,
             dry_run,
             allow_create,
             &config_line,
@@ -563,7 +567,7 @@ fn configure_shell_file(
     }
 }
 
-fn configure_fish_file(
+fn configure_wrapper_file(
     shell: Shell,
     path: &Path,
     content: &str,
@@ -571,9 +575,9 @@ fn configure_fish_file(
     allow_create: bool,
     config_line: &str,
 ) -> Result<Option<ConfigureResult>, String> {
-    // For Fish, we write a minimal wrapper to functions/{cmd}.fish that sources
-    // the full function from `{cmd} config shell init fish` at runtime.
-    // Fish autoloads these files on first invocation of the command.
+    // For Fish and Nushell, we write the full wrapper to a file that gets autoloaded.
+    // - Fish: functions/{cmd}.fish is autoloaded on first invocation
+    // - Nushell: vendor/autoload/{cmd}.nu is autoloaded automatically at startup
 
     // Check if it already exists and has our integration
     // Use .ok() for read errors - treat as "not configured" rather than failing
@@ -595,9 +599,9 @@ fn configure_fish_file(
     }
 
     // File doesn't exist or doesn't have our integration
-    // For Fish, create if parent directory exists or if explicitly allowed
-    // This is different from other shells because Fish uses functions/ which may exist
-    // even if the specific wt.fish file doesn't
+    // For Fish/Nushell, create if parent directory exists or if explicitly allowed
+    // This is different from other shells because these use autoload directories
+    // which may exist even if the specific wrapper file doesn't
     if !allow_create && !path.exists() {
         // Check if parent directory exists
         if !path.parent().is_some_and(|p| p.exists()) {
@@ -606,7 +610,7 @@ fn configure_fish_file(
     }
 
     if dry_run {
-        // Fish writes the complete file - use WouldAdd if file exists, WouldCreate if new
+        // Fish/Nushell write the complete file - use WouldAdd if file exists, WouldCreate if new
         let action = if path.exists() {
             ConfigAction::WouldAdd
         } else {
@@ -630,7 +634,7 @@ fn configure_fish_file(
         })?;
     }
 
-    // Write the complete fish function file
+    // Write the complete wrapper file
     fs::write(path, format!("{}\n", content))
         .map_err(|e| format!("Failed to write {}: {e}", format_path_for_display(path)))?;
 
