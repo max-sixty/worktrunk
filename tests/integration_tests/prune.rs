@@ -297,3 +297,66 @@ fn test_prune_integrated_only_no_prunable(mut repo: TestRepo) {
     // Only integrated, no prunable
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "prune", &["--dry-run"], None));
 }
+
+#[rstest]
+fn test_prune_execute_shows_confirmation_output(mut repo: TestRepo) {
+    // Create both integrated and prunable candidates
+    let wt1 = repo.add_worktree("feature/integrated");
+    repo.commit_in_worktree(&wt1, "f1.txt", "c1", "Feature 1");
+
+    let wt2 = repo.add_worktree("feature/prunable");
+    repo.commit_in_worktree(&wt2, "f2.txt", "c2", "Feature 2");
+    std::fs::remove_dir_all(&wt2).unwrap();
+
+    repo.run_git(&["switch", "main"]);
+    repo.run_git(&["merge", "--ff-only", "feature/integrated"]);
+
+    // Execute with --yes to see confirmation display and success reporting
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "prune", &["--yes"], None));
+}
+
+#[rstest]
+fn test_prune_execute_only_integrated(mut repo: TestRepo) {
+    // Only integrated branches (tests integrated-only confirmation path)
+    let wt1 = repo.add_worktree("feature/one");
+    repo.commit_in_worktree(&wt1, "f1.txt", "c1", "Feature 1");
+
+    let wt2 = repo.add_worktree("feature/two");
+    repo.commit_in_worktree(&wt2, "f2.txt", "c2", "Feature 2");
+
+    repo.run_git(&["switch", "main"]);
+    repo.run_git(&["merge", "--no-ff", "--no-edit", "feature/one"]);
+    repo.run_git(&["merge", "--no-ff", "--no-edit", "feature/two"]);
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "prune", &["--yes"], None));
+}
+
+#[rstest]
+fn test_prune_execute_only_prunable(mut repo: TestRepo) {
+    // Only prunable worktrees (tests prunable-only confirmation path)
+    let wt1 = repo.add_worktree("feature/stale1");
+    let wt2 = repo.add_worktree("feature/stale2");
+
+    std::fs::remove_dir_all(&wt1).unwrap();
+    std::fs::remove_dir_all(&wt2).unwrap();
+
+    repo.run_git(&["switch", "main"]);
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "prune", &["--yes"], None));
+}
+
+#[rstest]
+fn test_prune_execute_prunable_integrated(mut repo: TestRepo) {
+    // Prunable worktree that's also integrated (tests branch deletion after prune)
+    let wt = repo.add_worktree("feature/both");
+    repo.commit_in_worktree(&wt, "f.txt", "content", "Feature work");
+
+    // Merge it
+    repo.run_git(&["switch", "main"]);
+    repo.run_git(&["merge", "--ff-only", "feature/both"]);
+
+    // Remove directory to make it prunable
+    std::fs::remove_dir_all(&wt).unwrap();
+
+    // This should prune AND delete the branch (it's both prunable and integrated)
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "prune", &["--yes"], None));
+}

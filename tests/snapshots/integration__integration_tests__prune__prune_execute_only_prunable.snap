@@ -1,10 +1,10 @@
 ---
-source: tests/integration_tests/config_show.rs
+source: tests/integration_tests/prune.rs
 info:
   program: wt
   args:
-    - config
-    - show
+    - prune
+    - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -38,24 +38,13 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
-[2m↳[22m [2mNot found; to create one, run [90mwt config create[39m[22m
 
-[36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
-[2m↳[22m [2mNot found[22m
+Prunable worktrees:
+  feature/stale1 (directory missing)
+  feature/stale2 (directory missing)
 
-[36mSHELL INTEGRATION[39m
-[33m▲[39m [33mShell integration not active[39m
-[107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
+Removing 2 items...
+[32m✓[39m feature/stale1 pruned
+[32m✓[39m feature/stale2 pruned
 
-[2m○[22m [2mbash: Skipped; ~/.bashrc not found[22m
-[2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
-[2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
-
-[36mCLAUDE CODE[39m
-[2m○[22m [1mclaude[22m CLI not installed
-
-[36mOTHER[39m
-[2m○[22m wt: [1m[VERSION][22m
-[2m○[22m git: [1m[VERSION][22m
-[2m○[22m Hyperlinks: [1minactive[22m
+[32m✓[39m Removed 2 items
