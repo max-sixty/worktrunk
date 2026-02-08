@@ -26,4 +26,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt [VERSION]-dirty
+wt [VERSION]
