@@ -32,6 +32,7 @@ Commands:
   switch  Switch to a worktree
   list    List worktrees and their status
   remove  Remove worktree; delete branch if merged
+  prune   Remove integrated branches and prunable worktrees
   merge   Merge current branch into target
   step    Run individual operations
   hook    Run configured hooks

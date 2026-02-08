@@ -13,6 +13,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -59,6 +60,6 @@ exit_code: 0
 [2m○[22m [1mclaude[22m CLI not installed
 
 [36mOTHER[39m
-[2m○[22m wt: [1m[VERSION][22m
+[2m○[22m wt: [1m[VERSION]-dirty[22m
 [2m○[22m git: [1m[VERSION][22m
 [2m○[22m Hyperlinks: [1minactive[22m

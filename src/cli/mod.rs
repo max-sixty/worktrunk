@@ -846,6 +846,111 @@ Removal runs in the background by default (returns immediately). Logs are writte
         force: bool,
     },
 
+    /// Remove integrated branches and prunable worktrees
+    ///
+    /// Identifies branches fully integrated into the target and removes them along with their worktrees.
+    #[command(after_long_help = r#"## Examples
+
+Remove all integrated branches:
+
+```console
+wt prune
+```
+
+See what would be removed:
+
+```console
+wt prune --dry-run
+```
+
+Skip confirmation:
+
+```console
+wt prune --yes
+```
+
+Include unmerged branches (dangerous):
+
+```console
+wt prune --force
+```
+
+Only remove specific patterns:
+
+```console
+wt prune --pattern='feature/*'
+```
+
+Check against specific branch:
+
+```console
+wt prune --target=release
+```
+
+Exclude patterns:
+
+```console
+wt prune --exclude='feature/keep-*'
+```
+
+## What Gets Removed
+
+By default, `wt prune` removes:
+
+1. **Integrated branches** — Branches fully merged into the target (same checks as `wt remove`)
+2. **Prunable worktrees** — Worktrees whose directories no longer exist
+
+The command uses the same integration detection as `wt remove`:
+
+- **Same commit** — Branch HEAD equals the default branch
+- **Ancestor** — Branch is in target's history
+- **No added changes** — Three-dot diff is empty
+- **Trees match** — Branch tree SHA equals target tree SHA
+- **Merge adds nothing** — Simulated merge produces same tree as target
+
+## Safety Protections
+
+These are never removed:
+
+- Current worktree/branch
+- Default branch (main/master)
+- Locked worktrees
+
+## Hooks
+
+`pre-remove` and `post-remove` hooks run for each removed worktree, just like `wt remove`.
+
+## See also
+
+- [`wt remove`](@/remove.md) — Remove individual worktrees
+- [`wt list`](@/list.md) — View all worktrees and their integration status
+"#)]
+    Prune {
+        /// Check integration against this branch
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        target: Option<String>,
+
+        /// Remove unmerged branches
+        #[arg(long, short = 'D')]
+        force: bool,
+
+        /// Only remove matching branches
+        #[arg(long)]
+        pattern: Option<String>,
+
+        /// Exclude matching branches
+        #[arg(long)]
+        exclude: Vec<String>,
+
+        /// Show what would be removed
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
+
     /// Merge current branch into target
     ///
     /// Squash & rebase, fast-forward target, remove the worktree.

@@ -40,6 +40,7 @@ pub mod list_progressive;
 pub mod merge;
 pub mod output_system_guard;
 pub mod post_start_commands;
+pub mod prune;
 pub mod push;
 pub mod readme_sync;
 pub mod remove;

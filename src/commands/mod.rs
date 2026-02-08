@@ -15,6 +15,7 @@ pub(crate) mod list;
 pub(crate) mod merge;
 pub(crate) mod process;
 pub(crate) mod project_config;
+pub(crate) mod prune;
 mod relocate;
 pub(crate) mod repository_ext;
 #[cfg(unix)]

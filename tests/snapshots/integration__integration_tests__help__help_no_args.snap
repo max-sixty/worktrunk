@@ -33,6 +33,7 @@ Usage: [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
   [1m[36mswitch[0m  Switch to a worktree
   [1m[36mlist[0m    List worktrees and their status
   [1m[36mremove[0m  Remove worktree; delete branch if merged
+  [1m[36mprune[0m   Remove integrated branches and prunable worktrees
   [1m[36mmerge[0m   Merge current branch into target
   [1m[36mstep[0m    Run individual operations
   [1m[36mhook[0m    Run configured hooks

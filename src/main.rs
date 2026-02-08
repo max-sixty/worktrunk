@@ -43,6 +43,7 @@ pub(crate) use crate::cli::OutputFormat;
 
 #[cfg(unix)]
 use commands::handle_select;
+use commands::prune::handle_prune;
 use commands::worktree::handle_push;
 use commands::{
     MergeOptions, OperationMode, RebaseResult, SquashResult, SwitchOptions, add_approvals,
@@ -987,6 +988,27 @@ fn main() {
 
                     Ok(())
                 }
+            }),
+        Commands::Prune {
+            target,
+            force,
+            pattern,
+            exclude,
+            dry_run,
+            yes,
+        } => UserConfig::load()
+            .context("Failed to load config")
+            .and_then(|config| {
+                use commands::prune::PruneOptions;
+                let opts = PruneOptions {
+                    target,
+                    force,
+                    pattern,
+                    exclude,
+                    dry_run,
+                    yes,
+                };
+                handle_prune(opts, &config)
             }),
         Commands::Merge {
             target,
