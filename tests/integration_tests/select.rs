@@ -308,6 +308,16 @@ fn normalize_output(output: &str) -> String {
             "> [QUERY]                                                     │[PREVIEW_HEADER]";
     }
 
+    // Strip trailing whitespace from all lines (macOS terminal emulation behavior differs)
+    let mut lines: Vec<String> = lines.iter().map(|line| line.trim_end().to_string()).collect();
+
+    // Remove trailing blank lines (macOS terminal may not emit padding lines)
+    while lines.last().map_or(false, |line| {
+        line.is_empty() || line.chars().all(|c| c == '│' || c.is_whitespace())
+    }) {
+        lines.pop();
+    }
+
     let output = lines.join("\n");
 
     // Replace temp paths like /var/folders/.../repo.XXX with _REPO_

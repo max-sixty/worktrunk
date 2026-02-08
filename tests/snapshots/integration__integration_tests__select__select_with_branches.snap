@@ -7,25 +7,3 @@ expression: normalized
 > @ main                 ^                                  │
   + active-worktree      _                                  │○ main has no uncommitted changes
     orphan-branch       /_                                  │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │

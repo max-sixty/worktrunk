@@ -7,25 +7,3 @@ expression: normalized
 > @ main             ^                                  16h │
   + feature-one      _                                  16h │○ main has no uncommitted changes
   + feature-two      _                                  16h │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
