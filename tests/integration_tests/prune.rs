@@ -202,7 +202,7 @@ fn test_prune_no_added_changes_reason(mut repo: TestRepo) {
 
     // Switch to main and add a commit there (so feature is not an ancestor)
     repo.run_git(&["switch", "main"]);
-    repo.commit_in_worktree(&repo.root_path(), "mainfile.txt", "main", "Main work");
+    repo.commit_in_worktree(repo.root_path(), "mainfile.txt", "main", "Main work");
 
     // NoAddedChanges: branch has commits but no file changes from merge-base
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "prune", &["--dry-run"], None));
@@ -211,7 +211,7 @@ fn test_prune_no_added_changes_reason(mut repo: TestRepo) {
 #[rstest]
 fn test_prune_merge_adds_nothing_reason(mut repo: TestRepo) {
     // Create common base first
-    repo.commit_in_worktree(&repo.root_path(), "base.txt", "base", "Base file");
+    repo.commit_in_worktree(repo.root_path(), "base.txt", "base", "Base file");
 
     // Create feature branch that adds and removes a file
     let wt = repo.add_worktree("feature/reverted");
@@ -223,7 +223,12 @@ fn test_prune_merge_adds_nothing_reason(mut repo: TestRepo) {
 
     // Switch to main and apply the same net change (modify base, no temp file)
     repo.run_git(&["switch", "main"]);
-    repo.commit_in_worktree(&repo.root_path(), "base.txt", "modified", "Modify base differently");
+    repo.commit_in_worktree(
+        repo.root_path(),
+        "base.txt",
+        "modified",
+        "Modify base differently",
+    );
 
     // MergeAddsNothing: trees differ but merge would produce target's tree
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "prune", &["--dry-run"], None));
