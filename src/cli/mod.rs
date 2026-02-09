@@ -312,7 +312,7 @@ wt switch mr:101                 # MR !101's branch
 
 When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview. The picker requires a TTY.
 
-<!-- demo: wt-select.gif 1600x800 -->
+<!-- demo: wt-switch-picker.gif 1600x800 -->
 **Keybindings:**
 
 | Key | Action |

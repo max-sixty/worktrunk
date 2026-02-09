@@ -40,8 +40,8 @@ Regenerate a single demo:
 
 | Target | Demos |
 |--------|-------|
-| docs | wt-core, wt-switch, wt-list, wt-commit, wt-statusline, wt-merge, wt-select, wt-zellij-omnibus |
-| social | wt-switch, wt-statusline, wt-list, wt-list-remove, wt-hooks, wt-devserver, wt-commit, wt-merge, wt-select, wt-core, wt-zellij-omnibus |
+| docs | wt-core, wt-switch, wt-list, wt-commit, wt-statusline, wt-merge, wt-switch-picker, wt-zellij-omnibus |
+| social | wt-switch, wt-statusline, wt-list, wt-list-remove, wt-hooks, wt-devserver, wt-commit, wt-merge, wt-switch-picker, wt-core, wt-zellij-omnibus |
 
 ## Snapshot testing
 
@@ -135,7 +135,7 @@ cd docs/demos/.deps/vhs
 # 2. Rebuild and test
 go build -o vhs .
 cd ../../../..
-./docs/demos/build docs --only wt-select
+./docs/demos/build docs --only wt-switch-picker
 
 # 3. Commit and push to the fork
 cd docs/demos/.deps/vhs
@@ -169,9 +169,9 @@ ffmpeg -i demo.gif -vsync 0 /tmp/gif-frames/frame_%04d.png
 # Adjust keystrokeDelayMS: increase if keystroke appears too early, decrease if too late
 ```
 
-## wt-select demo goals (interactive picker)
+## wt-switch-picker demo goals (interactive picker)
 
-The wt-select demo showcases the interactive picker (`wt switch` without args) with **realistic variety in all columns**:
+The wt-switch-picker demo showcases the interactive picker (`wt switch` without args) with **realistic variety in all columns**:
 
 | Column | Demonstration |
 |--------|---------------|
@@ -191,7 +191,7 @@ Branch setup (from shared infrastructure):
 The docs build generates both light and dark GIF variants in separate directories:
 - `docs/light/wt-core.gif` / `docs/dark/wt-core.gif`
 - `docs/light/wt-merge.gif` / `docs/dark/wt-merge.gif`
-- `docs/light/wt-select.gif` / `docs/dark/wt-select.gif`
+- `docs/light/wt-switch-picker.gif` / `docs/dark/wt-switch-picker.gif`
 
 Social build generates light only (social media doesn't support theme-switching media queries).
 
@@ -266,10 +266,10 @@ Key fields in `.claude.json` for suppressing notifications:
 Inline viewing options:
 ```bash
 # Quick Look (macOS)
-qlmanage -p docs/static/assets/docs/light/wt-select.gif
+qlmanage -p docs/static/assets/docs/light/wt-switch-picker.gif
 
 # iTerm2 inline images
-imgcat docs/static/assets/docs/light/wt-select.gif
+imgcat docs/static/assets/docs/light/wt-switch-picker.gif
 ```
 
 ## Reviewing demo GIFs
