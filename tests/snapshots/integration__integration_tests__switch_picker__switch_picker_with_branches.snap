@@ -1,0 +1,31 @@
+---
+source: tests/integration_tests/switch_picker.rs
+expression: normalized
+---
+> [QUERY]                                                     │[PREVIEW_HEADER]
+    Branch           Status        HEAD±    main↕  Remote⇅  │Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
+> @ main                 ^                                  │
+  + active-worktree      _                                  │○ main has no uncommitted changes
+    orphan-branch       /_                                  │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
