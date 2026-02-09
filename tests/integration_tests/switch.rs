@@ -1544,6 +1544,76 @@ fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
     });
 }
 
+/// Test same-repo PR with a limited fetch refspec (single-branch clone scenario).
+///
+/// In repos with a limited refspec (e.g., `+refs/heads/main:refs/remotes/origin/main`),
+/// `git fetch origin <branch>` only updates FETCH_HEAD but doesn't create the remote
+/// tracking branch. This caused `wt switch pr:101` to fail with "No branch named X".
+#[rstest]
+fn test_switch_pr_same_repo_limited_refspec(#[from(repo_with_remote)] mut repo: TestRepo) {
+    // Create a feature branch and push it to the remote
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Set origin URL to GitHub-style so find_remote_for_repo() can match owner/test-repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // Redirect github.com URLs to the local bare remote
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // Restrict fetch refspec to only main, simulating a single-branch clone
+    repo.run_git(&[
+        "config",
+        "remote.origin.fetch",
+        "+refs/heads/main:refs/remotes/origin/main",
+    ]);
+
+    let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_same_repo_limited_refspec", cmd);
+    });
+}
+
 /// Test same-repo PR when origin points to a different repo (no remote for PR's repo)
 ///
 /// User scenario:

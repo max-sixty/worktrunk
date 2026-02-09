@@ -300,8 +300,11 @@ fn resolve_same_repo_ref(
             "{}",
             progress_message(cformat!("Fetching <bold>{branch}</> from {remote}..."))
         );
+        // Use an explicit refspec to ensure the remote tracking branch is created,
+        // even in repos with limited fetch refspecs (single-branch clones, etc.)
+        let refspec = format!("+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
         // Use -- to prevent branch names starting with - from being interpreted as flags
-        repo.run_command(&["fetch", "--", &remote, branch])
+        repo.run_command(&["fetch", "--", &remote, &refspec])
             .with_context(|| format!("Failed to fetch branch '{}' from {}", branch, remote))?;
     }
 
@@ -722,11 +725,26 @@ pub fn execute_switch(
                     let worktree_path_str = worktree_path.to_string_lossy();
                     let mut args = vec!["worktree", "add", worktree_path_str.as_ref()];
 
+                    // For DWIM fallback: when the branch doesn't exist locally,
+                    // git worktree add relies on DWIM to auto-create it from a
+                    // remote tracking branch. DWIM fails in repos without configured
+                    // fetch refspecs (bare repos, single-branch clones). Explicitly
+                    // create from the tracking ref in that case.
+                    let tracking_ref;
+
                     if *create_branch {
                         args.push("-b");
                         args.push(&branch);
                         if let Some(base) = base_branch {
                             args.push(base);
+                        }
+                    } else if !local_branch_existed {
+                        let remotes = branch_handle.remotes().unwrap_or_default();
+                        if remotes.len() == 1 {
+                            tracking_ref = format!("{}/{}", remotes[0], branch);
+                            args.extend(["-b", &branch, tracking_ref.as_str()]);
+                        } else {
+                            args.push(&branch);
                         }
                     } else {
                         args.push(&branch);
