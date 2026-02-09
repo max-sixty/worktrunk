@@ -134,7 +134,7 @@ signal-hook = "0.4"
 vergen-gitcl = { version = "9.1.0", features = ["build"] }
 
 [dev-dependencies]
-insta = { version = "1.46.2", features = ["yaml", "redactions", "filters"] }
+insta = { version = "1.46.3", features = ["yaml", "redactions", "filters"] }
 insta-cmd = "0.6"
 rstest = "0.26"
 tempfile = "3.24"
