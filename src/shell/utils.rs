@@ -235,6 +235,8 @@ mod tests {
     #[case::zsh("zsh", Some(Shell::Zsh))]
     #[case::zsh_versioned("zsh-5.9", Some(Shell::Zsh))]
     #[case::fish("fish", Some(Shell::Fish))]
+    #[case::nu("nu", Some(Shell::Nushell))]
+    #[case::nushell("nushell", Some(Shell::Nushell))]
     #[case::powershell("powershell", Some(Shell::PowerShell))]
     #[case::pwsh("pwsh", Some(Shell::PowerShell))]
     #[case::pwsh_preview("pwsh-preview", Some(Shell::PowerShell))]

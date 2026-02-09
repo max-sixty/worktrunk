@@ -182,13 +182,14 @@ fn has_init_pattern_with_prefix_check(line: &str, cmd: &str, strict: bool) -> bo
                     continue;
                 }
 
-                // POSIX shells (bash, zsh, fish)
-                let is_posix_shell = line.contains("eval")
+                // POSIX shells (bash, zsh, fish) and nushell
+                let is_shell_exec = line.contains("eval")
                     || line.contains("source")
                     || line.contains(". <(") // POSIX dot command with process substitution
-                    || line.contains(". =("); // zsh dot command with =() substitution
+                    || line.contains(". =(") // zsh dot command with =() substitution
+                    || line.contains("save"); // nushell pipe to save
 
-                if is_posix_shell {
+                if is_shell_exec {
                     return true;
                 }
             }
@@ -930,15 +931,14 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // FALSE NEGATIVE: Nushell (unsupported but users might try)
+    // Nushell detection
     // ------------------------------------------------------------------------
 
     #[test]
     fn test_nushell_pattern() {
-        // Nushell uses "source" so it might match
+        // Nushell's config_line uses `save --force` which contains "wt config shell init"
         let line = "wt config shell init nu | source";
-        // This actually matches because it contains "source" and "wt config shell init"
-        assert_detects(line, "wt", "nushell pattern (unexpectedly matches)");
+        assert_detects(line, "wt", "nushell pattern");
     }
 
     // ------------------------------------------------------------------------

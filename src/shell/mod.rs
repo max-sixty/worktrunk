@@ -3,7 +3,7 @@
 //! This module provides:
 //! - Shell detection and configuration path discovery
 //! - Shell integration line detection for config files
-//! - Shell initialization code generation (bash, zsh, fish, powershell)
+//! - Shell initialization code generation (bash, zsh, fish, nushell, powershell)
 
 mod detection;
 mod paths;
@@ -280,6 +280,7 @@ mod tests {
         insta::assert_snapshot!("config_line_bash", Shell::Bash.config_line("wt"));
         insta::assert_snapshot!("config_line_zsh", Shell::Zsh.config_line("wt"));
         insta::assert_snapshot!("config_line_fish", Shell::Fish.config_line("wt"));
+        insta::assert_snapshot!("config_line_nu", Shell::Nushell.config_line("wt"));
         insta::assert_snapshot!(
             "config_line_powershell",
             Shell::PowerShell.config_line("wt")
@@ -294,6 +295,7 @@ mod tests {
         insta::assert_snapshot!("config_line_bash_custom", Shell::Bash.config_line("git-wt"));
         insta::assert_snapshot!("config_line_zsh_custom", Shell::Zsh.config_line("git-wt"));
         insta::assert_snapshot!("config_line_fish_custom", Shell::Fish.config_line("git-wt"));
+        insta::assert_snapshot!("config_line_nu_custom", Shell::Nushell.config_line("git-wt"));
         insta::assert_snapshot!(
             "config_line_powershell_custom",
             Shell::PowerShell.config_line("git-wt")
@@ -302,7 +304,7 @@ mod tests {
 
     #[test]
     fn test_shell_init_generate() {
-        for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell] {
+        for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Nushell, Shell::PowerShell] {
             let init = ShellInit::with_prefix(shell, "wt".to_string());
             let output = init.generate().expect("Failed to generate");
             insta::assert_snapshot!(format!("init_{shell}"), output);
@@ -312,7 +314,7 @@ mod tests {
     #[test]
     fn test_shell_config_paths_returns_paths() {
         // All shells should return at least one config path
-        let shells = [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
+        let shells = [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Nushell, Shell::PowerShell];
         for shell in shells {
             let result = shell.config_paths("wt");
             assert!(result.is_ok(), "Failed to get config paths for {:?}", shell);
@@ -328,7 +330,7 @@ mod tests {
     #[test]
     fn test_shell_completion_path_returns_path() {
         // All shells should return a completion path
-        let shells = [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
+        let shells = [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Nushell, Shell::PowerShell];
         for shell in shells {
             let result = shell.completion_path("wt");
             assert!(
@@ -429,7 +431,7 @@ mod tests {
     /// the .exe suffix on Windows (MSYS2/Git Bash handles the resolution).
     #[rstest]
     fn test_config_line_detected_by_is_shell_integration_line(
-        #[values(Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell)] shell: Shell,
+        #[values(Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Nushell, Shell::PowerShell)] shell: Shell,
         #[values("wt", "git-wt")] prefix: &str,
     ) {
         let line = shell.config_line(prefix);
