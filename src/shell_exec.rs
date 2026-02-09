@@ -191,7 +191,7 @@ thread_local! {
     /// Thread-local command timeout. When set, all commands executed via `run()` on this
     /// thread will be killed if they exceed this duration.
     ///
-    /// This is used by `wt select` to make the TUI responsive faster on large repos.
+    /// This is used by `wt switch` interactive picker to make the TUI responsive faster on large repos.
     /// The timeout is set per-worker-thread in Rayon's thread pool.
     static COMMAND_TIMEOUT: Cell<Option<Duration>> = const { Cell::new(None) };
 }

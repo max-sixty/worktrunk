@@ -74,7 +74,7 @@ Worktrunk creates files in four categories.
 
 ### 1. Worktree directories
 
-Created by `wt switch <branch>` (or `wt select`) when switching to a branch that doesn't have a worktree. Use `wt switch --create <branch>` to create a new branch. Default location is `../<repo>.<branch>` (sibling to main repo), configurable via `worktree-path` in user config.
+Created by `wt switch <branch>` when switching to a branch that doesn't have a worktree. Use `wt switch --create <branch>` to create a new branch. Default location is `../<repo>.<branch>` (sibling to main repo), configurable via `worktree-path` in user config.
 
 **To remove:** `wt remove <branch>` removes the worktree directory and deletes the branch.
 
@@ -193,7 +193,7 @@ Yes. Core commands, shell integration, and tab completion work in both Git Bash 
 
 **Git for Windows required** — Hooks use bash syntax and execute via Git Bash, so [Git for Windows](https://gitforwindows.org/) must be installed even when PowerShell is the interactive shell.
 
-**`wt select` unavailable** — Uses [skim](https://github.com/skim-rs/skim), which doesn't support Windows. Use `wt list` and `wt switch <branch>` instead.
+**`wt switch` interactive picker unavailable** — Uses [skim](https://github.com/skim-rs/skim), which doesn't support Windows. Use `wt list` and `wt switch <branch>` instead.
 
 ## How does Worktrunk determine the default branch?
 

@@ -579,15 +579,3 @@ third = "echo 'third' >> output.txt"
         "All commands should have run in order"
     );
 }
-
-///
-/// The select command requires an interactive terminal for its TUI.
-/// When stdin is not a TTY, it should fail with a clear error.
-#[cfg(unix)] // select command is unix-only
-#[rstest]
-fn test_select_fails_in_non_tty(repo: TestRepo) {
-    assert_cmd_snapshot!(
-        "select_fails_in_non_tty",
-        make_snapshot_cmd(&repo, "select", &[], None)
-    );
-}

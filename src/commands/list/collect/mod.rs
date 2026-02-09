@@ -177,7 +177,7 @@ pub struct CollectOptions {
     /// - Status symbols (conflict `✗`, integrated `⊂`) may be missing or incorrect
     ///   since they depend on skipped tasks
     ///
-    /// Note: `wt select` doesn't show the BranchDiff column, so `…` isn't visible there.
+    /// Note: `wt switch` interactive picker doesn't show the BranchDiff column, so `…` isn't visible there.
     /// This is similar to how `✗` conflict only shows with `--full` even in `wt list`.
     ///
     /// TODO: Consider adding a visible indicator in Status column when integration
@@ -200,7 +200,7 @@ fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> std::collections::HashSet<
 /// - If `render_table` is false: returns data without rendering (JSON mode)
 ///
 /// The `command_timeout` parameter, if set, limits how long individual git commands can run.
-/// This is useful for `wt select` to show the TUI faster by skipping slow operations.
+/// This is useful for `wt switch` interactive picker to show the TUI faster by skipping slow operations.
 ///
 /// TODO: Now that we skip expensive tasks for stale branches (see `skip_expensive_for_stale`),
 /// the timeout may be unnecessary. Consider removing it if it doesn't provide value.
@@ -569,7 +569,7 @@ pub fn collect(
 
     // Batch-fetch ahead/behind counts to identify branches that are far behind.
     // This allows skipping expensive merge-base operations for diverged branches, dramatically
-    // improving performance on repos with many stale branches (e.g., wt select).
+    // improving performance on repos with many stale branches (e.g., `wt switch` interactive picker).
     //
     // Uses `git for-each-ref --format='%(ahead-behind:...)'` (git 2.36+) which gets all
     // counts in a single command. On older git versions, returns empty and all tasks run.

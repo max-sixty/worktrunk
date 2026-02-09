@@ -92,7 +92,7 @@ fn main() {
                 eprintln!("  branches-N      - N branches with 1 commit each");
                 eprintln!("  branches-N-M    - N branches with M commits each");
                 eprintln!("  divergent       - 200 branches × 20 commits (GH #461 scenario)");
-                eprintln!("  select-test     - Config for wt select testing");
+                eprintln!("  select-test     - Config for wt switch interactive picker testing");
                 std::process::exit(1);
             });
 
