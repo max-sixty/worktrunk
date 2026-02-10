@@ -664,28 +664,32 @@ fn test_copy_ignored_force_no_existing(mut repo: TestRepo) {
     );
 }
 
-/// Test --force overwrites files inside directories
+/// Test --force overwrites files and symlinks inside directories
 #[rstest]
 fn test_copy_ignored_force_directory(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
 
-    // Create target directory with a file in main
+    // Create target directory with a file and a symlink in main
     let target_dir = repo.root_path().join("target");
     fs::create_dir_all(target_dir.join("debug")).unwrap();
     fs::write(target_dir.join("debug").join("output"), "new content").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("output", target_dir.join("debug").join("link")).unwrap();
 
     fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
     fs::write(repo.root_path().join(".worktreeinclude"), "target/\n").unwrap();
 
-    // Create existing file in feature with different content
+    // Create existing file and symlink in feature with different content/target
     fs::create_dir_all(feature_path.join("target").join("debug")).unwrap();
     fs::write(
         feature_path.join("target").join("debug").join("output"),
         "old content",
     )
     .unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("old_target", feature_path.join("target").join("debug").join("link")).unwrap();
 
-    // With --force: files inside directory should be overwritten
+    // With --force: files and symlinks inside directory should be overwritten
     repo.wt_command()
         .args(["step", "copy-ignored", "--force"])
         .current_dir(&feature_path)
@@ -696,6 +700,12 @@ fn test_copy_ignored_force_directory(mut repo: TestRepo) {
         fs::read_to_string(feature_path.join("target").join("debug").join("output")).unwrap(),
         "new content",
         "With --force, files inside directories should be overwritten"
+    );
+    #[cfg(unix)]
+    assert_eq!(
+        fs::read_link(feature_path.join("target").join("debug").join("link")).unwrap(),
+        std::path::PathBuf::from("output"),
+        "With --force, symlinks inside directories should be overwritten"
     );
 }
 

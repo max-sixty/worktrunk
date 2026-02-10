@@ -645,13 +645,14 @@ pub fn step_copy_ignored(
     Ok(())
 }
 
-/// Remove a file if it exists, propagating errors other than NotFound.
+/// Remove a file, ignoring "not found" errors.
 fn remove_if_exists(path: &Path) -> anyhow::Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(anyhow::anyhow!(e).context(format!("failed to remove {}", path.display()))),
+    if let Err(e) = fs::remove_file(path) {
+        if e.kind() != ErrorKind::NotFound {
+            return Err(e).context(format!("failed to remove {}", path.display()));
+        }
     }
+    Ok(())
 }
 
 /// List ignored entries using git ls-files
