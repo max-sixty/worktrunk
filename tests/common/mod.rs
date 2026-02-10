@@ -1172,6 +1172,10 @@ impl TestRepo {
                 "WORKTRUNK_CONFIG_PATH".to_string(),
                 self.test_config_path().display().to_string(),
             ),
+            (
+                "WORKTRUNK_SYSTEM_CONFIG_PATH".to_string(),
+                "/etc/xdg/worktrunk/config.toml".to_string(),
+            ),
         ]);
 
         vars
