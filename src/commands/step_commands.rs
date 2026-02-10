@@ -481,6 +481,7 @@ pub fn step_copy_ignored(
     from: Option<&str>,
     to: Option<&str>,
     dry_run: bool,
+    force: bool,
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
 
@@ -612,11 +613,15 @@ pub fn step_copy_ignored(
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
-            copy_dir_recursive(src_entry, &dest_entry)?;
+            copy_dir_recursive(src_entry, &dest_entry, force)?;
             copied_count += 1;
         } else {
             if let Some(parent) = dest_entry.parent() {
                 fs::create_dir_all(parent)?;
+            }
+            if force {
+                // Remove existing file so reflink_or_copy can overwrite
+                let _ = fs::remove_file(&dest_entry);
             }
             // Skip existing files for idempotent hook usage
             match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
@@ -702,14 +707,14 @@ fn list_ignored_entries(
 ///
 /// Apple recommends `copyfile()` with `COPYFILE_CLONE` for directories, which
 /// internally walks the tree and clones per-file — equivalent to what we do here.
-fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
-    copy_dir_recursive_fallback(src, dest)
+fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
+    copy_dir_recursive_fallback(src, dest, force)
 }
 
 /// File-by-file recursive copy with reflink per file.
 ///
 /// Used as fallback when atomic directory clone isn't available or fails.
-fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
+fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
     fs::create_dir_all(dest)?;
 
     for entry in fs::read_dir(src)? {
@@ -736,8 +741,12 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
                 }
             }
         } else if file_type.is_dir() {
-            copy_dir_recursive_fallback(&src_path, &dest_path)?;
+            copy_dir_recursive_fallback(&src_path, &dest_path, force)?;
         } else {
+            if force {
+                // Remove existing file so reflink_or_copy can overwrite
+                let _ = fs::remove_file(&dest_path);
+            }
             // Skip existing files for idempotent hook usage
             match reflink_copy::reflink_or_copy(&src_path, &dest_path) {
                 Ok(_) => {}

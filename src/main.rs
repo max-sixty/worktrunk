@@ -534,9 +534,12 @@ fn main() {
                     }
                 })
             }
-            StepCommand::CopyIgnored { from, to, dry_run } => {
-                step_copy_ignored(from.as_deref(), to.as_deref(), dry_run)
-            }
+            StepCommand::CopyIgnored {
+                from,
+                to,
+                dry_run,
+                force,
+            } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force),
             StepCommand::ForEach { args } => step_for_each(args),
             StepCommand::Relocate {
                 branches,

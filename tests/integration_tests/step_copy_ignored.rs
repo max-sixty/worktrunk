@@ -601,6 +601,74 @@ fn test_copy_ignored_bare_repo() {
     );
 }
 
+/// Test --force overwrites existing files
+#[rstest]
+fn test_copy_ignored_force_overwrites_file(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Setup: gitignored .env file
+    fs::write(repo.root_path().join(".env"), "NEW_VALUE").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+
+    // Pre-create .env in destination with different content (e.g., from env:setup)
+    fs::write(feature_path.join(".env"), "OLD_VALUE").unwrap();
+
+    // Without --force, the existing file is skipped
+    repo.wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(feature_path.join(".env")).unwrap(),
+        "OLD_VALUE",
+        "Without --force, existing file should be preserved"
+    );
+
+    // With --force, the file should be overwritten
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored", "--force"],
+        Some(&feature_path),
+    ));
+    assert_eq!(
+        fs::read_to_string(feature_path.join(".env")).unwrap(),
+        "NEW_VALUE",
+        "With --force, existing file should be overwritten"
+    );
+}
+
+/// Test --force overwrites existing files inside directories
+#[rstest]
+fn test_copy_ignored_force_overwrites_directory(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Setup: gitignored directory with a file
+    let target_dir = repo.root_path().join("target");
+    fs::create_dir_all(target_dir.join("debug")).unwrap();
+    fs::write(target_dir.join("debug").join("output"), "new binary").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
+
+    // Pre-create target/debug/output in destination with stale content
+    let dest_target = feature_path.join("target").join("debug");
+    fs::create_dir_all(&dest_target).unwrap();
+    fs::write(dest_target.join("output"), "stale binary").unwrap();
+
+    // With --force, the file inside the directory should be overwritten
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored", "--force"],
+        Some(&feature_path),
+    ));
+    assert_eq!(
+        fs::read_to_string(feature_path.join("target").join("debug").join("output")).unwrap(),
+        "new binary",
+        "With --force, files inside directories should be overwritten"
+    );
+}
+
 /// Test that worktrees nested inside the source are not copied (GitHub issue #641)
 ///
 /// When worktree-path is configured to place worktrees inside the primary worktree

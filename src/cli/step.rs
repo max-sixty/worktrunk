@@ -211,7 +211,7 @@ target/
 
 - Uses copy-on-write (reflink) when available for space-efficient copies
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
-- Skips existing files (safe to re-run)
+- Skips existing files by default (safe to re-run); use `--force` to overwrite
 - Skips `.git` entries and other worktrees
 
 ## Performance
@@ -271,6 +271,10 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
         /// Show what would be copied
         #[arg(long)]
         dry_run: bool,
+
+        /// Overwrite files that already exist in the destination
+        #[arg(long)]
+        force: bool,
     },
 
     /// \[experimental\] Run command in each worktree

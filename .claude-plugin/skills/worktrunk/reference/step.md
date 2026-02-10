@@ -270,7 +270,7 @@ target/
 
 - Uses copy-on-write (reflink) when available for space-efficient copies
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
-- Skips existing files (safe to re-run)
+- Skips existing files by default (safe to re-run); use `--force` to overwrite
 - Skips `.git` entries and other worktrees
 
 ### Performance
@@ -334,6 +334,9 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
 
       <b><span class=c>--dry-run</span></b>
           Show what would be copied
+
+      <b><span class=c>--force</span></b>
+          Overwrite files that already exist in the destination
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
