@@ -261,13 +261,20 @@ fn test_switch_base_without_create_warning(repo: TestRepo) {
 
 #[rstest]
 fn test_switch_create_with_invalid_base(repo: TestRepo) {
-    // Issue #562: Error message should identify the invalid base branch,
+    // Issues #562, #977: Error message should identify the invalid base branch,
     // not the target branch being created
     snapshot_switch(
         "switch_create_invalid_base",
         &repo,
         &["--create", "new-feature", "--base", "nonexistent-base"],
     );
+}
+
+#[rstest]
+fn test_switch_nonexistent_branch(repo: TestRepo) {
+    // Switching to a nonexistent branch (without --create) should give a clear
+    // "branch not found" error, not fall through to a confusing git error.
+    snapshot_switch("switch_nonexistent_branch", &repo, &["nonexistent-branch"]);
 }
 
 #[rstest]
