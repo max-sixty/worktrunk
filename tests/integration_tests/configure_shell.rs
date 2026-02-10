@@ -4,7 +4,24 @@ use crate::common::{
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
+
+/// Recursively search for a file by name under a directory.
+fn find_file_recursive(dir: &Path, filename: &str) -> Option<PathBuf> {
+    for entry in fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_file_recursive(&path, filename) {
+                return Some(found);
+            }
+        } else if path.file_name().map(|n| n == filename).unwrap_or(false) {
+            return Some(path);
+        }
+    }
+    None
+}
 
 #[rstest]
 fn test_configure_shell_with_yes(repo: TestRepo, temp_home: TempDir) {
@@ -1633,6 +1650,110 @@ mod pty_tests {
             "File should not be modified when user declines"
         );
     }
+}
+
+/// Test installing nushell shell integration
+///
+/// Runs `install nu --yes` and verifies the wrapper file was created.
+/// This covers the nushell-specific wrapper generation path in configure_shell.
+///
+/// The nushell config directory depends on platform and whether the `nu` binary
+/// is available (macOS: ~/Library/Application Support/nushell, fallback: ~/.config/nushell).
+/// Rather than predicting the path, we search for the created file under temp_home.
+#[rstest]
+fn test_configure_shell_nushell(repo: TestRepo, temp_home: TempDir) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/nu");
+    cmd.arg("config")
+        .arg("shell")
+        .arg("install")
+        .arg("nu")
+        .arg("--yes")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute command");
+    assert!(
+        output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Created shell extension for") && stderr.contains("nu"),
+        "Output should show nushell was created:\n{}",
+        stderr
+    );
+
+    // Find wt.nu under temp_home (path depends on platform/nu availability)
+    let nu_config = find_file_recursive(temp_home.path(), "wt.nu")
+        .expect("wt.nu should be created somewhere under temp home");
+
+    let content = fs::read_to_string(&nu_config).unwrap();
+    assert!(
+        content.contains("def --env --wrapped wt"),
+        "Should contain nushell function definition: {}",
+        content
+    );
+}
+
+/// Test uninstalling nushell shell integration
+///
+/// Installs nushell integration first, then uninstalls it.
+/// This covers the nushell-specific uninstall block in configure_shell.
+#[rstest]
+fn test_uninstall_shell_nushell(repo: TestRepo, temp_home: TempDir) {
+    // First install to create the wrapper file
+    let mut install_cmd = wt_command();
+    repo.configure_wt_cmd(&mut install_cmd);
+    set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("SHELL", "/bin/nu");
+    install_cmd
+        .args(["config", "shell", "install", "nu", "--yes"])
+        .current_dir(repo.root_path());
+
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+
+    // Verify the file was created
+    let nu_config =
+        find_file_recursive(temp_home.path(), "wt.nu").expect("wt.nu should exist after install");
+    assert!(nu_config.exists());
+
+    // Now uninstall
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/nu");
+    cmd.args(["config", "shell", "uninstall", "nu", "--yes"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Removed shell extension for") && stderr.contains("nu"),
+        "Output should show nushell was removed:\n{}",
+        stderr
+    );
+
+    // Verify the nushell config file was deleted
+    assert!(
+        !nu_config.exists(),
+        "wt.nu should be deleted after uninstall: {:?}",
+        nu_config
+    );
 }
 
 /// Test that WORKTRUNK_TEST_POWERSHELL_ENV=1 triggers PowerShell auto-detection.
