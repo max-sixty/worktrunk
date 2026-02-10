@@ -640,6 +640,30 @@ fn test_copy_ignored_force_overwrites(mut repo: TestRepo) {
     );
 }
 
+/// Test --force works when destination file doesn't exist yet (no-op removal)
+#[rstest]
+fn test_copy_ignored_force_no_existing(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Create .env in main only — feature has no .env
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
+
+    // --force on a fresh worktree should still copy successfully
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored", "--force"],
+        Some(&feature_path),
+    ));
+    assert_eq!(
+        fs::read_to_string(feature_path.join(".env")).unwrap(),
+        "SECRET=value",
+        "With --force, file should be copied even when dest doesn't exist"
+    );
+}
+
 /// Test --force overwrites files inside directories
 #[rstest]
 fn test_copy_ignored_force_directory(mut repo: TestRepo) {
