@@ -36,18 +36,16 @@ impl Repository {
                 if wt.bare {
                     return false;
                 }
-                if is_bare {
-                    if let Ok(canonical) = canonicalize(&wt.path) {
-                        // Direct match: path IS the bare repo directory
-                        // (e.g., project/.bare where git_common_dir = project/.bare)
-                        if canonical == self.git_common_dir {
-                            return false;
-                        }
-                        // Parent match: path is the parent of the bare .git directory
-                        // (e.g., project/ where git_common_dir = project/.git)
-                        if self.git_common_dir.parent() == Some(canonical.as_ref()) {
-                            return false;
-                        }
+                if is_bare && let Ok(canonical) = canonicalize(&wt.path) {
+                    // Direct match: path IS the bare repo directory
+                    // (e.g., project/.bare where git_common_dir = project/.bare)
+                    if canonical == self.git_common_dir {
+                        return false;
+                    }
+                    // Parent match: path is the parent of the bare .git directory
+                    // (e.g., project/ where git_common_dir = project/.git)
+                    if self.git_common_dir.parent() == Some(canonical.as_ref()) {
+                        return false;
                     }
                 }
                 true

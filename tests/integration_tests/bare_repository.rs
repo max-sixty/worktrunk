@@ -888,7 +888,10 @@ fn test_bare_repo_list_worktrees_filters_bare_entry() {
             String::from_utf8_lossy(&output.stderr)
         );
     };
-    run_git(temp_dir.path(), &["init", "--initial-branch", "main", source.to_str().unwrap()]);
+    run_git(
+        temp_dir.path(),
+        &["init", "--initial-branch", "main", source.to_str().unwrap()],
+    );
     fs::write(source.join("file.txt"), "content").unwrap();
     run_git(&source, &["add", "file.txt"]);
     run_git(&source, &["commit", "-m", "Initial commit"]);
@@ -897,15 +900,26 @@ fn test_bare_repo_list_worktrees_filters_bare_entry() {
     let bare_path = temp_dir.path().join("project.bare");
     run_git(
         temp_dir.path(),
-        &["clone", "--bare", source.to_str().unwrap(), bare_path.to_str().unwrap()],
+        &[
+            "clone",
+            "--bare",
+            source.to_str().unwrap(),
+            bare_path.to_str().unwrap(),
+        ],
     );
 
     // Create linked worktrees
     let main_wt = temp_dir.path().join("main");
     let feature_wt = temp_dir.path().join("feature");
-    run_git(&bare_path, &["worktree", "add", main_wt.to_str().unwrap(), "main"]);
+    run_git(
+        &bare_path,
+        &["worktree", "add", main_wt.to_str().unwrap(), "main"],
+    );
     run_git(&bare_path, &["branch", "feature", "main"]);
-    run_git(&bare_path, &["worktree", "add", feature_wt.to_str().unwrap(), "feature"]);
+    run_git(
+        &bare_path,
+        &["worktree", "add", feature_wt.to_str().unwrap(), "feature"],
+    );
 
     // Use Repository API directly, discovering from the bare repo directory
     let repo = Repository::at(&bare_path).unwrap();
