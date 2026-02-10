@@ -1,31 +1,31 @@
 ---
 source: tests/integration_tests/switch_picker.rs
-expression: normalized
+expression: screen
 ---
-> [QUERY]                                                     │[PREVIEW_HEADER]
+> [QUERY]
     Branch  Status        HEAD±    main↕  Remote⇅  Commit   │Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
-> @ main        ^                                  05a4a45d │
-                                                            │○ main has no uncommitted changes
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
+> @ main        ^                                  [HASH] │                                                           
+                                                            │○ main has no uncommitted changes                          
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
                                                             │
