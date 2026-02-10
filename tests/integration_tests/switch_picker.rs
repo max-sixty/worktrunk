@@ -630,12 +630,14 @@ branches = true
     );
 
     let env_vars = repo.test_env_vars();
-    let (raw_output, exit_code) = exec_in_pty_with_input(
+    // Wait for orphan-branch to appear before sending Escape
+    // Under CI load, the branch list may take time to render fully
+    let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
         wt_bin().to_str().unwrap(),
         &["switch"], // No --branches flag - config should enable it
         repo.root_path(),
         &env_vars,
-        "\x1b", // Escape to abort
+        &[("\x1b", Some("│orphan-branch"))], // Wait for branch to appear (│ = border drawn)
     );
 
     assert_valid_abort_exit_code(exit_code);
