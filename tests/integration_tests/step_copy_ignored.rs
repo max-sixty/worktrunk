@@ -687,7 +687,11 @@ fn test_copy_ignored_force_directory(mut repo: TestRepo) {
     )
     .unwrap();
     #[cfg(unix)]
-    std::os::unix::fs::symlink("old_target", feature_path.join("target").join("debug").join("link")).unwrap();
+    std::os::unix::fs::symlink(
+        "old_target",
+        feature_path.join("target").join("debug").join("link"),
+    )
+    .unwrap();
 
     // With --force: files and symlinks inside directory should be overwritten
     repo.wt_command()

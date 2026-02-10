@@ -647,10 +647,10 @@ pub fn step_copy_ignored(
 
 /// Remove a file, ignoring "not found" errors.
 fn remove_if_exists(path: &Path) -> anyhow::Result<()> {
-    if let Err(e) = fs::remove_file(path) {
-        if e.kind() != ErrorKind::NotFound {
-            return Err(e).context(format!("failed to remove {}", path.display()));
-        }
+    if let Err(e) = fs::remove_file(path)
+        && e.kind() != ErrorKind::NotFound
+    {
+        return Err(e).context(format!("failed to remove {}", path.display()));
     }
     Ok(())
 }
