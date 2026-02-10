@@ -2063,8 +2063,7 @@ squash = true
 
 #[test]
 fn test_system_config_worktree_path_overridden_by_user() {
-    let system_toml =
-        r#"worktree-path = "/company/worktrees/{{ repo }}/{{ branch | sanitize }}""#;
+    let system_toml = r#"worktree-path = "/company/worktrees/{{ repo }}/{{ branch | sanitize }}""#;
     let user_toml = r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}""#;
 
     let system_config = UserConfig::load_from_str(system_toml).unwrap();

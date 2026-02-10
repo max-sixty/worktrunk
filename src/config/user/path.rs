@@ -93,9 +93,7 @@ pub fn get_system_config_path() -> Option<PathBuf> {
     {
         if let Ok(dirs) = std::env::var("XDG_CONFIG_DIRS") {
             for dir in dirs.split(':').filter(|d| !d.is_empty()) {
-                let path = PathBuf::from(dir)
-                    .join("worktrunk")
-                    .join("config.toml");
+                let path = PathBuf::from(dir).join("worktrunk").join("config.toml");
                 if path.exists() {
                     return Some(path);
                 }

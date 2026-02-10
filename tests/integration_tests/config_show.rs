@@ -137,7 +137,9 @@ fn test_system_config_values_used_as_defaults(repo: TestRepo) {
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
     cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
-    cmd.arg("list").arg("--format=json").current_dir(repo.root_path());
+    cmd.arg("list")
+        .arg("--format=json")
+        .current_dir(repo.root_path());
 
     let output = cmd.output().unwrap();
     assert!(output.status.success());
@@ -185,7 +187,9 @@ fn test_user_config_overrides_system_config(repo: TestRepo) {
     repo.configure_wt_cmd(&mut cmd);
     cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
     cmd.env("WORKTRUNK_CONFIG_PATH", &user_config_path);
-    cmd.arg("list").arg("--format=json").current_dir(repo.root_path());
+    cmd.arg("list")
+        .arg("--format=json")
+        .current_dir(repo.root_path());
 
     let output = cmd.output().unwrap();
     assert!(output.status.success());
