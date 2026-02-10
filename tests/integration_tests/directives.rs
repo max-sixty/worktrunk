@@ -514,6 +514,62 @@ fn test_switch_create_preserves_symlink_path(#[from(repo_with_remote)] repo: Tes
 
 #[cfg(unix)]
 #[rstest]
+fn test_switch_preserves_symlink_path_from_subdirectory(
+    #[from(repo_with_remote)] mut repo: TestRepo,
+) {
+    let feature_wt = repo.add_worktree("feature");
+    let (directive_path, _guard) = directive_file();
+
+    // Create subdirectory in both worktrees
+    let subdir = "apps/gateway";
+    fs::create_dir_all(repo.root_path().join(subdir)).unwrap();
+    fs::create_dir_all(feature_wt.join(subdir)).unwrap();
+
+    // Create a symlink to the repo's parent directory
+    let real_parent = repo.root_path().parent().unwrap();
+    let symlink_dir = tempfile::tempdir().unwrap();
+    let symlink_path = symlink_dir.path().join("link");
+    unix_fs::symlink(real_parent, &symlink_path).unwrap();
+
+    let repo_dir_name = repo.root_path().file_name().unwrap();
+    let logical_cwd = symlink_path.join(repo_dir_name).join(subdir);
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.env("PWD", &logical_cwd);
+    cmd.arg("switch").arg("feature").current_dir(&logical_cwd);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt switch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let directives = fs::read_to_string(&directive_path).unwrap_or_default();
+
+    // Should use symlink prefix AND preserve subdirectory
+    let symlink_prefix = symlink_path.to_string_lossy();
+    assert!(
+        directives.contains(&*symlink_prefix),
+        "Directive should use symlink path (containing {}), got: {}",
+        symlink_prefix,
+        directives
+    );
+
+    let subdir_suffix = Path::new("apps").join("gateway");
+    let subdir_str = subdir_suffix.to_string_lossy();
+    assert!(
+        directives.contains(&*subdir_str),
+        "Directive should preserve subdirectory {}, got: {}",
+        subdir_str,
+        directives
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
 fn test_switch_no_symlink_uses_canonical(#[from(repo_with_remote)] mut repo: TestRepo) {
     // When PWD matches current_dir (no symlink), canonical path is used as before
     let _feature_wt = repo.add_worktree("feature");

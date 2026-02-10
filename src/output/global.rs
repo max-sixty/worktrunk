@@ -192,12 +192,12 @@ pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
     let path = path.as_ref();
     let mut guard = get_state().lock().expect("OUTPUT_STATE lock poisoned");
 
-    // Store for execute() to use (always canonical — used for process cwd)
+    // Store for execute() to use as process cwd
     guard.target_dir = Some(path.to_path_buf());
 
     // Write to directive file if set
     if guard.directive_file.is_some() {
-        // Clone mapping out of lock — the .exists() check below does I/O
+        // Clone mapping out of lock — the canonicalize check below does I/O
         let symlink_mapping = guard.symlink_mapping.clone();
         drop(guard); // Release lock before I/O
 
@@ -205,10 +205,16 @@ pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
         // The user's shell should stay in their symlink tree — e.g., if they navigated via
         // /workspace/project (symlink to /mnt/wsl/workspace/project), the cd should use
         // /workspace/project.feature, not /mnt/wsl/workspace/project.feature.
+        //
+        // Verify the translation round-trips correctly: canonicalize(translated) must equal
+        // canonicalize(original). This prevents mis-translation if the prefix mapping is broad
+        // and an unrelated path happens to exist at the translated location.
         let directive_path = symlink_mapping
             .as_ref()
             .and_then(|m| m.to_logical_path(path))
-            .filter(|p| p.exists())
+            .filter(|translated| {
+                dunce::canonicalize(translated).ok() == dunce::canonicalize(path).ok()
+            })
             .unwrap_or_else(|| path.to_path_buf());
 
         let path_str = directive_path.to_string_lossy();
