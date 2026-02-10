@@ -647,10 +647,8 @@ pub fn step_copy_ignored(
 
 /// Remove a file, ignoring "not found" errors.
 fn remove_if_exists(path: &Path) -> anyhow::Result<()> {
-    if let Err(e) = fs::remove_file(path)
-        && e.kind() != ErrorKind::NotFound
-    {
-        return Err(e).context(format!("failed to remove {}", path.display()));
+    if let Err(e) = fs::remove_file(path) {
+        anyhow::ensure!(e.kind() == ErrorKind::NotFound, e);
     }
     Ok(())
 }
@@ -886,5 +884,18 @@ mod tests {
         } else {
             panic!("Expected UpToDate variant");
         }
+    }
+
+    #[test]
+    fn test_remove_if_exists_nonexistent() {
+        // NotFound is silently ignored
+        assert!(remove_if_exists(Path::new("/nonexistent/file")).is_ok());
+    }
+
+    #[test]
+    fn test_remove_if_exists_not_a_file() {
+        // Trying to remove a directory with remove_file produces a non-NotFound error
+        let dir = std::env::temp_dir();
+        assert!(remove_if_exists(&dir).is_err());
     }
 }
