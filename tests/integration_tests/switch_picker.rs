@@ -285,14 +285,8 @@ fn render_terminal_screen(raw_output: &[u8]) -> String {
         lines.push(line.trim_end().to_string());
     }
 
-    // Find the last non-empty line to avoid trimming intentional blank lines
-    let last_content_idx = lines.iter().rposition(|line| !line.is_empty()).unwrap_or(0);
-
-    // Keep all lines up to and including the last line with content, plus a few blank lines for preview panel
-    // The preview panel should show some blank lines even when empty
-    let keep_lines = (last_content_idx + 4).min(lines.len());
-
-    lines.truncate(keep_lines);
+    // Join all lines - preserve blank lines for cross-platform consistency
+    // The preview panel intentionally shows blank lines even when empty
     lines.join("\n")
 }
 
