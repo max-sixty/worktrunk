@@ -227,6 +227,9 @@ fn wait_for_stable(
 /// If `expected_content` is provided, waits until the screen contains that string
 /// AND has stabilized. This is essential for async preview panels where the initial
 /// render may show placeholder content before the actual data loads.
+///
+/// Tip: include the panel border character (`│`) in `expected_content` to ensure
+/// the full TUI frame has rendered, not just the preview text content.
 fn wait_for_stable_with_content(
     rx: &mpsc::Receiver<Vec<u8>>,
     parser: &mut vt100::Parser,
@@ -459,7 +462,7 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
         &env_vars,
         &[
             ("feature", None),
-            ("1", Some("diff --git")), // Wait for diff to load
+            ("1", Some("│diff --git")), // Wait for diff to load (│ = border drawn)
             ("\x1b", None),
         ],
     );
@@ -519,7 +522,7 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
         &env_vars,
         &[
             ("feature", None),
-            ("2", Some("* ")), // Wait for git log output (starts with "* [hash]")
+            ("2", Some("│* ")), // Wait for git log output (│ = border drawn)
             ("\x1b", None),
         ],
     );
@@ -612,7 +615,7 @@ fn test_new_feature() {
         &env_vars,
         &[
             ("feature", None),
-            ("3", Some("diff --git")), // Wait for diff to load
+            ("3", Some("│diff --git")), // Wait for diff to load (│ = border drawn)
             ("\x1b", None),
         ],
     );
@@ -648,12 +651,14 @@ branches = true
     );
 
     let env_vars = repo.test_env_vars();
-    let (raw_output, exit_code) = exec_in_pty_with_input(
+    // Wait for orphan-branch to appear before sending Escape
+    // Under CI load, the branch list may take time to render fully
+    let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
         wt_bin().to_str().unwrap(),
         &["switch"], // No --branches flag - config should enable it
         repo.root_path(),
         &env_vars,
-        "\x1b", // Escape to abort
+        &[("\x1b", Some("│orphan-branch"))], // Wait for branch to appear (│ = border drawn)
     );
 
     assert_valid_abort_exit_code(exit_code);
