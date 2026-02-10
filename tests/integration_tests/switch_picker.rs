@@ -272,7 +272,7 @@ fn render_terminal_screen(raw_output: &[u8]) -> String {
     parser.process(raw_output);
 
     let screen = parser.screen();
-    let mut result = String::new();
+    let mut lines = Vec::new();
 
     for row in 0..TERM_ROWS {
         let mut line = String::new();
@@ -281,17 +281,19 @@ fn render_terminal_screen(raw_output: &[u8]) -> String {
                 line.push_str(cell.contents());
             }
         }
-        // Trim trailing whitespace but preserve the line
-        result.push_str(line.trim_end());
-        result.push('\n');
+        // Trim trailing whitespace from each line
+        lines.push(line.trim_end().to_string());
     }
 
-    // Trim trailing empty lines
-    while result.ends_with("\n\n") {
-        result.pop();
-    }
+    // Find the last non-empty line to avoid trimming intentional blank lines
+    let last_content_idx = lines.iter().rposition(|line| !line.is_empty()).unwrap_or(0);
 
-    result
+    // Keep all lines up to and including the last line with content, plus a few blank lines for preview panel
+    // The preview panel should show some blank lines even when empty
+    let keep_lines = (last_content_idx + 4).min(lines.len());
+
+    lines.truncate(keep_lines);
+    lines.join("\n")
 }
 
 /// Normalize output for snapshot stability
