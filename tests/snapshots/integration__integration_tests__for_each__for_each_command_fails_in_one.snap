@@ -17,6 +17,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -51,25 +52,7 @@ fatal: ambiguous argument 'nonexistent-ref': unknown revision or path not in the
 Use '--' to separate paths from revisions, like this:
 'git <command> [<revision>...] -- [<file>...]'
 [31m✗[39m [31mFailed in [1m[1mfeature[22m[22m (exit code 128)[39m
-[36m◎[39m [36mRunning in [1mfeature-a[22m...[39m
-fatal: ambiguous argument 'nonexistent-ref': unknown revision or path not in the working tree.
-Use '--' to separate paths from revisions, like this:
-'git <command> [<revision>...] -- [<file>...]'
-[31m✗[39m [31mFailed in [1m[1mfeature-a[22m[22m (exit code 128)[39m
-[36m◎[39m [36mRunning in [1mfeature-b[22m...[39m
-fatal: ambiguous argument 'nonexistent-ref': unknown revision or path not in the working tree.
-Use '--' to separate paths from revisions, like this:
-'git <command> [<revision>...] -- [<file>...]'
-[31m✗[39m [31mFailed in [1m[1mfeature-b[22m[22m (exit code 128)[39m
-[36m◎[39m [36mRunning in [1mfeature-c[22m...[39m
-fatal: ambiguous argument 'nonexistent-ref': unknown revision or path not in the working tree.
-Use '--' to separate paths from revisions, like this:
-'git <command> [<revision>...] -- [<file>...]'
-[31m✗[39m [31mFailed in [1m[1mfeature-c[22m[22m (exit code 128)[39m
 
-[33m▲[39m [33m5 of 5 worktrees failed[39m
+[33m▲[39m [33m2 of 2 worktrees failed[39m
 [107m [0m [1mmain[22m
 [107m [0m [1mfeature[22m
-[107m [0m [1mfeature-a[22m
-[107m [0m [1mfeature-b[22m
-[107m [0m [1mfeature-c[22m

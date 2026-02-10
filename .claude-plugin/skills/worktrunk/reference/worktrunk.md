@@ -121,11 +121,14 @@ Create a worktree for a new feature:
 This creates a new branch and worktree, then switches to it. Do your work, then check all worktrees with [`wt list`](https://worktrunk.dev/list/):
 
 <span class="cmd">wt list</span>
-  <b>Branch</b>        <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ feature-auth  <span class=c>+</span>   <span class=d>–</span>      <span class=g>+53</span>                         <span class=d>0e631add</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
-^ main              <span class=d>^</span><span class=d>⇡</span>                         <span class=g>⇡1</span>      <span class=d>0e631add</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
+  <b>Branch</b>        <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Path</b>                        <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>
+@ feature-auth  <span class=c>+</span>   <span class=d>–</span>      <span class=g>+53</span>                ../repo.feature-auth                 <span class=d>0e631add</span>  <span class=d>1d</span>
+^ main              <span class=d>^</span><span class=d>⇡</span>                        .                            <span class=g>⇡1</span>      <span class=d>0e631add</span>  <span class=d>1d</span>
++ feature-a        <span class=r>⚑</span>                       <span class=d>⋯</span>  ../../../../repo.feature-a           <span class=d>1b87d473</span>  <span class=d>⋯</span>
++ feature-b        <span class=r>⚑</span>                       <span class=d>⋯</span>  ../../../../repo.feature-b           <span class=d>f62940fc</span>  <span class=d>⋯</span>
++ feature-c        <span class=r>⚑</span>                       <span class=d>⋯</span>  ../../../../repo.feature-c           <span class=d>345c7c93</span>  <span class=d>⋯</span>
 
-<span class=d>○</span> <span class=d>Showing 2 worktrees, 1 with changes, 1 column hidden</span>
+<span class=d>○</span> <span class=d>Showing 5 worktrees, 1 with changes, 1 column hidden</span>
 
 The `@` marks the current worktree. `+` means uncommitted changes, `↕` means unpushed commits.
 

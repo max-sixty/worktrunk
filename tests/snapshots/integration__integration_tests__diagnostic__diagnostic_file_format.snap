@@ -26,20 +26,23 @@ worktree [PATH]
 HEAD [COMMIT]
 branch refs/heads/main
 
-worktree [PATH]
-HEAD [COMMIT]
-
-worktree [PATH]
+worktree ..[REPO_PATH]
 HEAD [COMMIT]
 branch refs/heads/feature-a
+prunable gitdir file points to non-existent location
 
-worktree [PATH]
+worktree ..[REPO_PATH]
 HEAD [COMMIT]
 branch refs/heads/feature-b
+prunable gitdir file points to non-existent location
+
+worktree ..[REPO_PATH]
+HEAD [COMMIT]
+branch refs/heads/feature-c
+prunable gitdir file points to non-existent location
 
 worktree [PATH]
 HEAD [COMMIT]
-branch refs/heads/feature-c
 ```
 </details>
 

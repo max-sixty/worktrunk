@@ -73,12 +73,25 @@ Show current configuration and file locations:
 
 [1m[32mConfiguration files[0m
 
-        File                 Location                                Contains                     Committed & shared 
-   ────────────── ─────────────────────────────── ─────────────────────────────────────────────── ────────────────── 
-   User config    ~/.config/worktrunk/config.toml Worktree path template, LLM commit configs, etc ✗                  
-   Project config .config/wt.toml                 Project hooks, dev server URL                   ✓                  
+        File                 Location                            Contains                  Committed & shared    
+   ────────────── ─────────────────────────────── ────────────────────────────────────── ─────────────────────── 
+   System config  /etc/xdg/worktrunk/config.toml  Organization-wide defaults             ✗ (managed by sysadmin) 
+   User config    ~/.config/worktrunk/config.toml Personal preferences, overrides system ✗                       
+   Project config .config/wt.toml                 Project hooks, dev server URL          ✓                       
 
-[1mUser config[0m — personal preferences:
+[1mSystem config[0m — organization-wide defaults (optional):
+
+  [2m# /etc/xdg/worktrunk/config.toml (Linux)[0m
+  [2m# /Library/Application Support/worktrunk/config.toml (macOS)[0m
+  [2m# %PROGRAMDATA%\worktrunk\config.toml (Windows)[0m
+  [2m[merge][0m
+  [2msquash = true[0m
+  [2mverify = true[0m
+  [2m[0m
+  [2m[commit.generation][0m
+  [2mcommand = "company-llm-tool"[0m
+
+[1mUser config[0m — personal preferences (overrides system config):
 
   [2m# ~/.config/worktrunk/config.toml[0m
   [2mworktree-path = ".worktrees/{{ branch | sanitize }}"[0m
@@ -94,6 +107,21 @@ Show current configuration and file locations:
   [2m[0m
   [2m[pre-merge][0m
   [2mtest = "npm test"[0m
+
+[32mSYSTEM CONFIGURATION[0m
+
+Optional organization-wide defaults. System config uses the same format as user config, but is loaded first — user config values override system config values.
+
+Location (first found is used):
+
+- [2m$XDG_CONFIG_DIRS/worktrunk/config.toml[0m (if [2m$XDG_CONFIG_DIRS[0m is set)
+- Linux: [2m/etc/xdg/worktrunk/config.toml[0m
+- macOS: [2m/Library/Application Support/worktrunk/config.toml[0m, then [2m/etc/xdg/worktrunk/config.toml[0m
+- Windows: [2m%PROGRAMDATA%\worktrunk\config.toml[0m
+
+Override with [2m$WORKTRUNK_SYSTEM_CONFIG_PATH[0m environment variable.
+
+Use [2mwt config show[0m to see which system config file is active (if any).
 
 [32mUSER CONFIGURATION[0m
 
@@ -365,6 +393,8 @@ Override the LLM command in CI to use a mock:
    ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────── 
    WORKTRUNK_BIN                     Override binary path for shell wrappers (useful for testing dev builds)           
    WORKTRUNK_CONFIG_PATH             Override user config file location                                                
+   WORKTRUNK_SYSTEM_CONFIG_PATH      Override system config file location                                              
+   XDG_CONFIG_DIRS                   Colon-separated system config directories (default: /etc/xdg)                     
    WORKTRUNK_DIRECTIVE_FILE          Internal: set by shell wrappers to enable directory changes                       
    WORKTRUNK_SHELL                   Internal: set by shell wrappers to indicate shell type (e.g., powershell)         
    WORKTRUNK_MAX_CONCURRENT_COMMANDS Max parallel git commands (default: 32). Lower if hitting file descriptor limits. 

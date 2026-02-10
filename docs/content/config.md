@@ -40,10 +40,25 @@ wt config show
 
 | File | Location | Contains | Committed & shared |
 |------|----------|----------|--------------------|
-| **User config** | `~/.config/worktrunk/config.toml` | Worktree path template, LLM commit configs, etc | ✗ |
+| **System config** | `/etc/xdg/worktrunk/config.toml` | Organization-wide defaults | ✗ (managed by sysadmin) |
+| **User config** | `~/.config/worktrunk/config.toml` | Personal preferences, overrides system | ✗ |
 | **Project config** | `.config/wt.toml` | Project hooks, dev server URL | ✓ |
 
-**User config** — personal preferences:
+**System config** — organization-wide defaults (optional):
+
+```toml
+# /etc/xdg/worktrunk/config.toml (Linux)
+# /Library/Application Support/worktrunk/config.toml (macOS)
+# %PROGRAMDATA%\worktrunk\config.toml (Windows)
+[merge]
+squash = true
+verify = true
+
+[commit.generation]
+command = "company-llm-tool"
+```
+
+**User config** — personal preferences (overrides system config):
 
 ```toml
 # ~/.config/worktrunk/config.toml
@@ -63,6 +78,21 @@ deps = "npm ci"
 [pre-merge]
 test = "npm test"
 ```
+
+# System Configuration
+
+Optional organization-wide defaults. System config uses the same format as user config, but is loaded first — user config values override system config values.
+
+Location (first found is used):
+
+- `$XDG_CONFIG_DIRS/worktrunk/config.toml` (if `$XDG_CONFIG_DIRS` is set)
+- Linux: `/etc/xdg/worktrunk/config.toml`
+- macOS: `/Library/Application Support/worktrunk/config.toml`, then `/etc/xdg/worktrunk/config.toml`
+- Windows: `%PROGRAMDATA%\worktrunk\config.toml`
+
+Override with `$WORKTRUNK_SYSTEM_CONFIG_PATH` environment variable.
+
+Use `wt config show` to see which system config file is active (if any).
 
 <!-- USER_CONFIG_START -->
 # User Configuration
@@ -366,6 +396,8 @@ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 |----------|---------|
 | `WORKTRUNK_BIN` | Override binary path for shell wrappers (useful for testing dev builds) |
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
+| `WORKTRUNK_SYSTEM_CONFIG_PATH` | Override system config file location |
+| `XDG_CONFIG_DIRS` | Colon-separated system config directories (default: `/etc/xdg`) |
 | `WORKTRUNK_DIRECTIVE_FILE` | Internal: set by shell wrappers to enable directory changes |
 | `WORKTRUNK_SHELL` | Internal: set by shell wrappers to indicate shell type (e.g., `powershell`) |
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
@@ -408,7 +440,7 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
 
 Show configuration files & locations.
 
-Shows location and contents of user config (`~/.config/worktrunk/config.toml`)
+Shows location and contents of system config, user config (`~/.config/worktrunk/config.toml`),
 and project config (`.config/wt.toml`).
 
 If a config file doesn't exist, shows defaults that would be used.

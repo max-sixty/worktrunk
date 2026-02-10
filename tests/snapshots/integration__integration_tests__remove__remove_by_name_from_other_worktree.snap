@@ -13,6 +13,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -32,10 +33,9 @@ info:
     WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36m◎ Removing [1mfeature-b[22m worktree in background[39m
-[2m↳[22m [2mBranch unmerged; to delete, run [90mwt remove feature-b -D[39m[22m
+[31m✗[39m [31mfatal: not a git repository: _REPO_.feature-a/../repo/.git/worktrees/repo.feature-a[39m

@@ -13,6 +13,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -75,108 +76,84 @@ exit_code: 0
   },
   {
     "branch": "feature-a",
-    "path": "_REPO_.feature-a",
+    "path": "../../../../repo.feature-a",
     "kind": "worktree",
     "commit": {
       "sha": "1b87d4731ea707905d15a726e193531c20affa14",
       "short_sha": "1b87d47",
-      "message": "Add feature-a file",
-      "timestamp": 1735718400
+      "message": "",
+      "timestamp": 0
     },
     "working_tree": {
       "staged": false,
       "modified": false,
       "untracked": false,
       "renamed": false,
-      "deleted": false,
-      "diff": {
-        "added": 0,
-        "deleted": 0
-      }
-    },
-    "main_state": "diverged",
-    "main": {
-      "ahead": 1,
-      "behind": 2
+      "deleted": false
     },
     "worktree": {
+      "state": "branch_worktree_mismatch",
       "detached": false
     },
     "is_main": false,
     "is_current": false,
     "is_previous": false,
-    "statusline": "feature-a  /u001b[2m↕/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓2/u001b[0m",
-    "symbols": "↕"
+    "statusline": "feature-a  /u001b[31m⚑/u001b[39m",
+    "symbols": "⚑"
   },
   {
     "branch": "feature-b",
-    "path": "_REPO_.feature-b",
+    "path": "../../../../repo.feature-b",
     "kind": "worktree",
     "commit": {
       "sha": "f62940fcec424585adf98625e722fdf990810614",
       "short_sha": "f62940f",
-      "message": "Add feature-b file",
-      "timestamp": 1735718400
+      "message": "",
+      "timestamp": 0
     },
     "working_tree": {
       "staged": false,
       "modified": false,
       "untracked": false,
       "renamed": false,
-      "deleted": false,
-      "diff": {
-        "added": 0,
-        "deleted": 0
-      }
-    },
-    "main_state": "diverged",
-    "main": {
-      "ahead": 1,
-      "behind": 2
+      "deleted": false
     },
     "worktree": {
+      "state": "branch_worktree_mismatch",
       "detached": false
     },
     "is_main": false,
     "is_current": false,
     "is_previous": false,
-    "statusline": "feature-b  /u001b[2m↕/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓2/u001b[0m",
-    "symbols": "↕"
+    "statusline": "feature-b  /u001b[31m⚑/u001b[39m",
+    "symbols": "⚑"
   },
   {
     "branch": "feature-c",
-    "path": "_REPO_.feature-c",
+    "path": "../../../../repo.feature-c",
     "kind": "worktree",
     "commit": {
       "sha": "345c7c93ad7c3d8f5b08380898d78e024019599c",
       "short_sha": "345c7c9",
-      "message": "Add feature-c file",
-      "timestamp": 1735718400
+      "message": "",
+      "timestamp": 0
     },
     "working_tree": {
       "staged": false,
       "modified": false,
       "untracked": false,
       "renamed": false,
-      "deleted": false,
-      "diff": {
-        "added": 0,
-        "deleted": 0
-      }
-    },
-    "main_state": "diverged",
-    "main": {
-      "ahead": 1,
-      "behind": 2
+      "deleted": false
     },
     "worktree": {
+      "state": "branch_worktree_mismatch",
       "detached": false
     },
     "is_main": false,
     "is_current": false,
     "is_previous": false,
-    "statusline": "feature-c  /u001b[2m↕/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓2/u001b[0m",
-    "symbols": "↕"
+    "statusline": "feature-c  /u001b[31m⚑/u001b[39m",
+    "symbols": "⚑"
   },
   {
     "branch": "feature",

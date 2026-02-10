@@ -145,11 +145,14 @@ This creates a new branch and worktree, then switches to it. Do your work, then 
 
 ```console
 $ wt list
-  Branch        Status        HEAD±    main↕  Remote⇅  Commit    Age   Message
-@ feature-auth  +   –      +53                         0e631add  1d    Initial commit
-^ main              ^⇡                         ⇡1      0e631add  1d    Initial commit
+  Branch        Status        HEAD±    main↕  Path                        Remote⇅  Commit    Age
+@ feature-auth  +   –      +53                ../repo.feature-auth                 0e631add  1d
+^ main              ^⇡                        .                            ⇡1      0e631add  1d
++ feature-a        ⚑                       ⋯  ../../../../repo.feature-a           1b87d473  ⋯
++ feature-b        ⚑                       ⋯  ../../../../repo.feature-b           f62940fc  ⋯
++ feature-c        ⚑                       ⋯  ../../../../repo.feature-c           345c7c93  ⋯
 
-○ Showing 2 worktrees, 1 with changes, 1 column hidden
+○ Showing 5 worktrees, 1 with changes, 1 column hidden
 
 ```
 

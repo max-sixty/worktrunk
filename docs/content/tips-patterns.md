@@ -53,12 +53,15 @@ The URL column in `wt list` shows each worktree's dev server:
 
 {% terminal() %}
 <span class="cmd">wt list</span>
-  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>URL</b>                     <b>Commit</b>    <b>Age</b>
-@ main           <span class=c>?</span> <span class=d>^</span><span class=d>⇅</span>                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>http://localhost:12107</span>  <span class=d>41ee0834</span>  <span class=d>4d</span>
-+ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>⇡3</span>      <span class=d>http://localhost:10703</span>  <span class=d>6814f02a</span>  <span class=d>30m</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>     <span class=d>|</span>     <span class=d>http://localhost:16460</span>  <span class=d>b772e68b</span>  <span class=d>5h</span>
+  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Path</b>                        <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>
+@ main           <span class=c>?</span> <span class=d>^</span><span class=d>⇅</span>                        .                            <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>41ee0834</span>  <span class=d>4d</span>
++ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  ../repo.feature-api          <span class=g>⇡3</span>      <span class=d>6814f02a</span>  <span class=d>30m</span>
++ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  ../repo.fix-auth               <span class=d>|</span>     <span class=d>b772e68b</span>  <span class=d>5h</span>
++ feature-a       <span class=r>⚑</span>                       <span class=d>⋯</span>  ../../../../repo.feature-a           <span class=d>1b87d473</span>  <span class=d>⋯</span>
++ feature-b       <span class=r>⚑</span>                       <span class=d>⋯</span>  ../../../../repo.feature-b           <span class=d>f62940fc</span>  <span class=d>⋯</span>
++ feature-c       <span class=r>⚑</span>                       <span class=d>⋯</span>  ../../../../repo.feature-c           <span class=d>345c7c93</span>  <span class=d>⋯</span>
 
-<span class=d>○</span> <span class=d>Showing 3 worktrees, 2 with changes, 2 ahead, 2 columns hidden</span>
+<span class=d>○</span> <span class=d>Showing 6 worktrees, 2 with changes, 2 ahead, 2 columns hidden</span>
 {% end %}
 
 <!-- END AUTO-GENERATED -->
