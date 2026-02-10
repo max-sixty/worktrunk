@@ -2,10 +2,12 @@ name: claude-mention
 # Runner versions pinned; see ci.yaml header comment for rationale.
 
 on:
+  issues:
+    types: [opened, edited]
   issue_comment:
-    types: [created]
+    types: [created, edited]
   pull_request_review_comment:
-    types: [created]
+    types: [created, edited]
 
 # Consistent with ci.yaml for cache compatibility
 env:
@@ -16,8 +18,9 @@ env:
 
 jobs:
   claude:
-    # Only run when comment contains @claude
+    # Only run when issue body or comment contains @claude
     if: |
+      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude')) ||
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
     runs-on: ubuntu-24.04

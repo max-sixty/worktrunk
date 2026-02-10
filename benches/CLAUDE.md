@@ -66,7 +66,7 @@ cargo run -p wt-perf -- setup typical-8 --persist
 #   branches-N      - N branches, 1 commit each
 #   branches-N-M    - N branches, M commits each
 #   divergent       - 200 branches × 20 commits (GH #461 scenario)
-#   select-test     - Config for wt select testing
+#   select-test     - Config for wt switch interactive picker testing
 
 # Invalidate caches for cold run
 cargo run -p wt-perf -- invalidate /tmp/wt-perf-typical-8/main

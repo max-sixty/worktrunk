@@ -274,13 +274,13 @@ impl Merge for MergeConfig {
     }
 }
 
-/// Configuration for the `wt select` command (now `wt switch` interactive picker).
+/// Configuration for the `wt switch` interactive picker.
 // TODO(#890): Rename to SwitchPickerConfig and [switch.picker] once migration is confirmed
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct SelectConfig {
     /// Pager command with flags for diff preview
     ///
-    /// Overrides git's core.pager for the select command's preview panel.
+    /// Overrides git's core.pager for the interactive picker's preview panel.
     /// Use this to specify pager flags needed for non-TTY contexts.
     ///
     /// Example: `pager = "delta --paging=never"`
@@ -342,7 +342,7 @@ pub struct OverridableConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge: Option<MergeConfig>,
 
-    /// Configuration for the `wt select` command
+    /// Configuration for the `wt switch` interactive picker
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub select: Option<SelectConfig>,
 }

@@ -2789,8 +2789,8 @@ fn test_list_skips_operations_for_prunable_worktrees(mut repo: TestRepo) {
 }
 
 /// Tests that branches far behind main show `…` instead of diff stats when
-/// skip_expensive_for_stale is enabled. This saves time in `wt select` for
-/// repos with many stale branches.
+/// skip_expensive_for_stale is enabled. This saves time in `wt switch` interactive
+/// picker for repos with many stale branches.
 ///
 /// The `…` indicator distinguishes "not computed" from "zero changes" (blank).
 #[rstest]
