@@ -37,9 +37,9 @@ fn xdg_config_home(home: &std::path::Path, strategy: Option<&dyn BaseStrategy>) 
 /// On macOS, this is `~/Library/Application Support/nushell` rather than `~/.config/nushell`.
 /// Falls back to XDG config home if the nu command fails.
 fn nushell_config_dir(home: &std::path::Path) -> PathBuf {
-    let nu_config_dir = std::process::Command::new("nu")
+    let nu_config_dir = crate::shell_exec::Cmd::new("nu")
         .args(["-c", "echo $nu.default-config-dir"])
-        .output()
+        .run()
         .ok()
         .and_then(|output| {
             if output.status.success() {
@@ -174,7 +174,8 @@ pub fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf, std::i
         super::Shell::Zsh => home.join(".zfunc").join(format!("_{}", cmd)),
         super::Shell::Fish => {
             // XDG_CONFIG_HOME defaults to ~/.config
-            let config_home = xdg_config_home(&home, strategy.as_ref().map(|s| s as &dyn BaseStrategy));
+            let config_home =
+                xdg_config_home(&home, strategy.as_ref().map(|s| s as &dyn BaseStrategy));
             config_home
                 .join("fish")
                 .join("completions")

@@ -448,14 +448,7 @@ fn configure_shell_file(
             init.generate()
                 .map_err(|e| format!("Failed to generate nushell wrapper: {e}"))?
         };
-        return configure_wrapper_file(
-            shell,
-            path,
-            &wrapper,
-            dry_run,
-            allow_create,
-            &config_line,
-        );
+        return configure_wrapper_file(shell, path, &wrapper, dry_run, allow_create, &config_line);
     }
 
     // For other shells, check if file exists
@@ -938,7 +931,13 @@ fn scan_for_uninstall(
     cmd: &str,
 ) -> Result<UninstallScanResult, String> {
     // For uninstall, always include PowerShell to clean up any existing profiles
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Nushell, Shell::PowerShell];
+    let default_shells = vec![
+        Shell::Bash,
+        Shell::Zsh,
+        Shell::Fish,
+        Shell::Nushell,
+        Shell::PowerShell,
+    ];
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 

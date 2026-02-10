@@ -64,7 +64,9 @@ pub fn handle_completions(shell: shell::Shell) -> anyhow::Result<()> {
             // Nushell uses template-based integration (shell wrapper + completions in one)
             // Unlike other shells, it doesn't use clap_complete
             let init = shell::ShellInit::with_prefix(shell, cmd_name.clone());
-            let code = init.generate().expect("Failed to generate nushell integration");
+            let code = init
+                .generate()
+                .expect("Failed to generate nushell integration");
             write!(stdout, "{}", code).expect("Failed to write to stdout");
         }
         shell::Shell::PowerShell => {
