@@ -687,6 +687,7 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // Note: env_remove above may cause insta-cmd to capture empty values in snapshots,
     // but correctness (isolating from host WORKTRUNK_* vars) trumps snapshot aesthetics.
     cmd.env("WORKTRUNK_CONFIG_PATH", "/nonexistent/test/config.toml");
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", "/etc/xdg/worktrunk/config.toml");
     // Remove $SHELL to avoid platform-dependent diagnostic output (macOS has /bin/zsh,
     // Linux has /bin/bash). Tests that need SHELL should set it explicitly.
     cmd.env_remove("SHELL");
@@ -1305,6 +1306,7 @@ impl TestRepo {
         configure_cli_command(cmd);
         self.configure_git_cmd(cmd);
         cmd.env("WORKTRUNK_CONFIG_PATH", &self.test_config_path);
+        cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", "/etc/xdg/worktrunk/config.toml");
         set_temp_home_env(cmd, self.home_path());
         self.configure_mock_commands(cmd);
     }
@@ -2218,6 +2220,7 @@ impl BareRepoTest {
     pub fn configure_wt_cmd(&self, cmd: &mut Command) {
         self.configure_git_cmd(cmd);
         cmd.env("WORKTRUNK_CONFIG_PATH", &self.test_config_path)
+            .env("WORKTRUNK_SYSTEM_CONFIG_PATH", "/etc/xdg/worktrunk/config.toml")
             .env_remove("NO_COLOR")
             .env_remove("CLICOLOR_FORCE");
     }
@@ -2607,6 +2610,11 @@ fn setup_snapshot_settings_for_paths_with_home(
     // Note: [^)'\s\x1b]+ stops at ), ', whitespace, or ANSI escape to avoid matching too much
     settings.add_filter(
         r"/private/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s\x1b]+",
+        "[PROJECT_ID]",
+    );
+    // macOS non-canonicalized: /var/folders/.../T/.tmpXXXXXX/path -> [PROJECT_ID]
+    settings.add_filter(
+        r"/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s\x1b]+",
         "[PROJECT_ID]",
     );
     // Linux: /tmp/.tmpXXXXXX/path -> [PROJECT_ID]
