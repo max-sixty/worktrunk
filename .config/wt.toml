@@ -19,4 +19,4 @@ doc = "RUSTDOCFLAGS='-Dwarnings' cargo doc --no-deps"
 url = "http://127.0.0.1:{{ branch | hash_port }}"
 
 [post-remove]
-docs = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
+docs = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/null || true"

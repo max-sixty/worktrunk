@@ -21,7 +21,7 @@ use super::tasks::{
 use super::types::{TaskError, TaskKind, TaskResult};
 
 // Tasks that are expensive because they require merge-base computation or merge simulation.
-// These are skipped for branches that are far behind the default branch (in wt select).
+// These are skipped for branches that are far behind the default branch (in `wt switch` interactive picker).
 // AheadBehind is NOT here - we use batch data for it instead of skipping.
 // CommittedTreesMatch is NOT here - it's a cheap tree comparison that aids integration detection.
 const EXPENSIVE_TASKS: &[TaskKind] = &[

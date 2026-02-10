@@ -3938,26 +3938,6 @@ mod windows_tests {
         );
     }
 
-    /// Test PowerShell select command shows appropriate error on Windows
-    #[rstest]
-    #[ignore = "ConPTY output not captured when cargo test redirects stdout"]
-    fn test_powershell_select_not_available(repo: TestRepo) {
-        // wt select is not available on Windows (it's a TUI command requiring Unix PTY)
-        let output = exec_through_wrapper("powershell", &repo, "select", &[]);
-
-        assert_eq!(
-            output.exit_code, 1,
-            "PowerShell: select should fail on Windows.\nOutput:\n{}",
-            output.combined
-        );
-        assert!(
-            output.combined.contains("not available on Windows"),
-            "PowerShell: select should show 'not available' message.\nOutput:\n{}",
-            output.combined
-        );
-        output.assert_no_directive_leaks();
-    }
-
     /// Test PowerShell switch from one worktree to another
     #[rstest]
     #[ignore = "ConPTY output not captured when cargo test redirects stdout"]

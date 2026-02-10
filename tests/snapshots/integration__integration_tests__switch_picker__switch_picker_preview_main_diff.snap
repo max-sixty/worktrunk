@@ -1,5 +1,5 @@
 ---
-source: tests/integration_tests/select.rs
+source: tests/integration_tests/switch_picker.rs
 expression: normalized
 ---
 > [QUERY]                                                     │[PREVIEW_HEADER]
