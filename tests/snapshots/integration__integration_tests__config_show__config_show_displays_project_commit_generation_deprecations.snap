@@ -13,6 +13,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -37,6 +38,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
+[36mSYSTEM CONFIG[39m  /etc/xdg/worktrunk/config.toml
+[2m↳[22m [2mNot found (optional)[22m
+
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [33m▲[39m [33mUser config uses deprecated config sections: [projects."github.com/example/repo".commit-generation] → [projects."github.com/example/repo".commit.generation][39m
 [2m↳[22m [2mWrote migrated [90mconfig.toml.new[39m. To apply:[22m

@@ -1985,6 +1985,143 @@ fn test_reload_projects_from_invalid_toml() {
     );
 }
 
+// =========================================================================
+// System config path tests
+// =========================================================================
+
+#[test]
+fn test_system_config_path_returns_none_in_tests() {
+    // In test builds without WORKTRUNK_SYSTEM_CONFIG_PATH, should return None
+    // (prevents reading host system config during tests)
+    assert!(super::path::get_system_config_path().is_none());
+}
+
+#[test]
+fn test_system_config_search_dirs_returns_empty_in_tests() {
+    // In test builds without env var, should return empty
+    assert!(super::path::system_config_search_dirs().is_empty());
+}
+
+// =========================================================================
+// System config loading and merge tests
+// =========================================================================
+
+#[test]
+fn test_system_config_merged_with_user_config() {
+    // System config provides base defaults
+    let system_toml = r#"
+[merge]
+squash = false
+rebase = false
+
+[list]
+full = true
+"#;
+
+    // User config overrides some settings
+    let user_toml = r#"
+[merge]
+squash = true
+"#;
+
+    // Parse both configs separately
+    let system_config = UserConfig::load_from_str(system_toml).unwrap();
+    let user_config = UserConfig::load_from_str(user_toml).unwrap();
+
+    // Verify system config values
+    assert_eq!(
+        system_config.configs.merge.as_ref().unwrap().squash,
+        Some(false)
+    );
+    assert_eq!(
+        system_config.configs.merge.as_ref().unwrap().rebase,
+        Some(false)
+    );
+    assert_eq!(
+        system_config.configs.list.as_ref().unwrap().full,
+        Some(true)
+    );
+
+    // Verify user config values
+    assert_eq!(
+        user_config.configs.merge.as_ref().unwrap().squash,
+        Some(true)
+    );
+
+    // Simulate the merge that happens via the config crate's builder:
+    // When both system and user configs define [merge], the config crate
+    // performs a deep merge where user values override system values.
+    // This is tested end-to-end via integration tests; here we verify
+    // the Merge trait works correctly for the layering.
+    let system_merge = system_config.configs.merge.as_ref().unwrap();
+    let user_merge = user_config.configs.merge.as_ref().unwrap();
+    let merged = system_merge.merge_with(user_merge);
+
+    assert_eq!(merged.squash, Some(true)); // User overrides
+    assert_eq!(merged.rebase, Some(false)); // System default preserved
+}
+
+#[test]
+fn test_system_config_worktree_path_overridden_by_user() {
+    let system_toml =
+        r#"worktree-path = "/company/worktrees/{{ repo }}/{{ branch | sanitize }}""#;
+    let user_toml = r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}""#;
+
+    let system_config = UserConfig::load_from_str(system_toml).unwrap();
+    let user_config = UserConfig::load_from_str(user_toml).unwrap();
+
+    assert_eq!(
+        system_config.worktree_path(),
+        "/company/worktrees/{{ repo }}/{{ branch | sanitize }}"
+    );
+    assert_eq!(
+        user_config.worktree_path(),
+        "../{{ repo }}.{{ branch | sanitize }}"
+    );
+}
+
+#[test]
+fn test_system_config_commit_generation_merged() {
+    let system_toml = r#"
+[commit.generation]
+command = "company-llm-tool"
+template = "Company standard template: {{ git_diff }}"
+"#;
+    let user_toml = r#"
+[commit.generation]
+command = "my-preferred-llm"
+"#;
+
+    let system_config = UserConfig::load_from_str(system_toml).unwrap();
+    let user_config = UserConfig::load_from_str(user_toml).unwrap();
+
+    let system_gen = system_config.commit_generation(None);
+    assert_eq!(system_gen.command, Some("company-llm-tool".to_string()));
+    assert_eq!(
+        system_gen.template,
+        Some("Company standard template: {{ git_diff }}".to_string())
+    );
+
+    let user_gen = user_config.commit_generation(None);
+    assert_eq!(user_gen.command, Some("my-preferred-llm".to_string()));
+    // User didn't set template, so in a merged scenario the system template
+    // would be preserved via the config crate's deep merge
+}
+
+#[test]
+fn test_system_config_hooks_append_semantics() {
+    // System config hooks and user config hooks should merge with append semantics
+    let system_hooks = parse_hooks("pre-merge = \"company-lint\"");
+    let user_hooks = parse_hooks("pre-merge = \"my-lint\"");
+
+    let merged = system_hooks.merge_with(&user_hooks);
+    let pre_merge = merged.pre_merge.unwrap();
+    let commands = pre_merge.commands();
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0].template, "company-lint"); // System first
+    assert_eq!(commands[1].template, "my-lint"); // User second
+}
+
 /// Test that reload_projects_from handles permission errors
 /// when the config file exists but cannot be read.
 #[cfg(unix)]

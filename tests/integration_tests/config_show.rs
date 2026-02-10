@@ -77,6 +77,135 @@ fn test_config_show_no_project_config(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
+// ==================== System Config Tests ====================
+
+#[rstest]
+fn test_config_show_with_system_config(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // Create system config in a temp directory
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(
+        &system_config_path,
+        r#"[merge]
+squash = true
+verify = true
+
+[commit.generation]
+command = "company-llm-tool"
+"#,
+    )
+    .unwrap();
+
+    // Create user config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_system_config_values_used_as_defaults(repo: TestRepo) {
+    // Create system config with specific merge defaults
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(
+        &system_config_path,
+        r#"worktree-path = "/company/worktrees/{{ repo }}/{{ branch | sanitize }}"
+"#,
+    )
+    .unwrap();
+
+    // No user config — system config should provide the default
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
+    cmd.arg("list").arg("--format=json").current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+
+    // The worktree paths in the JSON output should use the system config template
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let worktrees = json.as_array().unwrap();
+
+    // Non-primary worktrees should use the system config path template
+    for wt in worktrees {
+        if wt["is_primary"].as_bool() == Some(false) {
+            let path = wt["path"].as_str().unwrap();
+            assert!(
+                path.contains("/company/worktrees/"),
+                "Expected system config worktree path, got: {path}"
+            );
+        }
+    }
+}
+
+#[rstest]
+fn test_user_config_overrides_system_config(repo: TestRepo) {
+    // Create system config
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(
+        &system_config_path,
+        r#"worktree-path = "/company/worktrees/{{ repo }}/{{ branch | sanitize }}"
+"#,
+    )
+    .unwrap();
+
+    // Create user config that overrides the worktree path
+    let user_config_dir = tempfile::tempdir().unwrap();
+    let user_config_path = user_config_dir.path().join("config.toml");
+    fs::write(
+        &user_config_path,
+        r#"worktree-path = "/user/worktrees/{{ repo }}/{{ branch | sanitize }}"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
+    cmd.env("WORKTRUNK_CONFIG_PATH", &user_config_path);
+    cmd.arg("list").arg("--format=json").current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let worktrees = json.as_array().unwrap();
+
+    // Non-primary worktrees should use user config path (overrides system)
+    for wt in worktrees {
+        if wt["is_primary"].as_bool() == Some(false) {
+            let path = wt["path"].as_str().unwrap();
+            assert!(
+                path.contains("/user/worktrees/"),
+                "Expected user config to override system, got: {path}"
+            );
+        }
+    }
+}
+
 #[rstest]
 fn test_config_show_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();

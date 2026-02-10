@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 // Re-export public types
 pub use merge::Merge;
-pub use path::{get_config_path, set_config_path};
+pub use path::{get_config_path, get_system_config_path, set_config_path, system_config_search_dirs};
 pub use resolved::ResolvedConfig;
 pub use schema::{find_unknown_keys, valid_user_config_keys};
 pub use sections::{
@@ -106,19 +106,39 @@ pub struct UserConfig {
 }
 
 impl UserConfig {
-    /// Load configuration from config file and environment variables.
+    /// Load configuration from system config, user config, and environment variables.
     ///
     /// Configuration is loaded in the following order (later sources override earlier ones):
     /// 1. Default values
-    /// 2. Config file (see struct documentation for platform-specific paths)
-    /// 3. Environment variables (WORKTRUNK_*)
+    /// 2. System config (organization-wide defaults)
+    /// 3. User config file (personal preferences)
+    /// 4. Environment variables (WORKTRUNK_*)
     pub fn load() -> Result<Self, ConfigError> {
         // Note: worktree-path has no default set here - it's handled by the getter
         // which returns the default when None. This allows us to distinguish
         // "user explicitly set this" from "using default".
         let mut builder = Config::builder();
 
-        // Add config file if it exists
+        // Add system config if it exists (lowest priority file source)
+        if let Some(system_path) = path::get_system_config_path() {
+            if let Ok(content) = std::fs::read_to_string(&system_path) {
+                // Warn about unknown fields in system config
+                let unknown_keys: std::collections::HashMap<_, _> = find_unknown_keys(&content)
+                    .into_iter()
+                    .filter(|(k, _)| {
+                        !super::deprecation::DEPRECATED_SECTION_KEYS.contains(&k.as_str())
+                    })
+                    .collect();
+                super::deprecation::warn_unknown_fields::<UserConfig>(
+                    &system_path,
+                    &unknown_keys,
+                    "System config",
+                );
+            }
+            builder = builder.add_source(File::from(system_path));
+        }
+
+        // Add user config file if it exists (overrides system config)
         let config_path = get_config_path();
         if let Some(config_path) = config_path.as_ref()
             && config_path.exists()

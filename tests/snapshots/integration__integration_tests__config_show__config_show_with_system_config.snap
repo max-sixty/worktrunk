@@ -9,7 +9,12 @@ info:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
@@ -21,6 +26,7 @@ info:
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -33,13 +39,19 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36mSYSTEM CONFIG[39m  /etc/xdg/worktrunk/config.toml
-[2m↳[22m [2mNot found (optional)[22m
+[36mSYSTEM CONFIG[39m  [PROJECT_ID]
+[107m [0m [1m[36m[merge]
+[107m [0m squash = [33mtrue
+[107m [0m verify = [33mtrue
+[107m [0m 
+[107m [0m [1m[36m[commit.generation]
+[107m [0m command = [32m"company-llm-tool"
 
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 
-[2m[36mPROJECT CONFIG[39m  Not in a git repository[22m
+[36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
+[2m↳[22m [2mNot found[22m
 
 [36mSHELL INTEGRATION[39m
 [33m▲[39m [33mShell integration not active[39m
