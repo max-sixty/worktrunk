@@ -702,13 +702,10 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                         Shell::PowerShell => format!("Get-Command {cmd}"),
                         _ => format!("type {cmd}"),
                     };
-                    writeln!(
-                        out,
-                        "{}",
-                        hint_message(cformat!(
-                            "To verify wrapper loaded: <bright-black>{verify_cmd}</>"
-                        ))
-                    )?;
+                    let hint = hint_message(cformat!(
+                        "To verify wrapper loaded: <bright-black>{verify_cmd}</>"
+                    ));
+                    writeln!(out, "{hint}")?;
                 }
             }
             ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
