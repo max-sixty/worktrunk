@@ -2484,6 +2484,33 @@ fn test_switch_mr_base_conflict(repo: TestRepo) {
 fn test_switch_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
     // Create a feature branch and push it
     repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Set origin URL to GitLab-style so find_remote_for_repo() can match owner/test-repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    // Redirect gitlab.com URLs to the local bare remote
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
 
     // glab api projects/:id/merge_requests/<number> format
     let glab_response = r#"{
@@ -2504,6 +2531,71 @@ fn test_switch_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
         configure_mock_glab_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_same_repo", cmd);
+    });
+}
+
+/// Test same-repo MR with a limited fetch refspec (single-branch clone scenario).
+///
+/// In repos with a limited refspec (e.g., `+refs/heads/main:refs/remotes/origin/main`),
+/// `git fetch origin <branch>` only updates FETCH_HEAD but doesn't create the remote
+/// tracking branch. This caused `wt switch mr:101` to fail with "No branch named X".
+#[rstest]
+fn test_switch_mr_same_repo_limited_refspec(#[from(repo_with_remote)] mut repo: TestRepo) {
+    // Create a feature branch and push it to the remote
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Set origin URL to GitLab-style so find_remote_for_repo() can match owner/test-repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    // Redirect gitlab.com URLs to the local bare remote
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    // Restrict fetch refspec to only main, simulating a single-branch clone
+    repo.run_git(&[
+        "config",
+        "remote.origin.fetch",
+        "+refs/heads/main:refs/remotes/origin/main",
+    ]);
+
+    let glab_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "author": {"username": "alice"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature-auth",
+        "source_project_id": 123,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/101"
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_same_repo_limited_refspec", cmd);
     });
 }
 
