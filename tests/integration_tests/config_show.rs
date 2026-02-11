@@ -211,6 +211,99 @@ fn test_user_config_overrides_system_config(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_config_show_system_config_shows_platform_default_path(repo: TestRepo) {
+    // When WORKTRUNK_SYSTEM_CONFIG_PATH is not set, config show should display
+    // the platform-specific default path (e.g., /etc/xdg/worktrunk/config.toml
+    // on Linux, /Library/Application Support/worktrunk/config.toml on macOS)
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.env_remove("WORKTRUNK_SYSTEM_CONFIG_PATH");
+    cmd.arg("config").arg("show").current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should show a system config path containing "worktrunk/config.toml"
+    assert!(
+        stderr.contains("SYSTEM CONFIG") && stderr.contains("worktrunk/config.toml"),
+        "Expected platform default system config path in output, got:\n{stderr}"
+    );
+}
+
+#[rstest]
+fn test_system_config_found_via_xdg_config_dirs(repo: TestRepo) {
+    // Create system config in a custom XDG directory
+    let xdg_dir = tempfile::tempdir().unwrap();
+    let config_dir = xdg_dir.path().join("worktrunk");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("config.toml"),
+        r#"worktree-path = "/xdg-org/{{ repo }}/{{ branch | sanitize }}"
+"#,
+    )
+    .unwrap();
+
+    // Use XDG_CONFIG_DIRS instead of WORKTRUNK_SYSTEM_CONFIG_PATH
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.env_remove("WORKTRUNK_SYSTEM_CONFIG_PATH");
+    cmd.env("XDG_CONFIG_DIRS", xdg_dir.path());
+    cmd.arg("list")
+        .arg("--format=json")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let worktrees = json.as_array().unwrap();
+
+    for wt in worktrees {
+        if wt["is_primary"].as_bool() == Some(false) {
+            let path = wt["path"].as_str().unwrap();
+            assert!(
+                path.contains("/xdg-org/"),
+                "Expected XDG_CONFIG_DIRS system config, got: {path}"
+            );
+        }
+    }
+}
+
+#[rstest]
+fn test_system_config_xdg_dirs_set_but_no_config_found(repo: TestRepo) {
+    // When XDG_CONFIG_DIRS is set but contains no worktrunk config,
+    // system config should be None (no fallback to platform defaults)
+    let empty_xdg_dir = tempfile::tempdir().unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.env_remove("WORKTRUNK_SYSTEM_CONFIG_PATH");
+    cmd.env("XDG_CONFIG_DIRS", empty_xdg_dir.path());
+    cmd.arg("list")
+        .arg("--format=json")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+
+    // Without system config, worktree paths should use the default template
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let worktrees = json.as_array().unwrap();
+
+    for wt in worktrees {
+        if wt["is_primary"].as_bool() == Some(false) {
+            let path = wt["path"].as_str().unwrap();
+            assert!(
+                !path.contains("/xdg-org/"),
+                "Should not use XDG system config path, got: {path}"
+            );
+        }
+    }
+}
+
+#[rstest]
 fn test_config_show_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
 
