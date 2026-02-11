@@ -316,16 +316,7 @@ Worktrunk needs shell integration to change directories when switching worktrees
 
   [2mwt config shell install[0m
 
-Or manually add to the shell config:
-
-  [2m# For bash: add to ~/.bashrc[0m
-  [2meval "$(wt config shell init bash)"[0m
-  [2m[0m
-  [2m# For zsh: add to ~/.zshrc[0m
-  [2meval "$(wt config shell init zsh)"[0m
-  [2m[0m
-  [2m# For fish: add to ~/.config/fish/config.fish[0m
-  [2mwt config shell init fish | source[0m
+For manual setup, see [2mwt config shell init --help[0m.
 
 Without shell integration, [2mwt switch[0m prints the target directory but cannot [2mcd[0m into it.
 

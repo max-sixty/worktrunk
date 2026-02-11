@@ -313,18 +313,7 @@ Worktrunk needs shell integration to change directories when switching worktrees
 wt config shell install
 ```
 
-Or manually add to the shell config:
-
-```bash
-# For bash: add to ~/.bashrc
-eval "$(wt config shell init bash)"
-
-# For zsh: add to ~/.zshrc
-eval "$(wt config shell init zsh)"
-
-# For fish: add to ~/.config/fish/config.fish
-wt config shell init fish | source
-```
+For manual setup, see `wt config shell init --help`.
 
 Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
 
