@@ -2636,6 +2636,54 @@ fn test_switch_mr_same_repo_no_remote(#[from(repo_with_remote)] repo: TestRepo) 
     });
 }
 
+/// Test same-repo MR with malformed web_url (missing /-/ separator)
+#[rstest]
+fn test_switch_mr_malformed_web_url_no_separator(#[from(repo_with_remote)] repo: TestRepo) {
+    let glab_response = r#"{
+        "title": "Fix bug",
+        "author": {"username": "alice"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature",
+        "source_project_id": 123,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/merge_requests/101"
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_malformed_web_url", cmd);
+    });
+}
+
+/// Test same-repo MR with unparseable project URL (has /-/ but no owner/repo)
+#[rstest]
+fn test_switch_mr_malformed_web_url_no_project(#[from(repo_with_remote)] repo: TestRepo) {
+    let glab_response = r#"{
+        "title": "Fix bug",
+        "author": {"username": "alice"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature",
+        "source_project_id": 123,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/-/merge_requests/101"
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_malformed_web_url_no_project", cmd);
+    });
+}
+
 /// Test error when MR is not found
 #[rstest]
 fn test_switch_mr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
