@@ -257,31 +257,26 @@ impl ProgressiveTable {
         final_footer: String,
     ) -> std::io::Result<()> {
         if self.row_count < self.total_row_count {
-            // Overflow: erase skeleton, rebuild with all rows, print full table
+            // Overflow: erase skeleton, print complete table (scrolls naturally)
             debug_assert!(
                 self.rendered,
                 "overflow finalize should only be called after render_skeleton"
             );
             let mut stdout = stdout();
-
-            let lines_up = self.lines.len();
-            if lines_up > 0 {
-                stdout.execute(MoveUp(lines_up as u16))?;
-            }
+            stdout.execute(MoveUp(self.lines.len() as u16))?;
             stdout.execute(MoveToColumn(0))?;
             stdout.execute(Clear(ClearType::FromCursorDown))?;
-
-            // Rebuild lines with all rows, then print via print_all
-            let header = std::mem::take(&mut self.lines[0]);
-            self.lines.clear();
-            self.lines.push(header);
-            for row in final_rows {
-                self.lines.push(truncate_visible(&row, self.max_width));
+            writeln!(stdout, "{}", self.lines[0])?; // header (unchanged)
+            for row in &final_rows {
+                writeln!(stdout, "{}", truncate_visible(row, self.max_width))?;
             }
-            self.lines.push(String::new()); // spacer
-            self.lines
-                .push(truncate_visible(&final_footer, self.max_width));
-            self.print_all()
+            writeln!(stdout)?;
+            writeln!(
+                stdout,
+                "{}",
+                truncate_visible(&final_footer, self.max_width)
+            )?;
+            stdout.flush()
         } else {
             // Normal: update rows in-place + footer
             for (idx, row) in final_rows.into_iter().enumerate() {
