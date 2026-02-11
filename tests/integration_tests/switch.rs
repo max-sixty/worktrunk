@@ -2660,7 +2660,7 @@ fn test_switch_mr_malformed_web_url_no_separator(#[from(repo_with_remote)] repo:
     });
 }
 
-/// Test same-repo MR with unparseable project URL (has /-/ but no owner/repo)
+/// Test same-repo MR with unparsable project URL (has /-/ but no owner/repo)
 #[rstest]
 fn test_switch_mr_malformed_web_url_no_project(#[from(repo_with_remote)] repo: TestRepo) {
     let glab_response = r#"{
