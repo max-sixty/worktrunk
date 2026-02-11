@@ -61,7 +61,13 @@ impl ProgressiveTable {
         initial_footer: String,
         max_width: usize,
     ) -> Self {
-        let term_height = terminal_size::terminal_size().map(|(_, h)| h.0 as usize);
+        // Only check terminal height when stdout is a TTY. terminal_size() falls
+        // back to stderr/stdin, so it can return Some even for piped stdout.
+        let term_height = if stdout().is_terminal() {
+            terminal_size::terminal_size().map(|(_, h)| h.0 as usize)
+        } else {
+            None
+        };
         Self::new_with_height(header, skeletons, initial_footer, max_width, term_height)
     }
 
@@ -245,7 +251,11 @@ impl ProgressiveTable {
     /// When overflowing (skeleton showed a subset of rows), erases the skeleton
     /// and prints the complete table — the output scrolls naturally, avoiding
     /// the `MoveUp`-into-scrollback problem.
-    pub fn finalize(&mut self, final_rows: &[String], final_footer: String) -> std::io::Result<()> {
+    pub fn finalize(
+        &mut self,
+        final_rows: Vec<String>,
+        final_footer: String,
+    ) -> std::io::Result<()> {
         if self.row_count < self.total_row_count {
             // Overflow: erase skeleton, print complete table
             debug_assert!(
@@ -263,7 +273,7 @@ impl ProgressiveTable {
 
             // Print complete table — scrolls naturally
             writeln!(stdout, "{}", self.lines[0])?; // header (unchanged)
-            for row in final_rows {
+            for row in &final_rows {
                 writeln!(stdout, "{}", truncate_visible(row, self.max_width))?;
             }
             writeln!(stdout)?; // spacer
@@ -275,18 +285,12 @@ impl ProgressiveTable {
             stdout.flush()
         } else {
             // Normal: update rows in-place + footer
-            for (idx, row) in final_rows.iter().enumerate() {
-                self.update_row(idx, row.clone());
+            for (idx, row) in final_rows.into_iter().enumerate() {
+                self.update_row(idx, row);
             }
             self.update_footer(final_footer);
             self.flush()
         }
-    }
-
-    /// Whether the skeleton is showing fewer rows than the total (test helper).
-    #[cfg(test)]
-    fn is_overflowing(&self) -> bool {
-        self.row_count < self.total_row_count
     }
 
     /// Check if output is going to a TTY.
@@ -390,7 +394,7 @@ mod tests {
 
         assert_eq!(table.row_count, 3);
         assert_eq!(table.total_row_count, 3);
-        assert!(!table.is_overflowing());
+        assert_eq!(table.row_count, table.total_row_count);
     }
 
     #[test]
@@ -421,7 +425,7 @@ mod tests {
 
         // Without render_skeleton(), finalize updates footer but doesn't print
         table
-            .finalize(&["row-final".to_string()], "Complete!".to_string())
+            .finalize(vec!["row-final".to_string()], "Complete!".to_string())
             .unwrap();
 
         // Footer IS updated (the data changes), but no output since not rendered
@@ -492,7 +496,7 @@ mod tests {
 
         assert_eq!(table.row_count, 4);
         assert_eq!(table.total_row_count, 10);
-        assert!(table.is_overflowing());
+        assert!(table.row_count < table.total_row_count);
         // header + 4 visible rows + spacer + footer = 7 lines
         assert_eq!(table.lines.len(), 7);
         assert_eq!(table.lines[0], "header");
@@ -516,7 +520,7 @@ mod tests {
 
         assert_eq!(table.row_count, 3);
         assert_eq!(table.total_row_count, 3);
-        assert!(!table.is_overflowing());
+        assert_eq!(table.row_count, table.total_row_count);
     }
 
     #[test]
@@ -532,7 +536,7 @@ mod tests {
         );
 
         assert_eq!(table.row_count, 5);
-        assert!(!table.is_overflowing());
+        assert_eq!(table.row_count, table.total_row_count);
     }
 
     #[test]
@@ -549,7 +553,7 @@ mod tests {
 
         assert_eq!(table.row_count, 4);
         assert_eq!(table.total_row_count, 5);
-        assert!(table.is_overflowing());
+        assert!(table.row_count < table.total_row_count);
     }
 
     #[test]
@@ -586,7 +590,7 @@ mod tests {
 
         assert_eq!(table.row_count, 0);
         assert_eq!(table.total_row_count, 5);
-        assert!(table.is_overflowing());
+        assert!(table.row_count < table.total_row_count);
         // header + 0 rows + spacer + footer = 3 lines
         assert_eq!(table.lines.len(), 3);
     }
@@ -605,6 +609,6 @@ mod tests {
 
         assert_eq!(table.row_count, 10);
         assert_eq!(table.total_row_count, 10);
-        assert!(!table.is_overflowing());
+        assert_eq!(table.row_count, table.total_row_count);
     }
 }

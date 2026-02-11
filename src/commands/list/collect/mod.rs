@@ -822,7 +822,7 @@ pub fn collect(
                 .iter()
                 .map(|item| layout.format_list_item_line(item))
                 .collect();
-            table.finalize(&rows, final_msg)?;
+            table.finalize(rows, final_msg)?;
         } else {
             // Non-TTY: output to stdout (same as buffered mode)
             // Progressive skeleton was suppressed; now output the final table
