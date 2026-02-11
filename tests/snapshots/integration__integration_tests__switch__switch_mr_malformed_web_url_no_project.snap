@@ -39,4 +39,4 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mFetching MR !101...[39m
-[31m✗[39m [31mFailed to parse GitLab project URL from web_url: https://gitlab.com[39m
+[31m✗[39m [31mFailed to parse GitLab project from MR URL: https://gitlab.com[39m

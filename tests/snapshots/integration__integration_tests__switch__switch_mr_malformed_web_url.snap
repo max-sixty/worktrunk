@@ -39,4 +39,4 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mFetching MR !101...[39m
-[31m✗[39m [31mGitLab MR web_url missing /-/ separator: https://gitlab.com/owner/test-repo/merge_requests/101[39m
+[31m✗[39m [31mGitLab MR URL missing /-/ separator: https://gitlab.com/owner/test-repo/merge_requests/101[39m

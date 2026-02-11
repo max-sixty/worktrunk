@@ -157,14 +157,12 @@ fn fetch_mr_info(mr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefIn
 
     // Parse host/owner/repo from the web URL (always available from the MR API).
     // e.g., "https://gitlab.com/owner/repo/-/merge_requests/101" → host/owner/repo
-    let (project_url, _) = response.web_url.split_once("/-/").with_context(|| {
-        format!(
-            "GitLab MR web_url missing /-/ separator: {}",
-            response.web_url
-        )
-    })?;
+    let (project_url, _) = response
+        .web_url
+        .split_once("/-/")
+        .with_context(|| format!("GitLab MR URL missing /-/ separator: {}", response.web_url))?;
     let parsed_url = crate::git::GitRemoteUrl::parse(project_url).ok_or_else(|| {
-        anyhow::anyhow!("Failed to parse GitLab project URL from web_url: {project_url}")
+        anyhow::anyhow!("Failed to parse GitLab project from MR URL: {project_url}")
     })?;
 
     // Don't fetch project URLs here - defer until after branch_tracks_ref check
