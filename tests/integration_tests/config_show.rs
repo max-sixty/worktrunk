@@ -1492,7 +1492,15 @@ fn test_config_show_powershell_detected_via_psmodulepath(mut repo: TestRepo, tem
     )
     .unwrap();
 
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    let mut settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    // PowerShell config state is platform-dependent: the profile path differs between
+    // Windows (Documents\PowerShell\) and Unix (~/.config/powershell/). The broad
+    // PowerShell filter strips status lines, but the Get-Command hint and "To configure"
+    // hint also vary by platform (present only when profile is found). Filter them too.
+    settings.add_filter(r"(?m)^.*Get-Command.*\n", "");
+    settings.add_filter(r"(?m)^.*To configure, run.*\n", "");
+    // Collapse triple newlines that may result from stripping adjacent lines
+    settings.add_filter(r"\n\n\n", "\n\n");
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);

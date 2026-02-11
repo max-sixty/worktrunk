@@ -757,7 +757,6 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mNo [90mbash[39m shell extension & completions in ~/.bashrc[22m
         [2m↳[22m [2mNo [90mfish[39m shell extension in ~/.config/fish/functions/wt.fish[22m
-        [2m↳[22m [2mNo [90mpowershell[39m shell extension in ~/.config/powershell/Microsoft.PowerShell_profile.ps1[22m
         [2m↳[22m [2mNo [90mfish[39m completions in ~/.config/fish/completions/wt.fish[22m
 
         [32m✓[39m [32mRemoved integration from 1 shell[39m
@@ -814,7 +813,6 @@ fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mRemoved shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mNo [90mfish[39m shell extension in ~/.config/fish/functions/wt.fish[22m
-        [2m↳[22m [2mNo [90mpowershell[39m shell extension in ~/.config/powershell/Microsoft.PowerShell_profile.ps1[22m
         [2m↳[22m [2mNo [90mfish[39m completions in ~/.config/fish/completions/wt.fish[22m
 
         [32m✓[39m [32mRemoved integration from 2 shells[39m
