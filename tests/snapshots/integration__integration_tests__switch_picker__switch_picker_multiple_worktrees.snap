@@ -1,31 +1,31 @@
 ---
 source: tests/integration_tests/switch_picker.rs
-expression: normalized
+expression: screen
 ---
-> [QUERY]                                                     │[PREVIEW_HEADER]
+> [QUERY]
     Branch       Status        HEAD±    main↕  Remote⇅  Age │Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
-> @ main             ^                                  16h │
-  + feature-one      _                                  16h │○ main has no uncommitted changes
-  + feature-two      _                                  16h │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
-                                                            │
+> @ main             ^                                  [TIME] │                                                           
+  + feature-one      _                                  [TIME] │○ main has no uncommitted changes                          
+  + feature-two      _                                  [TIME] │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
+                                                            │                                                           
                                                             │

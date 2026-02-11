@@ -56,6 +56,85 @@ struct OutputState {
     directive_file: Option<PathBuf>,
     /// Buffered target directory for execute() in interactive mode
     target_dir: Option<PathBuf>,
+    /// Mapping from canonical path prefix to logical (symlink) prefix.
+    /// Computed once at init from `$PWD` vs `std::env::current_dir()`.
+    symlink_mapping: Option<SymlinkMapping>,
+}
+
+/// Maps canonical path prefixes to logical (symlink-preserved) prefixes.
+///
+/// When a user navigates via symlink (e.g., `/workspace/project` -> `/mnt/wsl/workspace/project`),
+/// `std::env::current_dir()` returns the canonical path while `$PWD` preserves the symlink.
+/// This mapping allows translating canonical paths back to the user's logical path
+/// for `cd` directives, so the user stays in their symlink tree.
+#[derive(Debug, Clone)]
+struct SymlinkMapping {
+    canonical_prefix: PathBuf,
+    logical_prefix: PathBuf,
+}
+
+impl SymlinkMapping {
+    /// Compute a symlink mapping from `$PWD` (logical) and `current_dir()` (canonical).
+    ///
+    /// Returns `None` if:
+    /// - `$PWD` is not set
+    /// - `$PWD` equals `current_dir()` (no symlink)
+    /// - `$PWD` doesn't canonicalize to `current_dir()` (stale `$PWD`)
+    /// - No common suffix found (leaf-level symlink with different name)
+    fn compute() -> Option<Self> {
+        let logical_cwd = PathBuf::from(std::env::var("PWD").ok()?);
+        let canonical_cwd = std::env::current_dir().ok()?;
+
+        // No symlink: paths are identical
+        if logical_cwd == canonical_cwd {
+            return None;
+        }
+
+        // Verify $PWD is fresh — it must canonicalize to the same path as current_dir()
+        let canonical_of_pwd = dunce::canonicalize(&logical_cwd).ok()?;
+        if canonical_of_pwd != canonical_cwd {
+            return None;
+        }
+
+        // Find common suffix by matching components from the end
+        let logical_components: Vec<_> = logical_cwd.components().collect();
+        let canonical_components: Vec<_> = canonical_cwd.components().collect();
+
+        let common_suffix_len = logical_components
+            .iter()
+            .rev()
+            .zip(canonical_components.iter().rev())
+            .take_while(|(l, c)| l == c)
+            .count();
+
+        // No common suffix means the leaf names differ — can't map
+        if common_suffix_len == 0 {
+            return None;
+        }
+
+        // Build prefixes from the non-matching leading components
+        let logical_prefix: PathBuf = logical_components
+            [..logical_components.len() - common_suffix_len]
+            .iter()
+            .collect();
+        let canonical_prefix: PathBuf = canonical_components
+            [..canonical_components.len() - common_suffix_len]
+            .iter()
+            .collect();
+
+        Some(SymlinkMapping {
+            canonical_prefix,
+            logical_prefix,
+        })
+    }
+
+    /// Translate a canonical path to its logical equivalent.
+    ///
+    /// Returns `None` if the path doesn't start with the canonical prefix.
+    fn to_logical_path(&self, canonical_path: &Path) -> Option<PathBuf> {
+        let remainder = canonical_path.strip_prefix(&self.canonical_prefix).ok()?;
+        Some(self.logical_prefix.join(remainder))
+    }
 }
 
 /// Get or lazily initialize the global output state.
@@ -69,9 +148,12 @@ fn get_state() -> &'static Mutex<OutputState> {
             .filter(|s| !s.trim().is_empty())
             .map(PathBuf::from);
 
+        let symlink_mapping = SymlinkMapping::compute();
+
         Mutex::new(OutputState {
             directive_file,
             target_dir: None,
+            symlink_mapping,
         })
     })
 }
@@ -110,14 +192,32 @@ pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
     let path = path.as_ref();
     let mut guard = get_state().lock().expect("OUTPUT_STATE lock poisoned");
 
-    // Store for execute() to use
+    // Store for execute() to use as process cwd
     guard.target_dir = Some(path.to_path_buf());
 
     // Write to directive file if set
     if guard.directive_file.is_some() {
+        // Clone mapping out of lock — the canonicalize check below does I/O
+        let symlink_mapping = guard.symlink_mapping.clone();
         drop(guard); // Release lock before I/O
 
-        let path_str = path.to_string_lossy();
+        // Translate canonical path to logical (symlink-preserved) path for the cd directive.
+        // The user's shell should stay in their symlink tree — e.g., if they navigated via
+        // /workspace/project (symlink to /mnt/wsl/workspace/project), the cd should use
+        // /workspace/project.feature, not /mnt/wsl/workspace/project.feature.
+        //
+        // Verify the translation round-trips correctly: canonicalize(translated) must equal
+        // canonicalize(original). This prevents mis-translation if the prefix mapping is broad
+        // and an unrelated path happens to exist at the translated location.
+        let directive_path = symlink_mapping
+            .as_ref()
+            .and_then(|m| m.to_logical_path(path))
+            .filter(|translated| {
+                dunce::canonicalize(translated).ok() == dunce::canonicalize(path).ok()
+            })
+            .unwrap_or_else(|| path.to_path_buf());
+
+        let path_str = directive_path.to_string_lossy();
         // Escape based on shell type. Both shell families use single-quoted strings
         // where contents are literal, but they escape embedded quotes differently:
         // - PowerShell: double the quote ('it''s')
@@ -487,6 +587,69 @@ mod tests {
             "Reset should produce ANSI escape code, got: {:?}",
             output
         );
+    }
+
+    // ========================================================================
+    // Symlink Mapping Tests
+    // ========================================================================
+
+    #[test]
+    fn test_symlink_mapping_to_logical_path() {
+        let mapping = SymlinkMapping {
+            canonical_prefix: PathBuf::from("/mnt/wsl"),
+            logical_prefix: PathBuf::from("/"),
+        };
+
+        // Target under canonical prefix should be translated
+        let result = mapping.to_logical_path(Path::new("/mnt/wsl/workspace/project.feature"));
+        assert_eq!(result, Some(PathBuf::from("/workspace/project.feature")));
+    }
+
+    #[test]
+    fn test_symlink_mapping_preserves_deep_paths() {
+        let mapping = SymlinkMapping {
+            canonical_prefix: PathBuf::from("/mnt/wsl"),
+            logical_prefix: PathBuf::from("/"),
+        };
+
+        let result = mapping.to_logical_path(Path::new("/mnt/wsl/a/b/c/d"));
+        assert_eq!(result, Some(PathBuf::from("/a/b/c/d")));
+    }
+
+    #[test]
+    fn test_symlink_mapping_no_match() {
+        let mapping = SymlinkMapping {
+            canonical_prefix: PathBuf::from("/mnt/wsl"),
+            logical_prefix: PathBuf::from("/"),
+        };
+
+        // Path outside canonical prefix returns None
+        let result = mapping.to_logical_path(Path::new("/other/path"));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_symlink_mapping_macos_private_var() {
+        // macOS: /var -> /private/var
+        let mapping = SymlinkMapping {
+            canonical_prefix: PathBuf::from("/private"),
+            logical_prefix: PathBuf::from("/"),
+        };
+
+        let result = mapping.to_logical_path(Path::new("/private/var/folders/project.feature"));
+        assert_eq!(result, Some(PathBuf::from("/var/folders/project.feature")));
+    }
+
+    #[test]
+    fn test_symlink_mapping_equal_length_prefixes() {
+        // When logical and canonical prefixes have the same depth
+        let mapping = SymlinkMapping {
+            canonical_prefix: PathBuf::from("/real/path"),
+            logical_prefix: PathBuf::from("/link/path"),
+        };
+
+        let result = mapping.to_logical_path(Path::new("/real/path/workspace/project"));
+        assert_eq!(result, Some(PathBuf::from("/link/path/workspace/project")));
     }
 
     #[test]
