@@ -27,7 +27,7 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
-    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "1"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
     WT_TEST_EPOCH: "1735776000"
@@ -52,6 +52,9 @@ exit_code: 0
 [2m○[22m [1mbash[22m: Already configured shell extension & completions @ ~/.bashrc:1
 [107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init bash)"[0m[2m; [0m[2m[35mfi[0m[2m
 [2m↳[22m [2mTo verify wrapper loaded: [90mtype wt[39m[22m
+[2m○[22m [1mpowershell[22m: Already configured shell extension & completions @ ~/.config/powershell/Microsoft.PowerShell_profile.ps1:1
+[107m [0m [2m[0m[2m[35mif[0m[2m ([0m[2m[34mGet-Command[0m[2m wt [0m[2m[36m-ErrorAction[0m[2m SilentlyContinue) { [0m[2m[34mInvoke-Expression[0m[2m (& [0m[2m[34mwt[0m[2m config shell init powershell [0m[2m[36m|[0m[2m [0m[2m[34mOut-String[0m[2m) }
+[2m↳[22m [2mTo verify wrapper loaded: [90mGet-Command wt[39m[22m
 [2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
 [2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
 
