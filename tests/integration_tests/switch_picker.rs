@@ -318,6 +318,9 @@ fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
     // Relative timestamps (1d, 16h, etc.)
     settings.add_filter(r"\b\d+[dhms]\b", "[TIME]");
 
+    // Normalize trailing whitespace (git diff output varies across platforms)
+    settings.add_filter(r"(?m)\s+$", "");
+
     settings
 }
 
