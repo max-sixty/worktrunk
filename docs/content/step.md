@@ -35,6 +35,8 @@ wt step push
 - `push` — Fast-forward target to current branch
 - `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
+- `promote` — [experimental] Put a branch into the main worktree
+- `relocate` — [experimental] Move worktrees to expected paths
 
 ## See also
 
@@ -58,6 +60,7 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>rebase</span></b>        Rebase onto target
   <b><span class=c>copy-ignored</span></b>  Copy gitignored files to another worktree
   <b><span class=c>for-each</span></b>      [experimental] Run command in each worktree
+  <b><span class=c>promote</span></b>       [experimental] Put a branch into the main worktree
   <b><span class=c>relocate</span></b>      [experimental] Move worktrees to expected paths
 
 <b><span class=g>Options:</span></b>
