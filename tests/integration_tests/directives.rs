@@ -472,6 +472,21 @@ fn test_switch_preserves_symlink_path(#[from(repo_with_remote)] mut repo: TestRe
         real_prefix,
         directives
     );
+
+    // Display messages (stderr) should also use the logical path
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&*symlink_prefix),
+        "Display message should contain logical path {}, got: {}",
+        symlink_prefix,
+        stderr
+    );
+    assert!(
+        !stderr.contains(&*real_prefix),
+        "Display message should NOT contain canonical path {}, got: {}",
+        real_prefix,
+        stderr
+    );
 }
 
 #[cfg(unix)]
@@ -509,6 +524,22 @@ fn test_switch_create_preserves_symlink_path(#[from(repo_with_remote)] repo: Tes
         "Directive should use symlink path (containing {}), got: {}",
         symlink_prefix,
         directives
+    );
+
+    // Display messages (stderr) should also use the logical path
+    let real_prefix = real_parent.to_string_lossy();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&*symlink_prefix),
+        "Display message should contain logical path {}, got: {}",
+        symlink_prefix,
+        stderr
+    );
+    assert!(
+        !stderr.contains(&*real_prefix),
+        "Display message should NOT contain canonical path {}, got: {}",
+        real_prefix,
+        stderr
     );
 }
 

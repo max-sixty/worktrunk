@@ -4,28 +4,6 @@ expression: screen
 ---
 > [QUERY]
     Branch  Status        HEAD±    main↕  Remote⇅  Commit   │Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
-> @ main        ^                                  [HASH] │                                                           
-                                                            │○ main has no uncommitted changes                          
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
+> @ main        ^                                  [HASH] │
+                                                            │○ main has no uncommitted changes
                                                             │

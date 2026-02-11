@@ -63,23 +63,40 @@ struct PtyResult {
 
 impl PtyResult {
     /// Full screen content as rows of text.
+    ///
+    /// Trailing whitespace is trimmed from each row because `vt100::rows()` pads
+    /// rows to the full column width with spaces. This padding is terminal buffer
+    /// fill, not meaningful content, and varies across platforms. Trailing empty
+    /// lines are also removed (unwritten terminal rows become empty after trim).
     fn screen(&self) -> String {
         self.parser
             .screen()
             .rows(0, TERM_COLS)
+            .map(|row| row.trim_end().to_string())
             .collect::<Vec<_>>()
             .join("\n")
+            .trim_end()
+            .to_string()
     }
 
     /// List and preview panel content, split at the skim border column.
     /// Avoids the │ border character that causes cross-platform rendering issues.
     fn panels(&self) -> (String, String) {
         let screen = self.parser.screen();
-        let list = screen.rows(0, SEPARATOR_COL).collect::<Vec<_>>().join("\n");
+        let list = screen
+            .rows(0, SEPARATOR_COL)
+            .map(|row| row.trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim_end()
+            .to_string();
         let preview = screen
             .rows(SEPARATOR_COL + 1, TERM_COLS - SEPARATOR_COL - 1)
+            .map(|row| row.trim_end().to_string())
             .collect::<Vec<_>>()
-            .join("\n");
+            .join("\n")
+            .trim_end()
+            .to_string();
         (list, preview)
     }
 }
@@ -95,6 +112,18 @@ fn assert_valid_abort_exit_code(exit_code: i32) {
         "Unexpected exit code: {} (expected 0, 1, or 130 for skim abort)",
         exit_code
     );
+}
+
+/// Collapse consecutive identical trailing lines into a single copy.
+///
+/// Useful for abort tests where skim's border rendering produces a variable number
+/// of identical `│` rows depending on how far rendering progressed before exit.
+fn collapse_trailing_dupes(s: &str) -> String {
+    let mut lines: Vec<&str> = s.lines().collect();
+    while lines.len() >= 2 && lines[lines.len() - 1] == lines[lines.len() - 2] {
+        lines.pop();
+    }
+    lines.join("\n")
 }
 
 /// Check if skim is ready (shows "> " prompt indicating it's accepting input)
@@ -338,7 +367,10 @@ fn test_switch_picker_abort_with_escape(mut repo: TestRepo) {
 
     assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = result.screen();
+    // Collapse trailing duplicate lines: skim's border rendering varies on abort
+    // because the escape key kills the process mid-render, producing a variable
+    // number of identical `│` border rows at the bottom.
+    let screen = collapse_trailing_dupes(&result.screen());
     let settings = switch_picker_settings(&repo);
     settings.bind(|| {
         assert_snapshot!("switch_picker_abort_escape", screen);
@@ -365,7 +397,7 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
 
     assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = result.screen();
+    let screen = collapse_trailing_dupes(&result.screen());
     let settings = switch_picker_settings(&repo);
     settings.bind(|| {
         assert_snapshot!("switch_picker_multiple_worktrees", screen);
@@ -398,7 +430,7 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
 
     assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = result.screen();
+    let screen = collapse_trailing_dupes(&result.screen());
     let settings = switch_picker_settings(&repo);
     settings.bind(|| {
         assert_snapshot!("switch_picker_with_branches", screen);

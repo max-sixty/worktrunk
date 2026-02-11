@@ -4,28 +4,7 @@ expression: screen
 ---
 > [QUERY]
     Branch       Status        HEAD±    main↕  Remote⇅  Age │Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
-> @ main             ^                                  [TIME] │                                                           
-  + feature-one      _                                  [TIME] │○ main has no uncommitted changes                          
-  + feature-two      _                                  [TIME] │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
-                                                            │                                                           
+> @ main             ^                                  [TIME] │
+  + feature-one      _                                  [TIME] │○ main has no uncommitted changes
+  + feature-two      _                                  [TIME] │
                                                             │
