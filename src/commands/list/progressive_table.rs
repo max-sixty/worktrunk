@@ -32,8 +32,11 @@ pub struct ProgressiveTable {
     lines: Vec<String>,
     /// Maximum width for content (terminal width - safety margin)
     max_width: usize,
-    /// Number of data rows (not counting header, spacer, footer)
+    /// Number of data rows visible in skeleton (not counting header, spacer, footer).
+    /// May be less than `total_row_count` when terminal is too short.
     row_count: usize,
+    /// Total number of data rows (including those not shown in skeleton)
+    total_row_count: usize,
     /// Whether output is going to a TTY
     is_tty: bool,
     /// Lines that have been modified since last flush
@@ -58,14 +61,32 @@ impl ProgressiveTable {
         initial_footer: String,
         max_width: usize,
     ) -> Self {
-        let is_tty = stdout().is_terminal();
-        let row_count = skeletons.len();
+        let term_height = terminal_size::terminal_size().map(|(_, h)| h.0 as usize);
+        Self::new_with_height(header, skeletons, initial_footer, max_width, term_height)
+    }
 
-        // Build initial lines: header + rows + spacer + footer
-        let mut lines = Vec::with_capacity(row_count + 3);
+    fn new_with_height(
+        header: String,
+        skeletons: Vec<String>,
+        initial_footer: String,
+        max_width: usize,
+        terminal_height: Option<usize>,
+    ) -> Self {
+        let is_tty = stdout().is_terminal();
+        let total_row_count = skeletons.len();
+
+        // Limit visible rows to fit in terminal: header + rows + spacer + footer = rows + 3
+        // Reserve one extra line for the cursor position after printing.
+        // Only limit when we have height info — None means non-TTY or unknown.
+        let visible_row_count = terminal_height
+            .map(|h| total_row_count.min(h.saturating_sub(4)))
+            .unwrap_or(total_row_count);
+
+        // Build initial lines: header + visible rows + spacer + footer
+        let mut lines = Vec::with_capacity(visible_row_count + 3);
         lines.push(truncate_visible(&header, max_width));
 
-        for skeleton in skeletons {
+        for skeleton in skeletons.into_iter().take(visible_row_count) {
             lines.push(truncate_visible(&skeleton, max_width));
         }
 
@@ -78,7 +99,8 @@ impl ProgressiveTable {
         Self {
             lines,
             max_width,
-            row_count,
+            row_count: visible_row_count,
+            total_row_count,
             is_tty,
             dirty: Vec::new(),
             rendered: false,
@@ -217,15 +239,54 @@ impl ProgressiveTable {
         stdout.flush()
     }
 
-    /// Finalize: update footer and flush.
+    /// Finalize the table with final row content and footer.
     ///
-    /// Updates the footer content. If we rendered initially, also redraws the footer.
-    ///
-    /// # Arguments
-    /// * `final_footer` - Final summary message to replace loading status
-    pub fn finalize(&mut self, final_footer: String) -> std::io::Result<()> {
-        self.update_footer(final_footer);
-        self.flush()
+    /// For the normal case, updates rows in-place and redraws the footer.
+    /// When overflowing (skeleton showed a subset of rows), erases the skeleton
+    /// and prints the complete table — the output scrolls naturally, avoiding
+    /// the `MoveUp`-into-scrollback problem.
+    pub fn finalize(&mut self, final_rows: &[String], final_footer: String) -> std::io::Result<()> {
+        if self.row_count < self.total_row_count {
+            // Overflow: erase skeleton, print complete table
+            debug_assert!(
+                self.rendered,
+                "overflow finalize should only be called after render_skeleton"
+            );
+            let mut stdout = stdout();
+
+            let lines_up = self.lines.len();
+            if lines_up > 0 {
+                stdout.execute(MoveUp(lines_up as u16))?;
+            }
+            stdout.execute(MoveToColumn(0))?;
+            stdout.execute(Clear(ClearType::FromCursorDown))?;
+
+            // Print complete table — scrolls naturally
+            writeln!(stdout, "{}", self.lines[0])?; // header (unchanged)
+            for row in final_rows {
+                writeln!(stdout, "{}", truncate_visible(row, self.max_width))?;
+            }
+            writeln!(stdout)?; // spacer
+            writeln!(
+                stdout,
+                "{}",
+                truncate_visible(&final_footer, self.max_width)
+            )?;
+            stdout.flush()
+        } else {
+            // Normal: update rows in-place + footer
+            for (idx, row) in final_rows.iter().enumerate() {
+                self.update_row(idx, row.clone());
+            }
+            self.update_footer(final_footer);
+            self.flush()
+        }
+    }
+
+    /// Whether the skeleton is showing fewer rows than the total (test helper).
+    #[cfg(test)]
+    fn is_overflowing(&self) -> bool {
+        self.row_count < self.total_row_count
     }
 
     /// Check if output is going to a TTY.
@@ -328,6 +389,8 @@ mod tests {
         );
 
         assert_eq!(table.row_count, 3);
+        assert_eq!(table.total_row_count, 3);
+        assert!(!table.is_overflowing());
     }
 
     #[test]
@@ -357,10 +420,13 @@ mod tests {
         );
 
         // Without render_skeleton(), finalize updates footer but doesn't print
-        table.finalize("Complete!".to_string()).unwrap();
+        table
+            .finalize(&["row-final".to_string()], "Complete!".to_string())
+            .unwrap();
 
         // Footer IS updated (the data changes), but no output since not rendered
         assert_eq!(table.lines.last().unwrap(), "Complete!");
+        assert_eq!(table.lines[1], "row-final");
     }
 
     #[test]
@@ -410,5 +476,135 @@ mod tests {
 
         table.update_footer("new footer".into());
         assert_eq!(table.dirty, vec![1, 4]); // footer is last line
+    }
+
+    #[test]
+    fn overflow_limits_visible_rows() {
+        // 10 rows, terminal height 8 → visible = 8 - 4 = 4
+        let skeletons: Vec<String> = (0..10).map(|i| format!("row{i}")).collect();
+        let table = ProgressiveTable::new_with_height(
+            "header".into(),
+            skeletons,
+            "loading".into(),
+            80,
+            Some(8),
+        );
+
+        assert_eq!(table.row_count, 4);
+        assert_eq!(table.total_row_count, 10);
+        assert!(table.is_overflowing());
+        // header + 4 visible rows + spacer + footer = 7 lines
+        assert_eq!(table.lines.len(), 7);
+        assert_eq!(table.lines[0], "header");
+        assert_eq!(table.lines[1], "row0");
+        assert_eq!(table.lines[4], "row3");
+        assert_eq!(table.lines[5], ""); // spacer
+        assert_eq!(table.lines[6], "loading");
+    }
+
+    #[test]
+    fn no_overflow_when_fits() {
+        // 3 rows, terminal height 20 → visible = 3 (fits easily)
+        let skeletons = vec!["a".into(), "b".into(), "c".into()];
+        let table = ProgressiveTable::new_with_height(
+            "header".into(),
+            skeletons,
+            "loading".into(),
+            80,
+            Some(20),
+        );
+
+        assert_eq!(table.row_count, 3);
+        assert_eq!(table.total_row_count, 3);
+        assert!(!table.is_overflowing());
+    }
+
+    #[test]
+    fn overflow_boundary_exact_fit() {
+        // 5 rows need height 5+4=9, terminal height 9 → fits exactly, no overflow
+        let skeletons: Vec<String> = (0..5).map(|i| format!("row{i}")).collect();
+        let table = ProgressiveTable::new_with_height(
+            "header".into(),
+            skeletons,
+            "loading".into(),
+            80,
+            Some(9),
+        );
+
+        assert_eq!(table.row_count, 5);
+        assert!(!table.is_overflowing());
+    }
+
+    #[test]
+    fn overflow_boundary_one_short() {
+        // 5 rows need height 5+4=9, terminal height 8 → overflow, visible = 4
+        let skeletons: Vec<String> = (0..5).map(|i| format!("row{i}")).collect();
+        let table = ProgressiveTable::new_with_height(
+            "header".into(),
+            skeletons,
+            "loading".into(),
+            80,
+            Some(8),
+        );
+
+        assert_eq!(table.row_count, 4);
+        assert_eq!(table.total_row_count, 5);
+        assert!(table.is_overflowing());
+    }
+
+    #[test]
+    fn overflow_hidden_rows_are_noop() {
+        let skeletons: Vec<String> = (0..10).map(|i| format!("row{i}")).collect();
+        let mut table = ProgressiveTable::new_with_height(
+            "header".into(),
+            skeletons,
+            "loading".into(),
+            80,
+            Some(8),
+        );
+
+        // Can update visible rows (0..4)
+        assert!(table.update_row(0, "updated0".into()));
+        assert_eq!(table.lines[1], "updated0");
+
+        // Hidden rows (4..10) are no-ops
+        assert!(!table.update_row(4, "should-be-ignored".into()));
+        assert!(!table.update_row(9, "should-be-ignored".into()));
+    }
+
+    #[test]
+    fn overflow_very_small_terminal() {
+        // Terminal too small for any rows: height 3 → visible = 0
+        let skeletons: Vec<String> = (0..5).map(|i| format!("row{i}")).collect();
+        let table = ProgressiveTable::new_with_height(
+            "header".into(),
+            skeletons,
+            "loading".into(),
+            80,
+            Some(3),
+        );
+
+        assert_eq!(table.row_count, 0);
+        assert_eq!(table.total_row_count, 5);
+        assert!(table.is_overflowing());
+        // header + 0 rows + spacer + footer = 3 lines
+        assert_eq!(table.lines.len(), 3);
+    }
+
+    #[test]
+    fn no_height_info_shows_all_rows() {
+        // No terminal height info → show all rows (non-TTY or unknown)
+        let skeletons: Vec<String> = (0..10).map(|i| format!("row{i}")).collect();
+        let table = ProgressiveTable::new_with_height(
+            "header".into(),
+            skeletons,
+            "loading".into(),
+            80,
+            None,
+        );
+
+        assert_eq!(table.row_count, 10);
+        assert_eq!(table.total_row_count, 10);
+        assert!(!table.is_overflowing());
     }
 }
