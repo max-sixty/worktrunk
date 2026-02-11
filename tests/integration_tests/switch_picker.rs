@@ -39,7 +39,9 @@ const READY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Maximum time to wait for screen to stabilize after input.
 /// Long timeout ensures reliability on slow CI.
-const STABILIZE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Increased from 5s to 10s to handle macOS CI under heavy load where branch
+/// loading can be slow (particularly when waiting for async branch lists to populate).
+const STABILIZE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long screen must be unchanged to consider it "stable".
 /// Must be long enough for preview content to load (preview commands run async).
