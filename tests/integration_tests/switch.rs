@@ -2599,6 +2599,43 @@ fn test_switch_mr_same_repo_limited_refspec(#[from(repo_with_remote)] mut repo: 
     });
 }
 
+/// Test same-repo MR when origin points to a different repo (no remote for MR's repo)
+///
+/// User scenario:
+/// 1. User has origin pointing to their fork (contributor/test-repo)
+/// 2. MR !101 is a same-repo MR on the upstream (owner/test-repo)
+/// 3. No remote exists for owner/test-repo -> error with hint to add upstream
+#[rstest]
+fn test_switch_mr_same_repo_no_remote(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin to point to a DIFFERENT repo than where the MR is
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/contributor/test-repo.git",
+    ]);
+
+    let glab_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "author": {"username": "alice"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature-auth",
+        "source_project_id": 123,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/101"
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_same_repo_no_remote", cmd);
+    });
+}
+
 /// Test error when MR is not found
 #[rstest]
 fn test_switch_mr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
