@@ -4,6 +4,7 @@ expression: preview
 ---
 1: HEAD± | 2: log | 3: main…± | 4: remote⇅            [N/M]
 Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
+
  feature_code.rs | 6 ++++++
  tests.rs        | 4 ++++
  2 files changed, 10 insertions(+)
