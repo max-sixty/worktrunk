@@ -119,6 +119,24 @@ fn test_switch_dwim_from_remote(#[from(repo_with_remote)] repo: TestRepo) {
     snapshot_switch("switch_dwim_from_remote", &repo, &["dwim-feature"]);
 }
 
+/// When a branch exists on multiple remotes, DWIM should fail with an error
+/// since git can't determine which remote to track.
+#[rstest]
+fn test_switch_dwim_ambiguous_remotes(#[from(repo_with_remote)] mut repo: TestRepo) {
+    // Add a second remote
+    repo.setup_custom_remote("upstream", "main");
+
+    // Create a branch on both remotes (no local branch)
+    repo.run_git(&["branch", "shared-feature"]);
+    repo.run_git(&["push", "origin", "shared-feature"]);
+    repo.run_git(&["push", "upstream", "shared-feature"]);
+    repo.run_git(&["branch", "-D", "shared-feature"]);
+
+    // Now shared-feature exists on origin and upstream but not locally
+    // DWIM can't pick — git worktree add should error
+    snapshot_switch("switch_dwim_ambiguous_remotes", &repo, &["shared-feature"]);
+}
+
 /// When creating a new branch from a remote tracking branch (e.g., origin/main),
 /// the new branch should NOT track the remote base branch.
 /// This prevents accidental `git push` to the base branch (e.g., pushing to main).
