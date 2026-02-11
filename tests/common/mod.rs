@@ -2683,9 +2683,12 @@ fn setup_snapshot_settings_for_paths_with_home(
         "sh: $1: command not found",
     );
 
-    // Filter out PowerShell lines on Windows - these appear only on Windows
-    // and would cause snapshot mismatches with Unix snapshots
-    settings.add_filter(r"(?m)^.*[Pp]owershell.*\n", "");
+    // Filter out PowerShell shell-status lines on Windows — these appear only on Windows
+    // (e.g., "○ powershell: Skipped; ..." or "○ powershell: Already configured...")
+    // and would cause snapshot mismatches with Unix snapshots.
+    // Uses `[Pp]owershell:` (colon after) to avoid stripping "Detected shell: powershell"
+    // diagnostic lines that intentionally mention the detected shell.
+    settings.add_filter(r"(?m)^.*[Pp]owershell:.*\n", "");
 
     // Normalize Windows executable extension in help output
     // On Windows, clap shows "wt.exe" instead of "wt"
@@ -2788,9 +2791,8 @@ pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
         "[TEMP_HOME]",
     );
     settings.add_filter(r"\\", "/");
-    // Filter out PowerShell lines on Windows - these appear only on Windows
-    // and would cause snapshot mismatches with Unix snapshots
-    settings.add_filter(r"(?m)^.*[Pp]owershell.*\n", "");
+    // Filter out PowerShell shell-status lines on Windows (see main filter for details)
+    settings.add_filter(r"(?m)^.*[Pp]owershell:.*\n", "");
     // Normalize Windows executable extension in help output
     settings.add_filter(r"wt\.exe", "wt");
 

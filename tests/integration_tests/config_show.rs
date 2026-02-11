@@ -1463,6 +1463,44 @@ fn test_config_show_statusline_configured(mut repo: TestRepo, temp_home: TempDir
     });
 }
 
+/// When $SHELL is not set but PSModulePath is, config show should display
+/// "Detected shell: powershell" in the diagnostics and show the verification hint.
+#[rstest]
+fn test_config_show_powershell_detected_via_psmodulepath(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // Create global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    // Create .bashrc with wt integration (so there's a configured shell)
+    fs::write(
+        temp_home.path().join(".bashrc"),
+        r#"if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init bash)"; fi
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        // Ensure SHELL is NOT set (already removed by configure_cli_command)
+        cmd.env_remove("SHELL");
+        // Set PSModulePath to trigger PowerShell detection fallback
+        cmd.env(
+            "PSModulePath",
+            "C:\\Users\\user\\Documents\\PowerShell\\Modules",
+        );
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Test that deprecated [commit-generation] section shows warning and creates migration file
 #[rstest]
 fn test_deprecated_commit_generation_section_shows_warning(repo: TestRepo, temp_home: TempDir) {
