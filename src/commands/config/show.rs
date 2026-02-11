@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ProjectConfig, UserConfig, find_unknown_project_keys, find_unknown_user_keys,
-    get_system_config_path, system_config_search_dirs,
+    ProjectConfig, UserConfig, default_system_config_path, find_unknown_project_keys,
+    find_unknown_user_keys, get_system_config_path,
 };
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -346,19 +346,13 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
 fn render_system_config(out: &mut String) -> anyhow::Result<()> {
     let system_path = get_system_config_path();
 
-    // Determine the display path: actual path if found, or first search dir as hint
+    // Determine the display path: actual path if found, or platform default as hint
     let display_path = match &system_path {
         Some(path) => format_path_for_display(path),
-        None => {
-            // Show the primary search directory so the user knows where to put it
-            let search_dirs = system_config_search_dirs();
-            if let Some(first_dir) = search_dirs.first() {
-                let expected = first_dir.join("worktrunk").join("config.toml");
-                format_path_for_display(&expected)
-            } else {
-                "(unavailable)".to_string()
-            }
-        }
+        None => match default_system_config_path() {
+            Some(path) => format_path_for_display(&path),
+            None => "(unavailable)".to_string(),
+        },
     };
 
     writeln!(

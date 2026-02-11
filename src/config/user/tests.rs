@@ -1986,23 +1986,6 @@ fn test_reload_projects_from_invalid_toml() {
 }
 
 // =========================================================================
-// System config path tests
-// =========================================================================
-
-#[test]
-fn test_system_config_path_returns_none_in_tests() {
-    // In test builds without WORKTRUNK_SYSTEM_CONFIG_PATH, should return None
-    // (prevents reading host system config during tests)
-    assert!(super::path::get_system_config_path().is_none());
-}
-
-#[test]
-fn test_system_config_search_dirs_returns_empty_in_tests() {
-    // In test builds without env var, should return empty
-    assert!(super::path::system_config_search_dirs().is_empty());
-}
-
-// =========================================================================
 // System config loading and merge tests
 // =========================================================================
 

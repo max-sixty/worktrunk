@@ -1,17 +1,15 @@
 //! Configuration system for worktrunk
 //!
-//! Worktrunk uses two independent configuration files:
+//! Three configuration sources, loaded in order (later overrides earlier):
 //!
-//! - **User config** (`~/.config/worktrunk/config.toml`) - Personal preferences
-//! - **Project config** (`.config/wt.toml`) - Lifecycle hooks, checked into git
+//! 1. **System config** (`/etc/xdg/worktrunk/config.toml` or platform equivalent) -
+//!    Organization-wide defaults, optional
+//! 2. **User config** (`~/.config/worktrunk/config.toml`) - Personal preferences
+//! 3. **Project config** (`.config/wt.toml`) - Lifecycle hooks, checked into git
 //!
-//! The two configs are **completely independent**:
-//! - No overlap in settings (they configure different things)
-//! - No merging or precedence rules needed
-//! - Loaded separately and used in different contexts
-//!
-//! User config controls "how worktrunk behaves for me", project config controls
-//! "what commands run for this project".
+//! System and user configs share the same schema and are merged by the `config`
+//! crate's builder (user values override system values at the key level).
+//! Project config is independent — different schema, different purpose.
 //!
 //! See `wt config --help` for complete documentation.
 
@@ -94,8 +92,8 @@ pub use project::{
 pub use user::{
     CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig,
     ResolvedConfig, SelectConfig, StageMode, UserConfig, UserProjectOverrides,
-    find_unknown_keys as find_unknown_user_keys, get_config_path, get_system_config_path,
-    set_config_path, system_config_search_dirs,
+    default_system_config_path, find_unknown_keys as find_unknown_user_keys, get_config_path,
+    get_system_config_path, set_config_path,
 };
 
 #[cfg(test)]
