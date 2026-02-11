@@ -303,6 +303,92 @@ fn test_system_config_xdg_dirs_set_but_no_config_found(repo: TestRepo) {
     }
 }
 
+/// Test that `config show` displays empty system config with a hint
+#[rstest]
+fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // Create empty system config
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(&system_config_path, "").unwrap();
+
+    // Create user config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test that `config show` displays invalid system config with error details
+#[rstest]
+fn test_config_show_invalid_system_config(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // Create system config with invalid TOML
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(&system_config_path, "invalid = [toml\n").unwrap();
+
+    // Create user config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test that system config with unknown keys triggers a warning during config loading
+#[rstest]
+fn test_system_config_unknown_keys_warning_during_load(repo: TestRepo) {
+    // Create system config with an unknown key
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(
+        &system_config_path,
+        "[totally-unknown-section]\nkey = \"value\"",
+    )
+    .unwrap();
+
+    // Run `wt list` which triggers config loading and unknown key warnings
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
+    cmd.arg("list").current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "Command should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("has unknown field"),
+        "Expected unknown field warning from system config load, got: {stderr}"
+    );
+}
+
 #[rstest]
 fn test_config_show_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
