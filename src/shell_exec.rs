@@ -14,6 +14,8 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Instant;
 
+use wait_timeout::ChildExt;
+
 use crate::git::{GitError, WorktrunkError};
 use crate::sync::Semaphore;
 
@@ -189,7 +191,7 @@ thread_local! {
     /// Thread-local command timeout. When set, all commands executed via `run()` on this
     /// thread will be killed if they exceed this duration.
     ///
-    /// This is used by `wt select` to make the TUI responsive faster on large repos.
+    /// This is used by `wt switch` interactive picker to make the TUI responsive faster on large repos.
     /// The timeout is set per-worker-thread in Rayon's thread pool.
     static COMMAND_TIMEOUT: Cell<Option<Duration>> = const { Cell::new(None) };
 }
@@ -295,29 +297,21 @@ fn run_with_timeout_impl(
     });
 
     // Wait for process with timeout
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait()? {
-            Some(status) => break status,
-            None => {
-                if Instant::now() >= deadline {
-                    // Timeout exceeded - kill the process (SIGKILL on Unix)
-                    let _ = child.kill();
-                    let _ = child.wait(); // Reap the process
+    let status = match child.wait_timeout(timeout)? {
+        Some(status) => status,
+        None => {
+            // Timeout exceeded - kill the process
+            let _ = child.kill();
+            let _ = child.wait();
 
-                    // Wait for reader threads to complete (they'll see EOF after kill)
-                    // This prevents thread leaks
-                    let _ = stdout_thread.join();
-                    let _ = stderr_thread.join();
+            // Wait for reader threads to complete (they'll see EOF after kill)
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
 
-                    return Err(std::io::Error::new(
-                        ErrorKind::TimedOut,
-                        "command timed out",
-                    ));
-                }
-                // Sleep briefly before checking again
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
+            return Err(std::io::Error::new(
+                ErrorKind::TimedOut,
+                "command timed out",
+            ));
         }
     };
 

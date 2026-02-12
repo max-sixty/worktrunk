@@ -98,6 +98,49 @@ fn test_list_progressive_api(mut repo: TestRepo) {
     );
 }
 
+/// Tests overflow mode: when worktrees exceed terminal height, the skeleton shows a subset,
+/// then finalize erases and prints the complete table (scrolls naturally).
+#[rstest]
+fn test_list_progressive_overflow(mut repo: TestRepo) {
+    // Create enough worktrees to overflow a 10-row terminal.
+    // With height=10: visible_rows = 10 - 4 (header + spacer + footer + cursor) = 6
+    // 10 worktrees + main = 11 rows, well above the 6-row limit.
+    for i in 1..=10 {
+        repo.add_worktree(&format!("overflow-{:02}", i));
+    }
+
+    let mut opts = ProgressiveCaptureOptions::with_byte_interval(500);
+    opts.terminal_size = (10, 150); // Short terminal triggers overflow
+
+    let output = capture_progressive_output(&repo, "list", &["--full", "--branches"], opts);
+
+    assert_eq!(output.exit_code, 0);
+
+    // The overflow finalize path erases the skeleton and prints the complete table,
+    // which scrolls naturally. The vt100 parser (10 rows, no scrollback) only captures
+    // the visible tail. Verify: the footer and later branches are visible, confirming
+    // the overflow finalize path executed and printed the full table.
+    let final_text = output.final_output();
+
+    // Footer should be visible at the bottom
+    assert!(
+        final_text.contains("Showing"),
+        "Footer should be visible after overflow finalize.\nFinal output:\n{final_text}"
+    );
+
+    // Later branches should be visible (earlier ones scrolled off the 10-row viewport)
+    assert!(
+        final_text.contains("overflow-10"),
+        "Last branch should be visible.\nFinal output:\n{final_text}"
+    );
+
+    // No placeholder dots should remain — finalize printed real data
+    assert!(
+        !final_text.contains('⋯'),
+        "No placeholder dots should remain after finalize.\nFinal output:\n{final_text}"
+    );
+}
+
 /// Tests progressive rendering with no worktrees (fast path).
 #[rstest]
 fn test_list_progressive_fast_command(repo: TestRepo) {

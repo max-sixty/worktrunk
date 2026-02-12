@@ -64,8 +64,6 @@ deps = "npm ci"
 test = "npm test"
 ```
 
----
-
 <!-- USER_CONFIG_START -->
 # User Configuration
 
@@ -149,7 +147,7 @@ verify = true      # Run project hooks (--no-verify to skip)
 
 ### Select
 
-Pager behavior for `wt select` diff previews.
+Pager behavior for `wt switch` interactive picker diff previews.
 
 ```toml
 [select]
@@ -287,8 +285,6 @@ Combine these commits into a single commit message.
 <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 <!-- USER_CONFIG_END -->
 
----
-
 # Project Configuration
 
 Project config (`.config/wt.toml`) defines lifecycle hooks and project-specific settings. This file is checked into version control and shared with the team. Create with `wt config create --project`.
@@ -309,8 +305,6 @@ url = "http://localhost:{{ branch | hash_port }}"
 platform = "github"  # or "gitlab"
 ```
 
----
-
 # Shell Integration
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
@@ -319,18 +313,7 @@ Worktrunk needs shell integration to change directories when switching worktrees
 wt config shell install
 ```
 
-Or manually add to the shell config:
-
-```bash
-# For bash: add to ~/.bashrc
-eval "$(wt config shell init bash)"
-
-# For zsh: add to ~/.zshrc
-eval "$(wt config shell init zsh)"
-
-# For fish: add to ~/.config/fish/config.fish
-wt config shell init fish | source
-```
+For manual setup, see `wt config shell init --help`.
 
 Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
 

@@ -23,11 +23,14 @@ info:
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
+    PSModulePath: ""
     RUST_LOG: warn
     SHELL: /bin/fish
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
     WT_TEST_EPOCH: "1735776000"
@@ -45,10 +48,10 @@ exit_code: 0
 [107m [0m [2m# Check: wt config show | Uninstall: wt config shell uninstall[0m[2m
 [107m [0m [2m
 [107m [0m [2m[0m[2m[35mfunction[0m[2m wt
-[107m [0m [2m    [0m[2m[34mcommand[0m[2m wt config shell init fish [0m[2m[36m|[0m[2m [0m[2m[34msource[0m[2m
+[107m [0m [2m    command wt config shell init fish [0m[2m[36m|[0m[2m source
 [107m [0m [2m    # Check both command exit code ($pipestatus[1]) and source exit code ($pipestatus[2])[0m[2m
 [107m [0m [2m    # If source fails, the function isn't replaced and we'd infinite-loop calling ourselves[0m[2m
-[107m [0m [2m    [0m[2m[34mset[0m[2m [0m[2m[36m-l[0m[2m wt_status [0m[2m[36m$[0m[2mpipestatus[1]
+[107m [0m [2m    set -l wt_status [0m[2m[36m$[0m[2mpipestatus[1][0m[2m
 [107m [0m [2m    [0m[2m[34mset[0m[2m [0m[2m[36m-l[0m[2m source_status [0m[2m[36m$[0m[2mpipestatus[2]
 [107m [0m [2m    [0m[2m[34mtest[0m[2m [0m[2m[36m$[0m[2mwt_status [0m[2m[36m-eq[0m[2m 0; [0m[2m[34mor[0m[2m return [0m[2m[36m$[0m[2mwt_status
 [107m [0m [2m    [0m[2m[34mtest[0m[2m [0m[2m[36m$[0m[2msource_status [0m[2m[36m-eq[0m[2m 0; [0m[2m[34mor[0m[2m return [0m[2m[36m$[0m[2msource_status

@@ -778,11 +778,10 @@ cleanup = "echo 'POST_REMOVE_DURING_MERGE' > ../merge_postremove_marker.txt"
     );
 }
 
-// Note: The `return Ok(())` path in spawn_post_remove_hooks when UserConfig::load()
-// fails (handlers.rs line 556) is defensive code for an extremely rare race condition
-// where config becomes invalid between command startup and hook execution. This is
-// not easily testable without complex timing manipulation and matches the existing
-// pattern in spawn_post_switch_after_remove (line 584).
+// Note: The `return Ok(())` path in spawn_hooks_after_remove when UserConfig::load()
+// fails is defensive code for an extremely rare race condition where config becomes
+// invalid between command startup and hook execution. This is not easily testable
+// without complex timing manipulation.
 
 #[rstest]
 fn test_standalone_hook_post_remove_invalid_template(repo: TestRepo) {
@@ -926,6 +925,46 @@ vars = "echo 'repo={{ repo }} branch={{ branch }}' > template_vars.txt"
 // ============================================================================
 // Combined User and Project Hooks Tests
 // ============================================================================
+
+/// Test that both user and project unnamed hooks of the same type run and get unique log names.
+/// This exercises the unnamed index tracking when multiple unnamed hooks share the same hook type.
+#[rstest]
+fn test_user_and_project_unnamed_post_start(repo: TestRepo) {
+    // Create project config with unnamed post-start hook
+    repo.write_project_config(r#"post-start = "echo 'PROJECT_POST_START' > project_bg.txt""#);
+    repo.commit("Add project config");
+
+    // Write user config with unnamed hook AND pre-approve project command
+    repo.write_test_config(
+        r#"post-start = "echo 'USER_POST_START' > user_bg.txt"
+
+[projects."../origin"]
+approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
+"#,
+    );
+
+    snapshot_switch(
+        "user_and_project_unnamed_post_start",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+
+    // Wait for both background commands
+    wait_for_file(&worktree_path.join("user_bg.txt"));
+    wait_for_file(&worktree_path.join("project_bg.txt"));
+
+    // Both should have run
+    assert!(
+        worktree_path.join("user_bg.txt").exists(),
+        "User post-start should have run"
+    );
+    assert!(
+        worktree_path.join("project_bg.txt").exists(),
+        "Project post-start should have run"
+    );
+}
 
 #[rstest]
 fn test_user_and_project_post_start_both_run(repo: TestRepo) {

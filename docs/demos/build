@@ -58,7 +58,7 @@ TAPES_DIR = SCRIPT_DIR / "tapes"
 SNAPSHOTS_DIR = SCRIPT_DIR / "snapshots"
 
 # Demos that use TUI or interactive input - not suitable for command snapshots
-TUI_DEMOS = {"wt-select", "wt-switch", "wt-statusline", "wt-zellij-omnibus"}
+TUI_DEMOS = {"wt-switch-picker", "wt-switch", "wt-statusline", "wt-zellij-omnibus"}
 
 
 # =============================================================================
@@ -301,7 +301,7 @@ DOCS_DEMOS = [
     ("wt-commit.tape", "wt-commit", prepare_merge_demo),
     ("wt-statusline.tape", "wt-statusline", prepare_switch),
     ("wt-merge.tape", "wt-merge", prepare_merge_demo),
-    ("wt-select.tape", "wt-select", prepare_basic),
+    ("wt-switch-picker.tape", "wt-switch-picker", prepare_basic),
     ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus),
 ]
 
@@ -318,7 +318,7 @@ SOCIAL_DEMOS = [
         "wt-merge",
         partial(prepare_merge_demo, commit_generation=False, staged_changes=False),
     ),
-    ("wt-select.tape", "wt-select", prepare_basic),
+    ("wt-switch-picker.tape", "wt-switch-picker", prepare_basic),
     ("wt-core.tape", "wt-core", prepare_with_hooks),
     ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus),
 ]

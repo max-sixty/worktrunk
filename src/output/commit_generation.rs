@@ -8,9 +8,7 @@ use std::io::{self, IsTerminal};
 
 use color_print::cformat;
 use worktrunk::config::UserConfig;
-use worktrunk::styling::{
-    eprintln, format_with_gutter, hint_message, info_message, success_message,
-};
+use worktrunk::styling::{eprintln, format_toml, hint_message, info_message, success_message};
 
 use super::prompt::{PromptResponse, prompt_yes_no_preview};
 
@@ -146,7 +144,7 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
                     "Would add to <bold>~/.config/worktrunk/config.toml</>:"
                 ))
             );
-            eprintln!("{}", format_with_gutter(&config_preview, None));
+            eprintln!("{}", format_toml(&config_preview));
             eprintln!();
         },
     )?;
@@ -168,7 +166,7 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
 
             // Show what was added
             eprintln!("{}", success_message(cformat!("Added to user config:")));
-            eprintln!("{}", format_with_gutter(&config_preview, None));
+            eprintln!("{}", format_toml(&config_preview));
             eprintln!(
                 "{}",
                 hint_message(cformat!("View config: <bright-black>wt config show</>"))

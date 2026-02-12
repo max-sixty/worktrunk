@@ -1304,8 +1304,9 @@ fn test_docs_quickstart_examples_are_in_sync() {
 
 /// Command pages generated via `wt <cmd> --help-page`
 /// Each page preserves its frontmatter and replaces the AUTO-GENERATED marker region.
+/// Note: `select` is excluded because it's a deprecated hidden alias for `wt switch`.
 const COMMAND_PAGES: &[&str] = &[
-    "switch", "list", "merge", "remove", "select", "config", "step", "hook",
+    "switch", "list", "merge", "remove", "config", "step", "hook",
 ];
 
 /// Sync command pages from --help-page output to docs/content/*.md
@@ -1550,10 +1551,7 @@ const SKILL_SYNC_FILES: &[(&str, &str)] = &[
         "docs/content/list.md",
         ".claude-plugin/skills/worktrunk/reference/list.md",
     ),
-    (
-        "docs/content/select.md",
-        ".claude-plugin/skills/worktrunk/reference/select.md",
-    ),
+    // Note: select.md removed - it's a deprecated hidden alias for `wt switch`
     (
         "docs/content/step.md",
         ".claude-plugin/skills/worktrunk/reference/step.md",

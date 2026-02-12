@@ -102,7 +102,7 @@ Cleanup tasks after worktree removal: stopping dev servers, removing containers,
 
 ```toml
 [post-remove]
-kill-server = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
+kill-server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/null || true"
 remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
 ```
 
@@ -317,7 +317,7 @@ Run a dev server per worktree on a deterministic port using `hash_port`:
 server = "npm run dev -- --port {{ branch | hash_port }}"
 
 [post-remove]
-server = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
+server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/null || true"
 ```
 
 The port is stable across machines and restarts — `feature-api` always gets the same port. Show it in `wt list`:

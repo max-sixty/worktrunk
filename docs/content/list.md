@@ -274,7 +274,7 @@ Missing a field that would be generally useful? [Open an issue](https://github.c
 
 ## See also
 
-- [`wt select`](@/select.md) — Interactive worktree picker with live preview
+- [`wt switch`](@/switch.md) — Switch worktrees or open interactive picker
 
 ## Command reference
 

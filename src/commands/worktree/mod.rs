@@ -95,6 +95,6 @@ pub use resolve::{
 };
 pub use switch::{execute_switch, plan_switch};
 pub use types::{
-    BranchDeletionMode, MergeOperations, OperationMode, RemoveResult, SwitchBranchInfo,
+    BranchDeletionMode, MergeOperations, OperationMode, RemoveResult, SwitchBranchInfo, SwitchPlan,
     SwitchResult,
 };

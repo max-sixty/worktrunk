@@ -95,7 +95,7 @@ fn resolve_remote_ref(
         return resolve_fork_ref(repo, provider, number, &info);
     }
 
-    // Same-repo ref: for PRs, fetch the branch; for MRs, just use the branch name
+    // Same-repo ref: fetch the branch to ensure remote tracking refs exist
     resolve_same_repo_ref(repo, &info)
 }
 
@@ -274,38 +274,50 @@ fn resolve_same_repo_ref(
 ) -> anyhow::Result<ResolvedTarget> {
     use worktrunk::git::remote_ref::PlatformData;
 
-    // For GitHub PRs, fetch the branch to ensure remote refs are up-to-date
-    if let PlatformData::GitHub {
-        host,
-        base_owner,
-        base_repo,
-        ..
-    } = &info.platform_data
-    {
-        let remote = repo
-            .find_remote_for_repo(Some(host), base_owner, base_repo)
-            .ok_or_else(|| {
-                let suggested_url = worktrunk::git::remote_ref::github::fork_remote_url(
-                    host, base_owner, base_repo,
-                );
-                GitError::NoRemoteForRepo {
+    // Find the remote for the same-repo PR/MR and fetch the branch with an
+    // explicit refspec. This ensures the remote tracking branch is created even
+    // in repos with limited fetch refspecs (single-branch clones, bare repos).
+    let remote = match &info.platform_data {
+        PlatformData::GitHub {
+            host,
+            base_owner,
+            base_repo,
+            ..
+        } => {
+            let suggested_url =
+                worktrunk::git::remote_ref::github::fork_remote_url(host, base_owner, base_repo);
+            repo.find_remote_for_repo(Some(host), base_owner, base_repo)
+                .ok_or_else(|| GitError::NoRemoteForRepo {
                     owner: base_owner.clone(),
                     repo: base_repo.clone(),
                     suggested_url,
-                }
-            })?;
-        let branch = &info.source_branch;
+                })?
+        }
+        PlatformData::GitLab {
+            host,
+            base_owner,
+            base_repo,
+            ..
+        } => repo
+            .find_remote_for_repo(Some(host), base_owner, base_repo)
+            .ok_or_else(|| GitError::NoRemoteForRepo {
+                owner: base_owner.clone(),
+                repo: base_repo.clone(),
+                suggested_url: format!("https://{host}/{base_owner}/{base_repo}.git"),
+            })?,
+    };
 
-        eprintln!(
-            "{}",
-            progress_message(cformat!("Fetching <bold>{branch}</> from {remote}..."))
-        );
-        // Use -- to prevent branch names starting with - from being interpreted as flags
-        repo.run_command(&["fetch", "--", &remote, branch])
-            .with_context(|| format!("Failed to fetch branch '{}' from {}", branch, remote))?;
-    }
-
-    // For GitLab same-repo MRs, we just use the branch name directly
+    let branch = &info.source_branch;
+    eprintln!(
+        "{}",
+        progress_message(cformat!("Fetching <bold>{branch}</> from {remote}..."))
+    );
+    // Explicit refspec creates/updates the remote-tracking ref even when it's outside
+    // the configured fetch refspec (e.g., single-branch clones, bare repos).
+    let refspec = format!("+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
+    // Use -- to prevent branch names starting with - from being interpreted as flags
+    repo.run_command(&["fetch", "--", &remote, &refspec])
+        .with_context(|| format!("Failed to fetch branch '{}' from {}", branch, remote))?;
 
     Ok(ResolvedTarget {
         branch: info.source_branch.clone(),
@@ -345,21 +357,22 @@ fn resolve_switch_target(
         .resolve_worktree_name(branch)
         .context("Failed to resolve branch name")?;
 
-    // Resolve and validate base
+    // Resolve and validate base (only when --create is set)
     let resolved_base = if let Some(base_str) = base {
-        let resolved = repo.resolve_worktree_name(base_str)?;
         if !create {
             eprintln!(
                 "{}",
                 warning_message("--base flag is only used with --create, ignoring")
             );
             None
-        } else if !repo.ref_exists(&resolved)? {
-            return Err(GitError::ReferenceNotFound {
-                reference: resolved,
-            }
-            .into());
         } else {
+            let resolved = repo.resolve_worktree_name(base_str)?;
+            if !repo.ref_exists(&resolved)? {
+                return Err(GitError::ReferenceNotFound {
+                    reference: resolved,
+                }
+                .into());
+            }
             Some(resolved)
         }
     } else {
@@ -647,8 +660,6 @@ pub fn execute_switch(
             expected_path,
             new_previous,
         } => {
-            let _ = repo.set_switch_previous(new_previous.as_deref());
-
             let current_dir = std::env::current_dir()
                 .ok()
                 .and_then(|p| canonicalize(&p).ok());
@@ -656,6 +667,13 @@ pub fn execute_switch(
                 .as_ref()
                 .map(|cur| cur == &path)
                 .unwrap_or(false);
+
+            // Only update switch history when actually switching worktrees.
+            // Updating on AlreadyAt would corrupt `wt switch -` by recording
+            // the current branch as "previous" even though no switch occurred.
+            if !already_at_worktree {
+                let _ = repo.set_switch_previous(new_previous.as_deref());
+            }
 
             let mismatch_path = if !paths_match(&path, &expected_path) {
                 Some(expected_path)
@@ -716,11 +734,30 @@ pub fn execute_switch(
                     let worktree_path_str = worktree_path.to_string_lossy();
                     let mut args = vec!["worktree", "add", worktree_path_str.as_ref()];
 
+                    // For DWIM fallback: when the branch doesn't exist locally,
+                    // git worktree add relies on DWIM to auto-create it from a
+                    // remote tracking branch. DWIM fails in repos without configured
+                    // fetch refspecs (bare repos, single-branch clones). Explicitly
+                    // create from the tracking ref in that case.
+                    let tracking_ref;
+
                     if *create_branch {
                         args.push("-b");
                         args.push(&branch);
                         if let Some(base) = base_branch {
                             args.push(base);
+                        }
+                    } else if !local_branch_existed {
+                        // Explicit -b when there's exactly one remote tracking ref.
+                        // Git's DWIM relies on the fetch refspec including this branch,
+                        // which may not hold in single-branch clones or bare repos.
+                        let remotes = branch_handle.remotes().unwrap_or_default();
+                        if remotes.len() == 1 {
+                            tracking_ref = format!("{}/{}", remotes[0], branch);
+                            args.extend(["-b", &branch, tracking_ref.as_str()]);
+                        } else {
+                            // Multiple or zero remotes: let git's DWIM handle (or error)
+                            args.push(&branch);
                         }
                     } else {
                         args.push(&branch);
@@ -757,7 +794,7 @@ pub fn execute_switch(
                         branch_handle.unset_upstream()?;
                     }
 
-                    // Report tracking info only if git's DWIM created the branch from a remote
+                    // Report tracking info when the branch was auto-created from a remote
                     let from_remote = if !create_branch && !local_branch_existed {
                         branch_handle.upstream()?
                     } else {

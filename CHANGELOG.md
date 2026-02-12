@@ -1,5 +1,93 @@
 # Changelog
 
+## 0.23.2
+
+### Improved
+
+- **`--force` flag for `wt step copy-ignored`**: Overwrite existing destination files when copying gitignored files to new worktrees. Closes [#971](https://github.com/max-sixty/worktrunk/issues/971). ([#974](https://github.com/max-sixty/worktrunk/pull/974), thanks @williamgoulois for requesting)
+
+### Fixed
+
+- **`wt switch pr:NNNN` / `mr:NNNN` fails in repos without fetch refspecs**: Same-repo PRs and MRs failed with "No branch named X" in single-branch clones or bare repos because fetch didn't create remote tracking branches, and worktree creation relied on DWIM. Now uses explicit refspecs and `-b` fallback. ([#965](https://github.com/max-sixty/worktrunk/pull/965), thanks @andoniaf)
+
+- **Progressive table garbled when output exceeds terminal height**: `wt list` output was corrupted when more lines than the terminal height, because cursor-up commands tried to reach scrolled-off lines. Now detects overflow and falls back to a clean full-table print. ([#981](https://github.com/max-sixty/worktrunk/pull/981))
+
+- **Symlink paths resolved to canonical in cd directives**: When navigating via symlinks, cd directives wrote canonical paths, silently moving users out of their symlink tree. Now preserves the user's logical path. Fixes [#968](https://github.com/max-sixty/worktrunk/issues/968). ([#976](https://github.com/max-sixty/worktrunk/pull/976), thanks @brooke-hamilton for reporting)
+
+- **Terminal artifacts when cancelling interactive picker**: Pressing Esc to cancel the picker left terminal artifacts and a misplaced cursor. Now skim handles cleanup symmetrically for both cancel and accept. ([#984](https://github.com/max-sixty/worktrunk/pull/984))
+
+### Documentation
+
+- **Hook examples: safer port cleanup**: Added `-sTCP:LISTEN` to `lsof` in hook examples to prevent accidentally killing unrelated processes with connections to the port. ([#952](https://github.com/max-sixty/worktrunk/pull/952), thanks @andoniaf)
+
+## 0.23.1
+
+### Improved
+
+- **Interactive picker runs hooks**: `wt switch` without arguments (the interactive picker) now runs post-switch, post-start, and post-create hooks, matching the non-interactive path. ([#942](https://github.com/max-sixty/worktrunk/pull/942))
+
+- **Combined hook output during removal**: Post-remove and post-switch hooks during worktree removal are now shown on a single output line instead of two separate lines. ([#943](https://github.com/max-sixty/worktrunk/pull/943))
+
+### Fixed
+
+- **Shell escape corruption with template filters**: Shell escaping was applied before template rendering, so filters like `sanitize` operated on already-escaped strings, corrupting values with special characters (e.g., apostrophes in branch names). ([#944](https://github.com/max-sixty/worktrunk/pull/944))
+
+- **`wt switch -` history corruption**: `wt switch foo` while already in `foo` would incorrectly record `foo` as the previous branch, breaking `wt switch -` ping-pong. ([#944](https://github.com/max-sixty/worktrunk/pull/944))
+
+- **`--base` without `--create` showed wrong error**: Using `--base` without `--create` could produce misleading errors (e.g., "No previous branch") instead of the expected warning that `--base` requires `--create`. ([#944](https://github.com/max-sixty/worktrunk/pull/944))
+
+## 0.23.0
+
+### Improved
+
+- **Preserve subdirectory position when switching**: `wt switch` now lands in the same subdirectory of the target worktree if it exists, falling back to the root if it doesn't. [Docs](https://worktrunk.dev/switch/) ([#939](https://github.com/max-sixty/worktrunk/pull/939), thanks @frederik-suerig for requesting)
+
+- **`wt switch --no-cd`**: Skip the directory change after switching, useful for scripting or running commands in another worktree without leaving your current shell position. [Docs](https://worktrunk.dev/switch/) ([#932](https://github.com/max-sixty/worktrunk/pull/932), thanks @ArnaudRinquin for requesting)
+
+- **`Alt-c` to create worktree from picker**: In the interactive picker, press `Alt-c` to create a new worktree using the current query as the branch name. ([#933](https://github.com/max-sixty/worktrunk/pull/933))
+
+- **Faster preview tab switching**: Preview tabs (HEAD±, log, main…±, remote⇅) are now pre-computed in a background thread, making tab switching near-instant. ([#935](https://github.com/max-sixty/worktrunk/pull/935))
+
+### Fixed
+
+- **Pager width detection**: Makes preview pane width available to pagers via `$COLUMNS`, so tools like delta can use it for correct side-by-side rendering (e.g., `pager = "delta --width=$COLUMNS"`). Fixes [#924](https://github.com/max-sixty/worktrunk/issues/924). (thanks @tnlanh for reporting) ([#930](https://github.com/max-sixty/worktrunk/pull/930))
+
+- **ANSI style bleeding in preview tabs**: Fixed styling artifacts where dividers appeared emphasized and diffstat lines appeared dim. ([#931](https://github.com/max-sixty/worktrunk/pull/931))
+
+- **URL template expansion with `--skip`**: Skip URL template expansion when `--skip url-status` is used, avoiding unnecessary work. ([#923](https://github.com/max-sixty/worktrunk/pull/923))
+
+- **Hook error consistency**: `wt hook <type>` now errors consistently for all hook types when no hooks are configured, instead of silently succeeding for some types. ([#916](https://github.com/max-sixty/worktrunk/pull/916))
+
+### Documentation
+
+- Improved install instructions in release notes. ([#918](https://github.com/max-sixty/worktrunk/pull/918))
+
+### Internal
+
+- CI: check for existing fix PRs before creating duplicates. ([#922](https://github.com/max-sixty/worktrunk/pull/922))
+
+## 0.22.0
+
+### Improved
+
+- **`wt switch` integrates interactive picker**: `wt switch` without arguments now opens the interactive picker (previously `wt select`). The separate `wt select` command is deprecated with a warning directing users to use `wt switch` instead. Closes [#890](https://github.com/max-sixty/worktrunk/issues/890). (thanks @strangemonad for the suggestion) ([#894](https://github.com/max-sixty/worktrunk/pull/894))
+
+- **TOML syntax highlighting**: Config output from `wt config show` and `wt config shell show-theme` now renders TOML with syntax highlighting (table headers cyan, string values green, comments dimmed). ([#905](https://github.com/max-sixty/worktrunk/pull/905))
+
+- **Bash syntax highlighting improvements**: Multi-line bash commands in hook previews now preserve syntax highlighting across newlines. Wrapped continuation lines are indented with 3 extra spaces to distinguish terminal-forced wraps from actual newlines. ([#906](https://github.com/max-sixty/worktrunk/pull/906))
+
+- **Unified background hook output**: Contiguous post-switch and post-start hooks are now combined into a single output line instead of two separate lines. ([#908](https://github.com/max-sixty/worktrunk/pull/908))
+
+### Documentation
+
+- Removed redundant horizontal rules before H1 headers in documentation pages. ([#909](https://github.com/max-sixty/worktrunk/pull/909))
+
+### Internal
+
+- Updated GitHub Actions and Rust nightly versions. ([#910](https://github.com/max-sixty/worktrunk/pull/910))
+- Bumped tree-sitter ecosystem to 0.26 for unified multi-line highlighting. ([#906](https://github.com/max-sixty/worktrunk/pull/906))
+- Dependency updates: minijinja 2.15.1, clap, indexmap, ignore, thiserror, time, and others. ([#912](https://github.com/max-sixty/worktrunk/pull/912), [#913](https://github.com/max-sixty/worktrunk/pull/913))
+
 ## 0.21.0
 
 ### Improved

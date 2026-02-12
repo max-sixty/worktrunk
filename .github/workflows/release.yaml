@@ -275,7 +275,18 @@ jobs:
           RELEASE_COMMIT: "${{ github.sha }}"
         run: |
           # Write and read notes from a file to avoid quoting breaking things
-          echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
+          # Customize install commands:
+          # - Replace tap formula with homebrew-core and add shell install
+          # - Add shell install to shell script installer
+          # - Add shell install to powershell installer (uses git-wt for Windows)
+          echo "$ANNOUNCEMENT_BODY" | sed \
+            -e 's/brew install max-sixty\/worktrunk\/wt/brew install worktrunk \&\& wt config shell install/g' \
+            -e 's/| sh$/| sh \&\& wt config shell install/g' \
+            -e 's/| iex"$/| iex"; git-wt config shell install/g' \
+            > $RUNNER_TEMP/notes.txt
+
+          # Append additional install options after the Homebrew section
+          printf '\n### Install via Cargo\n\n```sh\ncargo install worktrunk && wt config shell install\n```\n\n### Install via Winget (Windows)\n\n```sh\nwinget install max-sixty.worktrunk && git-wt config shell install\n```\n\n### Install via AUR (Arch Linux)\n\n```sh\nparu worktrunk-bin && wt config shell install\n```\n' >> $RUNNER_TEMP/notes.txt
 
           gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 

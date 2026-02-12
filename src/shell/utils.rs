@@ -4,7 +4,9 @@
 //! shell names from paths, and probing shell configuration state.
 
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use wait_timeout::ChildExt;
 
 use super::Shell;
 
@@ -54,19 +56,36 @@ pub fn shell_from_name(shell_name: &str) -> Option<Shell> {
     }
 }
 
-/// Get the current shell from `$SHELL` environment variable.
+/// Detect the current shell from the environment.
 ///
-/// Returns `None` if `$SHELL` is not set or doesn't match a known shell.
-/// Handles versioned/prefixed binaries like `/nix/store/.../zsh-5.9` or `bash5`
-/// by checking if the name starts with a known shell.
+/// Uses two strategies:
+/// 1. `$SHELL` environment variable (Unix standard, also set by Git Bash on Windows)
+/// 2. `PSModulePath` environment variable (indicates PowerShell on all platforms)
+///
+/// Returns `None` if neither heuristic matches a known shell.
 ///
 /// Works on both Unix and Windows:
 /// - Unix: `/usr/bin/bash` -> Bash
 /// - Windows Git Bash: `C:\Program Files\Git\usr\bin\bash.exe` -> Bash
+/// - Windows PowerShell: `PSModulePath` set -> PowerShell
 pub fn current_shell() -> Option<Shell> {
-    let shell_path = std::env::var("SHELL").ok()?;
-    let shell_name = extract_filename_from_path(&shell_path)?;
-    shell_from_name(shell_name)
+    // Primary: $SHELL (Unix standard, also set by Git Bash on Windows)
+    if let Ok(shell_path) = std::env::var("SHELL")
+        && let Some(name) = extract_filename_from_path(&shell_path)
+    {
+        return shell_from_name(name);
+    }
+
+    // Fallback: PSModulePath indicates PowerShell (set on all platforms when
+    // running inside PowerShell). On Windows this has some false positives
+    // (PSModulePath can be set system-wide), but for diagnostic purposes
+    // that's acceptable — a slightly less accurate message is better than
+    // "shell integration not installed" when it IS installed.
+    if std::env::var_os("PSModulePath").is_some() {
+        return Some(Shell::PowerShell);
+    }
+
+    None
 }
 
 /// Detect if user's zsh has compinit enabled by probing for the compdef function.
@@ -131,29 +150,27 @@ pub fn detect_zsh_compinit() -> Option<bool> {
         .spawn()
         .ok()?;
 
-    let start = Instant::now();
+    // Take stdout handle before wait_timeout (which reaps the process)
+    let mut stdout_handle = child.stdout.take()?;
+
     let timeout = Duration::from_secs(2);
 
-    loop {
-        match child.try_wait() {
-            Ok(Some(_status)) => {
-                // Process finished (exit status is always 0 due to || fallback in probe)
-                // wait_with_output() collects remaining stdout even after try_wait() succeeds
-                let output = child.wait_with_output().ok()?;
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                return Some(stdout.contains("__WT_COMPINIT_YES__"));
-            }
-            Ok(None) => {
-                // Still running - check timeout
-                if start.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait(); // Reap zombie process
-                    return None;
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            Err(_) => return None,
+    match child.wait_timeout(timeout) {
+        Ok(Some(_status)) => {
+            // Process finished - read stdout (use lossy decode for robustness)
+            use std::io::Read;
+            let mut buf = Vec::new();
+            let _ = stdout_handle.read_to_end(&mut buf);
+            let stdout = String::from_utf8_lossy(&buf);
+            Some(stdout.contains("__WT_COMPINIT_YES__"))
         }
+        Ok(None) => {
+            // Timed out - kill and clean up
+            let _ = child.kill();
+            let _ = child.wait();
+            None
+        }
+        Err(_) => None,
     }
 }
 

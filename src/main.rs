@@ -65,7 +65,6 @@ use worktrunk::HookType;
 
 /// Enhance clap errors with command-specific hints, then exit.
 ///
-/// For `wt switch` missing the branch argument, adds hints about shortcuts.
 /// For unrecognized subcommands that match nested commands, suggests the full path.
 fn enhance_and_exit_error(err: clap::Error) -> ! {
     // For unrecognized subcommands, check if they match a nested subcommand
@@ -84,24 +83,8 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
         }
     }
 
-    // Enhance `wt switch` missing argument error with shortcut hints.
-    // Hints go to stderr, which is safe since stdout is reserved for data output.
-    // Check for both "wt switch" and "wt.exe switch" (Windows)
-    let err_str = format!("{err}");
-    let is_switch_missing_arg = err.kind() == ClapErrorKind::MissingRequiredArgument
-        && (err_str.contains("wt switch") || err_str.contains("wt.exe switch"));
-    if is_switch_missing_arg {
-        ceprintln!(
-            "{}
-
-<green,bold>Quick switches:</>
-  <cyan,bold>wt switch ^</>    # default branch's worktree
-  <cyan,bold>wt switch -</>    # previous worktree
-  <cyan,bold>wt select</>      # interactive picker",
-            err.render().ansi()
-        );
-        process::exit(2);
-    }
+    // Note: `wt switch` without arguments now opens the interactive picker,
+    // so this error enhancement is no longer triggered for that case.
 
     err.exit()
 }
@@ -551,9 +534,12 @@ fn main() {
                     }
                 })
             }
-            StepCommand::CopyIgnored { from, to, dry_run } => {
-                step_copy_ignored(from.as_deref(), to.as_deref(), dry_run)
-            }
+            StepCommand::CopyIgnored {
+                from,
+                to,
+                dry_run,
+                force,
+            } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force),
             StepCommand::ForEach { args } => step_for_each(args),
             StepCommand::Relocate {
                 branches,
@@ -643,6 +629,12 @@ fn main() {
         },
         #[cfg(unix)]
         Commands::Select { branches, remotes } => {
+            // Deprecated: show warning and delegate to handle_select
+            eprintln!(
+                "{}",
+                warning_message("wt select is deprecated; use wt switch instead")
+            );
+
             UserConfig::load()
                 .context("Failed to load config")
                 .and_then(|config| {
@@ -661,11 +653,18 @@ fn main() {
         }
         #[cfg(not(unix))]
         Commands::Select { .. } => {
-            eprintln!("{}", error_message("wt select is not available on Windows"));
+            eprintln!(
+                "{}",
+                warning_message("wt select is deprecated; use wt switch instead")
+            );
+            eprintln!(
+                "{}",
+                error_message("Interactive picker is not available on Windows")
+            );
             eprintln!(
                 "{}",
                 hint_message(cformat!(
-                    "To see all worktrees, run <bright-black>wt list</>; to switch directly, run <bright-black>wt switch BRANCH</>"
+                    "Specify a branch: <bright-black>wt switch BRANCH</>"
                 ))
             );
             std::process::exit(1);
@@ -728,16 +727,60 @@ fn main() {
         },
         Commands::Switch {
             branch,
+            branches,
+            remotes,
             create,
             base,
             execute,
             execute_args,
             yes,
             clobber,
+            no_cd,
             verify,
         } => UserConfig::load()
             .context("Failed to load config")
             .and_then(|mut config| {
+                // No branch argument: open interactive picker
+                let Some(branch) = branch else {
+                    #[cfg(unix)]
+                    {
+                        // Get project ID for per-project config lookup
+                        let project_id = Repository::current()
+                            .ok()
+                            .and_then(|r| r.project_identifier().ok());
+
+                        // Get effective list config (merges project-specific with global)
+                        let (show_branches_config, show_remotes_config) = config
+                            .list(project_id.as_deref())
+                            .map(|l| (l.branches.unwrap_or(false), l.remotes.unwrap_or(false)))
+                            .unwrap_or((false, false));
+
+                        // CLI flags override config
+                        let show_branches = branches || show_branches_config;
+                        let show_remotes = remotes || show_remotes_config;
+
+                        return handle_select(show_branches, show_remotes, &config);
+                    }
+
+                    #[cfg(not(unix))]
+                    {
+                        // Suppress unused variable warnings on Windows
+                        let _ = (branches, remotes);
+
+                        eprintln!(
+                            "{}",
+                            error_message("Interactive picker is not available on Windows")
+                        );
+                        eprintln!(
+                            "{}",
+                            hint_message(cformat!(
+                                "Specify a branch: <bright-black>wt switch BRANCH</>"
+                            ))
+                        );
+                        std::process::exit(2);
+                    }
+                };
+
                 handle_switch(
                     SwitchOptions {
                         branch: &branch,
@@ -747,6 +790,7 @@ fn main() {
                         execute_args: &execute_args,
                         yes,
                         clobber,
+                        change_dir: !no_cd,
                         verify,
                     },
                     &mut config,

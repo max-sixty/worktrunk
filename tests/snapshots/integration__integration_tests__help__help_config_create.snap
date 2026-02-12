@@ -127,7 +127,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# ### Select[0m
   [2m#[0m
-  [2m# Pager behavior for `wt select` diff previews.[0m
+  [2m# Pager behavior for `wt switch` interactive picker diff previews.[0m
   [2m#[0m
   [2m# [select][0m
   [2m# # Pager command with flags for diff preview (overrides git's core.pager)[0m

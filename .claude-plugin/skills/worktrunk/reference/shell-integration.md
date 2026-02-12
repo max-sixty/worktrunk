@@ -152,6 +152,23 @@ type wt
 # If it shows a path like /usr/local/bin/wt, wrapper isn't loaded
 ```
 
+### 1b. Check if wrapper is installed (PowerShell)
+
+```powershell
+# PowerShell: should show Function, not just Application
+Get-Command wt -All
+
+# Expected output when wrapper is loaded:
+# CommandType  Name  Source
+# -----------  ----  ------
+# Function     wt
+# Application  wt    C:\Users\...\wt.exe
+
+# If only Application appears, wrapper isn't loaded (restart shell)
+# If Function appears but integration is still "not active", check the body:
+(Get-Command wt -CommandType Function).ScriptBlock | Select-String WORKTRUNK
+```
+
 ### 2. Check shell config file
 
 ```bash

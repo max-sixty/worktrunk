@@ -61,7 +61,7 @@ wt list --full: CI status as clickable dots. Green/blue/red. Clicking opens the 
 [wt-list.gif]
 
 **9/**
-wt select: fuzzy picker across all branches.
+wt switch picker: fuzzy picker across all branches.
 
 [wt-select-short.gif]
 

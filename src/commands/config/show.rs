@@ -402,7 +402,7 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)
-    write!(out, "{}", format_toml(&contents))?;
+    writeln!(out, "{}", format_toml(&contents))?;
 
     Ok(())
 }
@@ -523,7 +523,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     }
 
     // Display TOML with syntax highlighting (gutter at column 0)
-    write!(out, "{}", format_toml(&contents))?;
+    writeln!(out, "{}", format_toml(&contents))?;
 
     Ok(())
 }
@@ -554,8 +554,13 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         }
 
         // Show $SHELL to help diagnose rc file sourcing issues
-        if let Ok(shell_env) = std::env::var("SHELL") {
+        let shell_env = std::env::var("SHELL").ok().filter(|s| !s.is_empty());
+        if let Some(shell_env) = &shell_env {
             debug_lines.push(cformat!("$SHELL: <bold>{shell_env}</>"));
+        } else if let Some(detected) = worktrunk::shell::current_shell() {
+            debug_lines.push(cformat!(
+                "Detected shell: <bold>{detected}</> (via PSModulePath)"
+            ));
         }
 
         if is_git_subcommand {
@@ -689,6 +694,18 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                             hint_message(format!("{shell}: Not configured completions"))
                         )?;
                     }
+                }
+
+                // When configured but not active, show how to verify the wrapper loaded
+                if !shell_active {
+                    let verify_cmd = match shell {
+                        Shell::PowerShell => format!("Get-Command {cmd}"),
+                        _ => format!("type {cmd}"),
+                    };
+                    let hint = hint_message(cformat!(
+                        "To verify wrapper loaded: <bright-black>{verify_cmd}</>"
+                    ));
+                    writeln!(out, "{hint}")?;
                 }
             }
             ConfigAction::WouldAdd | ConfigAction::WouldCreate => {

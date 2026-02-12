@@ -353,8 +353,8 @@ In markdown, use `<picture>` with media queries:
 ```html
 <figure class="demo">
 <picture>
-  <source srcset="/assets/docs/dark/wt-select.gif" media="(prefers-color-scheme: dark)">
-  <img src="/assets/docs/light/wt-select.gif" alt="wt select demo" width="1600" height="800">
+  <source srcset="/assets/docs/dark/wt-switch-picker.gif" media="(prefers-color-scheme: dark)">
+  <img src="/assets/docs/light/wt-switch-picker.gif" alt="wt switch picker demo" width="1600" height="800">
 </picture>
 </figure>
 ```

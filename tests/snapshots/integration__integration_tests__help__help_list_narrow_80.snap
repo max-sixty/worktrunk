@@ -11,10 +11,13 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
     WT_TEST_EPOCH: "1735776000"
@@ -308,4 +311,4 @@ https://github.com/max-sixty/worktrunk.
 
 [1m[32mSee also[0m
 
-- [2mwt select[0m — Interactive worktree picker with live preview
+- [2mwt switch[0m — Switch worktrees or open interactive picker

@@ -21,7 +21,7 @@ use super::tasks::{
 use super::types::{TaskError, TaskKind, TaskResult};
 
 // Tasks that are expensive because they require merge-base computation or merge simulation.
-// These are skipped for branches that are far behind the default branch (in wt select).
+// These are skipped for branches that are far behind the default branch (in `wt switch` interactive picker).
 // AheadBehind is NOT here - we use batch data for it instead of skipping.
 // CommittedTreesMatch is NOT here - it's a cheap tree comparison that aids integration detection.
 const EXPENSIVE_TASKS: &[TaskKind] = &[
@@ -145,18 +145,25 @@ pub fn work_items_for_worktree(
 
     let skip = &options.skip_tasks;
 
-    // Expand URL template for this item
-    let item_url = options.url_template.as_ref().and_then(|template| {
-        wt.branch.as_ref().and_then(|branch| {
-            let mut vars = std::collections::HashMap::new();
-            vars.insert("branch", branch.as_str());
-            worktrunk::config::expand_template(template, &vars, false, repo, "url-template").ok()
+    let include_url = !skip.contains(&TaskKind::UrlStatus);
+
+    // Expand URL template for this item (only if URL status is enabled).
+    let item_url = if include_url {
+        options.url_template.as_ref().and_then(|template| {
+            wt.branch.as_ref().and_then(|branch| {
+                let mut vars = std::collections::HashMap::new();
+                vars.insert("branch", branch.as_str());
+                worktrunk::config::expand_template(template, &vars, false, repo, "url-template")
+                    .ok()
+            })
         })
-    });
+    } else {
+        None
+    };
 
     // Send URL immediately (before health check) so it appears right away.
     // The UrlStatusTask will later update with active status.
-    if let Some(ref url) = item_url {
+    if include_url && let Some(ref url) = item_url {
         expected_results.expect(item_idx, TaskKind::UrlStatus);
         let _ = tx.send(Ok(TaskResult::UrlStatus {
             item_idx,
@@ -218,7 +225,7 @@ pub fn work_items_for_worktree(
     // Note: We already registered and sent an immediate UrlStatus above with url + active=None.
     // This work item will send a second UrlStatus with active=Some(bool) after health check.
     // Both results must be registered and expected.
-    if !skip.contains(&TaskKind::UrlStatus) && ctx.item_url.is_some() {
+    if include_url && ctx.item_url.is_some() {
         expected_results.expect(item_idx, TaskKind::UrlStatus);
         items.push(WorkItem {
             ctx: ctx.clone(),
@@ -298,4 +305,57 @@ pub fn work_items_for_branch(
     }
 
     items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use worktrunk::shell_exec::Cmd;
+
+    #[test]
+    fn test_skip_url_status_suppresses_placeholder_and_task() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        Cmd::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .run()
+            .expect("git init");
+
+        let repo = Repository::at(dir.path()).expect("repo");
+        let wt = WorktreeInfo {
+            path: dir.path().to_path_buf(),
+            head: "deadbeef".to_string(),
+            branch: Some("main".to_string()),
+            bare: false,
+            detached: false,
+            locked: None,
+            prunable: None,
+        };
+
+        let skip_tasks: HashSet<TaskKind> = [TaskKind::UrlStatus].into_iter().collect();
+        let options = CollectOptions {
+            skip_tasks,
+            url_template: Some("http://localhost/{{ branch }}".to_string()),
+            stale_branches: HashSet::new(),
+        };
+
+        let expected_results = Arc::new(ExpectedResults::default());
+        let (tx, rx) = chan::unbounded::<Result<TaskResult, TaskError>>();
+
+        let items = work_items_for_worktree(&repo, &wt, 0, &options, &expected_results, &tx);
+
+        // No placeholder sent
+        assert!(rx.try_recv().is_err());
+        // No UrlStatus work item created
+        assert!(!items.iter().any(|item| item.kind == TaskKind::UrlStatus));
+        // No UrlStatus in expected results
+        assert!(
+            !expected_results
+                .results_for(0)
+                .contains(&TaskKind::UrlStatus)
+        );
+        // item_url is None for all items
+        assert!(items.iter().all(|item| item.ctx.item_url.is_none()));
+    }
 }

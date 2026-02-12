@@ -397,12 +397,12 @@ fn setup_rust_workspace_with_branches(temp: &tempfile::TempDir, num_branches: us
 /// Benchmark GH #461 scenario: large real repo (rust-lang/rust) with branches at different
 /// historical points.
 ///
-/// This reproduces the `wt select` delay reported in #461. The key factor is NOT commits
-/// per branch, but rather how far back in history branches diverge from each other.
+/// This reproduces the `wt switch` interactive picker delay reported in #461. The key factor
+/// is NOT commits per branch, but rather how far back in history branches diverge from each other.
 ///
 /// Benchmarks three modes:
 /// - `warm`: baseline with all branches, no optimization (~15-18s)
-/// - `warm_optimized`: with skip_expensive_for_stale (what `wt select` uses, ~2-3s)
+/// - `warm_optimized`: with skip_expensive_for_stale (what `wt switch` picker uses, ~2-3s)
 /// - `warm_worktrees_only`: no branch enumeration (~600ms)
 ///
 /// Key insight: `git for-each-ref %(ahead-behind:BASE)` is O(commits), not O(refs).
@@ -450,7 +450,7 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
         });
     });
 
-    // With skip_expensive_for_stale optimization (simulates wt select behavior)
+    // With skip_expensive_for_stale optimization (simulates wt switch picker behavior)
     group.bench_function("warm_optimized", |b| {
         let (_temp, workspace_main) = setup_workspace();
         b.iter(|| {

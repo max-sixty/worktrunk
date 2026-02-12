@@ -1,12 +1,13 @@
 #![cfg(all(unix, feature = "shell-integration-tests"))]
-//! TUI snapshot tests for `wt select`
+//! TUI snapshot tests for `wt switch` interactive picker
 //!
 //! These tests use PTY execution combined with vt100 terminal emulation to capture
 //! what the user actually sees on screen, enabling meaningful snapshot testing of
 //! the skim-based TUI interface.
 //!
-//! The tests normalize timing-sensitive parts of the output (query line, count
-//! indicators) to ensure stable snapshots despite TUI rendering variations.
+//! Timing-sensitive output (query line, commit hashes, timestamps, count indicators)
+//! is normalized via insta filters for stable snapshots. Preview tests split the
+//! screen into list and preview panels to avoid the │ border character entirely.
 //!
 //! ## Timing Strategy
 //!
@@ -38,7 +39,9 @@ const READY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Maximum time to wait for screen to stabilize after input.
 /// Long timeout ensures reliability on slow CI.
-const STABILIZE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Increased from 5s to 10s to handle macOS CI under heavy load where branch
+/// loading can be slow (particularly when waiting for async branch lists to populate).
+const STABILIZE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long screen must be unchanged to consider it "stable".
 /// Must be long enough for preview content to load (preview commands run async).
@@ -49,6 +52,56 @@ const STABLE_DURATION: Duration = Duration::from_millis(500);
 /// Polling interval when waiting for output.
 /// Fast polling ensures tests complete quickly when ready.
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Column where skim renders the │ border between list and preview panels.
+/// TERM_COLS=120, preview window spec `right:60` → list gets 60 cols, separator at 60.
+const SEPARATOR_COL: u16 = 60;
+
+/// Result of executing a command in a PTY, holding the parsed terminal state.
+struct PtyResult {
+    parser: vt100::Parser,
+    exit_code: i32,
+}
+
+impl PtyResult {
+    /// Full screen content as rows of text.
+    ///
+    /// Trailing whitespace is trimmed from each row because `vt100::rows()` pads
+    /// rows to the full column width with spaces. This padding is terminal buffer
+    /// fill, not meaningful content, and varies across platforms. Trailing empty
+    /// lines are also removed (unwritten terminal rows become empty after trim).
+    fn screen(&self) -> String {
+        self.parser
+            .screen()
+            .rows(0, TERM_COLS)
+            .map(|row| row.trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim_end()
+            .to_string()
+    }
+
+    /// List and preview panel content, split at the skim border column.
+    /// Avoids the │ border character that causes cross-platform rendering issues.
+    fn panels(&self) -> (String, String) {
+        let screen = self.parser.screen();
+        let list = screen
+            .rows(0, SEPARATOR_COL)
+            .map(|row| row.trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim_end()
+            .to_string();
+        let preview = screen
+            .rows(SEPARATOR_COL + 1, TERM_COLS - SEPARATOR_COL - 1)
+            .map(|row| row.trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim_end()
+            .to_string();
+        (list, preview)
+    }
+}
 
 /// Assert that exit code is valid for skim abort (0, 1, or 130)
 fn assert_valid_abort_exit_code(exit_code: i32) {
@@ -63,13 +116,25 @@ fn assert_valid_abort_exit_code(exit_code: i32) {
     );
 }
 
+/// Collapse consecutive identical trailing lines into a single copy.
+///
+/// Useful for abort tests where skim's border rendering produces a variable number
+/// of identical `│` rows depending on how far rendering progressed before exit.
+fn collapse_trailing_dupes(s: &str) -> String {
+    let mut lines: Vec<&str> = s.lines().collect();
+    while lines.len() >= 2 && lines[lines.len() - 1] == lines[lines.len() - 2] {
+        lines.pop();
+    }
+    lines.join("\n")
+}
+
 /// Check if skim is ready (shows "> " prompt indicating it's accepting input)
 fn is_skim_ready(screen_content: &str) -> bool {
     // Skim shows "> " at the start when ready, and displays item count like "1/3"
     screen_content.starts_with("> ") || screen_content.contains("\n> ")
 }
 
-/// Execute a command in a PTY and return raw output bytes
+/// Execute a command in a PTY and return the parsed terminal state.
 ///
 /// Uses polling with stabilization detection instead of fixed delays.
 fn exec_in_pty_with_input(
@@ -78,7 +143,7 @@ fn exec_in_pty_with_input(
     working_dir: &Path,
     env_vars: &[(String, String)],
     input: &str,
-) -> (Vec<u8>, i32) {
+) -> PtyResult {
     exec_in_pty_with_input_expectations(command, args, working_dir, env_vars, &[(input, None)])
 }
 
@@ -98,7 +163,7 @@ fn exec_in_pty_with_input_expectations(
     working_dir: &Path,
     env_vars: &[(String, String)],
     inputs: &[(&str, Option<&str>)],
-) -> (Vec<u8>, i32) {
+) -> PtyResult {
     let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
 
     let mut cmd = CommandBuilder::new(command);
@@ -141,21 +206,18 @@ fn exec_in_pty_with_input_expectations(
     });
 
     let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
-    let mut raw_output = Vec::new();
 
     // Helper to drain available output from the channel (non-blocking)
-    let drain_output =
-        |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser, raw_output: &mut Vec<u8>| {
-            while let Ok(chunk) = rx.try_recv() {
-                raw_output.extend_from_slice(&chunk);
-                parser.process(&chunk);
-            }
-        };
+    let drain_output = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
+        while let Ok(chunk) = rx.try_recv() {
+            parser.process(&chunk);
+        }
+    };
 
     // Wait for skim to be ready (show "> " prompt)
     let start = Instant::now();
     loop {
-        drain_output(&rx, &mut parser, &mut raw_output);
+        drain_output(&rx, &mut parser);
 
         let screen_content = parser.screen().contents();
         if is_skim_ready(&screen_content) {
@@ -174,7 +236,7 @@ fn exec_in_pty_with_input_expectations(
     }
 
     // Wait for initial render to stabilize
-    wait_for_stable(&rx, &mut parser, &mut raw_output);
+    wait_for_stable(&rx, &mut parser);
 
     // Send each input and wait for screen to stabilize after each
     for (input, expected_content) in inputs {
@@ -182,7 +244,7 @@ fn exec_in_pty_with_input_expectations(
         writer.flush().unwrap();
 
         // Wait for screen to stabilize after this input, optionally requiring specific content
-        wait_for_stable_with_content(&rx, &mut parser, &mut raw_output, *expected_content);
+        wait_for_stable_with_content(&rx, &mut parser, *expected_content);
     }
 
     // Drop writer to signal EOF on stdin
@@ -200,21 +262,17 @@ fn exec_in_pty_with_input_expectations(
     let _ = child.kill(); // Kill if still running after timeout
 
     // Drain any remaining output
-    drain_output(&rx, &mut parser, &mut raw_output);
+    drain_output(&rx, &mut parser);
 
     let exit_status = child.wait().unwrap();
     let exit_code = exit_status.exit_code() as i32;
 
-    (raw_output, exit_code)
+    PtyResult { parser, exit_code }
 }
 
 /// Wait for screen content to stabilize (no changes for STABLE_DURATION)
-fn wait_for_stable(
-    rx: &mpsc::Receiver<Vec<u8>>,
-    parser: &mut vt100::Parser,
-    raw_output: &mut Vec<u8>,
-) {
-    wait_for_stable_with_content(rx, parser, raw_output, None);
+fn wait_for_stable(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
+    wait_for_stable_with_content(rx, parser, None);
 }
 
 /// Wait for screen content to stabilize, optionally requiring specific content.
@@ -222,10 +280,12 @@ fn wait_for_stable(
 /// If `expected_content` is provided, waits until the screen contains that string
 /// AND has stabilized. This is essential for async preview panels where the initial
 /// render may show placeholder content before the actual data loads.
+///
+/// Tip: include the panel border character (`│`) in `expected_content` to ensure
+/// the full TUI frame has rendered, not just the preview text content.
 fn wait_for_stable_with_content(
     rx: &mpsc::Receiver<Vec<u8>>,
     parser: &mut vt100::Parser,
-    raw_output: &mut Vec<u8>,
     expected_content: Option<&str>,
 ) {
     let start = Instant::now();
@@ -235,7 +295,6 @@ fn wait_for_stable_with_content(
     while start.elapsed() < STABILIZE_TIMEOUT {
         // Drain available output
         while let Ok(chunk) = rx.try_recv() {
-            raw_output.extend_from_slice(&chunk);
             parser.process(&chunk);
         }
 
@@ -266,91 +325,62 @@ fn wait_for_stable_with_content(
     );
 }
 
-/// Render raw PTY output through vt100 terminal emulator to get clean screen text
-fn render_terminal_screen(raw_output: &[u8]) -> String {
-    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
-    parser.process(raw_output);
+/// Create insta settings with filters for switch picker snapshot stability.
+///
+/// Replaces the manual `normalize_output()` approach with declarative insta filters.
+/// Since `rows()` returns plain text (no ANSI codes, no OSC 8 hyperlinks),
+/// `add_pty_filters()` and `strip_osc8_hyperlinks()` are not needed.
+fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
+    let mut settings = crate::common::setup_snapshot_settings(repo);
 
-    let screen = parser.screen();
-    let mut result = String::new();
+    // Query line has timing variations (shows typed chars at different rates).
+    // \A anchors to absolute start of string, matching only the first line.
+    settings.add_filter(r"\A> [^\n]*", "> [QUERY]");
 
-    for row in 0..TERM_ROWS {
-        let mut line = String::new();
-        for col in 0..TERM_COLS {
-            if let Some(cell) = screen.cell(row, col) {
-                line.push_str(cell.contents());
-            }
-        }
-        // Trim trailing whitespace but preserve the line
-        result.push_str(line.trim_end());
-        result.push('\n');
-    }
+    // Skim count indicators (matched/total) at end of lines
+    settings.add_filter(r"(?m)\d+/\d+\s*$", "[N/M]");
 
-    // Trim trailing empty lines
-    while result.ends_with("\n\n") {
-        result.pop();
-    }
+    // Commit hashes (7-8 hex chars)
+    settings.add_filter(r"\b[0-9a-f]{7,8}\b", "[HASH]");
 
-    result
-}
+    // Truncated commit hashes (6+ hex chars followed by ..) in narrow columns
+    settings.add_filter(r"\b[0-9a-f]{6,8}\.\.", "[HASH]..");
 
-/// Normalize output for snapshot stability
-fn normalize_output(output: &str) -> String {
-    // Strip OSC 8 hyperlinks first (git on macOS generates these in diffs)
-    let output = worktrunk::styling::strip_osc8_hyperlinks(output);
+    // Relative timestamps (1d, 16h, etc.)
+    settings.add_filter(r"\b\d+[dhms]\b", "[TIME]");
 
-    let mut lines: Vec<&str> = output.lines().collect();
-
-    // Normalize line 1 (query line) - replace with fixed marker
-    // This line shows typed query which has timing variations
-    if !lines.is_empty() {
-        lines[0] =
-            "> [QUERY]                                                     │[PREVIEW_HEADER]";
-    }
-
-    let output = lines.join("\n");
-
-    // Replace temp paths like /var/folders/.../repo.XXX with _REPO_
-    let re = regex::Regex::new(r"/[^\s]+\.tmp[^\s/]*").unwrap();
-    let output = re.replace_all(&output, "_REPO_");
-
-    // Replace count indicators like "1/4", "3/4" etc at end of lines
-    let count_re = regex::Regex::new(r"\d+/\d+$").unwrap();
-    let output = count_re.replace_all(&output, "[N/M]");
-
-    // Replace home directory paths
-    if let Some(home) = home::home_dir() {
-        let home_str = home.to_string_lossy();
-        output.replace(&*home_str, "~")
-    } else {
-        output.to_string()
-    }
+    settings
 }
 
 #[rstest]
-fn test_select_abort_with_escape(mut repo: TestRepo) {
+fn test_switch_picker_abort_with_escape(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
 
     let env_vars = repo.test_env_vars();
-    let (raw_output, exit_code) = exec_in_pty_with_input(
+    let result = exec_in_pty_with_input(
         wt_bin().to_str().unwrap(),
-        &["select"],
+        &["switch"],
         repo.root_path(),
         &env_vars,
         "\x1b", // Escape key to abort
     );
 
-    assert_valid_abort_exit_code(exit_code);
+    assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = render_terminal_screen(&raw_output);
-    let normalized = normalize_output(&screen);
-    assert_snapshot!("select_abort_escape", normalized);
+    // Collapse trailing duplicate lines: skim's border rendering varies on abort
+    // because the escape key kills the process mid-render, producing a variable
+    // number of identical `│` border rows at the bottom.
+    let screen = collapse_trailing_dupes(&result.screen());
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_abort_escape", screen);
+    });
 }
 
 #[rstest]
-fn test_select_with_multiple_worktrees(mut repo: TestRepo) {
+fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
@@ -359,23 +389,25 @@ fn test_select_with_multiple_worktrees(mut repo: TestRepo) {
     repo.add_worktree("feature-two");
 
     let env_vars = repo.test_env_vars();
-    let (raw_output, exit_code) = exec_in_pty_with_input(
+    let result = exec_in_pty_with_input(
         wt_bin().to_str().unwrap(),
-        &["select"],
+        &["switch"],
         repo.root_path(),
         &env_vars,
         "\x1b", // Escape to abort after viewing
     );
 
-    assert_valid_abort_exit_code(exit_code);
+    assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = render_terminal_screen(&raw_output);
-    let normalized = normalize_output(&screen);
-    assert_snapshot!("select_multiple_worktrees", normalized);
+    let screen = collapse_trailing_dupes(&result.screen());
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_multiple_worktrees", screen);
+    });
 }
 
 #[rstest]
-fn test_select_with_branches(mut repo: TestRepo) {
+fn test_switch_picker_with_branches(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
@@ -390,23 +422,25 @@ fn test_select_with_branches(mut repo: TestRepo) {
     assert!(output.status.success(), "Failed to create branch");
 
     let env_vars = repo.test_env_vars();
-    let (raw_output, exit_code) = exec_in_pty_with_input(
+    let result = exec_in_pty_with_input(
         wt_bin().to_str().unwrap(),
-        &["select", "--branches"],
+        &["switch", "--branches"],
         repo.root_path(),
         &env_vars,
         "\x1b", // Escape to abort
     );
 
-    assert_valid_abort_exit_code(exit_code);
+    assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = render_terminal_screen(&raw_output);
-    let normalized = normalize_output(&screen);
-    assert_snapshot!("select_with_branches", normalized);
+    let screen = collapse_trailing_dupes(&result.screen());
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_with_branches", screen);
+    });
 }
 
 #[rstest]
-fn test_select_preview_panel_uncommitted(mut repo: TestRepo) {
+fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
@@ -444,27 +478,30 @@ fn test_select_preview_panel_uncommitted(mut repo: TestRepo) {
     let env_vars = repo.test_env_vars();
     // Type "feature" to filter to just the feature worktree, press 1 for HEAD± panel
     // Wait for "diff --git" to appear after pressing 1 - the async preview can be slow under congestion
-    let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
+    let result = exec_in_pty_with_input_expectations(
         wt_bin().to_str().unwrap(),
-        &["select"],
+        &["switch"],
         repo.root_path(),
         &env_vars,
         &[
             ("feature", None),
-            ("1", Some("diff --git")), // Wait for diff to load
+            ("1", Some("│diff --git")), // Wait for diff to load (│ = border drawn)
             ("\x1b", None),
         ],
     );
 
-    assert_valid_abort_exit_code(exit_code);
+    assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = render_terminal_screen(&raw_output);
-    let normalized = normalize_output(&screen);
-    assert_snapshot!("select_preview_uncommitted", normalized);
+    let (list, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_preview_uncommitted_list", list);
+        assert_snapshot!("switch_picker_preview_uncommitted_preview", preview);
+    });
 }
 
 #[rstest]
-fn test_select_preview_panel_log(mut repo: TestRepo) {
+fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
@@ -501,27 +538,30 @@ fn test_select_preview_panel_log(mut repo: TestRepo) {
     let env_vars = repo.test_env_vars();
     // Type "feature" to filter, press 2 for log panel
     // Wait for commit log format "* [hash]" to appear - the async preview can be slow under congestion
-    let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
+    let result = exec_in_pty_with_input_expectations(
         wt_bin().to_str().unwrap(),
-        &["select"],
+        &["switch"],
         repo.root_path(),
         &env_vars,
         &[
             ("feature", None),
-            ("2", Some("* ")), // Wait for git log output (starts with "* [hash]")
+            ("2", Some("│* ")), // Wait for git log output (│ = border drawn)
             ("\x1b", None),
         ],
     );
 
-    assert_valid_abort_exit_code(exit_code);
+    assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = render_terminal_screen(&raw_output);
-    let normalized = normalize_output(&screen);
-    assert_snapshot!("select_preview_log", normalized);
+    let (list, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_preview_log_list", list);
+        assert_snapshot!("switch_picker_preview_log_preview", preview);
+    });
 }
 
 #[rstest]
-fn test_select_preview_panel_main_diff(mut repo: TestRepo) {
+fn test_switch_picker_preview_panel_main_diff(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
@@ -591,27 +631,30 @@ fn test_new_feature() {
     let env_vars = repo.test_env_vars();
     // Type "feature" to filter, press 3 for main…± panel
     // Wait for "diff --git" to appear after pressing 3 - the async preview can be slow under congestion
-    let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
+    let result = exec_in_pty_with_input_expectations(
         wt_bin().to_str().unwrap(),
-        &["select"],
+        &["switch"],
         repo.root_path(),
         &env_vars,
         &[
             ("feature", None),
-            ("3", Some("diff --git")), // Wait for diff to load
+            ("3", Some("│diff --git")), // Wait for diff to load (│ = border drawn)
             ("\x1b", None),
         ],
     );
 
-    assert_valid_abort_exit_code(exit_code);
+    assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = render_terminal_screen(&raw_output);
-    let normalized = normalize_output(&screen);
-    assert_snapshot!("select_preview_main_diff", normalized);
+    let (list, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_preview_main_diff_list", list);
+        assert_snapshot!("switch_picker_preview_main_diff_preview", preview);
+    });
 }
 
 #[rstest]
-fn test_select_respects_list_config(mut repo: TestRepo) {
+fn test_switch_picker_respects_list_config(mut repo: TestRepo) {
     repo.add_worktree("active-worktree");
     // Create a branch without a worktree
     let output = repo
@@ -622,7 +665,7 @@ fn test_select_respects_list_config(mut repo: TestRepo) {
     assert!(output.status.success(), "Failed to create branch");
 
     // Write user config with [list] branches = true
-    // This should enable branches in wt select without the --branches flag
+    // This should enable branches in the picker without the --branches flag
     repo.write_test_config(
         r#"
 [list]
@@ -631,21 +674,142 @@ branches = true
     );
 
     let env_vars = repo.test_env_vars();
-    let (raw_output, exit_code) = exec_in_pty_with_input(
+    // Wait for orphan-branch to appear before sending Escape
+    // Under CI load, the branch list may take time to render fully
+    let result = exec_in_pty_with_input_expectations(
         wt_bin().to_str().unwrap(),
-        &["select"], // No --branches flag - config should enable it
+        &["switch"], // No --branches flag - config should enable it
         repo.root_path(),
         &env_vars,
-        "\x1b", // Escape to abort
+        &[("\x1b", Some("│orphan-branch"))], // Wait for branch to appear (│ = border drawn)
     );
 
-    assert_valid_abort_exit_code(exit_code);
+    assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = render_terminal_screen(&raw_output);
+    let screen = result.screen();
     // Verify that orphan-branch appears (enabled by config, not CLI flag)
     assert!(
         screen.contains("orphan-branch"),
         "orphan-branch should appear when [list] branches = true in config.\nScreen:\n{}",
+        screen
+    );
+}
+
+#[rstest]
+fn test_switch_picker_create_worktree_with_alt_c(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so there's no interference from remote branches
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    let env_vars = repo.test_env_vars();
+
+    // Type branch name "new-feature", then press Alt-C (escape + c) to create
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("new-feature", None), // Type the branch name
+            ("\x1bc", None),       // Alt-C (escape + c) to create worktree
+        ],
+    );
+
+    // Alt-C triggers accept which should exit normally
+    assert_eq!(
+        result.exit_code, 0,
+        "Expected exit code 0 for successful create"
+    );
+
+    let screen = result.screen();
+
+    // Verify the success message shows the new branch
+    assert!(
+        screen.contains("new-feature") || screen.contains("Switched"),
+        "Expected success message showing new-feature branch.\nScreen:\n{}",
+        screen
+    );
+
+    // Verify the worktree was actually created by checking the branch exists
+    let branch_output = repo
+        .git_command()
+        .args(["branch", "--list", "new-feature"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&branch_output.stdout).contains("new-feature"),
+        "Branch new-feature should have been created"
+    );
+}
+
+#[rstest]
+fn test_switch_picker_create_with_empty_query_fails(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so there's no interference from remote branches
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    let env_vars = repo.test_env_vars();
+
+    // Press Alt-C without typing a query - should error
+    let result = exec_in_pty_with_input(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        "\x1bc", // Alt-C (escape + c) without typing a branch name
+    );
+
+    // Should exit with error (non-zero)
+    assert_ne!(
+        result.exit_code, 0,
+        "Expected non-zero exit for empty query"
+    );
+
+    let screen = result.screen();
+
+    // Verify the error message
+    assert!(
+        screen.contains("no branch name entered") || screen.contains("Cannot create"),
+        "Expected error message about missing branch name.\nScreen:\n{}",
+        screen
+    );
+}
+
+#[rstest]
+fn test_switch_picker_switch_to_existing_worktree(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so there's no interference from remote branches
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Create a worktree to switch to
+    repo.add_worktree("target-branch");
+
+    let env_vars = repo.test_env_vars();
+
+    // Navigate to target-branch and press Enter to switch
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("target", None), // Filter to "target-branch"
+            ("\r", None),     // Enter to switch
+        ],
+    );
+
+    // Should exit successfully
+    assert_eq!(
+        result.exit_code, 0,
+        "Expected exit code 0 for successful switch"
+    );
+
+    let screen = result.screen();
+
+    // Verify the success message or cd directive
+    assert!(
+        screen.contains("target-branch") || screen.contains("Switched") || screen.contains("cd "),
+        "Expected switch output showing target-branch.\nScreen:\n{}",
         screen
     );
 }

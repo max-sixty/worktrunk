@@ -2683,9 +2683,18 @@ fn setup_snapshot_settings_for_paths_with_home(
         "sh: $1: command not found",
     );
 
-    // Filter out PowerShell lines on Windows - these appear only on Windows
-    // and would cause snapshot mismatches with Unix snapshots
-    settings.add_filter(r"(?m)^.*[Pp]owershell.*\n", "");
+    // Filter out PowerShell lines that differ between Windows and Unix.
+    // On Windows, PowerShell profile paths use Documents\PowerShell\... while Unix uses
+    // ~/.config/powershell/..., and PowerShell scanning is auto-enabled on Windows.
+    // These targeted patterns strip platform-dependent output without affecting:
+    // - "Detected shell: powershell" diagnostics (no colon after powershell)
+    // - Clap help/error messages listing available shells
+    // ANSI codes can appear between "powershell" and ":" in styled output (e.g.,
+    // "\x1b[1mpowershell\x1b[22m:"), so we allow optional escape sequences in the match.
+    settings.add_filter(r"(?m)^.*[Pp]owershell(?:\x1b\[[0-9;]*m)*:.*\n", ""); // status: "○ powershell: ..."
+    settings.add_filter(r"(?m)^.*No .*powershell.* shell extension.*\n", ""); // uninstall hints
+    settings.add_filter(r"(?m)^.*shell init powershell.*\n", ""); // gutter config content
+    settings.add_filter(r"(?m)^.*for powershell .*\n", ""); // install success lines
 
     // Normalize Windows executable extension in help output
     // On Windows, clap shows "wt.exe" instead of "wt"
@@ -2788,9 +2797,11 @@ pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
         "[TEMP_HOME]",
     );
     settings.add_filter(r"\\", "/");
-    // Filter out PowerShell lines on Windows - these appear only on Windows
-    // and would cause snapshot mismatches with Unix snapshots
-    settings.add_filter(r"(?m)^.*[Pp]owershell.*\n", "");
+    // Filter out PowerShell lines (see main filter in setup_snapshot_settings_impl for details)
+    settings.add_filter(r"(?m)^.*[Pp]owershell(?:\x1b\[[0-9;]*m)*:.*\n", "");
+    settings.add_filter(r"(?m)^.*No .*powershell.* shell extension.*\n", "");
+    settings.add_filter(r"(?m)^.*shell init powershell.*\n", "");
+    settings.add_filter(r"(?m)^.*for powershell .*\n", "");
     // Normalize Windows executable extension in help output
     settings.add_filter(r"wt\.exe", "wt");
 

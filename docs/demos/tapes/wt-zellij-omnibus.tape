@@ -6,7 +6,7 @@ Output "{{OUTPUT_GIF}}"
 #
 # Design principles:
 # 1. Simple features before complex ones
-#    - list, switch, select (navigation) → create, commit, merge (workflows)
+#    - list, switch (navigation) → create, commit, merge (workflows)
 # 2. Logical story arc
 #    - Overview → work on branches → create feature → complete it → cleanup
 # 3. Merge comes AFTER making changes (not on pre-existing uncommitted changes)

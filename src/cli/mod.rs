@@ -308,6 +308,40 @@ wt switch pr:123                 # PR #123's branch
 wt switch mr:101                 # MR !101's branch
 ```
 
+## Interactive picker
+
+When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview. The picker requires a TTY.
+
+<!-- demo: wt-switch-picker.gif 1600x800 -->
+**Keybindings:**
+
+| Key | Action |
+|-----|--------|
+| `↑`/`↓` | Navigate worktree list |
+| (type) | Filter worktrees |
+| `Enter` | Switch to selected worktree |
+| `Alt-c` | Create new worktree from query |
+| `Esc` | Cancel |
+| `1`/`2`/`3`/`4` | Switch preview tab |
+| `Alt-p` | Toggle preview panel |
+| `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
+
+**Preview tabs** (toggle with number keys):
+
+1. **HEAD±** — Diff of uncommitted changes
+2. **log** — Recent commits; commits already on the default branch have dimmed hashes
+3. **main…±** — Diff of changes since the merge-base with the default branch
+4. **remote⇅** — Diff vs upstream tracking branch (ahead/behind)
+
+**Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
+
+```toml
+[select]
+pager = "delta --paging=never --width=$COLUMNS"
+```
+
+Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <branch>` directly.
+
 ## GitHub pull requests (experimental)
 
 The `pr:<number>` syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches `refs/pull/N/head` and configures `pushRemote` to the fork URL.
@@ -342,7 +376,6 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 
 ## See also
 
-- [`wt select`](@/select.md) — Interactive worktree selection
 - [`wt list`](@/list.md) — View all worktrees
 - [`wt remove`](@/remove.md) — Delete worktrees when done
 - [`wt merge`](@/merge.md) — Integrate changes back to the default branch
@@ -351,18 +384,27 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
     Switch {
         /// Branch name or shortcut
         ///
+        /// Opens interactive picker if omitted.
         /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)
         #[arg(add = crate::completion::worktree_branch_completer())]
-        branch: String,
+        branch: Option<String>,
+
+        /// Include branches without worktrees (interactive picker)
+        #[arg(long, conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
+        branches: bool,
+
+        /// Include remote branches (interactive picker)
+        #[arg(long, conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
+        remotes: bool,
 
         /// Create a new branch
-        #[arg(short = 'c', long)]
+        #[arg(short = 'c', long, requires = "branch")]
         create: bool,
 
         /// Base branch
         ///
         /// Defaults to default branch.
-        #[arg(short = 'b', long, add = crate::completion::branch_value_completer())]
+        #[arg(short = 'b', long, requires = "branch", add = crate::completion::branch_value_completer())]
         base: Option<String>,
 
         /// Command to run after switch
@@ -390,7 +432,7 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         /// Template example: `-x 'code {{ worktree_path }}'` opens VS Code
         /// at the worktree, `-x 'tmux new -s {{ branch | sanitize }}'` starts
         /// a tmux session named after the branch.
-        #[arg(short = 'x', long)]
+        #[arg(short = 'x', long, requires = "branch")]
         execute: Option<String>,
 
         /// Additional arguments for --execute command (after --)
@@ -405,8 +447,15 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         yes: bool,
 
         /// Remove stale paths at target
-        #[arg(long)]
+        #[arg(long, requires = "branch")]
         clobber: bool,
+
+        /// Skip directory change after switching
+        ///
+        /// Hooks still run normally. Useful when hooks handle navigation
+        /// (e.g., tmux workflows) or for CI/automation.
+        #[arg(long)]
+        no_cd: bool,
 
         /// Skip hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
@@ -644,7 +693,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
 
 ## See also
 
-- [`wt select`](@/select.md) — Interactive worktree picker with live preview
+- [`wt switch`](@/switch.md) — Switch worktrees or open interactive picker
 "#
     )]
     // TODO: `args_conflicts_with_subcommands` causes confusing errors for unknown
@@ -926,62 +975,10 @@ lint = "cargo clippy"
         #[arg(long)]
         stage: Option<crate::commands::commit::StageMode>,
     },
-    /// Interactive worktree selector
+    /// Deprecated: use `wt switch` instead
     ///
-    /// Browse and switch worktrees with live preview.
-    #[cfg_attr(not(unix), command(hide = true))]
-    #[command(after_long_help = r#"<!-- demo: wt-select.gif 1600x800 -->
-## Examples
-
-Open the selector:
-
-```console
-wt select
-```
-
-## Preview tabs
-
-Toggle between views with number keys:
-
-1. **HEAD±** — Diff of uncommitted changes
-2. **log** — Recent commits; commits already on the default branch have dimmed hashes
-3. **main…±** — Diff of changes since the merge-base with the default branch
-4. **remote⇅** — Diff vs upstream tracking branch (ahead/behind)
-
-## Keybindings
-
-| Key | Action |
-|-----|--------|
-| `↑`/`↓` | Navigate worktree list |
-| `Enter` | Switch to selected worktree |
-| `Esc` | Cancel |
-| (type) | Filter worktrees |
-| `1`/`2`/`3`/`4` | Switch preview tab |
-| `Alt-p` | Toggle preview panel |
-| `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
-
-With `--branches`, branches without worktrees are included — selecting one creates a worktree. This matches `wt list --branches`.
-
-## Configuration
-
-### Pager
-
-The preview panel pipes diff output through git's pager (typically `less` or `delta`). Override pager behavior in user config:
-
-```toml
-[select]
-pager = "delta --paging=never"
-```
-
-This is useful when the default pager doesn't render correctly in the embedded preview panel.
-
-## See also
-
-- [`wt list`](@/list.md) — Static table view with all worktree metadata
-- [`wt switch`](@/switch.md) — Direct switching to a known target branch
-
-Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch` directly.
-"#)]
+    /// Interactive worktree picker (now integrated into `wt switch`).
+    #[command(hide = true)]
     Select {
         /// Include branches without worktrees
         #[arg(long)]
@@ -1132,7 +1129,7 @@ Cleanup tasks after worktree removal: stopping dev servers, removing containers,
 
 ```toml
 [post-remove]
-kill-server = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
+kill-server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/null || true"
 remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
 ```
 
@@ -1347,7 +1344,7 @@ Run a dev server per worktree on a deterministic port using `hash_port`:
 server = "npm run dev -- --port {{ branch | hash_port }}"
 
 [post-remove]
-server = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
+server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/null || true"
 ```
 
 The port is stable across machines and restarts — `feature-api` always gets the same port. Show it in `wt list`:
@@ -1510,8 +1507,6 @@ deps = "npm ci"
 test = "npm test"
 ```
 
----
-
 <!-- USER_CONFIG_START -->
 # User Configuration
 
@@ -1595,7 +1590,7 @@ verify = true      # Run project hooks (--no-verify to skip)
 
 ### Select
 
-Pager behavior for `wt select` diff previews.
+Pager behavior for `wt switch` interactive picker diff previews.
 
 ```toml
 [select]
@@ -1733,8 +1728,6 @@ Combine these commits into a single commit message.
 <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 <!-- USER_CONFIG_END -->
 
----
-
 # Project Configuration
 
 Project config (`.config/wt.toml`) defines lifecycle hooks and project-specific settings. This file is checked into version control and shared with the team. Create with `wt config create --project`.
@@ -1755,8 +1748,6 @@ url = "http://localhost:{{ branch | hash_port }}"
 platform = "github"  # or "gitlab"
 ```
 
----
-
 # Shell Integration
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
@@ -1765,18 +1756,7 @@ Worktrunk needs shell integration to change directories when switching worktrees
 wt config shell install
 ```
 
-Or manually add to the shell config:
-
-```console
-# For bash: add to ~/.bashrc
-eval "$(wt config shell init bash)"
-
-# For zsh: add to ~/.zshrc
-eval "$(wt config shell init zsh)"
-
-# For fish: add to ~/.config/fish/config.fish
-wt config shell init fish | source
-```
+For manual setup, see `wt config shell init --help`.
 
 Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
 
