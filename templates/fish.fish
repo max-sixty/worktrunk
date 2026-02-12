@@ -28,9 +28,9 @@ function {{ cmd }}
 
     # --source: use cargo run (builds from source)
     if test $use_source = true
-        WORKTRUNK_DIRECTIVE_FILE=$directive_file cargo run --bin {{ cmd }} --quiet -- $args
+        env WORKTRUNK_DIRECTIVE_FILE=$directive_file cargo run --bin {{ cmd }} --quiet -- $args
     else
-        WORKTRUNK_DIRECTIVE_FILE=$directive_file command $WORKTRUNK_BIN $args
+        env WORKTRUNK_DIRECTIVE_FILE=$directive_file command $WORKTRUNK_BIN $args
     end
     set -l exit_code $status
 
