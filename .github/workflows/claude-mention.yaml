@@ -18,11 +18,17 @@ env:
 
 jobs:
   claude:
-    # Only run when issue body or comment contains @claude
+    # Only run when body/comment contains @claude AND secrets are available.
+    # Review comments on fork PRs don't receive repository secrets (GitHub
+    # security restriction) so the job skips. Use a regular PR comment on the
+    # Conversation tab to trigger @claude on fork PRs instead.
     if: |
-      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude')) ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
+      secrets.CLAUDE_CODE_OAUTH_TOKEN != '' &&
+      (
+        (github.event_name == 'issues' && contains(github.event.issue.body, '@claude')) ||
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
+      )
     runs-on: ubuntu-24.04
     permissions:
       contents: write # Allow pushing commits
@@ -34,7 +40,7 @@ jobs:
       - name: 📂 Checkout code
         uses: actions/checkout@v6
         with:
-          # Fix: Checkout PR branch for issue_comment events instead of default branch
+          # Checkout PR branch for issue_comment events instead of default branch
           ref:
             ${{ github.event.issue.pull_request && format('refs/pull/{0}/head',
             github.event.issue.number) || github.ref }}
@@ -73,7 +79,6 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
-          model: opus
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Use bot token so pushed commits trigger CI workflows
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
@@ -85,7 +90,8 @@ jobs:
           # Grant Claude full permissions to execute commands
           # Also include system prompt with project context via claude_args
           claude_args: |
-            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch
+            --model opus
+            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill
             --system-prompt "You are helping with the worktrunk project in a GitHub Actions environment.
             Follow the project guidelines in CLAUDE.md.
 
