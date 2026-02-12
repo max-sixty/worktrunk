@@ -6,8 +6,9 @@
 //! the skim-based TUI interface.
 //!
 //! Timing-sensitive output (query line, commit hashes, timestamps, count indicators)
-//! is normalized via insta filters for stable snapshots. Preview tests split the
-//! screen into list and preview panels to avoid the │ border character entirely.
+//! is normalized via insta filters for stable snapshots. Abort and preview tests
+//! split the screen into list and preview panels to avoid the │ border character,
+//! which skim may not fully render before exiting.
 //!
 //! ## Timing Strategy
 //!
@@ -112,18 +113,6 @@ fn assert_valid_abort_exit_code(exit_code: i32) {
         "Unexpected exit code: {} (expected 0, 1, or 130 for skim abort)",
         exit_code
     );
-}
-
-/// Collapse consecutive identical trailing lines into a single copy.
-///
-/// Useful for abort tests where skim's border rendering produces a variable number
-/// of identical `│` rows depending on how far rendering progressed before exit.
-fn collapse_trailing_dupes(s: &str) -> String {
-    let mut lines: Vec<&str> = s.lines().collect();
-    while lines.len() >= 2 && lines[lines.len() - 1] == lines[lines.len() - 2] {
-        lines.pop();
-    }
-    lines.join("\n")
 }
 
 /// Check if skim is ready (shows "> " prompt indicating it's accepting input)
@@ -367,13 +356,13 @@ fn test_switch_picker_abort_with_escape(mut repo: TestRepo) {
 
     assert_valid_abort_exit_code(result.exit_code);
 
-    // Collapse trailing duplicate lines: skim's border rendering varies on abort
-    // because the escape key kills the process mid-render, producing a variable
-    // number of identical `│` border rows at the bottom.
-    let screen = collapse_trailing_dupes(&result.screen());
+    // Use panels() to avoid the │ border character which renders inconsistently
+    // on abort — skim may not finish painting all border cells before exiting.
+    let (list, preview) = result.panels();
     let settings = switch_picker_settings(&repo);
     settings.bind(|| {
-        assert_snapshot!("switch_picker_abort_escape", screen);
+        assert_snapshot!("switch_picker_abort_escape_list", list);
+        assert_snapshot!("switch_picker_abort_escape_preview", preview);
     });
 }
 
@@ -397,10 +386,13 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
 
     assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = collapse_trailing_dupes(&result.screen());
+    // Use panels() to avoid the │ border character which renders inconsistently
+    // on abort — skim may not finish painting all border cells before exiting.
+    let (list, preview) = result.panels();
     let settings = switch_picker_settings(&repo);
     settings.bind(|| {
-        assert_snapshot!("switch_picker_multiple_worktrees", screen);
+        assert_snapshot!("switch_picker_multiple_worktrees_list", list);
+        assert_snapshot!("switch_picker_multiple_worktrees_preview", preview);
     });
 }
 
@@ -430,10 +422,13 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
 
     assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = collapse_trailing_dupes(&result.screen());
+    // Use panels() to avoid the │ border character which renders inconsistently
+    // on abort — skim may not finish painting all border cells before exiting.
+    let (list, preview) = result.panels();
     let settings = switch_picker_settings(&repo);
     settings.bind(|| {
-        assert_snapshot!("switch_picker_with_branches", screen);
+        assert_snapshot!("switch_picker_with_branches_list", list);
+        assert_snapshot!("switch_picker_with_branches_preview", preview);
     });
 }
 
