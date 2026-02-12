@@ -809,6 +809,13 @@ fn main() {
         } => UserConfig::load()
             .context("Failed to load config")
             .and_then(|config| {
+                // Detect VCS type — route to jj handler if in a jj repo
+                let cwd = std::env::current_dir()?;
+                if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj)
+                {
+                    return commands::handle_remove_jj::handle_remove_jj(&branches);
+                }
+
                 // Handle deprecated --no-background flag
                 if no_background {
                     eprintln!(
