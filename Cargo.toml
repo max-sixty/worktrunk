@@ -21,7 +21,7 @@ allow-branch = ["*"]
 consolidate-commits = true
 pre-release-replacements = [
     # Update skill version marker
-    { file = ".claude-plugin/skills/worktrunk/SKILL.md", search = "worktrunk-skill-version: [0-9.]+", replace = "worktrunk-skill-version: {{version}}" },
+    { file = "skills/worktrunk/SKILL.md", search = "worktrunk-skill-version: [0-9.]+", replace = "worktrunk-skill-version: {{version}}" },
 ]
 
 [package.metadata.cargo-udeps.ignore]
