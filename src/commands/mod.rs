@@ -7,6 +7,7 @@ pub(crate) mod configure_shell;
 pub(crate) mod context;
 mod for_each;
 mod handle_switch;
+mod handle_switch_jj;
 mod hook_commands;
 mod hook_filter;
 pub(crate) mod hooks;
