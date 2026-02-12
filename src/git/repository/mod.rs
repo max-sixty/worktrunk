@@ -56,6 +56,36 @@ pub use branch::Branch;
 pub use working_tree::WorkingTree;
 pub(super) use working_tree::path_to_logging_context;
 
+/// Structured error from [`Repository::run_command_delayed_stream`].
+///
+/// Separates command output from command identity so callers can format
+/// each part with appropriate styling (e.g., bold command, gray exit code).
+#[derive(Debug)]
+pub(crate) struct StreamCommandError {
+    /// Lines of output from the command (may be empty)
+    pub output: String,
+    /// The command string, e.g., "git worktree add /path -b fix main"
+    pub command: String,
+    /// Exit information, e.g., "exit code 255" or "killed by signal"
+    pub exit_info: String,
+}
+
+impl std::fmt::Display for StreamCommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.output.is_empty() {
+            write!(f, "{} failed ({})", self.command, self.exit_info)
+        } else {
+            write!(
+                f,
+                "{}\n({} failed, {})",
+                self.output, self.command, self.exit_info
+            )
+        }
+    }
+}
+
+impl std::error::Error for StreamCommandError {}
+
 // ============================================================================
 // Repository Cache
 // ============================================================================
@@ -655,11 +685,12 @@ impl Repository {
                         .code()
                         .map(|c| format!("exit code {c}"))
                         .unwrap_or_else(|| "killed by signal".to_string());
-                    if lines.is_empty() {
-                        bail!("{cmd_str} failed ({exit_info})");
-                    } else {
-                        bail!("{}\n({cmd_str} failed, {exit_info})", lines.join("\n"));
+                    return Err(StreamCommandError {
+                        output: lines.join("\n"),
+                        command: cmd_str,
+                        exit_info,
                     }
+                    .into());
                 }
                 Ok(None) => {
                     // Still running - check if we should switch to streaming (skip if delay_ms < 0)
@@ -695,6 +726,25 @@ impl Repository {
             .context(self.logging_context())
             .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
+    }
+
+    /// Extract structured failure info from a [`run_command_delayed_stream`] error.
+    ///
+    /// Returns `(output, Some(FailedCommand))` if the error is a `StreamCommandError`,
+    /// or `(error_string, None)` for other error types (e.g., spawn failures).
+    pub fn extract_failed_command(
+        err: &anyhow::Error,
+    ) -> (String, Option<super::error::FailedCommand>) {
+        match err.downcast_ref::<StreamCommandError>() {
+            Some(e) => (
+                e.output.clone(),
+                Some(super::error::FailedCommand {
+                    command: e.command.clone(),
+                    exit_info: e.exit_info.clone(),
+                }),
+            ),
+            None => (err.to_string(), None),
+        }
     }
 }
 

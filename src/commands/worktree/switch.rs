@@ -574,17 +574,22 @@ fn setup_fork_branch(
     // Create worktree (delayed streaming: silent if fast, shows progress if slow)
     // Use -- to prevent branch names starting with - from being interpreted as flags
     let worktree_path_str = worktree_path.to_string_lossy();
+    let git_args = ["worktree", "add", "--", worktree_path_str.as_ref(), branch];
     repo.run_command_delayed_stream(
-        &["worktree", "add", "--", worktree_path_str.as_ref(), branch],
+        &git_args,
         Repository::SLOW_OPERATION_DELAY_MS,
         Some(
             progress_message(cformat!("Creating worktree for <bold>{}</>...", branch)).to_string(),
         ),
     )
-    .map_err(|e| GitError::WorktreeCreationFailed {
-        branch: branch.to_string(),
-        base_branch: None,
-        error: e.to_string(),
+    .map_err(|e| {
+        let (output, command) = Repository::extract_failed_command(&e);
+        GitError::WorktreeCreationFailed {
+            branch: branch.to_string(),
+            base_branch: None,
+            error: output,
+            command,
+        }
     })?;
 
     Ok(())
@@ -773,10 +778,12 @@ pub fn execute_switch(
                         Repository::SLOW_OPERATION_DELAY_MS,
                         progress_msg,
                     ) {
+                        let (output, command) = Repository::extract_failed_command(&e);
                         return Err(GitError::WorktreeCreationFailed {
                             branch: branch.clone(),
                             base_branch: base_branch.clone(),
-                            error: e.to_string(),
+                            error: output,
+                            command,
                         }
                         .into());
                     }
