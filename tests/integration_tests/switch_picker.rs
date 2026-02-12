@@ -387,12 +387,14 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
     repo.add_worktree("feature-two");
 
     let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_with_input(
+    // Wait for preview content ("│○" = border + status icon) before pressing Escape
+    // The background preview pre-computation may be slow on macOS CI
+    let result = exec_in_pty_with_input_expectations(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
         &env_vars,
-        "\x1b", // Escape to abort after viewing
+        &[("\x1b", Some("│○"))], // Wait for preview to render, then abort
     );
 
     assert_valid_abort_exit_code(result.exit_code);
