@@ -92,6 +92,25 @@ wt config shell install powershell
 
 Both profile files are created when installing from a Windows-native shell. This ensures shell integration works regardless of which PowerShell variant the user opens later. The profile files are small and harmless if unused.
 
+### Shell integration configured but not active
+
+When `wt config show` shows the profile line is configured but shell integration
+is "not active", ask the user to run these diagnostics in the same PowerShell
+session:
+
+1. `Get-Command git-wt -All` — shows whether the wrapper Function is loaded
+   alongside the Application (exe). If only Application appears, the profile
+   didn't define the function (restart shell, or profile load failed).
+
+2. `(Get-Command git-wt -CommandType Function).ScriptBlock | Select-String
+   WORKTRUNK` — verifies the wrapper function body sets
+   `WORKTRUNK_DIRECTIVE_FILE`. If this doesn't appear, the function is
+   incomplete or corrupted.
+
+3. `Get-Command git-wt -CommandType Application | Select-Object Source` — shows
+   what the wrapper resolves as `$wtBin`. If empty, the wrapper can't find the
+   binary and will fail silently.
+
 ### Detection logic
 
 Worktrunk detects Windows-native shells (cmd/PowerShell) by checking if the `SHELL` environment variable is **not** set:
