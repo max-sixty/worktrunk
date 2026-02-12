@@ -54,6 +54,49 @@ impl JjWorkspace {
         run_jj_command(dir, args)
     }
 
+    /// Find which workspace contains the given directory.
+    ///
+    /// Returns the `WorkspaceItem` whose path is an ancestor of `cwd`.
+    pub fn current_workspace(&self, cwd: &Path) -> anyhow::Result<WorkspaceItem> {
+        let workspaces = self.list_workspaces()?;
+        let cwd = dunce::canonicalize(cwd)?;
+        workspaces
+            .into_iter()
+            .find(|ws| {
+                dunce::canonicalize(&ws.path)
+                    .map(|p| cwd.starts_with(&p))
+                    .unwrap_or(false)
+            })
+            .ok_or_else(|| anyhow::anyhow!("Not inside a jj workspace"))
+    }
+
+    /// Detect the bookmark name associated with `trunk()`.
+    ///
+    /// Falls back to `"main"` if no bookmark is found.
+    pub fn trunk_bookmark(&self) -> anyhow::Result<String> {
+        let output = self.run_command(&[
+            "log",
+            "-r",
+            "trunk()",
+            "--no-graph",
+            "-T",
+            r#"self.bookmarks().map(|b| b.name()).join("\n")"#,
+        ])?;
+        let bookmarks: Vec<&str> = output.trim().lines().filter(|l| !l.is_empty()).collect();
+
+        // Prefer "main", then "master", then first found
+        if bookmarks.contains(&"main") {
+            Ok("main".to_string())
+        } else if bookmarks.contains(&"master") {
+            Ok("master".to_string())
+        } else {
+            Ok(bookmarks
+                .first()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "main".to_string()))
+        }
+    }
+
     /// Get commit details (timestamp, description) for the working-copy commit
     /// in a specific workspace directory.
     ///

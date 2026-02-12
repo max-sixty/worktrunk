@@ -18,43 +18,39 @@ use crate::output;
 /// current workspace. Cannot remove the default workspace.
 pub fn handle_remove_jj(names: &[String]) -> anyhow::Result<()> {
     let workspace = JjWorkspace::from_current_dir()?;
-    let cwd = dunce::canonicalize(std::env::current_dir()?)?;
+    let cwd = std::env::current_dir()?;
 
     let targets = if names.is_empty() {
-        // Remove current workspace — determine which one we're in
-        let workspaces = workspace.list_workspaces()?;
-        let current = workspaces
-            .iter()
-            .find(|ws| {
-                dunce::canonicalize(&ws.path)
-                    .map(|p| cwd.starts_with(&p))
-                    .unwrap_or(false)
-            })
-            .ok_or_else(|| anyhow::anyhow!("Not inside a jj workspace"))?;
-        vec![current.name.clone()]
+        let current = workspace.current_workspace(&cwd)?;
+        vec![current.name]
     } else {
         names.to_vec()
     };
 
     for name in &targets {
-        remove_jj_workspace(&workspace, name, &cwd)?;
+        remove_jj_workspace_and_cd(&workspace, name, &workspace.workspace_path(name)?)?;
     }
 
     Ok(())
 }
 
-/// Remove a single jj workspace by name.
-fn remove_jj_workspace(workspace: &JjWorkspace, name: &str, cwd: &Path) -> anyhow::Result<()> {
+/// Forget a jj workspace, remove its directory, and cd to default if needed.
+///
+/// Shared between `wt remove` and `wt merge` for jj repositories.
+pub fn remove_jj_workspace_and_cd(
+    workspace: &JjWorkspace,
+    name: &str,
+    ws_path: &Path,
+) -> anyhow::Result<()> {
     if name == "default" {
         anyhow::bail!("Cannot remove the default workspace");
     }
 
-    // Find the workspace path before forgetting
-    let ws_path = workspace.workspace_path(name)?;
-    let path_display = format_path_for_display(&ws_path);
+    let path_display = format_path_for_display(ws_path);
 
     // Check if we're inside the workspace being removed
-    let canonical_ws = dunce::canonicalize(&ws_path).unwrap_or_else(|_| ws_path.clone());
+    let cwd = dunce::canonicalize(std::env::current_dir()?)?;
+    let canonical_ws = dunce::canonicalize(ws_path).unwrap_or_else(|_| ws_path.to_path_buf());
     let removing_current = cwd.starts_with(&canonical_ws);
 
     // Forget the workspace in jj
@@ -62,7 +58,7 @@ fn remove_jj_workspace(workspace: &JjWorkspace, name: &str, cwd: &Path) -> anyho
 
     // Remove the directory
     if ws_path.exists() {
-        std::fs::remove_dir_all(&ws_path).map_err(|e| {
+        std::fs::remove_dir_all(ws_path).map_err(|e| {
             anyhow::anyhow!(
                 "Workspace forgotten but failed to remove {}: {}",
                 path_display,

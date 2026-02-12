@@ -6,12 +6,11 @@
 use std::path::Path;
 
 use color_print::cformat;
-use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{eprintln, info_message, success_message};
 use worktrunk::workspace::{JjWorkspace, Workspace};
 
+use super::handle_remove_jj::remove_jj_workspace_and_cd;
 use super::merge::MergeOptions;
-use crate::output;
 
 /// Handle `wt merge` for jj repositories.
 ///
@@ -20,18 +19,9 @@ use crate::output;
 /// removes the workspace.
 pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let workspace = JjWorkspace::from_current_dir()?;
-    let cwd = dunce::canonicalize(std::env::current_dir()?)?;
+    let cwd = std::env::current_dir()?;
 
-    // Find current workspace
-    let workspaces = workspace.list_workspaces()?;
-    let current = workspaces
-        .iter()
-        .find(|ws| {
-            dunce::canonicalize(&ws.path)
-                .map(|p| cwd.starts_with(&p))
-                .unwrap_or(false)
-        })
-        .ok_or_else(|| anyhow::anyhow!("Not inside a jj workspace"))?;
+    let current = workspace.current_workspace(&cwd)?;
 
     if current.is_default {
         anyhow::bail!("Cannot merge the default workspace");
@@ -40,8 +30,9 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let ws_name = current.name.clone();
     let ws_path = current.path.clone();
 
-    // Target bookmark name (default: "main")
-    let target = opts.target.unwrap_or("main");
+    // Target bookmark name — detect from trunk() or use explicit override
+    let detected_target = workspace.trunk_bookmark()?;
+    let target = opts.target.unwrap_or(detected_target.as_str());
 
     // Get the feature tip change ID. The workspace's working copy (@) is often
     // an empty auto-snapshot; the real feature commits are its parents. Use @-
@@ -56,7 +47,7 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
                 "Workspace <bold>{ws_name}</> is already integrated into trunk"
             ))
         );
-        return remove_workspace_if_requested(&workspace, &opts, &ws_name, &ws_path);
+        return remove_if_requested(&workspace, &opts, &ws_name, &ws_path);
     }
 
     // Squash by default for jj (combine all feature commits into one on trunk)
@@ -79,7 +70,7 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         ))
     );
 
-    remove_workspace_if_requested(&workspace, &opts, &ws_name, &ws_path)
+    remove_if_requested(&workspace, &opts, &ws_name, &ws_path)
 }
 
 /// Determine the feature tip change ID.
@@ -202,7 +193,7 @@ fn push_bookmark(workspace: &JjWorkspace, ws_path: &Path, target: &str) {
 }
 
 /// Remove the workspace if `--no-remove` wasn't specified.
-fn remove_workspace_if_requested(
+fn remove_if_requested(
     workspace: &JjWorkspace,
     opts: &MergeOptions<'_>,
     ws_name: &str,
@@ -214,29 +205,5 @@ fn remove_workspace_if_requested(
         return Ok(());
     }
 
-    let default_path = workspace
-        .default_workspace_path()?
-        .unwrap_or_else(|| workspace.root().to_path_buf());
-
-    workspace.remove_workspace(ws_name)?;
-    if ws_path.exists() {
-        std::fs::remove_dir_all(ws_path).map_err(|e| {
-            anyhow::anyhow!(
-                "Workspace forgotten but failed to remove {}: {}",
-                format_path_for_display(ws_path),
-                e
-            )
-        })?;
-    }
-
-    let path_display = format_path_for_display(ws_path);
-    eprintln!(
-        "{}",
-        success_message(cformat!(
-            "Removed workspace <bold>{ws_name}</> @ <bold>{path_display}</>"
-        ))
-    );
-
-    output::change_directory(&default_path)?;
-    Ok(())
+    remove_jj_workspace_and_cd(workspace, ws_name, ws_path)
 }
