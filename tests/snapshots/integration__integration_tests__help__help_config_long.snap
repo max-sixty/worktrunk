@@ -16,6 +16,7 @@ info:
     SHELL: ""
     TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -73,25 +74,14 @@ Show current configuration and file locations:
 
 [1m[32mConfiguration files[0m
 
-        File                 Location                            Contains                  Committed & shared    
-   ────────────── ─────────────────────────────── ────────────────────────────────────── ─────────────────────── 
-   System config  /etc/xdg/worktrunk/config.toml  Organization-wide defaults             ✗ (managed by sysadmin) 
-   User config    ~/.config/worktrunk/config.toml Personal preferences, overrides system ✗                       
-   Project config .config/wt.toml                 Project hooks, dev server URL          ✓                       
+        File                 Location                                Contains                     Committed & shared 
+   ────────────── ─────────────────────────────── ─────────────────────────────────────────────── ────────────────── 
+   User config    ~/.config/worktrunk/config.toml Worktree path template, LLM commit configs, etc ✗                  
+   Project config .config/wt.toml                 Project hooks, dev server URL                   ✓                  
 
-[1mSystem config[0m — organization-wide defaults (optional):
+Organizations can also deploy a system-wide config file for shared defaults — run [2mwt config show[0m for the platform-specific location.
 
-  [2m# /etc/xdg/worktrunk/config.toml (Linux)[0m
-  [2m# /Library/Application Support/worktrunk/config.toml (macOS)[0m
-  [2m# %PROGRAMDATA%\worktrunk\config.toml (Windows)[0m
-  [2m[merge][0m
-  [2msquash = true[0m
-  [2mverify = true[0m
-  [2m[0m
-  [2m[commit.generation][0m
-  [2mcommand = "company-llm-tool"[0m
-
-[1mUser config[0m — personal preferences (overrides system config):
+[1mUser config[0m — personal preferences:
 
   [2m# ~/.config/worktrunk/config.toml[0m
   [2mworktree-path = ".worktrees/{{ branch | sanitize }}"[0m
@@ -107,21 +97,6 @@ Show current configuration and file locations:
   [2m[0m
   [2m[pre-merge][0m
   [2mtest = "npm test"[0m
-
-[32mSYSTEM CONFIGURATION[0m
-
-Optional organization-wide defaults. System config uses the same format as user config, but is loaded first — user config values override system config values.
-
-Location (first found is used):
-
-- [2m$XDG_CONFIG_DIRS/worktrunk/config.toml[0m (if [2m$XDG_CONFIG_DIRS[0m is set)
-- Linux: [2m/etc/xdg/worktrunk/config.toml[0m
-- macOS: [2m/Library/Application Support/worktrunk/config.toml[0m, then [2m/etc/xdg/worktrunk/config.toml[0m
-- Windows: [2m%PROGRAMDATA%\worktrunk\config.toml[0m
-
-Override with [2m$WORKTRUNK_SYSTEM_CONFIG_PATH[0m environment variable.
-
-Use [2mwt config show[0m to see which system config file is active (if any).
 
 [32mUSER CONFIGURATION[0m
 

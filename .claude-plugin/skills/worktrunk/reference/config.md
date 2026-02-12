@@ -32,25 +32,12 @@ wt config show
 
 | File | Location | Contains | Committed & shared |
 |------|----------|----------|--------------------|
-| **System config** | `/etc/xdg/worktrunk/config.toml` | Organization-wide defaults | ✗ (managed by sysadmin) |
-| **User config** | `~/.config/worktrunk/config.toml` | Personal preferences, overrides system | ✗ |
+| **User config** | `~/.config/worktrunk/config.toml` | Worktree path template, LLM commit configs, etc | ✗ |
 | **Project config** | `.config/wt.toml` | Project hooks, dev server URL | ✓ |
 
-**System config** — organization-wide defaults (optional):
+Organizations can also deploy a system-wide config file for shared defaults — run `wt config show` for the platform-specific location.
 
-```toml
-# /etc/xdg/worktrunk/config.toml (Linux)
-# /Library/Application Support/worktrunk/config.toml (macOS)
-# %PROGRAMDATA%\worktrunk\config.toml (Windows)
-[merge]
-squash = true
-verify = true
-
-[commit.generation]
-command = "company-llm-tool"
-```
-
-**User config** — personal preferences (overrides system config):
+**User config** — personal preferences:
 
 ```toml
 # ~/.config/worktrunk/config.toml
@@ -70,21 +57,6 @@ deps = "npm ci"
 [pre-merge]
 test = "npm test"
 ```
-
-# System Configuration
-
-Optional organization-wide defaults. System config uses the same format as user config, but is loaded first — user config values override system config values.
-
-Location (first found is used):
-
-- `$XDG_CONFIG_DIRS/worktrunk/config.toml` (if `$XDG_CONFIG_DIRS` is set)
-- Linux: `/etc/xdg/worktrunk/config.toml`
-- macOS: `/Library/Application Support/worktrunk/config.toml`, then `/etc/xdg/worktrunk/config.toml`
-- Windows: `%PROGRAMDATA%\worktrunk\config.toml`
-
-Override with `$WORKTRUNK_SYSTEM_CONFIG_PATH` environment variable.
-
-Use `wt config show` to see which system config file is active (if any).
 
 <!-- USER_CONFIG_START -->
 # User Configuration
@@ -430,8 +402,8 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
 
 Show configuration files & locations.
 
-Shows location and contents of system config, user config (`~/.config/worktrunk/config.toml`),
-and project config (`.config/wt.toml`).
+Shows location and contents of user config (`~/.config/worktrunk/config.toml`)
+and project config (`.config/wt.toml`). Also shows system config if present.
 
 If a config file doesn't exist, shows defaults that would be used.
 
