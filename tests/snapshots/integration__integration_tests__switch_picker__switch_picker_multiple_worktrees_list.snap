@@ -1,0 +1,9 @@
+---
+source: tests/integration_tests/switch_picker.rs
+expression: list
+---
+>
+    Branch       Status        HEAD±    main↕  Remote⇅  Age
+> @ main             ^                                  [TIME]
+  + feature-one      _                                  [TIME]
+  + feature-two      _                                  [TIME]
