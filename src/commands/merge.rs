@@ -77,6 +77,12 @@ fn collect_merge_commands(
 }
 
 pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
+    // Detect VCS type — route to jj handler if in a jj repo
+    let cwd = std::env::current_dir()?;
+    if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
+        return super::handle_merge_jj::handle_merge_jj(opts);
+    }
+
     let MergeOptions {
         target,
         squash: squash_opt,

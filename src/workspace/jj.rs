@@ -46,6 +46,14 @@ impl JjWorkspace {
         run_jj_command(&self.root, args)
     }
 
+    /// Run a jj command in the specified directory.
+    ///
+    /// Unlike `run_command` which runs in the repo root, this runs in the given
+    /// directory — needed when commands must execute in a specific workspace.
+    pub fn run_in_dir(&self, dir: &Path, args: &[&str]) -> anyhow::Result<String> {
+        run_jj_command(dir, args)
+    }
+
     /// Get commit details (timestamp, description) for the working-copy commit
     /// in a specific workspace directory.
     ///
