@@ -4,15 +4,22 @@
 //! commands need, independent of the underlying VCS (git, jj, etc.).
 //!
 //! The git implementation ([`GitWorkspace`](git::GitWorkspace)) delegates to
-//! [`Repository`](crate::git::Repository) methods.
+//! [`Repository`](crate::git::Repository) methods. The jj implementation
+//! ([`JjWorkspace`](jj::JjWorkspace)) shells out to `jj` CLI commands.
+//!
+//! Use [`detect_vcs`] to determine which VCS manages a given path.
 
+pub(crate) mod detect;
 mod git;
+pub(crate) mod jj;
 
 use std::path::{Path, PathBuf};
 
 use crate::git::{IntegrationReason, LineDiff, WorktreeInfo, path_dir_name};
 
+pub use detect::detect_vcs;
 pub use git::GitWorkspace;
+pub use jj::JjWorkspace;
 
 /// Version control system type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
