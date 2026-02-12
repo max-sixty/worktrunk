@@ -40,11 +40,7 @@ jobs:
       - name: 📂 Checkout code
         uses: actions/checkout@v6
         with:
-          # Checkout PR branch for issue_comment events instead of default branch
-          ref:
-            ${{ github.event.issue.pull_request && format('refs/pull/{0}/head',
-            github.event.issue.number) || github.ref }}
-          fetch-depth: 0 # Get more history for better context
+          fetch-depth: 0
           fetch-tags: true
           # Use bot token so pushed commits trigger CI workflows
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
@@ -53,6 +49,12 @@ jobs:
         run: |
           git config --global user.name "Claude Code"
           git config --global user.email "claude@anthropic.com"
+
+      - name: 📌 Check out PR branch
+        if: github.event.issue.pull_request
+        run: gh pr checkout ${{ github.event.issue.number }}
+        env:
+          GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: Install cargo-insta
         uses: baptiste0928/cargo-install@v3
@@ -119,7 +121,16 @@ jobs:
 
             For PR review comments on specific lines (shown as '[Comment on path:line]' in <review_comments>),
             ALWAYS read that file and examine the code at that line before answering. The question is about
-            that specific code, not about the PR in general."
+            that specific code, not about the PR in general.
+
+            FORMATTING: Keep PR comments concise. Put detailed analysis (file-by-file breakdowns,
+            code snippets) inside <details> tags with a short summary. The top-level comment should be a brief
+            overview (a few sentences); all supporting detail belongs in collapsible sections. Example:
+            <details><summary>Detailed findings (6 files)</summary>\n\n...details here...\n\n</details>
+
+            TONE: You are a helpful reviewer raising observations, not a manager assigning work. Never create
+            checklists or task lists for the PR author. Instead, note what you found and let the author decide
+            what to act on."
 
       - name: 📋 Upload Claude Code session logs
         if: always()
