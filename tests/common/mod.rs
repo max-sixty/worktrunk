@@ -2829,6 +2829,43 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     settings
 }
 
+/// Create configured insta Settings for jj integration test snapshots.
+///
+/// Reuses the core snapshot settings pipeline (ANSI cleanup, path normalization)
+/// but adapted for jj repos where the "repo root" is the default workspace path.
+///
+/// Filters applied:
+/// - Repo root → `_REPO_`
+/// - Workspace paths → `_REPO_.{name}`
+/// - Change IDs (12-char hex) → `[CHANGE_ID]`
+/// - Standard env/temp/project redactions
+pub fn setup_snapshot_settings_for_jj(
+    root: &Path,
+    workspaces: &HashMap<String, PathBuf>,
+) -> insta::Settings {
+    let mut settings = setup_snapshot_settings_for_paths(root, workspaces);
+
+    // jj change IDs vary between runs. They are lowercase-only alphabetic strings
+    // that appear in two forms:
+    // - 12-char IDs in "Showing N workspace" lines (plain text context)
+    // - 8-char IDs in the Commit column (wrapped in ANSI dim: \x1b[2m...\x1b[0m)
+    //
+    // The ANSI-wrapped form needs explicit matching because \b word boundaries
+    // don't work at ANSI code boundaries (the trailing 'm' of \x1b[2m is a word char).
+    //
+    // Match 8-char IDs in ANSI dim context (Commit column)
+    settings.add_filter(
+        r"\x1b\[2m([a-z]{8})\x1b\[0m",
+        "\x1b[2m[CHANGE_ID_SHORT]\x1b[0m",
+    );
+    // Match 12-char IDs in plain text (e.g., "Showing 1 xyzwabcdklmn")
+    settings.add_filter(r"\b[a-z]{12}\b", "[CHANGE_ID]");
+    // Match 8-char IDs in plain text (fallback for non-ANSI contexts)
+    settings.add_filter(r"\b[a-z]{8}\b", "[CHANGE_ID_SHORT]");
+
+    settings
+}
+
 // =============================================================================
 // PTY Test Filters
 // =============================================================================
