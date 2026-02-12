@@ -34,11 +34,7 @@ jobs:
       - name: 📂 Checkout code
         uses: actions/checkout@v6
         with:
-          # Fix: Checkout PR branch for issue_comment events instead of default branch
-          ref:
-            ${{ github.event.issue.pull_request && format('refs/pull/{0}/head',
-            github.event.issue.number) || github.ref }}
-          fetch-depth: 0 # Get more history for better context
+          fetch-depth: 0
           fetch-tags: true
           # Use bot token so pushed commits trigger CI workflows
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
@@ -47,6 +43,12 @@ jobs:
         run: |
           git config --global user.name "Claude Code"
           git config --global user.email "claude@anthropic.com"
+
+      - name: 📌 Check out PR branch
+        if: github.event.issue.pull_request
+        run: gh pr checkout ${{ github.event.issue.number }}
+        env:
+          GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: Install cargo-insta
         uses: baptiste0928/cargo-install@v3
