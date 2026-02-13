@@ -155,6 +155,16 @@ fn fetch_mr_info(mr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefIn
 
     let is_cross_repo = response.source_project_id != response.target_project_id;
 
+    // Parse host/owner/repo from the web URL (always available from the MR API).
+    // e.g., "https://gitlab.com/owner/repo/-/merge_requests/101" → host/owner/repo
+    let (project_url, _) = response
+        .web_url
+        .split_once("/-/")
+        .with_context(|| format!("GitLab MR URL missing /-/ separator: {}", response.web_url))?;
+    let parsed_url = crate::git::GitRemoteUrl::parse(project_url).ok_or_else(|| {
+        anyhow::anyhow!("Failed to parse GitLab project from MR URL: {project_url}")
+    })?;
+
     // Don't fetch project URLs here - defer until after branch_tracks_ref check
     // in switch.rs, which often short-circuits (branch already configured).
     // Use fetch_gitlab_project_urls() when URLs are actually needed.
@@ -171,6 +181,9 @@ fn fetch_mr_info(mr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefIn
         url: response.web_url,
         fork_push_url: None, // Populated later by fetch_gitlab_project_urls if needed
         platform_data: PlatformData::GitLab {
+            host: parsed_url.host().to_string(),
+            base_owner: parsed_url.owner().to_string(),
+            base_repo: parsed_url.repo().to_string(),
             source_project_id: response.source_project_id,
             target_project_id: response.target_project_id,
         },

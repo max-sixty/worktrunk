@@ -123,9 +123,10 @@ pub(crate) fn should_show_explicit_path_hint() -> bool {
 /// Returns a reason string explaining why shell integration isn't working.
 /// See the module documentation for the complete spec of warning messages.
 ///
-/// Checks specifically if the CURRENT shell (from $SHELL) has integration configured,
-/// not just any shell. This prevents misleading "shell requires restart" messages
-/// when e.g. bash has integration but the user is running fish.
+/// Checks specifically if the CURRENT shell (detected via $SHELL or PSModulePath
+/// fallback) has integration configured, not just any shell. This prevents misleading
+/// "shell requires restart" messages when e.g. bash has integration but the user is
+/// running fish.
 pub(crate) fn compute_shell_warning_reason() -> String {
     // Check if the CURRENT shell has integration configured, not just ANY shell
     let is_configured = current_shell()
@@ -373,7 +374,7 @@ pub fn prompt_shell_integration(
 
     let is_tty = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
 
-    // Check the current shell (from $SHELL)
+    // Check the current shell (via $SHELL or PSModulePath fallback)
     // Only prompt if current shell is supported (so they benefit immediately)
     let shell_env = std::env::var("SHELL").ok();
     if current_shell().is_none() {

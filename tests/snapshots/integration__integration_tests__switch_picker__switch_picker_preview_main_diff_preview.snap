@@ -4,28 +4,28 @@ expression: preview
 ---
 1: HEAD± | 2: log | 3: main…± | 4: remote⇅            [N/M]
 Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
-                                                           
- feature_code.rs | 6 ++++++                                
- tests.rs        | 4 ++++                                  
- 2 files changed, 10 insertions(+)                         
-diff --git a/feature_code.rs b/feature_code.rs             
-new file mode 100644                                       
-index [HASH]..[HASH]                                     
---- /dev/null                                              
-+++ b/feature_code.rs                                      
-@@ -0,0 +1,6 @@                                            
-+fn new_feature() {                                        
-+    println!("This is a new feature!");                   
-+    let x = 42;                                           
-+    let y = x * 2;                                        
-+    println!("Result: {}", y);                            
-+}                                                         
-diff --git a/tests.rs b/tests.rs                           
-new file mode 100644                                       
-index [HASH]..[HASH]                                     
---- /dev/null                                              
-+++ b/tests.rs                                             
-@@ -0,0 +1,4 @@                                            
-+#[test]                                                   
-+fn test_new_feature() {                                   
+
+ feature_code.rs | 6 ++++++
+ tests.rs        | 4 ++++
+ 2 files changed, 10 insertions(+)
+diff --git a/feature_code.rs b/feature_code.rs
+new file mode 100644
+index [HASH]..[HASH]
+--- /dev/null
++++ b/feature_code.rs
+@@ -0,0 +1,6 @@
++fn new_feature() {
++    println!("This is a new feature!");
++    let x = 42;
++    let y = x * 2;
++    println!("Result: {}", y);
++}
+diff --git a/tests.rs b/tests.rs
+new file mode 100644
+index [HASH]..[HASH]
+--- /dev/null
++++ b/tests.rs
+@@ -0,0 +1,4 @@
++#[test]
++fn test_new_feature() {
 +    assert_eq!(42 * 2, 84);

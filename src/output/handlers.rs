@@ -250,7 +250,8 @@ fn print_switch_message_if_changed(
         return Ok(());
     };
 
-    let path_display = format_path_for_display(main_path);
+    let logical_path = super::to_logical_path(main_path);
+    let path_display = format_path_for_display(&logical_path);
 
     if super::is_shell_integration_active() {
         // Shell integration active - cd will work
@@ -358,8 +359,10 @@ pub fn handle_switch_output(
         super::change_directory(&cd_target)?;
     }
 
-    let path = result.path();
-    let path_display = format_path_for_display(path);
+    // Translate to the user's logical (symlink-preserved) path for display messages.
+    // The cd directive (above) handles its own translation internally.
+    let path = super::to_logical_path(result.path());
+    let path_display = format_path_for_display(&path);
     let branch = &branch_info.branch;
 
     // Check if shell integration is active (directive file set)
@@ -433,7 +436,7 @@ pub fn handle_switch_output(
                 eprintln!(
                     "{}",
                     info_message(format_switch_message(
-                        branch, path, false, // worktree_created
+                        branch, &path, false, // worktree_created
                         false, // created_branch
                         None, None,
                     ))
@@ -457,7 +460,7 @@ pub fn handle_switch_output(
                 "{}",
                 success_message(format_switch_message(
                     branch,
-                    path,
+                    &path,
                     true, // worktree_created
                     *created_branch,
                     base_branch.as_deref(),

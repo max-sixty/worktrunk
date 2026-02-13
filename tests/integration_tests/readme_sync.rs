@@ -1527,70 +1527,33 @@ fn remove_section(content: &str, heading: &str) -> String {
     }
 }
 
-/// Skill files to sync from docs
-/// Format: (docs_path, skill_path)
-/// Files are synced with content transformed for skill consumption
-const SKILL_SYNC_FILES: &[(&str, &str)] = &[
-    (
-        "docs/content/hook.md",
-        ".claude-plugin/skills/worktrunk/reference/hook.md",
-    ),
-    (
-        "docs/content/config.md",
-        ".claude-plugin/skills/worktrunk/reference/config.md",
-    ),
-    (
-        "docs/content/switch.md",
-        ".claude-plugin/skills/worktrunk/reference/switch.md",
-    ),
-    (
-        "docs/content/merge.md",
-        ".claude-plugin/skills/worktrunk/reference/merge.md",
-    ),
-    (
-        "docs/content/list.md",
-        ".claude-plugin/skills/worktrunk/reference/list.md",
-    ),
-    // Note: select.md removed - it's a deprecated hidden alias for `wt switch`
-    (
-        "docs/content/step.md",
-        ".claude-plugin/skills/worktrunk/reference/step.md",
-    ),
-    (
-        "docs/content/remove.md",
-        ".claude-plugin/skills/worktrunk/reference/remove.md",
-    ),
-    (
-        "docs/content/llm-commits.md",
-        ".claude-plugin/skills/worktrunk/reference/llm-commits.md",
-    ),
-    (
-        "docs/content/tips-patterns.md",
-        ".claude-plugin/skills/worktrunk/reference/tips-patterns.md",
-    ),
-    (
-        "docs/content/worktrunk.md",
-        ".claude-plugin/skills/worktrunk/reference/worktrunk.md",
-    ),
-    (
-        "docs/content/faq.md",
-        ".claude-plugin/skills/worktrunk/reference/faq.md",
-    ),
-    (
-        "docs/content/claude-code.md",
-        ".claude-plugin/skills/worktrunk/reference/claude-code.md",
-    ),
-];
-
-/// Sync skill files from docs/content/*.md to .claude-plugin/skills/worktrunk/reference/*.md
+/// Sync all docs/content/*.md files to skills/worktrunk/reference/*.md
+/// (excluding _index.md which is a Zola template)
 /// Returns (errors, updated_files)
 fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     let mut errors = Vec::new();
     let mut updated_files = Vec::new();
 
-    for (docs_path, skill_path) in SKILL_SYNC_FILES {
-        let docs_file = project_root.join(docs_path);
-        let skill_file = project_root.join(skill_path);
+    let docs_dir = project_root.join("docs/content");
+    let skill_dir = project_root.join("skills/worktrunk/reference");
+
+    let mut entries: Vec<_> = fs::read_dir(&docs_dir)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_dir.display(), e))
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".md") && !name.starts_with('_') {
+                Some(name)
+            } else {
+                None
+            }
+        })
+        .collect();
+    entries.sort();
+
+    for name in &entries {
+        let docs_file = docs_dir.join(name);
+        let skill_file = skill_dir.join(name);
 
         if !docs_file.exists() {
             errors.push(format!("Missing docs file: {}", docs_file.display()));
@@ -1621,7 +1584,7 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
             }
             fs::write(&skill_file, format!("{}\n", expected))
                 .unwrap_or_else(|e| panic!("Failed to write {}: {}", skill_file.display(), e));
-            updated_files.push(skill_path.to_string());
+            updated_files.push(format!("skills/worktrunk/reference/{name}"));
         }
     }
 
@@ -1637,7 +1600,7 @@ fn test_command_pages_and_skill_files_are_in_sync() {
     // Step 1: Sync command pages (mod.rs → docs/content/*.md)
     let (cmd_errors, cmd_files) = sync_command_pages(project_root);
 
-    // Step 2: Sync skill files (docs/content/*.md → .claude-plugin/skills/*)
+    // Step 2: Sync skill files (docs/content/*.md → skills/*)
     // This reads the freshly-written docs from step 1
     let (skill_errors, skill_files) = sync_skill_files(project_root);
 

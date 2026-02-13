@@ -1,10 +1,11 @@
 ---
 source: tests/integration_tests/switch.rs
+assertion_line: 1613
 info:
   program: wt
   args:
     - switch
-    - "mr:101"
+    - "pr:101"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -38,9 +39,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mFetching MR !101...[39m
-[107m [0m [1mFix authentication bug in login flow[22m (!101)
-[107m [0m by @alice · opened · feature-auth · [90mhttps://gitlab.com/owner/test-repo/-/merge_requests/101[39m
+[36m◎[39m [36mFetching PR #101...[39m
+[107m [0m [1mFix authentication bug in login flow[22m (#101)
+[107m [0m by @alice · open · feature-auth · [90mhttps://github.com/owner/test-repo/pull/101[39m
 [36m◎[39m [36mFetching [1mfeature-auth[22m from origin...[39m
 [33m▲[39m [33mWorktree for [1mfeature-auth[22m @ [1m_REPO_.feature-auth[22m, but cannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

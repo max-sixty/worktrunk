@@ -818,11 +818,11 @@ pub fn collect(
 
         if table.is_tty() {
             // Interactive: do final render pass and update footer to summary
-            for (item_idx, item) in all_items.iter().enumerate() {
-                let rendered = layout.format_list_item_line(item);
-                table.update_row(item_idx, rendered);
-            }
-            table.finalize(final_msg)?;
+            let rows: Vec<String> = all_items
+                .iter()
+                .map(|item| layout.format_list_item_line(item))
+                .collect();
+            table.finalize(rows, final_msg)?;
         } else {
             // Non-TTY: output to stdout (same as buffered mode)
             // Progressive skeleton was suppressed; now output the final table

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.23.2
+
+### Improved
+
+- **`--force` flag for `wt step copy-ignored`**: Overwrite existing destination files when copying gitignored files to new worktrees. Closes [#971](https://github.com/max-sixty/worktrunk/issues/971). ([#974](https://github.com/max-sixty/worktrunk/pull/974), thanks @williamgoulois for requesting)
+
+### Fixed
+
+- **`wt switch pr:NNNN` / `mr:NNNN` fails in repos without fetch refspecs**: Same-repo PRs and MRs failed with "No branch named X" in single-branch clones or bare repos because fetch didn't create remote tracking branches, and worktree creation relied on DWIM. Now uses explicit refspecs and `-b` fallback. ([#965](https://github.com/max-sixty/worktrunk/pull/965), thanks @andoniaf)
+
+- **Progressive table garbled when output exceeds terminal height**: `wt list` output was corrupted when more lines than the terminal height, because cursor-up commands tried to reach scrolled-off lines. Now detects overflow and falls back to a clean full-table print. ([#981](https://github.com/max-sixty/worktrunk/pull/981))
+
+- **Symlink paths resolved to canonical in cd directives**: When navigating via symlinks, cd directives wrote canonical paths, silently moving users out of their symlink tree. Now preserves the user's logical path. Fixes [#968](https://github.com/max-sixty/worktrunk/issues/968). ([#976](https://github.com/max-sixty/worktrunk/pull/976), thanks @brooke-hamilton for reporting)
+
+- **Terminal artifacts when cancelling interactive picker**: Pressing Esc to cancel the picker left terminal artifacts and a misplaced cursor. Now skim handles cleanup symmetrically for both cancel and accept. ([#984](https://github.com/max-sixty/worktrunk/pull/984))
+
+### Documentation
+
+- **Hook examples: safer port cleanup**: Added `-sTCP:LISTEN` to `lsof` in hook examples to prevent accidentally killing unrelated processes with connections to the port. ([#952](https://github.com/max-sixty/worktrunk/pull/952), thanks @andoniaf)
+
 ## 0.23.1
 
 ### Improved

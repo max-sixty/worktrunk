@@ -4,15 +4,15 @@ expression: preview
 ---
 1: HEAD± | 2: log | 3: main…± | 4: remote⇅            [N/M]
 Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
-                                                           
- tracked.txt | 4 +++-                                      
- 1 file changed, 3 insertions(+), 1 deletion(-)            
-diff --git a/tracked.txt b/tracked.txt                     
-index [HASH]..[HASH] 100644                              
---- a/tracked.txt                                          
-+++ b/tracked.txt                                          
-@@ -1 +1,3 @@                                              
--Original content                                          
-+Modified content                                          
-+New line added                                            
+
+ tracked.txt | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+diff --git a/tracked.txt b/tracked.txt
+index [HASH]..[HASH] 100644
+--- a/tracked.txt
++++ b/tracked.txt
+@@ -1 +1,3 @@
+-Original content
++Modified content
++New line added
 +Another line

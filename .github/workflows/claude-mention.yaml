@@ -18,11 +18,17 @@ env:
 
 jobs:
   claude:
-    # Only run when issue body or comment contains @claude
+    # Only run when body/comment contains @claude AND secrets are available.
+    # Review comments on fork PRs don't receive repository secrets (GitHub
+    # security restriction) so the job skips. Use a regular PR comment on the
+    # Conversation tab to trigger @claude on fork PRs instead.
     if: |
-      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude')) ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
+      secrets.CLAUDE_CODE_OAUTH_TOKEN != '' &&
+      (
+        (github.event_name == 'issues' && contains(github.event.issue.body, '@claude')) ||
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
+      )
     runs-on: ubuntu-24.04
     permissions:
       contents: write # Allow pushing commits
@@ -34,11 +40,7 @@ jobs:
       - name: 📂 Checkout code
         uses: actions/checkout@v6
         with:
-          # Fix: Checkout PR branch for issue_comment events instead of default branch
-          ref:
-            ${{ github.event.issue.pull_request && format('refs/pull/{0}/head',
-            github.event.issue.number) || github.ref }}
-          fetch-depth: 0 # Get more history for better context
+          fetch-depth: 0
           fetch-tags: true
           # Use bot token so pushed commits trigger CI workflows
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
@@ -47,6 +49,12 @@ jobs:
         run: |
           git config --global user.name "Claude Code"
           git config --global user.email "claude@anthropic.com"
+
+      - name: 📌 Check out PR branch
+        if: github.event.issue.pull_request
+        run: gh pr checkout ${{ github.event.issue.number }}
+        env:
+          GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: Install cargo-insta
         uses: baptiste0928/cargo-install@v3
@@ -73,7 +81,6 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
-          model: opus
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Use bot token so pushed commits trigger CI workflows
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
@@ -82,38 +89,10 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Grant Claude full permissions to execute commands
-          # Also include system prompt with project context via claude_args
           claude_args: |
-            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch
-            --system-prompt "You are helping with the worktrunk project in a GitHub Actions environment.
-            Follow the project guidelines in CLAUDE.md.
-
-            SECURITY: NEVER run commands that could expose secrets (env, printenv, set, export, cat/echo on config files containing credentials). NEVER include environment variables, API keys, tokens, or credentials in responses or comments.
-            After making changes, ensure tests pass with 'cargo insta test --dnd --test-runner=nextest' and lints with 'cargo clippy --all-targets --all-features -- -D warnings' and 'cargo fmt --all --check'.
-
-            For CI failure diagnosis:
-            - Use 'gh run list' and 'gh run view' to check CI status
-            - Look for specific error messages in failing jobs
-            - Check the test output for detailed failure information
-            - When fixing issues, verify changes with the appropriate test commands
-            - Once local test commands work, push to the PR
-            - After pushing, MUST monitor CI until all checks complete (CI tests on Linux, Windows, macOS)
-            - Local tests passing is not sufficient — use 'gh pr checks' to monitor actual CI
-            - If CI fails, fix and push again. Do not return until CI is green.
-
-            Available test commands:
-            - 'cargo insta test --dnd --test-runner=nextest' - Run all tests with snapshot testing
-            - 'cargo clippy --all-targets --all-features -- -D warnings' - Run linter
-            - 'cargo fmt --all --check' - Check formatting
-            - 'cargo doc --no-deps' - Build documentation
-
-            This project is a git worktree manager that integrates with shells (bash, zsh, fish).
-            Pay attention to shell integration, output formatting (anstyle), and snapshot tests.
-
-            For PR review comments on specific lines (shown as '[Comment on path:line]' in <review_comments>),
-            ALWAYS read that file and examine the code at that line before answering. The question is about
-            that specific code, not about the PR in general."
+            --model opus
+            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill
+            --append-system-prompt "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
 
       - name: 📋 Upload Claude Code session logs
         if: always()

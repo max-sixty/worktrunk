@@ -7,11 +7,10 @@ mod log_formatter;
 mod pager;
 mod preview;
 
-use std::io::{IsTerminal, stderr};
+use std::io::IsTerminal;
 use std::sync::Arc;
 
 use anyhow::Context;
-use crossterm::{execute, terminal};
 use dashmap::DashMap;
 use skim::prelude::*;
 use worktrunk::config::UserConfig;
@@ -204,7 +203,6 @@ pub fn handle_select(
             format!("ctrl-d:preview-down({half_page})"),
         ])
         // Legend/controls moved to preview window tabs (render_preview_tabs)
-        .no_clear(true) // Prevent skim from clearing screen, we'll do it manually
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build skim options: {}", e))?;
 
@@ -274,12 +272,6 @@ pub fn handle_select(
         // Load config
         let config = UserConfig::load().context("Failed to load config")?;
         let repo = Repository::current().context("Failed to switch worktree")?;
-
-        // Clear the terminal screen after skim exits to prevent artifacts
-        // Use stderr for terminal control - stdout is reserved for data output
-        // Done before approval so hook prompts render on a clean terminal
-        execute!(stderr(), terminal::Clear(terminal::ClearType::All))?;
-        execute!(stderr(), crossterm::cursor::MoveTo(0, 0))?;
 
         // Switch to existing worktree or create new one
         let plan = plan_switch(&repo, &identifier, should_create, None, false, &config)?;

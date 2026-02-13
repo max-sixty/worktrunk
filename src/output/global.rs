@@ -137,6 +137,22 @@ impl SymlinkMapping {
     }
 }
 
+/// Translate a canonical path to the user's logical (symlink-preserved) path.
+///
+/// If the user navigated via symlink (e.g., `/workspace/project` -> `/mnt/wsl/workspace/project`),
+/// this translates canonical paths back to the symlink tree. Returns the original path unchanged
+/// if no symlink mapping exists or the translation doesn't round-trip correctly.
+pub fn to_logical_path(path: &Path) -> PathBuf {
+    let guard = get_state().lock().expect("OUTPUT_STATE lock poisoned");
+    let Some(mapping) = &guard.symlink_mapping else {
+        return path.to_path_buf();
+    };
+    mapping
+        .to_logical_path(path)
+        .filter(|translated| dunce::canonicalize(translated).ok() == dunce::canonicalize(path).ok())
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
 /// Get or lazily initialize the global output state.
 ///
 /// Reads `WORKTRUNK_DIRECTIVE_FILE` from environment on first access.
@@ -197,26 +213,9 @@ pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
 
     // Write to directive file if set
     if guard.directive_file.is_some() {
-        // Clone mapping out of lock — the canonicalize check below does I/O
-        let symlink_mapping = guard.symlink_mapping.clone();
         drop(guard); // Release lock before I/O
 
-        // Translate canonical path to logical (symlink-preserved) path for the cd directive.
-        // The user's shell should stay in their symlink tree — e.g., if they navigated via
-        // /workspace/project (symlink to /mnt/wsl/workspace/project), the cd should use
-        // /workspace/project.feature, not /mnt/wsl/workspace/project.feature.
-        //
-        // Verify the translation round-trips correctly: canonicalize(translated) must equal
-        // canonicalize(original). This prevents mis-translation if the prefix mapping is broad
-        // and an unrelated path happens to exist at the translated location.
-        let directive_path = symlink_mapping
-            .as_ref()
-            .and_then(|m| m.to_logical_path(path))
-            .filter(|translated| {
-                dunce::canonicalize(translated).ok() == dunce::canonicalize(path).ok()
-            })
-            .unwrap_or_else(|| path.to_path_buf());
-
+        let directive_path = to_logical_path(path);
         let path_str = directive_path.to_string_lossy();
         // Escape based on shell type. Both shell families use single-quoted strings
         // where contents are literal, but they escape embedded quotes differently:
