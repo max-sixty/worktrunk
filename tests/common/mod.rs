@@ -2764,9 +2764,10 @@ fn setup_snapshot_settings_for_paths_with_home(
 
     // Filter out cargo-llvm-cov env variables from snapshot YAML headers.
     // These are only present during coverage runs and cause snapshot mismatches.
-    settings.add_filter(r#"  CARGO_LLVM_COV: "1"\n"#, "");
-    settings.add_filter(r#"  CARGO_LLVM_COV_TARGET_DIR: "[^"]+"\n"#, "");
-    settings.add_filter(r#"  LLVM_PROFILE_FILE: "[^"]+"\n"#, "");
+    // Note: YAML indentation in the info.env section is 4 spaces.
+    settings.add_filter(r#"    CARGO_LLVM_COV: "1"\n"#, "");
+    settings.add_filter(r#"    CARGO_LLVM_COV_TARGET_DIR: "[^"]+"\n"#, "");
+    settings.add_filter(r#"    LLVM_PROFILE_FILE: "[^"]+"\n"#, "");
 
     settings
 }
