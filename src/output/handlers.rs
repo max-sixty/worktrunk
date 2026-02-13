@@ -15,7 +15,10 @@ use crate::commands::command_executor::CommandContext;
 use crate::commands::hooks::{
     HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_background_hooks,
 };
-use crate::commands::process::{HookLog, InternalOp, build_remove_command, spawn_detached};
+use crate::commands::process::{
+    HookLog, InternalOp, build_remove_command, build_remove_command_staged, generate_removing_path,
+    spawn_detached,
+};
 use crate::commands::worktree::{BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult};
 use worktrunk::config::UserConfig;
 use worktrunk::git::GitError;
@@ -32,6 +35,51 @@ use super::shell_integration::{
     compute_shell_warning_reason, explicit_path_hint, git_subcommand_warning,
     shell_integration_hint, should_show_explicit_path_hint,
 };
+
+// ============================================================================
+// Background Removal Helper
+// ============================================================================
+
+/// Execute instant worktree removal via rename-then-prune, returning the background command.
+///
+/// This function has side effects: it renames the worktree directory and prunes git metadata.
+/// If successful, returns a simple `rm -rf` command for the staged directory.
+/// If rename fails (cross-filesystem, permissions, Windows file locking), returns the legacy
+/// `git worktree remove` command instead.
+///
+/// The caller is responsible for spawning the returned command in the background.
+fn execute_instant_removal_or_fallback(
+    repo: &Repository,
+    worktree_path: &Path,
+    branch_to_delete: Option<&str>,
+    force_worktree: bool,
+) -> String {
+    // Fast path: instant removal via rename-then-prune.
+    // Rename worktree to staging path (instant on same filesystem), then prune
+    // git metadata. Background process just does `rm -rf` on the staged directory.
+    let staged_path = generate_removing_path(worktree_path);
+    match std::fs::rename(worktree_path, &staged_path) {
+        Ok(()) => {
+            // Fast path succeeded - prune git metadata synchronously.
+            // If prune fails, log and continue - the staged directory will still be deleted,
+            // and stale metadata is harmless (cleaned up by git gc or our next worktree operation).
+            if let Err(e) = repo.prune_worktrees() {
+                log::debug!("Failed to prune worktrees after rename: {}", e);
+            }
+            build_remove_command_staged(&staged_path, branch_to_delete)
+        }
+        Err(e) => {
+            // Fallback: cross-filesystem, permissions, Windows file locking, etc.
+            // Use legacy git worktree remove which handles these cases.
+            log::debug!("Instant removal unavailable, using legacy: {}", e);
+            build_remove_command(worktree_path, branch_to_delete, force_worktree)
+        }
+    }
+}
+
+// ============================================================================
+// Switch Output Handlers
+// ============================================================================
 
 /// Format a switch message based on what was created
 ///
@@ -953,7 +1001,15 @@ fn handle_removed_worktree_output(
                     "Removing worktree in background (detached HEAD, no branch to delete)",
                 )
             );
-            let remove_command = build_remove_command(worktree_path, None, force_worktree);
+
+            // Stop fsmonitor daemon BEFORE rename (must happen while path still exists)
+            let _ = repo
+                .worktree_at(worktree_path)
+                .run_command(&["fsmonitor--daemon", "stop"]);
+
+            let remove_command =
+                execute_instant_removal_or_fallback(&repo, worktree_path, None, force_worktree);
+
             spawn_detached(
                 &repo,
                 main_path,
@@ -1015,8 +1071,14 @@ fn handle_removed_worktree_output(
         display_info.print_hints(branch_name, deletion_mode, pre_computed_integration)?;
         print_switch_message_if_changed(changed_directory, main_path)?;
 
-        // Build command with the decision we already made
-        let remove_command = build_remove_command(
+        // Stop fsmonitor daemon BEFORE rename (must happen while path still exists).
+        // Best effort - ignore errors. This prevents zombie daemons from accumulating.
+        let _ = repo
+            .worktree_at(worktree_path)
+            .run_command(&["fsmonitor--daemon", "stop"]);
+
+        let remove_command = execute_instant_removal_or_fallback(
+            &repo,
             worktree_path,
             display_info.branch_deleted().then_some(branch_name),
             force_worktree,
