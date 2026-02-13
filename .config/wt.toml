@@ -11,7 +11,7 @@ sync = 'if [ "{{ target }}" = "main" ]; then git pull && git push; fi'
 
 [pre-merge]
 pre-commit = "if [ -n \"$MSYSTEM\" ]; then SKIP=lychee-system pre-commit run --all-files; else pre-commit run --all-files; fi"
-insta = "RUSTFLAGS='-D warnings' NEXTEST_NO_INPUT_HANDLER=1 cargo insta test --test-runner nextest --dnd --check $([ \"$(uname)\" = 'Linux' ] && echo '--unreferenced reject') --features shell-integration-tests"
+insta = "RUSTFLAGS='-D warnings' NEXTEST_NO_INPUT_HANDLER=1 cargo insta test --test-runner nextest --dnd --check $([ \"$(uname)\" = 'Linux' ] && echo '--unreferenced reject') --features shell-integration-tests$(command -v jj >/dev/null 2>&1 && echo ',jj-integration-tests')"
 doctest = "RUSTDOCFLAGS='-Dwarnings' cargo test --doc"
 doc = "RUSTDOCFLAGS='-Dwarnings' cargo doc --no-deps"
 
