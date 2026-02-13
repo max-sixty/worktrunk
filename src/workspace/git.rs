@@ -207,4 +207,124 @@ mod tests {
 
         assert_eq!(item.prunable, Some("directory missing".into()));
     }
+
+    /// Exercise all `Workspace` trait methods on a real git repository.
+    ///
+    /// This covers the `Workspace for GitWorkspace` implementation which
+    /// wraps `Repository` methods into the VCS-agnostic trait.
+    #[test]
+    fn test_workspace_trait_on_real_repo() {
+        use std::process::Command;
+
+        use super::super::{VcsKind, Workspace};
+        use super::GitWorkspace;
+        use crate::git::Repository;
+
+        let temp = tempfile::tempdir().unwrap();
+        let repo_path = temp.path().join("repo");
+        std::fs::create_dir(&repo_path).unwrap();
+
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&repo_path)
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@test.com")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@test.com")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+
+        git(&["init", "-b", "main"]);
+        std::fs::write(repo_path.join("file.txt"), "hello\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "initial"]);
+
+        let repo = Repository::at(&repo_path).unwrap();
+        let ws = GitWorkspace::new(repo);
+
+        // kind
+        assert_eq!(ws.kind(), VcsKind::Git);
+
+        // has_staging_area
+        assert!(ws.has_staging_area());
+
+        // list_workspaces
+        let items = ws.list_workspaces().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "main");
+        assert!(items[0].is_default);
+
+        // default_workspace_path
+        assert!(ws.default_workspace_path().unwrap().is_some());
+
+        // default_branch_name
+        let _ = ws.default_branch_name().unwrap();
+
+        // is_dirty — clean state
+        assert!(!ws.is_dirty(&repo_path).unwrap());
+
+        // working_diff — clean
+        let diff = ws.working_diff(&repo_path).unwrap();
+        assert_eq!(diff.added, 0);
+        assert_eq!(diff.deleted, 0);
+
+        // Make dirty
+        std::fs::write(repo_path.join("file.txt"), "modified\n").unwrap();
+        assert!(ws.is_dirty(&repo_path).unwrap());
+        let diff = ws.working_diff(&repo_path).unwrap();
+        assert!(diff.added > 0 || diff.deleted > 0);
+        git(&["checkout", "--", "."]);
+
+        // Create feature branch with a commit
+        git(&["checkout", "-b", "feature"]);
+        std::fs::write(repo_path.join("feature.txt"), "feature\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "feature commit"]);
+
+        // ahead_behind
+        let (ahead, behind) = ws.ahead_behind("main", "feature").unwrap();
+        assert_eq!(ahead, 1);
+        assert_eq!(behind, 0);
+
+        // is_integrated — feature is NOT an ancestor of main
+        let integrated = ws.is_integrated("feature", "main").unwrap();
+        assert!(integrated.is_none());
+
+        // branch_diff_stats
+        let diff = ws.branch_diff_stats("main", "feature").unwrap();
+        assert!(diff.added > 0);
+
+        // Switch back to main for workspace mutation tests
+        git(&["checkout", "main"]);
+
+        // create_workspace (also covers Repository::create_worktree)
+        let wt_path = temp.path().join("test-wt");
+        ws.create_workspace("test-branch", None, &wt_path).unwrap();
+
+        // workspace_path — found by branch name
+        let path = ws.workspace_path("test-branch").unwrap();
+        assert_eq!(
+            dunce::canonicalize(&path).unwrap(),
+            dunce::canonicalize(&wt_path).unwrap()
+        );
+
+        // remove_workspace
+        ws.remove_workspace("test-branch").unwrap();
+
+        // workspace_path — not found
+        assert!(ws.workspace_path("nonexistent").is_err());
+
+        // create_workspace with base revision (covers the `if let Some(base_ref)` branch)
+        let wt_path2 = temp.path().join("test-wt2");
+        ws.create_workspace("from-feature", Some("feature"), &wt_path2)
+            .unwrap();
+        ws.remove_workspace("from-feature").unwrap();
+    }
 }
