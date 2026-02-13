@@ -879,6 +879,81 @@ fn test_jj_step_squash_show_prompt(mut jj_repo: JjTestRepo) {
 // Multi-step workflow tests
 // ============================================================================
 
+// ============================================================================
+// Coverage gap tests — exercising uncovered code paths
+// ============================================================================
+
+/// Clean workspace should report as not dirty (workspace/jj.rs `is_dirty` clean path).
+#[rstest]
+fn test_jj_list_clean_workspace(jj_repo: JjTestRepo) {
+    // Default workspace has an empty @ on top of trunk — is_dirty should return false
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "list", &[], None));
+}
+
+/// Switch to existing workspace without --cd should succeed silently
+/// (handle_switch_jj.rs line 28: early return when change_dir is false).
+#[rstest]
+fn test_jj_switch_existing_no_cd(jj_repo_with_feature: JjTestRepo) {
+    let mut cmd = jj_repo_with_feature.wt_command();
+    cmd.args(["switch", "feature", "--no-cd"]);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    // Should succeed without error, no directory change
+}
+
+/// Remove workspace by running `wt remove` from inside the workspace (no name arg)
+/// (handle_remove_jj.rs line 19: empty names path).
+#[rstest]
+fn test_jj_remove_current_workspace_no_name(mut jj_repo: JjTestRepo) {
+    let ws = jj_repo.add_workspace("removeme");
+    jj_repo.commit_in(&ws, "x.txt", "x", "commit");
+
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "remove", &[], Some(&ws)));
+}
+
+/// Switch --create with --base creates workspace at specific revision
+/// (workspace/jj.rs create_workspace with base parameter, line 290).
+#[rstest]
+fn test_jj_switch_create_with_base(jj_repo: JjTestRepo) {
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "switch",
+        &["based-ws", "--create", "--base", "main"],
+        None,
+    ));
+}
+
+/// List workspace with committed changes (exercises branch_diff_stats and ahead/behind).
+#[rstest]
+fn test_jj_list_workspace_with_commits(mut jj_repo: JjTestRepo) {
+    let ws = jj_repo.add_workspace("with-commits");
+    jj_repo.commit_in(&ws, "a.txt", "a", "First change");
+    jj_repo.commit_in(&ws, "b.txt", "b", "Second change");
+
+    // List from default workspace — feature workspace should show commits ahead
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "list", &[], None));
+}
+
+/// Switch --create when target path already exists should error
+/// (handle_switch_jj.rs lines 50-54).
+#[rstest]
+fn test_jj_switch_create_path_exists(jj_repo: JjTestRepo) {
+    // Create the directory that would conflict
+    let conflict_dir = jj_repo.root_path().parent().unwrap().join("repo.conflict");
+    std::fs::create_dir_all(&conflict_dir).unwrap();
+
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "switch",
+        &["conflict", "--create"],
+        None,
+    ));
+}
+
+// ============================================================================
+// wt step push tests (continued)
+// ============================================================================
+
 #[rstest]
 fn test_jj_step_squash_then_push(mut jj_repo: JjTestRepo) {
     // The primary workflow: commit -> squash -> push
