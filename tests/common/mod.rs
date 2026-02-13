@@ -2713,9 +2713,9 @@ fn setup_snapshot_settings_for_paths_with_home(
         "${1}[VERSION]",
     );
     // Version check: "Up to date (<bold>VERSION</>)" or "current: VERSION)"
-    // version_str() can be: v0.8.5, v0.8.5-2-gabcdef, v0.8.5-dirty, or 0.8.5
+    // version_str() can be: v0.8.5, v0.8.5-2-gabcdef, v0.8.5-dirty, 0.8.5, or bare hash (8465a1f)
     settings.add_filter(
-        r"(current: |Up to date \(\x1b\[1m)(?:v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?)",
+        r"(current: |Up to date \(\x1b\[1m)(?:v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40})",
         "${1}[VERSION]",
     );
 
