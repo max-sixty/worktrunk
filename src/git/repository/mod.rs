@@ -722,7 +722,7 @@ impl Repository {
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
 
-    /// Extract structured failure info from a [`run_command_delayed_stream`] error.
+    /// Extract structured failure info from a [`Repository::run_command_delayed_stream`] error.
     ///
     /// Returns `(output, Some(FailedCommand))` if the error is a `StreamCommandError`,
     /// or `(error_string, None)` for other error types (e.g., spawn failures).
