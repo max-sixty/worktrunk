@@ -79,10 +79,10 @@ jobs:
       with:
         crate: jj-cli
 
-    - name: Install shells (bash, zsh, fish) - macOS
+    - name: Install shells and jj (Jujutsu) - macOS
       if: runner.os == 'macOS'
       run: |
-        brew install fish
+        brew install fish jj
         # bash and zsh are pre-installed on macOS
 
     - name: Install shells - Windows
@@ -251,7 +251,7 @@ jobs:
     - name: 📊 Generate coverage report
       env:
         NEXTEST_NO_INPUT_HANDLER: 1
-      run: cargo llvm-cov --features shell-integration-tests,jj-integration-tests --cobertura --output-path=cobertura.xml
+      run: cargo llvm-cov --features shell-integration-tests --cobertura --output-path=cobertura.xml
 
     - name: Upload code coverage results
       uses: actions/upload-artifact@v6

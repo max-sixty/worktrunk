@@ -35,14 +35,12 @@ normal = ["which"]
 # This is optional to avoid C compilation issues on some platforms
 default = ["syntax-highlighting"]
 syntax-highlighting = ["dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-highlight"]
-# Enable shell/PTY integration tests (requires bash, zsh, fish installed on system)
-# Includes: shell wrapper tests, PTY-based approval prompts, TUI select, progressive rendering
+# Enable shell/PTY integration tests (requires bash, zsh, fish, jj installed on system)
+# Includes: shell wrapper tests, PTY-based approval prompts, TUI select, progressive rendering, jj tests
 # These tests can cause nextest to suspend due to terminal foreground pgrp issues.
 # When enabled, run with NEXTEST_NO_INPUT_HANDLER=1 to avoid suspension.
 # See CLAUDE.md "Nextest Terminal Suspension" section for details.
 shell-integration-tests = []
-# Enable jj (Jujutsu) integration tests (requires jj 0.38.0+ installed on system)
-jj-integration-tests = []
 # Install git-wt binary so `git wt` works as a git subcommand
 git-wt = []
 

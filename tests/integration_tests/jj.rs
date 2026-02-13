@@ -2,8 +2,8 @@
 //!
 //! These tests exercise the `wt` CLI against real jj repositories.
 //! They require `jj` to be installed (0.38.0+). Gated behind the
-//! `jj-integration-tests` feature flag.
-#![cfg(feature = "jj-integration-tests")]
+//! `shell-integration-tests` feature flag (alongside shell/PTY tests).
+#![cfg(all(unix, feature = "shell-integration-tests"))]
 
 use crate::common::{
     canonicalize, configure_cli_command, configure_directive_file, directive_file,
