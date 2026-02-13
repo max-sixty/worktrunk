@@ -399,3 +399,30 @@ fn test_default_branch_name_display() {
         assert_eq!(branch, expected);
     }
 }
+
+#[test]
+fn extract_failed_command_from_stream_error() {
+    use super::StreamCommandError;
+
+    let err: anyhow::Error = StreamCommandError {
+        output: "fatal: ref exists".into(),
+        command: "git worktree add /path".into(),
+        exit_info: "exit code 128".into(),
+    }
+    .into();
+
+    let (output, cmd) = super::Repository::extract_failed_command(&err);
+    assert_eq!(output, "fatal: ref exists");
+    let cmd = cmd.unwrap();
+    assert_eq!(cmd.command, "git worktree add /path");
+    assert_eq!(cmd.exit_info, "exit code 128");
+}
+
+#[test]
+fn extract_failed_command_from_other_error() {
+    let err = anyhow::anyhow!("some other error");
+
+    let (output, cmd) = super::Repository::extract_failed_command(&err);
+    assert_eq!(output, "some other error");
+    assert!(cmd.is_none());
+}
