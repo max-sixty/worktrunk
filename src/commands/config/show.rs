@@ -298,6 +298,9 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
         }
     }
 
+    // Check for newer version on GitHub
+    render_version_check(out)?;
+
     // Test commit generation - use effective config for current project
     let config = UserConfig::load()?;
     let project_id = Repository::current()
@@ -307,31 +310,30 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
 
     if !commit_config.is_configured() {
         writeln!(out, "{}", hint_message("Commit generation not configured"))?;
-        return Ok(());
-    }
+    } else {
+        let command_display = commit_config.command.as_ref().unwrap().clone();
 
-    let command_display = commit_config.command.as_ref().unwrap().clone();
-
-    match test_commit_generation(&commit_config) {
-        Ok(message) => {
-            writeln!(
-                out,
-                "{}",
-                success_message(cformat!(
-                    "Commit generation working (<bold>{command_display}</>)"
-                ))
-            )?;
-            writeln!(out, "{}", format_with_gutter(&message, None))?;
-        }
-        Err(e) => {
-            writeln!(
-                out,
-                "{}",
-                error_message(cformat!(
-                    "Commit generation failed (<bold>{command_display}</>)"
-                ))
-            )?;
-            writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+        match test_commit_generation(&commit_config) {
+            Ok(message) => {
+                writeln!(
+                    out,
+                    "{}",
+                    success_message(cformat!(
+                        "Commit generation working (<bold>{command_display}</>)"
+                    ))
+                )?;
+                writeln!(out, "{}", format_with_gutter(&message, None))?;
+            }
+            Err(e) => {
+                writeln!(
+                    out,
+                    "{}",
+                    error_message(cformat!(
+                        "Commit generation failed (<bold>{command_display}</>)"
+                    ))
+                )?;
+                writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+            }
         }
     }
 
@@ -955,6 +957,92 @@ pub(super) fn render_ci_tool_status(
     Ok(())
 }
 
+/// Render version update check (fetches from GitHub)
+fn render_version_check(out: &mut String) -> anyhow::Result<()> {
+    match fetch_latest_version() {
+        Ok(latest) => {
+            let current = crate::cli::version_str();
+            let current_semver = env!("CARGO_PKG_VERSION");
+            if is_newer_version(&latest, current_semver) {
+                writeln!(
+                    out,
+                    "{}",
+                    info_message(cformat!(
+                        "Update available: <bold>{latest}</> (current: {current})"
+                    ))
+                )?;
+            } else {
+                writeln!(
+                    out,
+                    "{}",
+                    success_message(cformat!("Up to date (<bold>{current}</>)"))
+                )?;
+            }
+        }
+        Err(e) => {
+            log::debug!("Version check failed: {e}");
+            writeln!(out, "{}", hint_message("Version check unavailable"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Fetch the latest release version from GitHub
+fn fetch_latest_version() -> anyhow::Result<String> {
+    // Allow tests to inject a version without network access.
+    // Set to "error" to simulate a fetch failure.
+    if let Ok(version) = std::env::var("WORKTRUNK_TEST_LATEST_VERSION") {
+        if version == "error" {
+            anyhow::bail!("simulated fetch failure");
+        }
+        return Ok(version);
+    }
+
+    let user_agent = format!(
+        "worktrunk/{} (https://worktrunk.dev)",
+        env!("CARGO_PKG_VERSION")
+    );
+    let output = Cmd::new("curl")
+        .args([
+            "--silent",
+            "--fail",
+            "--max-time",
+            "5",
+            "--header",
+            &format!("User-Agent: {user_agent}"),
+            "https://api.github.com/repos/max-sixty/worktrunk/releases/latest",
+        ])
+        .run()?;
+
+    if !output.status.success() {
+        anyhow::bail!("GitHub API request failed");
+    }
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let tag = json["tag_name"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing tag_name in response"))?;
+
+    // Strip leading 'v' prefix (e.g., "v0.23.2" -> "0.23.2")
+    Ok(tag.strip_prefix('v').unwrap_or(tag).to_string())
+}
+
+/// Compare two semver version strings (e.g., "0.24.0" > "0.23.2")
+fn is_newer_version(latest: &str, current: &str) -> bool {
+    let parse = |s: &str| -> Option<(u32, u32, u32)> {
+        let mut parts = s.splitn(3, '.');
+        Some((
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+        ))
+    };
+    match (parse(latest), parse(current)) {
+        (Some(l), Some(c)) => l > c,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -968,5 +1056,25 @@ mod tests {
         // Version should look like a semver (e.g., "2.47.1")
         assert!(version.chars().next().unwrap().is_ascii_digit());
         assert!(version.contains('.'));
+    }
+
+    #[test]
+    fn test_is_newer_version() {
+        // Newer versions
+        assert!(is_newer_version("0.24.0", "0.23.2"));
+        assert!(is_newer_version("1.0.0", "0.99.99"));
+        assert!(is_newer_version("0.23.3", "0.23.2"));
+        assert!(is_newer_version("0.23.2", "0.23.1"));
+
+        // Same version
+        assert!(!is_newer_version("0.23.2", "0.23.2"));
+
+        // Older versions
+        assert!(!is_newer_version("0.23.1", "0.23.2"));
+        assert!(!is_newer_version("0.22.0", "0.23.2"));
+
+        // Invalid input
+        assert!(!is_newer_version("invalid", "0.23.2"));
+        assert!(!is_newer_version("0.23.2", "invalid"));
     }
 }
