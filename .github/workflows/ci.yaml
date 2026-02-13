@@ -240,13 +240,18 @@ jobs:
         packages: zsh fish
         version: 1.0
 
+    - name: Install jj (Jujutsu)
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: jj-cli
+
     # Ensure nothing remains from caching
     - run: cargo llvm-cov clean --workspace
 
     - name: 📊 Generate coverage report
       env:
         NEXTEST_NO_INPUT_HANDLER: 1
-      run: cargo llvm-cov --features shell-integration-tests --cobertura --output-path=cobertura.xml
+      run: cargo llvm-cov --features shell-integration-tests,jj-integration-tests --cobertura --output-path=cobertura.xml
 
     - name: Upload code coverage results
       uses: actions/upload-artifact@v6
