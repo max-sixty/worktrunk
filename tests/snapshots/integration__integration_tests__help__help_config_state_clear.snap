@@ -10,6 +10,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     PSModulePath: ""
@@ -51,6 +52,7 @@ Clears all stored state:
 - Default branch cache
 - Previous branch
 - All branch markers
+- All kv data
 - All CI status cache
 - All hints
 - All log files

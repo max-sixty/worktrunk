@@ -38,9 +38,11 @@ pub const TEMPLATE_VARS: &[&str] = &[
     "remote",
     "remote_url",
     "upstream",
-    "target",             // Added by merge/rebase hooks via extra_vars
-    "base",               // Added by creation hooks via extra_vars
+    "target", // Added by merge/rebase hooks via extra_vars
+    "base",   // Added by creation hooks via extra_vars
     "base_worktree_path", // Added by creation hooks via extra_vars
+              // Note: `kv` is NOT listed here — it's a structured object injected by expand_template,
+              // not a simple string that --var can override.
 ];
 
 /// Deprecated template variable aliases (still valid for backward compatibility).
@@ -238,6 +240,15 @@ pub fn expand_template(
         context.insert(
             key.to_string(),
             minijinja::Value::from((*value).to_string()),
+        );
+    }
+
+    // Inject kv data as a nested object: {{ kv.env }}, {{ kv.port | default("3000") }}
+    // Always inject (even if empty) so {{ kv.key | default(...) }} works in SemiStrict mode.
+    if let Some(branch) = vars.get("branch") {
+        context.insert(
+            "kv".to_string(),
+            Value::from_serialize(repo.kv_entries(branch)),
         );
     }
 
@@ -924,6 +935,101 @@ mod tests {
         assert_eq!(
             redact_credentials("https://token@github.com/owner/repo.git?ref=main"),
             "https://[REDACTED]@github.com/owner/repo.git?ref=main"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_kv_data() {
+        let test = test_repo();
+
+        // Set kv data via git config
+        std::process::Command::new("git")
+            .args(["config", "worktrunk.state.main.kv.env", "staging"])
+            .current_dir(test._dir.path())
+            .status()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "worktrunk.state.main.kv.port", "3000"])
+            .current_dir(test._dir.path())
+            .status()
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        vars.insert("branch", "main");
+
+        // Access kv via dot notation
+        assert_eq!(
+            expand_template("{{ kv.env }}", &vars, false, &test.repo, "test").unwrap(),
+            "staging"
+        );
+        assert_eq!(
+            expand_template("{{ kv.port }}", &vars, false, &test.repo, "test").unwrap(),
+            "3000"
+        );
+
+        // Default filter for missing kv keys
+        assert_eq!(
+            expand_template(
+                "{{ kv.missing | default('fallback') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "fallback"
+        );
+
+        // Conditional on kv
+        assert_eq!(
+            expand_template(
+                "{% if kv.env %}env={{ kv.env }}{% endif %}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "env=staging"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_kv_empty_when_no_branch() {
+        let test = test_repo();
+        let vars = HashMap::new(); // No branch var
+
+        // kv should be undefined (no branch to look up)
+        assert_eq!(
+            expand_template(
+                "{{ kv | default('none') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "none"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_kv_empty_when_no_data() {
+        let test = test_repo();
+        let mut vars = HashMap::new();
+        vars.insert("branch", "main");
+
+        // kv not injected when no entries exist — use default filter
+        assert_eq!(
+            expand_template(
+                "{{ kv.env | default('dev') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "dev"
         );
     }
 }

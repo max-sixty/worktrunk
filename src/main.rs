@@ -48,18 +48,18 @@ use commands::{
     MergeOptions, OperationMode, RebaseResult, SquashResult, SwitchOptions, add_approvals,
     clear_approvals, handle_completions, handle_config_create, handle_config_show,
     handle_configure_shell, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
-    handle_list, handle_logs_get, handle_merge, handle_rebase, handle_remove,
-    handle_remove_current, handle_show_theme, handle_squash, handle_state_clear,
-    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show, handle_switch,
-    handle_unconfigure_shell, resolve_worktree_arg, run_hook, step_commit, step_copy_ignored,
-    step_for_each, step_relocate,
+    handle_kv_clear, handle_kv_get, handle_kv_list, handle_kv_set, handle_list, handle_logs_get,
+    handle_merge, handle_rebase, handle_remove, handle_remove_current, handle_show_theme,
+    handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
+    handle_state_show, handle_switch, handle_unconfigure_shell, resolve_worktree_arg, run_hook,
+    step_commit, step_copy_ignored, step_for_each, step_relocate,
 };
 use output::handle_remove_output;
 
 use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigShellCommand,
-    DefaultBranchAction, HintsAction, HookCommand, ListSubcommand, LogsAction, MarkerAction,
-    PreviousBranchAction, StateCommand, StepCommand,
+    DefaultBranchAction, HintsAction, HookCommand, KvAction, ListSubcommand, LogsAction,
+    MarkerAction, PreviousBranchAction, StateCommand, StepCommand,
 };
 use worktrunk::HookType;
 
@@ -478,6 +478,14 @@ fn main() {
                 StateCommand::Hints { action } => match action {
                     Some(HintsAction::Get) | None => handle_hints_get(),
                     Some(HintsAction::Clear { name }) => handle_hints_clear(name),
+                },
+                StateCommand::Kv { action } => match action {
+                    KvAction::Get { key, branch } => handle_kv_get(&key, branch),
+                    KvAction::Set { key, value, branch } => handle_kv_set(&key, &value, branch),
+                    KvAction::List { branch } => handle_kv_list(branch),
+                    KvAction::Clear { key, all, branch } => {
+                        handle_kv_clear(key.as_deref(), all, branch)
+                    }
                 },
                 StateCommand::Get { format } => handle_state_show(format),
                 StateCommand::Clear => handle_state_clear_all(),

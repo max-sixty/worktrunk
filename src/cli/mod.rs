@@ -5,7 +5,7 @@ mod step;
 
 pub(crate) use config::{
     ApprovalsCommand, CiStatusAction, ConfigCommand, ConfigShellCommand, DefaultBranchAction,
-    HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand,
+    HintsAction, KvAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand,
 };
 pub(crate) use hook::HookCommand;
 pub(crate) use list::ListSubcommand;
