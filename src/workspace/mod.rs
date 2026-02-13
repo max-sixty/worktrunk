@@ -3,9 +3,9 @@
 //! This module provides the [`Workspace`] trait that captures the operations
 //! commands need, independent of the underlying VCS (git, jj, etc.).
 //!
-//! The git implementation ([`GitWorkspace`](git::GitWorkspace)) delegates to
+//! The git implementation ([`GitWorkspace`]) delegates to
 //! [`Repository`](crate::git::Repository) methods. The jj implementation
-//! ([`JjWorkspace`](jj::JjWorkspace)) shells out to `jj` CLI commands.
+//! ([`JjWorkspace`]) shells out to `jj` CLI commands.
 //!
 //! Use [`detect_vcs`] to determine which VCS manages a given path.
 
