@@ -1433,4 +1433,16 @@ diff --git a/Cargo.lock b/Cargo.lock
         assert!(!is_lock_file("README.md"));
         assert!(!is_lock_file("config.toml"));
     }
+
+    #[test]
+    fn test_build_jj_commit_prompt() {
+        let config = CommitGenerationConfig::default();
+        let diff = "+++ new_file.rs\n+fn main() {}\n";
+        let stat = "new_file.rs | 1 +\n1 file changed, 1 insertion(+)";
+        let result = build_jj_commit_prompt(diff, stat, "feature-ws", "myrepo", &config);
+        assert!(result.is_ok());
+        let prompt = result.unwrap();
+        assert!(prompt.contains("new_file.rs"));
+        assert!(prompt.contains("feature-ws"));
+    }
 }
