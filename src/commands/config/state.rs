@@ -691,17 +691,14 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
 
     // Get kv data (all branches)
     let kv_output = raw_kv_output(repo);
-    let kv_data: Vec<serde_json::Value> = kv_output
-        .lines()
-        .filter_map(|line| {
-            let (config_key, value) = line.split_once(' ')?;
-            let rest = config_key.strip_prefix("worktrunk.state.")?;
-            let (branch, key) = rest.split_once(".kv.")?;
-            Some(serde_json::json!({
+    let kv_data: Vec<serde_json::Value> = parse_all_kv(&kv_output)
+        .into_iter()
+        .map(|(branch, key, value)| {
+            serde_json::json!({
                 "branch": branch,
                 "key": key,
                 "value": value
-            }))
+            })
         })
         .collect();
 
@@ -766,16 +763,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     // Show kv data
     writeln!(out, "{}", format_heading("KV DATA", None))?;
     let kv_output = raw_kv_output(repo);
-    let mut kv_entries: Vec<(&str, &str, &str)> = kv_output
-        .lines()
-        .filter_map(|line| {
-            let (config_key, value) = line.split_once(' ')?;
-            let rest = config_key.strip_prefix("worktrunk.state.")?;
-            let (branch, key) = rest.split_once(".kv.")?;
-            Some((branch, key, value))
-        })
-        .collect();
-    kv_entries.sort_by(|a, b| a.0.cmp(b.0).then_with(|| a.1.cmp(b.1)));
+    let kv_entries = parse_all_kv(&kv_output);
 
     if kv_entries.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
@@ -863,6 +851,21 @@ fn raw_kv_output(repo: &Repository) -> String {
         .unwrap_or_default()
 }
 
+/// Parse raw kv output into (branch, key, value) triples, sorted by branch then key.
+fn parse_all_kv(raw: &str) -> Vec<(&str, &str, &str)> {
+    let mut entries: Vec<_> = raw
+        .lines()
+        .filter_map(|line| {
+            let (config_key, value) = line.split_once(' ')?;
+            let rest = config_key.strip_prefix("worktrunk.state.")?;
+            let (branch, key) = rest.split_once(".kv.")?;
+            Some((branch, key, value))
+        })
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0).then_with(|| a.1.cmp(b.1)));
+    entries
+}
+
 /// Validate a kv key name: letters, digits, hyphens, underscores only.
 fn validate_kv_key(key: &str) -> anyhow::Result<()> {
     if key.is_empty() {
@@ -895,8 +898,7 @@ pub fn handle_kv_get(key: &str, branch: Option<String>) -> anyhow::Result<()> {
             println!("{value}");
         }
         Err(_) => {
-            // Key not set — empty output, success exit
-            println!();
+            // Key not set — no output, success exit (like git config --get)
         }
     }
     Ok(())
@@ -929,7 +931,7 @@ pub fn handle_kv_list(branch: Option<String>) -> anyhow::Result<()> {
         None => repo.require_current_branch("list kv values for current branch")?,
     };
 
-    let entries = get_kv_entries(&repo, &branch_name);
+    let entries: Vec<_> = repo.kv_entries(&branch_name).into_iter().collect();
     if entries.is_empty() {
         eprintln!(
             "{}",
@@ -956,7 +958,7 @@ pub fn handle_kv_clear(key: Option<&str>, all: bool, branch: Option<String>) -> 
     }
 
     if all {
-        let entries = get_kv_entries(&repo, &branch_name);
+        let entries: Vec<_> = repo.kv_entries(&branch_name).into_iter().collect();
         if entries.is_empty() {
             eprintln!(
                 "{}",
@@ -1000,11 +1002,6 @@ pub fn handle_kv_clear(key: Option<&str>, all: bool, branch: Option<String>) -> 
         }
     }
     Ok(())
-}
-
-/// Get all kv entries for a branch as a sorted vec of (key, value) pairs.
-fn get_kv_entries(repo: &Repository, branch: &str) -> Vec<(String, String)> {
-    repo.kv_entries(branch).into_iter().collect()
 }
 
 /// Clear all kv entries across all branches (used by handle_state_clear_all).

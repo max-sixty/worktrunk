@@ -245,7 +245,10 @@ pub fn expand_template(
 
     // Inject kv data as a nested object: {{ kv.env }}, {{ kv.port | default("3000") }}
     // Always inject (even if empty) so {{ kv.key | default(...) }} works in SemiStrict mode.
-    if let Some(branch) = vars.get("branch") {
+    // Only look up kv data if the template references it (avoids a git process spawn per expansion).
+    if template.contains("kv")
+        && let Some(branch) = vars.get("branch")
+    {
         context.insert(
             "kv".to_string(),
             Value::from_serialize(repo.kv_entries(branch)),
