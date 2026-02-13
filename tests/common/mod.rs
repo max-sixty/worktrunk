@@ -2762,10 +2762,11 @@ fn setup_snapshot_settings_for_paths_with_home(
     // Format: "* " + yellow code + 7-char hex hash + reset
     settings.add_filter(r"\* \x1b\[33m[a-f0-9]{7}\x1b\[m", "* \x1b[33m[HASH]\x1b[m");
 
-    // Filter out CARGO_LLVM_COV env variables from snapshot YAML headers.
+    // Filter out cargo-llvm-cov env variables from snapshot YAML headers.
     // These are only present during coverage runs and cause snapshot mismatches.
     settings.add_filter(r#"  CARGO_LLVM_COV: "1"\n"#, "");
     settings.add_filter(r#"  CARGO_LLVM_COV_TARGET_DIR: "[^"]+"\n"#, "");
+    settings.add_filter(r#"  LLVM_PROFILE_FILE: "[^"]+"\n"#, "");
 
     settings
 }
