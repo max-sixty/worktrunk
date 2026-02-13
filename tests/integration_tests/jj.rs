@@ -971,7 +971,11 @@ fn test_jj_list_json(mut jj_repo: JjTestRepo) {
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     let arr = parsed.as_array().unwrap();
     // At least 2 workspaces: default + json-test
-    assert!(arr.len() >= 2, "Expected at least 2 workspaces, got {}", arr.len());
+    assert!(
+        arr.len() >= 2,
+        "Expected at least 2 workspaces, got {}",
+        arr.len()
+    );
     // Each item should have the 'kind' and 'branch' fields
     for item in arr {
         assert!(item.get("kind").is_some(), "Missing 'kind' field");

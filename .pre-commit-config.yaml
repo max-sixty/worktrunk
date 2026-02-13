@@ -76,7 +76,8 @@ repos:
         # src/config/{test,expansion,mod}.rs: TestRepo test fixtures use git init directly
         # src/config/user/tests.rs: TestRepo test fixtures use git init directly
         # src/styling/mod.rs: terminal width detection probes should be silent/quick
-        exclude: '^(src/shell_exec\.rs|src/commands/select/|src/config/(test|expansion|mod)\.rs|src/config/user/tests\.rs|src/styling/mod\.rs|tests/|benches/)'
+        # src/workspace/git.rs: #[cfg(test)] fixtures use git init/commit directly
+        exclude: '^(src/shell_exec\.rs|src/commands/select/|src/config/(test|expansion|mod)\.rs|src/config/user/tests\.rs|src/styling/mod\.rs|src/workspace/git\.rs|tests/|benches/)'
 
 ci:
   # pre-commit.ci doesn't have Rust toolchain, so skip Rust-specific hooks.
