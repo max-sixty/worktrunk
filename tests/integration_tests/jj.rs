@@ -1,8 +1,9 @@
 //! Integration tests for jj (Jujutsu) workspace support.
 //!
 //! These tests exercise the `wt` CLI against real jj repositories.
-//! They require `jj` to be installed (0.38.0+). Tests will fail if
-//! `jj` is not available.
+//! They require `jj` to be installed (0.38.0+). Gated behind the
+//! `jj-integration-tests` feature flag.
+#![cfg(feature = "jj-integration-tests")]
 
 use crate::common::{
     canonicalize, configure_cli_command, configure_directive_file, directive_file,
@@ -14,26 +15,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
-
-// ============================================================================
-// jj availability gate
-// ============================================================================
-
-fn jj_available() -> bool {
-    Command::new("jj")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-/// Guard for use inside rstest fixtures that return a value.
-/// Panics with a skip message if jj is not available.
-fn ensure_jj_available() {
-    if !jj_available() {
-        panic!("jj is not installed — skipping jj integration tests");
-    }
-}
 
 // ============================================================================
 // JjTestRepo — test fixture for jj repositories
@@ -241,7 +222,6 @@ fn make_jj_snapshot_cmd_with_config(
 
 #[fixture]
 fn jj_repo() -> JjTestRepo {
-    ensure_jj_available();
     JjTestRepo::new()
 }
 

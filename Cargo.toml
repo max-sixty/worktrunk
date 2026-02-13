@@ -41,6 +41,8 @@ syntax-highlighting = ["dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitt
 # When enabled, run with NEXTEST_NO_INPUT_HANDLER=1 to avoid suspension.
 # See CLAUDE.md "Nextest Terminal Suspension" section for details.
 shell-integration-tests = []
+# Enable jj (Jujutsu) integration tests (requires jj 0.38.0+ installed on system)
+jj-integration-tests = []
 # Install git-wt binary so `git wt` works as a git subcommand
 git-wt = []
 

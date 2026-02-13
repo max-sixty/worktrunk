@@ -11,7 +11,7 @@ tasks:
   # Development
   coverage:
     desc: Run tests with coverage report
-    cmd: cargo llvm-cov --html --features shell-integration-tests {{.CLI_ARGS}}
+    cmd: cargo llvm-cov --html --features shell-integration-tests,jj-integration-tests {{.CLI_ARGS}}
 
   setup-web:
     desc: Setup Claude Code web environment for development
