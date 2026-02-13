@@ -72,15 +72,9 @@ pub(crate) struct StreamCommandError {
 
 impl std::fmt::Display for StreamCommandError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.output.is_empty() {
-            write!(f, "{} failed ({})", self.command, self.exit_info)
-        } else {
-            write!(
-                f,
-                "{}\n({} failed, {})",
-                self.output, self.command, self.exit_info
-            )
-        }
+        // Callers use Repository::extract_failed_command() to access fields directly.
+        // This Display impl exists only to satisfy the Error trait bound.
+        write!(f, "{}", self.output)
     }
 }
 
