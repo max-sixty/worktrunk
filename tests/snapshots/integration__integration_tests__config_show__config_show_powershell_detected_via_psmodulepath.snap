@@ -26,6 +26,7 @@ info:
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "1"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -38,6 +39,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
+[36mSYSTEM CONFIG[39m  /etc/xdg/worktrunk/config.toml
+[2m↳[22m [2mNot found (optional)[22m
+
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [2m↳[22m [2mEmpty file (using defaults)[22m
 
