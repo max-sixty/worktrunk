@@ -171,7 +171,7 @@ fn test_statusline_claude_code_full_context(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @" [PATH]  main  [36m?[39m[90m^[39m[90m|[39m  | Opus");
+        assert_snapshot!(output, @"[PATH]  main  [36m?[0m[2m^[22m[2m|[22m  | Opus");
     });
 }
 
@@ -182,7 +182,7 @@ fn test_statusline_claude_code_minimal(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @" [PATH]  main  [90m^[39m[90m|[39m");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m");
     });
 }
 
@@ -198,7 +198,7 @@ fn test_statusline_claude_code_with_model(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @" [PATH]  main  [90m^[39m[90m|[39m  | Haiku");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Haiku");
     });
 }
 
@@ -217,7 +217,7 @@ fn test_statusline_claude_code_with_context_gauge(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @" [PATH]  main  [90m^[39m[90m|[39m  | Opus  🌕 42%");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus  🌕 42%");
     });
 }
 
@@ -234,7 +234,7 @@ fn test_statusline_claude_code_context_gauge_low(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @" [PATH]  main  [90m^[39m[90m|[39m  | Opus  🌕 5%");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus  🌕 5%");
     });
 }
 
@@ -251,7 +251,7 @@ fn test_statusline_claude_code_context_gauge_high(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @" [PATH]  main  [90m^[39m[90m|[39m  | Opus  🌑 98%");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus  🌑 98%");
     });
 }
 
@@ -277,7 +277,7 @@ fn test_statusline_claude_code_missing_context_window(repo: TestRepo) {
                 && !output.contains('●'),
             "No gauge should appear when context_window is missing: {output}"
         );
-        assert_snapshot!(output, @" [PATH]  main  [90m^[39m[90m|[39m  | Opus");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus");
     });
 }
 

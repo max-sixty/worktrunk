@@ -15,9 +15,7 @@ use dunce::canonicalize;
 use ansi_str::AnsiStr;
 use anyhow::{Context, Result};
 use worktrunk::git::Repository;
-use worktrunk::styling::{
-    dim_to_bright_black, fix_dim_after_color_reset, get_terminal_width, truncate_visible,
-};
+use worktrunk::styling::{fix_dim_after_color_reset, get_terminal_width, truncate_visible};
 
 use super::list::{self, CollectOptions, StatuslineSegment, json_output};
 use crate::cli::OutputFormat;
@@ -242,18 +240,9 @@ pub fn run(format: OutputFormat) -> Result<()> {
     // Join and apply final truncation as fallback
     let output = StatuslineSegment::join(&fitted_segments);
 
-    let output = if claude_code {
-        // CC's Ink renderer sets the base foreground to truecolor rgb(102,102,102).
-        // Dim (SGR 2) works on truecolor but the effect on this already-dark base is
-        // imperceptible. Convert standalone dim to bright-black for visible contrast.
-        // Skip the leading reset which would kill Ink's dimColor.
-        let output = dim_to_bright_black(&output);
-        truncate_visible(&format!(" {output}"), max_width)
-    } else {
-        let reset = anstyle::Reset;
-        let output = fix_dim_after_color_reset(&output);
-        truncate_visible(&format!("{reset} {output}"), max_width)
-    };
+    let reset = anstyle::Reset;
+    let output = fix_dim_after_color_reset(&output);
+    let output = truncate_visible(&format!("{reset} {output}"), max_width);
 
     println!("{}", output);
 

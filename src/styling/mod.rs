@@ -162,79 +162,13 @@ pub fn visual_width(s: &str) -> usize {
     s.ansi_strip().width()
 }
 
-/// Fix dim rendering for terminals that don't handle `\e[2m` after `\e[39m`.
+/// Fix dim rendering for terminals that don't handle \e[2m after \e[39m.
 ///
-/// Some terminals don't render dim (`\e[2m`) correctly when it follows a
-/// foreground color reset (`\e[39m`). This function replaces that sequence with
-/// a full reset (`\e[0m`) before dim, which works correctly.
-///
-/// Used in the standard (non-Claude Code) statusline path.
+/// Claude Code's terminal doesn't render dim (\e[2m) correctly when it follows
+/// a foreground color reset (\e[39m). This function replaces that sequence with
+/// a full reset (\e[0m) before dim, which works correctly.
 pub fn fix_dim_after_color_reset(s: &str) -> String {
     s.replace("\x1b[39m\x1b[2m", "\x1b[0m\x1b[2m")
-}
-
-/// Replace standalone dim (SGR 2) with bright-black for Claude Code.
-///
-/// CC's Ink renderer applies `dimColor={true}` by setting the base foreground to
-/// a **truecolor** value (`\e[38;2;102;102;102m`), which is already quite dark
-/// (rgb(102,102,102)). SGR 2 from our output passes through CC's ANSI parser to
-/// the host terminal, where dim *does* reduce brightness — but the effect on an
-/// already-dark base is imperceptible. Empirically: dim on bright truecolor
-/// (rgb(200,200,200)) is visibly different, but dim on CC's dark base is not.
-/// Dim + a saturated 4-bit color (like `\e[31m` red) produces a very visible
-/// change because the color has far more room to darken.
-///
-/// This function converts **standalone dim** (no following foreground color) to
-/// bright-black (`\e[90m`), which the terminal renders as a distinct darker shade
-/// against CC's truecolor gray base. Dim + foreground color (e.g., dim red for
-/// `⇣11`) is left as-is — dim on saturated colors works correctly.
-///
-/// The corresponding "dim off" (`\e[22m`) after a standalone dim becomes a
-/// foreground reset (`\e[39m`) so the base inactive color takes over again.
-/// This assumes `\e[22m` only appears as dim-off (not bold-off); bold text in
-/// the statusline uses `\e[0m` via anstyle.
-pub fn dim_to_bright_black(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut rest = s;
-
-    while let Some(pos) = rest.find('\x1b') {
-        // Copy text before this escape
-        result.push_str(&rest[..pos]);
-        rest = &rest[pos..];
-
-        if rest.starts_with("\x1b[2m") {
-            if starts_with_fg_color(&rest[4..]) {
-                // Dim + foreground color: keep dim, it works for colored text
-                result.push_str("\x1b[2m");
-            } else {
-                // Standalone dim: convert to bright-black for visible contrast
-                result.push_str("\x1b[90m");
-            }
-            rest = &rest[4..]; // consume \x1b[2m
-        } else if rest.starts_with("\x1b[22m") {
-            rest = &rest[5..]; // consume \x1b[22m
-            result.push_str("\x1b[39m");
-        } else {
-            // Other escape sequence — pass through one byte, loop will find the rest
-            result.push('\x1b');
-            rest = &rest[1..];
-        }
-    }
-
-    result.push_str(rest);
-    result
-}
-
-/// Check if string starts with a foreground color escape: `\x1b[30-37m` or `\x1b[90-97m`.
-fn starts_with_fg_color(s: &str) -> bool {
-    let b = s.as_bytes();
-    b.len() >= 5
-        && b[0] == b'\x1b'
-        && b[1] == b'['
-        && (b[2] == b'3' || b[2] == b'9')
-        && b[3] >= b'0'
-        && b[3] <= b'7'
-        && b[4] == b'm'
 }
 
 // ============================================================================
@@ -940,51 +874,6 @@ cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/bu
         assert_eq!(
             fix_dim_after_color_reset("\x1b[39m\x1b[1m"),
             "\x1b[39m\x1b[1m"
-        );
-    }
-
-    #[test]
-    fn test_dim_to_bright_black() {
-        // Standalone dim → bright-black
-        assert_eq!(dim_to_bright_black("\x1b[2m⊂\x1b[22m"), "\x1b[90m⊂\x1b[39m");
-
-        // Multiple standalone dim regions
-        assert_eq!(
-            dim_to_bright_black("\x1b[2m⊂\x1b[22m💬  \x1b[2m↓2\x1b[22m"),
-            "\x1b[90m⊂\x1b[39m💬  \x1b[90m↓2\x1b[39m"
-        );
-
-        // Dim + foreground color → keep dim (dim-red is visibly different from red)
-        assert_eq!(
-            dim_to_bright_black("\x1b[2m\x1b[31m⇣11\x1b[0m"),
-            "\x1b[2m\x1b[31m⇣11\x1b[0m"
-        );
-
-        // Dim + green (upstream ahead)
-        assert_eq!(
-            dim_to_bright_black("\x1b[2m\x1b[32m⇡3\x1b[0m"),
-            "\x1b[2m\x1b[32m⇡3\x1b[0m"
-        );
-
-        // Mixed: standalone dim → bright-black, dim+color → preserved
-        assert_eq!(
-            dim_to_bright_black("\x1b[2m⊂\x1b[22m  \x1b[2m\x1b[31m⇣11\x1b[0m"),
-            "\x1b[90m⊂\x1b[39m  \x1b[2m\x1b[31m⇣11\x1b[0m"
-        );
-
-        // color_print pattern: cyan then standalone dim (e.g., "?^")
-        assert_eq!(
-            dim_to_bright_black("\x1b[36m?\x1b[39m\x1b[2m^\x1b[22m"),
-            "\x1b[36m?\x1b[39m\x1b[90m^\x1b[39m"
-        );
-
-        // No dim codes — passthrough
-        assert_eq!(dim_to_bright_black("no escapes"), "no escapes");
-
-        // Other SGR codes preserved
-        assert_eq!(
-            dim_to_bright_black("\x1b[31mred\x1b[39m"),
-            "\x1b[31mred\x1b[39m"
         );
     }
 }
