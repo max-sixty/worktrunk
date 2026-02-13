@@ -471,6 +471,20 @@ Specific rules:
 - **One blank between phases** — When a sub-operation completes and a different
   operation begins, add a blank line to visually separate them
 - **Never double blanks** — One blank line maximum between elements
+- **Hints attach to their subject** — Never put a blank line between a hint and
+  the message it elaborates on. Hints (↳) are subordinate — they belong directly
+  below their parent message with no gap.
+
+  ```
+  // GOOD - hint directly follows its subject
+  ↳ fish: Not configured shell extension
+  ↳ To configure, run wt config shell install
+
+  // BAD - blank line detaches hint from subject
+  ↳ fish: Not configured shell extension
+
+  ↳ To configure, run wt config shell install
+  ```
 
 **Prompt spacing:** A blank line before the prompt signals "something different
 is about to happen" and gives the user's eye a natural stopping point before they
