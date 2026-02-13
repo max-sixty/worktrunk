@@ -499,7 +499,20 @@ fn main() {
             } => {
                 // Handle --show-prompt early: just build and output the prompt
                 if show_prompt {
-                    commands::step_show_squash_prompt(target.as_deref())
+                    // Route to jj if applicable (step_show_squash_prompt uses git)
+                    if std::env::current_dir()
+                        .ok()
+                        .and_then(|cwd| worktrunk::workspace::detect_vcs(&cwd))
+                        == Some(worktrunk::workspace::VcsKind::Jj)
+                    {
+                        eprintln!(
+                            "{}",
+                            info_message("--show-prompt is not yet supported for jj squash")
+                        );
+                        Ok(())
+                    } else {
+                        commands::step_show_squash_prompt(target.as_deref())
+                    }
                 } else {
                     // Approval is handled inside handle_squash (like step_commit)
                     handle_squash(target.as_deref(), yes, !verify, stage).map(|result| match result
@@ -522,7 +535,19 @@ fn main() {
                     })
                 }
             }
-            StepCommand::Push { target } => handle_push(target.as_deref(), "Pushed to", None),
+            StepCommand::Push { target } => {
+                // VCS routing here (not in handle_push) because handle_push takes
+                // git-specific args (verb, operations) that don't apply to jj.
+                if std::env::current_dir()
+                    .ok()
+                    .and_then(|cwd| worktrunk::workspace::detect_vcs(&cwd))
+                    == Some(worktrunk::workspace::VcsKind::Jj)
+                {
+                    commands::handle_step_jj::handle_push_jj(target.as_deref())
+                } else {
+                    handle_push(target.as_deref(), "Pushed to", None)
+                }
+            }
             StepCommand::Rebase { target } => {
                 handle_rebase(target.as_deref()).map(|result| match result {
                     RebaseResult::Rebased => (),

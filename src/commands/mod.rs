@@ -8,6 +8,7 @@ pub(crate) mod context;
 mod for_each;
 mod handle_merge_jj;
 pub(crate) mod handle_remove_jj;
+pub(crate) mod handle_step_jj;
 mod handle_switch;
 mod handle_switch_jj;
 mod hook_commands;

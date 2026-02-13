@@ -3,8 +3,8 @@ source: tests/integration_tests/jj.rs
 info:
   program: wt
   args:
-    - merge
-    - main
+    - step
+    - squash
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -31,5 +31,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Workspace [1mintegrated[22m is already integrated into trunk
-[32m✓[39m [32mRemoved workspace [1mintegrated[22m @ [1m_REPO_.integrated[22m[39m
+[2m○[22m Nothing to squash; already a single commit

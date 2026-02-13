@@ -37,6 +37,12 @@ pub fn step_commit(
     stage: Option<StageMode>,
     show_prompt: bool,
 ) -> anyhow::Result<()> {
+    // Route to jj handler if in a jj repo
+    let cwd = std::env::current_dir()?;
+    if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
+        return super::handle_step_jj::step_commit_jj(show_prompt);
+    }
+
     // Handle --show-prompt early: just build and output the prompt
     if show_prompt {
         let repo = worktrunk::git::Repository::current()?;
@@ -110,6 +116,12 @@ pub fn handle_squash(
     no_verify: bool,
     stage: Option<StageMode>,
 ) -> anyhow::Result<SquashResult> {
+    // Route to jj handler if in a jj repo
+    let cwd = std::env::current_dir()?;
+    if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
+        return super::handle_step_jj::handle_squash_jj(target);
+    }
+
     // Load config once, run LLM setup prompt, then reuse config
     let mut config = UserConfig::load().context("Failed to load config")?;
     // One-time LLM setup prompt (errors logged internally; don't block commit)
@@ -397,6 +409,12 @@ pub enum RebaseResult {
 
 /// Handle shared rebase workflow (used by `wt step rebase` and `wt merge`)
 pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
+    // Route to jj handler if in a jj repo
+    let cwd = std::env::current_dir()?;
+    if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
+        return super::handle_step_jj::handle_rebase_jj(target);
+    }
+
     let repo = Repository::current()?;
 
     // Get and validate target ref (any commit-ish for rebase)

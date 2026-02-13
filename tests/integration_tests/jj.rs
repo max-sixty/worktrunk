@@ -162,6 +162,19 @@ impl JjTestRepo {
         cmd.env("APPDATA", home.join(".config"));
     }
 
+    /// Write a config file with a mock LLM command and return its path.
+    ///
+    /// The command just echoes a fixed commit message, ignoring stdin.
+    pub fn write_llm_config(&self) -> PathBuf {
+        let config_path = self.home_path().join("llm-config.toml");
+        std::fs::write(
+            &config_path,
+            "[commit.generation]\ncommand = \"echo LLM-generated-message\"\n",
+        )
+        .unwrap();
+        config_path
+    }
+
     /// Path to a named workspace.
     pub fn workspace_path(&self, name: &str) -> &Path {
         self.workspaces
@@ -206,6 +219,19 @@ fn make_jj_snapshot_cmd(
     cmd.arg(subcommand)
         .args(args)
         .current_dir(cwd.unwrap_or(repo.root_path()));
+    cmd
+}
+
+/// Like `make_jj_snapshot_cmd` but with a custom config path (e.g., for LLM tests).
+fn make_jj_snapshot_cmd_with_config(
+    repo: &JjTestRepo,
+    subcommand: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    config_path: &Path,
+) -> Command {
+    let mut cmd = make_jj_snapshot_cmd(repo, subcommand, args, cwd);
+    cmd.env("WORKTRUNK_CONFIG_PATH", config_path);
     cmd
 }
 
@@ -568,4 +594,329 @@ fn test_jj_merge_with_no_squash(jj_repo_with_feature: JjTestRepo) {
         &["main", "--no-squash"],
         Some(feature_path)
     ));
+}
+
+// ============================================================================
+// wt step commit tests
+// ============================================================================
+
+#[rstest]
+fn test_jj_step_commit_with_changes(jj_repo: JjTestRepo) {
+    // Write a file (jj auto-snapshots, so @ will have content)
+    std::fs::write(jj_repo.root_path().join("new.txt"), "content\n").unwrap();
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "step", &["commit"], None));
+}
+
+#[rstest]
+fn test_jj_step_commit_nothing_to_commit(jj_repo: JjTestRepo) {
+    // @ is empty (fresh workspace), so step commit should fail
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "step", &["commit"], None));
+}
+
+#[rstest]
+fn test_jj_step_commit_in_feature_workspace(mut jj_repo: JjTestRepo) {
+    let ws = jj_repo.add_workspace("feat");
+    std::fs::write(ws.join("feat.txt"), "feature content\n").unwrap();
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "step",
+        &["commit"],
+        Some(&ws)
+    ));
+}
+
+#[rstest]
+fn test_jj_step_commit_reuses_existing_description(jj_repo: JjTestRepo) {
+    // Write a file, then manually describe @ — step commit should reuse that description
+    std::fs::write(jj_repo.root_path().join("described.txt"), "content\n").unwrap();
+    run_jj_in(
+        jj_repo.root_path(),
+        &["describe", "-m", "My custom message"],
+    );
+
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "step", &["commit"], None));
+}
+
+#[rstest]
+fn test_jj_step_commit_multiple_files(jj_repo: JjTestRepo) {
+    // Write 4 files — should generate "Changes to 4 files"
+    for name in &["a.txt", "b.txt", "c.txt", "d.txt"] {
+        std::fs::write(jj_repo.root_path().join(name), "content\n").unwrap();
+    }
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "step", &["commit"], None));
+}
+
+#[rstest]
+fn test_jj_step_commit_two_files(jj_repo: JjTestRepo) {
+    // 2 files — should generate "Changes to X & Y"
+    std::fs::write(jj_repo.root_path().join("alpha.txt"), "a\n").unwrap();
+    std::fs::write(jj_repo.root_path().join("beta.txt"), "b\n").unwrap();
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "step", &["commit"], None));
+}
+
+#[rstest]
+fn test_jj_step_commit_three_files(jj_repo: JjTestRepo) {
+    // 3 files — should generate "Changes to X, Y & Z"
+    std::fs::write(jj_repo.root_path().join("alpha.txt"), "a\n").unwrap();
+    std::fs::write(jj_repo.root_path().join("beta.txt"), "b\n").unwrap();
+    std::fs::write(jj_repo.root_path().join("gamma.txt"), "c\n").unwrap();
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "step", &["commit"], None));
+}
+
+#[rstest]
+fn test_jj_step_commit_show_prompt(jj_repo: JjTestRepo) {
+    // --show-prompt with no LLM configured
+    std::fs::write(jj_repo.root_path().join("prompt.txt"), "content\n").unwrap();
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "step",
+        &["commit", "--show-prompt"],
+        None
+    ));
+}
+
+#[rstest]
+fn test_jj_step_commit_with_llm(jj_repo: JjTestRepo) {
+    // Commit with a mock LLM command configured
+    let config = jj_repo.write_llm_config();
+    std::fs::write(jj_repo.root_path().join("llm.txt"), "content\n").unwrap();
+    assert_cmd_snapshot!(make_jj_snapshot_cmd_with_config(
+        &jj_repo,
+        "step",
+        &["commit"],
+        None,
+        &config
+    ));
+}
+
+#[rstest]
+fn test_jj_step_commit_show_prompt_with_llm(jj_repo: JjTestRepo) {
+    // --show-prompt with LLM configured — should print the actual prompt
+    let config = jj_repo.write_llm_config();
+    std::fs::write(jj_repo.root_path().join("llm.txt"), "content\n").unwrap();
+    assert_cmd_snapshot!(make_jj_snapshot_cmd_with_config(
+        &jj_repo,
+        "step",
+        &["commit", "--show-prompt"],
+        None,
+        &config
+    ));
+}
+
+// ============================================================================
+// wt step squash tests
+// ============================================================================
+
+#[rstest]
+fn test_jj_step_squash_multiple_commits(mut jj_repo: JjTestRepo) {
+    let ws = jj_repo.add_workspace("squash-test");
+    jj_repo.commit_in(&ws, "a.txt", "content a", "First commit");
+    jj_repo.commit_in(&ws, "b.txt", "content b", "Second commit");
+
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "step",
+        &["squash"],
+        Some(&ws)
+    ));
+}
+
+#[rstest]
+fn test_jj_step_squash_already_single_commit(mut jj_repo: JjTestRepo) {
+    let ws = jj_repo.add_workspace("single");
+    jj_repo.commit_in(&ws, "only.txt", "only content", "Only commit");
+
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "step",
+        &["squash"],
+        Some(&ws)
+    ));
+}
+
+#[rstest]
+fn test_jj_step_squash_no_commits_ahead(jj_repo: JjTestRepo) {
+    // Default workspace with no feature commits — nothing to squash
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "step", &["squash"], None));
+}
+
+#[rstest]
+fn test_jj_step_squash_already_integrated(mut jj_repo: JjTestRepo) {
+    // Feature that has already been squash-merged into trunk via wt merge
+    let ws = jj_repo.add_workspace("integrated");
+    jj_repo.commit_in(&ws, "i.txt", "content", "Feature commit");
+
+    // Merge it into trunk first
+    let mut merge_cmd = jj_repo.wt_command();
+    configure_cli_command(&mut merge_cmd);
+    merge_cmd
+        .current_dir(&ws)
+        .args(["merge", "main", "--no-remove"]);
+    let merge_result = merge_cmd.output().unwrap();
+    assert!(
+        merge_result.status.success(),
+        "merge failed: {}",
+        String::from_utf8_lossy(&merge_result.stderr)
+    );
+
+    // Now step squash should say "nothing to squash" (already integrated)
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "step",
+        &["squash"],
+        Some(&ws)
+    ));
+}
+
+// ============================================================================
+// wt step rebase tests
+// ============================================================================
+
+#[rstest]
+fn test_jj_step_rebase_already_up_to_date(mut jj_repo: JjTestRepo) {
+    let ws = jj_repo.add_workspace("rebased");
+    jj_repo.commit_in(&ws, "r.txt", "content", "Feature commit");
+
+    // Feature is already on trunk — should be up to date
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "step",
+        &["rebase"],
+        Some(&ws)
+    ));
+}
+
+#[rstest]
+fn test_jj_step_rebase_onto_advanced_trunk(mut jj_repo: JjTestRepo) {
+    // Create feature workspace
+    let ws = jj_repo.add_workspace("rebase-feat");
+    jj_repo.commit_in(&ws, "feat.txt", "feature", "Feature work");
+
+    // Advance trunk in default workspace
+    std::fs::write(jj_repo.root_path().join("trunk.txt"), "trunk advance\n").unwrap();
+    run_jj_in(jj_repo.root_path(), &["describe", "-m", "Advance trunk"]);
+    run_jj_in(jj_repo.root_path(), &["new"]);
+    run_jj_in(
+        jj_repo.root_path(),
+        &["bookmark", "set", "main", "-r", "@-"],
+    );
+
+    // Now rebase feature onto the advanced trunk
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "step",
+        &["rebase"],
+        Some(&ws)
+    ));
+}
+
+// ============================================================================
+// wt step push tests
+// ============================================================================
+
+#[rstest]
+fn test_jj_step_push_no_remote(mut jj_repo: JjTestRepo) {
+    // Push without a remote — should complete (bookmark set) but push fails silently
+    let ws = jj_repo.add_workspace("push-test");
+    jj_repo.commit_in(&ws, "p.txt", "push content", "Push commit");
+
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "step", &["push"], Some(&ws)));
+}
+
+#[rstest]
+fn test_jj_step_push_nothing_to_push(jj_repo: JjTestRepo) {
+    // Default workspace — feature tip IS trunk, nothing to push
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "step", &["push"], None));
+}
+
+#[rstest]
+fn test_jj_step_push_behind_trunk(mut jj_repo: JjTestRepo) {
+    // Create feature workspace with a commit
+    let ws = jj_repo.add_workspace("push-behind");
+    jj_repo.commit_in(&ws, "feat.txt", "feature", "Feature work");
+
+    // Advance trunk past the feature (so feature is behind)
+    std::fs::write(jj_repo.root_path().join("trunk.txt"), "trunk advance\n").unwrap();
+    run_jj_in(jj_repo.root_path(), &["describe", "-m", "Advance trunk"]);
+    run_jj_in(jj_repo.root_path(), &["new"]);
+    run_jj_in(
+        jj_repo.root_path(),
+        &["bookmark", "set", "main", "-r", "@-"],
+    );
+
+    // Advance trunk again so it's strictly ahead
+    std::fs::write(jj_repo.root_path().join("trunk2.txt"), "more trunk\n").unwrap();
+    run_jj_in(jj_repo.root_path(), &["describe", "-m", "More trunk"]);
+    run_jj_in(jj_repo.root_path(), &["new"]);
+    run_jj_in(
+        jj_repo.root_path(),
+        &["bookmark", "set", "main", "-r", "@-"],
+    );
+
+    // Push from feature — should detect feature is not ahead and fail
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "step", &["push"], Some(&ws)));
+}
+
+// ============================================================================
+// wt step squash edge cases
+// ============================================================================
+
+#[rstest]
+fn test_jj_step_squash_single_commit_with_wc_content(mut jj_repo: JjTestRepo) {
+    // Feature workspace with one commit AND uncommitted content in working copy
+    let ws = jj_repo.add_workspace("squash-wc");
+    jj_repo.commit_in(&ws, "first.txt", "first", "First commit");
+
+    // Add more content without committing (jj auto-snapshots into @)
+    std::fs::write(ws.join("extra.txt"), "uncommitted content\n").unwrap();
+
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "step",
+        &["squash"],
+        Some(&ws)
+    ));
+}
+
+// ============================================================================
+// wt step squash --show-prompt (jj routing)
+// ============================================================================
+
+#[rstest]
+fn test_jj_step_squash_show_prompt(mut jj_repo: JjTestRepo) {
+    let ws = jj_repo.add_workspace("squash-prompt");
+    jj_repo.commit_in(&ws, "p.txt", "content", "Commit for prompt");
+
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "step",
+        &["squash", "--show-prompt"],
+        Some(&ws)
+    ));
+}
+
+// ============================================================================
+// Multi-step workflow tests
+// ============================================================================
+
+#[rstest]
+fn test_jj_step_squash_then_push(mut jj_repo: JjTestRepo) {
+    // The primary workflow: commit -> squash -> push
+    let ws = jj_repo.add_workspace("sq-push");
+    jj_repo.commit_in(&ws, "a.txt", "a", "First");
+    jj_repo.commit_in(&ws, "b.txt", "b", "Second");
+
+    // Squash
+    let mut squash_cmd = jj_repo.wt_command();
+    configure_cli_command(&mut squash_cmd);
+    squash_cmd.current_dir(&ws).args(["step", "squash"]);
+    let squash_result = squash_cmd.output().unwrap();
+    assert!(
+        squash_result.status.success(),
+        "squash failed: {}",
+        String::from_utf8_lossy(&squash_result.stderr)
+    );
+
+    // Push should still work (not say "nothing to push")
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "step", &["push"], Some(&ws)));
 }

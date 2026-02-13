@@ -39,8 +39,9 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // when @ is empty so we don't reference a commit that jj may abandon.
     let feature_tip = get_feature_tip(&workspace, &ws_path)?;
 
-    // Check if already integrated
-    if workspace.is_integrated(&feature_tip, "trunk()")?.is_some() {
+    // Check if already integrated (use target bookmark, not trunk() revset,
+    // because trunk() only resolves with remote tracking branches)
+    if workspace.is_integrated(&feature_tip, target)?.is_some() {
         eprintln!(
             "{}",
             info_message(cformat!(
@@ -78,7 +79,7 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
 /// In jj, the working copy (@) is often an empty auto-snapshot commit.
 /// When @ is empty, the real feature tip is @- (the parent). We use @-
 /// in that case because empty commits get abandoned by `jj new`.
-fn get_feature_tip(workspace: &JjWorkspace, ws_path: &Path) -> anyhow::Result<String> {
+pub(crate) fn get_feature_tip(workspace: &JjWorkspace, ws_path: &Path) -> anyhow::Result<String> {
     let empty_check = workspace.run_in_dir(
         ws_path,
         &[
@@ -114,25 +115,29 @@ fn get_feature_tip(workspace: &JjWorkspace, ws_path: &Path) -> anyhow::Result<St
 
 /// Squash all feature changes into a single commit on trunk.
 ///
-/// 1. `jj new trunk()` — create empty commit on trunk
-/// 2. `jj squash --from 'trunk()..{tip}' --into @` — combine feature into it
+/// 1. `jj new {target}` — create empty commit on target
+/// 2. `jj squash --from '{target}..{tip}' --into @` — combine feature into it
 /// 3. `jj bookmark set {target} -r @` — update bookmark
-fn squash_into_trunk(
+///
+/// Uses the target bookmark name (not `trunk()` revset) because `trunk()`
+/// only resolves with remote tracking branches.
+pub(crate) fn squash_into_trunk(
     workspace: &JjWorkspace,
     ws_path: &Path,
     feature_tip: &str,
     ws_name: &str,
     target: &str,
 ) -> anyhow::Result<()> {
-    workspace.run_in_dir(ws_path, &["new", "trunk()"])?;
+    workspace.run_in_dir(ws_path, &["new", target])?;
 
     // Collect the descriptions from feature commits for the squash message
+    let from_revset = format!("{target}..{feature_tip}");
     let descriptions = workspace.run_in_dir(
         ws_path,
         &[
             "log",
             "-r",
-            &format!("trunk()..{feature_tip}"),
+            &from_revset,
             "--no-graph",
             "-T",
             r#"self.description() ++ "\n""#,
@@ -146,7 +151,6 @@ fn squash_into_trunk(
         message.to_string()
     };
 
-    let from_revset = format!("trunk()..{feature_tip}");
     workspace.run_in_dir(
         ws_path,
         &[
@@ -167,11 +171,11 @@ fn squash_into_trunk(
 
 /// Rebase the feature branch onto trunk without squashing.
 ///
-/// 1. `jj rebase -b @ -d trunk()` — rebase entire branch
+/// 1. `jj rebase -b @ -d {target}` — rebase entire branch
 /// 2. Determine feature tip (@ if has content, @- if empty)
 /// 3. `jj bookmark set {target} -r {tip}` — update bookmark
 fn rebase_onto_trunk(workspace: &JjWorkspace, ws_path: &Path, target: &str) -> anyhow::Result<()> {
-    workspace.run_in_dir(ws_path, &["rebase", "-b", "@", "-d", "trunk()"])?;
+    workspace.run_in_dir(ws_path, &["rebase", "-b", "@", "-d", target])?;
 
     // After rebase, find the feature tip (same logic as squash path)
     let feature_tip = get_feature_tip(workspace, ws_path)?;
@@ -181,7 +185,7 @@ fn rebase_onto_trunk(workspace: &JjWorkspace, ws_path: &Path, target: &str) -> a
 }
 
 /// Push the bookmark to remote (best-effort).
-fn push_bookmark(workspace: &JjWorkspace, ws_path: &Path, target: &str) {
+pub(crate) fn push_bookmark(workspace: &JjWorkspace, ws_path: &Path, target: &str) {
     match workspace.run_in_dir(ws_path, &["git", "push", "--bookmark", target]) {
         Ok(_) => {
             eprintln!("{}", success_message(cformat!("Pushed <bold>{target}</>")));
