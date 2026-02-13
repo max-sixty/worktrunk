@@ -983,6 +983,44 @@ fn test_jj_list_json(mut jj_repo: JjTestRepo) {
     }
 }
 
+/// Exercise JjWorkspace Workspace trait methods that aren't called by jj code paths.
+///
+/// Several trait methods (`kind`, `default_branch_name`, `has_staging_area`, `is_dirty`,
+/// `branch_diff_stats`) are required by the Workspace trait but not exercised by
+/// the normal `wt list`/`wt merge`/`wt step` flows. This test calls them directly.
+#[rstest]
+fn test_jj_workspace_trait_methods(mut jj_repo: JjTestRepo) {
+    use worktrunk::workspace::{JjWorkspace, VcsKind, Workspace};
+
+    let ws = JjWorkspace::new(jj_repo.root_path().to_path_buf());
+
+    // kind
+    assert_eq!(ws.kind(), VcsKind::Jj);
+
+    // has_staging_area — jj doesn't have one
+    assert!(!ws.has_staging_area());
+
+    // default_branch_name — jj uses trunk() revset, returns None
+    assert_eq!(ws.default_branch_name().unwrap(), None);
+
+    // is_dirty — clean workspace (empty @ on top of trunk)
+    assert!(!ws.is_dirty(jj_repo.root_path()).unwrap());
+
+    // Make dirty: write a file in the working copy
+    std::fs::write(jj_repo.root_path().join("dirty.txt"), "dirty\n").unwrap();
+    assert!(ws.is_dirty(jj_repo.root_path()).unwrap());
+
+    // branch_diff_stats — diff between trunk and a feature workspace
+    let feature_path = jj_repo.add_workspace("trait-test");
+    jj_repo.commit_in(&feature_path, "f.txt", "feature content", "feature commit");
+
+    // Get the feature workspace's change ID for branch_diff_stats
+    let items = ws.list_workspaces().unwrap();
+    let feature_item = items.iter().find(|i| i.name == "trait-test").unwrap();
+    let diff = ws.branch_diff_stats("trunk()", &feature_item.head).unwrap();
+    assert!(diff.added > 0, "Expected added lines in branch diff stats");
+}
+
 /// Remove workspace whose directory was already deleted externally
 /// (handle_remove_jj.rs lines 68-75: "already removed" warning path).
 #[rstest]
