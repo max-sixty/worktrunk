@@ -346,13 +346,16 @@ naturally come after the action.
 | "Created new worktree for feature"      | "Already on worktree for feature"     |
 | "Commands approved & saved"             | "All commands already approved"       |
 
-**Hint vs Info:** Hints suggest user action. Info acknowledges what happened.
+**Hint vs Info:** Hints suggest user action or provide additional non-essential
+context (supplementary details the user doesn't need but may find useful). Info
+acknowledges state without changing anything.
 
-| Hint ↳                              | Info ○                                |
-| ----------------------------------- | ------------------------------------- |
-| "To continue, run `wt merge`"       | "Already up to date with main"        |
-| "Commit or stash changes first"     | "Skipping hooks (--no-verify)"        |
-| "Branch can be deleted"             | "Worktree preserved (main worktree)"  |
+| Hint ↳                                          | Info ○                                |
+| ------------------------------------------------ | ------------------------------------- |
+| "To continue, run `wt merge`"                    | "Already up to date with main"        |
+| "Commit or stash changes first"                  | "Skipping hooks (--no-verify)"        |
+| "Branch can be deleted"                           | "Worktree preserved (main worktree)"  |
+| "Failed command, exit code 128:"                   |                                       |
 
 **Warning placement:** When something unexpected happens, warn somewhere. Where
 depends on the nature of the issue:

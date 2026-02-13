@@ -1,6 +1,6 @@
 use insta::assert_snapshot;
 use std::path::PathBuf;
-use worktrunk::git::{GitError, HookType, WorktrunkError, add_hook_skip_hint};
+use worktrunk::git::{FailedCommand, GitError, HookType, WorktrunkError, add_hook_skip_hint};
 
 // ============================================================================
 // Worktree errors
@@ -23,9 +23,26 @@ fn display_worktree_creation_failed() {
         branch: "feature-y".into(),
         base_branch: Some("main".into()),
         error: "fatal: '/tmp/repo.feature-y' already exists".into(),
+        command: None,
     };
 
     assert_snapshot!("worktree_creation_failed", err.to_string());
+}
+
+#[test]
+fn display_worktree_creation_failed_with_command() {
+    let err = GitError::WorktreeCreationFailed {
+        branch: "fix".into(),
+        base_branch: Some("main".into()),
+        error: "Preparing worktree (new branch 'fix')\nfatal: cannot lock ref 'refs/heads/fix'"
+            .into(),
+        command: Some(FailedCommand {
+            command: "git worktree add /tmp/repo.fix -b fix main".into(),
+            exit_info: "exit code 128".into(),
+        }),
+    };
+
+    assert_snapshot!("worktree_creation_failed_with_command", err.to_string());
 }
 
 #[test]
