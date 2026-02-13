@@ -220,7 +220,7 @@ pub fn handle_list(
     match format {
         crate::OutputFormat::Json => {
             // Convert to new JSON structure
-            let json_items = json_output::to_json_items(&items);
+            let json_items = json_output::to_json_items(&items, &repo);
             let json =
                 serde_json::to_string_pretty(&json_items).context("Failed to serialize to JSON")?;
             println!("{}", json);

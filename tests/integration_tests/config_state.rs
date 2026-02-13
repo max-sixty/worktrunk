@@ -1583,3 +1583,47 @@ fn test_kv_overwrite(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "kv", "get", &["env"]).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "production");
 }
+
+#[rstest]
+fn test_kv_in_json_output(repo: TestRepo) {
+    // Set kv data
+    repo.git_command()
+        .args(["config", "worktrunk.state.main.kv.env", "staging"])
+        .status()
+        .unwrap();
+    repo.git_command()
+        .args(["config", "worktrunk.state.main.kv.port", "3000"])
+        .status()
+        .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+    assert!(!items.is_empty());
+
+    let main_item = &items[0];
+    assert_eq!(main_item["kv"]["env"], "staging");
+    assert_eq!(main_item["kv"]["port"], "3000");
+}
+
+#[rstest]
+fn test_kv_absent_in_json_when_empty(repo: TestRepo) {
+    // No kv data set — kv field should be absent from JSON
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+    assert!(!items.is_empty());
+
+    // kv should not be present when empty (skip_serializing_if)
+    assert!(items[0].get("kv").is_none());
+}
