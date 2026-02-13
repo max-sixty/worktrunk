@@ -803,7 +803,6 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
 
     // Summary hint when shells need configuration
     if any_not_configured {
-        writeln!(out)?;
         writeln!(
             out,
             "{}",
