@@ -582,15 +582,7 @@ fn setup_fork_branch(
             progress_message(cformat!("Creating worktree for <bold>{}</>...", branch)).to_string(),
         ),
     )
-    .map_err(|e| {
-        let (output, command) = Repository::extract_failed_command(&e);
-        GitError::WorktreeCreationFailed {
-            branch: branch.to_string(),
-            base_branch: None,
-            error: output,
-            command,
-        }
-    })?;
+    .map_err(|e| worktree_creation_error(&e, branch.to_string(), None))?;
 
     Ok(())
 }
@@ -778,13 +770,11 @@ pub fn execute_switch(
                         Repository::SLOW_OPERATION_DELAY_MS,
                         progress_msg,
                     ) {
-                        let (output, command) = Repository::extract_failed_command(&e);
-                        return Err(GitError::WorktreeCreationFailed {
-                            branch: branch.clone(),
-                            base_branch: base_branch.clone(),
-                            error: output,
-                            command,
-                        }
+                        return Err(worktree_creation_error(
+                            &e,
+                            branch.clone(),
+                            base_branch.clone(),
+                        )
                         .into());
                     }
 
@@ -929,5 +919,19 @@ pub fn execute_switch(
                 },
             ))
         }
+    }
+}
+
+fn worktree_creation_error(
+    err: &anyhow::Error,
+    branch: String,
+    base_branch: Option<String>,
+) -> GitError {
+    let (output, command) = Repository::extract_failed_command(err);
+    GitError::WorktreeCreationFailed {
+        branch,
+        base_branch,
+        error: output,
+        command,
     }
 }
