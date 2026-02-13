@@ -30,7 +30,7 @@ function {{ cmd }}
     if test $use_source = true
         env WORKTRUNK_DIRECTIVE_FILE=$directive_file cargo run --bin {{ cmd }} --quiet -- $args
     else
-        env WORKTRUNK_DIRECTIVE_FILE=$directive_file command $WORKTRUNK_BIN $args
+        env WORKTRUNK_DIRECTIVE_FILE=$directive_file $WORKTRUNK_BIN $args
     end
     set -l exit_code $status
 
