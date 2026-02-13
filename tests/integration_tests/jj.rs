@@ -950,6 +950,48 @@ fn test_jj_switch_create_path_exists(jj_repo: JjTestRepo) {
     ));
 }
 
+/// List workspaces in JSON format (covers handle_list_jj JSON output path).
+#[rstest]
+fn test_jj_list_json(mut jj_repo: JjTestRepo) {
+    let ws = jj_repo.add_workspace("json-test");
+    jj_repo.commit_in(&ws, "x.txt", "x content", "json test commit");
+
+    let mut cmd = jj_repo.wt_command();
+    configure_cli_command(&mut cmd);
+    cmd.current_dir(jj_repo.root_path())
+        .args(["list", "--format=json"]);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt list --json failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let arr = parsed.as_array().unwrap();
+    // At least 2 workspaces: default + json-test
+    assert!(arr.len() >= 2, "Expected at least 2 workspaces, got {}", arr.len());
+    // Each item should have the 'kind' and 'branch' fields
+    for item in arr {
+        assert!(item.get("kind").is_some(), "Missing 'kind' field");
+        assert!(item.get("branch").is_some(), "Missing 'branch' field");
+    }
+}
+
+/// Remove workspace whose directory was already deleted externally
+/// (handle_remove_jj.rs lines 68-75: "already removed" warning path).
+#[rstest]
+fn test_jj_remove_already_deleted_directory(mut jj_repo: JjTestRepo) {
+    let ws = jj_repo.add_workspace("deleted");
+    jj_repo.commit_in(&ws, "d.txt", "d", "commit");
+
+    // Delete the directory externally before running wt remove
+    std::fs::remove_dir_all(&ws).unwrap();
+
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "remove", &["deleted"], None));
+}
+
 // ============================================================================
 // wt step push tests (continued)
 // ============================================================================
