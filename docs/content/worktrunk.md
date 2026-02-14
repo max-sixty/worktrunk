@@ -75,9 +75,9 @@ git branch -d feat{% end %}</td>
   </tbody>
 </table>
 
-**Workflow automation:**
-
 > Expand into the more advanced commands as needed
+
+**Workflow automation:**
 
 - **[Hooks](@/hook.md)** — run commands on create, pre-merge, post-merge, etc
 - **[LLM commit messages](@/llm-commits.md)** — generate commit messages from diffs
