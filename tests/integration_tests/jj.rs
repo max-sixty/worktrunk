@@ -1019,6 +1019,48 @@ fn test_jj_workspace_trait_methods(mut jj_repo: JjTestRepo) {
     let feature_item = items.iter().find(|i| i.name == "trait-test").unwrap();
     let diff = ws.branch_diff_stats("trunk()", &feature_item.head).unwrap();
     assert!(diff.added > 0, "Expected added lines in branch diff stats");
+
+    // feature_tip — returns a change ID for the workspace
+    let tip = ws.feature_tip(&feature_path).unwrap();
+    assert!(!tip.is_empty());
+
+    // commit — describe and advance @ in the feature workspace
+    std::fs::write(feature_path.join("commit-test.txt"), "via trait\n").unwrap();
+    let change_id = ws.commit("trait commit message", &feature_path).unwrap();
+    assert!(!change_id.is_empty());
+
+    // commit_subjects — check the commit we just made
+    let subjects = ws.commit_subjects("trunk()", &change_id).unwrap();
+    assert!(
+        subjects.iter().any(|s| s.contains("trait commit message")),
+        "Expected 'trait commit message' in subjects: {subjects:?}"
+    );
+
+    // resolve_integration_target(None) — discovers trunk bookmark
+    let target = ws.resolve_integration_target(None).unwrap();
+    assert_eq!(target, "main");
+
+    // resolve_integration_target(Some) — returns as-is
+    let target = ws.resolve_integration_target(Some("custom")).unwrap();
+    assert_eq!(target, "custom");
+
+    // wt_logs_dir — returns .jj/wt-logs path
+    let logs_dir = ws.wt_logs_dir();
+    assert!(logs_dir.ends_with(".jj/wt-logs"));
+
+    // project_identifier — returns directory name (no git remote in test fixture)
+    let id = ws.project_identifier().unwrap();
+    assert!(!id.is_empty());
+
+    // set_switch_previous(None) — exercises the unset path
+    ws.set_switch_previous(Some("trait-test")).unwrap();
+    assert_eq!(ws.switch_previous(), Some("trait-test".to_string()));
+    ws.set_switch_previous(None).unwrap();
+    assert!(ws.switch_previous().is_none());
+
+    // is_rebased_onto — feature should be rebased onto trunk
+    let rebased = ws.is_rebased_onto("trunk()", &feature_path).unwrap();
+    assert!(rebased);
 }
 
 /// Remove workspace whose directory was already deleted externally
@@ -1222,4 +1264,27 @@ fn test_jj_switch_records_previous(mut jj_repo: JjTestRepo) {
 #[rstest]
 fn test_jj_switch_default_from_default(jj_repo: JjTestRepo) {
     assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "switch", &["default"], None));
+}
+
+/// Merge with implicit target (no argument) — exercises trunk_bookmark() resolution
+/// (workspace/jj.rs resolve_integration_target(None) → trunk_bookmark()).
+#[rstest]
+fn test_jj_merge_implicit_target(jj_repo_with_feature: JjTestRepo) {
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo_with_feature,
+        "merge",
+        &[],
+        Some(jj_repo_with_feature.workspace_path("feature"))
+    ));
+}
+
+/// Step commit with empty description (no existing description, generates from files)
+/// (handle_step_jj.rs generate_jj_commit_message fallback path).
+#[rstest]
+fn test_jj_step_commit_empty_description(mut jj_repo: JjTestRepo) {
+    let ws = jj_repo.add_workspace("empty-desc");
+    // Create a new empty change, then write a file (no existing description)
+    run_jj_in(&ws, &["new"]);
+    std::fs::write(ws.join("gen.txt"), "generated msg test\n").unwrap();
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "step", &["commit"], Some(&ws)));
 }

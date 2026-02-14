@@ -717,6 +717,50 @@ mod tests {
             .unwrap();
         ws.remove_workspace("from-feature").unwrap();
 
+        // commit via Workspace trait — create a worktree, stage a file, commit
+        let commit_wt = temp.path().join("commit-test");
+        ws.create_workspace("commit-branch", Some("main"), &commit_wt)
+            .unwrap();
+        std::fs::write(commit_wt.join("new.txt"), "new content\n").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(&commit_wt)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .unwrap();
+        let sha = ws.commit("trait commit", &commit_wt).unwrap();
+        assert!(!sha.is_empty());
+
+        // commit_subjects — verify the commit we just made
+        let subjects = ws.commit_subjects("main", "commit-branch").unwrap();
+        assert!(subjects.contains(&"trait commit".to_string()));
+
+        // advance_and_push via Workspace trait — local push of feature onto main
+        let repo_at_wt = Repository::at(&commit_wt).unwrap();
+        let ws_at_wt: &dyn Workspace = &repo_at_wt;
+        let push_result = ws_at_wt.advance_and_push("main", &commit_wt).unwrap();
+        assert_eq!(push_result.commit_count, 1);
+
+        // advance_and_push with zero commits ahead — returns early
+        let push_result = ws_at_wt.advance_and_push("main", &commit_wt).unwrap();
+        assert_eq!(push_result.commit_count, 0);
+
+        ws.remove_workspace("commit-branch").unwrap();
+
+        // switch_previous — initially None (no history set yet)
+        assert!(ws.switch_previous().is_none());
+
+        // set_switch_previous — set a value
+        ws.set_switch_previous(Some("feature")).unwrap();
+        assert_eq!(ws.switch_previous(), Some("feature".to_string()));
+
+        // set_switch_previous(None) is a no-op for git (preserves history on detached HEAD)
+        ws.set_switch_previous(None).unwrap();
+        assert_eq!(ws.switch_previous(), Some("feature".to_string()));
+
         // as_any downcast
         let repo_ref = ws.as_any().downcast_ref::<Repository>();
         assert!(repo_ref.is_some());
