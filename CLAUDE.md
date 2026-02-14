@@ -123,7 +123,7 @@ Documentation has three categories:
    ```
    src/cli/mod.rs (PRIMARY SOURCE)
        ↓ test_command_pages_and_skill_files_are_in_sync
-   docs/content/{command}.md → .claude-plugin/skills/worktrunk/reference/{command}.md
+   docs/content/{command}.md → skills/worktrunk/reference/{command}.md
    ```
    Edit `src/cli/mod.rs` (`after_long_help` attributes), never the docs directly.
 
@@ -131,12 +131,12 @@ Documentation has three categories:
    ```
    docs/content/*.md (PRIMARY SOURCE)
        ↓ test_command_pages_and_skill_files_are_in_sync
-   .claude-plugin/skills/worktrunk/reference/*.md
+   skills/worktrunk/reference/*.md
    ```
    Edit the docs file directly. Skill reference is auto-synced.
 
 3. **Skill-only files** (shell-integration.md, troubleshooting.md):
-   Edit `.claude-plugin/skills/worktrunk/reference/` directly — no docs equivalent.
+   Edit `skills/worktrunk/reference/` directly — no docs equivalent.
 
 After any doc changes, run tests to sync:
 

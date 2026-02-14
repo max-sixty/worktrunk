@@ -252,6 +252,36 @@ fn test_config_show_fish_without_completions(mut repo: TestRepo, temp_home: Temp
     });
 }
 
+/// Test that config show displays "Outdated" when fish wrapper exists but has different code
+#[rstest]
+fn test_config_show_fish_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    // Create fish functions directory with an outdated wt.fish (different functional code)
+    let functions = temp_home.path().join(".config/fish/functions");
+    fs::create_dir_all(&functions).unwrap();
+    fs::write(
+        functions.join("wt.fish"),
+        "# worktrunk shell integration for fish\nfunction wt\n    command wt-old $argv\nend\n",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[rstest]
 fn test_config_show_zsh_compinit_correct_order(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -622,6 +652,8 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
         repo.configure_mock_commands(&mut cmd);
         // Override WORKTRUNK_CONFIG_PATH to point to our test config
         cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
+        // Inject current version for deterministic version check output
+        cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.arg("config")
             .arg("show")
             .arg("--full")
@@ -658,6 +690,72 @@ command = "nonexistent-llm-command-12345 -m test-model"
         repo.configure_mock_commands(&mut cmd);
         // Override WORKTRUNK_CONFIG_PATH to point to our test config
         cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
+        // Inject current version for deterministic version check output
+        cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
+        cmd.arg("config")
+            .arg("show")
+            .arg("--full")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_config_show_full_update_available(mut repo: TestRepo, temp_home: TempDir) {
+    // Setup mock gh/glab for deterministic BINARIES output
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // Create isolated config directory
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    let config_path = global_config_dir.join("config.toml");
+    fs::write(
+        &config_path,
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
+        // Inject a higher version to trigger update-available message
+        cmd.env("WORKTRUNK_TEST_LATEST_VERSION", "99.0.0");
+        cmd.arg("config")
+            .arg("show")
+            .arg("--full")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_config_show_full_version_check_unavailable(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    let config_path = global_config_dir.join("config.toml");
+    fs::write(
+        &config_path,
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
+        // Simulate a fetch failure
+        cmd.env("WORKTRUNK_TEST_LATEST_VERSION", "error");
         cmd.arg("config")
             .arg("show")
             .arg("--full")

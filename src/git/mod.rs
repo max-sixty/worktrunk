@@ -33,6 +33,8 @@ static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::ne
 pub(crate) use diff::DiffStats;
 pub use diff::{LineDiff, parse_numstat_line};
 pub use error::{
+    // Structured command failure info
+    FailedCommand,
     // Typed error enum (Display produces styled output)
     GitError,
     // Special-handling error enum (Display produces styled output)

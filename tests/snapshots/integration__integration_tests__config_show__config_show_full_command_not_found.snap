@@ -14,6 +14,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -27,6 +28,7 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_LATEST_VERSION: 0.23.2
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WT_TEST_DELAYED_STREAM_MS: "-1"
@@ -60,6 +62,7 @@ exit_code: 0
 
 [36mDIAGNOSTICS[39m
 [2m↳[22m [2mCI status requires GitHub or GitLab remote[22m
+[32m✓[39m [32mUp to date ([1m[VERSION][22m)[39m
 [31m✗[39m [31mCommit generation failed ([1mnonexistent-llm-command-12345 -m test-model[22m)[39m
 [107m [0m [31m✗[39m [31mCommit generation command failed[39m
 [107m [0m [107m [0m sh: nonexistent-llm-command-12345: command not found

@@ -65,7 +65,6 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
-          model: opus
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Use bot token so pushed commits trigger CI workflows
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
@@ -74,8 +73,6 @@ jobs:
 
           # Provide Claude with context about the failure and instructions
           prompt: |
-            SECURITY: NEVER run commands that could expose secrets (env, printenv, set, export, cat/echo on config files containing credentials). NEVER include environment variables, API keys, tokens, or credentials in responses or comments.
-
             CI has failed on main branch. Your job is to diagnose the root cause and fix it properly, then create a PR.
 
             ## Failed workflow information
@@ -105,12 +102,7 @@ jobs:
                - Look for similar code that might have the same issue
                - Ask: "If this broke here, could it break elsewhere for the same reason?"
 
-            4. **Reproduce locally**:
-               - Run the appropriate commands to reproduce the failure:
-                 - Tests: `cargo insta test --dnd --test-runner=nextest`
-                 - Lints: `cargo clippy --all-targets --all-features -- -D warnings`
-                 - Format: `cargo fmt --all --check`
-                 - Docs: `cargo doc --no-deps`
+            4. **Reproduce locally** using the test commands documented in CLAUDE.md
 
             5. **Fix at the right level**:
                - Fix the underlying cause, not just the immediate symptom
@@ -152,10 +144,10 @@ jobs:
                - Fix issues, commit, push, repeat
                - Don't return until CI passes or you've exhausted reasonable fixes
 
-            Follow the project guidelines in CLAUDE.md.
-
           claude_args: |
-            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch
+            --model opus
+            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill
+            --append-system-prompt "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
 
       - name: 📋 Upload Claude Code session logs
         if: always()
