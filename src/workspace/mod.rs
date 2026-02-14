@@ -269,6 +269,6 @@ pub fn open_workspace() -> anyhow::Result<Box<dyn Workspace>> {
             let repo = crate::git::Repository::current()?;
             Ok(Box::new(repo))
         }
-        None => anyhow::bail!("Not in a git or jj repository"),
+        None => anyhow::bail!("Not in a repository"),
     }
 }
