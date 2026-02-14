@@ -21,7 +21,7 @@ This allows `wt switch` to change the terminal's directory.
 ## Installation
 
 ```bash
-# Auto-install for all shells (bash, zsh, fish, PowerShell)
+# Auto-install for all shells (bash, zsh, fish, nushell, PowerShell)
 wt config shell install
 
 # Or manual installation - add to the shell config:

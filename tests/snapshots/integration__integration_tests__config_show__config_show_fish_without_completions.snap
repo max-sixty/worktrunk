@@ -54,6 +54,7 @@ exit_code: 0
 [2m↳[22m [2mTo verify wrapper loaded: [90mtype wt[39m[22m
 [2m○[22m [2mbash: Skipped; ~/.bashrc not found[22m
 [2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
+[2m○[22m [2mnu: Skipped; ~/.config/nushell/vendor/autoload not found[22m
 [2m↳[22m [2mTo configure, run [90mwt config shell install[39m[22m
 
 [36mCLAUDE CODE[39m

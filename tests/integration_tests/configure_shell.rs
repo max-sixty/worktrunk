@@ -35,6 +35,7 @@ fn test_configure_shell_with_yes(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mSkipped [90mbash[39m; [90m~/.bashrc[39m not found[22m
         [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/functions[39m not found[22m
+        [2m↳[22m [2mSkipped [90mnu[39m; [90m~/.config/nushell/vendor/autoload[39m not found[22m
 
         [32m✓[39m [32mConfigured 1 shell[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
@@ -607,6 +608,7 @@ fn test_configure_shell_no_files(repo: TestRepo, temp_home: TempDir) {
         [2m↳[22m [2mSkipped [90mbash[39m; [90m~/.bashrc[39m not found[22m
         [2m↳[22m [2mSkipped [90mzsh[39m; [90m~/.zshrc[39m not found[22m
         [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/functions[39m not found[22m
+        [2m↳[22m [2mSkipped [90mnu[39m; [90m~/.config/nushell/vendor/autoload[39m not found[22m
         [31m✗[39m [31mNo shell config files found[39m
         ");
     });
@@ -643,6 +645,7 @@ fn test_configure_shell_multiple_configs(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/functions[39m not found[22m
+        [2m↳[22m [2mSkipped [90mnu[39m; [90m~/.config/nushell/vendor/autoload[39m not found[22m
 
         [32m✓[39m [32mConfigured 2 shells[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
@@ -702,6 +705,7 @@ fn test_configure_shell_mixed_states(repo: TestRepo, temp_home: TempDir) {
         [2m○[22m Already configured shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/functions[39m not found[22m
+        [2m↳[22m [2mSkipped [90mnu[39m; [90m~/.config/nushell/vendor/autoload[39m not found[22m
 
         [32m✓[39m [32mConfigured 1 shell[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
@@ -757,6 +761,7 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mNo [90mbash[39m shell extension & completions in ~/.bashrc[22m
         [2m↳[22m [2mNo [90mfish[39m shell extension in ~/.config/fish/functions/wt.fish[22m
+        [2m↳[22m [2mNo [90mnu[39m shell extension in ~/.config/nushell/vendor/autoload/wt.nu[22m
         [2m↳[22m [2mNo [90mfish[39m completions in ~/.config/fish/completions/wt.fish[22m
 
         [32m✓[39m [32mRemoved integration from 1 shell[39m
@@ -813,6 +818,7 @@ fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mRemoved shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mNo [90mfish[39m shell extension in ~/.config/fish/functions/wt.fish[22m
+        [2m↳[22m [2mNo [90mnu[39m shell extension in ~/.config/nushell/vendor/autoload/wt.nu[22m
         [2m↳[22m [2mNo [90mfish[39m completions in ~/.config/fish/completions/wt.fish[22m
 
         [32m✓[39m [32mRemoved integration from 2 shells[39m
@@ -1110,6 +1116,7 @@ fn test_configure_shell_no_warning_for_bash_user(repo: TestRepo, temp_home: Temp
         [32m✓[39m [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/functions[39m not found[22m
+        [2m↳[22m [2mSkipped [90mnu[39m; [90m~/.config/nushell/vendor/autoload[39m not found[22m
 
         [32m✓[39m [32mConfigured 2 shells[39m
         [2m↳[22m [2mRestart shell to activate shell integration[22m
@@ -1265,6 +1272,7 @@ fn test_configure_shell_no_warning_when_shell_unset(repo: TestRepo, temp_home: T
         [32m✓[39m [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/functions[39m not found[22m
+        [2m↳[22m [2mSkipped [90mnu[39m; [90m~/.config/nushell/vendor/autoload[39m not found[22m
 
         [32m✓[39m [32mConfigured 2 shells[39m
         ");
@@ -1555,6 +1563,7 @@ mod pty_tests {
 
         configure_pty_command(&mut cmd);
         cmd.env("HOME", temp_home.path());
+        cmd.env("XDG_CONFIG_HOME", temp_home.path().join(".config"));
         cmd.env("SHELL", "/bin/zsh");
         // Skip the compinit probe and force the advisory to appear. The probe spawns
         // `zsh -ic` which triggers global zshrc configs that can produce "insecure
@@ -1625,6 +1634,128 @@ mod pty_tests {
             "File should not be modified when user declines"
         );
     }
+}
+
+/// Test installing nushell shell integration
+///
+/// Runs `install nu --yes` and verifies the wrapper file was created.
+/// This covers the nushell-specific wrapper generation path in configure_shell.
+///
+/// set_temp_home_env sets XDG_CONFIG_HOME to home/.config, and the `nu` binary
+/// isn't available in tests, so nushell_config_dir falls back to XDG_CONFIG_HOME/nushell.
+#[rstest]
+fn test_configure_shell_nushell(repo: TestRepo, temp_home: TempDir) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/nu");
+    cmd.arg("config")
+        .arg("shell")
+        .arg("install")
+        .arg("nu")
+        .arg("--yes")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute command");
+    assert!(
+        output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Created shell extension for") && stderr.contains("nu"),
+        "Output should show nushell was created:\n{}",
+        stderr
+    );
+
+    // set_temp_home_env sets XDG_CONFIG_HOME → home/.config, so the nushell
+    // vendor autoload path is deterministic (nu binary not available in tests).
+    let home = std::fs::canonicalize(temp_home.path()).unwrap();
+    let nu_config = home
+        .join(".config")
+        .join("nushell")
+        .join("vendor")
+        .join("autoload")
+        .join("wt.nu");
+    assert!(
+        nu_config.exists(),
+        "wt.nu should be created at {:?}",
+        nu_config
+    );
+
+    let content = fs::read_to_string(&nu_config).unwrap();
+    assert!(
+        content.contains("def --env --wrapped wt"),
+        "Should contain nushell function definition: {}",
+        content
+    );
+}
+
+/// Test uninstalling nushell shell integration
+///
+/// Installs nushell integration first, then uninstalls it.
+/// This covers the nushell-specific uninstall block in configure_shell.
+#[rstest]
+fn test_uninstall_shell_nushell(repo: TestRepo, temp_home: TempDir) {
+    let home = std::fs::canonicalize(temp_home.path()).unwrap();
+    let nu_config = home
+        .join(".config")
+        .join("nushell")
+        .join("vendor")
+        .join("autoload")
+        .join("wt.nu");
+
+    // First install to create the wrapper file
+    let mut install_cmd = wt_command();
+    repo.configure_wt_cmd(&mut install_cmd);
+    set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("SHELL", "/bin/nu");
+    install_cmd
+        .args(["config", "shell", "install", "nu", "--yes"])
+        .current_dir(repo.root_path());
+
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+    assert!(
+        nu_config.exists(),
+        "wt.nu should exist after install at {:?}",
+        nu_config
+    );
+
+    // Now uninstall
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/nu");
+    cmd.args(["config", "shell", "uninstall", "nu", "--yes"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Removed shell extension for") && stderr.contains("nu"),
+        "Output should show nushell was removed:\n{}",
+        stderr
+    );
+
+    // Verify the nushell config file was deleted
+    assert!(
+        !nu_config.exists(),
+        "wt.nu should be deleted after uninstall: {:?}",
+        nu_config
+    );
 }
 
 /// Test that WORKTRUNK_TEST_POWERSHELL_ENV=1 triggers PowerShell auto-detection.

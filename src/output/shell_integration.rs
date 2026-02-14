@@ -256,6 +256,11 @@ pub fn print_shell_install_result(
             }
         }
 
+        if matches!(shell, Shell::Nushell) && !matches!(result.action, ConfigAction::AlreadyExists)
+        {
+            eprintln!("{}", hint_message("Nushell support is experimental"));
+        }
+
         // Show completion result for this shell (fish has separate completion files)
         if let Some(comp_result) = scan_result
             .completion_results

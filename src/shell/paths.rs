@@ -18,6 +18,34 @@ pub fn home_dir_required() -> Result<PathBuf, std::io::Error> {
     })
 }
 
+/// Get Nushell's default config directory.
+///
+/// Queries `nu` for `$nu.default-config-dir` to handle platform-specific paths.
+/// On macOS, this is `~/Library/Application Support/nushell` rather than `~/.config/nushell`.
+/// Falls back to etcetera's config_dir if the nu command fails.
+fn nushell_config_dir(home: &std::path::Path) -> PathBuf {
+    let nu_config_dir = crate::shell_exec::Cmd::new("nu")
+        .args(["-c", "echo $nu.default-config-dir"])
+        .run()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                String::from_utf8(output.stdout)
+                    .ok()
+                    .map(|s| PathBuf::from(s.trim()))
+            } else {
+                None
+            }
+        });
+
+    nu_config_dir.unwrap_or_else(|| {
+        choose_base_strategy()
+            .map(|s| s.config_dir())
+            .unwrap_or_else(|_| home.join(".config"))
+            .join("nushell")
+    })
+}
+
 /// Get PowerShell profile paths in order of preference.
 /// On Windows, returns both PowerShell Core (7+) and Windows PowerShell (5.1) paths.
 /// On Unix, uses the conventional ~/.config/powershell location.
@@ -75,6 +103,17 @@ pub fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf>, std:
                     .join(format!("{}.fish", cmd)),
             ]
         }
+        super::Shell::Nushell => {
+            // Nushell vendor autoload directory - query nu for its config directory
+            // to handle platform-specific paths (e.g., ~/Library/Application Support/nushell on macOS)
+            let config_dir = nushell_config_dir(&home);
+            vec![
+                config_dir
+                    .join("vendor")
+                    .join("autoload")
+                    .join(format!("{}.nu", cmd)),
+            ]
+        }
         super::Shell::PowerShell => powershell_profile_paths(&home),
     })
 }
@@ -122,7 +161,6 @@ pub fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf, std::i
         }
         super::Shell::Zsh => home.join(".zfunc").join(format!("_{}", cmd)),
         super::Shell::Fish => {
-            // XDG_CONFIG_HOME defaults to ~/.config
             let config_home = strategy
                 .as_ref()
                 .map(|s| s.config_dir())
@@ -131,6 +169,15 @@ pub fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf, std::i
                 .join("fish")
                 .join("completions")
                 .join(format!("{}.fish", cmd))
+        }
+        super::Shell::Nushell => {
+            // Nushell completions are defined inline in the init script
+            // Return a path in the vendor autoload directory (same as config)
+            let config_dir = nushell_config_dir(&home);
+            config_dir
+                .join("vendor")
+                .join("autoload")
+                .join(format!("{}.nu", cmd))
         }
         super::Shell::PowerShell => {
             // PowerShell doesn't use a separate completion file - completions are
