@@ -27,7 +27,6 @@ use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, run_hook_with_filter};
 use super::repository_ext::RepositoryCliExt;
-use super::require_git;
 use worktrunk::shell_exec::Cmd;
 
 /// Handle `wt step commit` command
@@ -39,15 +38,14 @@ pub fn step_commit(
     stage: Option<StageMode>,
     show_prompt: bool,
 ) -> anyhow::Result<()> {
-    // Route to jj handler if in a jj repo
-    let cwd = std::env::current_dir()?;
-    if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
+    // Open workspace once, route by VCS type via downcast
+    let workspace = worktrunk::workspace::open_workspace()?;
+    let Some(repo) = workspace.as_any().downcast_ref::<Repository>() else {
         return super::handle_step_jj::step_commit_jj(show_prompt);
-    }
+    };
 
     // Handle --show-prompt early: just build and output the prompt
     if show_prompt {
-        let repo = worktrunk::git::Repository::current()?;
         let config = UserConfig::load().context("Failed to load config")?;
         let project_id = repo.project_identifier().ok();
         let commit_config = config.commit_generation(project_id.as_deref());
@@ -61,7 +59,7 @@ pub fn step_commit(
     // One-time LLM setup prompt (errors logged internally; don't block commit)
     let _ = crate::output::prompt_commit_generation(&mut config);
 
-    let env = CommandEnv::for_action("commit", config)?;
+    let env = CommandEnv::with_workspace(workspace, "commit", config)?;
     let ctx = env.context(yes);
 
     // CLI flag overrides config value
@@ -193,23 +191,24 @@ pub fn handle_squash(
     no_verify: bool,
     stage: Option<StageMode>,
 ) -> anyhow::Result<SquashResult> {
-    // Route to jj handler: use do_squash() directly (no staging/hooks)
-    let cwd = std::env::current_dir()?;
-    if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
-        let ws = worktrunk::workspace::open_workspace()?;
-        let target = ws.resolve_integration_target(target)?;
+    // Open workspace once, route by VCS type via downcast
+    let workspace = worktrunk::workspace::open_workspace()?;
+    if workspace.as_any().downcast_ref::<Repository>().is_none() {
+        // jj path: use do_squash() directly (no staging/hooks)
+        let cwd = std::env::current_dir()?;
+        let target = workspace.resolve_integration_target(target)?;
 
         let config = UserConfig::load().context("Failed to load config")?;
-        let project_id = ws.project_identifier().ok();
+        let project_id = workspace.project_identifier().ok();
         let resolved = config.resolved(project_id.as_deref());
 
-        let ws_name = ws
+        let ws_name = workspace
             .current_name(&cwd)?
             .unwrap_or_else(|| "default".to_string());
         let repo_name = project_id.as_deref().unwrap_or("repo");
 
         return do_squash(
-            &*ws,
+            &*workspace,
             &target,
             &cwd,
             &resolved.commit_generation,
@@ -217,13 +216,13 @@ pub fn handle_squash(
             repo_name,
         );
     }
-
-    // Load config once, run LLM setup prompt, then reuse config
+    // Workspace is git — proceed with CommandEnv which takes ownership
+    let cwd = std::env::current_dir()?;
     let mut config = UserConfig::load().context("Failed to load config")?;
     // One-time LLM setup prompt (errors logged internally; don't block commit)
     let _ = crate::output::prompt_commit_generation(&mut config);
 
-    let env = CommandEnv::for_action("squash", config)?;
+    let env = CommandEnv::with_workspace(workspace, "squash", config)?;
     let repo = env.require_repo()?;
     // Squash requires being on a branch (can't squash in detached HEAD)
     let current_branch = env.require_branch("squash")?.to_string();
@@ -573,8 +572,8 @@ pub fn step_copy_ignored(
     dry_run: bool,
     force: bool,
 ) -> anyhow::Result<()> {
-    require_git("step copy-ignored")?;
-    let repo = Repository::current()?;
+    let workspace = worktrunk::workspace::open_workspace()?;
+    let repo = super::require_git_workspace(&*workspace, "step copy-ignored")?;
 
     // Resolve source and destination worktree paths
     let (source_path, source_context) = match from {
@@ -882,8 +881,8 @@ pub fn step_relocate(
         show_dry_run_preview, show_no_relocations_needed, show_summary, validate_candidates,
     };
 
-    require_git("step relocate")?;
-    let repo = Repository::current()?;
+    let workspace = worktrunk::workspace::open_workspace()?;
+    let repo = super::require_git_workspace(&*workspace, "step relocate")?;
     let config = UserConfig::load()?;
     let default_branch = repo.default_branch().unwrap_or_default();
 
@@ -899,7 +898,7 @@ pub fn step_relocate(
     let GatherResult {
         candidates,
         template_errors,
-    } = gather_candidates(&repo, &config, &branches)?;
+    } = gather_candidates(repo, &config, &branches)?;
 
     if candidates.is_empty() {
         show_no_relocations_needed(template_errors);
@@ -914,7 +913,7 @@ pub fn step_relocate(
 
     // Phase 2: Validate candidates (check locked/dirty, optionally auto-commit)
     let ValidationResult { validated, skipped } =
-        validate_candidates(&repo, &config, candidates, commit, &repo_path)?;
+        validate_candidates(repo, &config, candidates, commit, &repo_path)?;
 
     if validated.is_empty() {
         show_all_skipped(skipped);
@@ -922,7 +921,7 @@ pub fn step_relocate(
     }
 
     // Phase 3 & 4: Create executor (classifies targets) and execute relocations
-    let mut executor = RelocationExecutor::new(&repo, validated, clobber)?;
+    let mut executor = RelocationExecutor::new(repo, validated, clobber)?;
     let cwd = std::env::current_dir().ok();
     executor.execute(&repo_path, &default_branch, cwd.as_deref())?;
 

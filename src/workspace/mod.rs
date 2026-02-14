@@ -300,14 +300,26 @@ pub fn build_worktree_map(workspace: &dyn Workspace) -> HashMap<String, PathBuf>
 }
 
 /// Detect VCS and open the appropriate workspace for the current directory.
+///
+/// The `-C` flag is handled by `std::env::set_current_dir()` in main.rs before
+/// any commands run, so `current_dir()` already reflects the right path.
+///
+/// Falls back to `Repository::current()` when filesystem markers aren't found,
+/// which handles bare repos and other non-standard layouts that git itself can discover.
 pub fn open_workspace() -> anyhow::Result<Box<dyn Workspace>> {
-    let cwd = std::env::current_dir()?;
-    match detect_vcs(&cwd) {
+    let detect_path = std::env::current_dir()?;
+    match detect_vcs(&detect_path) {
         Some(VcsKind::Jj) => Ok(Box::new(JjWorkspace::from_current_dir()?)),
         Some(VcsKind::Git) => {
             let repo = crate::git::Repository::current()?;
             Ok(Box::new(repo))
         }
-        None => anyhow::bail!("Not in a repository"),
+        None => {
+            // Fallback: try git discovery (handles bare repos, -C flag, etc.)
+            match crate::git::Repository::current() {
+                Ok(repo) => Ok(Box::new(repo)),
+                Err(_) => anyhow::bail!("Not in a repository"),
+            }
+        }
     }
 }

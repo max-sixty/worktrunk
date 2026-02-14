@@ -141,7 +141,7 @@ use model::{ListData, ListItem};
 use progressive::RenderMode;
 use worktrunk::git::Repository;
 use worktrunk::styling::INFO_SYMBOL;
-use worktrunk::workspace::{JjWorkspace, VcsKind, detect_vcs};
+use worktrunk::workspace::JjWorkspace;
 
 use collect::TaskKind;
 
@@ -149,23 +149,34 @@ use collect::TaskKind;
 pub use collect::{CollectOptions, build_worktree_item, populate_item};
 pub use model::StatuslineSegment;
 
+/// Handle `wt list` command.
+///
+/// `branches`, `remotes`, `full` are raw CLI flags (false when not passed).
+/// Config resolution (project-specific merged with global) happens internally
+/// using the workspace's project identifier.
 pub fn handle_list(
     format: crate::OutputFormat,
-    show_branches: bool,
-    show_remotes: bool,
-    show_full: bool,
+    branches: bool,
+    remotes: bool,
+    full: bool,
     render_mode: RenderMode,
     config: &worktrunk::config::UserConfig,
 ) -> anyhow::Result<()> {
-    // Detect VCS type from current directory
-    let cwd = std::env::current_dir()?;
-    let vcs_kind = detect_vcs(&cwd);
-
-    if vcs_kind == Some(VcsKind::Jj) {
+    // Open workspace once, route by VCS type via downcast
+    let workspace = worktrunk::workspace::open_workspace()?;
+    if workspace.as_any().downcast_ref::<Repository>().is_none() {
         return handle_list_jj(format);
     }
 
-    // Git path (existing behavior, unchanged)
+    // Resolve config using workspace's project identifier (avoids extra Repository::current())
+    let project_id = workspace.project_identifier().ok();
+    let resolved = config.resolved(project_id.as_deref());
+
+    // CLI flags override config values
+    let show_branches = branches || resolved.list.branches();
+    let show_remotes = remotes || resolved.list.remotes();
+    let show_full = full || resolved.list.full();
+
     handle_list_git(
         format,
         show_branches,

@@ -16,10 +16,10 @@ use super::command_executor::CommandContext;
 /// git-specific features (hooks, staging) can access `&Repository` via [`repo()`](Self::repo).
 ///
 /// This helper is used for commands that explicitly act on "where the user is standing"
-/// (e.g., `beta` and `merge`) and therefore need all of these pieces together. Commands that
-/// inspect multiple worktrees or run without a config/branch requirement (`list`, `select`,
-/// some `worktree` helpers) still call `Repository::current()` directly so they can operate in
-/// broader contexts without forcing config loads or branch resolution.
+/// (e.g., `step commit` and `merge`) and therefore need all of these pieces together.
+/// Commands that inspect multiple worktrees or run without a config/branch requirement
+/// (`list`, `select`, some `worktree` helpers) call `open_workspace()` directly so they
+/// can operate in broader contexts without forcing config loads or branch resolution.
 pub struct CommandEnv {
     pub workspace: Box<dyn Workspace>,
     /// Current branch name, if on a branch (None in detached HEAD state).
@@ -29,16 +29,20 @@ pub struct CommandEnv {
 }
 
 impl CommandEnv {
-    /// Load the command environment for a specific action.
+    /// Build the command environment from a pre-opened workspace.
     ///
     /// `action` describes what command is running (e.g., "merge", "squash").
     /// Used in error messages when the environment can't be loaded.
-    pub fn for_action(action: &str, config: UserConfig) -> anyhow::Result<Self> {
-        let workspace = open_workspace()?;
+    /// Requires a branch (can't merge/squash in detached HEAD).
+    pub fn with_workspace(
+        workspace: Box<dyn Workspace>,
+        action: &str,
+        config: UserConfig,
+    ) -> anyhow::Result<Self> {
         let worktree_path = workspace.current_workspace_path()?;
         let branch = workspace.current_name(&worktree_path)?;
 
-        // For git, require a branch (can't merge/squash in detached HEAD)
+        // Require a branch (can't merge/squash in detached HEAD)
         if branch.is_none() {
             return Err(worktrunk::git::GitError::DetachedHead {
                 action: Some(action.into()),
@@ -54,12 +58,11 @@ impl CommandEnv {
         })
     }
 
-    /// Load the command environment without requiring a branch.
+    /// Build the command environment from a pre-opened workspace, without requiring a branch.
     ///
     /// Use this for commands that can operate in detached HEAD state,
     /// such as running hooks (where `{{ branch }}` expands to "HEAD" if detached).
-    pub fn for_action_branchless() -> anyhow::Result<Self> {
-        let workspace = open_workspace()?;
+    pub fn with_workspace_branchless(workspace: Box<dyn Workspace>) -> anyhow::Result<Self> {
         let worktree_path = workspace.current_workspace_path()?;
         let branch = workspace
             .current_name(&worktree_path)
@@ -72,6 +75,13 @@ impl CommandEnv {
             config,
             worktree_path,
         })
+    }
+
+    /// Open a workspace and load the command environment without requiring a branch.
+    ///
+    /// Convenience wrapper that calls `open_workspace()` then `with_workspace_branchless()`.
+    pub fn for_action_branchless() -> anyhow::Result<Self> {
+        Self::with_workspace_branchless(open_workspace()?)
     }
 
     /// Access the underlying git `Repository`.

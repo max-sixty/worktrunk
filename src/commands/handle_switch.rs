@@ -138,11 +138,11 @@ pub fn handle_switch(
     config: &mut UserConfig,
     binary_name: &str,
 ) -> anyhow::Result<()> {
-    // Detect VCS type — route to jj handler if in a jj repo
-    let cwd = std::env::current_dir()?;
-    if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
+    // Open workspace once, route by VCS type via downcast
+    let workspace = worktrunk::workspace::open_workspace()?;
+    let Some(repo) = workspace.as_any().downcast_ref::<Repository>() else {
         return super::handle_switch_jj::handle_switch_jj(opts, config, binary_name);
-    }
+    };
 
     let SwitchOptions {
         branch,
@@ -156,18 +156,16 @@ pub fn handle_switch(
         verify,
     } = opts;
 
-    let repo = Repository::current().context("Failed to switch worktree")?;
-
     // Validate FIRST (before approval) - fails fast if branch doesn't exist, etc.
-    let plan = plan_switch(&repo, branch, create, base, clobber, config)?;
+    let plan = plan_switch(repo, branch, create, base, clobber, config)?;
 
     // "Approve at the Gate": collect and approve hooks upfront
     // This ensures approval happens once at the command entry point
     // If user declines, skip hooks but continue with worktree operation
-    let skip_hooks = !approve_switch_hooks(&repo, config, &plan, yes, verify)?;
+    let skip_hooks = !approve_switch_hooks(repo, config, &plan, yes, verify)?;
 
     // Execute the validated plan
-    let (result, branch_info) = execute_switch(&repo, plan, config, yes, skip_hooks)?;
+    let (result, branch_info) = execute_switch(repo, plan, config, yes, skip_hooks)?;
 
     // Show success message (temporal locality: immediately after worktree operation)
     // Returns path to display in hooks when user's shell won't be in the worktree
@@ -197,7 +195,7 @@ pub fn handle_switch(
     // Batch hooks into a single message when both types are present
     if !skip_hooks {
         spawn_switch_background_hooks(
-            &repo,
+            repo,
             config,
             &result,
             &branch_info.branch,
@@ -210,7 +208,7 @@ pub fn handle_switch(
     // Execute user command after post-start hooks have been spawned
     // Note: execute_args requires execute via clap's `requires` attribute
     if let Some(cmd) = execute {
-        let ctx = CommandContext::new(&repo, config, Some(&branch_info.branch), result.path(), yes);
+        let ctx = CommandContext::new(repo, config, Some(&branch_info.branch), result.path(), yes);
         expand_and_execute_command(
             &ctx,
             cmd,

@@ -32,7 +32,7 @@ exit_code: 101
 
 ----- stderr -----
 
-thread 'main' [CHANGE_ID_SHORT] at src/main.rs:889:21:
+thread 'main' [CHANGE_ID_SHORT] at src/main.rs:845:21:
 Multiline error without context: Changes to push to origin:
   Add [CHANGE_ID_SHORT] main to [COMMIT_HASH]
 Error: No git remote named 'origin'

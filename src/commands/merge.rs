@@ -76,9 +76,9 @@ fn collect_merge_commands(
 }
 
 pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
-    // Detect VCS type — route to jj handler if in a jj repo
-    let cwd = std::env::current_dir()?;
-    if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
+    // Open workspace once, route by VCS type via downcast
+    let workspace = worktrunk::workspace::open_workspace()?;
+    if workspace.as_any().downcast_ref::<Repository>().is_none() {
         return super::handle_merge_jj::handle_merge_jj(opts);
     }
 
@@ -100,7 +100,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         let _ = crate::output::prompt_commit_generation(&mut config);
     }
 
-    let env = CommandEnv::for_action("merge", config)?;
+    let env = CommandEnv::with_workspace(workspace, "merge", config)?;
     let repo = env.require_repo()?;
     let config = &env.config;
     // Merge requires being on a branch (can't merge from detached HEAD)

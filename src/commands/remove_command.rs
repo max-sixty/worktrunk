@@ -48,11 +48,11 @@ pub fn handle_remove_command(opts: RemoveOptions) -> anyhow::Result<()> {
 
     let config = UserConfig::load().context("Failed to load config")?;
 
-    // Detect VCS type — route to jj handler if in a jj repo
-    let cwd = std::env::current_dir()?;
-    if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
+    // Open workspace once, route by VCS type via downcast
+    let workspace = worktrunk::workspace::open_workspace()?;
+    let Some(repo) = workspace.as_any().downcast_ref::<Repository>() else {
         return super::handle_remove_jj::handle_remove_jj(&branches, verify, yes);
-    }
+    };
 
     // Handle deprecated --no-background flag
     if no_background {
@@ -70,8 +70,6 @@ pub fn handle_remove_command(opts: RemoveOptions) -> anyhow::Result<()> {
         }
         .into());
     }
-
-    let repo = Repository::current().context("Failed to remove worktree")?;
 
     // Helper: approve remove hooks using current worktree context
     // Returns true if hooks should run (user approved)
@@ -135,7 +133,7 @@ pub fn handle_remove_command(opts: RemoveOptions) -> anyhow::Result<()> {
         for branch_name in &branches {
             // Resolve the target
             let resolved =
-                match resolve_worktree_arg(&repo, branch_name, &config, OperationMode::Remove) {
+                match resolve_worktree_arg(repo, branch_name, &config, OperationMode::Remove) {
                     Ok(r) => r,
                     Err(e) => {
                         record_error(e);

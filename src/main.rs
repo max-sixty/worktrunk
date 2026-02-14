@@ -6,7 +6,7 @@ use clap::error::ErrorKind as ClapErrorKind;
 use color_print::{ceprintln, cformat};
 use std::process;
 use worktrunk::config::{UserConfig, set_config_path};
-use worktrunk::git::{Repository, exit_code};
+use worktrunk::git::exit_code;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::extract_filename_from_path;
 use worktrunk::styling::{
@@ -641,21 +641,10 @@ fn main() {
                 warning_message("wt select is deprecated; use wt switch instead")
             );
 
+            // handle_select resolves project-specific settings internally
             UserConfig::load()
                 .context("Failed to load config")
-                .and_then(|config| {
-                    // Get effective settings (project-specific merged with global, defaults applied)
-                    let project_id = Repository::current()
-                        .ok()
-                        .and_then(|r| r.project_identifier().ok());
-                    let resolved = config.resolved(project_id.as_deref());
-
-                    // CLI flags override config
-                    let show_branches = branches || resolved.list.branches();
-                    let show_remotes = remotes || resolved.list.remotes();
-
-                    handle_select(show_branches, show_remotes, &config)
-                })
+                .and_then(|config| handle_select(branches, remotes, &config))
         }
         #[cfg(not(unix))]
         Commands::Select { .. } => {
@@ -698,36 +687,17 @@ fn main() {
                 commands::statusline::run(effective_format)
             }
             None => {
-                // Load config and merge with CLI flags (CLI flags take precedence)
+                // Load config; handle_list resolves project-specific settings internally
                 UserConfig::load()
                     .context("Failed to load config")
                     .and_then(|config| {
-                        // Get resolved config (project-specific merged with global, defaults applied)
-                        let project_id = Repository::current()
-                            .ok()
-                            .and_then(|r| r.project_identifier().ok());
-                        let resolved = config.resolved(project_id.as_deref());
-
-                        // CLI flags override config
-                        let show_branches = branches || resolved.list.branches();
-                        let show_remotes = remotes || resolved.list.remotes();
-                        let show_full = full || resolved.list.full();
-
-                        // Convert two bools to Option<bool>: Some(true), Some(false), or None
                         let progressive_opt = match (progressive, no_progressive) {
                             (true, _) => Some(true),
                             (_, true) => Some(false),
                             _ => None,
                         };
                         let render_mode = RenderMode::detect(progressive_opt);
-                        handle_list(
-                            format,
-                            show_branches,
-                            show_remotes,
-                            show_full,
-                            render_mode,
-                            &config,
-                        )
+                        handle_list(format, branches, remotes, full, render_mode, &config)
                     })
             }
         },
@@ -750,22 +720,8 @@ fn main() {
                 let Some(branch) = branch else {
                     #[cfg(unix)]
                     {
-                        // Get project ID for per-project config lookup
-                        let project_id = Repository::current()
-                            .ok()
-                            .and_then(|r| r.project_identifier().ok());
-
-                        // Get effective list config (merges project-specific with global)
-                        let (show_branches_config, show_remotes_config) = config
-                            .list(project_id.as_deref())
-                            .map(|l| (l.branches.unwrap_or(false), l.remotes.unwrap_or(false)))
-                            .unwrap_or((false, false));
-
-                        // CLI flags override config
-                        let show_branches = branches || show_branches_config;
-                        let show_remotes = remotes || show_remotes_config;
-
-                        return handle_select(show_branches, show_remotes, &config);
+                        // handle_select resolves project-specific settings internally
+                        return handle_select(branches, remotes, &config);
                     }
 
                     #[cfg(not(unix))]

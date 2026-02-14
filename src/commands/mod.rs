@@ -55,18 +55,23 @@ pub(crate) use worktree::{is_worktree_at_expected_path, worktree_display_name};
 pub(crate) use worktrunk::shell::Shell;
 
 use color_print::cformat;
+use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, format_with_gutter};
-use worktrunk::workspace::VcsKind;
+use worktrunk::workspace::Workspace;
 
-/// Guard for commands that only work with git.
+/// Downcast a workspace to `Repository`, or error for jj repositories.
 ///
-/// Returns a clear error for jj users instead of crashing with "Not in a git repository".
-pub(crate) fn require_git(command: &str) -> anyhow::Result<()> {
-    let cwd = std::env::current_dir()?;
-    if worktrunk::workspace::detect_vcs(&cwd) == Some(VcsKind::Jj) {
-        anyhow::bail!("`wt {command}` is not yet supported for jj repositories");
-    }
-    Ok(())
+/// Replaces the old `require_git()` + `Repository::current()` two-step pattern.
+/// Returns a reference to the `Repository` if this is a git workspace,
+/// or a clear error for jj users.
+pub(crate) fn require_git_workspace<'a>(
+    workspace: &'a dyn Workspace,
+    command: &str,
+) -> anyhow::Result<&'a Repository> {
+    workspace
+        .as_any()
+        .downcast_ref::<Repository>()
+        .ok_or_else(|| anyhow::anyhow!("`wt {command}` is not yet supported for jj repositories"))
 }
 
 /// Format command execution label with optional command name.
