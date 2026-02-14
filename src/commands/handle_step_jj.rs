@@ -1,7 +1,10 @@
 //! Step command handlers for jj repositories.
 //!
-//! jj equivalents of `step commit`, `step squash`, `step rebase`, and `step push`.
+//! jj equivalents of `step commit`, `step squash`, and `step push`.
 //! Reuses helpers from [`super::handle_merge_jj`] where possible.
+//!
+//! `step rebase` is handled by the unified [`super::step_commands::handle_rebase`]
+//! via the [`Workspace`] trait.
 
 use std::path::Path;
 
@@ -11,8 +14,8 @@ use worktrunk::config::UserConfig;
 use worktrunk::styling::{eprintln, progress_message, success_message};
 use worktrunk::workspace::{JjWorkspace, Workspace};
 
-use super::handle_merge_jj::{get_feature_tip, push_bookmark, squash_into_trunk};
-use super::step_commands::{RebaseResult, SquashResult};
+use super::handle_merge_jj::{push_bookmark, squash_into_trunk};
+use super::step_commands::SquashResult;
 
 /// Handle `wt step commit` for jj repositories.
 ///
@@ -38,13 +41,15 @@ pub fn step_commit_jj(show_prompt: bool) -> anyhow::Result<()> {
     let diff = workspace.run_in_dir(&cwd, &["diff", "-r", "@", "--stat"])?;
 
     let config = UserConfig::load().context("Failed to load config")?;
-    let project_id = workspace_project_id(&workspace);
+    let project_id = workspace.project_identifier().ok();
     let commit_config = config.commit_generation(project_id.as_deref());
 
     // Handle --show-prompt: build and output the prompt without committing
     if show_prompt {
         if commit_config.is_configured() {
-            let ws_name = workspace_name(&workspace, &cwd);
+            let ws_name = workspace
+                .current_name(&cwd)?
+                .unwrap_or_else(|| "default".to_string());
             let repo_name = project_id.as_deref().unwrap_or("repo");
             let prompt = crate::llm::build_jj_commit_prompt(
                 &diff_full,
@@ -64,8 +69,7 @@ pub fn step_commit_jj(show_prompt: bool) -> anyhow::Result<()> {
         generate_jj_commit_message(&workspace, &cwd, &diff_full, &diff, &commit_config)?;
 
     // Describe the current change and start a new one
-    workspace.run_in_dir(&cwd, &["describe", "-m", &commit_message])?;
-    workspace.run_in_dir(&cwd, &["new"])?;
+    workspace.commit(&commit_message, &cwd)?;
 
     // Show commit message first line (more useful than change ID)
     let first_line = commit_message.lines().next().unwrap_or(&commit_message);
@@ -88,8 +92,7 @@ pub fn handle_squash_jj(target: Option<&str>) -> anyhow::Result<SquashResult> {
     let detected_target = workspace.trunk_bookmark()?;
     let target = target.unwrap_or(detected_target.as_str());
 
-    // Get the feature tip
-    let feature_tip = get_feature_tip(&workspace, &cwd)?;
+    let feature_tip = workspace.feature_tip(&cwd)?;
 
     // Check if already integrated (use target bookmark, not trunk() revset,
     // because trunk() only resolves with remote tracking branches)
@@ -124,7 +127,9 @@ pub fn handle_squash_jj(target: Option<&str>) -> anyhow::Result<SquashResult> {
     }
 
     // Get workspace name for the squash message
-    let ws_name = workspace_name(&workspace, &cwd);
+    let ws_name = workspace
+        .current_name(&cwd)?
+        .unwrap_or_else(|| "default".to_string());
 
     eprintln!(
         "{}",
@@ -144,40 +149,6 @@ pub fn handle_squash_jj(target: Option<&str>) -> anyhow::Result<SquashResult> {
     Ok(SquashResult::Squashed)
 }
 
-/// Handle `wt step rebase` for jj repositories.
-///
-/// Rebases the current feature onto trunk.
-pub fn handle_rebase_jj(target: Option<&str>) -> anyhow::Result<RebaseResult> {
-    let workspace = JjWorkspace::from_current_dir()?;
-    let cwd = std::env::current_dir()?;
-
-    // Detect trunk bookmark
-    let detected_target = workspace.trunk_bookmark()?;
-    let target = target.unwrap_or(detected_target.as_str());
-
-    let feature_tip = get_feature_tip(&workspace, &cwd)?;
-
-    // Check if already rebased: is target an ancestor of feature tip?
-    if is_ancestor_of(&workspace, &cwd, target, &feature_tip)? {
-        return Ok(RebaseResult::UpToDate(target.to_string()));
-    }
-
-    eprintln!(
-        "{}",
-        progress_message(cformat!("Rebasing onto <bold>{target}</>..."))
-    );
-
-    // Rebase using the bookmark name directly (not trunk() revset)
-    workspace.run_in_dir(&cwd, &["rebase", "-b", "@", "-d", target])?;
-
-    eprintln!(
-        "{}",
-        success_message(cformat!("Rebased onto <bold>{target}</>"))
-    );
-
-    Ok(RebaseResult::Rebased)
-}
-
 /// Handle `wt step push` for jj repositories.
 ///
 /// Moves the target bookmark to the feature tip and pushes to remote.
@@ -189,14 +160,13 @@ pub fn handle_push_jj(target: Option<&str>) -> anyhow::Result<()> {
     let detected_target = workspace.trunk_bookmark()?;
     let target = target.unwrap_or(detected_target.as_str());
 
-    // Get the feature tip
-    let feature_tip = get_feature_tip(&workspace, &cwd)?;
+    let feature_tip = workspace.feature_tip(&cwd)?;
 
     // Guard: target must be an ancestor of (or equal to) the feature tip.
     // This prevents moving the bookmark sideways or backward (which would lose commits).
     // Note: we intentionally don't short-circuit when feature_tip == target — after
     // `step squash`, the local bookmark is already moved but the remote needs pushing.
-    if !is_ancestor_of(&workspace, &cwd, target, &feature_tip)? {
+    if !workspace.is_rebased_onto(target, &cwd)? {
         anyhow::bail!(
             "Cannot push: feature is not ahead of {target}. Rebase first with `wt step rebase`."
         );
@@ -215,47 +185,6 @@ pub fn handle_push_jj(target: Option<&str>) -> anyhow::Result<()> {
 // Helpers
 // ============================================================================
 
-/// Check if `target` (a bookmark name) is an ancestor of `descendant` (a change ID).
-fn is_ancestor_of(
-    workspace: &JjWorkspace,
-    cwd: &Path,
-    target: &str,
-    descendant: &str,
-) -> anyhow::Result<bool> {
-    // jj resolves bookmark names directly in revsets, so we can check
-    // ancestry in a single command: "target & ::descendant" is non-empty
-    // iff target is an ancestor of (or equal to) descendant.
-    let check = workspace.run_in_dir(
-        cwd,
-        &[
-            "log",
-            "-r",
-            &format!("{target} & ::{descendant}"),
-            "--no-graph",
-            "-T",
-            r#""x""#,
-        ],
-    )?;
-    Ok(!check.trim().is_empty())
-}
-
-/// Get the workspace name for the current directory.
-fn workspace_name(workspace: &JjWorkspace, cwd: &Path) -> String {
-    workspace
-        .current_workspace(cwd)
-        .map(|ws| ws.name)
-        .unwrap_or_else(|_| "default".to_string())
-}
-
-/// Get a project identifier from the jj workspace root directory name.
-fn workspace_project_id(workspace: &JjWorkspace) -> Option<String> {
-    workspace
-        .root()
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map(|s| s.to_string())
-}
-
 /// Generate a commit message for jj changes.
 ///
 /// Uses LLM if configured, otherwise falls back to a message based on changed files.
@@ -267,8 +196,10 @@ fn generate_jj_commit_message(
     config: &worktrunk::config::CommitGenerationConfig,
 ) -> anyhow::Result<String> {
     if config.is_configured() {
-        let ws_name = workspace_name(workspace, cwd);
-        let repo_name = workspace_project_id(workspace);
+        let ws_name = workspace
+            .current_name(cwd)?
+            .unwrap_or_else(|| "default".to_string());
+        let repo_name = workspace.project_identifier().ok();
         let repo_name = repo_name.as_deref().unwrap_or("repo");
         let prompt =
             crate::llm::build_jj_commit_prompt(diff_full, diff_stat, &ws_name, repo_name, config)?;

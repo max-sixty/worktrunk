@@ -3,14 +3,17 @@
 //! Implements workspace operations by shelling out to `jj` commands
 //! and parsing their output.
 
+use std::any::Any;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+use color_print::cformat;
 
-use crate::git::{IntegrationReason, LineDiff};
+use super::types::{IntegrationReason, LineDiff};
 use crate::shell_exec::Cmd;
+use crate::styling::{eprintln, progress_message};
 
-use super::{VcsKind, Workspace, WorkspaceItem};
+use super::{RebaseOutcome, VcsKind, Workspace, WorkspaceItem};
 
 /// Jujutsu-backed workspace implementation.
 ///
@@ -95,6 +98,44 @@ impl JjWorkspace {
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "main".to_string()))
         }
+    }
+
+    /// Determine the feature tip change ID.
+    ///
+    /// In jj, the working copy (@) is often an empty auto-snapshot commit.
+    /// When @ is empty, the real feature tip is @- (the parent).
+    pub fn feature_tip(&self, ws_path: &Path) -> anyhow::Result<String> {
+        let empty_check = run_jj_command(
+            ws_path,
+            &[
+                "log",
+                "-r",
+                "@",
+                "--no-graph",
+                "-T",
+                r#"if(self.empty(), "empty", "content")"#,
+            ],
+        )?;
+
+        let revset = if empty_check.trim() == "empty" {
+            "@-"
+        } else {
+            "@"
+        };
+
+        let output = run_jj_command(
+            ws_path,
+            &[
+                "log",
+                "-r",
+                revset,
+                "--no-graph",
+                "-T",
+                r#"self.change_id().short(12)"#,
+            ],
+        )?;
+
+        Ok(output.trim().to_string())
     }
 
     /// Get commit details (timestamp, description) for the working-copy commit
@@ -298,8 +339,124 @@ impl Workspace for JjWorkspace {
         Ok(())
     }
 
+    fn resolve_integration_target(&self, target: Option<&str>) -> anyhow::Result<String> {
+        match target {
+            Some(t) => Ok(t.to_string()),
+            None => self.trunk_bookmark(),
+        }
+    }
+
+    fn is_rebased_onto(&self, target: &str, path: &Path) -> anyhow::Result<bool> {
+        let feature_tip = self.feature_tip(path)?;
+        // target is ancestor of feature tip iff "target & ::feature_tip" is non-empty
+        let check = run_jj_command(
+            path,
+            &[
+                "log",
+                "-r",
+                &format!("{target} & ::{feature_tip}"),
+                "--no-graph",
+                "-T",
+                r#""x""#,
+            ],
+        )?;
+        Ok(!check.trim().is_empty())
+    }
+
+    fn rebase_onto(&self, target: &str, path: &Path) -> anyhow::Result<RebaseOutcome> {
+        eprintln!(
+            "{}",
+            progress_message(cformat!("Rebasing onto <bold>{target}</>..."))
+        );
+        run_jj_command(path, &["rebase", "-b", "@", "-d", target])?;
+        // jj doesn't distinguish fast-forward from true rebase
+        Ok(RebaseOutcome::Rebased)
+    }
+
+    fn root_path(&self) -> anyhow::Result<PathBuf> {
+        Ok(self.root.clone())
+    }
+
+    fn current_workspace_path(&self) -> anyhow::Result<PathBuf> {
+        let cwd = std::env::current_dir()?;
+        Ok(self.current_workspace(&cwd)?.path)
+    }
+
+    fn current_name(&self, path: &Path) -> anyhow::Result<Option<String>> {
+        Ok(Some(self.current_workspace(path)?.name))
+    }
+
+    fn project_identifier(&self) -> anyhow::Result<String> {
+        // Most jj repos are git-backed. Try to get the git remote URL for a stable
+        // project identifier (same clone = same ID, regardless of directory name).
+        if let Ok(output) = self.run_command(&["git", "remote", "list"]) {
+            // Format: "remote_name url\n" — prefer "origin" if present
+            let url = output
+                .lines()
+                .find(|l| l.starts_with("origin "))
+                .or_else(|| output.lines().next())
+                .and_then(|l| l.split_whitespace().nth(1));
+            if let Some(url) = url {
+                return Ok(url.to_string());
+            }
+        }
+        // Fallback: use directory name
+        self.root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("Repository path has no filename"))
+    }
+
+    fn commit(&self, message: &str, path: &Path) -> anyhow::Result<String> {
+        run_jj_command(path, &["describe", "-m", message])?;
+        run_jj_command(path, &["new"])?;
+        // Return the change ID of the just-described commit (now @-)
+        let output = run_jj_command(
+            path,
+            &[
+                "log",
+                "-r",
+                "@-",
+                "--no-graph",
+                "-T",
+                r#"self.change_id().short(12)"#,
+            ],
+        )?;
+        Ok(output.trim().to_string())
+    }
+
+    fn commit_subjects(&self, base: &str, head: &str) -> anyhow::Result<Vec<String>> {
+        let revset = format!("{base}..{head}");
+        let output = run_jj_command(
+            &self.root,
+            &[
+                "log",
+                "-r",
+                &revset,
+                "--no-graph",
+                "-T",
+                r#"self.description().first_line() ++ "\n""#,
+            ],
+        )?;
+        Ok(output
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect())
+    }
+
+    fn push_to_target(&self, target: &str, path: &Path) -> anyhow::Result<()> {
+        run_jj_command(path, &["git", "push", "--bookmark", target])?;
+        Ok(())
+    }
+
     fn has_staging_area(&self) -> bool {
         false
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

@@ -3,23 +3,34 @@
 //! This module provides the [`Workspace`] trait that captures the operations
 //! commands need, independent of the underlying VCS (git, jj, etc.).
 //!
-//! The git implementation ([`GitWorkspace`]) delegates to
-//! [`Repository`](crate::git::Repository) methods. The jj implementation
-//! ([`JjWorkspace`]) shells out to `jj` CLI commands.
+//! The git implementation is on [`Repository`](crate::git::Repository) directly.
+//! The jj implementation ([`JjWorkspace`]) shells out to `jj` CLI commands.
+//! Commands that need git-specific features can downcast via
+//! `workspace.as_any().downcast_ref::<Repository>()`.
 //!
 //! Use [`detect_vcs`] to determine which VCS manages a given path.
 
 pub(crate) mod detect;
 mod git;
 pub(crate) mod jj;
+pub mod types;
 
+use std::any::Any;
 use std::path::{Path, PathBuf};
 
-use crate::git::{IntegrationReason, LineDiff, WorktreeInfo, path_dir_name};
+use crate::git::WorktreeInfo;
+pub use types::{IntegrationReason, LineDiff, path_dir_name};
 
 pub use detect::detect_vcs;
-pub use git::GitWorkspace;
 pub use jj::JjWorkspace;
+
+/// Outcome of a rebase operation on the VCS level.
+pub enum RebaseOutcome {
+    /// True rebase (history rewritten).
+    Rebased,
+    /// Fast-forward (HEAD moved forward, no rewrite).
+    FastForward,
+}
 
 /// Version control system type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,9 +138,76 @@ pub trait Workspace: Send + Sync {
     /// Remove a workspace by name.
     fn remove_workspace(&self, name: &str) -> anyhow::Result<()>;
 
+    // ====== Rebase ======
+
+    /// Resolve the integration target (branch/bookmark to rebase onto).
+    /// Git: validates ref exists, falls back to default branch.
+    /// Jj: detects trunk bookmark.
+    fn resolve_integration_target(&self, target: Option<&str>) -> anyhow::Result<String>;
+
+    /// Whether the current workspace is already rebased onto `target`.
+    /// Git: merge-base == target SHA, no merge commits between.
+    /// Jj: target is ancestor of feature tip.
+    fn is_rebased_onto(&self, target: &str, path: &Path) -> anyhow::Result<bool>;
+
+    /// Rebase the current workspace onto `target`.
+    /// Returns the outcome (Rebased vs FastForward).
+    /// Implementations emit their own progress message when appropriate.
+    fn rebase_onto(&self, target: &str, path: &Path) -> anyhow::Result<RebaseOutcome>;
+
+    // ====== Identity ======
+
+    /// Root path of the repository (git dir or jj repo root).
+    fn root_path(&self) -> anyhow::Result<PathBuf>;
+
+    /// Filesystem path of the current workspace/worktree.
+    ///
+    /// Git: uses `current_worktree().path()` (respects `-C` flag / base_path).
+    /// Jj: uses `current_workspace().path` (found via cwd).
+    fn current_workspace_path(&self) -> anyhow::Result<PathBuf>;
+
+    /// Current workspace/branch name at the given path.
+    /// Returns `None` for detached HEAD (git) or workspaces without bookmarks (jj).
+    fn current_name(&self, path: &Path) -> anyhow::Result<Option<String>>;
+
+    /// Project identifier for approval/hook scoping.
+    /// Uses remote URL if available, otherwise the canonical repository path.
+    fn project_identifier(&self) -> anyhow::Result<String>;
+
+    // ====== Commit ======
+
+    /// Commit staged/working changes with the given message.
+    /// Returns the new commit identifier (SHA for git, change ID for jj).
+    fn commit(&self, message: &str, path: &Path) -> anyhow::Result<String>;
+
+    /// Subject lines of commits between `base` and `head`.
+    fn commit_subjects(&self, base: &str, head: &str) -> anyhow::Result<Vec<String>>;
+
+    // ====== Push ======
+
+    /// Push current branch/bookmark to remote, fast-forward only.
+    /// `target` is the branch/bookmark to update on the remote.
+    fn push_to_target(&self, target: &str, path: &Path) -> anyhow::Result<()>;
+
     // ====== Capabilities ======
 
     /// Whether this VCS has a staging area (index).
     /// Git: true. Jj: false.
     fn has_staging_area(&self) -> bool;
+
+    /// Downcast to concrete type for VCS-specific operations.
+    fn as_any(&self) -> &dyn Any;
+}
+
+/// Detect VCS and open the appropriate workspace for the current directory.
+pub fn open_workspace() -> anyhow::Result<Box<dyn Workspace>> {
+    let cwd = std::env::current_dir()?;
+    match detect_vcs(&cwd) {
+        Some(VcsKind::Jj) => Ok(Box::new(JjWorkspace::from_current_dir()?)),
+        Some(VcsKind::Git) => {
+            let repo = crate::git::Repository::current()?;
+            Ok(Box::new(repo))
+        }
+        None => anyhow::bail!("Not in a git or jj repository"),
+    }
 }

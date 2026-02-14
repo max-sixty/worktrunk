@@ -36,6 +36,7 @@ pub fn handle_select(
         anyhow::bail!("Interactive picker requires an interactive terminal");
     }
 
+    crate::commands::require_git("select")?;
     let repo = Repository::current()?;
 
     // Initialize preview mode state file (auto-cleanup on drop)

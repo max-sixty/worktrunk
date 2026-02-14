@@ -10,7 +10,6 @@ use super::commit::CommitOptions;
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, execute_hook};
 use super::project_config::{HookCommand, collect_commands_for_hooks};
-use super::repository_ext::RepositoryCliExt;
 use super::worktree::{
     BranchDeletionMode, MergeOperations, RemoveResult, get_path_mismatch, handle_push,
 };
@@ -102,7 +101,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     }
 
     let env = CommandEnv::for_action("merge", config)?;
-    let repo = &env.repo;
+    let repo = env.require_repo()?;
     let config = &env.config;
     // Merge requires being on a branch (can't merge from detached HEAD)
     let current_branch = env.require_branch("merge")?.to_string();
@@ -165,7 +164,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         if squash_enabled {
             false // Squash path handles staging and committing
         } else {
-            let ctx = env.context(yes);
+            let ctx = env.context(yes)?;
             let mut options = CommitOptions::new(&ctx);
             options.target_branch = Some(&target_branch);
             options.no_verify = !verify;
@@ -213,7 +212,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Run pre-merge checks unless --no-verify was specified
     // Do this after commit/squash/rebase to validate the final state that will be pushed
     if verify {
-        let ctx = env.context(yes);
+        let ctx = env.context(yes)?;
         execute_hook(
             &ctx,
             HookType::PreMerge,

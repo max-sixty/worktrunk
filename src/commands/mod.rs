@@ -20,6 +20,7 @@ pub(crate) mod merge;
 pub(crate) mod process;
 pub(crate) mod project_config;
 mod relocate;
+mod remove_command;
 pub(crate) mod repository_ext;
 #[cfg(unix)]
 pub(crate) mod select;
@@ -41,22 +42,32 @@ pub(crate) use hook_commands::{add_approvals, clear_approvals, handle_hook_show,
 pub(crate) use init::{handle_completions, handle_init};
 pub(crate) use list::handle_list;
 pub(crate) use merge::{MergeOptions, handle_merge};
+pub(crate) use remove_command::{RemoveOptions, handle_remove_command};
 #[cfg(unix)]
 pub(crate) use select::handle_select;
 pub(crate) use step_commands::{
     RebaseResult, SquashResult, handle_rebase, handle_squash, step_commit, step_copy_ignored,
-    step_relocate, step_show_squash_prompt,
+    step_push, step_relocate, step_show_squash_prompt,
 };
-pub(crate) use worktree::{
-    OperationMode, handle_remove, handle_remove_current, is_worktree_at_expected_path,
-    resolve_worktree_arg, worktree_display_name,
-};
+pub(crate) use worktree::{is_worktree_at_expected_path, worktree_display_name};
 
 // Re-export Shell from the canonical location
 pub(crate) use worktrunk::shell::Shell;
 
 use color_print::cformat;
 use worktrunk::styling::{eprintln, format_with_gutter};
+use worktrunk::workspace::VcsKind;
+
+/// Guard for commands that only work with git.
+///
+/// Returns a clear error for jj users instead of crashing with "Not in a git repository".
+pub(crate) fn require_git(command: &str) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    if worktrunk::workspace::detect_vcs(&cwd) == Some(VcsKind::Jj) {
+        anyhow::bail!("`wt {command}` is not yet supported for jj repositories");
+    }
+    Ok(())
+}
 
 /// Format command execution label with optional command name.
 ///

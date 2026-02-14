@@ -26,6 +26,7 @@ use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, run_hook_with_filter};
 use super::repository_ext::RepositoryCliExt;
+use super::require_git;
 use worktrunk::shell_exec::Cmd;
 
 /// Handle `wt step commit` command
@@ -60,7 +61,7 @@ pub fn step_commit(
     let _ = crate::output::prompt_commit_generation(&mut config);
 
     let env = CommandEnv::for_action("commit", config)?;
-    let ctx = env.context(yes);
+    let ctx = env.context(yes)?;
 
     // CLI flag overrides config value
     let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
@@ -128,10 +129,10 @@ pub fn handle_squash(
     let _ = crate::output::prompt_commit_generation(&mut config);
 
     let env = CommandEnv::for_action("squash", config)?;
-    let repo = &env.repo;
+    let repo = env.require_repo()?;
     // Squash requires being on a branch (can't squash in detached HEAD)
     let current_branch = env.require_branch("squash")?.to_string();
-    let ctx = env.context(yes);
+    let ctx = env.context(yes)?;
     let resolved = env.resolved();
     let generator = CommitGenerator::new(&resolved.commit_generation);
 
@@ -355,10 +356,32 @@ pub fn handle_squash(
     Ok(SquashResult::Squashed)
 }
 
+/// Handle `wt step push` command.
+///
+/// Routes to the appropriate VCS handler: jj push for jj repos,
+/// git push (fast-forward to target) for git repos.
+pub fn step_push(target: Option<&str>) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
+        return super::handle_step_jj::handle_push_jj(target);
+    }
+    super::worktree::handle_push(target, "Pushed to", None)
+}
+
 /// Handle `wt step squash --show-prompt`
 ///
 /// Builds and outputs the squash prompt without running the LLM or squashing.
 pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
+    // Route to jj if applicable (uses git-specific prompt building)
+    let cwd = std::env::current_dir()?;
+    if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
+        eprintln!(
+            "{}",
+            info_message("--show-prompt is not yet supported for jj squash")
+        );
+        return Ok(());
+    }
+
     let repo = Repository::current()?;
     let config = UserConfig::load().context("Failed to load config")?;
     let project_id = repo.project_identifier().ok();
@@ -409,79 +432,24 @@ pub enum RebaseResult {
 
 /// Handle shared rebase workflow (used by `wt step rebase` and `wt merge`)
 pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
-    // Route to jj handler if in a jj repo
+    let ws = worktrunk::workspace::open_workspace()?;
     let cwd = std::env::current_dir()?;
-    if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
-        return super::handle_step_jj::handle_rebase_jj(target);
+
+    let target = ws.resolve_integration_target(target)?;
+
+    if ws.is_rebased_onto(&target, &cwd)? {
+        return Ok(RebaseResult::UpToDate(target));
     }
 
-    let repo = Repository::current()?;
+    let outcome = ws.rebase_onto(&target, &cwd)?;
 
-    // Get and validate target ref (any commit-ish for rebase)
-    let integration_target = repo.require_target_ref(target)?;
-
-    // Check if already up-to-date (linear extension of target, no merge commits)
-    if repo.is_rebased_onto(&integration_target)? {
-        return Ok(RebaseResult::UpToDate(integration_target));
-    }
-
-    // Check if this is a fast-forward or true rebase
-    let merge_base = repo
-        .merge_base("HEAD", &integration_target)?
-        .context("Cannot rebase: no common ancestor with target branch")?;
-    let head_sha = repo.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
-    let is_fast_forward = merge_base == head_sha;
-
-    // Only show progress for true rebases (fast-forwards are instant)
-    if !is_fast_forward {
-        eprintln!(
-            "{}",
-            progress_message(cformat!("Rebasing onto <bold>{integration_target}</>..."))
-        );
-    }
-
-    let rebase_result = repo.run_command(&["rebase", &integration_target]);
-
-    // If rebase failed, check if it's due to conflicts
-    if let Err(e) = rebase_result {
-        // Check if it's a rebase conflict
-        let is_rebasing = repo
-            .worktree_state()?
-            .is_some_and(|s| s.starts_with("REBASING"));
-        if is_rebasing {
-            // Extract git's stderr output from the error
-            let git_output = e.to_string();
-            return Err(worktrunk::git::GitError::RebaseConflict {
-                target_branch: integration_target,
-                git_output,
-            }
-            .into());
+    let msg = match outcome {
+        worktrunk::workspace::RebaseOutcome::FastForward => {
+            cformat!("Fast-forwarded to <bold>{target}</>")
         }
-        // Not a rebase conflict, return original error
-        return Err(worktrunk::git::GitError::Other {
-            message: cformat!(
-                "Failed to rebase onto <bold>{}</>: {}",
-                integration_target,
-                e
-            ),
+        worktrunk::workspace::RebaseOutcome::Rebased => {
+            cformat!("Rebased onto <bold>{target}</>")
         }
-        .into());
-    }
-
-    // Verify rebase completed successfully (safety check for edge cases)
-    if repo.worktree_state()?.is_some() {
-        return Err(worktrunk::git::GitError::RebaseConflict {
-            target_branch: integration_target,
-            git_output: String::new(),
-        }
-        .into());
-    }
-
-    // Success
-    let msg = if is_fast_forward {
-        cformat!("Fast-forwarded to <bold>{integration_target}</>")
-    } else {
-        cformat!("Rebased onto <bold>{integration_target}</>")
     };
     eprintln!("{}", success_message(msg));
 
@@ -501,6 +469,7 @@ pub fn step_copy_ignored(
     dry_run: bool,
     force: bool,
 ) -> anyhow::Result<()> {
+    require_git("step copy-ignored")?;
     let repo = Repository::current()?;
 
     // Resolve source and destination worktree paths
@@ -809,6 +778,7 @@ pub fn step_relocate(
         show_dry_run_preview, show_no_relocations_needed, show_summary, validate_candidates,
     };
 
+    require_git("step relocate")?;
     let repo = Repository::current()?;
     let config = UserConfig::load()?;
     let default_branch = repo.default_branch().unwrap_or_default();

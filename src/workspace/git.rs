@@ -1,53 +1,32 @@
 //! Git implementation of the [`Workspace`] trait.
 //!
-//! Delegates to [`Repository`] methods, mapping git-specific types
-//! to the VCS-agnostic [`WorkspaceItem`] and [`Workspace`] interface.
+//! Implements [`Workspace`] directly on [`Repository`], mapping git-specific
+//! types to the VCS-agnostic [`WorkspaceItem`] and [`Workspace`] interface.
+//!
+//! Commands that need git-specific features (staging, interactive squash)
+//! can downcast via `workspace.as_any().downcast_ref::<Repository>()`.
 
+use std::any::Any;
 use std::path::{Path, PathBuf};
 
-use crate::git::{
-    IntegrationReason, LineDiff, Repository, check_integration, compute_integration_lazy,
-    path_dir_name,
-};
+use anyhow::Context;
+use color_print::cformat;
 
-use super::{VcsKind, Workspace, WorkspaceItem};
+use crate::git::{Repository, check_integration, compute_integration_lazy};
 
-/// Git-backed workspace implementation.
-///
-/// Wraps a [`Repository`] and implements [`Workspace`] by delegating to
-/// existing git operations. The `Repository` is cloneable (shares cache
-/// via `Arc`), so `GitWorkspace` is cheap to clone.
-#[derive(Debug, Clone)]
-pub struct GitWorkspace {
-    repo: Repository,
-}
+use super::types::{IntegrationReason, LineDiff, path_dir_name};
+use crate::styling::{eprintln, progress_message};
 
-impl GitWorkspace {
-    /// Create a new `GitWorkspace` wrapping the given repository.
-    pub fn new(repo: Repository) -> Self {
-        Self { repo }
-    }
+use super::{RebaseOutcome, VcsKind, Workspace, WorkspaceItem};
 
-    /// Access the underlying [`Repository`].
-    pub fn repo(&self) -> &Repository {
-        &self.repo
-    }
-}
-
-impl From<Repository> for GitWorkspace {
-    fn from(repo: Repository) -> Self {
-        Self::new(repo)
-    }
-}
-
-impl Workspace for GitWorkspace {
+impl Workspace for Repository {
     fn kind(&self) -> VcsKind {
         VcsKind::Git
     }
 
     fn list_workspaces(&self) -> anyhow::Result<Vec<WorkspaceItem>> {
-        let worktrees = self.repo.list_worktrees()?;
-        let primary_path = self.repo.primary_worktree()?;
+        let worktrees = self.list_worktrees()?;
+        let primary_path = self.primary_worktree()?;
 
         Ok(worktrees
             .into_iter()
@@ -62,7 +41,7 @@ impl Workspace for GitWorkspace {
 
     fn workspace_path(&self, name: &str) -> anyhow::Result<PathBuf> {
         // Single pass: list worktrees once, check both branch name and dir name
-        let worktrees = self.repo.list_worktrees()?;
+        let worktrees = self.list_worktrees()?;
 
         // Prefer branch name match
         if let Some(wt) = worktrees
@@ -81,45 +60,151 @@ impl Workspace for GitWorkspace {
     }
 
     fn default_workspace_path(&self) -> anyhow::Result<Option<PathBuf>> {
-        self.repo.primary_worktree()
+        self.primary_worktree()
     }
 
     fn default_branch_name(&self) -> anyhow::Result<Option<String>> {
-        Ok(self.repo.default_branch())
+        Ok(self.default_branch())
     }
 
     fn is_dirty(&self, path: &Path) -> anyhow::Result<bool> {
-        self.repo.worktree_at(path).is_dirty()
+        self.worktree_at(path).is_dirty()
     }
 
     fn working_diff(&self, path: &Path) -> anyhow::Result<LineDiff> {
-        self.repo.worktree_at(path).working_tree_diff_stats()
+        self.worktree_at(path).working_tree_diff_stats()
     }
 
     fn ahead_behind(&self, base: &str, head: &str) -> anyhow::Result<(usize, usize)> {
-        self.repo.ahead_behind(base, head)
+        // Note: this calls Repository::ahead_behind inherent method directly
+        Repository::ahead_behind(self, base, head)
     }
 
     fn is_integrated(&self, id: &str, target: &str) -> anyhow::Result<Option<IntegrationReason>> {
-        let signals = compute_integration_lazy(&self.repo, id, target)?;
+        let signals = compute_integration_lazy(self, id, target)?;
         Ok(check_integration(&signals))
     }
 
     fn branch_diff_stats(&self, base: &str, head: &str) -> anyhow::Result<LineDiff> {
-        self.repo.branch_diff_stats(base, head)
+        Repository::branch_diff_stats(self, base, head)
     }
 
     fn create_workspace(&self, name: &str, base: Option<&str>, path: &Path) -> anyhow::Result<()> {
-        self.repo.create_worktree(name, base, path)
+        self.create_worktree(name, base, path)
     }
 
     fn remove_workspace(&self, name: &str) -> anyhow::Result<()> {
-        let path = self.workspace_path(name)?;
-        self.repo.remove_worktree(&path, false)
+        let path = Workspace::workspace_path(self, name)?;
+        self.remove_worktree(&path, false)
+    }
+
+    fn resolve_integration_target(&self, target: Option<&str>) -> anyhow::Result<String> {
+        self.require_target_ref(target)
+    }
+
+    fn is_rebased_onto(&self, target: &str, _path: &Path) -> anyhow::Result<bool> {
+        // Call the inherent method via fully-qualified syntax
+        Repository::is_rebased_onto(self, target)
+    }
+
+    fn rebase_onto(&self, target: &str, _path: &Path) -> anyhow::Result<RebaseOutcome> {
+        // Detect fast-forward: merge-base == HEAD means HEAD is behind target
+        let merge_base = self
+            .merge_base("HEAD", target)?
+            .context("Cannot rebase: no common ancestor with target branch")?;
+        let head_sha = self.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
+        let is_fast_forward = merge_base == head_sha;
+
+        // Only show progress for true rebases (fast-forwards are instant)
+        if !is_fast_forward {
+            eprintln!(
+                "{}",
+                progress_message(cformat!("Rebasing onto <bold>{target}</>..."))
+            );
+        }
+
+        let rebase_result = self.run_command(&["rebase", target]);
+
+        if let Err(e) = rebase_result {
+            let is_rebasing = self
+                .worktree_state()?
+                .is_some_and(|s| s.starts_with("REBASING"));
+            if is_rebasing {
+                let git_output = e.to_string();
+                return Err(crate::git::GitError::RebaseConflict {
+                    target_branch: target.to_string(),
+                    git_output,
+                }
+                .into());
+            }
+            return Err(crate::git::GitError::Other {
+                message: format!("Failed to rebase onto {target}: {e}"),
+            }
+            .into());
+        }
+
+        // Verify rebase completed successfully
+        if self.worktree_state()?.is_some() {
+            return Err(crate::git::GitError::RebaseConflict {
+                target_branch: target.to_string(),
+                git_output: String::new(),
+            }
+            .into());
+        }
+
+        if is_fast_forward {
+            Ok(RebaseOutcome::FastForward)
+        } else {
+            Ok(RebaseOutcome::Rebased)
+        }
+    }
+
+    fn root_path(&self) -> anyhow::Result<PathBuf> {
+        Ok(self.repo_path().to_path_buf())
+    }
+
+    fn current_workspace_path(&self) -> anyhow::Result<PathBuf> {
+        Ok(self.current_worktree().path().to_path_buf())
+    }
+
+    fn current_name(&self, path: &Path) -> anyhow::Result<Option<String>> {
+        self.worktree_at(path).branch()
+    }
+
+    fn project_identifier(&self) -> anyhow::Result<String> {
+        // Call the inherent method via fully-qualified syntax
+        Repository::project_identifier(self)
+    }
+
+    fn commit(&self, message: &str, path: &Path) -> anyhow::Result<String> {
+        self.worktree_at(path)
+            .run_command(&["commit", "-m", message])
+            .context("Failed to create commit")?;
+        let sha = self
+            .worktree_at(path)
+            .run_command(&["rev-parse", "HEAD"])?
+            .trim()
+            .to_string();
+        Ok(sha)
+    }
+
+    fn commit_subjects(&self, base: &str, head: &str) -> anyhow::Result<Vec<String>> {
+        let range = format!("{base}..{head}");
+        let output = self.run_command(&["log", "--format=%s", &range])?;
+        Ok(output.lines().map(|l| l.to_string()).collect())
+    }
+
+    fn push_to_target(&self, target: &str, _path: &Path) -> anyhow::Result<()> {
+        self.run_command(&["push", "origin", &format!("HEAD:{target}")])?;
+        Ok(())
     }
 
     fn has_staging_area(&self) -> bool {
         true
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -210,14 +295,13 @@ mod tests {
 
     /// Exercise all `Workspace` trait methods on a real git repository.
     ///
-    /// This covers the `Workspace for GitWorkspace` implementation which
-    /// wraps `Repository` methods into the VCS-agnostic trait.
+    /// This covers the `Workspace for Repository` implementation which
+    /// maps `Repository` methods into the VCS-agnostic trait.
     #[test]
     fn test_workspace_trait_on_real_repo() {
         use std::process::Command;
 
         use super::super::{VcsKind, Workspace};
-        use super::GitWorkspace;
         use crate::git::Repository;
 
         let temp = tempfile::tempdir().unwrap();
@@ -247,7 +331,7 @@ mod tests {
         git(&["commit", "-m", "initial"]);
 
         let repo = Repository::at(&repo_path).unwrap();
-        let ws = GitWorkspace::new(repo);
+        let ws: &dyn Workspace = &repo;
 
         // kind
         assert_eq!(ws.kind(), VcsKind::Git);
@@ -326,5 +410,9 @@ mod tests {
         ws.create_workspace("from-feature", Some("feature"), &wt_path2)
             .unwrap();
         ws.remove_workspace("from-feature").unwrap();
+
+        // as_any downcast
+        let repo_ref = ws.as_any().downcast_ref::<Repository>();
+        assert!(repo_ref.is_some());
     }
 }

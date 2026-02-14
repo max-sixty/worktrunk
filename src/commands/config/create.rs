@@ -43,6 +43,7 @@ pub(super) fn comment_out_config(content: &str) -> String {
 /// Handle the config create command
 pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
     if project {
+        crate::commands::require_git("config create --project")?;
         let repo = Repository::current()?;
         let config_path = repo.current_worktree().root()?.join(".config/wt.toml");
         let user_config_exists = require_user_config_path()

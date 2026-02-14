@@ -5,7 +5,9 @@
 
 use std::path::Path;
 
+use anyhow::Context;
 use color_print::cformat;
+use worktrunk::config::UserConfig;
 use worktrunk::styling::{eprintln, info_message, success_message};
 use worktrunk::workspace::{JjWorkspace, Workspace};
 
@@ -30,6 +32,11 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let ws_name = current.name.clone();
     let ws_path = current.path.clone();
 
+    // Load config for merge defaults
+    let config = UserConfig::load().context("Failed to load config")?;
+    let project_id = workspace.project_identifier().ok();
+    let resolved = config.resolved(project_id.as_deref());
+
     // Target bookmark name — detect from trunk() or use explicit override
     let detected_target = workspace.trunk_bookmark()?;
     let target = opts.target.unwrap_or(detected_target.as_str());
@@ -37,7 +44,7 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Get the feature tip change ID. The workspace's working copy (@) is often
     // an empty auto-snapshot; the real feature commits are its parents. Use @-
     // when @ is empty so we don't reference a commit that jj may abandon.
-    let feature_tip = get_feature_tip(&workspace, &ws_path)?;
+    let feature_tip = workspace.feature_tip(&ws_path)?;
 
     // Check if already integrated (use target bookmark, not trunk() revset,
     // because trunk() only resolves with remote tracking branches)
@@ -48,11 +55,11 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
                 "Workspace <bold>{ws_name}</> is already integrated into trunk"
             ))
         );
-        return remove_if_requested(&workspace, &opts, &ws_name, &ws_path);
+        return remove_if_requested(&workspace, &resolved, &opts, &ws_name, &ws_path);
     }
 
-    // Squash by default for jj (combine all feature commits into one on trunk)
-    let squash = opts.squash.unwrap_or(true);
+    // CLI flags override config values (jj always squashes by default)
+    let squash = opts.squash.unwrap_or(resolved.merge.squash());
 
     if squash {
         squash_into_trunk(&workspace, &ws_path, &feature_tip, &ws_name, target)?;
@@ -71,46 +78,7 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         ))
     );
 
-    remove_if_requested(&workspace, &opts, &ws_name, &ws_path)
-}
-
-/// Determine the feature tip change ID.
-///
-/// In jj, the working copy (@) is often an empty auto-snapshot commit.
-/// When @ is empty, the real feature tip is @- (the parent). We use @-
-/// in that case because empty commits get abandoned by `jj new`.
-pub(crate) fn get_feature_tip(workspace: &JjWorkspace, ws_path: &Path) -> anyhow::Result<String> {
-    let empty_check = workspace.run_in_dir(
-        ws_path,
-        &[
-            "log",
-            "-r",
-            "@",
-            "--no-graph",
-            "-T",
-            r#"if(self.empty(), "empty", "content")"#,
-        ],
-    )?;
-
-    let revset = if empty_check.trim() == "empty" {
-        "@-"
-    } else {
-        "@"
-    };
-
-    let output = workspace.run_in_dir(
-        ws_path,
-        &[
-            "log",
-            "-r",
-            revset,
-            "--no-graph",
-            "-T",
-            r#"self.change_id().short(12)"#,
-        ],
-    )?;
-
-    Ok(output.trim().to_string())
+    remove_if_requested(&workspace, &resolved, &opts, &ws_name, &ws_path)
 }
 
 /// Squash all feature changes into a single commit on trunk.
@@ -178,7 +146,7 @@ fn rebase_onto_trunk(workspace: &JjWorkspace, ws_path: &Path, target: &str) -> a
     workspace.run_in_dir(ws_path, &["rebase", "-b", "@", "-d", target])?;
 
     // After rebase, find the feature tip (same logic as squash path)
-    let feature_tip = get_feature_tip(workspace, ws_path)?;
+    let feature_tip = workspace.feature_tip(ws_path)?;
     workspace.run_in_dir(ws_path, &["bookmark", "set", target, "-r", &feature_tip])?;
 
     Ok(())
@@ -186,8 +154,8 @@ fn rebase_onto_trunk(workspace: &JjWorkspace, ws_path: &Path, target: &str) -> a
 
 /// Push the bookmark to remote (best-effort).
 pub(crate) fn push_bookmark(workspace: &JjWorkspace, ws_path: &Path, target: &str) {
-    match workspace.run_in_dir(ws_path, &["git", "push", "--bookmark", target]) {
-        Ok(_) => {
+    match workspace.push_to_target(target, ws_path) {
+        Ok(()) => {
             eprintln!("{}", success_message(cformat!("Pushed <bold>{target}</>")));
         }
         Err(e) => {
@@ -199,11 +167,12 @@ pub(crate) fn push_bookmark(workspace: &JjWorkspace, ws_path: &Path, target: &st
 /// Remove the workspace if `--no-remove` wasn't specified.
 fn remove_if_requested(
     workspace: &JjWorkspace,
+    resolved: &worktrunk::config::ResolvedConfig,
     opts: &MergeOptions<'_>,
     ws_name: &str,
     ws_path: &Path,
 ) -> anyhow::Result<()> {
-    let remove = opts.remove.unwrap_or(true);
+    let remove = opts.remove.unwrap_or(resolved.merge.remove());
     if !remove {
         eprintln!("{}", info_message("Workspace preserved (--no-remove)"));
         return Ok(());
