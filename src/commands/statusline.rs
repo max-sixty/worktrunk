@@ -303,7 +303,7 @@ fn run_json() -> Result<()> {
     list::populate_item(&repo, &mut item, options)?;
 
     // Convert to JSON format
-    let json_item = json_output::JsonItem::from_list_item(&item);
+    let json_item = json_output::JsonItem::from_list_item(&item, &repo);
 
     // Output as JSON array (consistent with wt list --format=json)
     let output = serde_json::to_string_pretty(&[json_item])?;

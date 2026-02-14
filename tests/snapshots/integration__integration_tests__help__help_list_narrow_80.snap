@@ -234,6 +234,8 @@ Query structured data with [2m--format=json[0m:
    statusline         string      Pre-formatted status with ANSI colors         
    symbols            string      Raw status symbols without colors (e.g.,      
                                   "!?↓")                                        
+   kv                 object      Per-branch key-value data from                
+                                  wt config state kv (absent when empty)        
 
 [32mCommit object[0m
 

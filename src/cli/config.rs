@@ -242,6 +242,7 @@ Use `wt config show` to view file-based configuration.
 - **previous-branch**: Previous branch for `wt switch -`
 - **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
+- **kv**: [experimental] Arbitrary key-value data per branch
 - **logs**: Background operation logs
 
 ## Examples
@@ -261,6 +262,11 @@ Set a marker for current branch:
 wt config state marker set "🚧 WIP"
 ```
 
+Store arbitrary data:
+```console
+wt config state kv set env staging
+```
+
 Clear all CI status cache:
 ```console
 wt config state ci-status clear --all
@@ -278,6 +284,7 @@ wt config state clear
 <!-- subdoc: default-branch -->
 <!-- subdoc: ci-status -->
 <!-- subdoc: marker -->
+<!-- subdoc: kv -->
 <!-- subdoc: logs -->"#
     )]
     State {
@@ -471,12 +478,54 @@ wt config state hints clear NAME   # re-show specific hint
         action: Option<HintsAction>,
     },
 
+    /// [experimental] Arbitrary key-value data per branch
+    #[command(
+        name = "kv",
+        after_long_help = r#"Store arbitrary key-value data per branch. Values are stored as-is — plain strings or JSON.
+
+## Examples
+
+Set and get values:
+```console
+wt config state kv set env staging
+wt config state kv get env
+```
+
+Store JSON:
+```console
+wt config state kv set config '{"port": 3000, "debug": true}'
+```
+
+List all keys:
+```console
+wt config state kv list
+```
+
+Operate on a different branch:
+```console
+wt config state kv set env production --branch=main
+```
+
+## Storage
+
+Stored in git config as `worktrunk.state.<branch>.kv.<key>`.
+
+## Key names
+
+Keys must contain only letters, digits, hyphens, and underscores. Dots are not allowed (they conflict with git config's section separator)."#
+    )]
+    Kv {
+        #[command(subcommand)]
+        action: KvAction,
+    },
+
     /// Get all stored state
     #[command(after_long_help = r#"Shows all stored state including:
 
 - **Default branch**: Cached result of querying remote for default branch
 - **Previous branch**: Previous branch for `wt switch -`
 - **Branch markers**: User-defined branch notes
+- **KV data**: Arbitrary key-value data per branch
 - **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
 - **Hints**: One-time hints that have been shown
 - **Log files**: Background operation logs
@@ -494,6 +543,7 @@ CI cache entries show status, age, and the commit SHA they were fetched for."#)]
 - Default branch cache
 - Previous branch
 - All branch markers
+- All kv data
 - All CI status cache
 - All hints
 - All log files
@@ -775,5 +825,107 @@ wt config state hints clear worktree-path
     Clear {
         /// Specific hint to clear (clears all if not specified)
         name: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum KvAction {
+    /// Get a value
+    #[command(after_long_help = r#"## Examples
+
+Get a value for the current branch:
+```console
+wt config state kv get env
+```
+
+Get a value for a specific branch:
+```console
+wt config state kv get env --branch=feature
+```"#)]
+    Get {
+        /// Key name
+        key: String,
+
+        /// Target branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        branch: Option<String>,
+    },
+
+    /// Set a value
+    #[command(after_long_help = r#"## Examples
+
+Set a plain string:
+```console
+wt config state kv set env staging
+```
+
+Set JSON:
+```console
+wt config state kv set config '{"port": 3000}'
+```
+
+Set for a specific branch:
+```console
+wt config state kv set env production --branch=main
+```"#)]
+    Set {
+        /// Key name
+        key: String,
+
+        /// Value (plain string or JSON)
+        value: String,
+
+        /// Target branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        branch: Option<String>,
+    },
+
+    /// List all keys
+    #[command(after_long_help = r#"## Examples
+
+List keys for current branch:
+```console
+wt config state kv list
+```
+
+List keys for a specific branch:
+```console
+wt config state kv list --branch=feature
+```"#)]
+    List {
+        /// Target branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        branch: Option<String>,
+    },
+
+    /// Clear a key or all keys
+    #[command(after_long_help = r#"## Examples
+
+Clear a specific key:
+```console
+wt config state kv clear env
+```
+
+Clear all keys for current branch:
+```console
+wt config state kv clear --all
+```
+
+Clear all keys for a specific branch:
+```console
+wt config state kv clear env --branch=feature
+```"#)]
+    Clear {
+        /// Key to clear (required unless --all)
+        #[arg(conflicts_with = "all")]
+        key: Option<String>,
+
+        /// Clear all keys for the branch
+        #[arg(long)]
+        all: bool,
+
+        /// Target branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        branch: Option<String>,
     },
 }

@@ -189,27 +189,28 @@ Query structured data with [2m--format=json[0m:
 
 [1mFields:[0m
 
-         Field           Type                                 Description                             
-   ────────────────── ─────────── ─────────────────────────────────────────────────────────────────── 
-   branch             string/null Branch name (null for detached HEAD)                                
-   path               string      Worktree path (absent for branches without worktrees)               
-   kind               string      "worktree" or "branch"                                              
-   commit             object      Commit info (see below)                                             
-   working_tree       object      Working tree state (see below)                                      
-   main_state         string      Relation to the default branch (see below)                          
-   integration_reason string      Why branch is integrated (see below)                                
-   operation_state    string      "conflicts", "rebase", or "merge" (absent when clean)               
-   main               object      Relationship to the default branch (see below, absent when is_main) 
-   remote             object      Tracking branch info (see below, absent when no tracking)           
-   worktree           object      Worktree metadata (see below)                                       
-   is_main            boolean     Is the main worktree                                                
-   is_current         boolean     Is the current worktree                                             
-   is_previous        boolean     Previous worktree from wt switch                                    
-   ci                 object      CI status (see below, absent when no CI)                            
-   url                string      Dev server URL from project config (absent when not configured)     
-   url_active         boolean     Whether the URL's port is listening (absent when not configured)    
-   statusline         string      Pre-formatted status with ANSI colors                               
-   symbols            string      Raw status symbols without colors (e.g., "!?↓")                     
+         Field           Type                                  Description                              
+   ────────────────── ─────────── ───────────────────────────────────────────────────────────────────── 
+   branch             string/null Branch name (null for detached HEAD)                                  
+   path               string      Worktree path (absent for branches without worktrees)                 
+   kind               string      "worktree" or "branch"                                                
+   commit             object      Commit info (see below)                                               
+   working_tree       object      Working tree state (see below)                                        
+   main_state         string      Relation to the default branch (see below)                            
+   integration_reason string      Why branch is integrated (see below)                                  
+   operation_state    string      "conflicts", "rebase", or "merge" (absent when clean)                 
+   main               object      Relationship to the default branch (see below, absent when is_main)   
+   remote             object      Tracking branch info (see below, absent when no tracking)             
+   worktree           object      Worktree metadata (see below)                                         
+   is_main            boolean     Is the main worktree                                                  
+   is_current         boolean     Is the current worktree                                               
+   is_previous        boolean     Previous worktree from wt switch                                      
+   ci                 object      CI status (see below, absent when no CI)                              
+   url                string      Dev server URL from project config (absent when not configured)       
+   url_active         boolean     Whether the URL's port is listening (absent when not configured)      
+   statusline         string      Pre-formatted status with ANSI colors                                 
+   symbols            string      Raw status symbols without colors (e.g., "!?↓")                       
+   kv                 object      Per-branch key-value data from wt config state kv (absent when empty) 
 
 [32mCommit object[0m
 
