@@ -38,6 +38,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
+[36mSYSTEM CONFIG[39m  /etc/xdg/worktrunk/config.toml
+[2m↳[22m [2mNot found (optional)[22m
+
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [33m▲[39m [33mUser config uses deprecated config sections: [projects."github.com/example/repo".commit-generation] → [projects."github.com/example/repo".commit.generation][39m
 [2m↳[22m [2mWrote migrated [90mconfig.toml.new[39m. To apply:[22m

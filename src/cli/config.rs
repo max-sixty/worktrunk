@@ -208,7 +208,7 @@ pub enum ConfigCommand {
     /// Show configuration files & locations
     #[command(
         after_long_help = r#"Shows location and contents of user config (`~/.config/worktrunk/config.toml`)
-and project config (`.config/wt.toml`).
+and project config (`.config/wt.toml`). Also shows system config if present.
 
 If a config file doesn't exist, shows defaults that would be used.
 

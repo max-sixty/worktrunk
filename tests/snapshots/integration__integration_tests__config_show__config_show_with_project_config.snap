@@ -38,6 +38,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
+[36mSYSTEM CONFIG[39m  /etc/xdg/worktrunk/config.toml
+[2m↳[22m [2mNot found (optional)[22m
+
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 [107m [0m 

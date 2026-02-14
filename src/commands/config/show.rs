@@ -10,7 +10,8 @@ use std::path::PathBuf;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ProjectConfig, UserConfig, find_unknown_project_keys, find_unknown_user_keys,
+    ProjectConfig, UserConfig, default_system_config_path, find_unknown_project_keys,
+    find_unknown_user_keys, get_system_config_path,
 };
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -33,6 +34,10 @@ use crate::output;
 pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     // Build the complete output as a string
     let mut show_output = String::new();
+
+    // Render system config (organization-wide defaults)
+    render_system_config(&mut show_output)?;
+    show_output.push('\n');
 
     // Render user config
     render_user_config(&mut show_output)?;
@@ -336,6 +341,55 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
             }
         }
     }
+
+    Ok(())
+}
+
+fn render_system_config(out: &mut String) -> anyhow::Result<()> {
+    let system_path = get_system_config_path();
+
+    // Determine the display path: actual path if found, or platform default as hint
+    let display_path = match &system_path {
+        Some(path) => format_path_for_display(path),
+        None => match default_system_config_path() {
+            Some(path) => format_path_for_display(&path),
+            None => "(unavailable)".to_string(),
+        },
+    };
+
+    writeln!(
+        out,
+        "{}",
+        format_heading("SYSTEM CONFIG", Some(&display_path))
+    )?;
+
+    let Some(system_path) = system_path else {
+        writeln!(out, "{}", hint_message("Not found (optional)"))?;
+        return Ok(());
+    };
+
+    // Read and display the file contents
+    let contents =
+        std::fs::read_to_string(&system_path).context("Failed to read system config file")?;
+
+    if contents.trim().is_empty() {
+        writeln!(out, "{}", hint_message("Empty file (no system defaults)"))?;
+        return Ok(());
+    }
+
+    // Validate config (syntax + schema) and warn if invalid
+    if let Err(e) = toml::from_str::<UserConfig>(&contents) {
+        writeln!(out, "{}", error_message("Invalid config"))?;
+        writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+    } else {
+        // Only check for unknown keys if config is valid
+        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
+            &contents,
+        )));
+    }
+
+    // Display TOML with syntax highlighting
+    writeln!(out, "{}", format_toml(&contents))?;
 
     Ok(())
 }

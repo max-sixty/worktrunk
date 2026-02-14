@@ -43,6 +43,8 @@ wt config show
 | **User config** | `~/.config/worktrunk/config.toml` | Worktree path template, LLM commit configs, etc | ✗ |
 | **Project config** | `.config/wt.toml` | Project hooks, dev server URL | ✓ |
 
+Organizations can also deploy a system-wide config file for shared defaults — run `wt config show` for the platform-specific location.
+
 **User config** — personal preferences:
 
 ```toml
@@ -355,6 +357,8 @@ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 |----------|---------|
 | `WORKTRUNK_BIN` | Override binary path for shell wrappers (useful for testing dev builds) |
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
+| `WORKTRUNK_SYSTEM_CONFIG_PATH` | Override system config file location |
+| `XDG_CONFIG_DIRS` | Colon-separated system config directories (default: `/etc/xdg`) |
 | `WORKTRUNK_DIRECTIVE_FILE` | Internal: set by shell wrappers to enable directory changes |
 | `WORKTRUNK_SHELL` | Internal: set by shell wrappers to indicate shell type (e.g., `powershell`) |
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
@@ -398,7 +402,7 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
 Show configuration files & locations.
 
 Shows location and contents of user config (`~/.config/worktrunk/config.toml`)
-and project config (`.config/wt.toml`).
+and project config (`.config/wt.toml`). Also shows system config if present.
 
 If a config file doesn't exist, shows defaults that would be used.
 
