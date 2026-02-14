@@ -19,7 +19,7 @@ use std::any::Any;
 use std::path::{Path, PathBuf};
 
 use crate::git::WorktreeInfo;
-pub use types::{IntegrationReason, LineDiff, path_dir_name};
+pub use types::{IntegrationReason, LineDiff, PushResult, path_dir_name};
 
 pub use detect::detect_vcs;
 pub use jj::JjWorkspace;
@@ -193,10 +193,13 @@ pub trait Workspace: Send + Sync {
     ///
     /// Git: fast-forward merge target branch to HEAD (local push), with
     ///   auto-stash/restore of non-conflicting changes in the target worktree.
+    ///   Emits progress messages (commit graph, diffstat) to stderr during the
+    ///   operation.
     /// Jj: set bookmark to feature tip, then `jj git push --bookmark`.
     ///
-    /// Returns number of commits pushed (0 = already up-to-date).
-    fn advance_and_push(&self, target: &str, path: &Path) -> anyhow::Result<usize>;
+    /// Returns a [`PushResult`] with commit count and optional stats for the
+    /// command handler to format the final success message.
+    fn advance_and_push(&self, target: &str, path: &Path) -> anyhow::Result<PushResult>;
 
     // ====== Squash ======
 

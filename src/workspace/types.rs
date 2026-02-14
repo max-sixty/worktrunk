@@ -111,6 +111,17 @@ impl IntegrationReason {
     }
 }
 
+/// Result of a push operation, with enough data for the command handler
+/// to format the final success/info message.
+#[derive(Debug, Clone)]
+pub struct PushResult {
+    /// Number of commits pushed (0 = already up-to-date).
+    pub commit_count: usize,
+    /// Summary parts for the success message parenthetical.
+    /// E.g. `["1 commit", "1 file", "+1"]`. Empty for jj or when count is 0.
+    pub stats_summary: Vec<String>,
+}
+
 /// Extract the directory name from a path for display purposes.
 ///
 /// Returns the last component of the path as a string, or "(unknown)" if

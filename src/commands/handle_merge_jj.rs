@@ -76,7 +76,7 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
 
     // Push (best-effort — may not have a git remote)
     match workspace.advance_and_push(target, &ws_path) {
-        Ok(n) if n > 0 => {
+        Ok(result) if result.commit_count > 0 => {
             eprintln!("{}", success_message(cformat!("Pushed <bold>{target}</>")));
         }
         _ => {}

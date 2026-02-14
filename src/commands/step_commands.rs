@@ -370,12 +370,24 @@ pub fn step_push(target: Option<&str>) -> anyhow::Result<()> {
 
     let target = ws.resolve_integration_target(target)?;
 
-    let commit_count = ws.advance_and_push(&target, &cwd)?;
+    let result = ws.advance_and_push(&target, &cwd)?;
 
-    if commit_count > 0 {
+    if result.commit_count > 0 {
+        let mut summary_parts = vec![format!(
+            "{} commit{}",
+            result.commit_count,
+            if result.commit_count == 1 { "" } else { "s" }
+        )];
+        summary_parts.extend(result.stats_summary);
+
+        let stats_str = summary_parts.join(", ");
+        let paren_close = cformat!("<bright-black>)</>");
         eprintln!(
             "{}",
-            success_message(cformat!("Pushed to <bold>{target}</>"))
+            success_message(cformat!(
+                "Pushed to <bold>{target}</> <bright-black>({stats_str}</>{}",
+                paren_close
+            ))
         );
     } else {
         eprintln!(

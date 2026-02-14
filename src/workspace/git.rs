@@ -18,9 +18,12 @@ use crate::git::{
 use crate::path::format_path_for_display;
 
 use super::types::{IntegrationReason, LineDiff, path_dir_name};
-use crate::styling::{eprintln, progress_message, warning_message};
+use crate::styling::{
+    GUTTER_OVERHEAD, eprintln, format_with_gutter, get_terminal_width, progress_message,
+    warning_message,
+};
 
-use super::{RebaseOutcome, VcsKind, Workspace, WorkspaceItem};
+use super::{PushResult, RebaseOutcome, VcsKind, Workspace, WorkspaceItem};
 
 impl Workspace for Repository {
     fn kind(&self) -> VcsKind {
@@ -202,7 +205,7 @@ impl Workspace for Repository {
         Ok(())
     }
 
-    fn advance_and_push(&self, target: &str, _path: &Path) -> anyhow::Result<usize> {
+    fn advance_and_push(&self, target: &str, _path: &Path) -> anyhow::Result<PushResult> {
         // Check fast-forward
         if !self.is_ancestor(target, "HEAD")? {
             let commits_formatted = self
@@ -225,12 +228,22 @@ impl Workspace for Repository {
 
         let commit_count = self.count_commits(target, "HEAD")?;
         if commit_count == 0 {
-            return Ok(0);
+            return Ok(PushResult {
+                commit_count: 0,
+                stats_summary: Vec::new(),
+            });
         }
+
+        // Collect display data before push (diffstat, stats summary)
+        let range = format!("{target}..HEAD");
+        let stats_summary = self.diff_stats_summary(&["diff", "--shortstat", &range]);
 
         // Auto-stash non-conflicting changes in the target worktree (if present)
         let target_wt_path = self.worktree_for_branch(target)?;
         let stash_info = stash_target_if_dirty(self, target_wt_path.as_ref(), target)?;
+
+        // Show progress message, commit graph, and diffstat (between stash and restore)
+        show_push_preview(self, target, commit_count, &range);
 
         // Local push to advance the target branch
         let git_common_dir = self.git_common_dir();
@@ -252,7 +265,10 @@ impl Workspace for Repository {
             error: e.to_string(),
         })?;
 
-        Ok(commit_count)
+        Ok(PushResult {
+            commit_count,
+            stats_summary,
+        })
     }
 
     fn squash_commits(&self, target: &str, message: &str, _path: &Path) -> anyhow::Result<String> {
@@ -280,6 +296,52 @@ impl Workspace for Repository {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+/// Print push progress: commit count, graph, and diffstat.
+///
+/// Emits the `◎ Pushing N commit(s) to TARGET @ SHA` progress message,
+/// followed by the commit graph and diffstat with gutter formatting.
+fn show_push_preview(repo: &Repository, target: &str, commit_count: usize, range: &str) {
+    let commit_text = if commit_count == 1 {
+        "commit"
+    } else {
+        "commits"
+    };
+    let head_sha = repo
+        .run_command(&["rev-parse", "--short", "HEAD"])
+        .unwrap_or_default();
+    let head_sha = head_sha.trim();
+
+    eprintln!(
+        "{}",
+        progress_message(cformat!(
+            "Pushing {commit_count} {commit_text} to <bold>{target}</> @ <dim>{head_sha}</>"
+        ))
+    );
+
+    // Commit graph
+    if let Ok(log_output) =
+        repo.run_command(&["log", "--color=always", "--graph", "--oneline", range])
+    {
+        eprintln!("{}", format_with_gutter(&log_output, None));
+    }
+
+    // Diffstat
+    let term_width = get_terminal_width();
+    let stat_width = term_width.saturating_sub(GUTTER_OVERHEAD);
+    if let Ok(diff_stat) = repo.run_command(&[
+        "diff",
+        "--color=always",
+        "--stat",
+        &format!("--stat-width={stat_width}"),
+        range,
+    ]) {
+        let diff_stat = diff_stat.trim_end();
+        if !diff_stat.is_empty() {
+            eprintln!("{}", format_with_gutter(diff_stat, None));
+        }
     }
 }
 

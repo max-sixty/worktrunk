@@ -13,7 +13,7 @@ use super::types::{IntegrationReason, LineDiff};
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, progress_message};
 
-use super::{RebaseOutcome, VcsKind, Workspace, WorkspaceItem};
+use super::{PushResult, RebaseOutcome, VcsKind, Workspace, WorkspaceItem};
 
 /// Jujutsu-backed workspace implementation.
 ///
@@ -451,7 +451,7 @@ impl Workspace for JjWorkspace {
         Ok(())
     }
 
-    fn advance_and_push(&self, target: &str, path: &Path) -> anyhow::Result<usize> {
+    fn advance_and_push(&self, target: &str, path: &Path) -> anyhow::Result<PushResult> {
         // Guard: target must be an ancestor of the feature tip.
         // Prevents moving the bookmark sideways or backward (which would lose commits).
         if !self.is_rebased_onto(target, path)? {
@@ -471,7 +471,10 @@ impl Workspace for JjWorkspace {
         let commit_count = count_output.lines().filter(|l| !l.is_empty()).count();
 
         if commit_count == 0 {
-            return Ok(0);
+            return Ok(PushResult {
+                commit_count: 0,
+                stats_summary: Vec::new(),
+            });
         }
 
         // Move bookmark to feature tip
@@ -480,7 +483,10 @@ impl Workspace for JjWorkspace {
         // Push to remote
         run_jj_command(path, &["git", "push", "--bookmark", target])?;
 
-        Ok(commit_count)
+        Ok(PushResult {
+            commit_count,
+            stats_summary: Vec::new(),
+        })
     }
 
     fn squash_commits(&self, target: &str, message: &str, path: &Path) -> anyhow::Result<String> {
