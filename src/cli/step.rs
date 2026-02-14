@@ -278,6 +278,51 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
         force: bool,
     },
 
+    /// \[experimental\] Evaluate a template expression
+    ///
+    /// Prints the result to stdout for use in scripts and shell substitutions.
+    #[command(
+        after_long_help = r#"Evaluates a template expression in the current worktree context and prints the result to stdout. All [hook template variables and filters](@/hook.md#template-variables) are available.
+
+Output goes to stdout with no decoration, making it suitable for shell substitution and piping.
+
+## Examples
+
+Get the port for the current branch:
+
+```console
+$ wt step eval '{{ branch | hash_port }}'
+16066
+```
+
+Use in shell substitution:
+
+```console
+$ curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health
+```
+
+Combine multiple values:
+
+```console
+$ wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'
+16066,16739
+```
+
+Use conditionals and filters:
+
+```console
+$ wt step eval '{{ branch | sanitize_db }}'
+feature_auth_oauth2_a1b
+```
+
+Note: This command is experimental and may change in future versions.
+"#
+    )]
+    Eval {
+        /// Template expression to evaluate
+        template: String,
+    },
+
     /// \[experimental\] Run command in each worktree
     ///
     /// Executes sequentially with real-time output; continues on failure.

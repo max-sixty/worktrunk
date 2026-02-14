@@ -34,6 +34,7 @@ wt step push
 - `rebase` — Rebase onto target branch
 - `push` — Fast-forward target to current branch
 - `copy-ignored` — Copy gitignored files between worktrees
+- `eval` — [experimental] Evaluate a template expression
 - `for-each` — [experimental] Run a command in every worktree
 
 ## See also
@@ -57,6 +58,7 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>push</span></b>          Fast-forward target to current branch
   <b><span class=c>rebase</span></b>        Rebase onto target
   <b><span class=c>copy-ignored</span></b>  Copy gitignored files to another worktree
+  <b><span class=c>eval</span></b>          [experimental] Evaluate a template expression
   <b><span class=c>for-each</span></b>      [experimental] Run command in each worktree
   <b><span class=c>relocate</span></b>      [experimental] Move worktrees to expected paths
 
@@ -359,6 +361,73 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
       <b><span class=c>--force</span></b>
           Overwrite existing files in destination
 
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: hooks, templates; -vv: debug report)
+{% end %}
+
+## wt step eval
+
+[experimental] Evaluate a template expression. Prints the result to stdout for use in scripts and shell substitutions.
+
+Evaluates a template expression in the current worktree context and prints the result to stdout. All [hook template variables and filters](@/hook.md#template-variables) are available.
+
+Output goes to stdout with no decoration, making it suitable for shell substitution and piping.
+
+### Examples
+
+Get the port for the current branch:
+
+```bash
+$ wt step eval '{{ branch | hash_port }}'
+16066
+```
+
+Use in shell substitution:
+
+```bash
+$ curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health
+```
+
+Combine multiple values:
+
+```bash
+$ wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'
+16066,16739
+```
+
+Use conditionals and filters:
+
+```bash
+$ wt step eval '{{ branch | sanitize_db }}'
+feature_auth_oauth2_a1b
+```
+
+Note: This command is experimental and may change in future versions.
+
+### Command reference
+
+{% terminal() %}
+wt step eval - [experimental] Evaluate a template expression
+
+Prints the result to stdout for use in scripts and shell substitutions.
+
+Usage: <b><span class=c>wt step eval</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;TEMPLATE&gt;</span>
+
+<b><span class=g>Arguments:</span></b>
+  <span class=c>&lt;TEMPLATE&gt;</span>
+          Template expression to evaluate
+
+<b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 
