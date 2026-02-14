@@ -599,7 +599,7 @@ impl Repository {
         progress_message: Option<String>,
     ) -> anyhow::Result<()> {
         // Allow tests to override delay threshold (-1 to disable, 0 for immediate)
-        let delay_ms = std::env::var("WT_TEST_DELAYED_STREAM_MS")
+        let delay_ms = std::env::var("WORKTRUNK_TEST_DELAYED_STREAM_MS")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(delay_ms);
