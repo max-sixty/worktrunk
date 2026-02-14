@@ -106,7 +106,7 @@ pub trait Workspace: Send + Sync {
 
     /// Name of the default/trunk branch. Returns `None` if unknown.
     /// Git: "main"/"master"/etc. Jj: `None` (uses `trunk()` revset).
-    fn default_branch_name(&self) -> anyhow::Result<Option<String>>;
+    fn default_branch_name(&self) -> Option<String>;
 
     // ====== Status per workspace ======
 

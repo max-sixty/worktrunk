@@ -261,9 +261,9 @@ impl Workspace for JjWorkspace {
         }
     }
 
-    fn default_branch_name(&self) -> anyhow::Result<Option<String>> {
+    fn default_branch_name(&self) -> Option<String> {
         // jj uses trunk() revset instead of a named default branch
-        Ok(None)
+        None
     }
 
     fn is_dirty(&self, path: &Path) -> anyhow::Result<bool> {

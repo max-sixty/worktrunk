@@ -1001,7 +1001,7 @@ fn test_jj_workspace_trait_methods(mut jj_repo: JjTestRepo) {
     assert!(!ws.has_staging_area());
 
     // default_branch_name — jj uses trunk() revset, returns None
-    assert_eq!(ws.default_branch_name().unwrap(), None);
+    assert_eq!(ws.default_branch_name(), None);
 
     // is_dirty — clean workspace (empty @ on top of trunk)
     assert!(!ws.is_dirty(jj_repo.root_path()).unwrap());

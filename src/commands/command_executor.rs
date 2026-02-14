@@ -117,7 +117,7 @@ pub fn build_hook_context(
     map.insert("worktree".into(), worktree);
 
     // Default branch
-    if let Ok(Some(default_branch)) = ctx.workspace.default_branch_name() {
+    if let Some(default_branch) = ctx.workspace.default_branch_name() {
         map.insert("default_branch".into(), default_branch);
     }
 

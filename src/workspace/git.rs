@@ -69,8 +69,8 @@ impl Workspace for Repository {
         self.primary_worktree()
     }
 
-    fn default_branch_name(&self) -> anyhow::Result<Option<String>> {
-        Ok(self.default_branch())
+    fn default_branch_name(&self) -> Option<String> {
+        self.default_branch()
     }
 
     fn is_dirty(&self, path: &Path) -> anyhow::Result<bool> {
@@ -617,7 +617,7 @@ mod tests {
         assert!(ws.default_workspace_path().unwrap().is_some());
 
         // default_branch_name
-        let _ = ws.default_branch_name().unwrap();
+        let _ = ws.default_branch_name();
 
         // is_dirty — clean state
         assert!(!ws.is_dirty(&repo_path).unwrap());
