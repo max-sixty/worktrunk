@@ -297,10 +297,17 @@ fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result<String> {
     }
 
     let shell = ShellConfig::get();
+    // TODO(claude-code-nesting): Claude Code sets CLAUDECODE=1 and blocks nested
+    // invocations, even non-interactive `claude -p`. Remove this env_remove if
+    // Claude Code relaxes the check for non-interactive mode. If they don't fix
+    // it, replace with a deprecation warning + config.new migration to have users
+    // add `CLAUDECODE=` to their command string themselves.
+    // https://github.com/anthropics/claude-code/issues/25803
     let output = Cmd::new(shell.executable.to_string_lossy())
         .args(&shell.args)
         .arg(command)
         .stdin_bytes(prompt)
+        .env_remove("CLAUDECODE")
         .run()
         .context("Failed to spawn LLM command")?;
 
