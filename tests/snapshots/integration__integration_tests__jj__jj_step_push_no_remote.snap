@@ -20,14 +20,20 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 101
 ----- stdout -----
 
 ----- stderr -----
+
+thread 'main' [CHANGE_ID_SHORT] at src/main.rs:875:21:
+Multiline error without context: Changes to push to origin:
+  Add [CHANGE_ID_SHORT] main to 26009b197b6c
+Error: No git remote named 'origin'
+note: run with `RUST_BACKTRACE=1` environment [CHANGE_ID_SHORT] to display a backtrace
