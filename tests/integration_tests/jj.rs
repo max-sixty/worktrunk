@@ -1153,6 +1153,70 @@ fn test_jj_merge_zero_commits_ahead(mut jj_repo: JjTestRepo) {
     ));
 }
 
+/// Merge workspace at trunk with removal (NoCommitsAhead + remove_if_requested)
+/// (handle_merge_jj.rs lines 69-77: NoCommitsAhead with workspace removal).
+#[rstest]
+fn test_jj_merge_zero_commits_ahead_with_remove(mut jj_repo: JjTestRepo) {
+    let ws = jj_repo.add_workspace("at-trunk2");
+    run_jj_in(&ws, &["edit", "@-"]);
+
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "merge",
+        &["main"],
+        Some(&ws)
+    ));
+}
+
+/// Merge no-net-changes workspace with removal (NoNetChanges + remove)
+/// (handle_merge_jj.rs line 82-84: NoNetChanges with workspace removal).
+#[rstest]
+fn test_jj_merge_no_net_changes_with_remove(mut jj_repo: JjTestRepo) {
+    let ws = jj_repo.add_workspace("noop2");
+    std::fs::write(ws.join("temp.txt"), "temporary content").unwrap();
+    run_jj_in(&ws, &["describe", "-m", "Add temp file"]);
+    run_jj_in(&ws, &["new"]);
+    std::fs::remove_file(ws.join("temp.txt")).unwrap();
+    run_jj_in(&ws, &["describe", "-m", "Remove temp file"]);
+    run_jj_in(&ws, &["new"]);
+
+    // Without --no-remove, workspace should be removed
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "merge",
+        &["main"],
+        Some(&ws)
+    ));
+}
+
+/// Switch records previous workspace for `wt switch -`
+/// (handle_switch_jj.rs line 79: record_switch_previous).
+#[rstest]
+fn test_jj_switch_records_previous(mut jj_repo: JjTestRepo) {
+    let _ws_a = jj_repo.add_workspace("bravo");
+
+    // Switch to bravo — should record "default" as previous
+    let mut switch_cmd = jj_repo.wt_command();
+    configure_cli_command(&mut switch_cmd);
+    switch_cmd
+        .current_dir(jj_repo.root_path())
+        .args(["switch", "bravo"]);
+    let result = switch_cmd.output().unwrap();
+    assert!(
+        result.status.success(),
+        "switch to bravo failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    // Now `wt switch -` from bravo should switch back to default
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "switch",
+        &["-"],
+        Some(jj_repo.workspace_path("bravo"))
+    ));
+}
+
 /// Switch to default from default (exercises is_default path)
 /// (handle_switch_jj.rs line 45: existing_path found + already at workspace).
 #[rstest]
