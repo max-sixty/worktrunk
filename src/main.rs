@@ -6,7 +6,7 @@ use clap::error::ErrorKind as ClapErrorKind;
 use color_print::{ceprintln, cformat};
 use std::process;
 use worktrunk::config::{UserConfig, set_config_path};
-use worktrunk::git::{Repository, exit_code, set_base_path};
+use worktrunk::git::{Repository, exit_code};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::extract_filename_from_path;
 use worktrunk::styling::{
@@ -123,9 +123,23 @@ fn main() {
     });
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
-    // Initialize base path from -C flag if provided
-    if let Some(path) = cli.directory {
-        set_base_path(path);
+    // Change working directory from -C flag if provided.
+    // This affects ALL code (git, jj, etc.) that uses relative paths or current_dir().
+    // Note: $PWD (used for symlink-aware path display) is not updated because set_var
+    // is unsafe. This means paths may display canonically when -C targets a symlinked
+    // directory. The symlink mapping code handles stale $PWD gracefully (returns None).
+    if let Some(ref path) = cli.directory {
+        std::env::set_current_dir(path).unwrap_or_else(|e| {
+            eprintln!(
+                "{}",
+                error_message(format!(
+                    "Cannot change to directory '{}': {}",
+                    path.display(),
+                    e
+                ))
+            );
+            process::exit(1);
+        });
     }
 
     // Initialize config path from --config flag if provided

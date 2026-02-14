@@ -20,7 +20,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -148,25 +148,6 @@ pub enum ResolvedWorktree {
     },
 }
 
-/// Global base path for repository operations, set by -C flag.
-static BASE_PATH: OnceLock<PathBuf> = OnceLock::new();
-
-/// Default base path when -C flag is not provided.
-static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."));
-
-/// Initialize the global base path for repository operations.
-///
-/// This should be called once at program startup from main().
-/// If not called, defaults to "." (current directory).
-pub fn set_base_path(path: PathBuf) {
-    BASE_PATH.set(path).ok();
-}
-
-/// Get the base path for repository operations.
-fn base_path() -> &'static PathBuf {
-    BASE_PATH.get().unwrap_or(&DEFAULT_BASE_PATH)
-}
-
 /// Repository state for git operations.
 ///
 /// Represents the shared state of a git repository (the `.git` directory).
@@ -211,7 +192,7 @@ impl Repository {
     /// For worktree-specific operations on paths other than cwd, use
     /// `repo.worktree_at(path)` to get a [`WorkingTree`].
     pub fn current() -> anyhow::Result<Self> {
-        Self::at(base_path().clone())
+        Self::at(".")
     }
 
     /// Discover the repository from the specified path.
@@ -287,7 +268,7 @@ impl Repository {
     ///
     /// This is the primary way to get a [`WorkingTree`] for worktree-specific operations.
     pub fn current_worktree(&self) -> WorkingTree<'_> {
-        self.worktree_at(base_path().clone())
+        self.worktree_at(".")
     }
 
     /// Get a worktree view at a specific path.

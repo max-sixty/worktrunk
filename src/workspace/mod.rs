@@ -163,7 +163,7 @@ pub trait Workspace: Send + Sync {
 
     /// Filesystem path of the current workspace/worktree.
     ///
-    /// Git: uses `current_worktree().path()` (respects `-C` flag / base_path).
+    /// Git: uses `current_worktree().path()` (respects `-C` flag via cwd).
     /// Jj: uses `current_workspace().path` (found via cwd).
     fn current_workspace_path(&self) -> anyhow::Result<PathBuf>;
 
