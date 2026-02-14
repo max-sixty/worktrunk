@@ -565,7 +565,7 @@ impl Workspace for JjWorkspace {
 
     fn switch_previous(&self) -> Option<String> {
         // Best-effort: read from jj repo config
-        self.run_command(&["config", "get", "--repo", "worktrunk.history"])
+        self.run_command(&["config", "get", "worktrunk.history"])
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())

@@ -1059,3 +1059,103 @@ fn test_jj_step_squash_then_push(mut jj_repo: JjTestRepo) {
     // Push should still work (not say "nothing to push")
     assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "step", &["push"], Some(&ws)));
 }
+
+// ============================================================================
+// Coverage: switch-previous, merge edge cases, hook paths
+// ============================================================================
+
+/// Switch to previous workspace with `wt switch -`
+/// (handle_switch_jj.rs lines 33-37, workspace/jj.rs switch_previous + set_switch_previous).
+#[rstest]
+fn test_jj_switch_previous(mut jj_repo: JjTestRepo) {
+    let _ws_a = jj_repo.add_workspace("alpha");
+
+    // Set config with test HOME so `wt` (which uses test HOME) finds it.
+    // jj 0.38+ stores per-repo config in the user config dir, not in .jj/.
+    let home = jj_repo.home_path();
+    let output = Command::new("jj")
+        .args([
+            "--no-pager",
+            "--color",
+            "never",
+            "config",
+            "set",
+            "--repo",
+            "worktrunk.history",
+            "alpha",
+        ])
+        .current_dir(jj_repo.root_path())
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("HOME", home)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "jj config set failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // `wt switch -` should resolve "-" to "alpha" and switch there
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "switch", &["-"], None));
+}
+
+/// Merge workspace whose commits result in no net changes (NoNetChanges path)
+/// (handle_merge_jj.rs lines 82-84, step_commands.rs lines 174-180).
+#[rstest]
+fn test_jj_merge_no_net_changes(mut jj_repo: JjTestRepo) {
+    let ws = jj_repo.add_workspace("noop");
+
+    // Add a file, then remove it — net effect is zero changes vs trunk
+    std::fs::write(ws.join("temp.txt"), "temporary content").unwrap();
+    run_jj_in(&ws, &["describe", "-m", "Add temp file"]);
+    run_jj_in(&ws, &["new"]);
+    std::fs::remove_file(ws.join("temp.txt")).unwrap();
+    run_jj_in(&ws, &["describe", "-m", "Remove temp file"]);
+    run_jj_in(&ws, &["new"]);
+
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "merge",
+        &["main"],
+        Some(&ws)
+    ));
+}
+
+/// Merge with --no-squash and --no-remove (rebase-only mode, workspace retained)
+/// (handle_merge_jj.rs line 87-89: rebase_onto_trunk path).
+#[rstest]
+fn test_jj_merge_no_squash_no_remove(jj_repo_with_feature: JjTestRepo) {
+    let repo = jj_repo_with_feature;
+    let feature_path = repo.workspace_path("feature");
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main", "--no-squash", "--no-remove"],
+        Some(feature_path)
+    ));
+}
+
+/// Merge workspace that's at trunk (squash finds 0 commits ahead)
+/// (handle_merge_jj.rs line 70: SquashResult::NoCommitsAhead match arm,
+///  step_commands.rs lines 131-132: ahead==0 early return).
+#[rstest]
+fn test_jj_merge_zero_commits_ahead(mut jj_repo: JjTestRepo) {
+    // Create workspace and move it to exactly trunk (@ = main)
+    let ws = jj_repo.add_workspace("at-trunk");
+    // Abandon the auto-created empty commit so @ points to trunk
+    run_jj_in(&ws, &["edit", "@-"]);
+
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "merge",
+        &["main", "--no-remove"],
+        Some(&ws)
+    ));
+}
+
+/// Switch to default from default (exercises is_default path)
+/// (handle_switch_jj.rs line 45: existing_path found + already at workspace).
+#[rstest]
+fn test_jj_switch_default_from_default(jj_repo: JjTestRepo) {
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "switch", &["default"], None));
+}
