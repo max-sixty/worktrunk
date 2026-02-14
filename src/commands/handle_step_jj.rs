@@ -14,7 +14,6 @@ use worktrunk::config::UserConfig;
 use worktrunk::styling::{eprintln, progress_message, success_message};
 use worktrunk::workspace::{JjWorkspace, Workspace};
 
-use super::handle_merge_jj::{push_bookmark, squash_into_trunk};
 use super::step_commands::SquashResult;
 
 /// Handle `wt step commit` for jj repositories.
@@ -139,7 +138,8 @@ pub fn handle_squash_jj(target: Option<&str>) -> anyhow::Result<SquashResult> {
         ))
     );
 
-    squash_into_trunk(&workspace, &cwd, &feature_tip, &ws_name, target)?;
+    let message = collect_squash_message(&workspace, &cwd, &feature_tip, &ws_name, target)?;
+    workspace.squash_commits(target, &message, &cwd)?;
 
     eprintln!(
         "{}",
@@ -149,41 +149,41 @@ pub fn handle_squash_jj(target: Option<&str>) -> anyhow::Result<SquashResult> {
     Ok(SquashResult::Squashed)
 }
 
-/// Handle `wt step push` for jj repositories.
-///
-/// Moves the target bookmark to the feature tip and pushes to remote.
-pub fn handle_push_jj(target: Option<&str>) -> anyhow::Result<()> {
-    let workspace = JjWorkspace::from_current_dir()?;
-    let cwd = std::env::current_dir()?;
-
-    // Detect trunk bookmark
-    let detected_target = workspace.trunk_bookmark()?;
-    let target = target.unwrap_or(detected_target.as_str());
-
-    let feature_tip = workspace.feature_tip(&cwd)?;
-
-    // Guard: target must be an ancestor of (or equal to) the feature tip.
-    // This prevents moving the bookmark sideways or backward (which would lose commits).
-    // Note: we intentionally don't short-circuit when feature_tip == target — after
-    // `step squash`, the local bookmark is already moved but the remote needs pushing.
-    if !workspace.is_rebased_onto(target, &cwd)? {
-        anyhow::bail!(
-            "Cannot push: feature is not ahead of {target}. Rebase first with `wt step rebase`."
-        );
-    }
-
-    // Move bookmark to feature tip (no-op if already there, e.g., after squash)
-    workspace.run_in_dir(&cwd, &["bookmark", "set", target, "-r", &feature_tip])?;
-
-    // Push (best-effort — may not have a git remote)
-    push_bookmark(&workspace, &cwd, target);
-
-    Ok(())
-}
-
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/// Collect descriptions from feature commits for a squash message.
+///
+/// Used by both `step squash` and `merge` to generate the commit message
+/// for squash operations.
+pub(crate) fn collect_squash_message(
+    workspace: &JjWorkspace,
+    ws_path: &Path,
+    feature_tip: &str,
+    ws_name: &str,
+    target: &str,
+) -> anyhow::Result<String> {
+    let from_revset = format!("{target}..{feature_tip}");
+    let descriptions = workspace.run_in_dir(
+        ws_path,
+        &[
+            "log",
+            "-r",
+            &from_revset,
+            "--no-graph",
+            "-T",
+            r#"self.description() ++ "\n""#,
+        ],
+    )?;
+
+    let message = descriptions.trim();
+    if message.is_empty() {
+        Ok(format!("Merge workspace {ws_name}"))
+    } else {
+        Ok(message.to_string())
+    }
+}
 
 /// Generate a commit message for jj changes.
 ///

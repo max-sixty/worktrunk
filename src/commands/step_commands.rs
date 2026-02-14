@@ -358,14 +358,33 @@ pub fn handle_squash(
 
 /// Handle `wt step push` command.
 ///
-/// Routes to the appropriate VCS handler: jj push for jj repos,
-/// git push (fast-forward to target) for git repos.
+/// Fully trait-based: opens the workspace and uses `advance_and_push`
+/// for both git and jj, with zero VcsKind branching.
+///
+/// Each VCS implementation validates push safety internally:
+/// - Git checks fast-forward (is_ancestor) — allows merge commits
+/// - Jj checks that target is ancestor of feature tip (is_rebased_onto)
 pub fn step_push(target: Option<&str>) -> anyhow::Result<()> {
+    let ws = worktrunk::workspace::open_workspace()?;
     let cwd = std::env::current_dir()?;
-    if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
-        return super::handle_step_jj::handle_push_jj(target);
+
+    let target = ws.resolve_integration_target(target)?;
+
+    let commit_count = ws.advance_and_push(&target, &cwd)?;
+
+    if commit_count > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!("Pushed to <bold>{target}</>"))
+        );
+    } else {
+        eprintln!(
+            "{}",
+            info_message(cformat!("Already up to date with <bold>{target}</>"))
+        );
     }
-    super::worktree::handle_push(target, "Pushed to", None)
+
+    Ok(())
 }
 
 /// Handle `wt step squash --show-prompt`

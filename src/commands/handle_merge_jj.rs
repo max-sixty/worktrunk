@@ -62,13 +62,25 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let squash = opts.squash.unwrap_or(resolved.merge.squash());
 
     if squash {
-        squash_into_trunk(&workspace, &ws_path, &feature_tip, &ws_name, target)?;
+        let message = super::handle_step_jj::collect_squash_message(
+            &workspace,
+            &ws_path,
+            &feature_tip,
+            &ws_name,
+            target,
+        )?;
+        workspace.squash_commits(target, &message, &ws_path)?;
     } else {
         rebase_onto_trunk(&workspace, &ws_path, target)?;
     }
 
     // Push (best-effort — may not have a git remote)
-    push_bookmark(&workspace, &ws_path, target);
+    match workspace.advance_and_push(target, &ws_path) {
+        Ok(n) if n > 0 => {
+            eprintln!("{}", success_message(cformat!("Pushed <bold>{target}</>")));
+        }
+        _ => {}
+    }
 
     let mode = if squash { "Squashed" } else { "Merged" };
     eprintln!(
@@ -79,62 +91,6 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     );
 
     remove_if_requested(&workspace, &resolved, &opts, &ws_name, &ws_path)
-}
-
-/// Squash all feature changes into a single commit on trunk.
-///
-/// 1. `jj new {target}` — create empty commit on target
-/// 2. `jj squash --from '{target}..{tip}' --into @` — combine feature into it
-/// 3. `jj bookmark set {target} -r @` — update bookmark
-///
-/// Uses the target bookmark name (not `trunk()` revset) because `trunk()`
-/// only resolves with remote tracking branches.
-pub(crate) fn squash_into_trunk(
-    workspace: &JjWorkspace,
-    ws_path: &Path,
-    feature_tip: &str,
-    ws_name: &str,
-    target: &str,
-) -> anyhow::Result<()> {
-    workspace.run_in_dir(ws_path, &["new", target])?;
-
-    // Collect the descriptions from feature commits for the squash message
-    let from_revset = format!("{target}..{feature_tip}");
-    let descriptions = workspace.run_in_dir(
-        ws_path,
-        &[
-            "log",
-            "-r",
-            &from_revset,
-            "--no-graph",
-            "-T",
-            r#"self.description() ++ "\n""#,
-        ],
-    )?;
-
-    let message = descriptions.trim();
-    let message = if message.is_empty() {
-        format!("Merge workspace {ws_name}")
-    } else {
-        message.to_string()
-    };
-
-    workspace.run_in_dir(
-        ws_path,
-        &[
-            "squash",
-            "--from",
-            &from_revset,
-            "--into",
-            "@",
-            "-m",
-            &message,
-        ],
-    )?;
-
-    workspace.run_in_dir(ws_path, &["bookmark", "set", target, "-r", "@"])?;
-
-    Ok(())
 }
 
 /// Rebase the feature branch onto trunk without squashing.
@@ -150,18 +106,6 @@ fn rebase_onto_trunk(workspace: &JjWorkspace, ws_path: &Path, target: &str) -> a
     workspace.run_in_dir(ws_path, &["bookmark", "set", target, "-r", &feature_tip])?;
 
     Ok(())
-}
-
-/// Push the bookmark to remote (best-effort).
-pub(crate) fn push_bookmark(workspace: &JjWorkspace, ws_path: &Path, target: &str) {
-    match workspace.push_to_target(target, ws_path) {
-        Ok(()) => {
-            eprintln!("{}", success_message(cformat!("Pushed <bold>{target}</>")));
-        }
-        Err(e) => {
-            log::debug!("Push failed (may not have remote): {e}");
-        }
-    }
 }
 
 /// Remove the workspace if `--no-remove` wasn't specified.

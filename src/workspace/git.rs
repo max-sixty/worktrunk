@@ -12,10 +12,13 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use color_print::cformat;
 
-use crate::git::{Repository, check_integration, compute_integration_lazy};
+use crate::git::{
+    GitError, Repository, check_integration, compute_integration_lazy, parse_porcelain_z,
+};
+use crate::path::format_path_for_display;
 
 use super::types::{IntegrationReason, LineDiff, path_dir_name};
-use crate::styling::{eprintln, progress_message};
+use crate::styling::{eprintln, progress_message, warning_message};
 
 use super::{RebaseOutcome, VcsKind, Workspace, WorkspaceItem};
 
@@ -199,12 +202,199 @@ impl Workspace for Repository {
         Ok(())
     }
 
+    fn advance_and_push(&self, target: &str, _path: &Path) -> anyhow::Result<usize> {
+        // Check fast-forward
+        if !self.is_ancestor(target, "HEAD")? {
+            let commits_formatted = self
+                .run_command(&[
+                    "log",
+                    "--color=always",
+                    "--graph",
+                    "--oneline",
+                    &format!("HEAD..{target}"),
+                ])?
+                .trim()
+                .to_string();
+            return Err(GitError::NotFastForward {
+                target_branch: target.to_string(),
+                commits_formatted,
+                in_merge_context: false,
+            }
+            .into());
+        }
+
+        let commit_count = self.count_commits(target, "HEAD")?;
+        if commit_count == 0 {
+            return Ok(0);
+        }
+
+        // Auto-stash non-conflicting changes in the target worktree (if present)
+        let target_wt_path = self.worktree_for_branch(target)?;
+        let stash_info = stash_target_if_dirty(self, target_wt_path.as_ref(), target)?;
+
+        // Local push to advance the target branch
+        let git_common_dir = self.git_common_dir();
+        let push_target = format!("HEAD:{target}");
+        let push_result = self.run_command(&[
+            "push",
+            "--receive-pack=git -c receive.denyCurrentBranch=updateInstead receive-pack",
+            &git_common_dir.to_string_lossy(),
+            &push_target,
+        ]);
+
+        // Restore stash regardless of push result
+        if let Some((wt_path, stash_ref)) = stash_info {
+            restore_stash(self, &wt_path, &stash_ref);
+        }
+
+        push_result.map_err(|e| GitError::PushFailed {
+            target_branch: target.to_string(),
+            error: e.to_string(),
+        })?;
+
+        Ok(commit_count)
+    }
+
+    fn squash_commits(&self, target: &str, message: &str, _path: &Path) -> anyhow::Result<String> {
+        let merge_base = self
+            .merge_base("HEAD", target)?
+            .context("Cannot squash: no common ancestor with target branch")?;
+
+        self.run_command(&["reset", "--soft", &merge_base])
+            .context("Failed to reset to merge base")?;
+
+        self.run_command(&["commit", "-m", message])
+            .context("Failed to create squash commit")?;
+
+        let sha = self
+            .run_command(&["rev-parse", "--short", "HEAD"])?
+            .trim()
+            .to_string();
+
+        Ok(sha)
+    }
+
     fn has_staging_area(&self) -> bool {
         true
     }
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+/// Auto-stash non-conflicting dirty changes in the target worktree.
+///
+/// Returns `Some((path, stash_ref))` if changes were stashed, `None` otherwise.
+/// Errors if the target worktree has dirty files that overlap with the push range.
+fn stash_target_if_dirty(
+    repo: &Repository,
+    target_wt_path: Option<&PathBuf>,
+    target: &str,
+) -> anyhow::Result<Option<(PathBuf, String)>> {
+    let Some(wt_path) = target_wt_path else {
+        return Ok(None);
+    };
+    if !wt_path.exists() {
+        return Ok(None);
+    }
+
+    let wt = repo.worktree_at(wt_path);
+    if !wt.is_dirty()? {
+        return Ok(None);
+    }
+
+    // Check for overlapping files
+    let push_files = repo.changed_files(target, "HEAD")?;
+    let wt_status = wt.run_command(&["status", "--porcelain", "-z"])?;
+    let wt_files = parse_porcelain_z(&wt_status);
+
+    let overlapping: Vec<String> = push_files
+        .iter()
+        .filter(|f| wt_files.contains(f))
+        .cloned()
+        .collect();
+
+    if !overlapping.is_empty() {
+        return Err(GitError::ConflictingChanges {
+            target_branch: target.to_string(),
+            files: overlapping,
+            worktree_path: wt_path.clone(),
+        }
+        .into());
+    }
+
+    // Stash non-conflicting changes
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let stash_name = format!(
+        "worktrunk autostash::{}::{}::{}",
+        target,
+        std::process::id(),
+        nanos
+    );
+
+    eprintln!(
+        "{}",
+        progress_message(cformat!(
+            "Stashing changes in <bold>{}</>...",
+            format_path_for_display(wt_path)
+        ))
+    );
+
+    wt.run_command(&["stash", "push", "--include-untracked", "-m", &stash_name])?;
+
+    // Find the stash ref
+    let list_output = wt.run_command(&["stash", "list", "--format=%gd%x00%gs%x00"])?;
+    let mut parts = list_output.split('\0');
+    while let Some(id) = parts.next() {
+        if id.is_empty() {
+            continue;
+        }
+        if let Some(message) = parts.next()
+            && (message == stash_name || message.ends_with(&stash_name))
+        {
+            return Ok(Some((wt_path.clone(), id.to_string())));
+        }
+    }
+
+    // Stash entry not found — verify worktree is clean (stash may have been empty)
+    if wt.is_dirty()? {
+        anyhow::bail!(
+            "Failed to stash changes in {}; worktree still has uncommitted changes",
+            format_path_for_display(wt_path)
+        );
+    }
+
+    // Worktree is clean and no stash entry — nothing needed to be stashed
+    Ok(None)
+}
+
+/// Restore a previously created stash (best-effort).
+fn restore_stash(repo: &Repository, wt_path: &Path, stash_ref: &str) {
+    eprintln!(
+        "{}",
+        progress_message(cformat!(
+            "Restoring stashed changes in <bold>{}</>...",
+            format_path_for_display(wt_path)
+        ))
+    );
+
+    let success = repo
+        .worktree_at(wt_path)
+        .run_command(&["stash", "pop", stash_ref])
+        .is_ok();
+
+    if !success {
+        eprintln!(
+            "{}",
+            warning_message(cformat!(
+                "Failed to restore stash <bold>{stash_ref}</>; run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
+                path = format_path_for_display(wt_path),
+            ))
+        );
     }
 }
 

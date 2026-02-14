@@ -451,6 +451,76 @@ impl Workspace for JjWorkspace {
         Ok(())
     }
 
+    fn advance_and_push(&self, target: &str, path: &Path) -> anyhow::Result<usize> {
+        // Guard: target must be an ancestor of the feature tip.
+        // Prevents moving the bookmark sideways or backward (which would lose commits).
+        if !self.is_rebased_onto(target, path)? {
+            anyhow::bail!(
+                "Cannot push: feature is not ahead of {target}. Rebase first with `wt step rebase`."
+            );
+        }
+
+        let feature_tip = self.feature_tip(path)?;
+
+        // Count commits ahead of target
+        let revset = format!("{target}..{feature_tip}");
+        let count_output = run_jj_command(
+            path,
+            &["log", "-r", &revset, "--no-graph", "-T", r#""x\n""#],
+        )?;
+        let commit_count = count_output.lines().filter(|l| !l.is_empty()).count();
+
+        if commit_count == 0 {
+            return Ok(0);
+        }
+
+        // Move bookmark to feature tip
+        run_jj_command(path, &["bookmark", "set", target, "-r", &feature_tip])?;
+
+        // Push to remote
+        run_jj_command(path, &["git", "push", "--bookmark", target])?;
+
+        Ok(commit_count)
+    }
+
+    fn squash_commits(&self, target: &str, message: &str, path: &Path) -> anyhow::Result<String> {
+        let feature_tip = self.feature_tip(path)?;
+        let from_revset = format!("{target}..{feature_tip}");
+
+        // Create empty commit on target, squash feature into it
+        run_jj_command(path, &["new", target])?;
+        run_jj_command(
+            path,
+            &[
+                "squash",
+                "--from",
+                &from_revset,
+                "--into",
+                "@",
+                "-m",
+                message,
+            ],
+        )?;
+
+        // Update bookmark
+        run_jj_command(path, &["bookmark", "set", target, "-r", "@"])?;
+
+        // Return the change ID of the squashed commit
+        let output = run_jj_command(
+            path,
+            &[
+                "log",
+                "-r",
+                "@",
+                "--no-graph",
+                "-T",
+                r#"self.change_id().short(12)"#,
+            ],
+        )?;
+
+        Ok(output.trim().to_string())
+    }
+
     fn has_staging_area(&self) -> bool {
         false
     }
