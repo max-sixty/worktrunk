@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.23.3
+
+### Improved
+
+- **Error display for failed commands**: Failed git commands are now shown in a separate bash-highlighted gutter block instead of inline parenthesized text, making long commands much more readable. ([#1001](https://github.com/max-sixty/worktrunk/pull/1001))
+
+- **PowerShell detection and diagnostics**: Detect PowerShell via `PSModulePath` environment variable so Windows users get "shell requires restart" instead of "not installed". `wt config show` now displays the detected shell and verification hints. Fixes [#885](https://github.com/max-sixty/worktrunk/issues/885). ([#987](https://github.com/max-sixty/worktrunk/pull/987), thanks @DiTo97 for reporting)
+
+### Fixed
+
+- **Fish shell wrapper incompatible with fish < 3.1**: The shell wrapper used `VAR=value command` syntax which requires fish 3.1+. Now uses `env VAR=value ...` for compatibility with all fish versions. Fixes [#999](https://github.com/max-sixty/worktrunk/issues/999). ([#1000](https://github.com/max-sixty/worktrunk/pull/1000), thanks @chrisrickard for reporting)
+
+- **Symlink paths resolved in display messages**: Status messages like "Created worktree @ path" showed canonical paths instead of the user's symlink path. Now consistent with cd directives. Fixes [#968](https://github.com/max-sixty/worktrunk/issues/968). ([#985](https://github.com/max-sixty/worktrunk/pull/985), thanks @brooke-hamilton for reporting)
+
+### Documentation
+
+- **Deduplicated manual shell setup**: Removed duplicated per-shell eval snippets from `wt config --help`, referencing `wt config shell init --help` instead. ([#986](https://github.com/max-sixty/worktrunk/pull/986))
+
+- **PowerShell diagnostic guidance**: Added PowerShell-specific debugging steps to shell integration and troubleshooting references. ([#993](https://github.com/max-sixty/worktrunk/pull/993))
+
 ## 0.23.2
 
 ### Improved

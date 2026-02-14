@@ -18,17 +18,15 @@ env:
 
 jobs:
   claude:
-    # Only run when body/comment contains @claude AND secrets are available.
-    # Review comments on fork PRs don't receive repository secrets (GitHub
-    # security restriction) so the job skips. Use a regular PR comment on the
-    # Conversation tab to trigger @claude on fork PRs instead.
+    # Only run when body/comment contains @claude.
+    # Note: secrets cannot be used in job-level `if:` (actions/runner#520) —
+    # doing so causes GitHub to fail the workflow on push validation. For review
+    # comments on fork PRs (which don't receive secrets), we detect forks via
+    # github.event context instead. Use a Conversation tab comment for fork PRs.
     if: |
-      secrets.CLAUDE_CODE_OAUTH_TOKEN != '' &&
-      (
-        (github.event_name == 'issues' && contains(github.event.issue.body, '@claude')) ||
-        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
-      )
+      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude')) ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     permissions:
       contents: write # Allow pushing commits

@@ -9,6 +9,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     PSModulePath: ""
@@ -33,7 +34,7 @@ Usage: [1m[36mwt config show[0m [36m[OPTIONS][0m
 
 [1m[32mOptions:[0m
       [1m[36m--full[0m
-          Run diagnostic checks (CI tools, commit generation)
+          Run diagnostic checks (CI tools, commit generation, version)
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
@@ -62,3 +63,4 @@ Use [2m--full[0m to run diagnostic checks:
 This tests:
 - [1mCI tool status[0m — Whether [2mgh[0m (GitHub) or [2mglab[0m (GitLab) is installed and authenticated
 - [1mCommit generation[0m — Whether the LLM command can generate commit messages
+- [1mVersion check[0m — Whether a newer version is available on GitHub

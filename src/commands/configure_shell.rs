@@ -563,6 +563,18 @@ fn configure_shell_file(
     }
 }
 
+/// Extract non-comment, non-blank lines from fish source for comparison.
+///
+/// This lets us detect existing installations even when comment text has changed
+/// between versions (e.g. updated documentation URLs).
+fn fish_code_lines(source: &str) -> Vec<&str> {
+    source
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect()
+}
+
 fn configure_fish_file(
     shell: Shell,
     path: &Path,
@@ -582,9 +594,9 @@ fn configure_fish_file(
         .then(|| fs::read_to_string(path).ok())
         .flatten()
     {
-        // Canonical detection: check if the file matches exactly what we write
-        // Trim both sides to handle trailing newlines consistently across platforms
-        if existing_content.trim() == content.trim() {
+        // Compare only non-comment lines so that comment changes (e.g. updated
+        // URLs) don't cause existing installations to appear unconfigured.
+        if fish_code_lines(&existing_content) == fish_code_lines(content) {
             return Ok(Some(ConfigureResult {
                 shell,
                 path: path.to_path_buf(),
@@ -1376,4 +1388,20 @@ mod tests {
 
     // Note: should_auto_configure_powershell() is tested via WORKTRUNK_TEST_POWERSHELL_ENV
     // override in tests/integration_tests/configure_shell.rs.
+
+    #[test]
+    fn test_fish_code_lines_strips_comments_and_blanks() {
+        let source = "# comment\n\nfunction wt\n    command wt $argv\nend\n";
+        assert_eq!(
+            fish_code_lines(source),
+            vec!["function wt", "command wt $argv", "end"]
+        );
+    }
+
+    #[test]
+    fn test_fish_code_lines_matches_despite_different_comments() {
+        let old = "# Docs: https://worktrunk.dev/docs/shell-integration\nfunction wt\n    command wt $argv\nend";
+        let new = "# Docs: https://worktrunk.dev/config/#shell-integration\nfunction wt\n    command wt $argv\nend";
+        assert_eq!(fish_code_lines(old), fish_code_lines(new));
+    }
 }

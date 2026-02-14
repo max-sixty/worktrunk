@@ -18,8 +18,8 @@ use shell_escape::escape;
 use super::HookType;
 use crate::path::format_path_for_display;
 use crate::styling::{
-    ERROR_SYMBOL, HINT_SYMBOL, error_message, format_with_gutter, hint_message, info_message,
-    suggest_command,
+    ERROR_SYMBOL, HINT_SYMBOL, error_message, format_bash_with_gutter, format_with_gutter,
+    hint_message, info_message, suggest_command,
 };
 
 /// Platform-specific reference type (PR vs MR).
@@ -93,6 +93,18 @@ pub trait RefContext {
     fn source_ref(&self) -> String;
 }
 
+/// Information about a failed command, for display in error messages.
+///
+/// Separates the command string from exit information so Display impls
+/// can style each part differently (bold command, gray exit code).
+#[derive(Debug, Clone)]
+pub struct FailedCommand {
+    /// The full command string, e.g., "git worktree add /path -b fix main"
+    pub command: String,
+    /// Exit information, e.g., "exit code 255" or "killed by signal"
+    pub exit_info: String,
+}
+
 /// Domain errors for git and worktree operations.
 ///
 /// This enum provides structured error data that can be pattern-matched and tested.
@@ -163,6 +175,8 @@ pub enum GitError {
         branch: String,
         base_branch: Option<String>,
         error: String,
+        /// The git command that failed, shown separately from git output
+        command: Option<FailedCommand>,
     },
     WorktreeRemovalFailed {
         branch: String,
@@ -441,6 +455,7 @@ impl std::fmt::Display for GitError {
                 branch,
                 base_branch,
                 error,
+                command,
             } => {
                 let header = if let Some(base) = base_branch {
                     error_message(cformat!(
@@ -449,7 +464,19 @@ impl std::fmt::Display for GitError {
                 } else {
                     error_message(cformat!("Failed to create worktree for <bold>{branch}</>"))
                 };
-                write!(f, "{}", format_error_block(header, error))
+                write!(f, "{}", format_error_block(header, error))?;
+                if let Some(cmd) = command {
+                    write!(
+                        f,
+                        "\n{}\n{}",
+                        hint_message(cformat!(
+                            "Failed command, <bright-black>{}</>:",
+                            cmd.exit_info
+                        )),
+                        format_bash_with_gutter(&cmd.command)
+                    )?;
+                }
+                Ok(())
             }
 
             GitError::WorktreeRemovalFailed {
@@ -1150,6 +1177,7 @@ mod tests {
             branch: "feature".into(),
             base_branch: Some("main".into()),
             error: "git error".into(),
+            command: None,
         };
         let display = err.to_string();
         assert!(display.contains("feature"));
@@ -1161,9 +1189,26 @@ mod tests {
             branch: "feature".into(),
             base_branch: None,
             error: "git error".into(),
+            command: None,
         };
         let display = err.to_string();
         assert!(display.contains("feature"));
+
+        // With command info
+        let err = GitError::WorktreeCreationFailed {
+            branch: "feature".into(),
+            base_branch: Some("main".into()),
+            error: "fatal: ref exists".into(),
+            command: Some(FailedCommand {
+                command: "git worktree add /path -b feature main".into(),
+                exit_info: "exit code 128".into(),
+            }),
+        };
+        let display = err.to_string();
+        assert!(display.contains("fatal: ref exists"));
+        assert!(display.contains("worktree add"));
+        assert!(display.contains("Failed command"));
+        assert!(display.contains("exit code 128"));
     }
 
     #[test]

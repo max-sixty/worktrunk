@@ -2712,6 +2712,12 @@ fn setup_snapshot_settings_for_paths_with_home(
         r"(git: \x1b\[1m)[0-9]+\.[0-9]+\.[0-9]+[^\x1b]*",
         "${1}[VERSION]",
     );
+    // Version check: "Up to date (<bold>VERSION</>)" or "current: VERSION)"
+    // version_str() can be: v0.8.5, v0.8.5-2-gabcdef, v0.8.5-dirty, 0.8.5, or bare hash (8465a1f)
+    settings.add_filter(
+        r"(current: |Up to date \(\x1b\[1m)(?:v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40})",
+        "${1}[VERSION]",
+    );
 
     // Normalize project root paths in "Binary invoked as:" debug output
     // Tests run cargo which produces paths like /path/to/worktrunk/target/debug/wt
@@ -2762,10 +2768,12 @@ fn setup_snapshot_settings_for_paths_with_home(
     // Format: "* " + yellow code + 7-char hex hash + reset
     settings.add_filter(r"\* \x1b\[33m[a-f0-9]{7}\x1b\[m", "* \x1b[33m[HASH]\x1b[m");
 
-    // Filter out CARGO_LLVM_COV env variables from snapshot YAML headers.
+    // Filter out cargo-llvm-cov env variables from snapshot YAML headers.
     // These are only present during coverage runs and cause snapshot mismatches.
-    settings.add_filter(r#"  CARGO_LLVM_COV: "1"\n"#, "");
-    settings.add_filter(r#"  CARGO_LLVM_COV_TARGET_DIR: "[^"]+"\n"#, "");
+    // Note: YAML indentation in the info.env section is 4 spaces.
+    settings.add_filter(r#"    CARGO_LLVM_COV: "1"\n"#, "");
+    settings.add_filter(r#"    CARGO_LLVM_COV_TARGET_DIR: "[^"]+"\n"#, "");
+    settings.add_filter(r#"    LLVM_PROFILE_FILE: "[^"]+"\n"#, "");
 
     settings
 }
