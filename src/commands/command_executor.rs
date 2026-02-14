@@ -4,6 +4,7 @@ use worktrunk::HookType;
 use worktrunk::config::{Command, CommandConfig, UserConfig, expand_template};
 use worktrunk::git::Repository;
 use worktrunk::path::to_posix_path;
+use worktrunk::workspace::{Workspace, build_worktree_map};
 
 use super::hook_filter::HookSource;
 
@@ -14,9 +15,9 @@ pub struct PreparedCommand {
     pub context_json: String,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct CommandContext<'a> {
-    pub repo: &'a Repository,
+    pub workspace: &'a dyn Workspace,
     pub config: &'a UserConfig,
     /// Current branch name, if on a branch (None in detached HEAD state).
     pub branch: Option<&'a str>,
@@ -24,21 +25,37 @@ pub struct CommandContext<'a> {
     pub yes: bool,
 }
 
+impl std::fmt::Debug for CommandContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommandContext")
+            .field("workspace_kind", &self.workspace.kind())
+            .field("branch", &self.branch)
+            .field("worktree_path", &self.worktree_path)
+            .field("yes", &self.yes)
+            .finish()
+    }
+}
+
 impl<'a> CommandContext<'a> {
     pub fn new(
-        repo: &'a Repository,
+        workspace: &'a dyn Workspace,
         config: &'a UserConfig,
         branch: Option<&'a str>,
         worktree_path: &'a Path,
         yes: bool,
     ) -> Self {
         Self {
-            repo,
+            workspace,
             config,
             branch,
             worktree_path,
             yes,
         }
+    }
+
+    /// Downcast to git Repository. Returns None for jj workspaces.
+    pub fn repo(&self) -> Option<&Repository> {
+        self.workspace.as_any().downcast_ref::<Repository>()
     }
 
     /// Get branch name, using "HEAD" as fallback for detached HEAD state.
@@ -51,7 +68,7 @@ impl<'a> CommandContext<'a> {
     /// Uses the remote URL if available, otherwise the canonical repository path.
     /// Returns None only if the path is not valid UTF-8.
     pub fn project_id(&self) -> Option<String> {
-        self.repo.project_identifier().ok()
+        self.workspace.project_identifier().ok()
     }
 
     /// Get the commit generation config, merging project-specific settings.
@@ -68,7 +85,7 @@ pub fn build_hook_context(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
 ) -> HashMap<String, String> {
-    let repo_root = ctx.repo.repo_path();
+    let repo_root = ctx.workspace.root_path().unwrap_or_default();
     let repo_name = repo_root
         .file_name()
         .and_then(|n| n.to_str())
@@ -100,36 +117,38 @@ pub fn build_hook_context(
     map.insert("worktree".into(), worktree);
 
     // Default branch
-    if let Some(default_branch) = ctx.repo.default_branch() {
+    if let Ok(Some(default_branch)) = ctx.workspace.default_branch_name() {
         map.insert("default_branch".into(), default_branch);
     }
 
     // Primary worktree path (where established files live)
-    if let Ok(Some(path)) = ctx.repo.primary_worktree() {
+    if let Ok(Some(path)) = ctx.workspace.default_workspace_path() {
         let path_str = to_posix_path(&path.to_string_lossy());
         map.insert("primary_worktree_path".into(), path_str.clone());
         // Deprecated alias
         map.insert("main_worktree_path".into(), path_str);
     }
 
-    if let Ok(commit) = ctx.repo.run_command(&["rev-parse", "HEAD"]) {
-        let commit = commit.trim();
-        map.insert("commit".into(), commit.into());
-        if commit.len() >= 7 {
-            map.insert("short_commit".into(), commit[..7].into());
+    // Git-specific context (commit SHA, remote, upstream)
+    if let Some(repo) = ctx.repo() {
+        if let Ok(commit) = repo.run_command(&["rev-parse", "HEAD"]) {
+            let commit = commit.trim();
+            map.insert("commit".into(), commit.into());
+            if commit.len() >= 7 {
+                map.insert("short_commit".into(), commit[..7].into());
+            }
         }
-    }
 
-    if let Ok(remote) = ctx.repo.primary_remote() {
-        map.insert("remote".into(), remote.to_string());
-        // Add remote URL for conditional hook execution (e.g., GitLab vs GitHub)
-        if let Some(url) = ctx.repo.remote_url(&remote) {
-            map.insert("remote_url".into(), url);
-        }
-        if let Some(branch) = ctx.branch
-            && let Ok(Some(upstream)) = ctx.repo.branch(branch).upstream()
-        {
-            map.insert("upstream".into(), upstream);
+        if let Ok(remote) = repo.primary_remote() {
+            map.insert("remote".into(), remote.to_string());
+            if let Some(url) = repo.remote_url(&remote) {
+                map.insert("remote_url".into(), url);
+            }
+            if let Some(branch) = ctx.branch
+                && let Ok(Some(upstream)) = repo.branch(branch).upstream()
+            {
+                map.insert("upstream".into(), upstream);
+            }
         }
     }
 
@@ -157,6 +176,7 @@ fn expand_commands(
     }
 
     let base_context = build_hook_context(ctx, extra_vars);
+    let worktree_map = build_worktree_map(ctx.workspace);
 
     // Convert to &str references for expand_template
     let vars: HashMap<&str, &str> = base_context
@@ -171,14 +191,16 @@ fn expand_commands(
             Some(name) => format!("{}:{}", source, name),
             None => format!("{} {} hook", source, hook_type),
         };
-        let expanded_str = expand_template(&cmd.template, &vars, true, ctx.repo, &template_name)
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to expand command template '{}': {}",
-                    cmd.template,
-                    e
-                )
-            })?;
+        let expanded_str =
+            expand_template(&cmd.template, &vars, true, &worktree_map, &template_name).map_err(
+                |e| {
+                    anyhow::anyhow!(
+                        "Failed to expand command template '{}': {}",
+                        cmd.template,
+                        e
+                    )
+                },
+            )?;
 
         // Build per-command JSON with hook_type and hook_name
         let mut cmd_context = base_context.clone();

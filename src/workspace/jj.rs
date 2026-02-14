@@ -531,6 +531,35 @@ impl Workspace for JjWorkspace {
         false
     }
 
+    fn load_project_config(&self) -> anyhow::Result<Option<crate::config::ProjectConfig>> {
+        crate::config::ProjectConfig::load_from_root(&self.root).map_err(|e| anyhow::anyhow!("{e}"))
+    }
+
+    fn wt_logs_dir(&self) -> PathBuf {
+        self.root.join(".jj").join("wt-logs")
+    }
+
+    fn switch_previous(&self) -> Option<String> {
+        // Best-effort: read from jj repo config
+        self.run_command(&["config", "get", "--repo", "worktrunk.history"])
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    fn set_switch_previous(&self, name: Option<&str>) -> anyhow::Result<()> {
+        match name {
+            Some(name) => {
+                self.run_command(&["config", "set", "--repo", "worktrunk.history", name])?;
+            }
+            None => {
+                // Best-effort unset — jj config unset may not exist in older versions
+                let _ = self.run_command(&["config", "unset", "--repo", "worktrunk.history"]);
+            }
+        }
+        Ok(())
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

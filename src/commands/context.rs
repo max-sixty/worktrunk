@@ -91,17 +91,14 @@ impl CommandEnv {
     }
 
     /// Build a `CommandContext` tied to this environment.
-    ///
-    /// Requires a git workspace (hooks currently need `Repository`).
-    /// Returns an error for non-git workspaces.
-    pub fn context(&self, yes: bool) -> anyhow::Result<CommandContext<'_>> {
-        Ok(CommandContext::new(
-            self.require_repo()?,
+    pub fn context(&self, yes: bool) -> CommandContext<'_> {
+        CommandContext::new(
+            self.workspace.as_ref(),
             &self.config,
             self.branch.as_deref(),
             &self.worktree_path,
             yes,
-        ))
+        )
     }
 
     /// Get branch name, returning error if in detached HEAD state.

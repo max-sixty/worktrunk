@@ -20,6 +20,7 @@ use worktrunk::styling::{
     INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, hint_message,
     info_message, success_message,
 };
+use worktrunk::workspace::build_worktree_map;
 
 use super::command_approval::approve_hooks_filtered;
 use super::command_executor::build_hook_context;
@@ -58,7 +59,7 @@ pub fn run_hook(
     // Derive context from current environment (branch-optional for CI compatibility)
     let env = CommandEnv::for_action_branchless()?;
     let repo = env.require_repo()?;
-    let ctx = env.context(yes)?;
+    let ctx = env.context(yes);
 
     // Load project config (optional - user hooks can run without project config)
     let project_config = repo.load_project_config()?;
@@ -492,7 +493,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
     } else {
         None
     };
-    let ctx = env.as_ref().map(|e| e.context(false)).transpose()?;
+    let ctx = env.as_ref().map(|e| e.context(false));
 
     let mut output = String::new();
 
@@ -693,7 +694,7 @@ fn render_hook_commands(
 /// Expand a command template with context variables
 fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: HookType) -> String {
     // Build extra vars based on hook type (same logic as run_hook approval)
-    let default_branch = ctx.repo.default_branch();
+    let default_branch = ctx.workspace.default_branch_name().ok().flatten();
     let extra_vars: Vec<(&str, &str)> = match hook_type {
         HookType::PreCommit => {
             // Pre-commit uses default branch as target (for comparison context)
@@ -714,9 +715,10 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
+    let worktree_map = build_worktree_map(ctx.workspace);
 
     // Use the standard template expansion (shell-escaped)
     // On any error, show both the template and error message
-    worktrunk::config::expand_template(template, &vars, true, ctx.repo, "hook preview")
+    worktrunk::config::expand_template(template, &vars, true, &worktree_map, "hook preview")
         .unwrap_or_else(|err| format!("# Template error: {}\n{}", err, template))
 }

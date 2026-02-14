@@ -16,6 +16,7 @@ pub(crate) mod jj;
 pub mod types;
 
 use std::any::Any;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::git::WorktreeInfo;
@@ -218,8 +219,45 @@ pub trait Workspace: Send + Sync {
     /// Git: true. Jj: false.
     fn has_staging_area(&self) -> bool;
 
+    // ====== Hooks & Configuration ======
+
+    /// Load project configuration (`.config/wt.toml`) from the repository root.
+    fn load_project_config(&self) -> anyhow::Result<Option<crate::config::ProjectConfig>>;
+
+    /// Directory for background hook log files.
+    /// Git: `.git/wt-logs/`. Jj: `.jj/wt-logs/`.
+    fn wt_logs_dir(&self) -> PathBuf;
+
+    /// Previously-switched-from workspace name (for `wt switch -`).
+    fn switch_previous(&self) -> Option<String>;
+
+    /// Record the current workspace name before switching away.
+    fn set_switch_previous(&self, name: Option<&str>) -> anyhow::Result<()>;
+
     /// Downcast to concrete type for VCS-specific operations.
     fn as_any(&self) -> &dyn Any;
+}
+
+/// Build a branch→path lookup map from workspace items.
+///
+/// Used by `expand_template` for the `worktree_path_of_branch()` template function.
+/// Maps both workspace names and branch names to their filesystem paths, so lookups
+/// work with either identifier.
+pub fn build_worktree_map(workspace: &dyn Workspace) -> HashMap<String, PathBuf> {
+    workspace
+        .list_workspaces()
+        .unwrap_or_default()
+        .into_iter()
+        .flat_map(|ws| {
+            let mut entries = vec![(ws.name.clone(), ws.path.clone())];
+            if let Some(branch) = &ws.branch
+                && branch != &ws.name
+            {
+                entries.push((branch.clone(), ws.path.clone()));
+            }
+            entries
+        })
+        .collect()
 }
 
 /// Detect VCS and open the appropriate workspace for the current directory.

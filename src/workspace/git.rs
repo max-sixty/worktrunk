@@ -294,6 +294,22 @@ impl Workspace for Repository {
         true
     }
 
+    fn load_project_config(&self) -> anyhow::Result<Option<crate::config::ProjectConfig>> {
+        Repository::load_project_config(self)
+    }
+
+    fn wt_logs_dir(&self) -> PathBuf {
+        Repository::wt_logs_dir(self)
+    }
+
+    fn switch_previous(&self) -> Option<String> {
+        Repository::switch_previous(self)
+    }
+
+    fn set_switch_previous(&self, name: Option<&str>) -> anyhow::Result<()> {
+        Repository::set_switch_previous(self, name)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

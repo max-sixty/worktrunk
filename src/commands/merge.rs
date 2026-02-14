@@ -164,7 +164,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         if squash_enabled {
             false // Squash path handles staging and committing
         } else {
-            let ctx = env.context(yes)?;
+            let ctx = env.context(yes);
             let mut options = CommitOptions::new(&ctx);
             options.target_branch = Some(&target_branch);
             options.no_verify = !verify;
@@ -212,7 +212,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Run pre-merge checks unless --no-verify was specified
     // Do this after commit/squash/rebase to validate the final state that will be pushed
     if verify {
-        let ctx = env.context(yes)?;
+        let ctx = env.context(yes);
         execute_hook(
             &ctx,
             HookType::PreMerge,

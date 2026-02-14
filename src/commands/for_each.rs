@@ -33,6 +33,7 @@ use worktrunk::shell_exec::ShellConfig;
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, progress_message, success_message, warning_message,
 };
+use worktrunk::workspace::build_worktree_map;
 
 use crate::commands::command_executor::{CommandContext, build_hook_context};
 use crate::commands::worktree_display_name;
@@ -79,8 +80,15 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
             .collect();
 
         // Expand template with full context (shell-escaped)
-        let command = expand_template(&command_template, &vars, true, &repo, "for-each command")
-            .map_err(|e| anyhow::anyhow!("Template expansion failed: {e}"))?;
+        let worktree_map = build_worktree_map(&repo);
+        let command = expand_template(
+            &command_template,
+            &vars,
+            true,
+            &worktree_map,
+            "for-each command",
+        )
+        .map_err(|e| anyhow::anyhow!("Template expansion failed: {e}"))?;
 
         // Build JSON context for stdin
         let context_json = serde_json::to_string(&context_map)

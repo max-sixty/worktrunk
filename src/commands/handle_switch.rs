@@ -8,6 +8,7 @@ use worktrunk::HookType;
 use worktrunk::config::{UserConfig, expand_template};
 use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, info_message};
+use worktrunk::workspace::build_worktree_map;
 
 use super::command_approval::approve_hooks;
 use super::command_executor::{CommandContext, build_hook_context};
@@ -36,7 +37,7 @@ pub struct SwitchOptions<'a> {
 /// Returns `true` if hooks are approved to run.
 /// Returns `false` if hooks should be skipped (`!verify` or user declined).
 pub(crate) fn approve_switch_hooks(
-    repo: &Repository,
+    workspace: &dyn worktrunk::workspace::Workspace,
     config: &UserConfig,
     plan: &SwitchPlan,
     yes: bool,
@@ -46,7 +47,13 @@ pub(crate) fn approve_switch_hooks(
         return Ok(false);
     }
 
-    let ctx = CommandContext::new(repo, config, Some(plan.branch()), plan.worktree_path(), yes);
+    let ctx = CommandContext::new(
+        workspace,
+        config,
+        Some(plan.branch()),
+        plan.worktree_path(),
+        yes,
+    );
     let approved = if plan.is_create() {
         approve_hooks(
             &ctx,
@@ -98,7 +105,7 @@ pub(crate) fn switch_extra_vars(result: &SwitchResult) -> Vec<(&str, &str)> {
 
 /// Spawn post-switch (and post-start for creates) background hooks.
 pub(crate) fn spawn_switch_background_hooks(
-    repo: &Repository,
+    workspace: &dyn worktrunk::workspace::Workspace,
     config: &UserConfig,
     result: &SwitchResult,
     branch: &str,
@@ -106,7 +113,7 @@ pub(crate) fn spawn_switch_background_hooks(
     extra_vars: &[(&str, &str)],
     hooks_display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let ctx = CommandContext::new(repo, config, Some(branch), result.path(), yes);
+    let ctx = CommandContext::new(workspace, config, Some(branch), result.path(), yes);
 
     let mut hooks = super::hooks::prepare_background_hooks(
         &ctx,
@@ -134,7 +141,7 @@ pub fn handle_switch(
     // Detect VCS type — route to jj handler if in a jj repo
     let cwd = std::env::current_dir()?;
     if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
-        return super::handle_switch_jj::handle_switch_jj(opts);
+        return super::handle_switch_jj::handle_switch_jj(opts, config, binary_name);
     }
 
     let SwitchOptions {
@@ -203,38 +210,54 @@ pub fn handle_switch(
     // Execute user command after post-start hooks have been spawned
     // Note: execute_args requires execute via clap's `requires` attribute
     if let Some(cmd) = execute {
-        // Build template context for expansion (includes base vars when creating)
         let ctx = CommandContext::new(&repo, config, Some(&branch_info.branch), result.path(), yes);
-        let template_vars = build_hook_context(&ctx, &extra_vars);
-        let vars: HashMap<&str, &str> = template_vars
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-
-        // Expand template variables in command (shell_escape: true for safety)
-        let expanded_cmd = expand_template(cmd, &vars, true, &repo, "--execute command")
-            .map_err(|e| anyhow::anyhow!("Failed to expand --execute template: {}", e))?;
-
-        // Append any trailing args (after --) to the execute command
-        // Each arg is also expanded, then shell-escaped
-        let full_cmd = if execute_args.is_empty() {
-            expanded_cmd
-        } else {
-            let expanded_args: Result<Vec<_>, _> = execute_args
-                .iter()
-                .map(|arg| {
-                    expand_template(arg, &vars, false, &repo, "--execute argument")
-                        .map_err(|e| anyhow::anyhow!("Failed to expand argument template: {}", e))
-                })
-                .collect();
-            let escaped_args: Vec<_> = expanded_args?
-                .iter()
-                .map(|arg| shlex::try_quote(arg).unwrap_or(arg.into()).into_owned())
-                .collect();
-            format!("{} {}", expanded_cmd, escaped_args.join(" "))
-        };
-        execute_user_command(&full_cmd, hooks_display_path.as_deref())?;
+        expand_and_execute_command(
+            &ctx,
+            cmd,
+            execute_args,
+            &extra_vars,
+            hooks_display_path.as_deref(),
+        )?;
     }
 
     Ok(())
+}
+
+/// Expand `--execute` template with context variables and run the command.
+///
+/// Shared between git and jj switch handlers.
+pub(crate) fn expand_and_execute_command(
+    ctx: &CommandContext<'_>,
+    cmd: &str,
+    execute_args: &[String],
+    extra_vars: &[(&str, &str)],
+    hooks_display_path: Option<&Path>,
+) -> anyhow::Result<()> {
+    let template_vars = build_hook_context(ctx, extra_vars);
+    let vars: HashMap<&str, &str> = template_vars
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let worktree_map = build_worktree_map(ctx.workspace);
+
+    let expanded_cmd = expand_template(cmd, &vars, true, &worktree_map, "--execute command")
+        .map_err(|e| anyhow::anyhow!("Failed to expand --execute template: {}", e))?;
+
+    let full_cmd = if execute_args.is_empty() {
+        expanded_cmd
+    } else {
+        let expanded_args: Result<Vec<_>, _> = execute_args
+            .iter()
+            .map(|arg| {
+                expand_template(arg, &vars, false, &worktree_map, "--execute argument")
+                    .map_err(|e| anyhow::anyhow!("Failed to expand argument template: {}", e))
+            })
+            .collect();
+        let escaped_args: Vec<_> = expanded_args?
+            .iter()
+            .map(|arg| shlex::try_quote(arg).unwrap_or(arg.into()).into_owned())
+            .collect();
+        format!("{} {}", expanded_cmd, escaped_args.join(" "))
+    };
+    execute_user_command(&full_cmd, hooks_display_path)
 }

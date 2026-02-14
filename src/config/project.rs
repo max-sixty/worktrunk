@@ -111,10 +111,27 @@ pub struct ProjectConfig {
 }
 
 impl ProjectConfig {
-    /// Load project configuration from .config/wt.toml in the repository root
+    /// Load project configuration from a root path without git-specific features.
     ///
-    /// Set `write_hints` to true for normal usage. Set to false during completion
-    /// to avoid side effects (writing git config hints).
+    /// Skips deprecation migration and unknown-field warnings (those require
+    /// git-specific context like main-worktree detection). Used by jj workspace
+    /// and other non-git contexts.
+    pub fn load_from_root(root: &std::path::Path) -> Result<Option<Self>, ConfigError> {
+        let config_path = root.join(".config").join("wt.toml");
+
+        if !config_path.exists() {
+            return Ok(None);
+        }
+
+        let contents = std::fs::read_to_string(&config_path)
+            .map_err(|e| ConfigError::Message(format!("Failed to read config file: {}", e)))?;
+
+        let config: ProjectConfig = toml::from_str(&contents)
+            .map_err(|e| ConfigError::Message(format!("Failed to parse TOML: {}", e)))?;
+
+        Ok(Some(config))
+    }
+
     pub fn load(
         repo: &crate::git::Repository,
         write_hints: bool,

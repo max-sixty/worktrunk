@@ -77,7 +77,7 @@ pub fn handle_remove_command(opts: RemoveOptions) -> anyhow::Result<()> {
     // Returns true if hooks should run (user approved)
     let approve_remove = |yes: bool| -> anyhow::Result<bool> {
         let env = CommandEnv::for_action_branchless()?;
-        let ctx = env.context(yes)?;
+        let ctx = env.context(yes);
         let approved = approve_hooks(
             &ctx,
             &[

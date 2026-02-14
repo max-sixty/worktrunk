@@ -61,7 +61,7 @@ pub fn step_commit(
     let _ = crate::output::prompt_commit_generation(&mut config);
 
     let env = CommandEnv::for_action("commit", config)?;
-    let ctx = env.context(yes)?;
+    let ctx = env.context(yes);
 
     // CLI flag overrides config value
     let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
@@ -132,7 +132,7 @@ pub fn handle_squash(
     let repo = env.require_repo()?;
     // Squash requires being on a branch (can't squash in detached HEAD)
     let current_branch = env.require_branch("squash")?.to_string();
-    let ctx = env.context(yes)?;
+    let ctx = env.context(yes);
     let resolved = env.resolved();
     let generator = CommitGenerator::new(&resolved.commit_generation);
 
