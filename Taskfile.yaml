@@ -53,7 +53,7 @@ tasks:
                 apt-get install -y -qq zsh fish
             fi
         fi
-        for shell in bash zsh fish; do
+        for shell in bash zsh fish nu; do
             command -v "$shell" &> /dev/null || { echo "Error: $shell not found"; exit 1; }
             echo "$shell available"
         done

@@ -1,0 +1,61 @@
+---
+source: src/shell/mod.rs
+expression: output
+---
+# worktrunk shell integration for nushell
+
+# Override wt command with file-based directive passing.
+# Creates a temp file, passes path via WORKTRUNK_DIRECTIVE_FILE, executes directives after.
+# WORKTRUNK_BIN can override the binary path (for testing dev builds).
+#
+# Note: Nushell's `source` is parse-time only, so we can't source dynamic paths.
+# Instead, we read the directive file and execute each line.
+def --env --wrapped wt [...args: string] {
+    let worktrunk_bin = if ($env.WORKTRUNK_BIN? | is-not-empty) {
+        $env.WORKTRUNK_BIN
+    } else {
+        # Find the external binary, not the custom function
+        # `which -a` is needed because `which` alone only returns the custom command
+        let external = (which -a wt | where type == "external")
+        if ($external | is-empty) {
+            error make {
+                msg: "wt binary not found in PATH. Install with 'cargo install --path .' or set $env.WORKTRUNK_BIN"
+            }
+        }
+        ($external | get 0.path)
+    }
+
+    let directive_file = (mktemp --tmpdir)
+
+    # Run command with directive file - output streams in real-time
+    with-env { WORKTRUNK_DIRECTIVE_FILE: $directive_file } {
+        ^$worktrunk_bin ...$args
+    }
+    let exit_code = $env.LAST_EXIT_CODE
+
+    # Process directive file line by line
+    if ($directive_file | path exists) and (open $directive_file --raw | str trim | is-not-empty) {
+        let directives = open $directive_file --raw | str trim | lines
+        for directive in $directives {
+            if ($directive | str starts-with "cd '") {
+                # Parse cd command: worktrunk emits "cd '<path>'" with POSIX quoting.
+                # Strip the "cd '" prefix and trailing "'" to extract the raw path.
+                # Note: paths with embedded single quotes use POSIX '\'' escaping,
+                # which this doesn't handle. A future improvement could have worktrunk
+                # emit raw paths instead of POSIX shell commands, letting each shell
+                # construct its native cd syntax.
+                let target_dir = $directive | str substring 4..-2
+                cd $target_dir
+            } else if ($directive | is-not-empty) {
+                # Execute other commands via sh for proper shell expansion
+                ^sh -c $directive
+            }
+        }
+    }
+
+    rm -f $directive_file
+
+    if $exit_code != 0 {
+        error make { msg: $"wt exited with code ($exit_code)" }
+    }
+}
