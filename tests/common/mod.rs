@@ -584,7 +584,7 @@ const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK", "1"),
     // Disable delayed streaming for deterministic output across platforms.
     // Without this, slow CI triggers progress messages that don't appear on faster systems.
-    ("WT_TEST_DELAYED_STREAM_MS", "-1"),
+    ("WORKTRUNK_TEST_DELAYED_STREAM_MS", "-1"),
 ];
 
 // NOTE: TERM is intentionally NOT in STATIC_TEST_ENV_VARS because:
@@ -695,7 +695,7 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env_remove("PSModulePath");
     // Disable auto PowerShell detection (tests that need it should set to "1")
     cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "0");
-    cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
+    cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
     // Enable warn-level logging so diagnostics show up in test failures
     cmd.env("RUST_LOG", "warn");
     // Treat Claude as not installed by default (tests can override with "1")
@@ -746,7 +746,7 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
     cmd.env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z");
     cmd.env("LC_ALL", "C");
     cmd.env("LANG", "C");
-    cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
+    cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
     cmd.env("GIT_TERMINAL_PROMPT", "0");
 }
 
@@ -1163,7 +1163,7 @@ impl TestRepo {
                 "XDG_CONFIG_HOME".to_string(),
                 self.home_path().join(".config").display().to_string(),
             ),
-            ("WT_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
+            ("WORKTRUNK_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
             (
                 "WORKTRUNK_CONFIG_PATH".to_string(),
                 self.test_config_path().display().to_string(),

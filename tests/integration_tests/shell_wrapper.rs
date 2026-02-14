@@ -696,7 +696,7 @@ const STANDARD_TEST_ENV: &[(&str, &str)] = &[
     ("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z"),
     ("LANG", "C"),
     ("LC_ALL", "C"),
-    ("WT_TEST_EPOCH", "1735776000"),
+    ("WORKTRUNK_TEST_EPOCH", "1735776000"),
 ];
 
 /// Build standard test env vars with config path
@@ -1589,7 +1589,7 @@ approved-commands = ["echo 'fish background task'"]
             ("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z"),
             ("LANG", "C"),
             ("LC_ALL", "C"),
-            ("WT_TEST_EPOCH", "1735776000"),
+            ("WORKTRUNK_TEST_EPOCH", "1735776000"),
         ];
 
         let (combined, exit_code) =
