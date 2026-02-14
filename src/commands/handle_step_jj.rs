@@ -1,20 +1,15 @@
 //! Step command handlers for jj repositories.
 //!
-//! jj equivalents of `step commit`, `step squash`, and `step push`.
-//! Reuses helpers from [`super::handle_merge_jj`] where possible.
-//!
-//! `step rebase` is handled by the unified [`super::step_commands::handle_rebase`]
-//! via the [`Workspace`] trait.
+//! jj equivalent of `step commit`. Squash and push are handled by unified
+//! implementations via the [`Workspace`] trait.
 
 use std::path::Path;
 
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::UserConfig;
-use worktrunk::styling::{eprintln, progress_message, success_message};
+use worktrunk::styling::{eprintln, success_message};
 use worktrunk::workspace::{JjWorkspace, Workspace};
-
-use super::step_commands::SquashResult;
 
 /// Handle `wt step commit` for jj repositories.
 ///
@@ -80,110 +75,9 @@ pub fn step_commit_jj(show_prompt: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Handle `wt step squash` for jj repositories.
-///
-/// Squashes all feature commits into a single commit on trunk.
-pub fn handle_squash_jj(target: Option<&str>) -> anyhow::Result<SquashResult> {
-    let workspace = JjWorkspace::from_current_dir()?;
-    let cwd = std::env::current_dir()?;
-
-    // Detect trunk bookmark
-    let detected_target = workspace.trunk_bookmark()?;
-    let target = target.unwrap_or(detected_target.as_str());
-
-    let feature_tip = workspace.feature_tip(&cwd)?;
-
-    // Check if already integrated (use target bookmark, not trunk() revset,
-    // because trunk() only resolves with remote tracking branches)
-    if workspace.is_integrated(&feature_tip, target)?.is_some() {
-        return Ok(SquashResult::NoCommitsAhead(target.to_string()));
-    }
-
-    // Count commits ahead of target
-    // (is_integrated already handles the 0-commit case — if feature_tip is not
-    // in target's ancestry, target..feature_tip must contain at least feature_tip)
-    let revset = format!("{target}..{feature_tip}");
-    let count_output = workspace.run_in_dir(
-        &cwd,
-        &["log", "-r", &revset, "--no-graph", "-T", r#""x\n""#],
-    )?;
-    let commit_count = count_output.lines().filter(|l| !l.is_empty()).count();
-
-    // Check if already a single commit and @ is empty (nothing to squash)
-    let at_empty = workspace.run_in_dir(
-        &cwd,
-        &[
-            "log",
-            "-r",
-            "@",
-            "--no-graph",
-            "-T",
-            r#"if(self.empty(), "empty", "content")"#,
-        ],
-    )?;
-    if commit_count == 1 && at_empty.trim() == "empty" {
-        return Ok(SquashResult::AlreadySingleCommit);
-    }
-
-    // Get workspace name for the squash message
-    let ws_name = workspace
-        .current_name(&cwd)?
-        .unwrap_or_else(|| "default".to_string());
-
-    eprintln!(
-        "{}",
-        progress_message(cformat!(
-            "Squashing {commit_count} commit{} into trunk...",
-            if commit_count == 1 { "" } else { "s" }
-        ))
-    );
-
-    let message = collect_squash_message(&workspace, &cwd, &feature_tip, &ws_name, target)?;
-    workspace.squash_commits(target, &message, &cwd)?;
-
-    eprintln!(
-        "{}",
-        success_message(cformat!("Squashed onto <bold>{target}</>"))
-    );
-
-    Ok(SquashResult::Squashed)
-}
-
 // ============================================================================
 // Helpers
 // ============================================================================
-
-/// Collect descriptions from feature commits for a squash message.
-///
-/// Used by both `step squash` and `merge` to generate the commit message
-/// for squash operations.
-pub(crate) fn collect_squash_message(
-    workspace: &JjWorkspace,
-    ws_path: &Path,
-    feature_tip: &str,
-    ws_name: &str,
-    target: &str,
-) -> anyhow::Result<String> {
-    let from_revset = format!("{target}..{feature_tip}");
-    let descriptions = workspace.run_in_dir(
-        ws_path,
-        &[
-            "log",
-            "-r",
-            &from_revset,
-            "--no-graph",
-            "-T",
-            r#"self.description() ++ "\n""#,
-        ],
-    )?;
-
-    let message = descriptions.trim();
-    if message.is_empty() {
-        Ok(format!("Merge workspace {ws_name}"))
-    } else {
-        Ok(message.to_string())
-    }
-}
 
 /// Generate a commit message for jj changes.
 ///

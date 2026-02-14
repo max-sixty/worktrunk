@@ -23,7 +23,7 @@ use crate::styling::{
     warning_message,
 };
 
-use super::{PushResult, RebaseOutcome, VcsKind, Workspace, WorkspaceItem};
+use super::{PushResult, RebaseOutcome, SquashOutcome, VcsKind, Workspace, WorkspaceItem};
 
 impl Workspace for Repository {
     fn kind(&self) -> VcsKind {
@@ -271,13 +271,51 @@ impl Workspace for Repository {
         })
     }
 
-    fn squash_commits(&self, target: &str, message: &str, _path: &Path) -> anyhow::Result<String> {
+    fn feature_head(&self, _path: &Path) -> anyhow::Result<String> {
+        Ok("HEAD".to_string())
+    }
+
+    fn diff_for_prompt(
+        &self,
+        base: &str,
+        head: &str,
+        _path: &Path,
+    ) -> anyhow::Result<(String, String)> {
+        let diff = self.run_command(&[
+            "-c",
+            "diff.noprefix=false",
+            "-c",
+            "diff.mnemonicPrefix=false",
+            "--no-pager",
+            "diff",
+            base,
+            head,
+        ])?;
+        let stat = self.run_command(&["--no-pager", "diff", base, head, "--stat"])?;
+        Ok((diff, stat))
+    }
+
+    fn recent_subjects(&self, start_ref: Option<&str>, count: usize) -> Option<Vec<String>> {
+        self.recent_commit_subjects(start_ref, count)
+    }
+
+    fn squash_commits(
+        &self,
+        target: &str,
+        message: &str,
+        _path: &Path,
+    ) -> anyhow::Result<SquashOutcome> {
         let merge_base = self
             .merge_base("HEAD", target)?
             .context("Cannot squash: no common ancestor with target branch")?;
 
         self.run_command(&["reset", "--soft", &merge_base])
             .context("Failed to reset to merge base")?;
+
+        // Check if there are actually any changes to commit (commits may cancel out)
+        if !self.current_worktree().has_staged_changes()? {
+            return Ok(SquashOutcome::NoNetChanges);
+        }
 
         self.run_command(&["commit", "-m", message])
             .context("Failed to create squash commit")?;
@@ -287,7 +325,7 @@ impl Workspace for Repository {
             .trim()
             .to_string();
 
-        Ok(sha)
+        Ok(SquashOutcome::Squashed(sha))
     }
 
     fn has_staging_area(&self) -> bool {

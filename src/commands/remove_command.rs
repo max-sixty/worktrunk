@@ -51,7 +51,7 @@ pub fn handle_remove_command(opts: RemoveOptions) -> anyhow::Result<()> {
     // Detect VCS type — route to jj handler if in a jj repo
     let cwd = std::env::current_dir()?;
     if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
-        return super::handle_remove_jj::handle_remove_jj(&branches);
+        return super::handle_remove_jj::handle_remove_jj(&branches, verify, yes);
     }
 
     // Handle deprecated --no-background flag

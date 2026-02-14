@@ -13,7 +13,7 @@ use super::types::{IntegrationReason, LineDiff};
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, progress_message};
 
-use super::{PushResult, RebaseOutcome, VcsKind, Workspace, WorkspaceItem};
+use super::{PushResult, RebaseOutcome, SquashOutcome, VcsKind, Workspace, WorkspaceItem};
 
 /// Jujutsu-backed workspace implementation.
 ///
@@ -489,7 +489,31 @@ impl Workspace for JjWorkspace {
         })
     }
 
-    fn squash_commits(&self, target: &str, message: &str, path: &Path) -> anyhow::Result<String> {
+    fn feature_head(&self, path: &Path) -> anyhow::Result<String> {
+        self.feature_tip(path)
+    }
+
+    fn diff_for_prompt(
+        &self,
+        base: &str,
+        head: &str,
+        path: &Path,
+    ) -> anyhow::Result<(String, String)> {
+        let diff = run_jj_command(path, &["diff", "--from", base, "--to", head])?;
+        let stat = run_jj_command(path, &["diff", "--stat", "--from", base, "--to", head])?;
+        Ok((diff, stat))
+    }
+
+    fn recent_subjects(&self, _start_ref: Option<&str>, _count: usize) -> Option<Vec<String>> {
+        None
+    }
+
+    fn squash_commits(
+        &self,
+        target: &str,
+        message: &str,
+        path: &Path,
+    ) -> anyhow::Result<SquashOutcome> {
         let feature_tip = self.feature_tip(path)?;
         let from_revset = format!("{target}..{feature_tip}");
 
@@ -524,7 +548,7 @@ impl Workspace for JjWorkspace {
             ],
         )?;
 
-        Ok(output.trim().to_string())
+        Ok(SquashOutcome::Squashed(output.trim().to_string()))
     }
 
     fn has_staging_area(&self) -> bool {

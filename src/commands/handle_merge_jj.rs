@@ -13,6 +13,7 @@ use worktrunk::workspace::{JjWorkspace, Workspace};
 
 use super::handle_remove_jj::remove_jj_workspace_and_cd;
 use super::merge::MergeOptions;
+use super::step_commands::{SquashResult, do_squash};
 
 /// Handle `wt merge` for jj repositories.
 ///
@@ -41,13 +42,8 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let detected_target = workspace.trunk_bookmark()?;
     let target = opts.target.unwrap_or(detected_target.as_str());
 
-    // Get the feature tip change ID. The workspace's working copy (@) is often
-    // an empty auto-snapshot; the real feature commits are its parents. Use @-
-    // when @ is empty so we don't reference a commit that jj may abandon.
+    // Check if already integrated
     let feature_tip = workspace.feature_tip(&ws_path)?;
-
-    // Check if already integrated (use target bookmark, not trunk() revset,
-    // because trunk() only resolves with remote tracking branches)
     if workspace.is_integrated(&feature_tip, target)?.is_some() {
         eprintln!(
             "{}",
@@ -62,14 +58,32 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let squash = opts.squash.unwrap_or(resolved.merge.squash());
 
     if squash {
-        let message = super::handle_step_jj::collect_squash_message(
+        let repo_name = project_id.as_deref().unwrap_or("repo");
+        match do_squash(
             &workspace,
-            &ws_path,
-            &feature_tip,
-            &ws_name,
             target,
-        )?;
-        workspace.squash_commits(target, &message, &ws_path)?;
+            &ws_path,
+            &resolved.commit_generation,
+            &ws_name,
+            repo_name,
+        )? {
+            SquashResult::NoCommitsAhead(_) => {
+                eprintln!(
+                    "{}",
+                    info_message(cformat!(
+                        "Workspace <bold>{ws_name}</> is already integrated into trunk"
+                    ))
+                );
+                return remove_if_requested(&workspace, &resolved, &opts, &ws_name, &ws_path);
+            }
+            SquashResult::AlreadySingleCommit | SquashResult::Squashed => {
+                // Proceed to push
+            }
+            SquashResult::NoNetChanges => {
+                // Feature commits canceled out — nothing to push, just remove
+                return remove_if_requested(&workspace, &resolved, &opts, &ws_name, &ws_path);
+            }
+        }
     } else {
         rebase_onto_trunk(&workspace, &ws_path, target)?;
     }
@@ -122,5 +136,6 @@ fn remove_if_requested(
         return Ok(());
     }
 
-    remove_jj_workspace_and_cd(workspace, ws_name, ws_path)
+    // Merge handles its own hook flow — don't run remove hooks here
+    remove_jj_workspace_and_cd(workspace, ws_name, ws_path, false, false)
 }

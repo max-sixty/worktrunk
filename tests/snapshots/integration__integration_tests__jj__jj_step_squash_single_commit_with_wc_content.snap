@@ -20,10 +20,10 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -31,5 +31,10 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mSquashing 2 commits into trunk...[39m
-[32m✓[39m [32mSquashed onto [1mmain[22m[39m
+[36m◎[39m [36mGenerating squash commit message...[39m
+[2m↳[22m [2mUsing [CHANGE_ID_SHORT] commit message. For LLM setup guide, run [90mwt config --help[39m[22m
+[107m [0m [1mSquash commits from main[22m
+[107m [0m 
+[107m [0m Combined commits:
+[107m [0m - First commit
+[32m✓[39m [32mSquashed @ [2m[CHANGE_ID][22m[39m

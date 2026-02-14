@@ -558,26 +558,26 @@ pub(crate) fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Re
     build_prompt(config, TemplateType::Commit, &context)
 }
 
+/// Pre-computed VCS-agnostic data needed for squash prompt/message generation.
+pub(crate) struct SquashInput<'a> {
+    pub target_branch: &'a str,
+    pub diff: &'a str,
+    pub diff_stat: &'a str,
+    pub subjects: &'a [String],
+    pub current_branch: &'a str,
+    pub repo_name: &'a str,
+    pub recent_commits: Option<&'a Vec<String>>,
+}
+
 pub(crate) fn generate_squash_message(
-    target_branch: &str,
-    merge_base: &str,
-    subjects: &[String],
-    current_branch: &str,
-    repo_name: &str,
+    input: &SquashInput<'_>,
     commit_generation_config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
         let command = commit_generation_config.command.as_ref().unwrap();
 
-        let prompt = build_squash_prompt(
-            target_branch,
-            merge_base,
-            subjects,
-            current_branch,
-            repo_name,
-            commit_generation_config,
-        )?;
+        let prompt = build_squash_prompt(input, commit_generation_config)?;
 
         return execute_llm_command(command, &prompt).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
@@ -593,9 +593,9 @@ pub(crate) fn generate_squash_message(
     }
 
     // Fallback: deterministic commit message (only when not configured)
-    let mut commit_message = format!("Squash commits from {}\n\n", target_branch);
+    let mut commit_message = format!("Squash commits from {}\n\n", input.target_branch);
     commit_message.push_str("Combined commits:\n");
-    for subject in subjects.iter().rev() {
+    for subject in input.subjects.iter().rev() {
         // Reverse so they're in chronological order
         commit_message.push_str(&format!("- {}\n", subject));
     }
@@ -604,44 +604,23 @@ pub(crate) fn generate_squash_message(
 
 /// Build the squash prompt from commits being squashed.
 ///
-/// Gathers the combined diff, commit subjects, branch names, and recent commits, then
-/// renders the prompt template. Used by both normal squash generation and `--show-prompt`.
+/// Accepts pre-computed diff data (from the Workspace trait), making this
+/// VCS-agnostic. Used by both normal squash generation and `--show-prompt`.
 pub(crate) fn build_squash_prompt(
-    target_branch: &str,
-    merge_base: &str,
-    subjects: &[String],
-    current_branch: &str,
-    repo_name: &str,
+    input: &SquashInput<'_>,
     config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
-    let repo = Repository::current()?;
-
-    // Get the combined diff and diffstat for all commits being squashed
-    // Use -c flags to ensure consistent format regardless of user's git config
-    let diff_output = repo.run_command(&[
-        "-c",
-        "diff.noprefix=false",
-        "-c",
-        "diff.mnemonicPrefix=false",
-        "--no-pager",
-        "diff",
-        merge_base,
-        "HEAD",
-    ])?;
-    let diff_stat = repo.run_command(&["--no-pager", "diff", merge_base, "HEAD", "--stat"])?;
-
     // Prepare diff (may filter if too large)
-    let prepared = prepare_diff(diff_output, diff_stat);
+    let prepared = prepare_diff(input.diff.to_string(), input.diff_stat.to_string());
 
-    let recent_commits = repo.recent_commit_subjects(Some(merge_base), 5);
     let context = TemplateContext {
         git_diff: &prepared.diff,
         git_diff_stat: &prepared.stat,
-        branch: current_branch,
-        recent_commits: recent_commits.as_ref(),
-        repo_name,
-        commits: subjects,
-        target_branch: Some(target_branch),
+        branch: input.current_branch,
+        recent_commits: input.recent_commits,
+        repo_name: input.repo_name,
+        commits: input.subjects,
+        target_branch: Some(input.target_branch),
     };
     build_prompt(config, TemplateType::Squash, &context)
 }

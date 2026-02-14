@@ -15,11 +15,12 @@ use anyhow::Context;
 use color_print::cformat;
 use ignore::gitignore::GitignoreBuilder;
 use worktrunk::HookType;
-use worktrunk::config::UserConfig;
+use worktrunk::config::{CommitGenerationConfig, UserConfig};
 use worktrunk::git::Repository;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
 };
+use worktrunk::workspace::{SquashOutcome, Workspace};
 
 use super::command_approval::approve_hooks;
 use super::commit::{CommitGenerator, CommitOptions, StageMode};
@@ -106,6 +107,81 @@ pub enum SquashResult {
     NoNetChanges,
 }
 
+/// VCS-agnostic squash core: count, generate message, execute squash.
+///
+/// Used by both git and jj paths. Does NOT handle staging, hooks, safety backups,
+/// or progress display — those are git-specific concerns in `handle_squash`.
+pub(crate) fn do_squash(
+    workspace: &dyn Workspace,
+    target: &str,
+    path: &Path,
+    commit_gen_config: &CommitGenerationConfig,
+    branch_name: &str,
+    repo_name: &str,
+) -> anyhow::Result<SquashResult> {
+    let feature_head = workspace.feature_head(path)?;
+
+    // Check if already integrated
+    if workspace.is_integrated(&feature_head, target)?.is_some() {
+        return Ok(SquashResult::NoCommitsAhead(target.to_string()));
+    }
+
+    let (ahead, _) = workspace.ahead_behind(target, &feature_head)?;
+
+    if ahead == 0 {
+        return Ok(SquashResult::NoCommitsAhead(target.to_string()));
+    }
+
+    if ahead == 1 && !workspace.is_dirty(path)? {
+        return Ok(SquashResult::AlreadySingleCommit);
+    }
+
+    // Gather data for message generation
+    let subjects = workspace.commit_subjects(target, &feature_head)?;
+    let (diff, diff_stat) = workspace.diff_for_prompt(target, &feature_head, path)?;
+    let recent_commits = workspace.recent_subjects(Some(target), 5);
+
+    // Generate squash commit message
+    eprintln!(
+        "{}",
+        progress_message("Generating squash commit message...")
+    );
+
+    let generator = CommitGenerator::new(commit_gen_config);
+    generator.emit_hint_if_needed();
+
+    let input = crate::llm::SquashInput {
+        target_branch: target,
+        diff: &diff,
+        diff_stat: &diff_stat,
+        subjects: &subjects,
+        current_branch: branch_name,
+        repo_name,
+        recent_commits: recent_commits.as_ref(),
+    };
+    let commit_message = crate::llm::generate_squash_message(&input, commit_gen_config)?;
+
+    // Display the generated commit message
+    let formatted_message = generator.format_message_for_display(&commit_message);
+    eprintln!("{}", format_with_gutter(&formatted_message, None));
+
+    // Execute the squash
+    match workspace.squash_commits(target, &commit_message, path)? {
+        SquashOutcome::Squashed(id) => {
+            eprintln!("{}", success_message(cformat!("Squashed @ <dim>{id}</>")));
+            Ok(SquashResult::Squashed)
+        }
+        SquashOutcome::NoNetChanges => {
+            let commit_text = if ahead == 1 { "commit" } else { "commits" };
+            eprintln!(
+                "{}",
+                info_message(format!("No changes after squashing {ahead} {commit_text}"))
+            );
+            Ok(SquashResult::NoNetChanges)
+        }
+    }
+}
+
 /// Handle shared squash workflow (used by `wt step squash` and `wt merge`)
 ///
 /// # Arguments
@@ -117,10 +193,29 @@ pub fn handle_squash(
     no_verify: bool,
     stage: Option<StageMode>,
 ) -> anyhow::Result<SquashResult> {
-    // Route to jj handler if in a jj repo
+    // Route to jj handler: use do_squash() directly (no staging/hooks)
     let cwd = std::env::current_dir()?;
     if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
-        return super::handle_step_jj::handle_squash_jj(target);
+        let ws = worktrunk::workspace::open_workspace()?;
+        let target = ws.resolve_integration_target(target)?;
+
+        let config = UserConfig::load().context("Failed to load config")?;
+        let project_id = ws.project_identifier().ok();
+        let resolved = config.resolved(project_id.as_deref());
+
+        let ws_name = ws
+            .current_name(&cwd)?
+            .unwrap_or_else(|| "default".to_string());
+        let repo_name = project_id.as_deref().unwrap_or("repo");
+
+        return do_squash(
+            &*ws,
+            &target,
+            &cwd,
+            &resolved.commit_generation,
+            &ws_name,
+            repo_name,
+        );
     }
 
     // Load config once, run LLM setup prompt, then reuse config
@@ -303,57 +398,48 @@ pub fn handle_squash(
         .and_then(|n| n.to_str())
         .unwrap_or("repo");
 
-    let commit_message = crate::llm::generate_squash_message(
-        &integration_target,
-        &merge_base,
-        &subjects,
-        &current_branch,
+    // Get diff data for LLM prompt
+    let (diff, diff_stat) = repo.diff_for_prompt(&merge_base, "HEAD", &cwd)?;
+    let recent_commits = repo.recent_subjects(Some(&merge_base), 5);
+
+    let input = crate::llm::SquashInput {
+        target_branch: &integration_target,
+        diff: &diff,
+        diff_stat: &diff_stat,
+        subjects: &subjects,
+        current_branch: &current_branch,
         repo_name,
-        &resolved.commit_generation,
-    )?;
+        recent_commits: recent_commits.as_ref(),
+    };
+    let commit_message = crate::llm::generate_squash_message(&input, &resolved.commit_generation)?;
 
     // Display the generated commit message
     let formatted_message = generator.format_message_for_display(&commit_message);
     eprintln!("{}", format_with_gutter(&formatted_message, None));
 
-    // Reset to merge base (soft reset stages all changes, including any already-staged uncommitted changes)
+    // Execute squash via trait (reset --soft, check staged, commit)
     //
-    // TOCTOU note: Between this reset and the commit below, an external process could
-    // modify the staging area. This is extremely unlikely (requires precise timing) and
-    // the consequence is minor (unexpected content in squash commit). The commit message
-    // generated above accurately reflects the original commits being squashed, so any
-    // discrepancy would be visible in the diff. Considered acceptable risk.
-    repo.run_command(&["reset", "--soft", &merge_base])
-        .context("Failed to reset to merge base")?;
-
-    // Check if there are actually any changes to commit
-    if !wt.has_staged_changes()? {
-        eprintln!(
-            "{}",
-            info_message(format!(
-                "No changes after squashing {commit_count} {commit_text}"
-            ))
-        );
-        return Ok(SquashResult::NoNetChanges);
+    // TOCTOU note: Between the reset and commit inside squash_commits, an external
+    // process could modify the staging area. This is extremely unlikely and the
+    // consequence is minor (unexpected content in squash commit). Considered acceptable.
+    match repo.squash_commits(&integration_target, &commit_message, &cwd)? {
+        SquashOutcome::Squashed(commit_hash) => {
+            eprintln!(
+                "{}",
+                success_message(cformat!("Squashed @ <dim>{commit_hash}</>"))
+            );
+            Ok(SquashResult::Squashed)
+        }
+        SquashOutcome::NoNetChanges => {
+            eprintln!(
+                "{}",
+                info_message(format!(
+                    "No changes after squashing {commit_count} {commit_text}"
+                ))
+            );
+            Ok(SquashResult::NoNetChanges)
+        }
     }
-
-    // Commit with the generated message
-    repo.run_command(&["commit", "-m", &commit_message])
-        .context("Failed to create squash commit")?;
-
-    // Get commit hash for display
-    let commit_hash = repo
-        .run_command(&["rev-parse", "--short", "HEAD"])?
-        .trim()
-        .to_string();
-
-    // Show success immediately after completing the squash
-    eprintln!(
-        "{}",
-        success_message(cformat!("Squashed @ <dim>{commit_hash}</>"))
-    );
-
-    Ok(SquashResult::Squashed)
 }
 
 /// Handle `wt step push` command.
@@ -402,53 +488,40 @@ pub fn step_push(target: Option<&str>) -> anyhow::Result<()> {
 /// Handle `wt step squash --show-prompt`
 ///
 /// Builds and outputs the squash prompt without running the LLM or squashing.
+/// Works for both git and jj repositories.
 pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
-    // Route to jj if applicable (uses git-specific prompt building)
+    let ws = worktrunk::workspace::open_workspace()?;
     let cwd = std::env::current_dir()?;
-    if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
-        eprintln!(
-            "{}",
-            info_message("--show-prompt is not yet supported for jj squash")
-        );
-        return Ok(());
-    }
 
-    let repo = Repository::current()?;
     let config = UserConfig::load().context("Failed to load config")?;
-    let project_id = repo.project_identifier().ok();
+    let project_id = ws.project_identifier().ok();
     let effective_config = config.commit_generation(project_id.as_deref());
 
-    // Get and validate target ref (any commit-ish for merge-base calculation)
-    let integration_target = repo.require_target_ref(target)?;
+    let target = ws.resolve_integration_target(target)?;
+    let feature_head = ws.feature_head(&cwd)?;
 
-    // Get current branch
-    let wt = repo.current_worktree();
-    let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
+    let current_branch = ws.current_name(&cwd)?.unwrap_or_else(|| "HEAD".to_string());
 
-    // Get merge base with target branch (required for generating squash message)
-    let merge_base = repo
-        .merge_base("HEAD", &integration_target)?
-        .context("Cannot generate squash message: no common ancestor with target branch")?;
+    let subjects = ws.commit_subjects(&target, &feature_head)?;
+    let (diff, diff_stat) = ws.diff_for_prompt(&target, &feature_head, &cwd)?;
+    let recent_commits = ws.recent_subjects(Some(&target), 5);
 
-    // Get commit subjects for the squash message
-    let range = format!("{}..HEAD", merge_base);
-    let subjects = repo.commit_subjects(&range)?;
-
-    // Get repo name from directory
-    let repo_root = wt.root()?;
-    let repo_name = repo_root
+    let repo_name = ws
+        .root_path()?
         .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("repo");
+        .and_then(|n| n.to_str().map(String::from))
+        .unwrap_or_else(|| "repo".to_string());
 
-    let prompt = crate::llm::build_squash_prompt(
-        &integration_target,
-        &merge_base,
-        &subjects,
-        &current_branch,
-        repo_name,
-        &effective_config,
-    )?;
+    let input = crate::llm::SquashInput {
+        target_branch: &target,
+        diff: &diff,
+        diff_stat: &diff_stat,
+        subjects: &subjects,
+        current_branch: &current_branch,
+        repo_name: &repo_name,
+        recent_commits: recent_commits.as_ref(),
+    };
+    let prompt = crate::llm::build_squash_prompt(&input, &effective_config)?;
     println!("{}", prompt);
     Ok(())
 }
