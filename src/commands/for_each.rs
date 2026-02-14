@@ -44,6 +44,7 @@ use crate::commands::worktree_display_name;
 ///
 /// All template variables from hooks are available, and context JSON is piped to stdin.
 pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
+    super::require_git("step for-each")?;
     let repo = Repository::current()?;
     // Filter out prunable worktrees (directory deleted) - can't run commands there
     let worktrees: Vec<_> = repo

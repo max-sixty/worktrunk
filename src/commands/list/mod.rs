@@ -120,6 +120,7 @@
 
 pub mod ci_status;
 pub(crate) mod collect;
+mod collect_jj;
 pub(crate) mod columns;
 pub mod json_output;
 pub(crate) mod layout;
@@ -140,6 +141,7 @@ use model::{ListData, ListItem};
 use progressive::RenderMode;
 use worktrunk::git::Repository;
 use worktrunk::styling::INFO_SYMBOL;
+use worktrunk::workspace::{JjWorkspace, VcsKind, detect_vcs};
 
 use collect::TaskKind;
 
@@ -148,6 +150,79 @@ pub use collect::{CollectOptions, build_worktree_item, populate_item};
 pub use model::StatuslineSegment;
 
 pub fn handle_list(
+    format: crate::OutputFormat,
+    show_branches: bool,
+    show_remotes: bool,
+    show_full: bool,
+    render_mode: RenderMode,
+    config: &worktrunk::config::UserConfig,
+) -> anyhow::Result<()> {
+    // Detect VCS type from current directory
+    let cwd = std::env::current_dir()?;
+    let vcs_kind = detect_vcs(&cwd);
+
+    if vcs_kind == Some(VcsKind::Jj) {
+        return handle_list_jj(format);
+    }
+
+    // Git path (existing behavior, unchanged)
+    handle_list_git(
+        format,
+        show_branches,
+        show_remotes,
+        show_full,
+        render_mode,
+        config,
+    )
+}
+
+/// Handle `wt list` for jj repositories.
+fn handle_list_jj(format: crate::OutputFormat) -> anyhow::Result<()> {
+    let workspace = JjWorkspace::from_current_dir()?;
+    let list_data = collect_jj::collect_jj(&workspace)?;
+    let items = &list_data.items;
+
+    match format {
+        crate::OutputFormat::Json => {
+            let json_items = json_output::to_json_items(items);
+            let json =
+                serde_json::to_string_pretty(&json_items).context("Failed to serialize to JSON")?;
+            println!("{}", json);
+        }
+        crate::OutputFormat::Table | crate::OutputFormat::ClaudeCode => {
+            // For jj: render table in buffered mode (no progressive rendering)
+            let skip_tasks: HashSet<TaskKind> = [
+                TaskKind::BranchDiff,
+                TaskKind::CiStatus,
+                TaskKind::WorkingTreeConflicts,
+                TaskKind::Upstream,
+                TaskKind::MergeTreeConflicts,
+            ]
+            .into_iter()
+            .collect();
+
+            let layout = layout::calculate_layout_from_basics(
+                items,
+                &skip_tasks,
+                &list_data.main_worktree_path,
+                None,
+            );
+
+            println!("{}", layout.format_header_line());
+            for item in items {
+                println!("{}", layout.format_list_item_line(item));
+            }
+
+            let summary = format_summary_message(items, false, layout.hidden_column_count, 0, 0);
+            println!("{}", summary);
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle `wt list` for git repositories (existing behavior).
+fn handle_list_git(
     format: crate::OutputFormat,
     show_branches: bool,
     show_remotes: bool,

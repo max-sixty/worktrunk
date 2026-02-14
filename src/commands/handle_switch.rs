@@ -131,6 +131,12 @@ pub fn handle_switch(
     config: &mut UserConfig,
     binary_name: &str,
 ) -> anyhow::Result<()> {
+    // Detect VCS type — route to jj handler if in a jj repo
+    let cwd = std::env::current_dir()?;
+    if worktrunk::workspace::detect_vcs(&cwd) == Some(worktrunk::workspace::VcsKind::Jj) {
+        return super::handle_switch_jj::handle_switch_jj(opts);
+    }
+
     let SwitchOptions {
         branch,
         create,

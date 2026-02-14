@@ -289,7 +289,7 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"Combine these commits into a single com
 ///
 /// This is the canonical way to execute LLM commands in this codebase.
 /// All LLM execution should go through this function to maintain consistency.
-fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result<String> {
+pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result<String> {
     // Log prompt for debugging (Cmd logs the command itself)
     log::debug!("  Prompt (stdin):");
     for line in prompt.lines() {
@@ -704,6 +704,30 @@ pub(crate) fn test_commit_generation(
         }
         .into()
     })
+}
+
+/// Build a commit prompt for jj changes (no git repo needed).
+///
+/// Used by `step commit` in jj repos where we have the diff and stat
+/// from `jj diff` instead of `git diff --staged`.
+pub(crate) fn build_jj_commit_prompt(
+    diff: &str,
+    diff_stat: &str,
+    branch: &str,
+    repo_name: &str,
+    config: &CommitGenerationConfig,
+) -> anyhow::Result<String> {
+    let prepared = prepare_diff(diff.to_string(), diff_stat.to_string());
+    let context = TemplateContext {
+        git_diff: &prepared.diff,
+        git_diff_stat: &prepared.stat,
+        branch,
+        recent_commits: None,
+        repo_name,
+        commits: &[],
+        target_branch: None,
+    };
+    build_prompt(config, TemplateType::Commit, &context)
 }
 
 #[cfg(test)]
@@ -1408,5 +1432,17 @@ diff --git a/Cargo.lock b/Cargo.lock
         assert!(!is_lock_file("main.rs"));
         assert!(!is_lock_file("README.md"));
         assert!(!is_lock_file("config.toml"));
+    }
+
+    #[test]
+    fn test_build_jj_commit_prompt() {
+        let config = CommitGenerationConfig::default();
+        let diff = "+++ new_file.rs\n+fn main() {}\n";
+        let stat = "new_file.rs | 1 +\n1 file changed, 1 insertion(+)";
+        let result = build_jj_commit_prompt(diff, stat, "feature-ws", "myrepo", &config);
+        assert!(result.is_ok());
+        let prompt = result.unwrap();
+        assert!(prompt.contains("new_file.rs"));
+        assert!(prompt.contains("feature-ws"));
     }
 }
