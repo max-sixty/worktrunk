@@ -69,7 +69,7 @@ fn test_switch_create_shows_progress_when_forced(repo: TestRepo) {
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature-progress"], None);
         // Force immediate streaming by setting threshold to 0
-        cmd.env("WT_TEST_DELAYED_STREAM_MS", "0");
+        cmd.env("WORKTRUNK_TEST_DELAYED_STREAM_MS", "0");
         assert_cmd_snapshot!("switch_create_with_progress", cmd);
     });
 }
