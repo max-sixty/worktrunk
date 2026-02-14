@@ -158,7 +158,7 @@ This creates a new branch and worktree, then switches to it. Do your work, then 
 
 <!-- END AUTO-GENERATED -->
 
-The `@` marks the current worktree. `+` means uncommitted changes, `↕` means unpushed commits.
+The `@` marks the current worktree. `+` means staged changes, `⇡` means unpushed commits.
 
 When done, either:
 

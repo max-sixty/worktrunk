@@ -153,7 +153,7 @@ $ wt list
 
 ```
 
-The `@` marks the current worktree. `+` means uncommitted changes, `↕` means unpushed commits.
+The `@` marks the current worktree. `+` means staged changes, `⇡` means unpushed commits.
 
 When done, either:
 
