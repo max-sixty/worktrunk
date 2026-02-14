@@ -34,6 +34,6 @@ exit_code: 101
 
 thread 'main' [CHANGE_ID_SHORT] at src/main.rs:875:21:
 Multiline error without context: Changes to push to origin:
-  Add [CHANGE_ID_SHORT] main to 26009b197b6c
+  Add [CHANGE_ID_SHORT] main to [COMMIT_HASH]
 Error: No git remote named 'origin'
 note: run with `RUST_BACKTRACE=1` environment [CHANGE_ID_SHORT] to display a backtrace

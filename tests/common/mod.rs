@@ -2870,6 +2870,9 @@ pub fn setup_snapshot_settings_for_jj(
     settings.add_filter(r"\b[a-z]{12}\b", "[CHANGE_ID]");
     // Match 8-char IDs in plain text (fallback for non-ANSI contexts)
     settings.add_filter(r"\b[a-z]{8}\b", "[CHANGE_ID_SHORT]");
+    // Match git commit hashes (hex, 12 chars) in jj output (e.g., "to 26009b197b6c").
+    // Applied after the [a-z]-only filters so pure-alpha IDs are caught as change IDs first.
+    settings.add_filter(r"\b[0-9a-f]{12}\b", "[COMMIT_HASH]");
 
     settings
 }
