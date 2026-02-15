@@ -1,6 +1,6 @@
 # Benchmark Guidelines
 
-See `list.rs` header for the authoritative list of benchmark groups and run examples.
+See `list.rs` and `time_to_first_output.rs` headers for benchmark groups and run examples.
 
 ## Quick Start
 
@@ -14,8 +14,12 @@ cargo bench --bench list many_branches
 # GH #461 scenario (200 branches on rust-lang/rust)
 cargo bench --bench list real_repo_many_branches
 
-# All benchmarks (~1 hour)
+# All list benchmarks (~1 hour)
 cargo bench --bench list
+
+# Time-to-first-output benchmarks
+cargo bench --bench time_to_first_output            # all commands
+cargo bench --bench time_to_first_output -- remove  # just remove
 ```
 
 ## Rust Repo Caching

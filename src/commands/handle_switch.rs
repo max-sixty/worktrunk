@@ -156,6 +156,11 @@ pub fn handle_switch(
     // Execute the validated plan
     let (result, branch_info) = execute_switch(&repo, plan, config, yes, skip_hooks)?;
 
+    // Early exit for benchmarking time-to-first-output
+    if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
+        return Ok(());
+    }
+
     // Show success message (temporal locality: immediately after worktree operation)
     // Returns path to display in hooks when user's shell won't be in the worktree
     // Also shows worktree-path hint on first --create (before shell integration warning)

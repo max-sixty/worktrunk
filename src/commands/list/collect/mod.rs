@@ -502,8 +502,10 @@ pub fn collect(
         None
     };
 
-    // Early exit for benchmarking skeleton render time
-    if std::env::var("WORKTRUNK_SKELETON_ONLY").is_ok() {
+    // Early exit for benchmarking skeleton render time / time-to-first-output
+    if std::env::var_os("WORKTRUNK_SKELETON_ONLY").is_some()
+        || std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some()
+    {
         return Ok(None);
     }
 

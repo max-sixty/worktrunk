@@ -159,6 +159,10 @@ harness = false
 name = "cow_copy"
 harness = false
 
+[[bench]]
+name = "time_to_first_output"
+harness = false
+
 [lints.rust]
 unsafe_code = "forbid"
 
