@@ -4,6 +4,7 @@
 //! - Deprecated template variables (repo_root → repo_path, etc.)
 //! - Deprecated config sections ([commit-generation] → [commit.generation])
 //! - Deprecated fields (args merged into command)
+//! - Deprecated approved-commands in [projects] (moved to approvals.toml)
 //!
 //! Migration file write behavior:
 //! - First time a deprecation is detected: file is written automatically
@@ -183,12 +184,14 @@ pub struct Deprecations {
     pub vars: Vec<(&'static str, &'static str)>,
     /// Deprecated commit-generation sections found
     pub commit_gen: CommitGenerationDeprecations,
+    /// Has `approved-commands` in any `[projects."..."]` section (moved to approvals.toml)
+    pub approved_commands: bool,
 }
 
 impl Deprecations {
     /// Returns true if any deprecations were found
     pub fn is_empty(&self) -> bool {
-        self.vars.is_empty() && self.commit_gen.is_empty()
+        self.vars.is_empty() && self.commit_gen.is_empty() && !self.approved_commands
     }
 }
 
@@ -200,7 +203,32 @@ pub fn detect_deprecations(content: &str) -> Deprecations {
     Deprecations {
         vars: find_deprecated_vars(content),
         commit_gen: find_commit_generation_deprecations(content),
+        approved_commands: find_approved_commands_deprecation(content),
     }
+}
+
+/// Check if any `[projects."..."]` section has a non-empty `approved-commands` array.
+///
+/// These have moved to `approvals.toml` and should be removed from config.toml.
+pub fn find_approved_commands_deprecation(content: &str) -> bool {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+
+    let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) else {
+        return false;
+    };
+
+    for (_project_key, project_value) in projects.iter() {
+        if let Some(project_table) = project_value.as_table()
+            && let Some(approved) = project_table.get("approved-commands")
+            && approved.as_array().is_some_and(|a| !a.is_empty())
+        {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Find deprecated [commit-generation] sections in config
@@ -374,6 +402,66 @@ pub fn migrate_commit_generation_sections(content: &str) -> String {
     }
 }
 
+/// Remove `approved-commands` from all `[projects."..."]` sections.
+///
+/// For each project section, removes the `approved-commands` key.
+/// If a project section becomes empty after removal, removes the project entry.
+/// If the `[projects]` table becomes empty, removes it.
+pub fn remove_approved_commands_from_config(content: &str) -> String {
+    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return content.to_string();
+    };
+
+    let mut modified = false;
+
+    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+        // Collect project keys that should have approved-commands removed
+        let mut remove_from: Vec<String> = Vec::new();
+        let mut emptied: Vec<String> = Vec::new();
+
+        for (project_key, project_value) in projects.iter() {
+            if let Some(project_table) = project_value.as_table()
+                && project_table.contains_key("approved-commands")
+            {
+                remove_from.push(project_key.to_string());
+                // Will be empty after removal if approved-commands is the only key
+                if project_table.len() == 1 {
+                    emptied.push(project_key.to_string());
+                }
+            }
+        }
+
+        for key in &remove_from {
+            if let Some(project_value) = projects.get_mut(key)
+                && let Some(project_table) = project_value.as_table_mut()
+            {
+                project_table.remove("approved-commands");
+                modified = true;
+            }
+        }
+
+        for key in &emptied {
+            projects.remove(key);
+        }
+    }
+
+    // Remove empty [projects] table
+    if doc
+        .get("projects")
+        .and_then(|p| p.as_table())
+        .is_some_and(|t| t.is_empty())
+    {
+        doc.remove("projects");
+        modified = true;
+    }
+
+    if modified {
+        doc.to_string()
+    } else {
+        content.to_string()
+    }
+}
+
 /// Merge args array into command string
 ///
 /// Converts: command = "llm", args = ["-m", "haiku"]
@@ -456,6 +544,7 @@ impl DeprecationInfo {
 /// - Deprecated template variables (repo_root → repo_path, etc.)
 /// - Deprecated [commit-generation] sections → [commit.generation]
 /// - Deprecated args field (merged into command)
+/// - Deprecated approved-commands in [projects] (moved to approvals.toml)
 ///
 /// If deprecations are found and `warn_and_migrate` is true:
 /// 1. Emits warnings listing the deprecated patterns
@@ -627,6 +716,9 @@ pub fn write_migration_file(
     if !deprecations.commit_gen.is_empty() {
         new_content = migrate_commit_generation_sections(&new_content);
     }
+    if deprecations.approved_commands {
+        new_content = remove_approved_commands_from_config(&new_content);
+    }
 
     if let Err(e) = std::fs::write(&new_path, &new_content) {
         // Log write failure but don't block config loading
@@ -709,6 +801,17 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
                 "{} uses deprecated config sections: {}",
                 info.label,
                 parts.join(", ")
+            ))
+        );
+    }
+
+    if info.deprecations.approved_commands {
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(format!(
+                "{} has approved-commands in [projects] sections (moved to approvals.toml)",
+                info.label
             ))
         );
     }
@@ -1749,6 +1852,142 @@ branches = true
 "#;
         let result = migrate_commit_generation_sections(content);
         insta::assert_snapshot!(migration_diff(content, &result));
+    }
+
+    // Tests for approved-commands deprecation detection
+
+    #[test]
+    fn test_find_approved_commands_deprecation_none() {
+        let content = r#"
+[commit.generation]
+command = "llm -m haiku"
+"#;
+        assert!(!find_approved_commands_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_approved_commands_deprecation_present() {
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install", "npm test"]
+"#;
+        assert!(find_approved_commands_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_approved_commands_deprecation_empty_array() {
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = []
+"#;
+        assert!(!find_approved_commands_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_approved_commands_deprecation_no_projects() {
+        let content = r#"
+worktree-path = "../{{ repo }}.{{ branch }}"
+"#;
+        assert!(!find_approved_commands_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_approved_commands_deprecation_project_without_approvals() {
+        let content = r#"
+[projects."github.com/user/repo"]
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+"#;
+        assert!(!find_approved_commands_deprecation(content));
+    }
+
+    // Tests for remove_approved_commands_from_config
+
+    #[test]
+    fn test_remove_approved_commands_simple() {
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install", "npm test"]
+"#;
+        let result = remove_approved_commands_from_config(content);
+        assert!(!result.contains("approved-commands"));
+        // Empty project section and empty projects table should be removed
+        assert!(!result.contains("[projects"));
+    }
+
+    #[test]
+    fn test_remove_approved_commands_preserves_other_fields() {
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install"]
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+"#;
+        let result = remove_approved_commands_from_config(content);
+        assert!(!result.contains("approved-commands"));
+        assert!(result.contains("worktree-path"));
+        assert!(result.contains("projects"));
+    }
+
+    #[test]
+    fn test_remove_approved_commands_multiple_projects() {
+        let content = r#"
+[projects."github.com/user/repo1"]
+approved-commands = ["npm install"]
+
+[projects."github.com/user/repo2"]
+approved-commands = ["cargo test"]
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+"#;
+        let result = remove_approved_commands_from_config(content);
+        assert!(!result.contains("approved-commands"));
+        // repo1 had only approved-commands, so its section should be removed
+        assert!(!result.contains("repo1"));
+        // repo2 has other fields, so its section should remain
+        assert!(result.contains("repo2"));
+        assert!(result.contains("worktree-path"));
+    }
+
+    #[test]
+    fn test_remove_approved_commands_no_change() {
+        let content = r#"
+[projects."github.com/user/repo"]
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+"#;
+        let result = remove_approved_commands_from_config(content);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn snapshot_remove_approved_commands() {
+        let content = r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm install", "npm test"]
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+"#;
+        let result = remove_approved_commands_from_config(content);
+        insta::assert_snapshot!(migration_diff(content, &result));
+    }
+
+    #[test]
+    fn snapshot_remove_approved_commands_entire_section() {
+        let content = r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm install"]
+"#;
+        let result = remove_approved_commands_from_config(content);
+        insta::assert_snapshot!(migration_diff(content, &result));
+    }
+
+    #[test]
+    fn test_detect_deprecations_includes_approved_commands() {
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install"]
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.approved_commands);
+        assert!(!deprecations.is_empty());
     }
 
     #[test]

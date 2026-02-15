@@ -1101,7 +1101,7 @@ test = "echo '✓ All 47 tests passed in 2.3s'"
         let feature_wt = repo.add_feature();
 
         // Pre-approve commands
-        repo.write_test_config(
+        repo.write_test_approvals(
             r#"[projects."../origin"]
 approved-commands = [
     "echo '✓ Code formatting check passed'",
@@ -1157,7 +1157,7 @@ test = "echo '✗ Test suite failed: 3 tests failing' && exit 1"
         );
 
         // Pre-approve the commands
-        repo.write_test_config(
+        repo.write_test_approvals(
             r#"[projects."../origin"]
 approved-commands = [
     "echo '✓ Code formatting check passed'",
@@ -1221,11 +1221,11 @@ check2 = "{} check2 3"
         repo.commit("Add pre-merge validation with mixed output");
         let feature_wt = repo.add_feature();
 
-        // Pre-approve commands
-        repo.write_test_config(&format!(
-            r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
+        repo.write_test_config(r#"worktree-path = "../{{ repo }}.{{ branch }}""#);
 
-[projects."../origin"]
+        // Pre-approve commands
+        repo.write_test_approvals(&format!(
+            r#"[projects."../origin"]
 approved-commands = [
     "{} check1 3",
     "{} check2 3",

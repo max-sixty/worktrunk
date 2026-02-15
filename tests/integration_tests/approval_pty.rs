@@ -265,7 +265,7 @@ third = "echo 'Third command'"
     repo.commit("Add config");
 
     // Pre-approve the second command
-    repo.write_test_config(&format!(
+    repo.write_test_approvals(&format!(
         r#"[projects.'{}']
 approved-commands = ["echo 'Second command'"]
 "#,
@@ -321,7 +321,7 @@ third = "echo 'Third command'"
     repo.commit("Add config");
 
     // Pre-approve the second command
-    repo.write_test_config(&format!(
+    repo.write_test_approvals(&format!(
         r#"[projects.'{}']
 approved-commands = ["echo 'Second command'"]
 "#,
