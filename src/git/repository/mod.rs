@@ -114,6 +114,8 @@ pub(super) struct RepoCache {
     pub(super) project_identifier: OnceCell<String>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
+    /// Sparse checkout paths (empty if not a sparse checkout)
+    pub(super) sparse_checkout_paths: OnceCell<Vec<String>>,
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
     pub(super) merge_base: DashMap<(String, String), Option<String>>,
     /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
@@ -405,6 +407,30 @@ impl Repository {
                 .run()
                 .expect("git rev-parse failed on valid repo");
             output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
+        })
+    }
+
+    /// Get the sparse checkout paths for this repository.
+    ///
+    /// Returns the list of paths from `git sparse-checkout list`. For non-sparse
+    /// repos, returns an empty slice (the command exits with code 128).
+    ///
+    /// Assumes cone mode (the git default). Cached using `discovery_path` —
+    /// scoped to the worktree the user is running from, not per-listed-worktree.
+    pub fn sparse_checkout_paths(&self) -> &[String] {
+        self.cache.sparse_checkout_paths.get_or_init(|| {
+            let output = match self.run_command_output(&["sparse-checkout", "list"]) {
+                Ok(out) => out,
+                Err(_) => return Vec::new(),
+            };
+
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout.lines().map(String::from).collect()
+            } else {
+                // Exit 128 = not a sparse checkout (expected, not an error)
+                Vec::new()
+            }
         })
     }
 

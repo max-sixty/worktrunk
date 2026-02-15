@@ -9,11 +9,11 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use color_print::cformat;
 
-use super::types::{IntegrationReason, LineDiff, PushDisplay};
+use super::types::{IntegrationReason, LineDiff, LocalPushDisplay};
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, progress_message};
 
-use super::{PushResult, RebaseOutcome, SquashOutcome, VcsKind, Workspace, WorkspaceItem};
+use super::{LocalPushResult, RebaseOutcome, SquashOutcome, VcsKind, Workspace, WorkspaceItem};
 
 /// Jujutsu-backed workspace implementation.
 ///
@@ -492,12 +492,12 @@ impl Workspace for JjWorkspace {
         Ok(())
     }
 
-    fn advance_and_push(
+    fn local_push(
         &self,
         target: &str,
         path: &Path,
-        _display: PushDisplay<'_>,
-    ) -> anyhow::Result<PushResult> {
+        _display: LocalPushDisplay<'_>,
+    ) -> anyhow::Result<LocalPushResult> {
         // Guard: target must be an ancestor of the feature tip.
         // Prevents moving the bookmark sideways or backward (which would lose commits).
         if !self.is_rebased_onto(target, path)? {
@@ -517,16 +517,16 @@ impl Workspace for JjWorkspace {
         let commit_count = count_output.lines().filter(|l| !l.is_empty()).count();
 
         if commit_count == 0 {
-            return Ok(PushResult {
+            return Ok(LocalPushResult {
                 commit_count: 0,
                 stats_summary: Vec::new(),
             });
         }
 
-        // Move bookmark to feature tip (local only — no remote push)
+        // Move bookmark to feature tip (local only)
         run_jj_command(path, &["bookmark", "set", target, "-r", &feature_tip])?;
 
-        Ok(PushResult {
+        Ok(LocalPushResult {
             commit_count,
             stats_summary: Vec::new(),
         })

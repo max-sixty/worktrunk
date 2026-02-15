@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::git::WorktreeInfo;
-pub use types::{IntegrationReason, LineDiff, PushDisplay, PushResult, path_dir_name};
+pub use types::{IntegrationReason, LineDiff, LocalPushDisplay, LocalPushResult, path_dir_name};
 
 pub use detect::detect_vcs;
 pub use jj::JjWorkspace;
@@ -206,22 +206,25 @@ pub trait Workspace: Send + Sync {
     /// `target` is the branch/bookmark to update on the remote.
     fn push_to_target(&self, target: &str, path: &Path) -> anyhow::Result<()>;
 
-    /// Advance the target branch/bookmark to include current changes, then push.
+    /// Advance the target branch ref to include current feature commits (local only).
     ///
-    /// Git: fast-forward merge target branch to HEAD (local push), with
-    ///   auto-stash/restore of non-conflicting changes in the target worktree.
-    ///   Emits progress messages (commit graph, diffstat) to stderr during the
-    ///   operation.
-    /// Jj: set bookmark to feature tip, then `jj git push --bookmark`.
+    /// "Local push" means moving the target branch pointer forward — no remote
+    /// interaction. This is the git term for advancing a ref locally via
+    /// `git push <local-path>`.
     ///
-    /// Returns a [`PushResult`] with commit count and optional stats for the
-    /// command handler to format the final success message.
-    fn advance_and_push(
+    /// Git: fast-forward the target branch to HEAD, with auto-stash/restore of
+    ///   non-conflicting changes in the target worktree. Emits progress messages
+    ///   (commit graph, diffstat) to stderr.
+    /// Jj: `jj bookmark set` to move the target bookmark to the feature tip.
+    ///
+    /// Returns a [`LocalPushResult`] with commit count and optional stats for
+    /// the command handler to format the final success message.
+    fn local_push(
         &self,
         target: &str,
         path: &Path,
-        display: PushDisplay<'_>,
-    ) -> anyhow::Result<PushResult>;
+        display: LocalPushDisplay<'_>,
+    ) -> anyhow::Result<LocalPushResult>;
 
     // ====== Squash ======
 

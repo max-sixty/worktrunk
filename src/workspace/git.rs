@@ -17,13 +17,13 @@ use crate::git::{
 };
 use crate::path::format_path_for_display;
 
-use super::types::{IntegrationReason, LineDiff, PushDisplay, path_dir_name};
+use super::types::{IntegrationReason, LineDiff, LocalPushDisplay, path_dir_name};
 use crate::styling::{
     GUTTER_OVERHEAD, eprintln, format_with_gutter, get_terminal_width, progress_message,
     warning_message,
 };
 
-use super::{PushResult, RebaseOutcome, SquashOutcome, VcsKind, Workspace, WorkspaceItem};
+use super::{LocalPushResult, RebaseOutcome, SquashOutcome, VcsKind, Workspace, WorkspaceItem};
 
 impl Workspace for Repository {
     fn kind(&self) -> VcsKind {
@@ -218,12 +218,12 @@ impl Workspace for Repository {
         Ok(())
     }
 
-    fn advance_and_push(
+    fn local_push(
         &self,
         target: &str,
         _path: &Path,
-        display: PushDisplay<'_>,
-    ) -> anyhow::Result<PushResult> {
+        display: LocalPushDisplay<'_>,
+    ) -> anyhow::Result<LocalPushResult> {
         // Check fast-forward
         if !self.is_ancestor(target, "HEAD")? {
             let commits_formatted = self
@@ -246,7 +246,7 @@ impl Workspace for Repository {
 
         let commit_count = self.count_commits(target, "HEAD")?;
         if commit_count == 0 {
-            return Ok(PushResult {
+            return Ok(LocalPushResult {
                 commit_count: 0,
                 stats_summary: Vec::new(),
             });
@@ -263,7 +263,7 @@ impl Workspace for Repository {
         // Show progress message, commit graph, and diffstat (between stash and restore)
         show_push_preview(self, target, commit_count, &range, &display);
 
-        // Local push to advance the target branch
+        // Local push: advance the target branch ref via git push to local path
         let git_common_dir = self.git_common_dir();
         let push_target = format!("HEAD:{target}");
         let push_result = self.run_command(&[
@@ -283,7 +283,7 @@ impl Workspace for Repository {
             error: e.to_string(),
         })?;
 
-        Ok(PushResult {
+        Ok(LocalPushResult {
             commit_count,
             stats_summary,
         })
@@ -423,7 +423,7 @@ fn show_push_preview(
     target: &str,
     commit_count: usize,
     range: &str,
-    display: &PushDisplay<'_>,
+    display: &LocalPushDisplay<'_>,
 ) {
     let commit_text = if commit_count == 1 {
         "commit"
@@ -835,17 +835,17 @@ mod tests {
         let subjects = ws.commit_subjects("main", "commit-branch").unwrap();
         assert!(subjects.contains(&"trait commit".to_string()));
 
-        // advance_and_push via Workspace trait — local push of feature onto main
+        // local_push via Workspace trait — local push of feature onto main
         let repo_at_wt = Repository::at(&commit_wt).unwrap();
         let ws_at_wt: &dyn Workspace = &repo_at_wt;
         let push_result = ws_at_wt
-            .advance_and_push("main", &commit_wt, Default::default())
+            .local_push("main", &commit_wt, Default::default())
             .unwrap();
         assert_eq!(push_result.commit_count, 1);
 
-        // advance_and_push with zero commits ahead — returns early
+        // local_push with zero commits ahead — returns early
         let push_result = ws_at_wt
-            .advance_and_push("main", &commit_wt, Default::default())
+            .local_push("main", &commit_wt, Default::default())
             .unwrap();
         assert_eq!(push_result.commit_count, 0);
 
@@ -929,7 +929,7 @@ mod tests {
         assert!(matches!(outcome, super::super::RebaseOutcome::Rebased));
         ws.remove_workspace("rebase-diverged").unwrap();
 
-        // advance_and_push with dirty target worktree — exercises stash/restore path
+        // local_push with dirty target worktree — exercises stash/restore path
         // Make main worktree dirty with a non-conflicting file
         std::fs::write(repo_path.join("dirty.txt"), "dirty\n").unwrap();
         // Create a new branch with a commit to push onto main
@@ -942,7 +942,7 @@ mod tests {
         let repo_at_stash = Repository::at(&stash_wt).unwrap();
         let ws_stash: &dyn Workspace = &repo_at_stash;
         let push_result = ws_stash
-            .advance_and_push("main", &stash_wt, Default::default())
+            .local_push("main", &stash_wt, Default::default())
             .unwrap();
         assert_eq!(push_result.commit_count, 1);
         // Verify dirty file in main worktree was preserved after stash/restore

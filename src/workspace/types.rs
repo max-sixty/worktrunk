@@ -111,12 +111,16 @@ impl IntegrationReason {
     }
 }
 
-/// Display context for the push progress message.
+/// Display context for the local push progress message.
 ///
 /// Controls the verb and optional notes in the progress line emitted by
-/// `advance_and_push`. E.g. merge passes `verb: "Merging"` and notes like
+/// `local_push`. E.g. merge passes `verb: "Merging"` and notes like
 /// "(no commit/squash needed)", while step push uses the default "Pushing".
-pub struct PushDisplay<'a> {
+///
+/// "Local push" means advancing a target branch ref to include feature commits —
+/// no remote interaction. Git implements this via `git push <local-path>`,
+/// jj via `jj bookmark set`.
+pub struct LocalPushDisplay<'a> {
     /// Verb in -ing form for the progress line.
     pub verb: &'a str,
     /// Optional parenthetical notes appended after the SHA
@@ -125,7 +129,7 @@ pub struct PushDisplay<'a> {
     pub notes: &'a str,
 }
 
-impl Default for PushDisplay<'_> {
+impl Default for LocalPushDisplay<'_> {
     fn default() -> Self {
         Self {
             verb: "Pushing",
@@ -134,11 +138,13 @@ impl Default for PushDisplay<'_> {
     }
 }
 
-/// Result of a push operation, with enough data for the command handler
+/// Result of a local push operation, with enough data for the command handler
 /// to format the final success/info message.
+///
+/// "Local push" means advancing a target branch ref — no remote interaction.
 #[derive(Debug, Clone)]
-pub struct PushResult {
-    /// Number of commits pushed (0 = already up-to-date).
+pub struct LocalPushResult {
+    /// Number of commits pushed locally (0 = already up-to-date).
     pub commit_count: usize,
     /// Summary parts for the success message parenthetical.
     /// E.g. `["1 commit", "1 file", "+1"]`. Empty for jj or when count is 0.

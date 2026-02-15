@@ -461,7 +461,7 @@ pub fn handle_squash(
 
 /// Handle `wt step push` command.
 ///
-/// Fully trait-based: opens the workspace and uses `advance_and_push`
+/// Fully trait-based: opens the workspace and uses `local_push`
 /// for both git and jj, with zero VcsKind branching.
 ///
 /// Each VCS implementation validates push safety internally:
@@ -474,7 +474,7 @@ pub fn step_push(target: Option<&str>) -> anyhow::Result<()> {
     let target = ws.resolve_integration_target(target)?;
 
     let result = ws
-        .advance_and_push(&target, &cwd, Default::default())
+        .local_push(&target, &cwd, Default::default())
         .context("Failed to push")?;
 
     if result.commit_count > 0 {

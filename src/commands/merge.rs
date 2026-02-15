@@ -4,7 +4,7 @@ use worktrunk::HookType;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{eprintln, info_message, success_message};
-use worktrunk::workspace::PushDisplay;
+use worktrunk::workspace::LocalPushDisplay;
 
 use super::command_approval::approve_command_batch;
 use super::command_executor::CommandContext;
@@ -239,13 +239,13 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         }
     };
 
-    // Fast-forward push to target branch via workspace trait
+    // Local push: advance target branch ref to include feature commits
     let push_result = env
         .workspace
-        .advance_and_push(
+        .local_push(
             &target_branch,
             &env.worktree_path,
-            PushDisplay {
+            LocalPushDisplay {
                 verb: "Merging",
                 notes: &operations_note,
             },
