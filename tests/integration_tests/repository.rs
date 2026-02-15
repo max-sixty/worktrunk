@@ -774,7 +774,10 @@ fn test_sparse_checkout_paths_empty_for_normal_repo() {
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
 
     let paths = repository.sparse_checkout_paths();
-    assert!(paths.is_empty(), "normal repo should have no sparse checkout paths");
+    assert!(
+        paths.is_empty(),
+        "normal repo should have no sparse checkout paths"
+    );
 }
 
 #[test]
@@ -853,21 +856,18 @@ fn test_branch_diff_stats_scoped_to_sparse_checkout() {
     let stats = repository.branch_diff_stats("main", "feature").unwrap();
 
     // Only changes in inside/ should be counted
-    // inside/file.txt: 2 added, 1 deleted (replacing "base content\n" with "modified inside\nadded line\n")
-    assert!(stats.added > 0, "should count additions in inside/");
-    assert!(stats.deleted > 0, "should count deletions in inside/");
+    // inside/file.txt: "base content\n" → "modified inside\nadded line\n" = 2 added, 1 deleted
+    assert_eq!(stats.added, 2, "sparse: only inside/ additions");
+    assert_eq!(stats.deleted, 1, "sparse: only inside/ deletions");
 
-    // Compare with what we'd get without sparse checkout to verify scoping
-    // Disable sparse checkout and get full stats
+    // Disable sparse checkout — full stats include both inside/ and outside/
     repo.run_git(&["sparse-checkout", "disable"]);
     let full_repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-    let full_stats = full_repository.branch_diff_stats("main", "feature").unwrap();
+    let full_stats = full_repository
+        .branch_diff_stats("main", "feature")
+        .unwrap();
 
-    // Full stats should be larger since they include outside/ changes too
-    assert!(
-        full_stats.added > stats.added || full_stats.deleted > stats.deleted,
-        "sparse checkout should scope diff to inside/ only; sparse={:?}, full={:?}",
-        stats,
-        full_stats
-    );
+    // Both files have identical diffs, so full = 2x sparse
+    assert_eq!(full_stats.added, 4, "full: inside/ + outside/ additions");
+    assert_eq!(full_stats.deleted, 2, "full: inside/ + outside/ deletions");
 }

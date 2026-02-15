@@ -438,36 +438,17 @@ impl Repository {
     /// scoped to the worktree the user is running from, not per-listed-worktree.
     pub fn sparse_checkout_paths(&self) -> &[String] {
         self.cache.sparse_checkout_paths.get_or_init(|| {
-            let output = Cmd::new("git")
-                .args(["sparse-checkout", "list"])
-                .current_dir(&self.discovery_path)
-                .context(self.logging_context())
-                .run();
+            let output = match self.run_command_output(&["sparse-checkout", "list"]) {
+                Ok(out) => out,
+                Err(_) => return Vec::new(),
+            };
 
-            match output {
-                Ok(out) if out.status.success() => {
-                    let stdout = String::from_utf8_lossy(&out.stdout);
-                    stdout
-                        .lines()
-                        .filter(|l| !l.is_empty())
-                        .map(String::from)
-                        .collect()
-                }
-                // Exit 128 = not a sparse checkout (expected)
-                Ok(out) if out.status.code() == Some(128) => Vec::new(),
-                Ok(out) => {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    log::debug!(
-                        "git sparse-checkout list failed (exit {}): {}",
-                        out.status.code().unwrap_or(-1),
-                        stderr.trim()
-                    );
-                    Vec::new()
-                }
-                Err(e) => {
-                    log::debug!("git sparse-checkout list failed: {e}");
-                    Vec::new()
-                }
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout.lines().map(String::from).collect()
+            } else {
+                // Exit 128 = not a sparse checkout (expected, not an error)
+                Vec::new()
             }
         })
     }
