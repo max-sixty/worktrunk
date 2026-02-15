@@ -1293,7 +1293,12 @@ fn test_jj_step_commit_empty_description(mut jj_repo: JjTestRepo) {
     // Create a new empty change, then write a file (no existing description)
     run_jj_in(&ws, &["new"]);
     std::fs::write(ws.join("gen.txt"), "generated msg test\n").unwrap();
-    assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "step", &["commit"], Some(&ws)));
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "step",
+        &["commit"],
+        Some(&ws)
+    ));
 }
 
 // ============================================================================
