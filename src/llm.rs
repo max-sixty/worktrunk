@@ -1381,4 +1381,74 @@ diff --git a/Cargo.lock b/Cargo.lock
         assert!(prompt.contains("new_file.rs"));
         assert!(prompt.contains("feature-ws"));
     }
+
+    #[test]
+    fn test_generate_commit_message_fallback_single_file() {
+        let config = CommitGenerationConfig::default();
+        let input = CommitInput {
+            diff: "",
+            diff_stat: " src/main.rs | 3 +++\n 1 file changed, 3 insertions(+)",
+            branch: "main",
+            repo_name: "test",
+            recent_commits: None,
+        };
+        let msg = generate_commit_message(&input, &config).unwrap();
+        assert_eq!(msg, "Changes to main.rs");
+    }
+
+    #[test]
+    fn test_generate_commit_message_fallback_two_files() {
+        let config = CommitGenerationConfig::default();
+        let input = CommitInput {
+            diff: "",
+            diff_stat: " src/lib.rs | 1 +\n src/main.rs | 2 ++\n 2 files changed",
+            branch: "main",
+            repo_name: "test",
+            recent_commits: None,
+        };
+        let msg = generate_commit_message(&input, &config).unwrap();
+        assert_eq!(msg, "Changes to lib.rs & main.rs");
+    }
+
+    #[test]
+    fn test_generate_commit_message_fallback_three_files() {
+        let config = CommitGenerationConfig::default();
+        let input = CommitInput {
+            diff: "",
+            diff_stat: " src/lib.rs | 1 +\n src/main.rs | 2 ++\n src/util.rs | 5 ++---\n 3 files changed",
+            branch: "main",
+            repo_name: "test",
+            recent_commits: None,
+        };
+        let msg = generate_commit_message(&input, &config).unwrap();
+        assert_eq!(msg, "Changes to lib.rs, main.rs & util.rs");
+    }
+
+    #[test]
+    fn test_generate_commit_message_fallback_no_files() {
+        let config = CommitGenerationConfig::default();
+        let input = CommitInput {
+            diff: "",
+            diff_stat: "",
+            branch: "main",
+            repo_name: "test",
+            recent_commits: None,
+        };
+        let msg = generate_commit_message(&input, &config).unwrap();
+        assert_eq!(msg, "WIP: Changes");
+    }
+
+    #[test]
+    fn test_generate_commit_message_fallback_many_files() {
+        let config = CommitGenerationConfig::default();
+        let input = CommitInput {
+            diff: "",
+            diff_stat: " a.rs | 1 +\n b.rs | 1 +\n c.rs | 1 +\n d.rs | 1 +\n 4 files changed",
+            branch: "main",
+            repo_name: "test",
+            recent_commits: None,
+        };
+        let msg = generate_commit_message(&input, &config).unwrap();
+        assert_eq!(msg, "Changes to 4 files");
+    }
 }

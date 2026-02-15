@@ -268,11 +268,7 @@ mod tests {
             .current_dir(&repo_path)
             .output()
             .unwrap();
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        assert!(out.status.success());
         let out = std::process::Command::new("git")
             .args(["commit", "--allow-empty", "-m", "init"])
             .current_dir(&repo_path)
@@ -282,11 +278,7 @@ mod tests {
             .env("GIT_COMMITTER_EMAIL", "test@test.com")
             .output()
             .unwrap();
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        assert!(out.status.success());
         (temp, repo_path)
     }
 
@@ -389,5 +381,118 @@ mod tests {
         assert!(context.contains_key("main_worktree"));
         assert!(context.contains_key("repo_root"));
         assert!(context.contains_key("worktree"));
+    }
+
+    /// Deserialize a CommandConfig from a TOML string command.
+    fn make_command_config(toml_value: &str) -> worktrunk::config::CommandConfig {
+        #[derive(serde::Deserialize)]
+        struct W {
+            cmd: worktrunk::config::CommandConfig,
+        }
+        let toml_str = format!("cmd = {toml_value}");
+        toml::from_str::<W>(&toml_str).unwrap().cmd
+    }
+
+    #[test]
+    fn test_prepare_commands_empty_template() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let cmd_config = make_command_config("\"\"");
+        // Empty template still counts as one command
+        let result = prepare_commands(
+            &cmd_config,
+            &ctx,
+            &[],
+            HookType::PreCommit,
+            HookSource::User,
+        )
+        .unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_prepare_commands_single() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let cmd_config = make_command_config("\"echo hello\"");
+        let result = prepare_commands(
+            &cmd_config,
+            &ctx,
+            &[],
+            HookType::PreCommit,
+            HookSource::User,
+        )
+        .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].expanded, "echo hello");
+        assert!(result[0].name.is_none());
+        // context_json should contain hook_type
+        assert!(result[0].context_json.contains("pre-commit"));
+    }
+
+    #[test]
+    fn test_prepare_commands_with_template_vars() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let cmd_config = make_command_config("\"echo {{ branch }}\"");
+        let result = prepare_commands(
+            &cmd_config,
+            &ctx,
+            &[],
+            HookType::PostCreate,
+            HookSource::User,
+        )
+        .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].expanded, "echo main");
+    }
+
+    #[test]
+    fn test_prepare_commands_named() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let cmd_config = make_command_config("{ build = \"cargo build\", test = \"cargo test\" }");
+        let result = prepare_commands(
+            &cmd_config,
+            &ctx,
+            &[],
+            HookType::PreMerge,
+            HookSource::Project,
+        )
+        .unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].name.as_deref(), Some("build"));
+        assert_eq!(result[0].expanded, "cargo build");
+        assert_eq!(result[1].name.as_deref(), Some("test"));
+        assert_eq!(result[1].expanded, "cargo test");
+        // Named commands should have hook_name in JSON context
+        assert!(result[0].context_json.contains("hook_name"));
+        assert!(result[0].context_json.contains("build"));
+    }
+
+    #[test]
+    fn test_prepare_commands_with_extra_vars() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let cmd_config = make_command_config("\"echo {{ target }}\"");
+        let result = prepare_commands(
+            &cmd_config,
+            &ctx,
+            &[("target", "develop")],
+            HookType::PreMerge,
+            HookSource::User,
+        )
+        .unwrap();
+        assert_eq!(result[0].expanded, "echo develop");
     }
 }
