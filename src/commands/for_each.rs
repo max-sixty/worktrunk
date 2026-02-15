@@ -27,12 +27,12 @@ use std::process::Stdio;
 
 use color_print::cformat;
 use worktrunk::config::{UserConfig, expand_template};
-use worktrunk::git::Repository;
 use worktrunk::git::WorktrunkError;
 use worktrunk::shell_exec::ShellConfig;
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, progress_message, success_message, warning_message,
 };
+use worktrunk::workspace::build_worktree_map;
 
 use crate::commands::command_executor::{CommandContext, build_hook_context};
 use crate::commands::worktree_display_name;
@@ -44,7 +44,8 @@ use crate::commands::worktree_display_name;
 ///
 /// All template variables from hooks are available, and context JSON is piped to stdin.
 pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
-    let repo = Repository::current()?;
+    let workspace = worktrunk::workspace::open_workspace()?;
+    let repo = super::require_git_workspace(&*workspace, "step for-each")?;
     // Filter out prunable worktrees (directory deleted) - can't run commands there
     let worktrees: Vec<_> = repo
         .list_worktrees()?
@@ -60,7 +61,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
     let command_template = args.join(" ");
 
     for wt in &worktrees {
-        let display_name = worktree_display_name(wt, &repo, &config);
+        let display_name = worktree_display_name(wt, repo, &config);
         eprintln!(
             "{}",
             progress_message(format!("Running in {display_name}..."))
@@ -68,7 +69,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
 
         // Build full hook context for this worktree
         // Pass wt.branch directly (not the display string) so detached HEAD maps to None -> "HEAD"
-        let ctx = CommandContext::new(&repo, &config, wt.branch.as_deref(), &wt.path, false);
+        let ctx = CommandContext::new(repo, &config, wt.branch.as_deref(), &wt.path, false);
         let context_map = build_hook_context(&ctx, &[]);
 
         // Convert to &str references for expand_template
@@ -78,8 +79,15 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
             .collect();
 
         // Expand template with full context (shell-escaped)
-        let command = expand_template(&command_template, &vars, true, &repo, "for-each command")
-            .map_err(|e| anyhow::anyhow!("Template expansion failed: {e}"))?;
+        let worktree_map = build_worktree_map(repo);
+        let command = expand_template(
+            &command_template,
+            &vars,
+            true,
+            &worktree_map,
+            "for-each command",
+        )
+        .map_err(|e| anyhow::anyhow!("Template expansion failed: {e}"))?;
 
         // Build JSON context for stdin
         let context_json = serde_json::to_string(&context_map)
