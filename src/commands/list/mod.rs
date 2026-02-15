@@ -120,7 +120,7 @@
 
 pub mod ci_status;
 pub(crate) mod collect;
-mod collect_jj;
+pub(crate) mod collect_jj;
 pub(crate) mod columns;
 pub mod json_output;
 pub(crate) mod layout;

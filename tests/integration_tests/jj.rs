@@ -1070,10 +1070,10 @@ fn test_jj_workspace_trait_methods(mut jj_repo: JjTestRepo) {
     let id = ws.project_identifier().unwrap();
     assert!(!id.is_empty());
 
-    // set_switch_previous(None) — exercises the unset path
+    // clear_switch_previous — exercises the unset path
     ws.set_switch_previous(Some("trait-test")).unwrap();
     assert_eq!(ws.switch_previous(), Some("trait-test".to_string()));
-    ws.set_switch_previous(None).unwrap();
+    ws.clear_switch_previous().unwrap();
     assert!(ws.switch_previous().is_none());
 
     // is_rebased_onto — feature should be rebased onto trunk

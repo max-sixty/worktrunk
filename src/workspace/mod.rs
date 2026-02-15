@@ -317,6 +317,47 @@ pub trait Workspace: Send + Sync {
     /// Record the current workspace name before switching away.
     fn set_switch_previous(&self, name: Option<&str>) -> anyhow::Result<()>;
 
+    /// Clear the previously-switched-from workspace name. Returns `true` if cleared.
+    fn clear_switch_previous(&self) -> anyhow::Result<bool>;
+
+    // ====== Markers (per-branch state) ======
+
+    /// Get the marker for a branch/workspace name.
+    ///
+    /// Markers are stored as JSON: `{"marker": "text", "set_at": unix_timestamp}`.
+    fn branch_marker(&self, name: &str) -> Option<String>;
+
+    /// Set a marker for a branch/workspace name (stored as JSON with timestamp).
+    fn set_branch_marker(&self, name: &str, marker: &str, timestamp: u64) -> anyhow::Result<()>;
+
+    /// Clear the marker for a branch/workspace name. Returns true if it existed.
+    fn clear_branch_marker(&self, name: &str) -> bool;
+
+    /// List all branch markers. Returns `(branch, marker_text, set_at_timestamp)` tuples.
+    fn list_all_markers(&self) -> Vec<(String, String, u64)>;
+
+    /// Clear all markers. Returns the number cleared.
+    fn clear_all_markers(&self) -> usize;
+
+    // ====== Hints (shown-once messages) ======
+
+    /// Check if a hint has been shown in this repo.
+    fn has_shown_hint(&self, name: &str) -> bool;
+
+    /// Mark a hint as shown in this repo.
+    fn mark_hint_shown(&self, name: &str) -> anyhow::Result<()>;
+
+    /// Clear a hint so it will show again.
+    fn clear_hint(&self, name: &str) -> anyhow::Result<bool>;
+
+    /// List all hints that have been shown in this repo.
+    fn list_shown_hints(&self) -> Vec<String>;
+
+    /// Clear all hints so they will show again. Returns the number cleared.
+    fn clear_all_hints(&self) -> anyhow::Result<usize>;
+
+    // ====== Downcast ======
+
     /// Downcast to concrete type for VCS-specific operations.
     fn as_any(&self) -> &dyn Any;
 }

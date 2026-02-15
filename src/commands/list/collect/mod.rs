@@ -109,6 +109,7 @@ use worktrunk::git::{Repository, WorktreeInfo};
 use worktrunk::styling::{
     INFO_SYMBOL, eprintln, format_with_gutter, hint_message, warning_message,
 };
+use worktrunk::workspace::Workspace;
 
 use crate::commands::is_worktree_at_expected_path;
 
