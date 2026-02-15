@@ -262,6 +262,18 @@ pub trait Workspace: Send + Sync {
     /// Jj: working-copy changes (`jj diff -r @`).
     fn committable_diff_for_prompt(&self, path: &Path) -> anyhow::Result<(String, String)>;
 
+    // ====== Copy-ignored ======
+
+    /// List ignored (by `.gitignore`) entries in the given workspace directory.
+    ///
+    /// Returns `(absolute_path, is_directory)` pairs. Uses directory-level
+    /// granularity — stops at directory boundaries so `target/` is one entry,
+    /// not thousands of files.
+    ///
+    /// Git: `git ls-files --ignored --exclude-standard -o --directory`
+    /// Jj: same command with explicit `--git-dir` pointing to the git backend.
+    fn list_ignored_entries(&self, path: &Path) -> anyhow::Result<Vec<(PathBuf, bool)>>;
+
     // ====== Capabilities ======
 
     /// Whether this VCS has a staging area (index).

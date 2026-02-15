@@ -1369,3 +1369,88 @@ fn test_jj_switch_existing_with_execute(mut jj_repo: JjTestRepo) {
         None,
     ));
 }
+
+// ============================================================================
+// step copy-ignored
+// ============================================================================
+
+/// Copy ignored files between jj workspaces — basic case.
+#[rstest]
+fn test_jj_copy_ignored_basic(mut jj_repo: JjTestRepo) {
+    // Create .gitignore and an ignored file in default workspace
+    std::fs::write(jj_repo.root_path().join(".gitignore"), "target/\n").unwrap();
+    std::fs::create_dir_all(jj_repo.root_path().join("target")).unwrap();
+    std::fs::write(jj_repo.root_path().join("target/debug.o"), "binary content").unwrap();
+    run_jj_in(jj_repo.root_path(), &["describe", "-m", "add gitignore"]);
+    run_jj_in(jj_repo.root_path(), &["new"]);
+
+    // Create a feature workspace
+    let feature_path = jj_repo.add_workspace("feature");
+
+    // Copy from default to feature
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "step",
+        &["copy-ignored", "--to", "feature"],
+        None,
+    ));
+
+    // Verify file was copied
+    assert!(
+        feature_path.join("target/debug.o").exists(),
+        "Ignored file should be copied to feature workspace"
+    );
+}
+
+/// Copy ignored files with --from flag (copy from feature to default).
+#[rstest]
+fn test_jj_copy_ignored_from_feature(mut jj_repo: JjTestRepo) {
+    // Set up gitignore
+    std::fs::write(jj_repo.root_path().join(".gitignore"), "build/\n").unwrap();
+    run_jj_in(jj_repo.root_path(), &["describe", "-m", "add gitignore"]);
+    run_jj_in(jj_repo.root_path(), &["new"]);
+
+    // Create feature workspace with an ignored file
+    let feature_path = jj_repo.add_workspace("feature");
+    std::fs::create_dir_all(feature_path.join("build")).unwrap();
+    std::fs::write(feature_path.join("build/app"), "binary").unwrap();
+
+    // Copy from feature to default
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "step",
+        &["copy-ignored", "--from", "feature"],
+        None,
+    ));
+
+    // Verify file was copied to default workspace
+    assert!(
+        jj_repo.root_path().join("build/app").exists(),
+        "Ignored file should be copied from feature to default workspace"
+    );
+}
+
+/// Dry run shows what would be copied without actually copying.
+#[rstest]
+fn test_jj_copy_ignored_dry_run(mut jj_repo: JjTestRepo) {
+    std::fs::write(jj_repo.root_path().join(".gitignore"), "target/\n").unwrap();
+    std::fs::create_dir_all(jj_repo.root_path().join("target")).unwrap();
+    std::fs::write(jj_repo.root_path().join("target/app"), "bin").unwrap();
+    run_jj_in(jj_repo.root_path(), &["describe", "-m", "add gitignore"]);
+    run_jj_in(jj_repo.root_path(), &["new"]);
+
+    let feature_path = jj_repo.add_workspace("feature");
+
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "step",
+        &["copy-ignored", "--to", "feature", "--dry-run"],
+        None,
+    ));
+
+    // Verify nothing was actually copied
+    assert!(
+        !feature_path.join("target").exists(),
+        "Dry run should not copy files"
+    );
+}

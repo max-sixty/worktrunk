@@ -587,6 +587,50 @@ impl Workspace for JjWorkspace {
         Ok((diff, stat))
     }
 
+    fn list_ignored_entries(&self, path: &Path) -> anyhow::Result<Vec<(PathBuf, bool)>> {
+        // jj repos have a git backend — find the git dir
+        let git_dir = self.root.join(".git");
+        if !git_dir.exists() {
+            anyhow::bail!(
+                "No git backend found at {}; copy-ignored requires a git backend",
+                git_dir.display()
+            );
+        }
+
+        let output = crate::shell_exec::Cmd::new("git")
+            .args([
+                &format!("--git-dir={}", git_dir.display()),
+                &format!("--work-tree={}", path.display()),
+                "ls-files",
+                "--ignored",
+                "--exclude-standard",
+                "-o",
+                "--directory",
+            ])
+            .current_dir(path)
+            .run()
+            .context("Failed to run git ls-files in jj workspace")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git ls-files failed: {}", stderr.trim());
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| {
+                // Filter out .jj/ entries (jj internal directory, gitignored in default workspace)
+                let trimmed = line.trim_end_matches('/');
+                trimmed != ".jj" && !trimmed.starts_with(".jj/")
+            })
+            .map(|line| {
+                let is_dir = line.ends_with('/');
+                let entry_path = path.join(line.trim_end_matches('/'));
+                (entry_path, is_dir)
+            })
+            .collect())
+    }
+
     fn has_staging_area(&self) -> bool {
         false
     }

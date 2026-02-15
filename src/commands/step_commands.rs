@@ -27,7 +27,6 @@ use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, run_hook_with_filter};
 use super::repository_ext::RepositoryCliExt;
-use worktrunk::shell_exec::Cmd;
 
 /// Handle `wt step commit` command
 ///
@@ -594,44 +593,23 @@ pub fn step_copy_ignored(
     force: bool,
 ) -> anyhow::Result<()> {
     let workspace = worktrunk::workspace::open_workspace()?;
-    let repo = super::require_git_workspace(&*workspace, "step copy-ignored")?;
 
-    // Resolve source and destination worktree paths
-    let (source_path, source_context) = match from {
-        Some(branch) => {
-            let path = repo.worktree_for_branch(branch)?.ok_or_else(|| {
-                worktrunk::git::GitError::WorktreeNotFound {
-                    branch: branch.to_string(),
-                }
-            })?;
-            (path, branch.to_string())
-        }
-        None => {
-            // Default source is the primary worktree (main worktree for normal repos,
-            // default branch worktree for bare repos).
-            let path = repo.primary_worktree()?.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "No primary worktree found (bare repo with no default branch worktree)"
-                )
-            })?;
-            let context = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            (path, context)
-        }
+    // Resolve source and destination workspace paths
+    let source_path = match from {
+        Some(name) => workspace.workspace_path(name)?,
+        None => workspace
+            .default_workspace_path()?
+            .ok_or_else(|| anyhow::anyhow!("No default workspace found"))?,
     };
 
     let dest_path = match to {
-        Some(branch) => repo.worktree_for_branch(branch)?.ok_or_else(|| {
-            worktrunk::git::GitError::WorktreeNotFound {
-                branch: branch.to_string(),
-            }
-        })?,
-        None => repo.current_worktree().root()?,
+        Some(name) => workspace.workspace_path(name)?,
+        None => workspace.current_workspace_path()?,
     };
 
-    if source_path == dest_path {
+    if dunce::canonicalize(&source_path).unwrap_or_else(|_| source_path.clone())
+        == dunce::canonicalize(&dest_path).unwrap_or_else(|_| dest_path.clone())
+    {
         eprintln!(
             "{}",
             info_message("Source and destination are the same worktree")
@@ -639,9 +617,8 @@ pub fn step_copy_ignored(
         return Ok(());
     }
 
-    // Get ignored entries from git
-    // --directory stops at directory boundaries (avoids listing thousands of files in target/)
-    let ignored_entries = list_ignored_entries(&source_path, &source_context)?;
+    // Get ignored entries via git ls-files (works for both git and jj with git backend)
+    let ignored_entries = workspace.list_ignored_entries(&source_path)?;
 
     // Filter to entries that match .worktreeinclude (or all if no file exists)
     let include_path = source_path.join(".worktreeinclude");
@@ -650,10 +627,8 @@ pub fn step_copy_ignored(
         let include_matcher = {
             let mut builder = GitignoreBuilder::new(&source_path);
             if let Some(err) = builder.add(&include_path) {
-                return Err(worktrunk::git::GitError::WorktreeIncludeParseError {
-                    error: err.to_string(),
-                }
-                .into());
+                return Err(anyhow::anyhow!("{err}"))
+                    .context(cformat!("Error parsing <bold>.worktreeinclude</>"));
             }
             builder.build().context("Failed to build include matcher")?
         };
@@ -666,20 +641,20 @@ pub fn step_copy_ignored(
         ignored_entries
     };
 
-    // Filter out entries that contain other worktrees (prevents recursive copying when
-    // worktrees are nested inside the source, e.g., worktree-path = ".worktrees/...")
-    let worktree_paths: Vec<PathBuf> = repo
-        .list_worktrees()?
+    // Filter out entries that contain other workspaces (prevents recursive copying when
+    // workspaces are nested inside the source, e.g., worktree-path = ".worktrees/...")
+    let workspace_paths: Vec<PathBuf> = workspace
+        .list_workspaces()?
         .into_iter()
-        .map(|wt| wt.path)
+        .map(|ws| ws.path)
         .collect();
     let entries_to_copy: Vec<_> = entries_to_copy
         .into_iter()
         .filter(|(entry_path, _)| {
-            // Exclude if any worktree (other than source) is inside or equal to this entry
-            !worktree_paths
+            // Exclude if any workspace (other than source) is inside or equal to this entry
+            !workspace_paths
                 .iter()
-                .any(|wt_path| wt_path != &source_path && wt_path.starts_with(entry_path))
+                .any(|ws_path| ws_path != &source_path && ws_path.starts_with(entry_path))
         })
         .collect();
 
@@ -717,10 +692,10 @@ pub fn step_copy_ignored(
 
     // Copy entries
     for (src_entry, is_dir) in &entries_to_copy {
-        // Paths from git ls-files are always under source_path
+        // Paths from list_ignored_entries are always under source_path
         let relative = src_entry
             .strip_prefix(&source_path)
-            .expect("git ls-files path under worktree");
+            .expect("ignored entry path under source workspace");
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
@@ -762,46 +737,6 @@ fn remove_if_exists(path: &Path) -> anyhow::Result<()> {
         anyhow::ensure!(e.kind() == ErrorKind::NotFound, e);
     }
     Ok(())
-}
-
-/// List ignored entries using git ls-files
-///
-/// Uses `git ls-files --ignored --exclude-standard -o --directory` which:
-/// - Handles all gitignore sources (global, .gitignore, .git/info/exclude, nested)
-/// - Stops at directory boundaries (--directory) to avoid listing thousands of files
-fn list_ignored_entries(
-    worktree_path: &Path,
-    context: &str,
-) -> anyhow::Result<Vec<(std::path::PathBuf, bool)>> {
-    let output = Cmd::new("git")
-        .args([
-            "ls-files",
-            "--ignored",
-            "--exclude-standard",
-            "-o",
-            "--directory",
-        ])
-        .current_dir(worktree_path)
-        .context(context)
-        .run()
-        .context("Failed to run git ls-files")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git ls-files failed: {}", stderr.trim());
-    }
-
-    // Parse output: directories end with /
-    let entries = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(|line| {
-            let is_dir = line.ends_with('/');
-            let path = worktree_path.join(line.trim_end_matches('/'));
-            (path, is_dir)
-        })
-        .collect();
-
-    Ok(entries)
 }
 
 /// Copy a directory recursively using reflink (COW).

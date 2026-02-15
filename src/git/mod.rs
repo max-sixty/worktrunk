@@ -48,6 +48,7 @@ pub use error::{
     exit_code,
 };
 pub use parse::{parse_porcelain_z, parse_untracked_files};
+pub(crate) use repository::path_to_logging_context;
 pub use repository::{Branch, Repository, ResolvedWorktree, WorkingTree};
 pub use url::GitRemoteUrl;
 pub use url::{parse_owner_repo, parse_remote_owner};

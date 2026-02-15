@@ -54,7 +54,7 @@ mod worktrees;
 // Re-export WorkingTree and Branch
 pub use branch::Branch;
 pub use working_tree::WorkingTree;
-pub(super) use working_tree::path_to_logging_context;
+pub(crate) use working_tree::path_to_logging_context;
 
 /// Structured error from [`Repository::run_command_delayed_stream`].
 ///

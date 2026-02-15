@@ -62,7 +62,12 @@ impl Workspace for Repository {
             .iter()
             .find(|wt| path_dir_name(&wt.path) == name)
             .map(|wt| wt.path.clone())
-            .ok_or_else(|| anyhow::anyhow!("No workspace found for name: {name}"))
+            .ok_or_else(|| {
+                GitError::WorktreeNotFound {
+                    branch: name.to_string(),
+                }
+                .into()
+            })
     }
 
     fn default_workspace_path(&self) -> anyhow::Result<Option<PathBuf>> {
@@ -340,6 +345,35 @@ impl Workspace for Repository {
         ])?;
         let stat = self.run_command(&["--no-pager", "diff", "--staged", "--stat"])?;
         Ok((diff, stat))
+    }
+
+    fn list_ignored_entries(&self, path: &Path) -> anyhow::Result<Vec<(PathBuf, bool)>> {
+        let output = crate::shell_exec::Cmd::new("git")
+            .args([
+                "ls-files",
+                "--ignored",
+                "--exclude-standard",
+                "-o",
+                "--directory",
+            ])
+            .current_dir(path)
+            .context(crate::git::path_to_logging_context(path))
+            .run()
+            .context("Failed to run git ls-files")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git ls-files failed: {}", stderr.trim());
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| {
+                let is_dir = line.ends_with('/');
+                let entry_path = path.join(line.trim_end_matches('/'));
+                (entry_path, is_dir)
+            })
+            .collect())
     }
 
     fn has_staging_area(&self) -> bool {
