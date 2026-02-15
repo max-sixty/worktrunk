@@ -114,6 +114,8 @@ pub(super) struct RepoCache {
     pub(super) project_identifier: OnceCell<String>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
+    /// Sparse checkout paths (empty if not a sparse checkout)
+    pub(super) sparse_checkout_paths: OnceCell<Vec<String>>,
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
     pub(super) merge_base: DashMap<(String, String), Option<String>>,
     /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
@@ -424,6 +426,49 @@ impl Repository {
                 .run()
                 .expect("git rev-parse failed on valid repo");
             output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
+        })
+    }
+
+    /// Get the sparse checkout paths for this repository.
+    ///
+    /// Returns the list of paths from `git sparse-checkout list`. For non-sparse
+    /// repos, returns an empty slice (the command exits with code 128).
+    ///
+    /// Assumes cone mode (the git default). Cached using `discovery_path` —
+    /// scoped to the worktree the user is running from, not per-listed-worktree.
+    pub fn sparse_checkout_paths(&self) -> &[String] {
+        self.cache.sparse_checkout_paths.get_or_init(|| {
+            let output = Cmd::new("git")
+                .args(["sparse-checkout", "list"])
+                .current_dir(&self.discovery_path)
+                .context(self.logging_context())
+                .run();
+
+            match output {
+                Ok(out) if out.status.success() => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    stdout
+                        .lines()
+                        .filter(|l| !l.is_empty())
+                        .map(String::from)
+                        .collect()
+                }
+                // Exit 128 = not a sparse checkout (expected)
+                Ok(out) if out.status.code() == Some(128) => Vec::new(),
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    log::debug!(
+                        "git sparse-checkout list failed (exit {}): {}",
+                        out.status.code().unwrap_or(-1),
+                        stderr.trim()
+                    );
+                    Vec::new()
+                }
+                Err(e) => {
+                    log::debug!("git sparse-checkout list failed: {e}");
+                    Vec::new()
+                }
+            }
         })
     }
 

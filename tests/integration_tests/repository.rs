@@ -763,3 +763,111 @@ fn test_is_dirty_does_not_detect_skip_worktree_changes() {
         "is_dirty() does not detect skip-worktree changes by design"
     );
 }
+
+// =============================================================================
+// sparse_checkout_paths() tests
+// =============================================================================
+
+#[test]
+fn test_sparse_checkout_paths_empty_for_normal_repo() {
+    let repo = TestRepo::new();
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+
+    let paths = repository.sparse_checkout_paths();
+    assert!(paths.is_empty(), "normal repo should have no sparse checkout paths");
+}
+
+#[test]
+fn test_sparse_checkout_paths_returns_cone_paths() {
+    let repo = TestRepo::new();
+
+    // Create directories with files and commit them
+    let dir1 = repo.root_path().join("dir1");
+    let dir2 = repo.root_path().join("dir2");
+    fs::create_dir_all(&dir1).unwrap();
+    fs::create_dir_all(&dir2).unwrap();
+    fs::write(dir1.join("file.txt"), "content1").unwrap();
+    fs::write(dir2.join("file.txt"), "content2").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "add directories"]);
+
+    // Set up sparse checkout in cone mode
+    repo.run_git(&["sparse-checkout", "init", "--cone"]);
+    repo.run_git(&["sparse-checkout", "set", "dir1", "dir2"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let paths = repository.sparse_checkout_paths();
+
+    assert_eq!(paths, &["dir1".to_string(), "dir2".to_string()]);
+}
+
+#[test]
+fn test_sparse_checkout_paths_cached() {
+    let repo = TestRepo::new();
+
+    let dir1 = repo.root_path().join("dir1");
+    fs::create_dir_all(&dir1).unwrap();
+    fs::write(dir1.join("file.txt"), "content").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "add dir1"]);
+
+    repo.run_git(&["sparse-checkout", "init", "--cone"]);
+    repo.run_git(&["sparse-checkout", "set", "dir1"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+
+    let first = repository.sparse_checkout_paths();
+    let second = repository.sparse_checkout_paths();
+
+    assert_eq!(first, second);
+    assert_eq!(first, &["dir1".to_string()]);
+}
+
+#[test]
+fn test_branch_diff_stats_scoped_to_sparse_checkout() {
+    let repo = TestRepo::new();
+
+    // Create two directories with files on main
+    let inside = repo.root_path().join("inside");
+    let outside = repo.root_path().join("outside");
+    fs::create_dir_all(&inside).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(inside.join("file.txt"), "base content\n").unwrap();
+    fs::write(outside.join("file.txt"), "base content\n").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "add directories"]);
+
+    // Create feature branch and modify files in both directories
+    repo.run_git(&["checkout", "-b", "feature"]);
+    fs::write(inside.join("file.txt"), "modified inside\nadded line\n").unwrap();
+    fs::write(outside.join("file.txt"), "modified outside\nadded line\n").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "modify both dirs"]);
+
+    // Go back to main and set up sparse checkout
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["sparse-checkout", "init", "--cone"]);
+    repo.run_git(&["sparse-checkout", "set", "inside"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let stats = repository.branch_diff_stats("main", "feature").unwrap();
+
+    // Only changes in inside/ should be counted
+    // inside/file.txt: 2 added, 1 deleted (replacing "base content\n" with "modified inside\nadded line\n")
+    assert!(stats.added > 0, "should count additions in inside/");
+    assert!(stats.deleted > 0, "should count deletions in inside/");
+
+    // Compare with what we'd get without sparse checkout to verify scoping
+    // Disable sparse checkout and get full stats
+    repo.run_git(&["sparse-checkout", "disable"]);
+    let full_repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let full_stats = full_repository.branch_diff_stats("main", "feature").unwrap();
+
+    // Full stats should be larger since they include outside/ changes too
+    assert!(
+        full_stats.added > stats.added || full_stats.deleted > stats.deleted,
+        "sparse checkout should scope diff to inside/ only; sparse={:?}, full={:?}",
+        stats,
+        full_stats
+    );
+}
