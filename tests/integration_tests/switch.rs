@@ -3243,6 +3243,29 @@ fn test_switch_already_at_preserves_history(repo: TestRepo) {
     );
 }
 
+/// WORKTRUNK_FIRST_OUTPUT exits after execute_switch, before mismatch computation
+/// and output rendering. Used by time-to-first-output benchmarks.
+#[rstest]
+fn test_switch_first_output_exits_cleanly(mut repo: TestRepo) {
+    repo.add_worktree("feature-bench");
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "feature-bench", "--yes"])
+        .env("WORKTRUNK_FIRST_OUTPUT", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "WORKTRUNK_FIRST_OUTPUT should exit 0: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // No output expected — early exit skips all rendering
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+}
+
 /// Bug fix: `--base` without `--create` should warn, not error.
 ///
 /// Previously, `--base -` was resolved (calling resolve_worktree_name) before
