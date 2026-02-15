@@ -78,6 +78,14 @@ impl Workspace for Repository {
         self.default_branch()
     }
 
+    fn set_default_branch(&self, name: &str) -> anyhow::Result<()> {
+        Repository::set_default_branch(self, name)
+    }
+
+    fn clear_default_branch(&self) -> anyhow::Result<bool> {
+        self.clear_default_branch_cache()
+    }
+
     fn is_dirty(&self, path: &Path) -> anyhow::Result<bool> {
         self.worktree_at(path).is_dirty()
     }

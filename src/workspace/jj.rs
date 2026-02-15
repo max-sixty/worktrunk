@@ -262,8 +262,28 @@ impl Workspace for JjWorkspace {
     }
 
     fn default_branch_name(&self) -> Option<String> {
-        // jj uses trunk() revset instead of a named default branch
-        None
+        // Check explicit config override first
+        if let Some(name) = self
+            .run_command(&["config", "get", "worktrunk.default-branch"])
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            return Some(name);
+        }
+        // Fall back to trunk() revset detection
+        self.trunk_bookmark().ok()
+    }
+
+    fn set_default_branch(&self, name: &str) -> anyhow::Result<()> {
+        self.run_command(&["config", "set", "--repo", "worktrunk.default-branch", name])?;
+        Ok(())
+    }
+
+    fn clear_default_branch(&self) -> anyhow::Result<bool> {
+        Ok(self
+            .run_command(&["config", "unset", "--repo", "worktrunk.default-branch"])
+            .is_ok())
     }
 
     fn is_dirty(&self, path: &Path) -> anyhow::Result<bool> {

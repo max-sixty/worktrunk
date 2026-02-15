@@ -115,8 +115,14 @@ pub trait Workspace: Send + Sync {
     fn default_workspace_path(&self) -> anyhow::Result<Option<PathBuf>>;
 
     /// Name of the default/trunk branch. Returns `None` if unknown.
-    /// Git: "main"/"master"/etc. Jj: `None` (uses `trunk()` revset).
+    /// Git: detected from remote or local heuristics. Jj: from config or `trunk()` revset.
     fn default_branch_name(&self) -> Option<String>;
+
+    /// Override the default branch name (persisted to VCS-specific config).
+    fn set_default_branch(&self, name: &str) -> anyhow::Result<()>;
+
+    /// Clear the configured default branch override. Returns `true` if a value was cleared.
+    fn clear_default_branch(&self) -> anyhow::Result<bool>;
 
     // ====== Status per workspace ======
 

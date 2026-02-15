@@ -1007,8 +1007,19 @@ fn test_jj_workspace_trait_methods(mut jj_repo: JjTestRepo) {
     // has_staging_area — jj doesn't have one
     assert!(!ws.has_staging_area());
 
-    // default_branch_name — jj uses trunk() revset, returns None
-    assert_eq!(ws.default_branch_name(), None);
+    // default_branch_name — jj detects from trunk() revset bookmark
+    assert_eq!(ws.default_branch_name(), Some("main".to_string()));
+
+    // set_default_branch — override the detected value
+    ws.set_default_branch("develop").unwrap();
+    assert_eq!(ws.default_branch_name(), Some("develop".to_string()));
+
+    // clear_default_branch — reverts to trunk() detection
+    assert!(ws.clear_default_branch().unwrap());
+    assert_eq!(ws.default_branch_name(), Some("main".to_string()));
+
+    // clear when already clear — returns false
+    assert!(!ws.clear_default_branch().unwrap());
 
     // is_dirty — clean workspace (empty @ on top of trunk)
     assert!(!ws.is_dirty(jj_repo.root_path()).unwrap());
