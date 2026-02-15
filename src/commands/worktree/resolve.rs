@@ -10,6 +10,7 @@ use normalize_path::NormalizePath;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{GitError, Repository, ResolvedWorktree};
 use worktrunk::path::format_path_for_display;
+use worktrunk::workspace::build_worktree_map;
 
 use super::types::OperationMode;
 
@@ -107,8 +108,16 @@ pub fn compute_worktree_path(
         })?;
 
     let project = repo.project_identifier().ok();
+    let repo_path_str = repo.repo_path().to_string_lossy().to_string();
+    let worktree_map = build_worktree_map(repo);
     let expanded_path = config
-        .format_path(repo_name, branch, repo, project.as_deref())
+        .format_path(
+            repo_name,
+            branch,
+            &repo_path_str,
+            &worktree_map,
+            project.as_deref(),
+        )
         .map_err(|e| anyhow::anyhow!("Failed to format worktree path: {e}"))?;
 
     Ok(repo_root.join(expanded_path).normalize())
@@ -189,7 +198,7 @@ pub(crate) fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
 /// Returns the expected path if `actual_path` differs from the template-computed path.
 ///
 /// Returns `Some(expected_path)` when there's a mismatch, `None` when paths match.
-/// Used to show path mismatch warnings in `wt remove` and `wt merge`.
+/// Used to show path mismatch warnings in switch, select, remove, and merge.
 pub fn get_path_mismatch(
     repo: &Repository,
     branch: &str,

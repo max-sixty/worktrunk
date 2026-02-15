@@ -4,6 +4,7 @@ use worktrunk::HookType;
 use worktrunk::config::{Command, CommandConfig, UserConfig, expand_template};
 use worktrunk::git::Repository;
 use worktrunk::path::to_posix_path;
+use worktrunk::workspace::{Workspace, build_worktree_map};
 
 use super::hook_filter::HookSource;
 
@@ -14,9 +15,9 @@ pub struct PreparedCommand {
     pub context_json: String,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct CommandContext<'a> {
-    pub repo: &'a Repository,
+    pub workspace: &'a dyn Workspace,
     pub config: &'a UserConfig,
     /// Current branch name, if on a branch (None in detached HEAD state).
     pub branch: Option<&'a str>,
@@ -24,21 +25,37 @@ pub struct CommandContext<'a> {
     pub yes: bool,
 }
 
+impl std::fmt::Debug for CommandContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommandContext")
+            .field("workspace_kind", &self.workspace.kind())
+            .field("branch", &self.branch)
+            .field("worktree_path", &self.worktree_path)
+            .field("yes", &self.yes)
+            .finish()
+    }
+}
+
 impl<'a> CommandContext<'a> {
     pub fn new(
-        repo: &'a Repository,
+        workspace: &'a dyn Workspace,
         config: &'a UserConfig,
         branch: Option<&'a str>,
         worktree_path: &'a Path,
         yes: bool,
     ) -> Self {
         Self {
-            repo,
+            workspace,
             config,
             branch,
             worktree_path,
             yes,
         }
+    }
+
+    /// Downcast to git Repository. Returns None for jj workspaces.
+    pub fn repo(&self) -> Option<&Repository> {
+        self.workspace.as_any().downcast_ref::<Repository>()
     }
 
     /// Get branch name, using "HEAD" as fallback for detached HEAD state.
@@ -51,7 +68,7 @@ impl<'a> CommandContext<'a> {
     /// Uses the remote URL if available, otherwise the canonical repository path.
     /// Returns None only if the path is not valid UTF-8.
     pub fn project_id(&self) -> Option<String> {
-        self.repo.project_identifier().ok()
+        self.workspace.project_identifier().ok()
     }
 
     /// Get the commit generation config, merging project-specific settings.
@@ -68,7 +85,7 @@ pub fn build_hook_context(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
 ) -> HashMap<String, String> {
-    let repo_root = ctx.repo.repo_path();
+    let repo_root = ctx.workspace.root_path().unwrap_or_default();
     let repo_name = repo_root
         .file_name()
         .and_then(|n| n.to_str())
@@ -100,36 +117,38 @@ pub fn build_hook_context(
     map.insert("worktree".into(), worktree);
 
     // Default branch
-    if let Some(default_branch) = ctx.repo.default_branch() {
+    if let Some(default_branch) = ctx.workspace.default_branch_name() {
         map.insert("default_branch".into(), default_branch);
     }
 
     // Primary worktree path (where established files live)
-    if let Ok(Some(path)) = ctx.repo.primary_worktree() {
+    if let Ok(Some(path)) = ctx.workspace.default_workspace_path() {
         let path_str = to_posix_path(&path.to_string_lossy());
         map.insert("primary_worktree_path".into(), path_str.clone());
         // Deprecated alias
         map.insert("main_worktree_path".into(), path_str);
     }
 
-    if let Ok(commit) = ctx.repo.run_command(&["rev-parse", "HEAD"]) {
-        let commit = commit.trim();
-        map.insert("commit".into(), commit.into());
-        if commit.len() >= 7 {
-            map.insert("short_commit".into(), commit[..7].into());
+    // Git-specific context (commit SHA, remote, upstream)
+    if let Some(repo) = ctx.repo() {
+        if let Ok(commit) = repo.run_command(&["rev-parse", "HEAD"]) {
+            let commit = commit.trim();
+            map.insert("commit".into(), commit.into());
+            if commit.len() >= 7 {
+                map.insert("short_commit".into(), commit[..7].into());
+            }
         }
-    }
 
-    if let Ok(remote) = ctx.repo.primary_remote() {
-        map.insert("remote".into(), remote.to_string());
-        // Add remote URL for conditional hook execution (e.g., GitLab vs GitHub)
-        if let Some(url) = ctx.repo.remote_url(&remote) {
-            map.insert("remote_url".into(), url);
-        }
-        if let Some(branch) = ctx.branch
-            && let Ok(Some(upstream)) = ctx.repo.branch(branch).upstream()
-        {
-            map.insert("upstream".into(), upstream);
+        if let Ok(remote) = repo.primary_remote() {
+            map.insert("remote".into(), remote.to_string());
+            if let Some(url) = repo.remote_url(&remote) {
+                map.insert("remote_url".into(), url);
+            }
+            if let Some(branch) = ctx.branch
+                && let Ok(Some(upstream)) = repo.branch(branch).upstream()
+            {
+                map.insert("upstream".into(), upstream);
+            }
         }
     }
 
@@ -157,6 +176,7 @@ fn expand_commands(
     }
 
     let base_context = build_hook_context(ctx, extra_vars);
+    let worktree_map = build_worktree_map(ctx.workspace);
 
     // Convert to &str references for expand_template
     let vars: HashMap<&str, &str> = base_context
@@ -171,14 +191,16 @@ fn expand_commands(
             Some(name) => format!("{}:{}", source, name),
             None => format!("{} {} hook", source, hook_type),
         };
-        let expanded_str = expand_template(&cmd.template, &vars, true, ctx.repo, &template_name)
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to expand command template '{}': {}",
-                    cmd.template,
-                    e
-                )
-            })?;
+        let expanded_str =
+            expand_template(&cmd.template, &vars, true, &worktree_map, &template_name).map_err(
+                |e| {
+                    anyhow::anyhow!(
+                        "Failed to expand command template '{}': {}",
+                        cmd.template,
+                        e
+                    )
+                },
+            )?;
 
         // Build per-command JSON with hook_type and hook_name
         let mut cmd_context = base_context.clone();
@@ -228,4 +250,249 @@ pub fn prepare_commands(
             context_json,
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use worktrunk::config::UserConfig;
+    use worktrunk::git::Repository;
+
+    /// Helper to init a git repo and return (temp_dir, repo_path).
+    fn init_test_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let repo_path = temp.path().join("repo");
+        std::fs::create_dir(&repo_path).unwrap();
+        let out = std::process::Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let out = std::process::Command::new("git")
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(&repo_path)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        (temp, repo_path)
+    }
+
+    #[test]
+    fn test_command_context_debug_format() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let debug = format!("{ctx:?}");
+        assert!(debug.contains("CommandContext"));
+        assert!(debug.contains("Git"));
+    }
+
+    #[test]
+    fn test_command_context_repo_downcast() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        // repo() should succeed for git repositories
+        assert!(ctx.repo().is_some());
+    }
+
+    #[test]
+    fn test_command_context_branch_or_head() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+
+        // With a branch set
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        assert_eq!(ctx.branch_or_head(), "main");
+
+        // Without a branch (detached HEAD)
+        let ctx = CommandContext::new(&repo, &config, None, &repo_path, false);
+        assert_eq!(ctx.branch_or_head(), "HEAD");
+    }
+
+    #[test]
+    fn test_command_context_project_id() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        // project_id should return Some (path-based, since no remote)
+        assert!(ctx.project_id().is_some());
+    }
+
+    #[test]
+    fn test_command_context_commit_generation() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        // commit_generation returns default config (no command set)
+        let cg = ctx.commit_generation();
+        assert!(cg.command.is_none());
+    }
+
+    #[test]
+    fn test_build_hook_context() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let context = build_hook_context(&ctx, &[("extra_key", "extra_val")]);
+        assert_eq!(context.get("branch").map(|s| s.as_str()), Some("main"));
+        assert_eq!(context.get("repo").map(|s| s.as_str()), Some("repo"));
+        assert!(context.contains_key("worktree_path"));
+        assert!(context.contains_key("repo_path"));
+        assert_eq!(
+            context.get("extra_key").map(|s| s.as_str()),
+            Some("extra_val")
+        );
+    }
+
+    #[test]
+    fn test_build_hook_context_detached_head() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        // Detached HEAD: branch is None, branch_or_head returns "HEAD"
+        let ctx = CommandContext::new(&repo, &config, None, &repo_path, false);
+        let context = build_hook_context(&ctx, &[]);
+        assert_eq!(context.get("branch").map(|s| s.as_str()), Some("HEAD"));
+    }
+
+    #[test]
+    fn test_build_hook_context_includes_git_specifics() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let context = build_hook_context(&ctx, &[]);
+        // Git-specific: commit and short_commit should be present
+        assert!(context.contains_key("commit"));
+        assert!(context.contains_key("short_commit"));
+        // Deprecated aliases should still be present
+        assert!(context.contains_key("main_worktree"));
+        assert!(context.contains_key("repo_root"));
+        assert!(context.contains_key("worktree"));
+    }
+
+    /// Deserialize a CommandConfig from a TOML string command.
+    fn make_command_config(toml_value: &str) -> worktrunk::config::CommandConfig {
+        #[derive(serde::Deserialize)]
+        struct W {
+            cmd: worktrunk::config::CommandConfig,
+        }
+        let toml_str = format!("cmd = {toml_value}");
+        toml::from_str::<W>(&toml_str).unwrap().cmd
+    }
+
+    #[test]
+    fn test_prepare_commands_empty_template() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let cmd_config = make_command_config("\"\"");
+        // Empty template still counts as one command
+        let result = prepare_commands(
+            &cmd_config,
+            &ctx,
+            &[],
+            HookType::PreCommit,
+            HookSource::User,
+        )
+        .unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_prepare_commands_single() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let cmd_config = make_command_config("\"echo hello\"");
+        let result = prepare_commands(
+            &cmd_config,
+            &ctx,
+            &[],
+            HookType::PreCommit,
+            HookSource::User,
+        )
+        .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].expanded, "echo hello");
+        assert!(result[0].name.is_none());
+        // context_json should contain hook_type
+        assert!(result[0].context_json.contains("pre-commit"));
+    }
+
+    #[test]
+    fn test_prepare_commands_with_template_vars() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let cmd_config = make_command_config("\"echo {{ branch }}\"");
+        let result = prepare_commands(
+            &cmd_config,
+            &ctx,
+            &[],
+            HookType::PostCreate,
+            HookSource::User,
+        )
+        .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].expanded, "echo main");
+    }
+
+    #[test]
+    fn test_prepare_commands_named() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let cmd_config = make_command_config("{ build = \"cargo build\", test = \"cargo test\" }");
+        let result = prepare_commands(
+            &cmd_config,
+            &ctx,
+            &[],
+            HookType::PreMerge,
+            HookSource::Project,
+        )
+        .unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].name.as_deref(), Some("build"));
+        assert_eq!(result[0].expanded, "cargo build");
+        assert_eq!(result[1].name.as_deref(), Some("test"));
+        assert_eq!(result[1].expanded, "cargo test");
+        // Named commands should have hook_name in JSON context
+        assert!(result[0].context_json.contains("hook_name"));
+        assert!(result[0].context_json.contains("build"));
+    }
+
+    #[test]
+    fn test_prepare_commands_with_extra_vars() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let cmd_config = make_command_config("\"echo {{ target }}\"");
+        let result = prepare_commands(
+            &cmd_config,
+            &ctx,
+            &[("target", "develop")],
+            HookType::PreMerge,
+            HookSource::User,
+        )
+        .unwrap();
+        assert_eq!(result[0].expanded, "echo develop");
+    }
 }

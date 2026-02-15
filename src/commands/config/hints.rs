@@ -1,14 +1,19 @@
 //! Hint management commands.
 //!
 //! Commands for viewing and clearing shown hints.
+//!
+//! Hints are stored in git config — not yet supported for jj repositories.
 
 use color_print::cformat;
-use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, info_message, println, success_message};
+use worktrunk::workspace::open_workspace;
+
+use crate::commands::require_git_workspace;
 
 /// Handle the hints get command (list shown hints)
 pub fn handle_hints_get() -> anyhow::Result<()> {
-    let repo = Repository::current()?;
+    let workspace = open_workspace()?;
+    let repo = require_git_workspace(&*workspace, "config hints")?;
     let hints = repo.list_shown_hints();
 
     if hints.is_empty() {
@@ -24,7 +29,8 @@ pub fn handle_hints_get() -> anyhow::Result<()> {
 
 /// Handle the hints clear command
 pub fn handle_hints_clear(name: Option<String>) -> anyhow::Result<()> {
-    let repo = Repository::current()?;
+    let workspace = open_workspace()?;
+    let repo = require_git_workspace(&*workspace, "config hints")?;
 
     match name {
         Some(hint_name) => {
