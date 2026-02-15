@@ -870,6 +870,54 @@ mod tests {
         assert!(matches!(outcome, super::super::RebaseOutcome::Rebased));
         ws.remove_workspace("rebase-diverged").unwrap();
 
+        // advance_and_push with dirty target worktree — exercises stash/restore path
+        // Make main worktree dirty with a non-conflicting file
+        std::fs::write(repo_path.join("dirty.txt"), "dirty\n").unwrap();
+        // Create a new branch with a commit to push onto main
+        let stash_wt = temp.path().join("stash-push-test");
+        ws.create_workspace("stash-push-branch", Some("main"), &stash_wt)
+            .unwrap();
+        std::fs::write(stash_wt.join("push-me.txt"), "push content\n").unwrap();
+        git_at(&["add", "."], &stash_wt);
+        git_at(&["commit", "-m", "push with stash"], &stash_wt);
+        let repo_at_stash = Repository::at(&stash_wt).unwrap();
+        let ws_stash: &dyn Workspace = &repo_at_stash;
+        let push_result = ws_stash.advance_and_push("main", &stash_wt).unwrap();
+        assert_eq!(push_result.commit_count, 1);
+        // Verify dirty file in main worktree was preserved after stash/restore
+        assert!(repo_path.join("dirty.txt").exists());
+        // Clean up
+        git(&["checkout", "--", "."]);
+        std::fs::remove_file(repo_path.join("dirty.txt")).ok();
+        ws.remove_workspace("stash-push-branch").unwrap();
+
+        // rebase_onto — conflict case: both branches modify the same file
+        // First, create a branch from the current main
+        let conflict_wt = temp.path().join("conflict-test");
+        ws.create_workspace("conflict-branch", Some("main"), &conflict_wt)
+            .unwrap();
+        // On the branch, modify file.txt
+        std::fs::write(conflict_wt.join("file.txt"), "branch version\n").unwrap();
+        git_at(&["add", "."], &conflict_wt);
+        git_at(&["commit", "-m", "branch modifies file.txt"], &conflict_wt);
+        // On main, also modify file.txt differently (creating divergence)
+        git(&["checkout", "main"]);
+        std::fs::write(repo_path.join("file.txt"), "main version\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "main modifies file.txt"]);
+        // Now rebase conflict-branch onto main → should conflict
+        let repo_at_conflict = Repository::at(&conflict_wt).unwrap();
+        let ws_conflict: &dyn Workspace = &repo_at_conflict;
+        let err = ws_conflict.rebase_onto("main", &conflict_wt).unwrap_err();
+        // Verify it's a rebase conflict error, then abort the rebase
+        assert!(
+            err.to_string().contains("conflict")
+                || err.downcast_ref::<crate::git::GitError>().is_some()
+        );
+        // Abort the in-progress rebase to clean up
+        let _ = repo_at_conflict.run_command(&["rebase", "--abort"]);
+        ws.remove_workspace("conflict-branch").unwrap();
+
         // switch_previous — initially None (no history set yet)
         assert!(ws.switch_previous().is_none());
 

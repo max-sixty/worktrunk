@@ -26,6 +26,7 @@ pub use detect::detect_vcs;
 pub use jj::JjWorkspace;
 
 /// Outcome of a rebase operation on the VCS level.
+#[derive(Debug)]
 pub enum RebaseOutcome {
     /// True rebase (history rewritten).
     Rebased,
