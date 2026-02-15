@@ -27,13 +27,11 @@ info:
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: false
-exit_code: 101
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-
-thread 'main' [CHANGE_ID_SHORT] at src/main.rs:845:21:
-Multiline error without context: Changes to push to origin:
-  Add [CHANGE_ID_SHORT] main to [COMMIT_HASH]
-Error: No git remote named 'origin'
-note: run with `RUST_BACKTRACE=1` environment [CHANGE_ID_SHORT] to display a backtrace
+[31m✗[39m [31mFailed to push[39m
+[107m [0m Changes to push to origin:
+[107m [0m   Add [CHANGE_ID_SHORT] main to [COMMIT_HASH]
+[107m [0m Error: No git remote named 'origin'

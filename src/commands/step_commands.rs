@@ -455,7 +455,9 @@ pub fn step_push(target: Option<&str>) -> anyhow::Result<()> {
 
     let target = ws.resolve_integration_target(target)?;
 
-    let result = ws.advance_and_push(&target, &cwd)?;
+    let result = ws
+        .advance_and_push(&target, &cwd)
+        .context("Failed to push")?;
 
     if result.commit_count > 0 {
         let mut summary_parts = vec![format!(
