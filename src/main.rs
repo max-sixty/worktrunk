@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::Write;
 
 use anyhow::Context;
@@ -6,7 +7,7 @@ use clap::error::ErrorKind as ClapErrorKind;
 use color_print::{ceprintln, cformat};
 use std::process;
 use worktrunk::config::{UserConfig, set_config_path};
-use worktrunk::git::exit_code;
+use worktrunk::git::{Repository, ResolvedWorktree, exit_code, set_base_path};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::extract_filename_from_path;
 use worktrunk::styling::{
@@ -14,7 +15,10 @@ use worktrunk::styling::{
     warning_message,
 };
 
+use commands::command_approval::approve_hooks;
+use commands::context::CommandEnv;
 use commands::list::progressive::RenderMode;
+use commands::worktree::RemoveResult;
 
 mod cli;
 mod commands;
@@ -39,15 +43,18 @@ pub(crate) use crate::cli::OutputFormat;
 
 #[cfg(unix)]
 use commands::handle_select;
+use commands::worktree::handle_push;
 use commands::{
-    MergeOptions, RebaseResult, RemoveOptions, SquashResult, SwitchOptions, add_approvals,
+    MergeOptions, OperationMode, RebaseResult, SquashResult, SwitchOptions, add_approvals,
     clear_approvals, handle_completions, handle_config_create, handle_config_show,
     handle_configure_shell, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
-    handle_list, handle_logs_get, handle_merge, handle_rebase, handle_remove_command,
-    handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
-    handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell, run_hook,
-    step_commit, step_copy_ignored, step_for_each, step_push, step_relocate,
+    handle_list, handle_logs_get, handle_merge, handle_rebase, handle_remove,
+    handle_remove_current, handle_show_theme, handle_squash, handle_state_clear,
+    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show, handle_switch,
+    handle_unconfigure_shell, resolve_worktree_arg, run_hook, step_commit, step_copy_ignored,
+    step_for_each, step_relocate,
 };
+use output::handle_remove_output;
 
 use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigShellCommand,
@@ -123,23 +130,9 @@ fn main() {
     });
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
-    // Change working directory from -C flag if provided.
-    // This affects ALL code (git, jj, etc.) that uses relative paths or current_dir().
-    // Note: $PWD (used for symlink-aware path display) is not updated because set_var
-    // is unsafe. This means paths may display canonically when -C targets a symlinked
-    // directory. The symlink mapping code handles stale $PWD gracefully (returns None).
-    if let Some(ref path) = cli.directory {
-        std::env::set_current_dir(path).unwrap_or_else(|e| {
-            eprintln!(
-                "{}",
-                error_message(format!(
-                    "Cannot change to directory '{}': {}",
-                    path.display(),
-                    e
-                ))
-            );
-            process::exit(1);
-        });
+    // Initialize base path from -C flag if provided
+    if let Some(path) = cli.directory {
+        set_base_path(path);
     }
 
     // Initialize config path from --config flag if provided
@@ -504,6 +497,7 @@ fn main() {
                 stage,
                 show_prompt,
             } => {
+                // Handle --show-prompt early: just build and output the prompt
                 if show_prompt {
                     commands::step_show_squash_prompt(target.as_deref())
                 } else {
@@ -528,7 +522,7 @@ fn main() {
                     })
                 }
             }
-            StepCommand::Push { target } => step_push(target.as_deref()),
+            StepCommand::Push { target } => handle_push(target.as_deref(), "Pushed to", None),
             StepCommand::Rebase { target } => {
                 handle_rebase(target.as_deref()).map(|result| match result {
                     RebaseResult::Rebased => (),
@@ -641,10 +635,21 @@ fn main() {
                 warning_message("wt select is deprecated; use wt switch instead")
             );
 
-            // handle_select resolves project-specific settings internally
             UserConfig::load()
                 .context("Failed to load config")
-                .and_then(|config| handle_select(branches, remotes, &config))
+                .and_then(|config| {
+                    // Get effective settings (project-specific merged with global, defaults applied)
+                    let project_id = Repository::current()
+                        .ok()
+                        .and_then(|r| r.project_identifier().ok());
+                    let resolved = config.resolved(project_id.as_deref());
+
+                    // CLI flags override config
+                    let show_branches = branches || resolved.list.branches();
+                    let show_remotes = remotes || resolved.list.remotes();
+
+                    handle_select(show_branches, show_remotes, &config)
+                })
         }
         #[cfg(not(unix))]
         Commands::Select { .. } => {
@@ -687,17 +692,36 @@ fn main() {
                 commands::statusline::run(effective_format)
             }
             None => {
-                // Load config; handle_list resolves project-specific settings internally
+                // Load config and merge with CLI flags (CLI flags take precedence)
                 UserConfig::load()
                     .context("Failed to load config")
                     .and_then(|config| {
+                        // Get resolved config (project-specific merged with global, defaults applied)
+                        let project_id = Repository::current()
+                            .ok()
+                            .and_then(|r| r.project_identifier().ok());
+                        let resolved = config.resolved(project_id.as_deref());
+
+                        // CLI flags override config
+                        let show_branches = branches || resolved.list.branches();
+                        let show_remotes = remotes || resolved.list.remotes();
+                        let show_full = full || resolved.list.full();
+
+                        // Convert two bools to Option<bool>: Some(true), Some(false), or None
                         let progressive_opt = match (progressive, no_progressive) {
                             (true, _) => Some(true),
                             (_, true) => Some(false),
                             _ => None,
                         };
                         let render_mode = RenderMode::detect(progressive_opt);
-                        handle_list(format, branches, remotes, full, render_mode, &config)
+                        handle_list(
+                            format,
+                            show_branches,
+                            show_remotes,
+                            show_full,
+                            render_mode,
+                            &config,
+                        )
                     })
             }
         },
@@ -720,8 +744,22 @@ fn main() {
                 let Some(branch) = branch else {
                     #[cfg(unix)]
                     {
-                        // handle_select resolves project-specific settings internally
-                        return handle_select(branches, remotes, &config);
+                        // Get project ID for per-project config lookup
+                        let project_id = Repository::current()
+                            .ok()
+                            .and_then(|r| r.project_identifier().ok());
+
+                        // Get effective list config (merges project-specific with global)
+                        let (show_branches_config, show_remotes_config) = config
+                            .list(project_id.as_deref())
+                            .map(|l| (l.branches.unwrap_or(false), l.remotes.unwrap_or(false)))
+                            .unwrap_or((false, false));
+
+                        // CLI flags override config
+                        let show_branches = branches || show_branches_config;
+                        let show_remotes = remotes || show_remotes_config;
+
+                        return handle_select(show_branches, show_remotes, &config);
                     }
 
                     #[cfg(not(unix))]
@@ -768,16 +806,201 @@ fn main() {
             verify,
             yes,
             force,
-        } => handle_remove_command(RemoveOptions {
-            branches,
-            delete_branch,
-            force_delete,
-            foreground,
-            no_background,
-            verify,
-            yes,
-            force,
-        }),
+        } => UserConfig::load()
+            .context("Failed to load config")
+            .and_then(|config| {
+                // Handle deprecated --no-background flag
+                if no_background {
+                    eprintln!(
+                        "{}",
+                        warning_message("--no-background is deprecated; use --foreground instead")
+                    );
+                }
+                let background = !(foreground || no_background);
+
+                // Validate conflicting flags
+                if !delete_branch && force_delete {
+                    return Err(worktrunk::git::GitError::Other {
+                        message: "Cannot use --force-delete with --no-delete-branch".into(),
+                    }
+                    .into());
+                }
+
+                let repo = Repository::current().context("Failed to remove worktree")?;
+
+                // Helper: approve remove hooks using current worktree context
+                // Returns true if hooks should run (user approved)
+                let approve_remove = |yes: bool| -> anyhow::Result<bool> {
+                    let env = CommandEnv::for_action_branchless()?;
+                    let ctx = env.context(yes);
+                    let approved = approve_hooks(
+                        &ctx,
+                        &[
+                            HookType::PreRemove,
+                            HookType::PostRemove,
+                            HookType::PostSwitch,
+                        ],
+                    )?;
+                    if !approved {
+                        eprintln!("{}", info_message("Commands declined, continuing removal"));
+                    }
+                    Ok(approved)
+                };
+
+                if branches.is_empty() {
+                    // Single worktree removal: validate FIRST, then approve, then execute
+                    let result =
+                        handle_remove_current(!delete_branch, force_delete, force, &config)
+                            .context("Failed to remove worktree")?;
+
+                    // Early exit for benchmarking time-to-first-output
+                    if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
+                        return Ok(());
+                    }
+
+                    // "Approve at the Gate": approval happens AFTER validation passes
+                    let run_hooks = verify && approve_remove(yes)?;
+
+                    handle_remove_output(&result, background, run_hooks)
+                } else {
+                    // Multi-worktree removal: validate ALL first, then approve, then execute
+                    // This supports partial success - some may fail validation while others succeed.
+                    let current_worktree = repo
+                        .current_worktree()
+                        .root()
+                        .ok()
+                        .and_then(|p| dunce::canonicalize(&p).ok());
+
+                    // Dedupe inputs to avoid redundant planning/execution
+                    let branches: Vec<_> = {
+                        let mut seen = HashSet::new();
+                        branches
+                            .into_iter()
+                            .filter(|b| seen.insert(b.clone()))
+                            .collect()
+                    };
+
+                    // Phase 1: Validate all targets (resolution + preparation)
+                    // Store successful plans for execution after approval
+                    let mut plans_others: Vec<RemoveResult> = Vec::new();
+                    let mut plans_branch_only: Vec<RemoveResult> = Vec::new();
+                    let mut plan_current: Option<RemoveResult> = None;
+                    let mut all_errors: Vec<anyhow::Error> = Vec::new();
+
+                    // Helper: record error and continue
+                    let mut record_error = |e: anyhow::Error| {
+                        eprintln!("{}", e);
+                        all_errors.push(e);
+                    };
+
+                    for branch_name in &branches {
+                        // Resolve the target
+                        let resolved = match resolve_worktree_arg(
+                            &repo,
+                            branch_name,
+                            &config,
+                            OperationMode::Remove,
+                        ) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                record_error(e);
+                                continue;
+                            }
+                        };
+
+                        match resolved {
+                            ResolvedWorktree::Worktree { path, branch } => {
+                                // Use canonical paths to avoid symlink/normalization mismatches
+                                let path_canonical = dunce::canonicalize(&path).unwrap_or(path);
+                                let is_current = current_worktree.as_ref() == Some(&path_canonical);
+
+                                if is_current {
+                                    // Current worktree - use handle_remove_current for detached HEAD
+                                    match handle_remove_current(
+                                        !delete_branch,
+                                        force_delete,
+                                        force,
+                                        &config,
+                                    ) {
+                                        Ok(result) => plan_current = Some(result),
+                                        Err(e) => record_error(e),
+                                    }
+                                    continue;
+                                }
+
+                                // Non-current worktree - branch is always Some because:
+                                // - "@" resolves to current worktree (handled by is_current branch above)
+                                // - Other names resolve via resolve_worktree_arg which always sets branch: Some(...)
+                                let branch_for_remove = branch.as_ref().unwrap();
+
+                                match handle_remove(
+                                    branch_for_remove,
+                                    !delete_branch,
+                                    force_delete,
+                                    force,
+                                    &config,
+                                ) {
+                                    Ok(result) => plans_others.push(result),
+                                    Err(e) => record_error(e),
+                                }
+                            }
+                            ResolvedWorktree::BranchOnly { branch } => {
+                                match handle_remove(
+                                    &branch,
+                                    !delete_branch,
+                                    force_delete,
+                                    force,
+                                    &config,
+                                ) {
+                                    Ok(result) => plans_branch_only.push(result),
+                                    Err(e) => record_error(e),
+                                }
+                            }
+                        }
+                    }
+
+                    // If no valid plans, bail early (all failed validation)
+                    let has_valid_plans = !plans_others.is_empty()
+                        || !plans_branch_only.is_empty()
+                        || plan_current.is_some();
+                    if !has_valid_plans {
+                        anyhow::bail!("");
+                    }
+
+                    // Early exit for benchmarking time-to-first-output
+                    if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
+                        return Ok(());
+                    }
+
+                    // Phase 2: Approve hooks (only if we have valid plans)
+                    // TODO(pre-remove-context): Approval context uses current worktree,
+                    // but hooks execute in each target worktree.
+                    let run_hooks = verify && approve_remove(yes)?;
+
+                    // Phase 3: Execute all validated plans
+                    // Remove other worktrees first
+                    for result in plans_others {
+                        handle_remove_output(&result, background, run_hooks)?;
+                    }
+
+                    // Handle branch-only cases
+                    for result in plans_branch_only {
+                        handle_remove_output(&result, background, run_hooks)?;
+                    }
+
+                    // Remove current worktree last (if it was in the list)
+                    if let Some(result) = plan_current {
+                        handle_remove_output(&result, background, run_hooks)?;
+                    }
+
+                    // Exit with failure if any validation errors occurred
+                    if !all_errors.is_empty() {
+                        anyhow::bail!("");
+                    }
+
+                    Ok(())
+                }
+            }),
         Commands::Merge {
             target,
             squash,

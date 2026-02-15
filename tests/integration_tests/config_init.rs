@@ -77,7 +77,7 @@ fn test_config_create_project_creates_file(repo: TestRepo) {
         ----- stdout -----
 
         ----- stderr -----
-        [32m✓[39m [32mCreated project config: [1m./.config/wt.toml[22m[39m
+        [32m✓[39m [32mCreated project config: [1m_REPO_/.config/wt.toml[22m[39m
 
         [2m↳[22m [2mEdit this file to configure hooks for this repository[22m
         [2m↳[22m [2mSee https://worktrunk.dev/hook/ for hook documentation[22m
@@ -114,7 +114,7 @@ run = "echo hello"
         ----- stdout -----
 
         ----- stderr -----
-        [2m○[22m Project config already exists: [1m./.config/wt.toml[22m
+        [2m○[22m Project config already exists: [1m_REPO_/.config/wt.toml[22m
         [2m↳[22m [2mTo view, run [90mwt config show[39m. To create a user config, run [90mwt config create[39m[22m
         ");
     });

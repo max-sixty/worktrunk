@@ -31,4 +31,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mNot in a repository[39m
+[31m✗[39m [31mfatal: not a git repository (or any of the parent directories): .git[39m

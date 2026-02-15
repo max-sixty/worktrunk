@@ -612,9 +612,11 @@ pub fn collect(
     let mut errors: Vec<TaskError> = Vec::new();
 
     // Collect all work items upfront, then execute in a single Rayon pool.
-    // This avoids nested parallelism (Rayon par_iter → thread::scope per worktree)
-    // which could create 100+ threads. Instead, we have one pool with the configured
-    // thread count (default 2x CPU cores unless overridden by RAYON_NUM_THREADS).
+    // This avoids nested parallelism (Rayon par_iter → scope per worktree)
+    // which can deadlock when outer tasks block pool threads waiting for inner
+    // tasks that can't get scheduled. Instead, we have one flat pool with the
+    // configured thread count (default 2x CPU cores unless overridden by
+    // RAYON_NUM_THREADS).
     let sorted_worktrees_clone = sorted_worktrees.clone();
     let tx_worker = tx.clone();
     let expected_results_clone = expected_results.clone();

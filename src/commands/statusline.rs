@@ -16,9 +16,7 @@ use ansi_str::AnsiStr;
 use anyhow::{Context, Result};
 use worktrunk::git::Repository;
 use worktrunk::styling::{fix_dim_after_color_reset, get_terminal_width, truncate_visible};
-use worktrunk::workspace::open_workspace;
 
-use super::list::columns::ColumnKind;
 use super::list::{self, CollectOptions, StatuslineSegment, json_output};
 use crate::cli::OutputFormat;
 
@@ -199,28 +197,20 @@ pub fn run(format: OutputFormat) -> Result<()> {
         None
     };
 
-    // VCS status segments (skip links in claude-code mode - OSC 8 not supported)
-    if let Ok(workspace) = open_workspace() {
-        if let Some(repo) = workspace.as_any().downcast_ref::<Repository>() {
-            // Git path: full statusline with all git details
-            if repo.worktree_at(&cwd).git_dir().is_ok() {
-                let git_segments = get_git_status_segments(repo, &cwd, !claude_code)?;
+    // Git status segments (skip links in claude-code mode - OSC 8 not supported)
+    if let Ok(repo) = Repository::current()
+        && repo.worktree_at(&cwd).git_dir().is_ok()
+    {
+        let git_segments = get_git_status_segments(&repo, &cwd, !claude_code)?;
 
-                // In claude-code mode, skip branch segment if directory matches worktrunk template
-                let git_segments = if let Some(ref dir) = dir_str {
-                    filter_redundant_branch(git_segments, dir)
-                } else {
-                    git_segments
-                };
-
-                segments.extend(git_segments);
-            }
+        // In claude-code mode, skip branch segment if directory matches worktrunk template
+        let git_segments = if let Some(ref dir) = dir_str {
+            filter_redundant_branch(git_segments, dir)
         } else {
-            // jj path: show workspace name as branch segment
-            if let Ok(Some(name)) = workspace.current_name(&cwd) {
-                segments.push(StatuslineSegment::from_column(name, ColumnKind::Branch));
-            }
-        }
+            git_segments
+        };
+
+        segments.extend(git_segments);
     }
 
     // Model name (claude-code mode only) - priority 1 (same as Branch)
@@ -265,11 +255,7 @@ pub fn run(format: OutputFormat) -> Result<()> {
 fn run_json() -> Result<()> {
     let cwd = env::current_dir().context("Failed to get current directory")?;
 
-    let workspace = open_workspace().context("Not in a repository")?;
-    let repo = workspace
-        .as_any()
-        .downcast_ref::<Repository>()
-        .context("JSON statusline format is only supported for git repositories")?;
+    let repo = Repository::current().context("Not in a git repository")?;
 
     // Verify we're in a worktree
     if repo.worktree_at(&cwd).git_dir().is_err() {
@@ -314,7 +300,7 @@ fn run_json() -> Result<()> {
     };
 
     // Populate computed fields (parallel git operations)
-    list::populate_item(repo, &mut item, options)?;
+    list::populate_item(&repo, &mut item, options)?;
 
     // Convert to JSON format
     let json_item = json_output::JsonItem::from_list_item(&item);

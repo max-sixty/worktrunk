@@ -35,8 +35,8 @@ normal = ["which"]
 # This is optional to avoid C compilation issues on some platforms
 default = ["syntax-highlighting"]
 syntax-highlighting = ["dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-highlight"]
-# Enable shell/PTY integration tests (requires bash, zsh, fish, jj installed on system)
-# Includes: shell wrapper tests, PTY-based approval prompts, TUI select, progressive rendering, jj tests
+# Enable shell/PTY integration tests (requires bash, zsh, fish installed on system)
+# Includes: shell wrapper tests, PTY-based approval prompts, TUI select, progressive rendering
 # These tests can cause nextest to suspend due to terminal foreground pgrp issues.
 # When enabled, run with NEXTEST_NO_INPUT_HANDLER=1 to avoid suspension.
 # See CLAUDE.md "Nextest Terminal Suspension" section for details.

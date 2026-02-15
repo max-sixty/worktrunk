@@ -279,10 +279,6 @@ Real repo benchmarks clone rust-lang/rust (~2-5 min first run, cached thereafter
 
 Use `wt list --format=json` for structured data access. See `wt list --help` for complete field documentation, status variants, and query examples.
 
-## VCS Support
-
-Worktrunk supports **git and jj** (Jujutsu). The `Workspace` trait abstracts over both, but don't design for hypothetical third backends — keep trait signatures as simple as the two real implementations require. For example, if both git and jj implementations are infallible, the trait method should return a plain value, not `Result`.
-
 ## Worktree Model
 
 - Worktrees are **addressed by branch name**, not by filesystem path.

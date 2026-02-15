@@ -8,7 +8,7 @@ use clap_complete::env::CompleteEnv;
 
 use crate::cli;
 use crate::display::format_relative_time_short;
-use worktrunk::config::UserConfig;
+use worktrunk::config::{ProjectConfig, UserConfig};
 use worktrunk::git::{BranchCategory, HookType, Repository};
 
 /// Deprecated args that should never appear in completions.
@@ -268,9 +268,9 @@ fn complete_hook_commands() -> Vec<CompletionCandidate> {
     }
 
     // Load project config and add project hook names
-    // Uses workspace trait (works for both git and jj)
-    if let Ok(workspace) = worktrunk::workspace::open_workspace()
-        && let Ok(Some(project_config)) = workspace.load_project_config()
+    // Pass write_hints=false to avoid side effects during completion
+    if let Ok(repo) = Repository::current()
+        && let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
         && let Some(config) = project_config.hooks.get(hook_type)
     {
         add_named_commands(&mut candidates, config);
@@ -320,46 +320,36 @@ fn complete_branches(
         return Vec::new();
     }
 
-    // Try git first (fast path, no workspace detection overhead)
-    if let Ok(repo) = Repository::current() {
-        let branches = repo.branches_for_completion().unwrap_or_default();
-        return branches
-            .into_iter()
-            .filter(|branch| {
-                if worktree_only {
-                    matches!(branch.category, BranchCategory::Worktree)
-                } else if exclude_remote_only {
-                    !matches!(branch.category, BranchCategory::Remote(_))
-                } else {
-                    true
-                }
-            })
-            .map(|branch| {
-                let time_str = format_relative_time_short(branch.timestamp);
-                let help = match branch.category {
-                    BranchCategory::Worktree => format!("+ {}", time_str),
-                    BranchCategory::Local => format!("/ {}", time_str),
-                    BranchCategory::Remote(remotes) => {
-                        format!("⇣ {} {}", time_str, remotes.join(", "))
-                    }
-                };
-                CompletionCandidate::new(branch.name).help(Some(help.into()))
-            })
-            .collect();
+    let branches = match Repository::current().and_then(|repo| repo.branches_for_completion()) {
+        Ok(b) => b,
+        Err(_) => return Vec::new(),
+    };
+
+    if branches.is_empty() {
+        return Vec::new();
     }
 
-    // Not in a git repo — try jj: workspace names as branch completions
-    if let Ok(workspace) = worktrunk::workspace::open_workspace()
-        && let Ok(items) = workspace.list_workspaces()
-    {
-        return items
-            .iter()
-            .filter_map(|w| w.branch.as_ref())
-            .map(|name| CompletionCandidate::new(name.clone()))
-            .collect();
-    }
-
-    Vec::new()
+    branches
+        .into_iter()
+        .filter(|branch| {
+            if worktree_only {
+                matches!(branch.category, BranchCategory::Worktree)
+            } else if exclude_remote_only {
+                !matches!(branch.category, BranchCategory::Remote(_))
+            } else {
+                true
+            }
+        })
+        .map(|branch| {
+            let time_str = format_relative_time_short(branch.timestamp);
+            let help = match branch.category {
+                BranchCategory::Worktree => format!("+ {}", time_str),
+                BranchCategory::Local => format!("/ {}", time_str),
+                BranchCategory::Remote(remotes) => format!("⇣ {} {}", time_str, remotes.join(", ")),
+            };
+            CompletionCandidate::new(branch.name).help(Some(help.into()))
+        })
+        .collect()
 }
 
 fn suppress_switch_branch_completion() -> bool {

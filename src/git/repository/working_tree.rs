@@ -59,7 +59,7 @@ impl<'a> WorkingTree<'a> {
 
     /// Get the path this WorkingTree was created with.
     ///
-    /// This is the path passed to `worktree_at()` (or `"."` for `current_worktree()`).
+    /// This is the path passed to `worktree_at()` or `base_path()` for `current_worktree()`.
     /// For the canonical git-determined root, use [`root()`](Self::root) instead.
     pub fn path(&self) -> &Path {
         &self.path

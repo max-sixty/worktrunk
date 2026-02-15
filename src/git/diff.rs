@@ -3,8 +3,12 @@
 use ansi_str::AnsiStr;
 use color_print::cformat;
 
-// Re-export LineDiff from its canonical location for backward compatibility.
-pub use crate::workspace::types::LineDiff;
+/// Line-level diff totals (added/deleted counts) used across git operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+pub struct LineDiff {
+    pub added: usize,
+    pub deleted: usize,
+}
 
 /// Parse a git numstat line and extract insertions/deletions.
 ///
@@ -46,6 +50,25 @@ impl LineDiff {
         }
 
         Ok(totals)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.added == 0 && self.deleted == 0
+    }
+}
+
+impl From<LineDiff> for (usize, usize) {
+    fn from(diff: LineDiff) -> Self {
+        (diff.added, diff.deleted)
+    }
+}
+
+impl From<(usize, usize)> for LineDiff {
+    fn from(value: (usize, usize)) -> Self {
+        Self {
+            added: value.0,
+            deleted: value.1,
+        }
     }
 }
 

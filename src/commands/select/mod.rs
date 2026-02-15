@@ -14,37 +14,31 @@ use anyhow::Context;
 use dashmap::DashMap;
 use skim::prelude::*;
 use worktrunk::config::UserConfig;
+use worktrunk::git::Repository;
 
 use super::handle_switch::{
     approve_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
 use super::list::collect;
-use super::worktree::{execute_switch, plan_switch, resolve_path_mismatch};
+use super::worktree::{
+    SwitchBranchInfo, SwitchResult, execute_switch, get_path_mismatch, plan_switch,
+};
 use crate::output::handle_switch_output;
 
 use items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
 use preview::{PreviewLayout, PreviewMode, PreviewState};
 
-/// Handle the interactive select/switch picker.
-///
-/// `branches` and `remotes` are raw CLI flags (false when not passed).
-/// Config resolution (project-specific merged with global) happens internally.
-pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyhow::Result<()> {
+pub fn handle_select(
+    show_branches: bool,
+    show_remotes: bool,
+    config: &UserConfig,
+) -> anyhow::Result<()> {
     // Interactive picker requires a terminal for the TUI
     if !std::io::stdin().is_terminal() {
         anyhow::bail!("Interactive picker requires an interactive terminal");
     }
 
-    let workspace = worktrunk::workspace::open_workspace()?;
-    let repo = crate::commands::require_git_workspace(&*workspace, "select")?;
-
-    // Resolve config using workspace's project identifier (avoids extra Repository::current())
-    let project_id = workspace.project_identifier().ok();
-    let resolved = config.resolved(project_id.as_deref());
-
-    // CLI flags override config values
-    let show_branches = branches || resolved.list.branches();
-    let show_remotes = remotes || resolved.list.remotes();
+    let repo = Repository::current()?;
 
     // Initialize preview mode state file (auto-cleanup on drop)
     let state = PreviewState::new();
@@ -66,7 +60,7 @@ pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyh
     let command_timeout = Some(std::time::Duration::from_millis(500));
 
     let Some(list_data) = collect::collect(
-        repo,
+        &repo,
         show_branches,
         show_remotes,
         &skip_tasks,
@@ -277,17 +271,26 @@ pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyh
             (selected.output().to_string(), false)
         };
 
-        // Load config (fresh load for switch operation)
+        // Load config
         let config = UserConfig::load().context("Failed to load config")?;
+        let repo = Repository::current().context("Failed to switch worktree")?;
 
         // Switch to existing worktree or create new one
-        let plan = plan_switch(repo, &identifier, should_create, None, false, &config)?;
-        let skip_hooks = !approve_switch_hooks(repo, &config, &plan, false, true)?;
-        let (result, branch_info) = execute_switch(repo, plan, &config, false, skip_hooks)?;
+        let plan = plan_switch(&repo, &identifier, should_create, None, false, &config)?;
+        let skip_hooks = !approve_switch_hooks(&repo, &config, &plan, false, true)?;
+        let (result, branch_info) = execute_switch(&repo, plan, &config, false, skip_hooks)?;
 
-        // Compute path mismatch lazily (deferred from plan_switch for existing worktrees).
-        // No early exit here — select's TUI already dominates latency.
-        let branch_info = resolve_path_mismatch(branch_info, &result, repo, &config);
+        // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
+        let branch_info = match &result {
+            SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
+                let expected_path = get_path_mismatch(&repo, &branch_info.branch, path, &config);
+                SwitchBranchInfo {
+                    expected_path,
+                    ..branch_info
+                }
+            }
+            _ => branch_info,
+        };
 
         // Show success message; emit cd directive if shell integration is active
         // Interactive picker always performs cd (change_dir: true)
@@ -300,7 +303,7 @@ pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyh
         if !skip_hooks {
             let extra_vars = switch_extra_vars(&result);
             spawn_switch_background_hooks(
-                repo,
+                &repo,
                 &config,
                 &result,
                 &branch_info.branch,

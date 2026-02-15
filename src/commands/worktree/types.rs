@@ -1,10 +1,18 @@
 //! Types for worktree operations.
 //!
-//! Core data structures used by switch and remove operations.
+//! Core data structures used by switch, remove, and push operations.
 
 use std::path::{Path, PathBuf};
 
 use worktrunk::git::RefType;
+
+/// Flags indicating which merge operations occurred
+#[derive(Debug, Clone, Copy)]
+pub struct MergeOperations {
+    pub committed: bool,
+    pub squashed: bool,
+    pub rebased: bool,
+}
 
 /// Result of a worktree switch operation
 pub enum SwitchResult {
@@ -257,6 +265,59 @@ mod tests {
             from_remote: Some("origin/feature".to_string()),
         };
         assert_eq!(result.path(), &path);
+    }
+
+    #[test]
+    fn test_merge_operations_struct() {
+        let ops = MergeOperations {
+            committed: true,
+            squashed: false,
+            rebased: true,
+        };
+        assert!(ops.committed);
+        assert!(!ops.squashed);
+        assert!(ops.rebased);
+    }
+
+    #[test]
+    fn test_merge_operations_clone() {
+        let ops = MergeOperations {
+            committed: true,
+            squashed: true,
+            rebased: false,
+        };
+        // MergeOperations implements both Clone and Copy
+        // Use Clone explicitly to test the Clone impl
+        let cloned = Clone::clone(&ops);
+        assert_eq!(ops.committed, cloned.committed);
+        assert_eq!(ops.squashed, cloned.squashed);
+        assert_eq!(ops.rebased, cloned.rebased);
+    }
+
+    #[test]
+    fn test_merge_operations_copy() {
+        let ops = MergeOperations {
+            committed: false,
+            squashed: false,
+            rebased: true,
+        };
+        let copied = ops; // Copy trait
+        assert_eq!(ops.committed, copied.committed);
+        assert_eq!(ops.squashed, copied.squashed);
+        assert_eq!(ops.rebased, copied.rebased);
+    }
+
+    #[test]
+    fn test_merge_operations_debug() {
+        let ops = MergeOperations {
+            committed: true,
+            squashed: false,
+            rebased: true,
+        };
+        let debug = format!("{:?}", ops);
+        assert!(debug.contains("committed: true"));
+        assert!(debug.contains("squashed: false"));
+        assert!(debug.contains("rebased: true"));
     }
 
     #[test]

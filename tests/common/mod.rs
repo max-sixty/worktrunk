@@ -695,6 +695,8 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env_remove("PSModulePath");
     // Disable auto PowerShell detection (tests that need it should set to "1")
     cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "0");
+    // Disable auto nushell detection (tests that need it should set to "1")
+    cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
     cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
     // Enable warn-level logging so diagnostics show up in test failures
     cmd.env("RUST_LOG", "warn");
@@ -2833,52 +2835,6 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     settings.add_filter(r"wt\.exe", "wt");
 
     add_standard_env_redactions(&mut settings);
-
-    settings
-}
-
-/// Create configured insta Settings for jj integration test snapshots.
-///
-/// Reuses the core snapshot settings pipeline (ANSI cleanup, path normalization)
-/// but adapted for jj repos where the "repo root" is the default workspace path.
-///
-/// Filters applied:
-/// - Repo root → `_REPO_`
-/// - Workspace paths → `_REPO_.{name}`
-/// - Change IDs (12-char hex) → `[CHANGE_ID]`
-/// - Standard env/temp/project redactions
-pub fn setup_snapshot_settings_for_jj(
-    root: &Path,
-    workspaces: &HashMap<String, PathBuf>,
-) -> insta::Settings {
-    let mut settings = setup_snapshot_settings_for_paths(root, workspaces);
-
-    // jj change IDs vary between runs. They are lowercase-only alphabetic strings
-    // that appear in several forms:
-    // - 12-char IDs in plain text (e.g., "Showing 1 xyzwabcdklmn")
-    // - 8-char IDs in the Commit column (wrapped in ANSI dim)
-    // - 12-char IDs in ANSI dim context (e.g., "Squashed @ <dim>id</dim>")
-    //
-    // The ANSI-wrapped forms need explicit matching because \b word boundaries
-    // don't work at ANSI code boundaries (the trailing 'm' of \x1b[2m is a word char).
-    //
-    // Match 8-char IDs in ANSI dim context (\x1b[2m...\x1b[0m — list output)
-    settings.add_filter(
-        r"\x1b\[2m([a-z]{8})\x1b\[0m",
-        "\x1b[2m[CHANGE_ID_SHORT]\x1b[0m",
-    );
-    // Match 12-char IDs in ANSI dim context (\x1b[2m...\x1b[22m — squash output)
-    settings.add_filter(
-        r"\x1b\[2m([a-z]{12})\x1b\[22m",
-        "\x1b[2m[CHANGE_ID]\x1b[22m",
-    );
-    // Match 12-char IDs in plain text (e.g., "Showing 1 xyzwabcdklmn")
-    settings.add_filter(r"\b[a-z]{12}\b", "[CHANGE_ID]");
-    // Match 8-char IDs in plain text (fallback for non-ANSI contexts)
-    settings.add_filter(r"\b[a-z]{8}\b", "[CHANGE_ID_SHORT]");
-    // Match git commit hashes (hex, 12 chars) in jj output (e.g., "to 26009b197b6c").
-    // Applied after the [a-z]-only filters so pure-alpha IDs are caught as change IDs first.
-    settings.add_filter(r"\b[0-9a-f]{12}\b", "[COMMIT_HASH]");
 
     settings
 }
