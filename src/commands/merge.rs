@@ -1,8 +1,10 @@
 use anyhow::Context;
+use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
-use worktrunk::git::Repository;
-use worktrunk::styling::{eprintln, info_message};
+use worktrunk::git::{GitError, Repository};
+use worktrunk::styling::{eprintln, info_message, success_message};
+use worktrunk::workspace::PushDisplay;
 
 use super::command_approval::approve_command_batch;
 use super::command_executor::CommandContext;
@@ -10,9 +12,7 @@ use super::commit::CommitOptions;
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, execute_hook};
 use super::project_config::{HookCommand, collect_commands_for_hooks};
-use super::worktree::{
-    BranchDeletionMode, MergeOperations, RemoveResult, get_path_mismatch, handle_push,
-};
+use super::worktree::{BranchDeletionMode, RemoveResult, get_path_mismatch};
 
 /// Options for the merge command
 ///
@@ -223,16 +223,95 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         )?;
     }
 
-    // Fast-forward push to target branch with commit/squash/rebase info for consolidated message
-    handle_push(
-        Some(&target_branch),
-        "Merged to",
-        Some(MergeOperations {
-            committed,
-            squashed,
-            rebased,
-        }),
-    )?;
+    // Build operations note for the progress line (e.g., " (no commit/squash needed)")
+    let operations_note = {
+        let mut skipped_ops = Vec::new();
+        if !committed && !squashed {
+            skipped_ops.push("commit/squash");
+        }
+        if !rebased {
+            skipped_ops.push("rebase");
+        }
+        if skipped_ops.is_empty() {
+            String::new()
+        } else {
+            format!(" (no {} needed)", skipped_ops.join("/"))
+        }
+    };
+
+    // Fast-forward push to target branch via workspace trait
+    let push_result = env
+        .workspace
+        .advance_and_push(
+            &target_branch,
+            &env.worktree_path,
+            PushDisplay {
+                verb: "Merging",
+                notes: &operations_note,
+            },
+        )
+        .map_err(|e| {
+            // Rewrite NotFastForward hint for merge context
+            if let Some(GitError::NotFastForward {
+                target_branch,
+                commits_formatted,
+                ..
+            }) = e.downcast_ref::<GitError>()
+            {
+                return GitError::NotFastForward {
+                    target_branch: target_branch.clone(),
+                    commits_formatted: commits_formatted.clone(),
+                    in_merge_context: true,
+                }
+                .into();
+            }
+            e
+        })?;
+
+    // Format merge-specific success/info message
+    if push_result.commit_count > 0 {
+        let mut summary_parts = vec![format!(
+            "{} commit{}",
+            push_result.commit_count,
+            if push_result.commit_count == 1 {
+                ""
+            } else {
+                "s"
+            }
+        )];
+        summary_parts.extend(push_result.stats_summary);
+
+        let stats_str = summary_parts.join(", ");
+        let paren_close = cformat!("<bright-black>)</>");
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Merged to <bold>{target_branch}</> <bright-black>({stats_str}</>{}",
+                paren_close
+            ))
+        );
+    } else {
+        // Explain why nothing was pushed
+        let mut notes = Vec::new();
+        if !committed && !squashed {
+            notes.push("no new commits");
+        }
+        if !rebased {
+            notes.push("no rebase needed");
+        }
+        let context = if notes.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", notes.join(", "))
+        };
+
+        eprintln!(
+            "{}",
+            info_message(cformat!(
+                "Already up to date with <bold>{target_branch}</>{context}"
+            ))
+        );
+    }
 
     // Destination: prefer the target branch's worktree; fall back to home path.
     let destination_path = match target_worktree_path {

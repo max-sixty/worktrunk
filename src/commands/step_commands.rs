@@ -474,7 +474,7 @@ pub fn step_push(target: Option<&str>) -> anyhow::Result<()> {
     let target = ws.resolve_integration_target(target)?;
 
     let result = ws
-        .advance_and_push(&target, &cwd)
+        .advance_and_push(&target, &cwd, Default::default())
         .context("Failed to push")?;
 
     if result.commit_count > 0 {

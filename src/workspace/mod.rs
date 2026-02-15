@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::git::WorktreeInfo;
-pub use types::{IntegrationReason, LineDiff, PushResult, path_dir_name};
+pub use types::{IntegrationReason, LineDiff, PushDisplay, PushResult, path_dir_name};
 
 pub use detect::detect_vcs;
 pub use jj::JjWorkspace;
@@ -159,7 +159,7 @@ pub trait Workspace: Send + Sync {
 
     /// Resolve the integration target (branch/bookmark to rebase onto).
     /// Git: validates ref exists, falls back to default branch.
-    /// Jj: detects trunk bookmark.
+    /// Jj: uses `default_branch_name()` detection chain (config, trunk, local bookmarks).
     fn resolve_integration_target(&self, target: Option<&str>) -> anyhow::Result<String>;
 
     /// Whether the current workspace is already rebased onto `target`.
@@ -216,7 +216,12 @@ pub trait Workspace: Send + Sync {
     ///
     /// Returns a [`PushResult`] with commit count and optional stats for the
     /// command handler to format the final success message.
-    fn advance_and_push(&self, target: &str, path: &Path) -> anyhow::Result<PushResult>;
+    fn advance_and_push(
+        &self,
+        target: &str,
+        path: &Path,
+        display: PushDisplay<'_>,
+    ) -> anyhow::Result<PushResult>;
 
     // ====== Squash ======
 

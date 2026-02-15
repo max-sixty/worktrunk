@@ -17,7 +17,7 @@ use crate::git::{
 };
 use crate::path::format_path_for_display;
 
-use super::types::{IntegrationReason, LineDiff, path_dir_name};
+use super::types::{IntegrationReason, LineDiff, PushDisplay, path_dir_name};
 use crate::styling::{
     GUTTER_OVERHEAD, eprintln, format_with_gutter, get_terminal_width, progress_message,
     warning_message,
@@ -218,7 +218,12 @@ impl Workspace for Repository {
         Ok(())
     }
 
-    fn advance_and_push(&self, target: &str, _path: &Path) -> anyhow::Result<PushResult> {
+    fn advance_and_push(
+        &self,
+        target: &str,
+        _path: &Path,
+        display: PushDisplay<'_>,
+    ) -> anyhow::Result<PushResult> {
         // Check fast-forward
         if !self.is_ancestor(target, "HEAD")? {
             let commits_formatted = self
@@ -256,7 +261,7 @@ impl Workspace for Repository {
         let stash_info = stash_target_if_dirty(self, target_wt_path.as_ref(), target)?;
 
         // Show progress message, commit graph, and diffstat (between stash and restore)
-        show_push_preview(self, target, commit_count, &range);
+        show_push_preview(self, target, commit_count, &range, &display);
 
         // Local push to advance the target branch
         let git_common_dir = self.git_common_dir();
@@ -411,9 +416,15 @@ impl Workspace for Repository {
 
 /// Print push progress: commit count, graph, and diffstat.
 ///
-/// Emits the `◎ Pushing N commit(s) to TARGET @ SHA` progress message,
+/// Emits the `◎ {verb} N commit(s) to TARGET @ SHA{notes}` progress message,
 /// followed by the commit graph and diffstat with gutter formatting.
-fn show_push_preview(repo: &Repository, target: &str, commit_count: usize, range: &str) {
+fn show_push_preview(
+    repo: &Repository,
+    target: &str,
+    commit_count: usize,
+    range: &str,
+    display: &PushDisplay<'_>,
+) {
     let commit_text = if commit_count == 1 {
         "commit"
     } else {
@@ -423,11 +434,13 @@ fn show_push_preview(repo: &Repository, target: &str, commit_count: usize, range
         .run_command(&["rev-parse", "--short", "HEAD"])
         .unwrap_or_default();
     let head_sha = head_sha.trim();
+    let verb = display.verb;
+    let notes = display.notes;
 
     eprintln!(
         "{}",
         progress_message(cformat!(
-            "Pushing {commit_count} {commit_text} to <bold>{target}</> @ <dim>{head_sha}</>"
+            "{verb} {commit_count} {commit_text} to <bold>{target}</> @ <dim>{head_sha}</>{notes}"
         ))
     );
 
@@ -825,11 +838,15 @@ mod tests {
         // advance_and_push via Workspace trait — local push of feature onto main
         let repo_at_wt = Repository::at(&commit_wt).unwrap();
         let ws_at_wt: &dyn Workspace = &repo_at_wt;
-        let push_result = ws_at_wt.advance_and_push("main", &commit_wt).unwrap();
+        let push_result = ws_at_wt
+            .advance_and_push("main", &commit_wt, Default::default())
+            .unwrap();
         assert_eq!(push_result.commit_count, 1);
 
         // advance_and_push with zero commits ahead — returns early
-        let push_result = ws_at_wt.advance_and_push("main", &commit_wt).unwrap();
+        let push_result = ws_at_wt
+            .advance_and_push("main", &commit_wt, Default::default())
+            .unwrap();
         assert_eq!(push_result.commit_count, 0);
 
         // Helper for git commands in linked worktrees
@@ -924,7 +941,9 @@ mod tests {
         git_at(&["commit", "-m", "push with stash"], &stash_wt);
         let repo_at_stash = Repository::at(&stash_wt).unwrap();
         let ws_stash: &dyn Workspace = &repo_at_stash;
-        let push_result = ws_stash.advance_and_push("main", &stash_wt).unwrap();
+        let push_result = ws_stash
+            .advance_and_push("main", &stash_wt, Default::default())
+            .unwrap();
         assert_eq!(push_result.commit_count, 1);
         // Verify dirty file in main worktree was preserved after stash/restore
         assert!(repo_path.join("dirty.txt").exists());

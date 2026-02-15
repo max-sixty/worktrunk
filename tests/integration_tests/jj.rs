@@ -1284,8 +1284,8 @@ fn test_jj_switch_default_from_default(jj_repo: JjTestRepo) {
     assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "switch", &["default"], None));
 }
 
-/// Merge with implicit target (no argument) — exercises trunk_bookmark() resolution
-/// (workspace/jj.rs resolve_integration_target(None) → trunk_bookmark()).
+/// Merge with implicit target (no argument) — exercises default branch detection
+/// (resolve_integration_target(None) → default_branch_name()).
 #[rstest]
 fn test_jj_merge_implicit_target(jj_repo_with_feature: JjTestRepo) {
     assert_cmd_snapshot!(make_jj_snapshot_cmd(

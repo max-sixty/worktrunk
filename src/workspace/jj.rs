@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use color_print::cformat;
 
-use super::types::{IntegrationReason, LineDiff};
+use super::types::{IntegrationReason, LineDiff, PushDisplay};
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, progress_message};
 
@@ -75,8 +75,9 @@ impl JjWorkspace {
 
     /// Detect the bookmark name associated with `trunk()`.
     ///
-    /// Falls back to `"main"` if no bookmark is found.
-    pub fn trunk_bookmark(&self) -> anyhow::Result<String> {
+    /// Returns `None` if no bookmarks are found on the `trunk()` revset
+    /// (common in local-only repos without remote tracking).
+    fn trunk_bookmark(&self) -> anyhow::Result<Option<String>> {
         let output = self.run_command(&[
             "log",
             "-r",
@@ -89,15 +90,29 @@ impl JjWorkspace {
 
         // Prefer "main", then "master", then first found
         if bookmarks.contains(&"main") {
-            Ok("main".to_string())
+            Ok(Some("main".to_string()))
         } else if bookmarks.contains(&"master") {
-            Ok("master".to_string())
+            Ok(Some("master".to_string()))
         } else {
-            Ok(bookmarks
-                .first()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "main".to_string()))
+            Ok(bookmarks.first().map(|s| s.to_string()))
         }
+    }
+
+    /// Check if common default branch bookmarks ("main", "master") exist locally.
+    ///
+    /// Used as a fallback when `trunk()` doesn't resolve to a bookmark (e.g.,
+    /// local-only repos without remote tracking).
+    fn find_local_default_bookmark(&self) -> Option<String> {
+        let output = self
+            .run_command(&["bookmark", "list", "-T", r#"name ++ "\n""#])
+            .ok()?;
+        let bookmarks: Vec<&str> = output.lines().filter(|l| !l.is_empty()).collect();
+        for candidate in ["main", "master"] {
+            if bookmarks.contains(&candidate) {
+                return Some(candidate.to_string());
+            }
+        }
+        None
     }
 
     /// Determine the feature tip change ID.
@@ -271,8 +286,12 @@ impl Workspace for JjWorkspace {
         {
             return Some(name);
         }
-        // Fall back to trunk() revset detection
-        self.trunk_bookmark().ok()
+        // Fall back to trunk() revset detection (requires remote bookmarks)
+        if let Some(name) = self.trunk_bookmark().ok().flatten() {
+            return Some(name);
+        }
+        // Local-only repos: check if common default branch bookmarks exist
+        self.find_local_default_bookmark()
     }
 
     fn set_default_branch(&self, name: &str) -> anyhow::Result<()> {
@@ -362,7 +381,9 @@ impl Workspace for JjWorkspace {
     fn resolve_integration_target(&self, target: Option<&str>) -> anyhow::Result<String> {
         match target {
             Some(t) => Ok(t.to_string()),
-            None => self.trunk_bookmark(),
+            None => self.default_branch_name().ok_or_else(|| {
+                anyhow::anyhow!("Cannot determine default branch. Specify target explicitly or run: wt config state default-branch set BRANCH")
+            }),
         }
     }
 
@@ -471,7 +492,12 @@ impl Workspace for JjWorkspace {
         Ok(())
     }
 
-    fn advance_and_push(&self, target: &str, path: &Path) -> anyhow::Result<PushResult> {
+    fn advance_and_push(
+        &self,
+        target: &str,
+        path: &Path,
+        _display: PushDisplay<'_>,
+    ) -> anyhow::Result<PushResult> {
         // Guard: target must be an ancestor of the feature tip.
         // Prevents moving the bookmark sideways or backward (which would lose commits).
         if !self.is_rebased_onto(target, path)? {
@@ -497,11 +523,8 @@ impl Workspace for JjWorkspace {
             });
         }
 
-        // Move bookmark to feature tip
+        // Move bookmark to feature tip (local only — no remote push)
         run_jj_command(path, &["bookmark", "set", target, "-r", &feature_tip])?;
-
-        // Push to remote
-        run_jj_command(path, &["git", "push", "--bookmark", target])?;
 
         Ok(PushResult {
             commit_count,

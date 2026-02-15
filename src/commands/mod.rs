@@ -56,7 +56,6 @@ pub(crate) use worktrunk::shell::Shell;
 
 use color_print::cformat;
 use worktrunk::git::Repository;
-use worktrunk::styling::{eprintln, format_with_gutter};
 use worktrunk::workspace::Workspace;
 
 /// Downcast a workspace to `Repository`, or error for jj repositories.
@@ -84,35 +83,6 @@ pub(crate) fn format_command_label(command_type: &str, name: Option<&str>) -> St
         Some(name) => cformat!("Running {command_type} <bold>{name}</>"),
         None => format!("Running {command_type}"),
     }
-}
-
-/// Show detailed diffstat for a given commit range.
-///
-/// Displays the diff statistics (file changes, insertions, deletions) in a gutter format.
-/// Used after commit/squash to show what was included in the commit.
-///
-/// # Arguments
-/// * `repo` - The repository to query
-/// * `range` - The commit range to diff (e.g., "HEAD~1..HEAD" or "main..HEAD")
-pub(crate) fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> anyhow::Result<()> {
-    let term_width = crate::display::get_terminal_width();
-    let stat_width = term_width.saturating_sub(worktrunk::styling::GUTTER_OVERHEAD);
-    let diff_stat = repo
-        .run_command(&[
-            "diff",
-            "--color=always",
-            "--stat",
-            &format!("--stat-width={}", stat_width),
-            range,
-        ])?
-        .trim_end()
-        .to_string();
-
-    if !diff_stat.is_empty() {
-        eprintln!("{}", format_with_gutter(&diff_stat, None));
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

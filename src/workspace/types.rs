@@ -111,6 +111,29 @@ impl IntegrationReason {
     }
 }
 
+/// Display context for the push progress message.
+///
+/// Controls the verb and optional notes in the progress line emitted by
+/// `advance_and_push`. E.g. merge passes `verb: "Merging"` and notes like
+/// "(no commit/squash needed)", while step push uses the default "Pushing".
+pub struct PushDisplay<'a> {
+    /// Verb in -ing form for the progress line.
+    pub verb: &'a str,
+    /// Optional parenthetical notes appended after the SHA
+    /// (e.g., " (no commit/squash needed)"). Include the leading space.
+    /// Empty string = omitted.
+    pub notes: &'a str,
+}
+
+impl Default for PushDisplay<'_> {
+    fn default() -> Self {
+        Self {
+            verb: "Pushing",
+            notes: "",
+        }
+    }
+}
+
 /// Result of a push operation, with enough data for the command handler
 /// to format the final success/info message.
 #[derive(Debug, Clone)]

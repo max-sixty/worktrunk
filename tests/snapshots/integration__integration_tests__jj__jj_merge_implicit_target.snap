@@ -30,5 +30,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
+[32m✓[39m [32mPushed [1mmain[22m[39m
 [32m✓[39m [32mSquashed workspace [1mfeature[22m into [1mmain[22m[39m
 [32m✓[39m [32mRemoved workspace [1mfeature[22m @ [1m_REPO_.feature[22m[39m

@@ -72,9 +72,9 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         false
     };
 
-    // Target bookmark name — detect from trunk() or use explicit override
-    let detected_target = workspace.trunk_bookmark()?;
-    let target = opts.target.unwrap_or(detected_target.as_str());
+    // Target bookmark name — detect from config/trunk()/local bookmarks, or use explicit override
+    let resolved_target = workspace.resolve_integration_target(opts.target)?;
+    let target = resolved_target.as_str();
 
     // Check if already integrated
     let feature_tip = workspace.feature_tip(&ws_path)?;
@@ -143,7 +143,7 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     }
 
     // Push (best-effort — may not have a git remote)
-    match workspace.advance_and_push(target, &ws_path) {
+    match workspace.advance_and_push(target, &ws_path, Default::default()) {
         Ok(result) if result.commit_count > 0 => {
             eprintln!("{}", success_message(cformat!("Pushed <bold>{target}</>")));
         }

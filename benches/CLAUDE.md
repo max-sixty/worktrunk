@@ -39,6 +39,14 @@ cargo bench --bench list scaling    # All scaling benchmarks
 cargo bench --bench list -- --skip cold  # Warm cache only
 ```
 
+## WORKTRUNK_FIRST_OUTPUT
+
+Setting `WORKTRUNK_FIRST_OUTPUT=1` causes commands to exit at the point where first
+user-visible output would appear. Used by `time_to_first_output` benchmarks to measure
+startup latency without output rendering or post-output work (mismatch warnings, hooks).
+
+Supported commands: `switch`, `remove`, `list`.
+
 ## Expected Performance
 
 **Modest repos** (500 commits, 100 files):
