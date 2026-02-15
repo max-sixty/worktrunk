@@ -709,22 +709,10 @@ mod tests {
         let plain = result.ansi_strip();
 
         // The output must contain {{ and }}, not the placeholders
-        assert!(
-            plain.contains("{{"),
-            "Template open delimiter should be restored, got: {plain}"
-        );
-        assert!(
-            plain.contains("}}"),
-            "Template close delimiter should be restored, got: {plain}"
-        );
-        assert!(
-            !plain.contains("WTO"),
-            "Open placeholder should not leak into output, got: {plain}"
-        );
-        assert!(
-            !plain.contains("WTC"),
-            "Close placeholder should not leak into output, got: {plain}"
-        );
+        assert!(plain.contains("{{"), "{plain}");
+        assert!(plain.contains("}}"), "{plain}");
+        assert!(!plain.contains("WTO"), "{plain}");
+        assert!(!plain.contains("WTC"), "{plain}");
     }
 
     /// Regression test: template syntax ({{ }}) doesn't break highlighting.
