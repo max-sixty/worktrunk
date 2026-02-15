@@ -38,20 +38,39 @@ pub fn step_commit(
     stage: Option<StageMode>,
     show_prompt: bool,
 ) -> anyhow::Result<()> {
-    // Open workspace once, route by VCS type via downcast
-    let workspace = worktrunk::workspace::open_workspace()?;
-    let Some(repo) = workspace.as_any().downcast_ref::<Repository>() else {
-        return super::handle_step_jj::step_commit_jj(show_prompt);
-    };
-
-    // Handle --show-prompt early: just build and output the prompt
+    // --show-prompt is VCS-agnostic: build prompt from trait method and print
     if show_prompt {
+        let ws = worktrunk::workspace::open_workspace()?;
+        let cwd = std::env::current_dir()?;
         let config = UserConfig::load().context("Failed to load config")?;
-        let project_id = repo.project_identifier().ok();
+        let project_id = ws.project_identifier().ok();
         let commit_config = config.commit_generation(project_id.as_deref());
-        let prompt = crate::llm::build_commit_prompt(&commit_config)?;
+
+        let (diff, diff_stat) = ws.committable_diff_for_prompt(&cwd)?;
+        let branch = ws.current_name(&cwd)?.unwrap_or_else(|| "HEAD".to_string());
+        let repo_name = ws
+            .root_path()?
+            .file_name()
+            .and_then(|n| n.to_str().map(String::from))
+            .unwrap_or_else(|| "repo".to_string());
+        let recent_commits = ws.recent_subjects(None, 5);
+
+        let input = crate::llm::CommitInput {
+            diff: &diff,
+            diff_stat: &diff_stat,
+            branch: &branch,
+            repo_name: &repo_name,
+            recent_commits: recent_commits.as_ref(),
+        };
+        let prompt = crate::llm::build_commit_prompt(&input, &commit_config)?;
         println!("{}", prompt);
         return Ok(());
+    }
+
+    // Open workspace once, route by VCS type via downcast
+    let workspace = worktrunk::workspace::open_workspace()?;
+    if workspace.as_any().downcast_ref::<Repository>().is_none() {
+        return super::handle_step_jj::step_commit_jj();
     }
 
     // Load config once, run LLM setup prompt, then reuse config

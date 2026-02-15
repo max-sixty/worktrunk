@@ -551,6 +551,12 @@ impl Workspace for JjWorkspace {
         Ok(SquashOutcome::Squashed(output.trim().to_string()))
     }
 
+    fn committable_diff_for_prompt(&self, path: &Path) -> anyhow::Result<(String, String)> {
+        let diff = run_jj_command(path, &["diff", "-r", "@"])?;
+        let stat = run_jj_command(path, &["diff", "-r", "@", "--stat"])?;
+        Ok((diff, stat))
+    }
+
     fn has_staging_area(&self) -> bool {
         false
     }

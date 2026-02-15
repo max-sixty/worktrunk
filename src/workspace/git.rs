@@ -328,6 +328,20 @@ impl Workspace for Repository {
         Ok(SquashOutcome::Squashed(sha))
     }
 
+    fn committable_diff_for_prompt(&self, _path: &Path) -> anyhow::Result<(String, String)> {
+        let diff = self.run_command(&[
+            "-c",
+            "diff.noprefix=false",
+            "-c",
+            "diff.mnemonicPrefix=false",
+            "--no-pager",
+            "diff",
+            "--staged",
+        ])?;
+        let stat = self.run_command(&["--no-pager", "diff", "--staged", "--stat"])?;
+        Ok((diff, stat))
+    }
+
     fn has_staging_area(&self) -> bool {
         true
     }

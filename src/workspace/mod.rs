@@ -252,6 +252,15 @@ pub trait Workspace: Send + Sync {
         path: &Path,
     ) -> anyhow::Result<SquashOutcome>;
 
+    // ====== Commit prompt ======
+
+    /// Diff and diffstat of changes that would be committed, for LLM prompt consumption.
+    ///
+    /// Returns `(raw_diff, diffstat)` representing "what's about to be committed."
+    /// Git: staged changes (`git diff --staged`).
+    /// Jj: working-copy changes (`jj diff -r @`).
+    fn committable_diff_for_prompt(&self, path: &Path) -> anyhow::Result<(String, String)>;
+
     // ====== Capabilities ======
 
     /// Whether this VCS has a staging area (index).

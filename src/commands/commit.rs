@@ -5,6 +5,7 @@ use worktrunk::config::CommitGenerationConfig;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
 };
+use worktrunk::workspace::Workspace;
 
 use super::command_executor::CommandContext;
 use super::hooks::HookFailureStrategy;
@@ -130,7 +131,27 @@ impl<'a> CommitGenerator<'a> {
         }
 
         self.emit_hint_if_needed();
-        let commit_message = crate::llm::generate_commit_message(self.config)?;
+
+        // Get staged diff data for commit message generation
+        let (diff, diff_stat) = wt
+            .repo()
+            .committable_diff_for_prompt(wt.root()?.as_path())?;
+        let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
+        let repo_root = wt.root()?;
+        let repo_name = repo_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("repo");
+        let recent_commits = wt.repo().recent_subjects(None, 5);
+
+        let input = crate::llm::CommitInput {
+            diff: &diff,
+            diff_stat: &diff_stat,
+            branch: &current_branch,
+            repo_name,
+            recent_commits: recent_commits.as_ref(),
+        };
+        let commit_message = crate::llm::generate_commit_message(&input, self.config)?;
 
         let formatted_message = self.format_message_for_display(&commit_message);
         eprintln!("{}", format_with_gutter(&formatted_message, None));

@@ -1,10 +1,9 @@
 use anyhow::Context;
 use shell_escape::escape;
 use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
-use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::{Cmd, ShellConfig};
 use worktrunk::styling::{eprintln, warning_message};
@@ -453,14 +452,24 @@ fn build_prompt(
     Ok(rendered)
 }
 
+/// Pre-computed VCS-agnostic data needed for commit prompt/message generation.
+pub(crate) struct CommitInput<'a> {
+    pub diff: &'a str,
+    pub diff_stat: &'a str,
+    pub branch: &'a str,
+    pub repo_name: &'a str,
+    pub recent_commits: Option<&'a Vec<String>>,
+}
+
 pub(crate) fn generate_commit_message(
+    input: &CommitInput<'_>,
     commit_generation_config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
         let command = commit_generation_config.command.as_ref().unwrap();
-        // Commit generation is explicitly configured - fail if it doesn't work
-        return try_generate_commit_message(command, commit_generation_config).map_err(|e| {
+        let prompt = build_commit_prompt(input, commit_generation_config)?;
+        return execute_llm_command(command, &prompt).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
                 command: command.clone(),
                 error: e.to_string(),
@@ -473,85 +482,45 @@ pub(crate) fn generate_commit_message(
         });
     }
 
-    // Fallback: generate a descriptive commit message based on changed files
-    let repo = Repository::current()?;
-    // Use -z for NUL-separated output to handle filenames with spaces/newlines
-    let file_list = repo.run_command(&["diff", "--staged", "--name-only", "-z"])?;
-    let staged_files = file_list
-        .split('\0')
-        .map(|s| s.trim())
+    // Fallback: generate a descriptive commit message based on changed files.
+    // Parses diffstat lines (e.g. " src/foo.rs | 3 +") — works for both git and jj
+    // but may mis-parse filenames containing '|' (rare, low-stakes fallback).
+    let files: Vec<&str> = input
+        .diff_stat
+        .lines()
+        .filter(|l| l.contains('|'))
+        .map(|l| l.split('|').next().unwrap_or("").trim())
         .filter(|s| !s.is_empty())
-        .map(|path| {
-            Path::new(path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(path)
-        })
-        .collect::<Vec<_>>();
+        .map(|path| path.rsplit('/').next().unwrap_or(path))
+        .collect();
 
-    let message = match staged_files.len() {
+    let message = match files.len() {
         0 => "WIP: Changes".to_string(),
-        1 => format!("Changes to {}", staged_files[0]),
-        2 => format!("Changes to {} & {}", staged_files[0], staged_files[1]),
-        3 => format!(
-            "Changes to {}, {} & {}",
-            staged_files[0], staged_files[1], staged_files[2]
-        ),
+        1 => format!("Changes to {}", files[0]),
+        2 => format!("Changes to {} & {}", files[0], files[1]),
+        3 => format!("Changes to {}, {} & {}", files[0], files[1], files[2]),
         n => format!("Changes to {} files", n),
     };
 
     Ok(message)
 }
 
-fn try_generate_commit_message(
-    command: &str,
+/// Build the commit prompt from pre-computed VCS-agnostic data.
+///
+/// Accepts diff, branch name, repo name, and recent commits, then renders
+/// the prompt template. Used by both normal commit generation and `--show-prompt`.
+pub(crate) fn build_commit_prompt(
+    input: &CommitInput<'_>,
     config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
-    let prompt = build_commit_prompt(config)?;
-    execute_llm_command(command, &prompt)
-}
-
-/// Build the commit prompt from staged changes.
-///
-/// Gathers the staged diff, branch name, repo name, and recent commits, then renders
-/// the prompt template. Used by both normal commit generation and `--show-prompt`.
-pub(crate) fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<String> {
-    let repo = Repository::current()?;
-
-    // Get staged diff and diffstat
-    // Use -c flags to ensure consistent format regardless of user's git config
-    // (diff.noprefix, diff.mnemonicPrefix, etc. could break our parsing)
-    let diff_output = repo.run_command(&[
-        "-c",
-        "diff.noprefix=false",
-        "-c",
-        "diff.mnemonicPrefix=false",
-        "--no-pager",
-        "diff",
-        "--staged",
-    ])?;
-    let diff_stat = repo.run_command(&["--no-pager", "diff", "--staged", "--stat"])?;
-
-    // Prepare diff (may filter if too large)
-    let prepared = prepare_diff(diff_output, diff_stat);
-
-    // Get current branch and repo root
-    let wt = repo.current_worktree();
-    let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
-    let repo_root = wt.root()?;
-    let repo_name = repo_root
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("repo");
-
-    let recent_commits = repo.recent_commit_subjects(None, 5);
+    let prepared = prepare_diff(input.diff.to_string(), input.diff_stat.to_string());
 
     let context = TemplateContext {
         git_diff: &prepared.diff,
         git_diff_stat: &prepared.stat,
-        branch: &current_branch,
-        recent_commits: recent_commits.as_ref(),
-        repo_name,
+        branch: input.branch,
+        recent_commits: input.recent_commits,
+        repo_name: input.repo_name,
         commits: &[],
         target_branch: None,
     };
@@ -683,30 +652,6 @@ pub(crate) fn test_commit_generation(
         }
         .into()
     })
-}
-
-/// Build a commit prompt for jj changes (no git repo needed).
-///
-/// Used by `step commit` in jj repos where we have the diff and stat
-/// from `jj diff` instead of `git diff --staged`.
-pub(crate) fn build_jj_commit_prompt(
-    diff: &str,
-    diff_stat: &str,
-    branch: &str,
-    repo_name: &str,
-    config: &CommitGenerationConfig,
-) -> anyhow::Result<String> {
-    let prepared = prepare_diff(diff.to_string(), diff_stat.to_string());
-    let context = TemplateContext {
-        git_diff: &prepared.diff,
-        git_diff_stat: &prepared.stat,
-        branch,
-        recent_commits: None,
-        repo_name,
-        commits: &[],
-        target_branch: None,
-    };
-    build_prompt(config, TemplateType::Commit, &context)
 }
 
 #[cfg(test)]
@@ -1414,11 +1359,16 @@ diff --git a/Cargo.lock b/Cargo.lock
     }
 
     #[test]
-    fn test_build_jj_commit_prompt() {
+    fn test_build_commit_prompt_with_commit_input() {
         let config = CommitGenerationConfig::default();
-        let diff = "+++ new_file.rs\n+fn main() {}\n";
-        let stat = "new_file.rs | 1 +\n1 file changed, 1 insertion(+)";
-        let result = build_jj_commit_prompt(diff, stat, "feature-ws", "myrepo", &config);
+        let input = CommitInput {
+            diff: "+++ new_file.rs\n+fn main() {}\n",
+            diff_stat: "new_file.rs | 1 +\n1 file changed, 1 insertion(+)",
+            branch: "feature-ws",
+            repo_name: "myrepo",
+            recent_commits: None,
+        };
+        let result = build_commit_prompt(&input, &config);
         assert!(result.is_ok());
         let prompt = result.unwrap();
         assert!(prompt.contains("new_file.rs"));

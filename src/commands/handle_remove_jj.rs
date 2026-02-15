@@ -163,6 +163,23 @@ pub fn remove_jj_workspace_and_cd(
             None,
             None,
         )?;
+
+        // Run post-switch hooks when removing the current workspace
+        // (we've changed directory to the default workspace)
+        if removing_current {
+            run_hook_with_filter(
+                &ctx,
+                user_hooks.post_switch.as_ref(),
+                project_config
+                    .as_ref()
+                    .and_then(|c| c.hooks.post_switch.as_ref()),
+                HookType::PostSwitch,
+                &[],
+                HookFailureStrategy::Warn,
+                None,
+                None,
+            )?;
+        }
     }
 
     Ok(())
