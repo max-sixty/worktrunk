@@ -72,6 +72,7 @@ pub fn handle_remove_command(opts: RemoveOptions) -> anyhow::Result<()> {
                 &ws_path,
                 run_hooks,
                 yes,
+                None,
             )?;
         }
         return Ok(());

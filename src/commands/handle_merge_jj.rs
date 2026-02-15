@@ -14,7 +14,7 @@ use worktrunk::workspace::{JjWorkspace, Workspace};
 
 use super::command_approval::approve_hooks;
 use super::context::CommandEnv;
-use super::handle_remove_jj::remove_jj_workspace_and_cd;
+use super::handle_remove_jj::{IntegrationInfo, remove_jj_workspace_and_cd};
 use super::hooks::{HookFailureStrategy, run_hook_with_filter};
 use super::merge::MergeOptions;
 use super::step_commands::{SquashResult, do_squash};
@@ -85,7 +85,7 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
                 "Workspace <bold>{ws_name}</> is already integrated into trunk"
             ))
         );
-        return remove_if_requested(&workspace, remove, yes, &ws_name, &ws_path, verify);
+        return remove_if_requested(&workspace, remove, yes, &ws_name, &ws_path, verify, target);
     }
 
     // CLI flags override config values (jj always squashes by default)
@@ -108,14 +108,18 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
                         "Workspace <bold>{ws_name}</> is already integrated into trunk"
                     ))
                 );
-                return remove_if_requested(&workspace, remove, yes, &ws_name, &ws_path, verify);
+                return remove_if_requested(
+                    &workspace, remove, yes, &ws_name, &ws_path, verify, target,
+                );
             }
             SquashResult::AlreadySingleCommit | SquashResult::Squashed => {
                 // Proceed to push
             }
             SquashResult::NoNetChanges => {
                 // Feature commits canceled out — nothing to push, just remove
-                return remove_if_requested(&workspace, remove, yes, &ws_name, &ws_path, verify);
+                return remove_if_requested(
+                    &workspace, remove, yes, &ws_name, &ws_path, verify, target,
+                );
             }
         }
     } else {
@@ -179,7 +183,7 @@ pub fn handle_merge_jj(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     }
 
     // Remove workspace if requested
-    remove_if_requested(&workspace, remove, yes, &ws_name, &ws_path, verify)?;
+    remove_if_requested(&workspace, remove, yes, &ws_name, &ws_path, verify, target)?;
 
     Ok(())
 }
@@ -200,6 +204,9 @@ fn rebase_onto_trunk(workspace: &JjWorkspace, ws_path: &Path, target: &str) -> a
 }
 
 /// Remove the workspace if `--no-remove` wasn't specified.
+///
+/// Computes the integration reason before removal so the success message
+/// can show whether/how the workspace was integrated into the target.
 fn remove_if_requested(
     workspace: &JjWorkspace,
     remove: bool,
@@ -207,12 +214,20 @@ fn remove_if_requested(
     ws_name: &str,
     ws_path: &Path,
     run_hooks: bool,
+    target: &str,
 ) -> anyhow::Result<()> {
     if !remove {
         eprintln!("{}", info_message("Workspace preserved (--no-remove)"));
         return Ok(());
     }
 
+    // Compute integration before removal (workspace must still exist)
+    let integration = workspace
+        .feature_tip(ws_path)
+        .ok()
+        .and_then(|tip| workspace.is_integrated(&tip, target).ok().flatten())
+        .map(|reason| IntegrationInfo { reason, target });
+
     // Pass through run_hooks so pre-remove/post-remove/post-switch hooks execute during merge
-    remove_jj_workspace_and_cd(workspace, ws_name, ws_path, run_hooks, yes)
+    remove_jj_workspace_and_cd(workspace, ws_name, ws_path, run_hooks, yes, integration)
 }

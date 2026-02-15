@@ -344,6 +344,14 @@ impl Workspace for JjWorkspace {
     }
 
     fn is_integrated(&self, id: &str, target: &str) -> anyhow::Result<Option<IntegrationReason>> {
+        // TODO: Implement full integration reasons for jj (matching git's 5 variants).
+        // Currently only detects Ancestor via revset. Could distinguish:
+        // - SameCommit: `{id} & {target}` (exact same change)
+        // - Ancestor: `{id} & ::{target}` (current check)
+        // - NoAddedChanges: `jj diff --from {target} --to {id}` is empty
+        // - TreesMatch / MergeAddsNothing: compare tree hashes or simulate merge
+        // See git implementation in src/git/repository/integration.rs for reference.
+
         // Check if the change is an ancestor of (or same as) the target
         let revset = format!("{id} & ::{target}");
         let output = self.run_command(&["log", "-r", &revset, "--no-graph", "-T", r#""x""#])?;
