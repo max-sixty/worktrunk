@@ -9,7 +9,6 @@ use worktrunk::workspace::Workspace;
 
 use super::command_executor::CommandContext;
 use super::hooks::HookFailureStrategy;
-use super::repository_ext::RepositoryCliExt;
 
 // Re-export StageMode from config for use by CLI
 pub use worktrunk::config::StageMode;
@@ -20,7 +19,6 @@ pub struct CommitOptions<'a> {
     pub target_branch: Option<&'a str>,
     pub no_verify: bool,
     pub stage_mode: StageMode,
-    pub warn_about_untracked: bool,
     pub show_no_squash_note: bool,
 }
 
@@ -32,7 +30,6 @@ impl<'a> CommitOptions<'a> {
             target_branch: None,
             no_verify: false,
             stage_mode: StageMode::All,
-            warn_about_untracked: true,
             show_no_squash_note: false,
         }
     }
@@ -216,32 +213,10 @@ impl CommitOptions<'_> {
             .map_err(worktrunk::git::add_hook_skip_hint)?;
         }
 
-        if self.warn_about_untracked && self.stage_mode == StageMode::All {
-            self.ctx.repo().unwrap().warn_if_auto_staging_untracked()?;
-        }
-
-        // Stage changes based on mode
-        match self.stage_mode {
-            StageMode::All => {
-                // Stage everything: tracked modifications + untracked files
-                self.ctx
-                    .repo()
-                    .unwrap()
-                    .run_command(&["add", "-A"])
-                    .context("Failed to stage changes")?;
-            }
-            StageMode::Tracked => {
-                // Stage tracked modifications only (no untracked files)
-                self.ctx
-                    .repo()
-                    .unwrap()
-                    .run_command(&["add", "-u"])
-                    .context("Failed to stage tracked changes")?;
-            }
-            StageMode::None => {
-                // Stage nothing - commit only what's already in the index
-            }
-        }
+        // Stage changes via Workspace (git: warn + add, jj: no-op)
+        self.ctx
+            .workspace
+            .prepare_commit(self.ctx.worktree_path, self.stage_mode)?;
 
         let effective_config = self.ctx.commit_generation();
         let wt = self.ctx.repo().unwrap().current_worktree();

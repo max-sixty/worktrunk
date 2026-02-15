@@ -26,7 +26,6 @@ use super::command_approval::approve_hooks;
 use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, run_hook_with_filter};
-use super::repository_ext::RepositoryCliExt;
 
 /// Handle `wt step commit` command
 ///
@@ -104,8 +103,6 @@ pub fn step_commit(
     options.no_verify = no_verify;
     options.stage_mode = stage_mode;
     options.show_no_squash_note = false;
-    // Only warn about untracked if we're staging all
-    options.warn_about_untracked = stage_mode == StageMode::All;
 
     options.commit()
 }
@@ -286,21 +283,8 @@ pub fn handle_squash(
     // Get and validate target ref (any commit-ish for merge-base calculation)
     let integration_target = repo.require_target_ref(target)?;
 
-    // Auto-stage changes before running pre-commit hooks so both beta and merge paths behave identically
-    match stage_mode {
-        StageMode::All => {
-            repo.warn_if_auto_staging_untracked()?;
-            repo.run_command(&["add", "-A"])
-                .context("Failed to stage changes")?;
-        }
-        StageMode::Tracked => {
-            repo.run_command(&["add", "-u"])
-                .context("Failed to stage tracked changes")?;
-        }
-        StageMode::None => {
-            // Stage nothing - use what's already staged
-        }
-    }
+    // Stage changes via Workspace (git: warn + add, jj: no-op)
+    env.workspace.prepare_commit(&cwd, stage_mode)?;
 
     // Run pre-commit hooks (user first, then project)
     if !no_verify {

@@ -10,6 +10,7 @@ use anyhow::Context;
 use color_print::cformat;
 
 use super::types::{IntegrationReason, LineDiff, LocalPushDisplay};
+use crate::config::StageMode;
 use crate::shell_exec::Cmd;
 use crate::styling::{eprintln, progress_message};
 
@@ -455,6 +456,10 @@ impl Workspace for JjWorkspace {
             .and_then(|n| n.to_str())
             .map(|s| s.to_string())
             .ok_or_else(|| anyhow::anyhow!("Repository path has no filename"))
+    }
+
+    fn prepare_commit(&self, _path: &Path, _mode: StageMode) -> anyhow::Result<()> {
+        Ok(()) // jj auto-snapshots the working copy
     }
 
     fn commit(&self, message: &str, path: &Path) -> anyhow::Result<String> {

@@ -1,8 +1,6 @@
 use super::worktree::{BranchDeletionMode, RemoveResult, get_path_mismatch};
-use anyhow::Context;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{GitError, IntegrationReason, Repository, parse_untracked_files};
-use worktrunk::styling::{eprintln, format_with_gutter, warning_message};
+use worktrunk::git::{GitError, IntegrationReason, Repository};
 
 /// Target for worktree removal.
 #[derive(Debug)]
@@ -16,9 +14,6 @@ pub enum RemoveTarget<'a> {
 /// CLI-only helpers implemented on [`Repository`] via an extension trait so we can keep orphan
 /// implementations inside the binary crate.
 pub trait RepositoryCliExt {
-    /// Warn about untracked files being auto-staged.
-    fn warn_if_auto_staging_untracked(&self) -> anyhow::Result<()>;
-
     /// Prepare a worktree removal by branch name or current worktree.
     ///
     /// Returns a `RemoveResult` describing what will be removed. The actual
@@ -36,14 +31,6 @@ pub trait RepositoryCliExt {
 }
 
 impl RepositoryCliExt for Repository {
-    fn warn_if_auto_staging_untracked(&self) -> anyhow::Result<()> {
-        // Use -z for NUL-separated output to handle filenames with spaces/newlines
-        let status = self
-            .run_command(&["status", "--porcelain", "-z"])
-            .context("Failed to get status")?;
-        warn_about_untracked_files(&status)
-    }
-
     fn prepare_worktree_removal(
         &self,
         target: RemoveTarget,
@@ -226,30 +213,9 @@ fn compute_integration_reason(
     reason
 }
 
-/// Warn about untracked files that will be auto-staged.
-fn warn_about_untracked_files(status_output: &str) -> anyhow::Result<()> {
-    let files = parse_untracked_files(status_output);
-    if files.is_empty() {
-        return Ok(());
-    }
-
-    let count = files.len();
-    let path_word = if count == 1 { "path" } else { "paths" };
-    eprintln!(
-        "{}",
-        warning_message(format!("Auto-staging {count} untracked {path_word}:"))
-    );
-
-    let joined_files = files.join("\n");
-    eprintln!("{}", format_with_gutter(&joined_files, None));
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use worktrunk::git::parse_porcelain_z;
+    use worktrunk::git::{parse_porcelain_z, parse_untracked_files};
 
     #[test]
     fn test_parse_porcelain_z_modified_staged() {

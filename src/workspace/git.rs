@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use color_print::cformat;
 
+use crate::config::StageMode;
 use crate::git::{
     GitError, Repository, check_integration, compute_integration_lazy, parse_porcelain_z,
 };
@@ -193,6 +194,25 @@ impl Workspace for Repository {
     fn project_identifier(&self) -> anyhow::Result<String> {
         // Call the inherent method via fully-qualified syntax
         Repository::project_identifier(self)
+    }
+
+    fn prepare_commit(&self, _path: &Path, mode: StageMode) -> anyhow::Result<()> {
+        if mode == StageMode::All {
+            warn_if_auto_staging_untracked(self)?;
+        }
+
+        match mode {
+            StageMode::All => {
+                self.run_command(&["add", "-A"])
+                    .context("Failed to stage changes")?;
+            }
+            StageMode::Tracked => {
+                self.run_command(&["add", "-u"])
+                    .context("Failed to stage tracked changes")?;
+            }
+            StageMode::None => {}
+        }
+        Ok(())
     }
 
     fn commit(&self, message: &str, path: &Path) -> anyhow::Result<String> {
@@ -412,6 +432,30 @@ impl Workspace for Repository {
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+/// Warn about untracked files that will be auto-staged.
+fn warn_if_auto_staging_untracked(repo: &Repository) -> anyhow::Result<()> {
+    let status = repo
+        .run_command(&["status", "--porcelain", "-z"])
+        .context("Failed to get status")?;
+
+    let files = crate::git::parse_untracked_files(&status);
+    if files.is_empty() {
+        return Ok(());
+    }
+
+    let count = files.len();
+    let path_word = if count == 1 { "path" } else { "paths" };
+    eprintln!(
+        "{}",
+        warning_message(format!("Auto-staging {count} untracked {path_word}:"))
+    );
+
+    let joined_files = files.join("\n");
+    eprintln!("{}", format_with_gutter(&joined_files, None));
+
+    Ok(())
 }
 
 /// Print push progress: commit count, graph, and diffstat.

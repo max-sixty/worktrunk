@@ -19,6 +19,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::config::StageMode;
 use crate::git::WorktreeInfo;
 pub use types::{IntegrationReason, LineDiff, LocalPushDisplay, LocalPushResult, path_dir_name};
 
@@ -192,6 +193,13 @@ pub trait Workspace: Send + Sync {
     fn project_identifier(&self) -> anyhow::Result<String>;
 
     // ====== Commit ======
+
+    /// Prepare the working tree for commit.
+    ///
+    /// Git: warns about untracked files if `mode` is [`StageMode::All`],
+    ///   then stages files (`git add -A`, `git add -u`, or nothing).
+    /// Jj: no-op (jj auto-snapshots the working copy).
+    fn prepare_commit(&self, path: &Path, mode: StageMode) -> anyhow::Result<()>;
 
     /// Commit staged/working changes with the given message.
     /// Returns the new commit identifier (SHA for git, change ID for jj).
