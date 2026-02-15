@@ -152,6 +152,7 @@ pub fn handle_select(
     // Configure skim options with Rust-based preview and mode switching keybindings
     let options = SkimOptionsBuilder::default()
         .height("90%".to_string())
+        .no_clear_start(true)
         .layout("reverse".to_string())
         .header_lines(1) // Make first line (header) non-selectable
         .multi(false)
