@@ -38,7 +38,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning pre-remove project hook:[39m
+[36m◎[39m [36mRunning pre-remove project hook[39m
 [107m [0m [2m[0m[2m[34mtouch[0m[2m _REPO_/m.txt
 [0m[36m◎[39m [36mRemoving worktree (detached HEAD, no branch to delete)...[39m
 [32m✓[39m [32mRemoved worktree (detached HEAD, no branch to delete)[39m

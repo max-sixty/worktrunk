@@ -39,13 +39,13 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning post-create [1muser:vscode[22m @ [1m_REPO_.feature[22m:[39m
+[36m◎[39m [36mRunning post-create [1muser:vscode[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'1'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt
-[0m[36m◎[39m [36mRunning post-create [1muser:claude[22m @ [1m_REPO_.feature[22m:[39m
+[0m[36m◎[39m [36mRunning post-create [1muser:claude[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'2'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt
-[0m[36m◎[39m [36mRunning post-create [1muser:copy[22m @ [1m_REPO_.feature[22m:[39m
+[0m[36m◎[39m [36mRunning post-create [1muser:copy[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'3'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt
-[0m[36m◎[39m [36mRunning post-create [1muser:submodule[22m @ [1m_REPO_.feature[22m:[39m
+[0m[36m◎[39m [36mRunning post-create [1muser:submodule[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'4'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt
 [0m[32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m

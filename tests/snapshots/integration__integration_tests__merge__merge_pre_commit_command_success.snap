@@ -41,7 +41,7 @@ exit_code: 0
 ----- stderr -----
 [33m▲[39m [33mAuto-staging 1 untracked path:[39m
 [107m [0m feature.txt
-[36m◎[39m [36mRunning pre-commit project hook:[39m
+[36m◎[39m [36mRunning pre-commit project hook[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Pre-commit check passed'[0m[2m
 [0mPre-commit check passed
 [36m◎[39m [36mCommitting changes with default message... [90m(1 file, [32m+1[39m, no squashing needed[39m[90m)[39m[39m

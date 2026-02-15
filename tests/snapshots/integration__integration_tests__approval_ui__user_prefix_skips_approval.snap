@@ -39,6 +39,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning pre-merge [1muser:test[22m:[39m
+[36m◎[39m [36mRunning pre-merge [1muser:test[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'user test'[0m[2m
 [0muser test
