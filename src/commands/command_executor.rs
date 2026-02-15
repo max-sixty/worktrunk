@@ -192,15 +192,7 @@ fn expand_commands(
             None => format!("{} {} hook", source, hook_type),
         };
         let expanded_str =
-            expand_template(&cmd.template, &vars, true, &worktree_map, &template_name).map_err(
-                |e| {
-                    anyhow::anyhow!(
-                        "Failed to expand command template '{}': {}",
-                        cmd.template,
-                        e
-                    )
-                },
-            )?;
+            expand_template(&cmd.template, &vars, true, &worktree_map, &template_name)?;
 
         // Build per-command JSON with hook_type and hook_name
         let mut cmd_context = base_context.clone();
