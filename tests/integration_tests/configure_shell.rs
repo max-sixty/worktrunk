@@ -1849,6 +1849,11 @@ fn test_nushell_auto_detection_creates_vendor_autoload(repo: TestRepo, temp_home
         "Nushell should be auto-configured when detected:\n{}",
         stderr
     );
+    assert!(
+        !stderr.contains("Skipped nu"),
+        "Nushell should not be skipped when detected:\n{}",
+        stderr
+    );
 
     // Verify the nushell wrapper was created with vendor/autoload/ directory
     let home = std::fs::canonicalize(temp_home.path()).unwrap();

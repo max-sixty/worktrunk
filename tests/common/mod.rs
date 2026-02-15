@@ -695,6 +695,8 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env_remove("PSModulePath");
     // Disable auto PowerShell detection (tests that need it should set to "1")
     cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "0");
+    // Disable auto nushell detection (tests that need it should set to "1")
+    cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
     cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
     // Enable warn-level logging so diagnostics show up in test failures
     cmd.env("RUST_LOG", "warn");
@@ -981,10 +983,6 @@ pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
     // Windows: etcetera uses APPDATA for config_dir() (AppData\Roaming)
     // Map it to .config to match Unix XDG_CONFIG_HOME behavior
     cmd.env("APPDATA", home.join(".config"));
-    // Suppress nushell auto-detection by default so tests are deterministic
-    // regardless of whether `nu` is installed on the host. Tests that need nushell
-    // detection should override with cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "1").
-    cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
 }
 
 /// Check that a git command succeeded, panicking with diagnostics if not.
