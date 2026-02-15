@@ -757,11 +757,10 @@ pub fn collect(
         items_with_missing,
     } = drain_outcome
     {
-        // Build diagnostic message showing what's MISSING (more useful for debugging)
+        // Warning: what happened + gutter showing which results are missing
         let mut diag = format!("wt list timed out after 30s ({received_count} results received)");
 
         if !items_with_missing.is_empty() {
-            diag.push_str("\nMissing results:");
             let missing_lines: Vec<String> = items_with_missing
                 .iter()
                 .map(|result| {
@@ -776,14 +775,14 @@ pub fn collect(
             ));
         }
 
-        diag.push_str(
-            "\n\nThis likely indicates a git command hung. Run with -v for details, -vv to create a diagnostic file.",
-        );
-
         eprintln!("{}", warning_message(&diag));
 
-        // Show issue reporting hint (free function - doesn't collect diagnostic data)
-        eprintln!("{}", hint_message(crate::diagnostic::issue_hint()));
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "A git command likely hung; run with <bright-black>-v</> for details, <bright-black>-vv</> to create a diagnostic file"
+            ))
+        );
     }
 
     // Compute status symbols for prunable worktrees (skipped during task spawning).
