@@ -50,6 +50,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
+          allowed_non_write_users: "*"
           additional_permissions: |
             actions: read
           use_sticky_comment: true
