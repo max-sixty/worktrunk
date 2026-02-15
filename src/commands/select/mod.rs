@@ -20,7 +20,9 @@ use super::handle_switch::{
     approve_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
 use super::list::collect;
-use super::worktree::{execute_switch, plan_switch};
+use super::worktree::{
+    SwitchBranchInfo, SwitchResult, execute_switch, get_path_mismatch, plan_switch,
+};
 use crate::output::handle_switch_output;
 
 use items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
@@ -277,6 +279,18 @@ pub fn handle_select(
         let plan = plan_switch(&repo, &identifier, should_create, None, false, &config)?;
         let skip_hooks = !approve_switch_hooks(&repo, &config, &plan, false, true)?;
         let (result, branch_info) = execute_switch(&repo, plan, &config, false, skip_hooks)?;
+
+        // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
+        let branch_info = match &result {
+            SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
+                let expected_path = get_path_mismatch(&repo, &branch_info.branch, path, &config);
+                SwitchBranchInfo {
+                    expected_path,
+                    ..branch_info
+                }
+            }
+            _ => branch_info,
+        };
 
         // Show success message; emit cd directive if shell integration is active
         // Interactive picker always performs cd (change_dir: true)
