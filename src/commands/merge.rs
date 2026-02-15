@@ -6,12 +6,11 @@ use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{eprintln, info_message, success_message};
 use worktrunk::workspace::LocalPushDisplay;
 
-use super::command_approval::approve_command_batch;
+use super::command_approval::approve_hooks;
 use super::command_executor::CommandContext;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, execute_hook};
-use super::project_config::{HookCommand, collect_commands_for_hooks};
 use super::worktree::{BranchDeletionMode, RemoveResult, get_path_mismatch};
 
 /// Options for the merge command
@@ -33,46 +32,6 @@ pub struct MergeOptions<'a> {
     pub yes: bool,
     /// CLI override for stage mode. None = use effective config default.
     pub stage: Option<super::commit::StageMode>,
-}
-
-/// Collect all commands that will be executed during merge.
-///
-/// Returns (commands, project_identifier) for batch approval.
-fn collect_merge_commands(
-    repo: &Repository,
-    commit: bool,
-    verify: bool,
-    will_remove: bool,
-    squash_enabled: bool,
-) -> anyhow::Result<(Vec<HookCommand>, String)> {
-    let mut all_commands = Vec::new();
-    let project_config = match repo.load_project_config()? {
-        Some(cfg) => cfg,
-        None => return Ok((all_commands, repo.project_identifier()?)),
-    };
-
-    let mut hooks = Vec::new();
-
-    // Pre-commit hooks run when a commit will actually be created
-    let will_create_commit = repo.current_worktree().is_dirty()? || squash_enabled;
-    if commit && verify && will_create_commit {
-        hooks.push(HookType::PreCommit);
-    }
-
-    if verify {
-        hooks.push(HookType::PreMerge);
-        hooks.push(HookType::PostMerge);
-        if will_remove {
-            hooks.push(HookType::PreRemove);
-            hooks.push(HookType::PostRemove);
-            hooks.push(HookType::PostSwitch);
-        }
-    }
-
-    all_commands.extend(collect_commands_for_hooks(&project_config, &hooks));
-
-    let project_id = repo.project_identifier()?;
-    Ok((all_commands, project_id))
 }
 
 pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
@@ -143,20 +102,37 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let on_target = current_branch == target_branch;
     let remove_effective = remove && !on_target && !in_main;
 
-    // Collect and approve all commands upfront for batch permission request
-    let (all_commands, project_id) =
-        collect_merge_commands(repo, commit, verify, remove_effective, squash_enabled)?;
+    // "Approve at the Gate": approve all hooks upfront
+    let verify = if verify {
+        let ctx = env.context(yes);
 
-    // Approve all commands in a single batch (shows templates, not expanded values)
-    let approved = approve_command_batch(&all_commands, &project_id, config, yes, false)?;
+        let mut hook_types = Vec::new();
 
-    // If commands were declined, skip hooks but continue with merge
-    // Shadow verify to gate all subsequent hook execution on approval
-    let verify = if !approved {
-        eprintln!("{}", info_message("Commands declined, continuing merge"));
-        false
+        // Pre-commit hooks run when a commit will actually be created
+        let will_create_commit = repo.current_worktree().is_dirty()? || squash_enabled;
+        if commit && will_create_commit {
+            hook_types.push(HookType::PreCommit);
+        }
+
+        hook_types.push(HookType::PreMerge);
+        hook_types.push(HookType::PostMerge);
+        if remove_effective {
+            hook_types.extend_from_slice(&[
+                HookType::PreRemove,
+                HookType::PostRemove,
+                HookType::PostSwitch,
+            ]);
+        }
+
+        let approved = approve_hooks(&ctx, &hook_types)?;
+        if !approved {
+            eprintln!("{}", info_message("Commands declined, continuing merge"));
+            false
+        } else {
+            true
+        }
     } else {
-        verify
+        false
     };
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
@@ -351,7 +327,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             removed_commit,
         };
         // Run hooks during merge removal (pass through verify flag)
-        // Approval was handled at the gate (collect_merge_commands)
+        // Approval was handled at the gate (approve_hooks)
         crate::output::handle_remove_output(&remove_result, true, verify)?;
     } else {
         // Worktree preserved - show reason (priority: main worktree > on target > --no-remove flag)
