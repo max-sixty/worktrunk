@@ -543,6 +543,12 @@ pub fn check_and_migrate(
     // For brief warnings (non-config-show commands), just show a pointer
     if show_brief_warning {
         eprintln!("{}", format_brief_warning(label));
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "To see details, run <bright-black>wt config show</>"
+            ))
+        );
 
         // Still write migration file if needed (first time only)
         if !should_skip_write
@@ -588,11 +594,7 @@ pub fn check_and_migrate(
 /// Returns a formatted warning string. Does not print anything;
 /// caller is responsible for output.
 pub fn format_brief_warning(label: &str) -> String {
-    warning_message(cformat!(
-        "{} has deprecated settings. To see details, run <bold>wt config show</>",
-        label
-    ))
-    .to_string()
+    warning_message(cformat!("{} has deprecated settings", label)).to_string()
 }
 
 /// Write migration file with all fixes applied.
