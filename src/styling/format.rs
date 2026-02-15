@@ -343,10 +343,7 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
                             .replace(&close_with_space, "}}")
                             .replace(TPL_CLOSE, "}}")
                     } else {
-                        let restore = match active_style {
-                            Some(style) => format!("{reset}{style}"),
-                            None => format!("{reset}{dim}"),
-                        };
+                        let restore = format!("{reset}{}", active_style.unwrap_or(dim));
                         let close_repl = format!("{reset}{string_style}}}}}{restore}");
                         text.replace(TPL_OPEN, &format!("{reset}{string_style}{{{{{restore}"))
                             .replace(&close_with_space, &close_repl)
