@@ -41,9 +41,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning post-create [1mproject:base[22m @ [1m_REPO_.feature[22m:[39m
+[36m◎[39m [36mRunning post-create [1mproject:base[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Base: main'[0m[2m [0m[2m[36m>[0m[2m base_info.txt
-[0m[36m◎[39m [36mRunning post-create [1mproject:base_path[22m @ [1m_REPO_.feature[22m:[39m
+[0m[36m◎[39m [36mRunning post-create [1mproject:base_path[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Base Path: _REPO_'[0m[2m [0m[2m[36m>>[0m[2m base_info.txt
 [0m[32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m

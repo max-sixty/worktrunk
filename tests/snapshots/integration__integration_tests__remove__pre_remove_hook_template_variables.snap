@@ -39,13 +39,13 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning pre-remove [1mproject:branch[22m @ [1m_REPO_.feature-templates[22m:[39m
+[36m◎[39m [36mRunning pre-remove [1mproject:branch[22m @ [1m_REPO_.feature-templates[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Branch: feature-templates'[0m[2m
 [0mBranch: feature-templates
-[36m◎[39m [36mRunning pre-remove [1mproject:worktree[22m @ [1m_REPO_.feature-templates[22m:[39m
+[36m◎[39m [36mRunning pre-remove [1mproject:worktree[22m @ [1m_REPO_.feature-templates[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Worktree: _REPO_.feature-templates'[0m[2m
 [0mWorktree: _REPO_.feature-templates
-[36m◎[39m [36mRunning pre-remove [1mproject:worktree_name[22m @ [1m_REPO_.feature-templates[22m:[39m
+[36m◎[39m [36mRunning pre-remove [1mproject:worktree_name[22m @ [1m_REPO_.feature-templates[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Name: repo.feature-templates'[0m[2m
 [0mName: repo.feature-templates
 [36m◎[39m [36mRemoving [1mfeature-templates[22m worktree...[39m

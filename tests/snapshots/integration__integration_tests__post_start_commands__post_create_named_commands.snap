@@ -39,10 +39,10 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning post-create [1mproject:install[22m @ [1m_REPO_.feature[22m:[39m
+[36m◎[39m [36mRunning post-create [1mproject:install[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing deps'[0m[2m
 [0mInstalling deps
-[36m◎[39m [36mRunning post-create [1mproject:setup[22m @ [1m_REPO_.feature[22m:[39m
+[36m◎[39m [36mRunning post-create [1mproject:setup[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running setup'[0m[2m
 [0mRunning setup
 [32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m

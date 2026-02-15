@@ -40,5 +40,5 @@ exit_code: 0
 ----- stderr -----
 [2m○[22m Already up to date with [1mmain[22m (no new commits, no rebase needed)
 [2m○[22m Worktree preserved (main worktree)
-[36m◎[39m [36mRunning post-merge project hook:[39m
+[36m◎[39m [36mRunning post-merge project hook[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'post-merge ran from main'[0m[2m [0m[2m[36m>[0m[2m post-merge-ran.txt

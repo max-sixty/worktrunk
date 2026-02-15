@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.24.0
+
+### Improved
+
+- **Nushell support (experimental)**: Initial nushell shell integration — shell wrapper, completions, and `wt config shell install` support. This is a proof-of-concept and will need iteration before it's usable; if you're a nushell user feel free to try it and report issues. ([#964](https://github.com/max-sixty/worktrunk/pull/964), thanks @arnaudlimbourg)
+
+- **Version check in `wt config show --full`**: The diagnostics section now queries GitHub for the latest release and shows "Up to date", "Update available", or "Version check unavailable". Gated behind `--full` so normal commands are unaffected. Closes [#1003](https://github.com/max-sixty/worktrunk/issues/1003). ([#1011](https://github.com/max-sixty/worktrunk/pull/1011), thanks @risperdal for requesting)
+
+- **Fish outdated wrapper detection**: `wt config show` now detects when the installed fish shell wrapper has outdated code (e.g., from a previous version) and shows "Outdated shell extension" with a reinstall hint, instead of incorrectly reporting "Not configured". ([#1009](https://github.com/max-sixty/worktrunk/pull/1009))
+
+### Fixed
+
+- **LLM subprocess blocked in Claude Code sessions**: Claude Code sets `CLAUDECODE=1` which blocks nested invocations, breaking `wt step commit` and `wt merge` commit generation. Now strips the env var before spawning the LLM command. ([#1021](https://github.com/max-sixty/worktrunk/pull/1021))
+
+- **Blank line between hint and subject in config show**: The "To configure, run wt config shell install" hint was visually detached from the shell entries it referred to. ([#1007](https://github.com/max-sixty/worktrunk/pull/1007))
+
+### Documentation
+
+- **Status symbol descriptions**: Corrected quick start documentation — `↕` means diverged from default branch (not unpushed commits), `+` means staged changes (not uncommitted changes). ([#1017](https://github.com/max-sixty/worktrunk/pull/1017))
+
+- **Claude Code commit command**: Added `CLAUDECODE` env var unsetting to the Claude Code documentation for commit message generation. ([#1020](https://github.com/max-sixty/worktrunk/pull/1020))
+
+### Internal
+
+- **Environment variable prefix standardization**: Renamed remaining `WT_TEST_*` env vars to `WORKTRUNK_TEST_*`, completing the prefix migration. ([#1016](https://github.com/max-sixty/worktrunk/pull/1016))
+
+- **Plugin metadata**: Aligned plugin description with Cargo.toml tagline ([#1019](https://github.com/max-sixty/worktrunk/pull/1019)), fixed duplicate skills declaration ([#1014](https://github.com/max-sixty/worktrunk/pull/1014), thanks @jacksonblankenship for reporting [#1013](https://github.com/max-sixty/worktrunk/issues/1013)), corrected marketplace source path ([#1012](https://github.com/max-sixty/worktrunk/pull/1012)).
+
 ## 0.23.3
 
 ### Improved

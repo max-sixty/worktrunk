@@ -39,7 +39,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning pre-commit project hook:[39m
+[36m◎[39m [36mRunning pre-commit project hook[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Pre-commit from squash'[0m[2m
 [0mPre-commit from squash
 [36m◎[39m [36mSquashing 3 commits into a single commit [90m(3 files, [32m+3[39m[39m[90m)[39m...[39m

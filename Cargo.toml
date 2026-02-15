@@ -5,7 +5,7 @@ default-members = [".", "tests/helpers/mock-stub"]
 
 [package]
 name = "worktrunk"
-version = "0.23.3"
+version = "0.24.0"
 edition = "2024"
 rust-version = "1.89"
 build = "build.rs"
@@ -157,6 +157,10 @@ harness = false
 
 [[bench]]
 name = "cow_copy"
+harness = false
+
+[[bench]]
+name = "time_to_first_output"
 harness = false
 
 [lints.rust]

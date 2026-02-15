@@ -34,7 +34,7 @@ impl SourcedCommand {
 
     /// Announce this command before execution.
     ///
-    /// Format: "Running pre-merge user:foo:" for named, "Running post-create user hook:" for unnamed
+    /// Format: "Running pre-merge user:foo" for named, "Running post-create user hook" for unnamed
     /// When display_path is set, appends "@ path" to show where the command runs.
     fn announce(&self) -> anyhow::Result<()> {
         // Named: "Running post-switch user:foo" with "user:foo" bold
@@ -52,9 +52,9 @@ impl SourcedCommand {
         let message = match &self.display_path {
             Some(path) => {
                 let path_display = format_path_for_display(path);
-                cformat!("{full_label} @ <bold>{path_display}</>:")
+                cformat!("{full_label} @ <bold>{path_display}</>")
             }
-            None => format!("{full_label}:"),
+            None => full_label,
         };
         eprintln!("{}", progress_message(message));
         eprintln!("{}", format_bash_with_gutter(&self.prepared.expanded));
