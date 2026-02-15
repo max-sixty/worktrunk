@@ -11,7 +11,6 @@ expression: "&output"
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Third command'[0m[2m
 
 [36m❯[39m [36mAllow and remember? [1m[y/N][22m[39m y
-
 [36m◎[39m [36mRunning post-create [1mproject:first[22m @ [1m_REPO_.test-multi[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'First command'[0m[2m
 First command

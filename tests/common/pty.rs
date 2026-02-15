@@ -217,8 +217,11 @@ pub fn build_pty_command(
 
 /// Execute a CommandBuilder in a PTY, writing all input immediately.
 ///
-/// Use for non-interactive commands or when input timing doesn't matter.
-/// For interactive prompts, use `exec_cmd_in_pty_prompted` instead.
+/// Drops the writer before waiting for the child to signal EOF — non-interactive
+/// commands may block on stdin until it closes.
+///
+/// For interactive prompts, use `exec_cmd_in_pty_prompted` instead (it waits
+/// for the child before dropping the writer to avoid PTY echo artifacts).
 pub fn exec_cmd_in_pty(cmd: CommandBuilder, input: &str) -> (String, i32) {
     let pair = super::open_pty();
 
@@ -264,7 +267,7 @@ pub fn exec_cmd_in_pty_prompted(
 ///
 /// Reads PTY output in a background thread while the main thread waits for
 /// `prompt_marker` to appear before sending each input. After all inputs are
-/// sent, drops the writer (EOF) and collects remaining output.
+/// sent, waits for the child to exit, then drops the writer.
 fn prompted_pty_interaction(
     reader: Box<dyn std::io::Read + Send>,
     writer: Box<dyn std::io::Write + Send>,
@@ -332,12 +335,21 @@ fn prompted_pty_interaction(
         writer.flush().unwrap();
     }
 
-    // Drop writer to signal EOF
-    drop(writer);
-
-    // Wait for child to exit
+    // Wait for child to exit BEFORE dropping writer.
+    //
+    // portable_pty's UnixMasterWriter::drop() sends \n + EOT to the PTY.
+    // If dropped while the child is still running, the terminal echoes this
+    // \n as \r\n, creating a spurious blank line in the captured output.
+    // By waiting for the child first, the slave side closes and the echo
+    // from the Drop's \n goes to a dead PTY — no artifact.
+    //
+    // The child won't hang: after read_line() returns for all prompts, it
+    // continues executing without reading stdin. EOF isn't needed.
     let exit_status = child.wait().unwrap();
     let exit_code = exit_status.exit_code() as i32;
+
+    // Now safe to drop writer (child already exited, slave side closed)
+    drop(writer);
 
     // Wait for reader thread to finish
     let _ = reader_thread.join();

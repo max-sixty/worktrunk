@@ -7,5 +7,4 @@ expression: "&output"
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 
 [36m❯[39m Install shell integration? [1m[y/N/?][22m n
-
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

@@ -1589,9 +1589,6 @@ mod pty_tests {
         // Remove standalone echoed input lines (just y or n on their own line)
         settings.add_filter(r"^[yn]\n", "");
 
-        // Collapse consecutive newlines (PTY timing variations)
-        settings.add_filter(r"\n{2,}", "\n");
-
         // Replace temp home path with ~/
         settings.add_filter(&regex::escape(&temp_home.path().to_string_lossy()), "~");
 
