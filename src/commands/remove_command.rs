@@ -51,7 +51,30 @@ pub fn handle_remove_command(opts: RemoveOptions) -> anyhow::Result<()> {
     // Open workspace once, route by VCS type via downcast
     let workspace = worktrunk::workspace::open_workspace()?;
     let Some(repo) = workspace.as_any().downcast_ref::<Repository>() else {
-        return super::handle_remove_jj::handle_remove_jj(&branches, verify, yes);
+        // JJ path: resolve targets, approve hooks, remove each workspace
+        let cwd = std::env::current_dir()?;
+        let targets = if branches.is_empty() {
+            let name = workspace
+                .current_name(&cwd)?
+                .ok_or_else(|| anyhow::anyhow!("Not inside a jj workspace"))?;
+            vec![name]
+        } else {
+            branches
+        };
+
+        let run_hooks = approve_remove_hooks(verify, yes)?;
+
+        for name in &targets {
+            let ws_path = workspace.workspace_path(name)?;
+            super::handle_remove_jj::remove_jj_workspace_and_cd(
+                &*workspace,
+                name,
+                &ws_path,
+                run_hooks,
+                yes,
+            )?;
+        }
+        return Ok(());
     };
 
     // Handle deprecated --no-background flag
@@ -71,32 +94,13 @@ pub fn handle_remove_command(opts: RemoveOptions) -> anyhow::Result<()> {
         .into());
     }
 
-    // Helper: approve remove hooks using current worktree context
-    // Returns true if hooks should run (user approved)
-    let approve_remove = |yes: bool| -> anyhow::Result<bool> {
-        let env = CommandEnv::for_action_branchless()?;
-        let ctx = env.context(yes);
-        let approved = approve_hooks(
-            &ctx,
-            &[
-                HookType::PreRemove,
-                HookType::PostRemove,
-                HookType::PostSwitch,
-            ],
-        )?;
-        if !approved {
-            eprintln!("{}", info_message("Commands declined, continuing removal"));
-        }
-        Ok(approved)
-    };
-
     if branches.is_empty() {
         // Single worktree removal: validate FIRST, then approve, then execute
         let result = handle_remove_current(!delete_branch, force_delete, force, &config)
             .context("Failed to remove worktree")?;
 
         // "Approve at the Gate": approval happens AFTER validation passes
-        let run_hooks = verify && approve_remove(yes)?;
+        let run_hooks = approve_remove_hooks(verify, yes)?;
 
         handle_remove_output(&result, background, run_hooks)
     } else {
@@ -191,7 +195,7 @@ pub fn handle_remove_command(opts: RemoveOptions) -> anyhow::Result<()> {
         // Phase 2: Approve hooks (only if we have valid plans)
         // TODO(pre-remove-context): Approval context uses current worktree,
         // but hooks execute in each target worktree.
-        let run_hooks = verify && approve_remove(yes)?;
+        let run_hooks = approve_remove_hooks(verify, yes)?;
 
         // Phase 3: Execute all validated plans
         // Remove other worktrees first
@@ -216,4 +220,27 @@ pub fn handle_remove_command(opts: RemoveOptions) -> anyhow::Result<()> {
 
         Ok(())
     }
+}
+
+/// Approve remove hooks if verification is enabled.
+///
+/// Shared between git and jj remove paths. Returns `true` if hooks should run.
+fn approve_remove_hooks(verify: bool, yes: bool) -> anyhow::Result<bool> {
+    if !verify {
+        return Ok(false);
+    }
+    let env = CommandEnv::for_action_branchless()?;
+    let ctx = env.context(yes);
+    let approved = approve_hooks(
+        &ctx,
+        &[
+            HookType::PreRemove,
+            HookType::PostRemove,
+            HookType::PostSwitch,
+        ],
+    )?;
+    if !approved {
+        eprintln!("{}", info_message("Commands declined, continuing removal"));
+    }
+    Ok(approved)
 }

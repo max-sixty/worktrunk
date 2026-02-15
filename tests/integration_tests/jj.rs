@@ -909,7 +909,7 @@ fn test_jj_switch_existing_no_cd(jj_repo_with_feature: JjTestRepo) {
 }
 
 /// Remove workspace by running `wt remove` from inside the workspace (no name arg)
-/// (handle_remove_jj.rs line 19: empty names path).
+/// (remove_command.rs: empty branches path resolves current workspace name).
 #[rstest]
 fn test_jj_remove_current_workspace_no_name(mut jj_repo: JjTestRepo) {
     let ws = jj_repo.add_workspace("removeme");
@@ -1071,7 +1071,7 @@ fn test_jj_workspace_trait_methods(mut jj_repo: JjTestRepo) {
 }
 
 /// Remove workspace whose directory was already deleted externally
-/// (handle_remove_jj.rs lines 68-75: "already removed" warning path).
+/// (handle_remove_jj.rs: "already removed" warning path).
 #[rstest]
 fn test_jj_remove_already_deleted_directory(mut jj_repo: JjTestRepo) {
     let ws = jj_repo.add_workspace("deleted");

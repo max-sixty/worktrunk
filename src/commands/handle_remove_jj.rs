@@ -1,4 +1,4 @@
-//! Remove command handler for jj repositories.
+//! Remove helper for jj repositories.
 //!
 //! Simpler than git removal: no branch deletion, no merge status checks.
 //! Just forget the workspace and remove the directory.
@@ -8,67 +8,18 @@ use std::path::Path;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, info_message, success_message, warning_message};
-use worktrunk::workspace::{JjWorkspace, Workspace};
+use worktrunk::styling::{eprintln, success_message, warning_message};
+use worktrunk::workspace::Workspace;
 
-use super::command_approval::approve_hooks;
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, run_hook_with_filter};
 use crate::output;
-
-/// Handle `wt remove` for jj repositories.
-///
-/// Removes one or more workspaces by name. If no names given, removes the
-/// current workspace. Cannot remove the default workspace.
-pub fn handle_remove_jj(names: &[String], verify: bool, yes: bool) -> anyhow::Result<()> {
-    let workspace = JjWorkspace::from_current_dir()?;
-    let cwd = std::env::current_dir()?;
-
-    let targets = if names.is_empty() {
-        let current = workspace.current_workspace(&cwd)?;
-        vec![current.name]
-    } else {
-        names.to_vec()
-    };
-
-    // "Approve at the Gate": approve remove hooks upfront
-    let run_hooks = if verify {
-        let env = CommandEnv::for_action_branchless()?;
-        let ctx = env.context(yes);
-        let approved = approve_hooks(
-            &ctx,
-            &[
-                HookType::PreRemove,
-                HookType::PostRemove,
-                HookType::PostSwitch,
-            ],
-        )?;
-        if !approved {
-            eprintln!("{}", info_message("Commands declined, continuing removal"));
-        }
-        approved
-    } else {
-        false
-    };
-
-    for name in &targets {
-        remove_jj_workspace_and_cd(
-            &workspace,
-            name,
-            &workspace.workspace_path(name)?,
-            run_hooks,
-            yes,
-        )?;
-    }
-
-    Ok(())
-}
 
 /// Forget a jj workspace, remove its directory, and cd to default if needed.
 ///
 /// Shared between `wt remove` and `wt merge` for jj repositories.
 pub fn remove_jj_workspace_and_cd(
-    workspace: &JjWorkspace,
+    workspace: &dyn Workspace,
     name: &str,
     ws_path: &Path,
     run_hooks: bool,
@@ -141,9 +92,10 @@ pub fn remove_jj_workspace_and_cd(
 
     // If removing current workspace, cd to default workspace
     if removing_current {
-        let default_path = workspace
-            .default_workspace_path()?
-            .unwrap_or_else(|| workspace.root().to_path_buf());
+        let default_path = match workspace.default_workspace_path()? {
+            Some(p) => p,
+            None => workspace.root_path()?,
+        };
         output::change_directory(&default_path)?;
     }
 
