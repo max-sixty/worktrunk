@@ -1,0 +1,70 @@
+name: claude-review
+# Runner versions pinned; see ci.yaml header comment for rationale.
+
+# Automatic code review on PRs from external contributors.
+# Uses pull_request_target so secrets are available for fork PRs.
+on:
+  pull_request_target:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CLICOLOR_FORCE: 1
+
+jobs:
+  review:
+    # Skip draft PRs
+    # To skip PRs from repo members, uncomment the author_association conditions:
+    # github.event.pull_request.author_association != 'OWNER' &&
+    # github.event.pull_request.author_association != 'MEMBER' &&
+    if: >-
+      github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    # Scoped environment — only CLAUDE_CODE_OAUTH_TOKEN is needed.
+    # Publishing tokens etc. are not accessible.
+    environment: claude-review
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: 📂 Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          fetch-depth: 0
+
+      - name: 🔧 Configure git for Claude
+        run: |
+          git config --global user.name "Claude Code"
+          git config --global user.email "claude@anthropic.com"
+
+      - name: 🤖 Review PR with Claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          additional_permissions: |
+            actions: read
+          use_sticky_comment: true
+          prompt: |
+            Use /worktrunk-review ${{ github.event.pull_request.number }}
+          claude_args: |
+            --model opus
+            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill
+            --append-system-prompt "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
+
+      - name: 📋 Upload Claude Code session logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: claude-session-logs
+          path: ~/.claude/
+          retention-days: 30
+          if-no-files-found: warn
