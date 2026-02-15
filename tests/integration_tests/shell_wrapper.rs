@@ -315,9 +315,8 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
     }
 }
 
-/// Execute a command in a PTY with interactive input support
+/// Execute a command in a PTY with interactive input support.
 ///
-/// This is similar to `exec_in_pty` but allows sending input during execution.
 /// The PTY will automatically echo the input (like a real terminal), so you'll
 /// see both the prompts and the input in the captured output.
 ///
@@ -3415,12 +3414,18 @@ mod windows_tests {
     /// This test runs cmd.exe which is simpler than PowerShell and validates the core ConPTY fix.
     #[test]
     fn test_conpty_basic_cmd() {
-        use crate::common::pty::exec_in_pty;
+        use crate::common::pty::{build_pty_command, exec_cmd_in_pty};
 
         // Use cmd.exe for simplest possible test
         let tmp = tempfile::tempdir().unwrap();
-        let (output, exit_code) =
-            exec_in_pty("cmd.exe", &["/C", "echo CONPTY_WORKS"], tmp.path(), &[], "");
+        let cmd = build_pty_command(
+            "cmd.exe",
+            &["/C", "echo CONPTY_WORKS"],
+            tmp.path(),
+            &[],
+            None,
+        );
+        let (output, exit_code) = exec_cmd_in_pty(cmd, "");
 
         eprintln!("ConPTY test output: {:?}", output);
         eprintln!("ConPTY test exit code: {}", exit_code);
@@ -3438,19 +3443,20 @@ mod windows_tests {
     /// Diagnostic test: Verify wt --version works via ConPTY.
     #[test]
     fn test_conpty_wt_version() {
-        use crate::common::pty::exec_in_pty;
+        use crate::common::pty::{build_pty_command, exec_cmd_in_pty};
         use crate::common::wt_bin;
 
         let wt_bin = wt_bin();
         let tmp = tempfile::tempdir().unwrap();
 
-        let (output, exit_code) = exec_in_pty(
+        let cmd = build_pty_command(
             wt_bin.to_str().unwrap(),
             &["--version"],
             tmp.path(),
             &[],
-            "",
+            None,
         );
+        let (output, exit_code) = exec_cmd_in_pty(cmd, "");
 
         eprintln!("wt --version output: {:?}", output);
         eprintln!("wt --version exit code: {}", exit_code);
