@@ -118,11 +118,6 @@ impl UserConfig {
                     table.remove("worktree-path");
                 }
 
-                // approved-commands
-                let commands =
-                    Self::format_multiline_array(project_config.approved_commands.iter());
-                projects[project_id]["approved-commands"] = toml_edit::value(commands);
-
                 // Per-project nested config sections
                 Self::serialize_project_config_section(
                     projects,
@@ -156,20 +151,6 @@ impl UserConfig {
                 );
             }
         }
-    }
-
-    /// Format a string array as multiline TOML for readability
-    ///
-    /// TODO: toml_edit doesn't provide a built-in multiline array format option.
-    /// Consider replacing with a dependency if one emerges that handles this automatically.
-    fn format_multiline_array<'a>(items: impl Iterator<Item = &'a String>) -> toml_edit::Array {
-        let mut array: toml_edit::Array = items.collect();
-        for item in array.iter_mut() {
-            item.decor_mut().set_prefix("\n    ");
-        }
-        array.set_trailing("\n");
-        array.set_trailing_comma(true);
-        array
     }
 
     /// Serialize a per-project config section (commit-generation, list, commit, merge).
@@ -282,21 +263,9 @@ impl UserConfig {
             Self::expand_inline_tables(doc.as_table_mut());
             Self::make_commit_table_implicit_if_only_subtables(&mut doc);
 
-            // Post-process: format approved-commands as multiline arrays for readability
+            // Make [projects] implicit to avoid emitting header for readability
             if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
-                projects.set_implicit(true); // Don't emit [projects] header
-                for (_, project) in projects.iter_mut() {
-                    if let Some(arr) = project
-                        .get_mut("approved-commands")
-                        .and_then(|a| a.as_array_mut())
-                    {
-                        for item in arr.iter_mut() {
-                            item.decor_mut().set_prefix("\n    ");
-                        }
-                        arr.set_trailing("\n");
-                        arr.set_trailing_comma(true);
-                    }
-                }
+                projects.set_implicit(true);
             }
 
             doc.to_string()

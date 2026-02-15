@@ -1,7 +1,7 @@
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
-use worktrunk::config::UserConfig;
+use worktrunk::config::{Approvals, UserConfig};
 use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{eprintln, info_message, success_message};
 use worktrunk::workspace::LocalPushDisplay;
@@ -148,7 +148,8 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         collect_merge_commands(repo, commit, verify, remove_effective, squash_enabled)?;
 
     // Approve all commands in a single batch (shows templates, not expanded values)
-    let approved = approve_command_batch(&all_commands, &project_id, config, yes, false)?;
+    let approvals = Approvals::load().context("Failed to load approvals")?;
+    let approved = approve_command_batch(&all_commands, &project_id, &approvals, yes, false)?;
 
     // If commands were declined, skip hooks but continue with merge
     // Shadow verify to gate all subsequent hook execution on approval

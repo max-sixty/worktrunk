@@ -22,7 +22,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use color_print::cformat;
-use worktrunk::config::UserConfig;
+use worktrunk::config::Approvals;
 use worktrunk::git::{GitError, HookType};
 use worktrunk::styling::{
     INFO_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_bash_with_gutter, hint_message,
@@ -44,7 +44,7 @@ use super::project_config::{HookCommand, collect_commands_for_hooks};
 pub fn approve_command_batch(
     commands: &[HookCommand],
     project_id: &str,
-    config: &UserConfig,
+    approvals: &Approvals,
     yes: bool,
     commands_already_filtered: bool,
 ) -> anyhow::Result<bool> {
@@ -52,7 +52,7 @@ pub fn approve_command_batch(
         .iter()
         .filter(|cmd| {
             commands_already_filtered
-                || !config.is_command_approved(project_id, &cmd.command.template)
+                || !approvals.is_command_approved(project_id, &cmd.command.template)
         })
         .collect();
 
@@ -72,27 +72,12 @@ pub fn approve_command_batch(
 
     // Only save approvals when interactively approved, not when using --yes
     if !yes {
-        let mut fresh_config = UserConfig::load().context("Failed to reload config")?;
-
-        let project_entry = fresh_config
-            .projects
-            .entry(project_id.to_string())
-            .or_default();
-
-        let mut updated = false;
-        for cmd in &needs_approval {
-            if !project_entry
-                .approved_commands
-                .contains(&cmd.command.template)
-            {
-                project_entry
-                    .approved_commands
-                    .push(cmd.command.template.clone());
-                updated = true;
-            }
-        }
-
-        if updated && let Err(e) = fresh_config.save() {
+        let mut fresh_approvals = Approvals::load().context("Failed to load approvals")?;
+        let commands: Vec<String> = needs_approval
+            .iter()
+            .map(|cmd| cmd.command.template.clone())
+            .collect();
+        if let Err(e) = fresh_approvals.approve_commands(project_id.to_string(), commands, None) {
             eprintln!(
                 "{}",
                 warning_message(format!("Failed to save command approval: {e}"))
@@ -234,5 +219,6 @@ pub fn approve_hooks_filtered(
     }
 
     let project_id = ctx.workspace.project_identifier()?;
-    approve_command_batch(&commands, &project_id, ctx.config, ctx.yes, false)
+    let approvals = Approvals::load().context("Failed to load approvals")?;
+    approve_command_batch(&commands, &project_id, &approvals, ctx.yes, false)
 }
