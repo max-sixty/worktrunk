@@ -48,5 +48,5 @@ exit_code: 0
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
 [2m○[22m Expanding [1mproject:setup[22m
 [107m [0m echo 'verbose test' > verbose.txt [2m→[22m echo 'verbose test' > verbose.txt
-[36m◎[39m [36mRunning post-start [1mproject:setup[22m @ [1m_REPO_.feature[22m:[39m
+[36m◎[39m [36mRunning post-start [1mproject:setup[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'verbose test'[0m[2m [0m[2m[36m>[0m[2m verbose.txt

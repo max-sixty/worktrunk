@@ -39,7 +39,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning pre-commit project hook:[39m
+[36m◎[39m [36mRunning pre-commit project hook[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Pre-commit check passed'[0m[2m
 [0mPre-commit check passed
 [36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no commit/squash/rebase needed)[39m

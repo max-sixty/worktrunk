@@ -39,15 +39,15 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning post-create [1mproject:repo[22m @ [1m_REPO_.feature-test[22m:[39m
+[36m◎[39m [36mRunning post-create [1mproject:repo[22m @ [1m_REPO_.feature-test[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Repo: repo'[0m[2m [0m[2m[36m>[0m[2m info.txt
-[0m[36m◎[39m [36mRunning post-create [1mproject:branch[22m @ [1m_REPO_.feature-test[22m:[39m
+[0m[36m◎[39m [36mRunning post-create [1mproject:branch[22m @ [1m_REPO_.feature-test[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Branch: feature/test'[0m[2m [0m[2m[36m>>[0m[2m info.txt
-[0m[36m◎[39m [36mRunning post-create [1mproject:hash_port[22m @ [1m_REPO_.feature-test[22m:[39m
+[0m[36m◎[39m [36mRunning post-create [1mproject:hash_port[22m @ [1m_REPO_.feature-test[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Port: 18064'[0m[2m [0m[2m[36m>>[0m[2m info.txt
-[0m[36m◎[39m [36mRunning post-create [1mproject:worktree[22m @ [1m_REPO_.feature-test[22m:[39m
+[0m[36m◎[39m [36mRunning post-create [1mproject:worktree[22m @ [1m_REPO_.feature-test[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Worktree: _REPO_.feature-test'[0m[2m [0m[2m[36m>>[0m[2m info.txt
-[0m[36m◎[39m [36mRunning post-create [1mproject:root[22m @ [1m_REPO_.feature-test[22m:[39m
+[0m[36m◎[39m [36mRunning post-create [1mproject:root[22m @ [1m_REPO_.feature-test[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Root: _REPO_'[0m[2m [0m[2m[36m>>[0m[2m info.txt
 [0m[32m✓[39m [32mCreated branch [1mfeature/test[22m from [1mmain[22m and worktree @ [1m_REPO_.feature-test[22m[39m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
