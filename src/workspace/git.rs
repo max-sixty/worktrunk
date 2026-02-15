@@ -632,6 +632,8 @@ mod tests {
         };
 
         git(&["init", "-b", "main"]);
+        git(&["config", "user.name", "Test"]);
+        git(&["config", "user.email", "test@test.com"]);
         std::fs::write(repo_path.join("file.txt"), "hello\n").unwrap();
         git(&["add", "."]);
         git(&["commit", "-m", "initial"]);
@@ -725,10 +727,6 @@ mod tests {
         Command::new("git")
             .args(["add", "."])
             .current_dir(&commit_wt)
-            .env("GIT_AUTHOR_NAME", "Test")
-            .env("GIT_AUTHOR_EMAIL", "test@test.com")
-            .env("GIT_COMMITTER_NAME", "Test")
-            .env("GIT_COMMITTER_EMAIL", "test@test.com")
             .output()
             .unwrap();
         let sha = ws.commit("trait commit", &commit_wt).unwrap();

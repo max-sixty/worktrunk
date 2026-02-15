@@ -89,7 +89,7 @@ impl JjTestRepo {
     }
 
     /// The temp directory containing the repo (used as HOME in tests).
-    fn home_path(&self) -> &Path {
+    pub fn home_path(&self) -> &Path {
         self._temp_dir.path()
     }
 
@@ -154,6 +154,13 @@ impl JjTestRepo {
         )
         .unwrap();
         config_path
+    }
+
+    /// Write project-specific config (`.config/wt.toml`) under the repo root.
+    pub fn write_project_config(&self, contents: &str) {
+        let config_dir = self.root.join(".config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("wt.toml"), contents).unwrap();
     }
 
     /// Path to a named workspace.
@@ -1287,4 +1294,73 @@ fn test_jj_step_commit_empty_description(mut jj_repo: JjTestRepo) {
     run_jj_in(&ws, &["new"]);
     std::fs::write(ws.join("gen.txt"), "generated msg test\n").unwrap();
     assert_cmd_snapshot!(make_jj_snapshot_cmd(&jj_repo, "step", &["commit"], Some(&ws)));
+}
+
+// ============================================================================
+// Hook and execute coverage tests
+// ============================================================================
+
+/// Switch --create with project hooks and --yes exercises approve_hooks,
+/// post-create blocking hooks, and background post-switch/post-start hooks
+/// (handle_switch_jj.rs lines 148-167, 183-186, 211-226).
+#[rstest]
+fn test_jj_switch_create_with_hooks(jj_repo: JjTestRepo) {
+    // Write project config with hooks
+    jj_repo.write_project_config(
+        r#"post-create = "echo post-create-ran"
+post-switch = "echo post-switch-ran"
+post-start = "echo post-start-ran"
+"#,
+    );
+
+    // --yes auto-approves hooks
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "switch",
+        &["--create", "hooked", "--yes"],
+        None,
+    ));
+}
+
+/// Switch to existing workspace with hooks exercises the existing-switch hook path
+/// (handle_switch_jj.rs lines 67-76, 100-112: approve + background for existing switch).
+#[rstest]
+fn test_jj_switch_existing_with_hooks(mut jj_repo: JjTestRepo) {
+    let _ws = jj_repo.add_workspace("hookable");
+
+    // Write project config with post-switch hook
+    jj_repo.write_project_config(r#"post-switch = "echo switched-hook""#);
+
+    // Switch to existing workspace with hooks
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "switch",
+        &["hookable", "--yes"],
+        None,
+    ));
+}
+
+/// Switch --create with --execute exercises the execute path
+/// (handle_switch_jj.rs lines 229-238: expand_and_execute_command).
+#[rstest]
+fn test_jj_switch_create_with_execute(jj_repo: JjTestRepo) {
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "switch",
+        &["--create", "exec-ws", "--execute", "echo hello"],
+        None,
+    ));
+}
+
+/// Switch to existing workspace with --execute exercises the execute path
+/// (handle_switch_jj.rs lines 115-123: expand_and_execute_command for existing).
+#[rstest]
+fn test_jj_switch_existing_with_execute(mut jj_repo: JjTestRepo) {
+    let _ws = jj_repo.add_workspace("exec-target");
+    assert_cmd_snapshot!(make_jj_snapshot_cmd(
+        &jj_repo,
+        "switch",
+        &["exec-target", "--execute", "echo switched"],
+        None,
+    ));
 }
