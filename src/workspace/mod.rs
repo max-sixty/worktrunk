@@ -234,7 +234,7 @@ pub trait Workspace: Send + Sync {
     /// Recent commit subjects for LLM style reference.
     ///
     /// Returns up to `count` recent commit subjects, starting from `start_ref` if given.
-    /// Returns `None` if not available (e.g., jj doesn't track this).
+    /// Returns `None` if no commits are available.
     fn recent_subjects(&self, start_ref: Option<&str>, count: usize) -> Option<Vec<String>>;
 
     /// Squash all commits between target and HEAD/feature-tip into a single commit.

@@ -504,8 +504,38 @@ impl Workspace for JjWorkspace {
         Ok((diff, stat))
     }
 
-    fn recent_subjects(&self, _start_ref: Option<&str>, _count: usize) -> Option<Vec<String>> {
-        None
+    fn recent_subjects(&self, start_ref: Option<&str>, count: usize) -> Option<Vec<String>> {
+        let count_str = count.to_string();
+        // ..@- = ancestors of parent (skip empty working-copy commit)
+        // ..{ref} = ancestors of the given ref (e.g., trunk bookmark)
+        let rev = match start_ref {
+            Some(r) => format!("..{r}"),
+            None => "..@-".to_string(),
+        };
+        let output = self
+            .run_command(&[
+                "log",
+                "--no-graph",
+                "-r",
+                &rev,
+                "--limit",
+                &count_str,
+                "-T",
+                r#"description.first_line() ++ "\n""#,
+            ])
+            .ok()?;
+
+        let subjects: Vec<String> = output
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect();
+
+        if subjects.is_empty() {
+            None
+        } else {
+            Some(subjects)
+        }
     }
 
     fn squash_commits(

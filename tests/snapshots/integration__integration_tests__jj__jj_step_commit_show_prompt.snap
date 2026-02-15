@@ -58,7 +58,9 @@ Added regular file prompt.txt:
 
 <context>
 Branch: default
-
+<recent_commits>
+- Initial commit
+</recent_commits>
 </context>
 
 ----- stderr -----
