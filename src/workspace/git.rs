@@ -681,6 +681,36 @@ mod tests {
         assert_eq!(diff.added, 0);
         assert_eq!(diff.deleted, 0);
 
+        // root_path
+        let root = ws.root_path().unwrap();
+        assert!(root.exists());
+
+        // current_workspace_path
+        let cur_path = ws.current_workspace_path().unwrap();
+        assert!(cur_path.exists());
+
+        // current_name
+        let name = ws.current_name(&repo_path).unwrap();
+        assert_eq!(name, Some("main".to_string()));
+
+        // project_identifier — derived from path without remote
+        assert!(ws.project_identifier().is_ok());
+
+        // feature_head — always "HEAD" for git
+        assert_eq!(ws.feature_head(&repo_path).unwrap(), "HEAD");
+
+        // recent_subjects
+        let subjects = ws.recent_subjects(None, 5).unwrap();
+        assert!(subjects.contains(&"initial".to_string()));
+
+        // load_project_config — no .config/wt.toml in the test tempdir
+        // (may find one from parent project when run inside worktrunk repo)
+        let _ = ws.load_project_config();
+
+        // wt_logs_dir
+        let logs_dir = ws.wt_logs_dir();
+        assert!(!logs_dir.as_os_str().is_empty());
+
         // Make dirty
         std::fs::write(repo_path.join("file.txt"), "modified\n").unwrap();
         assert!(ws.is_dirty(&repo_path).unwrap());
@@ -760,7 +790,85 @@ mod tests {
         let push_result = ws_at_wt.advance_and_push("main", &commit_wt).unwrap();
         assert_eq!(push_result.commit_count, 0);
 
+        // Helper for git commands in linked worktrees
+        let git_at = |args: &[&str], dir: &std::path::Path| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@test.com")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@test.com")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+
+        // committable_diff_for_prompt — stage a file in the worktree
+        let staged_wt = temp.path().join("staged-test");
+        ws.create_workspace("staged-branch", Some("main"), &staged_wt)
+            .unwrap();
+        std::fs::write(staged_wt.join("staged.txt"), "staged content\n").unwrap();
+        git_at(&["add", "."], &staged_wt);
+        let repo_at_staged = Repository::at(&staged_wt).unwrap();
+        let ws_staged: &dyn Workspace = &repo_at_staged;
+        let (diff_text, stat_text) = ws_staged.committable_diff_for_prompt(&staged_wt).unwrap();
+        assert!(!diff_text.is_empty());
+        assert!(!stat_text.is_empty());
+        git_at(&["commit", "-m", "staged commit"], &staged_wt);
+        ws.remove_workspace("staged-branch").unwrap();
+
         ws.remove_workspace("commit-branch").unwrap();
+
+        // diff_for_prompt — feature has changes vs main
+        let (diff_text, stat_text) = ws.diff_for_prompt("main", "feature", &repo_path).unwrap();
+        assert!(diff_text.contains("feature.txt"));
+        assert!(stat_text.contains("feature.txt"));
+
+        // is_rebased_onto — branch created from main is rebased onto main
+        let rb_wt = temp.path().join("rb-check");
+        ws.create_workspace("rb-check", Some("main"), &rb_wt)
+            .unwrap();
+        git_at(&["commit", "--allow-empty", "-m", "ahead of main"], &rb_wt);
+        let repo_at_rb = Repository::at(&rb_wt).unwrap();
+        let ws_rb: &dyn Workspace = &repo_at_rb;
+        assert!(ws_rb.is_rebased_onto("main", &rb_wt).unwrap());
+        ws.remove_workspace("rb-check").unwrap();
+
+        // resolve_integration_target with explicit target
+        assert_eq!(ws.resolve_integration_target(Some("main")).unwrap(), "main");
+
+        // rebase_onto — fast-forward case: create branch at main~1, rebase onto main
+        git(&["checkout", "main"]);
+        std::fs::write(repo_path.join("main-only.txt"), "main content\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "advance main"]);
+
+        let rebase_wt = temp.path().join("rebase-test");
+        ws.create_workspace("rebase-ff", Some("main~1"), &rebase_wt)
+            .unwrap();
+        let repo_at_rebase = Repository::at(&rebase_wt).unwrap();
+        let ws_rebase: &dyn Workspace = &repo_at_rebase;
+        let outcome = ws_rebase.rebase_onto("main", &rebase_wt).unwrap();
+        assert!(matches!(outcome, super::super::RebaseOutcome::FastForward));
+        ws.remove_workspace("rebase-ff").unwrap();
+
+        // rebase_onto — real rebase case: diverged branches
+        let rebase_wt2 = temp.path().join("rebase-test2");
+        ws.create_workspace("rebase-diverged", Some("feature"), &rebase_wt2)
+            .unwrap();
+        std::fs::write(rebase_wt2.join("diverge.txt"), "diverged\n").unwrap();
+        git_at(&["add", "."], &rebase_wt2);
+        git_at(&["commit", "-m", "diverged commit"], &rebase_wt2);
+        let repo_at_rebase2 = Repository::at(&rebase_wt2).unwrap();
+        let ws_rebase2: &dyn Workspace = &repo_at_rebase2;
+        let outcome = ws_rebase2.rebase_onto("main", &rebase_wt2).unwrap();
+        assert!(matches!(outcome, super::super::RebaseOutcome::Rebased));
+        ws.remove_workspace("rebase-diverged").unwrap();
 
         // switch_previous — initially None (no history set yet)
         assert!(ws.switch_previous().is_none());
