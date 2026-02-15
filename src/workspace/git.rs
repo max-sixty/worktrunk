@@ -640,7 +640,7 @@ mod tests {
                 .unwrap();
             assert!(
                 output.status.success(),
-                "git {args:?} failed: {}",
+                "{}",
                 String::from_utf8_lossy(&output.stderr)
             );
         };
@@ -803,7 +803,7 @@ mod tests {
                 .unwrap();
             assert!(
                 output.status.success(),
-                "git {args:?} failed: {}",
+                "{}",
                 String::from_utf8_lossy(&output.stderr)
             );
         };
@@ -932,5 +932,10 @@ mod tests {
         // as_any downcast
         let repo_ref = ws.as_any().downcast_ref::<Repository>();
         assert!(repo_ref.is_some());
+
+        // build_worktree_map — covers the map-building logic in mod.rs
+        let map = super::super::build_worktree_map(ws);
+        assert!(!map.is_empty());
+        assert!(map.contains_key("main"));
     }
 }

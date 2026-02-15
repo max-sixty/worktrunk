@@ -476,4 +476,62 @@ post-create = "npm install"
         let cloned = config.clone();
         assert_eq!(config, cloned);
     }
+
+    #[test]
+    fn test_ci_platform() {
+        // No CI config
+        let config: ProjectConfig = toml::from_str("").unwrap();
+        assert_eq!(config.ci_platform(), None);
+
+        // CI config with platform
+        let config: ProjectConfig = toml::from_str("[ci]\nplatform = \"github\"").unwrap();
+        assert_eq!(config.ci_platform(), Some("github"));
+    }
+
+    #[test]
+    fn test_load_from_root_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let result = ProjectConfig::load_from_root(temp.path()).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_load_from_root_valid() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_dir = temp.path().join(".config");
+        std::fs::create_dir(&config_dir).unwrap();
+        std::fs::write(config_dir.join("wt.toml"), "[ci]\nplatform = \"gitlab\"\n").unwrap();
+        let config = ProjectConfig::load_from_root(temp.path()).unwrap().unwrap();
+        assert_eq!(config.ci_platform(), Some("gitlab"));
+    }
+
+    #[test]
+    fn test_list_config_is_configured() {
+        assert!(!ProjectListConfig::default().is_configured());
+        let with_url = ProjectListConfig {
+            url: Some("http://localhost:3000".into()),
+        };
+        assert!(with_url.is_configured());
+    }
+
+    #[test]
+    fn test_load_from_root_invalid_toml() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_dir = temp.path().join(".config");
+        std::fs::create_dir(&config_dir).unwrap();
+        std::fs::write(config_dir.join("wt.toml"), "not valid [[ toml").unwrap();
+        let err = ProjectConfig::load_from_root(temp.path()).unwrap_err();
+        assert!(err.to_string().contains("Failed to parse TOML"));
+    }
+
+    #[test]
+    fn test_load_from_root_unreadable() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_dir = temp.path().join(".config");
+        std::fs::create_dir(&config_dir).unwrap();
+        // Create a directory where the file should be (causes read error)
+        std::fs::create_dir(config_dir.join("wt.toml")).unwrap();
+        let err = ProjectConfig::load_from_root(temp.path()).unwrap_err();
+        assert!(err.to_string().contains("Failed to read config file"));
+    }
 }

@@ -131,3 +131,82 @@ pub fn path_dir_name(path: &Path) -> &str {
         .and_then(|n| n.to_str())
         .unwrap_or("(unknown)")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_line_diff_is_empty() {
+        assert!(LineDiff::default().is_empty());
+        assert!(
+            !LineDiff {
+                added: 1,
+                deleted: 0
+            }
+            .is_empty()
+        );
+        assert!(
+            !LineDiff {
+                added: 0,
+                deleted: 1
+            }
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn test_integration_reason_symbol() {
+        assert_eq!(IntegrationReason::SameCommit.symbol(), "_");
+        assert_eq!(IntegrationReason::Ancestor.symbol(), "⊂");
+        assert_eq!(IntegrationReason::NoAddedChanges.symbol(), "⊂");
+        assert_eq!(IntegrationReason::TreesMatch.symbol(), "⊂");
+        assert_eq!(IntegrationReason::MergeAddsNothing.symbol(), "⊂");
+    }
+
+    #[test]
+    fn test_path_dir_name() {
+        assert_eq!(
+            path_dir_name(Path::new("/repos/myrepo.feature")),
+            "myrepo.feature"
+        );
+        assert_eq!(path_dir_name(Path::new("/")), "(unknown)");
+    }
+
+    #[test]
+    fn test_line_diff_conversions() {
+        let diff = LineDiff {
+            added: 10,
+            deleted: 5,
+        };
+        let tuple: (usize, usize) = diff.into();
+        assert_eq!(tuple, (10, 5));
+        let back: LineDiff = (3, 7).into();
+        assert_eq!(
+            back,
+            LineDiff {
+                added: 3,
+                deleted: 7
+            }
+        );
+    }
+
+    #[test]
+    fn test_integration_reason_description() {
+        assert_eq!(
+            IntegrationReason::SameCommit.description(),
+            "same commit as"
+        );
+        assert_eq!(IntegrationReason::Ancestor.description(), "ancestor of");
+        assert_eq!(
+            IntegrationReason::NoAddedChanges.description(),
+            "no added changes on"
+        );
+        assert_eq!(IntegrationReason::TreesMatch.description(), "tree matches");
+        assert_eq!(
+            IntegrationReason::MergeAddsNothing.description(),
+            "all changes in"
+        );
+    }
+}

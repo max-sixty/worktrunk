@@ -251,3 +251,37 @@ pub fn prepare_commands(
         })
         .collect())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use worktrunk::config::UserConfig;
+    use worktrunk::git::Repository;
+
+    #[test]
+    fn test_command_context_debug_format() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo_path = temp.path().join("repo");
+        std::fs::create_dir(&repo_path).unwrap();
+        std::process::Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(&repo_path)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .unwrap();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let debug = format!("{ctx:?}");
+        assert!(debug.contains("CommandContext"));
+        assert!(debug.contains("Git"));
+    }
+}
