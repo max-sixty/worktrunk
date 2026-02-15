@@ -288,6 +288,10 @@ pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyh
         // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
         let branch_info = resolve_path_mismatch(branch_info, &result, repo, &config);
 
+        // Compute path mismatch lazily (deferred from plan_switch for existing worktrees).
+        // No early exit here — select's TUI already dominates latency.
+        let branch_info = resolve_path_mismatch(branch_info, &result, &repo, &config);
+
         // Show success message; emit cd directive if shell integration is active
         // Interactive picker always performs cd (change_dir: true)
         let cwd = std::env::current_dir().context("Failed to get current directory")?;

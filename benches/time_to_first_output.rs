@@ -54,7 +54,7 @@ fn bench_first_output(c: &mut Criterion) {
         });
     });
 
-    // switch: exits after execute_switch, before output
+    // switch: exits after execute_switch, before mismatch computation and output
     group.bench_function("switch", |b| {
         b.iter(|| {
             run_bench_cmd(
