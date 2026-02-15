@@ -171,8 +171,7 @@ fn expand_commands(
             Some(name) => format!("{}:{}", source, name),
             None => format!("{} {} hook", source, hook_type),
         };
-        let expanded_str =
-            expand_template(&cmd.template, &vars, true, ctx.repo, &template_name)?;
+        let expanded_str = expand_template(&cmd.template, &vars, true, ctx.repo, &template_name)?;
 
         // Build per-command JSON with hook_type and hook_name
         let mut cmd_context = base_context.clone();

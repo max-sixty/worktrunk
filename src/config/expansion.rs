@@ -619,9 +619,8 @@ mod tests {
             "static text"
         );
         // Undefined variables now error in SemiStrict mode
-        let err =
-            expand_template("no {{ variables }} here", &empty, false, &test.repo, "test")
-                .unwrap_err();
+        let err = expand_template("no {{ variables }} here", &empty, false, &test.repo, "test")
+            .unwrap_err();
         assert!(
             err.message.contains("undefined value"),
             "got: {}",
