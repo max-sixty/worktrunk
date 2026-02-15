@@ -158,6 +158,11 @@ pub fn handle_switch(
     // Execute the validated plan
     let (result, branch_info) = execute_switch(&repo, plan, config, yes, skip_hooks)?;
 
+    // Early exit for benchmarking time-to-first-output
+    if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
+        return Ok(());
+    }
+
     // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
     let branch_info = resolve_path_mismatch(branch_info, &result, &repo, config);
 
