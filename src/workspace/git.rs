@@ -918,6 +918,28 @@ mod tests {
         let _ = repo_at_conflict.run_command(&["rebase", "--abort"]);
         ws.remove_workspace("conflict-branch").unwrap();
 
+        // workspace_path by directory name — fallback when branch name doesn't match
+        // Create a worktree and look it up by its directory name (not branch name)
+        let dirname_wt = temp.path().join("dir-lookup-test");
+        ws.create_workspace("dir-lookup-branch", Some("main"), &dirname_wt)
+            .unwrap();
+        // Look up by the directory name (not the branch name)
+        let found_path = ws.workspace_path("dir-lookup-test").unwrap();
+        assert_eq!(
+            dunce::canonicalize(&found_path).unwrap(),
+            dunce::canonicalize(&dirname_wt).unwrap()
+        );
+        ws.remove_workspace("dir-lookup-branch").unwrap();
+
+        // feature_head via Workspace trait — should return "HEAD" for git
+        let fh_wt = temp.path().join("fh-test");
+        ws.create_workspace("fh-branch", Some("main"), &fh_wt)
+            .unwrap();
+        let repo_at_fh = Repository::at(&fh_wt).unwrap();
+        let ws_fh: &dyn Workspace = &repo_at_fh;
+        assert_eq!(ws_fh.feature_head(&fh_wt).unwrap(), "HEAD");
+        ws.remove_workspace("fh-branch").unwrap();
+
         // switch_previous — initially None (no history set yet)
         assert!(ws.switch_previous().is_none());
 

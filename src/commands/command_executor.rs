@@ -258,17 +258,22 @@ mod tests {
     use worktrunk::config::UserConfig;
     use worktrunk::git::Repository;
 
-    #[test]
-    fn test_command_context_debug_format() {
+    /// Helper to init a git repo and return (temp_dir, repo_path).
+    fn init_test_repo() -> (tempfile::TempDir, std::path::PathBuf) {
         let temp = tempfile::tempdir().unwrap();
         let repo_path = temp.path().join("repo");
         std::fs::create_dir(&repo_path).unwrap();
-        std::process::Command::new("git")
+        let out = std::process::Command::new("git")
             .args(["init", "-b", "main"])
             .current_dir(&repo_path)
             .output()
             .unwrap();
-        std::process::Command::new("git")
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let out = std::process::Command::new("git")
             .args(["commit", "--allow-empty", "-m", "init"])
             .current_dir(&repo_path)
             .env("GIT_AUTHOR_NAME", "Test")
@@ -277,11 +282,112 @@ mod tests {
             .env("GIT_COMMITTER_EMAIL", "test@test.com")
             .output()
             .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (temp, repo_path)
+    }
+
+    #[test]
+    fn test_command_context_debug_format() {
+        let (_temp, repo_path) = init_test_repo();
         let repo = Repository::at(&repo_path).unwrap();
         let config = UserConfig::default();
         let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
         let debug = format!("{ctx:?}");
         assert!(debug.contains("CommandContext"));
         assert!(debug.contains("Git"));
+    }
+
+    #[test]
+    fn test_command_context_repo_downcast() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        // repo() should succeed for git repositories
+        assert!(ctx.repo().is_some());
+    }
+
+    #[test]
+    fn test_command_context_branch_or_head() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+
+        // With a branch set
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        assert_eq!(ctx.branch_or_head(), "main");
+
+        // Without a branch (detached HEAD)
+        let ctx = CommandContext::new(&repo, &config, None, &repo_path, false);
+        assert_eq!(ctx.branch_or_head(), "HEAD");
+    }
+
+    #[test]
+    fn test_command_context_project_id() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        // project_id should return Some (path-based, since no remote)
+        assert!(ctx.project_id().is_some());
+    }
+
+    #[test]
+    fn test_command_context_commit_generation() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        // commit_generation returns default config (no command set)
+        let cg = ctx.commit_generation();
+        assert!(cg.command.is_none());
+    }
+
+    #[test]
+    fn test_build_hook_context() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let context = build_hook_context(&ctx, &[("extra_key", "extra_val")]);
+        assert_eq!(context.get("branch").map(|s| s.as_str()), Some("main"));
+        assert_eq!(context.get("repo").map(|s| s.as_str()), Some("repo"));
+        assert!(context.contains_key("worktree_path"));
+        assert!(context.contains_key("repo_path"));
+        assert_eq!(
+            context.get("extra_key").map(|s| s.as_str()),
+            Some("extra_val")
+        );
+    }
+
+    #[test]
+    fn test_build_hook_context_detached_head() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        // Detached HEAD: branch is None, branch_or_head returns "HEAD"
+        let ctx = CommandContext::new(&repo, &config, None, &repo_path, false);
+        let context = build_hook_context(&ctx, &[]);
+        assert_eq!(context.get("branch").map(|s| s.as_str()), Some("HEAD"));
+    }
+
+    #[test]
+    fn test_build_hook_context_includes_git_specifics() {
+        let (_temp, repo_path) = init_test_repo();
+        let repo = Repository::at(&repo_path).unwrap();
+        let config = UserConfig::default();
+        let ctx = CommandContext::new(&repo, &config, Some("main"), &repo_path, false);
+        let context = build_hook_context(&ctx, &[]);
+        // Git-specific: commit and short_commit should be present
+        assert!(context.contains_key("commit"));
+        assert!(context.contains_key("short_commit"));
+        // Deprecated aliases should still be present
+        assert!(context.contains_key("main_worktree"));
+        assert!(context.contains_key("repo_root"));
+        assert!(context.contains_key("worktree"));
     }
 }
