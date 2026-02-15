@@ -324,6 +324,21 @@ fn should_auto_configure_powershell() -> bool {
     }
 }
 
+/// Check if nushell is available on the system.
+///
+/// Nushell's `vendor/autoload` directory may not exist even when nushell is installed,
+/// since it was introduced in nushell v0.96.0 and isn't always created by default.
+/// When `nu` is in PATH, we should auto-configure nushell (creating vendor/autoload/
+/// if needed) rather than silently skipping it.
+fn is_nushell_available() -> bool {
+    // Allow tests to override detection (set via Command::env() in integration tests)
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_NUSHELL_ENV") {
+        return val == "1";
+    }
+
+    which::which("nu").is_ok()
+}
+
 pub fn scan_shell_configs(
     shell_filter: Option<Shell>,
     dry_run: bool,
@@ -339,6 +354,10 @@ pub fn scan_shell_configs(
     if in_powershell_env {
         default_shells.push(Shell::PowerShell);
     }
+
+    // Check if nushell is available on the system (nu binary in PATH).
+    // vendor/autoload/ may not exist yet, but we should still install if nu is available.
+    let nushell_available = is_nushell_available();
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
@@ -366,13 +385,12 @@ pub fn scan_shell_configs(
             target_path.is_some()
         };
 
-        // Auto-configure PowerShell when user is in a PowerShell-compatible environment,
-        // even if the profile doesn't exist yet (issue #885). PowerShell doesn't create
-        // a profile by default, so most users won't have one until they create it.
-        // Detection:
-        // - Non-Windows: PSModulePath indicates PowerShell Core
-        // - Windows: SHELL not set indicates Windows-native shell (not Git Bash/MSYS2)
-        let in_detected_shell = matches!(shell, Shell::PowerShell) && in_powershell_env;
+        // Auto-configure shells when we detect them on the system, even if their
+        // config directory doesn't exist yet:
+        // - PowerShell: profile may not exist (issue #885)
+        // - Nushell: vendor/autoload/ may not exist (introduced in nushell v0.96.0)
+        let in_detected_shell = (matches!(shell, Shell::PowerShell) && in_powershell_env)
+            || (matches!(shell, Shell::Nushell) && nushell_available);
 
         // Only configure if explicitly targeting this shell OR if config file/location exists
         // OR if we detected we're running in this shell's environment

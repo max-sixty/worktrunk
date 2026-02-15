@@ -1564,6 +1564,7 @@ mod pty_tests {
         configure_pty_command(&mut cmd);
         cmd.env("HOME", temp_home.path());
         cmd.env("XDG_CONFIG_HOME", temp_home.path().join(".config"));
+        cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
         cmd.env("SHELL", "/bin/zsh");
         // Skip the compinit probe and force the advisory to appear. The probe spawns
         // `zsh -ic` which triggers global zshrc configs that can produce "insecure
@@ -1808,6 +1809,70 @@ fn test_powershell_env_detection(repo: TestRepo, temp_home: TempDir) {
     assert!(
         content.contains("wt config shell init powershell"),
         "Profile should contain shell init: {}",
+        content
+    );
+}
+
+/// Test that nushell gets auto-configured when detected, even without vendor/autoload dir.
+///
+/// Parallels test_powershell_env_detection: when nushell is detected on the system,
+/// `wt config shell install` should create vendor/autoload/ and install the wrapper,
+/// rather than skipping with "vendor/autoload not found".
+#[rstest]
+fn test_nushell_auto_detection_creates_vendor_autoload(repo: TestRepo, temp_home: TempDir) {
+    // Don't create vendor/autoload - the whole point is that it doesn't exist yet
+    // but nushell IS detected on the system
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    // Force nushell detection via test env var (parallels WORKTRUNK_TEST_POWERSHELL_ENV)
+    cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "1");
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.arg("config")
+        .arg("shell")
+        .arg("install")
+        .arg("--yes")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute command");
+    assert!(
+        output.status.success(),
+        "Command should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Nushell should be configured, not skipped
+    assert!(
+        stderr.contains("Created shell extension for") && stderr.contains("nu"),
+        "Nushell should be auto-configured when detected:\n{}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("Skipped nu"),
+        "Nushell should not be skipped when detected:\n{}",
+        stderr
+    );
+
+    // Verify the nushell wrapper was created with vendor/autoload/ directory
+    let home = std::fs::canonicalize(temp_home.path()).unwrap();
+    let nu_config = home
+        .join(".config")
+        .join("nushell")
+        .join("vendor")
+        .join("autoload")
+        .join("wt.nu");
+    assert!(
+        nu_config.exists(),
+        "wt.nu should be created at {:?}",
+        nu_config
+    );
+
+    let content = fs::read_to_string(&nu_config).unwrap();
+    assert!(
+        content.contains("def --env --wrapped wt"),
+        "Should contain nushell function definition: {}",
         content
     );
 }

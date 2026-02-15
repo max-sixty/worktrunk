@@ -261,6 +261,8 @@ fn exec_in_pty_impl(
         // Windows: the `home` crate uses USERPROFILE for home_dir()
         #[cfg(windows)]
         cmd.env("USERPROFILE", home.to_string_lossy().to_string());
+        // Suppress nushell auto-detection for deterministic PTY tests
+        cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
     }
 
     let mut child = pair.slave.spawn_command(cmd).unwrap();

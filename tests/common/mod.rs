@@ -695,6 +695,8 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env_remove("PSModulePath");
     // Disable auto PowerShell detection (tests that need it should set to "1")
     cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "0");
+    // Disable auto nushell detection (tests that need it should set to "1")
+    cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
     cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
     // Enable warn-level logging so diagnostics show up in test failures
     cmd.env("RUST_LOG", "warn");
