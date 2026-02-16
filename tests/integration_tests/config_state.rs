@@ -771,6 +771,16 @@ fn test_state_get_comprehensive(repo: TestRepo) {
         .status()
         .unwrap();
 
+    // Set up KV data
+    repo.git_command()
+        .args(["config", "worktrunk.state.main.kv.env", "staging"])
+        .status()
+        .unwrap();
+    repo.git_command()
+        .args(["config", "worktrunk.state.feature.kv.port", "3000"])
+        .status()
+        .unwrap();
+
     // Set up CI cache (file-based)
     write_ci_cache(
         &repo,
@@ -828,6 +838,12 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
         .status()
         .unwrap();
 
+    // Set up KV data
+    repo.git_command()
+        .args(["config", "worktrunk.state.main.kv.env", "staging"])
+        .status()
+        .unwrap();
+
     // Set up CI cache (file-based)
     write_ci_cache(
         &repo,
@@ -852,6 +868,13 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
     assert_eq!(markers[0]["branch"], "feature");
     assert_eq!(markers[0]["marker"], "🚧 WIP");
     assert_eq!(markers[0]["set_at"], TEST_EPOCH);
+
+    // Check KV data
+    let kv = json["kv"].as_array().unwrap();
+    assert_eq!(kv.len(), 1);
+    assert_eq!(kv[0]["branch"], "main");
+    assert_eq!(kv[0]["key"], "env");
+    assert_eq!(kv[0]["value"], "staging");
 
     // Check CI status
     let ci_status = json["ci_status"].as_array().unwrap();
@@ -1626,4 +1649,74 @@ fn test_kv_absent_in_json_when_empty(repo: TestRepo) {
 
     // kv should not be present when empty (skip_serializing_if)
     assert!(items[0].get("kv").is_none());
+}
+
+#[rstest]
+fn test_kv_clear_nonexistent_key(repo: TestRepo) {
+    // Clear a key that was never set
+    let output = wt_state_cmd(&repo, "kv", "clear", &["nonexistent"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No kv key"),
+        "Expected 'No kv key' message: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_kv_clear_all_empty(repo: TestRepo) {
+    // Clear --all when no kv data exists
+    let output = wt_state_cmd(&repo, "kv", "clear", &["--all"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No kv data"),
+        "Expected 'No kv data' message: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_kv_list_with_branch_flag(repo: TestRepo) {
+    // Create a branch and set kv data
+    repo.run_git(&["branch", "feature"]);
+    repo.git_command()
+        .args(["config", "worktrunk.state.feature.kv.env", "production"])
+        .status()
+        .unwrap();
+
+    // List kv for specific branch
+    let output = wt_state_cmd(&repo, "kv", "list", &["--branch=feature"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("env\tproduction"),
+        "Expected kv entry: {stdout}"
+    );
+}
+
+#[rstest]
+fn test_kv_clear_with_branch_flag(repo: TestRepo) {
+    // Create a branch and set kv data
+    repo.run_git(&["branch", "feature"]);
+    repo.git_command()
+        .args(["config", "worktrunk.state.feature.kv.env", "production"])
+        .status()
+        .unwrap();
+
+    // Clear kv for specific branch
+    let output = wt_state_cmd(&repo, "kv", "clear", &["env", "--branch=feature"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Cleared"),
+        "Expected clear message: {stderr}"
+    );
 }

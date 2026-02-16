@@ -15,7 +15,10 @@ expression: "String::from_utf8_lossy(&output.stderr)"
  feature 🚧 WIP       now
 
 [36mKV DATA[39m
-[107m [0m (none)
+ Branch  Key   Value  
+ ─────── ──── ─────── 
+ feature port 3000    
+ main    env  staging
 
 [36mCI STATUS CACHE[39m
  Branch  Status Age   Head   
