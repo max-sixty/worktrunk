@@ -148,37 +148,43 @@ fn test_approval_prompt_permission_error(repo: TestRepo) {
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
-    // Make the approvals directory read-only to trigger permission error when saving approval
-    let approvals_path = repo.test_approvals_path();
+    // Configure shell integration before making the approvals directory read-only
+    repo.configure_shell_integration();
+
+    // Create a subdirectory for approvals so we can make it read-only
+    // without affecting the temp dir root (which holds .zshrc, git config, etc.)
+    let approvals_dir = repo.home_path().join("readonly-approvals");
+    let approvals_path = approvals_dir.join("approvals.toml");
     #[cfg(unix)]
     {
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
 
-        let approvals_dir = approvals_path.parent().unwrap();
-        fs::create_dir_all(approvals_dir).unwrap();
+        fs::create_dir_all(&approvals_dir).unwrap();
 
         // Make the directory read-only (prevents creating approvals.toml or lock file)
-        let mut perms = fs::metadata(approvals_dir).unwrap().permissions();
+        let mut perms = fs::metadata(&approvals_dir).unwrap().permissions();
         perms.set_mode(0o555); // Read + execute only
-        fs::set_permissions(approvals_dir, perms).unwrap();
+        fs::set_permissions(&approvals_dir, perms).unwrap();
 
         // Test if permissions actually restrict us (skip if running as root)
         let test_file = approvals_dir.join("test_write");
         if fs::write(&test_file, "test").is_ok() {
             // Running as root - restore permissions and skip test
             let _ = fs::remove_file(&test_file);
-            let mut perms = fs::metadata(approvals_dir).unwrap().permissions();
+            let mut perms = fs::metadata(&approvals_dir).unwrap().permissions();
             perms.set_mode(0o755);
-            fs::set_permissions(approvals_dir, perms).unwrap();
+            fs::set_permissions(&approvals_dir, perms).unwrap();
             eprintln!("Skipping permission test - running with elevated privileges");
             return;
         }
     }
-
-    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
-    repo.configure_shell_integration();
-    let env_vars = test_env_vars_with_shell(&repo);
+    let mut env_vars = test_env_vars_with_shell(&repo);
+    // Override the approvals path to point to the read-only directory
+    env_vars.push((
+        "WORKTRUNK_APPROVALS_PATH".to_string(),
+        approvals_path.display().to_string(),
+    ));
     let (output, exit_code) = exec_wt_in_pty(
         &repo,
         &["switch", "--create", "test-permission"],
