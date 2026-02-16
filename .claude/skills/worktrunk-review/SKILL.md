@@ -55,10 +55,64 @@ Then read CLAUDE.md (project root) to understand project-specific conventions.
 - Are the changes adequately tested?
 - Do the tests follow the project's testing conventions (see tests/CLAUDE.md)?
 
+## Review discipline
+
+- Submit **one formal review per run** via `gh pr review` (approve, request
+  changes, or comment). Never call `gh pr review` multiple times.
+- **Don't use `gh pr comment`** — the CI action manages the summary comment
+  (sticky comment from Claude's stdout).
+- Only submit a formal review when **approving** or when there are **inline
+  findings**. If the PR is fine but doesn't need approval yet, just write your
+  summary to stdout (it becomes the sticky comment).
+- **Before approving**, check if the bot already approved this revision:
+  ```bash
+  APPROVED_SHA=$(gh pr view <number> --json reviews --jq '[.reviews[] | select(.state == "APPROVED") | .commit.oid] | last')
+  HEAD_SHA=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
+  ```
+  If `APPROVED_SHA == HEAD_SHA`, skip the redundant re-approval.
+
+## LGTM behavior
+
+When the PR has no issues worth raising:
+
+1. Approve with a brief summary (1-2 sentences):
+   ```bash
+   gh pr review <number> --approve --body "Clean implementation of X. Tests cover the new behavior well."
+   ```
+2. Add a thumbs-up reaction to the PR:
+   ```bash
+   gh api repos/{owner}/{repo}/issues/<number>/reactions -f content="+1"
+   ```
+3. Keep stdout output brief — it becomes the sticky comment. A short "Looks
+   good, approved." is fine. No essays.
+
+## Inline suggestions
+
+For small, confident fixes (typos, doc updates, naming, missing imports, minor
+refactors), use GitHub suggestion format via `gh api`:
+
+```bash
+gh api repos/{owner}/{repo}/pulls/<number>/reviews \
+  --method POST \
+  -f event=COMMENT \
+  -f body="Summary of suggestions" \
+  -f 'comments[0][path]=src/foo.rs' \
+  -f 'comments[0][line]=42' \
+  -f 'comments[0][body]=```suggestion
+fixed line content here
+```'
+```
+
+**Rules:**
+- Use suggestions for any small fix you're confident about — no limit on count.
+- Only use prose comments for changes that are too large or uncertain for a
+  direct suggestion.
+- Multi-line suggestions: set `start_line` and `line` to define the range.
+
 ## How to provide feedback
 
-- Use inline comments for specific code issues.
-- Use `gh pr comment` for a top-level summary.
+- Use inline review comments for specific code issues. Prefer suggestion format
+  (see above) for narrow fixes.
 - Be constructive and explain *why* something should change, not just *what*.
 - Distinguish between suggestions (nice to have) and issues (should fix).
 - Don't nitpick formatting — that's what linters are for.
