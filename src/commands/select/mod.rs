@@ -45,7 +45,7 @@ pub fn handle_select(
 
     // Gather list data using simplified collection (buffered mode)
     // Skip expensive operations not needed for select UI
-    let skip_tasks = [
+    let skip_tasks: std::collections::HashSet<collect::TaskKind> = [
         collect::TaskKind::BranchDiff,
         collect::TaskKind::CiStatus,
         collect::TaskKind::MergeTreeConflicts,
@@ -61,13 +61,15 @@ pub fn handle_select(
 
     let Some(list_data) = collect::collect(
         &repo,
-        show_branches,
-        show_remotes,
-        &skip_tasks,
+        collect::ShowConfig::Resolved {
+            show_branches,
+            show_remotes,
+            skip_tasks: skip_tasks.clone(),
+            command_timeout,
+        },
         false, // show_progress (no progress bars)
         false, // render_table (select renders its own UI)
         config,
-        command_timeout,
         true, // skip_expensive_for_stale (faster for repos with many stale branches)
     )?
     else {
