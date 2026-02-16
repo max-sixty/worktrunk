@@ -231,15 +231,17 @@ pub fn handle_select(
     // git commands are harmless read-only operations even if skim exits early.
     let (preview_width, preview_height) = state.initial_layout.preview_dimensions(num_items);
 
-    // Clone items for summary thread before rayon consumes them
-    let summary_items = items_for_precompute.clone();
-
     let modes = [
         PreviewMode::WorkingTree,
         PreviewMode::Log,
         PreviewMode::BranchDiff,
         PreviewMode::UpstreamDiff,
     ];
+
+    // Clone items for the summary thread before the rayon loop consumes them.
+    // Arc clones are cheap (refcount bumps only).
+    let summary_items = items_for_precompute.clone();
+
     for item in items_for_precompute {
         for mode in modes {
             let cache = Arc::clone(&preview_cache);
