@@ -154,6 +154,10 @@ pub fn handle_select(
     // Configure skim options with Rust-based preview and mode switching keybindings
     let options = SkimOptionsBuilder::default()
         .height("90%".to_string())
+        // Workaround for skim-tuikit bug: partial-height mode skips smcup but
+        // cleanup still sends rmcup, leaving artifacts. no_clear_start forces
+        // cursor_goto + erase_down cleanup instead. See skim-rs/skim#880.
+        .no_clear_start(true)
         .layout("reverse".to_string())
         .header_lines(1) // Make first line (header) non-selectable
         .multi(false)
