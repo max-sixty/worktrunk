@@ -406,13 +406,6 @@ impl BranchRef {
     pub fn has_worktree(&self) -> bool {
         self.worktree_path.is_some()
     }
-
-    /// Returns true if this branch points to a real commit (not the null OID).
-    ///
-    /// Unborn branches (no commits yet) have the null OID as their commit SHA.
-    pub fn has_commits(&self) -> bool {
-        self.commit_sha != NULL_OID
-    }
 }
 
 impl From<&WorktreeInfo> for BranchRef {
