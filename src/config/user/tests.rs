@@ -280,6 +280,7 @@ fn test_list_config_serde() {
         full: Some(true),
         branches: Some(false),
         remotes: None,
+        summary: None,
         timeout_ms: Some(500),
     };
     let json = serde_json::to_string(&config).unwrap();
@@ -287,6 +288,7 @@ fn test_list_config_serde() {
     assert_eq!(parsed.full, Some(true));
     assert_eq!(parsed.branches, Some(false));
     assert_eq!(parsed.remotes, None);
+    assert_eq!(parsed.summary, None);
     assert_eq!(parsed.timeout_ms, Some(500));
 }
 
@@ -491,12 +493,14 @@ fn test_merge_list_config() {
         full: Some(true),
         branches: Some(false),
         remotes: None,
+        summary: Some(true),
         timeout_ms: Some(1000),
     };
     let override_config = ListConfig {
         full: None,           // Should fall back to base
         branches: Some(true), // Should override
         remotes: Some(true),  // Should override (base was None)
+        summary: None,        // Should fall back to base
         timeout_ms: None,     // Should fall back to base
     };
 
@@ -504,6 +508,7 @@ fn test_merge_list_config() {
     assert_eq!(merged.full, Some(true)); // From base
     assert_eq!(merged.branches, Some(true)); // From override
     assert_eq!(merged.remotes, Some(true)); // From override
+    assert_eq!(merged.summary, Some(true)); // From base
     assert_eq!(merged.timeout_ms, Some(1000)); // From base
 }
 
@@ -840,9 +845,7 @@ fn test_effective_list_project_only() {
             overrides: OverridableConfig {
                 list: Some(ListConfig {
                     full: Some(true),
-                    branches: None,
-                    remotes: None,
-                    timeout_ms: None,
+                    ..Default::default()
                 }),
                 ..Default::default()
             },
@@ -934,11 +937,13 @@ fn test_list_config_accessor_methods_with_values() {
         full: Some(true),
         branches: Some(true),
         remotes: Some(false),
+        summary: Some(true),
         timeout_ms: Some(5000),
     };
     assert!(config.full());
     assert!(config.branches());
     assert!(!config.remotes());
+    assert!(config.summary());
     assert_eq!(config.timeout_ms(), Some(5000));
 }
 

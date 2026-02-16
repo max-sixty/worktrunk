@@ -453,8 +453,14 @@ fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
     // \A anchors to absolute start of string, matching only the first line.
     settings.add_filter(r"\A> [^\n]*", "> [QUERY]");
 
-    // Skim count indicators (matched/total) at end of lines
-    settings.add_filter(r"(?m)\d+/\d+\s*$", "[N/M]");
+    // Skim count indicators (matched/total) at end of lines.
+    // Normalize leading whitespace too — skim right-aligns the count with padding
+    // that varies based on unicode character width calculations across platforms.
+    // The tab header line may have the count jammed against "summary" (no space)
+    // or even truncate "summary" when skim's width_cjk() treats ambiguous-width
+    // unicode symbols (±, …, ⇅) as double-width, consuming extra columns.
+    settings.add_filter(r"(?m)summary?\w*\s*\d+/\d+\s*$", "summary [N/M]");
+    settings.add_filter(r"(?m)\s+\d+/\d+\s*$", " [N/M]");
 
     // Commit hashes (7-8 hex chars)
     settings.add_filter(r"\b[0-9a-f]{7,8}\b", "[HASH]");
@@ -767,6 +773,59 @@ fn test_new_feature() {
     settings.bind(|| {
         assert_snapshot!("switch_picker_preview_main_diff_list", list);
         assert_snapshot!("switch_picker_preview_main_diff_preview", preview);
+    });
+}
+
+#[rstest]
+fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so snapshots don't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    let feature_path = repo.add_worktree("feature");
+
+    // Make a commit so there's content to potentially summarize
+    std::fs::write(feature_path.join("new.txt"), "content\n").unwrap();
+    let output = repo
+        .git_command()
+        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "Failed to add file");
+    let output = repo
+        .git_command()
+        .args([
+            "-C",
+            feature_path.to_str().unwrap(),
+            "commit",
+            "-m",
+            "Add new file",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "Failed to commit");
+
+    let env_vars = repo.test_env_vars();
+    // Type "feature" to filter, press 5 for summary panel
+    // Wait for "commit.generation" hint since no LLM is configured
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("feature", None),
+            ("5", Some("│Configure")), // Wait for config hint (│ = border drawn)
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (list, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_preview_summary_list", list);
+        assert_snapshot!("switch_picker_preview_summary_preview", preview);
     });
 }
 

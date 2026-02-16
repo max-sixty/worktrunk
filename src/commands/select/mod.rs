@@ -6,6 +6,7 @@ mod items;
 mod log_formatter;
 mod pager;
 mod preview;
+mod summary;
 
 use std::io::IsTerminal;
 use std::sync::Arc;
@@ -181,7 +182,7 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
                 .to_string(),
         ))
         .bind(vec![
-            // Mode switching (1/2/3/4 keys change preview content)
+            // Mode switching (1/2/3/4/5 keys change preview content)
             format!(
                 "1:execute-silent(echo 1 > {0})+refresh-preview",
                 state_path_str
@@ -196,6 +197,10 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
             ),
             format!(
                 "4:execute-silent(echo 4 > {0})+refresh-preview",
+                state_path_str
+            ),
+            format!(
+                "5:execute-silent(echo 5 > {0})+refresh-preview",
                 state_path_str
             ),
             // Create new worktree with query as branch name (alt-c for "create")
@@ -224,22 +229,57 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
     // to overlap I/O-bound git commands. Tasks are fire-and-forget — ongoing
     // git commands are harmless read-only operations even if skim exits early.
     let (preview_width, preview_height) = state.initial_layout.preview_dimensions(num_items);
+
     let modes = [
         PreviewMode::WorkingTree,
         PreviewMode::Log,
         PreviewMode::BranchDiff,
         PreviewMode::UpstreamDiff,
     ];
-    for item in items_for_precompute {
+
+    for item in &items_for_precompute {
         for mode in modes {
             let cache = Arc::clone(&preview_cache);
-            let item = Arc::clone(&item);
+            let item = Arc::clone(item);
             rayon::spawn(move || {
                 let cache_key = (item.branch_name().to_string(), mode);
                 cache.entry(cache_key).or_insert_with(|| {
                     WorktreeSkimItem::compute_preview(&item, mode, preview_width, preview_height)
                 });
             });
+        }
+    }
+
+    // Queue summary generation after tabs 1-4 so git previews get rayon priority.
+    if config.list.summary() && config.commit_generation.is_configured() {
+        let llm_command = config.commit_generation.command.clone().unwrap();
+        for item in &items_for_precompute {
+            let item = Arc::clone(item);
+            let cache = Arc::clone(&preview_cache);
+            let cmd = llm_command.clone();
+            let repo = repo.clone();
+            rayon::spawn(move || {
+                summary::generate_and_cache_summary(&item, &cmd, &cache, &repo);
+            });
+        }
+    } else {
+        // No LLM configured or summaries disabled — insert config hint so the
+        // tab shows a useful message instead of a perpetual "Generating..." placeholder.
+        let hint = if !config.commit_generation.is_configured() {
+            "Configure [commit.generation] command to enable AI summaries.\n\n\
+             Example in ~/.config/worktrunk/config.toml:\n\n\
+             [commit.generation]\n\
+             command = \"llm -m haiku\"\n\n\
+             [list]\n\
+             summary = true\n"
+        } else {
+            "Enable summaries in ~/.config/worktrunk/config.toml:\n\n\
+             [list]\n\
+             summary = true\n"
+        };
+        for item in &items_for_precompute {
+            let branch = item.branch_name().to_string();
+            preview_cache.insert((branch, PreviewMode::Summary), hint.to_string());
         }
     }
 
@@ -337,6 +377,9 @@ pub mod tests {
 
         let _ = fs::write(&state_path, "4");
         assert_eq!(PreviewStateData::read_mode(), PreviewMode::UpstreamDiff);
+
+        let _ = fs::write(&state_path, "5");
+        assert_eq!(PreviewStateData::read_mode(), PreviewMode::Summary);
 
         // Cleanup
         let _ = fs::remove_file(&state_path);

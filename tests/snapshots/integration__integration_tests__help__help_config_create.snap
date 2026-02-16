@@ -108,6 +108,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# full = false       # Show CI status and main…± diffstat columns (--full)[0m
   [2m# branches = false   # Include branches without worktrees (--branches)[0m
   [2m# remotes = false    # Include remote-only branches (--remotes)[0m
+  [2m# summary = false    # AI branch summaries in picker tab 5 (requires [commit.generation])[0m
   [2m#[0m
   [2m# ### Commit[0m
   [2m#[0m

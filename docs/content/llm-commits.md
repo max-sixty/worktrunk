@@ -93,6 +93,19 @@ $ wt step squash
 
 See [`wt merge`](@/merge.md) and [`wt step`](@/step.md) for full documentation.
 
+## Picker summaries
+
+The `wt switch` [interactive picker](@/switch.md#interactive-picker) can show AI-generated branch summaries in preview tab 5. Summaries use the same `[commit.generation] command` and describe each branch's changes in a few sentences.
+
+Enable in user config:
+
+```toml
+[list]
+summary = true
+```
+
+Summaries are generated in parallel across all worktrees when the picker opens, cached in `.git/wt-cache/summaries/`, and invalidated when the branch's diff changes.
+
 ## Prompt templates
 
 Worktrunk uses [minijinja](https://docs.rs/minijinja/) templates (Jinja2-like syntax) to build prompts. There are sensible defaults, but templates are fully customizable.

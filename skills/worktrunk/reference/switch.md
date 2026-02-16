@@ -71,7 +71,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | `Enter` | Switch to selected worktree |
 | `Alt-c` | Create new worktree from query |
 | `Esc` | Cancel |
-| `1`/`2`/`3`/`4` | Switch preview tab |
+| `1`–`5` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
@@ -81,6 +81,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 2. **log** — Recent commits; commits already on the default branch have dimmed hashes
 3. **main…±** — Diff of changes since the merge-base with the default branch
 4. **remote⇅** — Diff vs upstream tracking branch (ahead/behind)
+5. **summary** — AI-generated branch summary (requires `[list] summary = true` and `[commit.generation]`)
 
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 

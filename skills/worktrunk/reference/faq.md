@@ -158,7 +158,7 @@ Worktrunk runs `git` commands internally and optionally runs `gh` (GitHub) or `g
 
 1. **User hooks** (`~/.config/worktrunk/config.toml`) — Personal automation for all repositories
 2. **Project hooks** (`.config/wt.toml`) — Repository-specific automation
-3. **LLM commands** (`~/.config/worktrunk/config.toml`) — Commit message generation
+3. **LLM commands** (`~/.config/worktrunk/config.toml`) — Commit message generation and [picker summaries](https://worktrunk.dev/llm-commits/#picker-summaries)
 4. **--execute flag** — Explicitly provided commands
 
 User hooks don't require approval (you defined them). Commands from project hooks require approval on first run. Approved commands are saved to user config. If a command changes, Worktrunk requires new approval.

@@ -5,4 +5,12 @@ expression: preview
 1: HEAD± | 2: log | 3: main…± | 4: remote⇅ | 5: summary [N/M]
 Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
 
-○ main has no uncommitted changes
+Configure [commit.generation] command to enable AI summarie
+
+Example in ~/.config/worktrunk/config.toml:
+
+[commit.generation]
+command = "llm -m haiku"
+
+[list]
+summary = true

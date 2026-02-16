@@ -2,7 +2,7 @@
 source: tests/integration_tests/switch_picker.rs
 expression: preview
 ---
-1: HEAD± | 2: log | 3: main…± | 4: remote⇅            [N/M]
+1: HEAD± | 2: log | 3: main…± | 4: remote⇅ | 5: summary [N/M]
 Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scr
 
  tracked.txt | 4 +++-
