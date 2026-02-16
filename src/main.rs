@@ -635,15 +635,7 @@ fn main() {
                 warning_message("wt select is deprecated; use wt switch instead")
             );
 
-            (|| {
-                let repo = Repository::current()?;
-                let config = repo.config();
-
-                let show_branches = branches || config.list.branches();
-                let show_remotes = remotes || config.list.remotes();
-
-                handle_select(show_branches, show_remotes)
-            })()
+            handle_select(branches, remotes)
         }
         #[cfg(not(unix))]
         Commands::Select { .. } => {
@@ -716,13 +708,7 @@ fn main() {
                 let Some(branch) = branch else {
                     #[cfg(unix)]
                     {
-                        let repo = Repository::current()?;
-                        let resolved = repo.config();
-
-                        let show_branches = branches || resolved.list.branches();
-                        let show_remotes = remotes || resolved.list.remotes();
-
-                        return handle_select(show_branches, show_remotes);
+                        return handle_select(branches, remotes);
                     }
 
                     #[cfg(not(unix))]

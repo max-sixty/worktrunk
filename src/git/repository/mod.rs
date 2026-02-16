@@ -265,10 +265,9 @@ impl Repository {
     /// approval state, hook resolution).
     pub fn user_config(&self) -> &UserConfig {
         self.cache.user_config.get_or_init(|| {
-            UserConfig::load().unwrap_or_else(|err| {
-                log::warn!("Failed to load user config, using defaults: {err}");
-                UserConfig::default()
-            })
+            UserConfig::load()
+                .inspect_err(|err| log::warn!("Failed to load user config, using defaults: {err}"))
+                .unwrap_or_default()
         })
     }
 
