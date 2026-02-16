@@ -196,6 +196,7 @@ fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
 }
 
 /// Controls how show flags (branches/remotes/full) are determined in [`collect`].
+#[cfg_attr(not(unix), allow(dead_code))]
 pub enum ShowConfig {
     /// Flags already resolved by the caller (used by `wt select`).
     Resolved {
@@ -247,16 +248,12 @@ pub fn collect(
             show_remotes,
             ..
         } => (*show_branches, *show_remotes),
-        ShowConfig::DeferredToParallel {
-            cli_branches,
-            cli_remotes,
-            ..
-        } => {
+        ShowConfig::DeferredToParallel { cli_remotes, .. } => {
             // Always fetch local branches: ~7ms hidden by parallelism, needed if
             // config says branches=true (which we won't know until after this phase).
             // Only fetch remotes when CLI-requested (can be expensive, rarely config-only).
             let fetch_branches = true;
-            let fetch_remotes = *cli_branches || *cli_remotes;
+            let fetch_remotes = *cli_remotes;
             (fetch_branches, fetch_remotes)
         }
     };
