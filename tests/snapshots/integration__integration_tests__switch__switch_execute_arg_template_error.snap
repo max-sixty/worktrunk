@@ -35,12 +35,13 @@ info:
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: false
-exit_code: 1
+exit_code: 101
 ----- stdout -----
 
 ----- stderr -----
@@ -48,4 +49,8 @@ exit_code: 1
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
-[31m✗[39m [31mFailed to expand argument template: Template syntax error: syntax error: unexpected end of input, expected end of variable block (in --execute argument:1)[39m
+
+thread 'main' panicked at src/main.rs:845:21:
+Multiline error without context: [31m✗[39m [31mFailed to expand --execute argument: syntax error: unexpected end of input, expected end of variable block @ line 1[39m
+[107m [0m invalid={{ unclosed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
