@@ -110,14 +110,13 @@ pub fn compute_worktree_path(
     let project = repo.project_identifier().ok();
     let repo_path_str = repo.repo_path().to_string_lossy().to_string();
     let worktree_map = build_worktree_map(repo);
-    let expanded_path = config
-        .format_path(
-            repo_name,
-            branch,
-            &repo_path_str,
-            &worktree_map,
-            project.as_deref(),
-        )?;
+    let expanded_path = config.format_path(
+        repo_name,
+        branch,
+        &repo_path_str,
+        &worktree_map,
+        project.as_deref(),
+    )?;
 
     Ok(repo_root.join(expanded_path).normalize())
 }
