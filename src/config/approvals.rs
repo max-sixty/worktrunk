@@ -93,12 +93,7 @@ impl Approvals {
             return Ok(Self::default());
         };
 
-        if path.exists() {
-            return Self::load_from_file(&path);
-        }
-
-        // Silent fallback: read approved-commands from config.toml
-        Self::load_from_config_fallback()
+        Self::load_with_fallback(&path)
     }
 
     /// Load approvals from a specific file path.
@@ -129,25 +124,26 @@ impl Approvals {
         Self::load_from_file(path)
     }
 
-    /// Extract approved-commands from `config.toml` as a fallback.
+    /// Load approvals from an approvals file, falling back to config.toml.
     ///
-    /// Uses `get_config_path()` to find config.toml, respecting env var
-    /// overrides (`WORKTRUNK_CONFIG_PATH`). In production both paths resolve to
-    /// the same directory since `get_approvals_path()` derives from
-    /// `get_config_path()`.
+    /// 1. If the approvals file exists → load from it (authoritative)
+    /// 2. If not → read `approved-commands` from sibling `config.toml`
+    /// 3. If neither exists → return empty
     ///
-    /// This is a read-only operation — no files are written or modified.
-    /// Used when `approvals.toml` doesn't exist yet.
-    fn load_from_config_fallback() -> Result<Self, ConfigError> {
-        let Some(config_path) = super::user::get_config_path() else {
-            return Ok(Self::default());
-        };
-
-        if !config_path.exists() {
-            return Ok(Self::default());
+    /// The fallback uses sibling derivation (`path.with_file_name("config.toml")`)
+    /// which is correct because `get_approvals_path()` derives approvals.toml as
+    /// a sibling of config.toml.
+    fn load_with_fallback(path: &Path) -> Result<Self, ConfigError> {
+        if path.exists() {
+            return Self::load_from_file(path);
         }
 
-        Self::load_from_config_file(&config_path)
+        let config_path = path.with_file_name("config.toml");
+        if config_path.exists() {
+            return Self::load_from_config_file(&config_path);
+        }
+
+        Ok(Self::default())
     }
 }
 
@@ -260,50 +256,10 @@ impl Approvals {
         Ok(())
     }
 
-    /// Reload approvals from disk (under lock).
-    ///
-    /// If the approvals file exists, loads from it. Otherwise falls back to
-    /// reading `config.toml` as a sibling of the approvals file. This mirrors
-    /// `get_approvals_path()` which derives approvals.toml as a sibling of
-    /// config.toml — so the reverse derivation always finds the right file.
-    ///
-    /// Uses sibling derivation rather than `get_config_path()` because this
-    /// method receives an explicit path parameter. In tests, this path may come
-    /// from `WORKTRUNK_APPROVALS_PATH`; in production, it comes from
-    /// `get_approvals_path()` which already derived from `get_config_path()`,
-    /// so the sibling derivation finds the same config.toml. Both `load()` and
-    /// `reload_from()` share the same `load_from_config_file()` extraction logic.
+    /// Reload approvals from disk (under lock), with config.toml fallback.
     fn reload_from(&mut self, path: &Path) -> Result<(), ConfigError> {
-        if path.exists() {
-            let content = std::fs::read_to_string(path).map_err(|e| {
-                ConfigError::Message(format!(
-                    "Failed to read approvals file {}: {}",
-                    format_path_for_display(path),
-                    e
-                ))
-            })?;
-
-            if content.trim().is_empty() {
-                self.projects.clear();
-                return Ok(());
-            }
-
-            let disk: Approvals = toml::from_str(&content).map_err(|e| {
-                ConfigError::Message(format!(
-                    "Failed to parse approvals file {}: {}",
-                    format_path_for_display(path),
-                    e
-                ))
-            })?;
-            self.projects = disk.projects;
-        } else {
-            // Fall back: config.toml is always a sibling of approvals.toml
-            let config_path = path.with_file_name("config.toml");
-            if config_path.exists() {
-                let fallback = Self::load_from_config_file(&config_path)?;
-                self.projects = fallback.projects;
-            }
-        }
+        let fresh = Self::load_with_fallback(path)?;
+        self.projects = fresh.projects;
         Ok(())
     }
 
