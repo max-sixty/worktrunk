@@ -120,7 +120,6 @@
 
 pub mod ci_status;
 pub(crate) mod collect;
-mod collect_jj;
 pub(crate) mod columns;
 pub mod json_output;
 pub(crate) mod layout;
@@ -141,7 +140,6 @@ use model::{ListData, ListItem};
 use progressive::RenderMode;
 use worktrunk::git::Repository;
 use worktrunk::styling::INFO_SYMBOL;
-use worktrunk::workspace::JjWorkspace;
 
 use collect::TaskKind;
 
@@ -149,91 +147,7 @@ use collect::TaskKind;
 pub use collect::{CollectOptions, build_worktree_item, populate_item};
 pub use model::StatuslineSegment;
 
-/// Handle `wt list` command.
-///
-/// `branches`, `remotes`, `full` are raw CLI flags (false when not passed).
-/// Config resolution (project-specific merged with global) happens internally
-/// using the workspace's project identifier.
 pub fn handle_list(
-    format: crate::OutputFormat,
-    branches: bool,
-    remotes: bool,
-    full: bool,
-    render_mode: RenderMode,
-    config: &worktrunk::config::UserConfig,
-) -> anyhow::Result<()> {
-    // Open workspace once, route by VCS type via downcast
-    let workspace = worktrunk::workspace::open_workspace()?;
-    if workspace.as_any().downcast_ref::<Repository>().is_none() {
-        return handle_list_jj(format);
-    }
-
-    // Resolve config using workspace's project identifier (avoids extra Repository::current())
-    let project_id = workspace.project_identifier().ok();
-    let resolved = config.resolved(project_id.as_deref());
-
-    // CLI flags override config values
-    let show_branches = branches || resolved.list.branches();
-    let show_remotes = remotes || resolved.list.remotes();
-    let show_full = full || resolved.list.full();
-
-    handle_list_git(
-        format,
-        show_branches,
-        show_remotes,
-        show_full,
-        render_mode,
-        config,
-    )
-}
-
-/// Handle `wt list` for jj repositories.
-fn handle_list_jj(format: crate::OutputFormat) -> anyhow::Result<()> {
-    let workspace = JjWorkspace::from_current_dir()?;
-    let list_data = collect_jj::collect_jj(&workspace)?;
-    let items = &list_data.items;
-
-    match format {
-        crate::OutputFormat::Json => {
-            let json_items = json_output::to_json_items(items);
-            let json =
-                serde_json::to_string_pretty(&json_items).context("Failed to serialize to JSON")?;
-            println!("{}", json);
-        }
-        crate::OutputFormat::Table | crate::OutputFormat::ClaudeCode => {
-            // For jj: render table in buffered mode (no progressive rendering)
-            let skip_tasks: HashSet<TaskKind> = [
-                TaskKind::BranchDiff,
-                TaskKind::CiStatus,
-                TaskKind::WorkingTreeConflicts,
-                TaskKind::Upstream,
-                TaskKind::MergeTreeConflicts,
-            ]
-            .into_iter()
-            .collect();
-
-            let layout = layout::calculate_layout_from_basics(
-                items,
-                &skip_tasks,
-                &list_data.main_worktree_path,
-                None,
-            );
-
-            println!("{}", layout.format_header_line());
-            for item in items {
-                println!("{}", layout.format_list_item_line(item));
-            }
-
-            let summary = format_summary_message(items, false, layout.hidden_column_count, 0, 0);
-            println!("{}", summary);
-        }
-    }
-
-    Ok(())
-}
-
-/// Handle `wt list` for git repositories (existing behavior).
-fn handle_list_git(
     format: crate::OutputFormat,
     show_branches: bool,
     show_remotes: bool,

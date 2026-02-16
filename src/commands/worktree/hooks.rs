@@ -50,7 +50,7 @@ impl<'a> CommandContext<'a> {
         removed_commit: Option<&str>,
         display_path: Option<&Path>,
     ) -> anyhow::Result<Vec<SourcedCommand>> {
-        let project_config = self.workspace.load_project_config()?;
+        let project_config = self.repo.load_project_config()?;
 
         // Template variables should reflect the removed worktree, not where we run from.
         // The removed worktree path no longer exists, but hooks may need to reference it

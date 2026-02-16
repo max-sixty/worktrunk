@@ -17,7 +17,7 @@ use worktrunk::styling::{
     warning_message,
 };
 
-use super::resolve::{compute_clobber_backup, compute_worktree_path, get_path_mismatch};
+use super::resolve::{compute_clobber_backup, compute_worktree_path};
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::commands::command_executor::CommandContext;
 
@@ -628,8 +628,8 @@ pub fn plan_switch(
 ///
 /// Takes a `SwitchPlan` from `plan_switch()` and executes it.
 /// For `SwitchPlan::Existing`, just records history. The returned
-/// `SwitchBranchInfo` has `expected_path: None` — callers must use
-/// [`resolve_path_mismatch`] after first output to fill in mismatch warnings.
+/// `SwitchBranchInfo` has `expected_path: None` — callers fill it in after
+/// first output to avoid computing path mismatch on the hot path.
 /// For `SwitchPlan::Create`, creates the worktree and runs hooks.
 pub fn execute_switch(
     repo: &Repository,
@@ -907,27 +907,6 @@ pub fn execute_switch(
 
 /// Resolve the deferred path mismatch for existing worktree switches.
 ///
-/// `execute_switch` returns `expected_path: None` for existing worktrees to avoid
-/// ~7 git commands on the hot path. Call this after first output to fill in the
-/// mismatch warning.
-pub fn resolve_path_mismatch(
-    branch_info: SwitchBranchInfo,
-    result: &SwitchResult,
-    repo: &Repository,
-    config: &UserConfig,
-) -> SwitchBranchInfo {
-    match result {
-        SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-            let expected_path = get_path_mismatch(repo, &branch_info.branch, path, config);
-            SwitchBranchInfo {
-                expected_path,
-                ..branch_info
-            }
-        }
-        _ => branch_info,
-    }
-}
-
 fn worktree_creation_error(
     err: &anyhow::Error,
     branch: String,

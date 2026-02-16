@@ -111,27 +111,10 @@ pub struct ProjectConfig {
 }
 
 impl ProjectConfig {
-    /// Load project configuration from a root path without git-specific features.
+    /// Load project configuration from .config/wt.toml in the repository root
     ///
-    /// Skips deprecation migration and unknown-field warnings (those require
-    /// git-specific context like main-worktree detection). Used by jj workspace
-    /// and other non-git contexts.
-    pub fn load_from_root(root: &std::path::Path) -> Result<Option<Self>, ConfigError> {
-        let config_path = root.join(".config").join("wt.toml");
-
-        if !config_path.exists() {
-            return Ok(None);
-        }
-
-        let contents = std::fs::read_to_string(&config_path)
-            .map_err(|e| ConfigError::Message(format!("Failed to read config file: {}", e)))?;
-
-        let config: ProjectConfig = toml::from_str(&contents)
-            .map_err(|e| ConfigError::Message(format!("Failed to parse TOML: {}", e)))?;
-
-        Ok(Some(config))
-    }
-
+    /// Set `write_hints` to true for normal usage. Set to false during completion
+    /// to avoid side effects (writing git config hints).
     pub fn load(
         repo: &crate::git::Repository,
         write_hints: bool,
@@ -475,63 +458,5 @@ post-create = "npm install"
         let config: ProjectConfig = toml::from_str(contents).unwrap();
         let cloned = config.clone();
         assert_eq!(config, cloned);
-    }
-
-    #[test]
-    fn test_ci_platform() {
-        // No CI config
-        let config: ProjectConfig = toml::from_str("").unwrap();
-        assert_eq!(config.ci_platform(), None);
-
-        // CI config with platform
-        let config: ProjectConfig = toml::from_str("[ci]\nplatform = \"github\"").unwrap();
-        assert_eq!(config.ci_platform(), Some("github"));
-    }
-
-    #[test]
-    fn test_load_from_root_missing() {
-        let temp = tempfile::tempdir().unwrap();
-        let result = ProjectConfig::load_from_root(temp.path()).unwrap();
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_load_from_root_valid() {
-        let temp = tempfile::tempdir().unwrap();
-        let config_dir = temp.path().join(".config");
-        std::fs::create_dir(&config_dir).unwrap();
-        std::fs::write(config_dir.join("wt.toml"), "[ci]\nplatform = \"gitlab\"\n").unwrap();
-        let config = ProjectConfig::load_from_root(temp.path()).unwrap().unwrap();
-        assert_eq!(config.ci_platform(), Some("gitlab"));
-    }
-
-    #[test]
-    fn test_list_config_is_configured() {
-        assert!(!ProjectListConfig::default().is_configured());
-        let with_url = ProjectListConfig {
-            url: Some("http://localhost:3000".into()),
-        };
-        assert!(with_url.is_configured());
-    }
-
-    #[test]
-    fn test_load_from_root_invalid_toml() {
-        let temp = tempfile::tempdir().unwrap();
-        let config_dir = temp.path().join(".config");
-        std::fs::create_dir(&config_dir).unwrap();
-        std::fs::write(config_dir.join("wt.toml"), "not valid [[ toml").unwrap();
-        let err = ProjectConfig::load_from_root(temp.path()).unwrap_err();
-        assert!(err.to_string().contains("Failed to parse TOML"));
-    }
-
-    #[test]
-    fn test_load_from_root_unreadable() {
-        let temp = tempfile::tempdir().unwrap();
-        let config_dir = temp.path().join(".config");
-        std::fs::create_dir(&config_dir).unwrap();
-        // Create a directory where the file should be (causes read error)
-        std::fs::create_dir(config_dir.join("wt.toml")).unwrap();
-        let err = ProjectConfig::load_from_root(temp.path()).unwrap_err();
-        assert!(err.to_string().contains("Failed to read config file"));
     }
 }

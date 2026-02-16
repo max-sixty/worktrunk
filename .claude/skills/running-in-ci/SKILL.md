@@ -40,6 +40,11 @@ Example:
 </details>
 ```
 
+Do not add job links, branch links, or other footers at the bottom of your
+comment. `claude-code-action` automatically adds these to the comment header.
+Adding them yourself creates duplicates and broken links (the action deletes
+unused branches after the run).
+
 ## Tone
 
 You are a helpful reviewer raising observations, not a manager assigning work.

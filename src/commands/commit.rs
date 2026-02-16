@@ -5,7 +5,6 @@ use worktrunk::config::CommitGenerationConfig;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
 };
-use worktrunk::workspace::Workspace;
 
 use super::command_executor::CommandContext;
 use super::hooks::HookFailureStrategy;
@@ -131,27 +130,7 @@ impl<'a> CommitGenerator<'a> {
         }
 
         self.emit_hint_if_needed();
-
-        // Get staged diff data for commit message generation
-        let (diff, diff_stat) = wt
-            .repo()
-            .committable_diff_for_prompt(wt.root()?.as_path())?;
-        let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
-        let repo_root = wt.root()?;
-        let repo_name = repo_root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("repo");
-        let recent_commits = wt.repo().recent_subjects(None, 5);
-
-        let input = crate::llm::CommitInput {
-            diff: &diff,
-            diff_stat: &diff_stat,
-            branch: &current_branch,
-            repo_name,
-            recent_commits: recent_commits.as_ref(),
-        };
-        let commit_message = crate::llm::generate_commit_message(&input, self.config)?;
+        let commit_message = crate::llm::generate_commit_message(self.config)?;
 
         let formatted_message = self.format_message_for_display(&commit_message);
         eprintln!("{}", format_with_gutter(&formatted_message, None));
@@ -176,7 +155,7 @@ impl<'a> CommitGenerator<'a> {
 /// Commit uncommitted changes with the shared commit pipeline.
 impl CommitOptions<'_> {
     pub fn commit(self) -> anyhow::Result<()> {
-        let project_config = self.ctx.workspace.load_project_config()?;
+        let project_config = self.ctx.repo.load_project_config()?;
         let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
         let user_hooks_exist = user_hooks.pre_commit.is_some();
         let project_hooks_exist = project_config
@@ -217,7 +196,7 @@ impl CommitOptions<'_> {
         }
 
         if self.warn_about_untracked && self.stage_mode == StageMode::All {
-            self.ctx.repo().unwrap().warn_if_auto_staging_untracked()?;
+            self.ctx.repo.warn_if_auto_staging_untracked()?;
         }
 
         // Stage changes based on mode
@@ -225,16 +204,14 @@ impl CommitOptions<'_> {
             StageMode::All => {
                 // Stage everything: tracked modifications + untracked files
                 self.ctx
-                    .repo()
-                    .unwrap()
+                    .repo
                     .run_command(&["add", "-A"])
                     .context("Failed to stage changes")?;
             }
             StageMode::Tracked => {
                 // Stage tracked modifications only (no untracked files)
                 self.ctx
-                    .repo()
-                    .unwrap()
+                    .repo
                     .run_command(&["add", "-u"])
                     .context("Failed to stage tracked changes")?;
             }
@@ -244,7 +221,7 @@ impl CommitOptions<'_> {
         }
 
         let effective_config = self.ctx.commit_generation();
-        let wt = self.ctx.repo().unwrap().current_worktree();
+        let wt = self.ctx.repo.current_worktree();
         CommitGenerator::new(&effective_config).commit_staged_changes(
             &wt,
             true, // show_progress

@@ -1,8 +1,16 @@
+use std::path::{Path, PathBuf};
+use std::process;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use super::worktree::{BranchDeletionMode, RemoveResult, get_path_mismatch};
-use anyhow::Context;
+use anyhow::{Context, bail};
+use color_print::cformat;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{GitError, IntegrationReason, Repository, parse_untracked_files};
-use worktrunk::styling::{eprintln, format_with_gutter, warning_message};
+use worktrunk::git::{
+    GitError, IntegrationReason, Repository, parse_porcelain_z, parse_untracked_files,
+};
+use worktrunk::path::format_path_for_display;
+use worktrunk::styling::{eprintln, format_with_gutter, progress_message, warning_message};
 
 /// Target for worktree removal.
 #[derive(Debug)]
@@ -33,6 +41,23 @@ pub trait RepositoryCliExt {
         force_worktree: bool,
         config: &UserConfig,
     ) -> anyhow::Result<RemoveResult>;
+
+    /// Prepare the target worktree for push by auto-stashing non-overlapping changes when safe.
+    fn prepare_target_worktree(
+        &self,
+        target_worktree: Option<&PathBuf>,
+        target_branch: &str,
+    ) -> anyhow::Result<Option<TargetWorktreeStash>>;
+
+    /// Check if HEAD is a linear extension of the target branch.
+    ///
+    /// Returns true when:
+    /// 1. The merge-base equals target's SHA (target hasn't advanced), AND
+    /// 2. There are no merge commits between target and HEAD (history is linear)
+    ///
+    /// This detects branches that have merged the target into themselves — such
+    /// branches need rebasing to linearize history even though merge-base equals target.
+    fn is_rebased_onto(&self, target: &str) -> anyhow::Result<bool>;
 }
 
 impl RepositoryCliExt for Repository {
@@ -197,6 +222,119 @@ impl RepositoryCliExt for Repository {
             removed_commit,
         })
     }
+
+    fn prepare_target_worktree(
+        &self,
+        target_worktree: Option<&PathBuf>,
+        target_branch: &str,
+    ) -> anyhow::Result<Option<TargetWorktreeStash>> {
+        let Some(wt_path) = target_worktree else {
+            return Ok(None);
+        };
+
+        // Skip if target worktree directory is missing (prunable worktree)
+        if !wt_path.exists() {
+            return Ok(None);
+        }
+
+        let wt = self.worktree_at(wt_path);
+        if !wt.is_dirty()? {
+            return Ok(None);
+        }
+
+        let push_files = self.changed_files(target_branch, "HEAD")?;
+        // Use -z for NUL-separated output: handles filenames with spaces and renames correctly
+        // Format: "XY path\0" for normal files, "XY new_path\0old_path\0" for renames/copies
+        let wt_status_output = wt.run_command(&["status", "--porcelain", "-z"])?;
+
+        let wt_files: Vec<String> = parse_porcelain_z(&wt_status_output);
+
+        let overlapping: Vec<String> = push_files
+            .iter()
+            .filter(|f| wt_files.contains(f))
+            .cloned()
+            .collect();
+
+        if !overlapping.is_empty() {
+            return Err(GitError::ConflictingChanges {
+                target_branch: target_branch.to_string(),
+                files: overlapping,
+                worktree_path: wt_path.clone(),
+            }
+            .into());
+        }
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let stash_name = format!(
+            "worktrunk autostash::{}::{}::{}",
+            target_branch,
+            process::id(),
+            nanos
+        );
+
+        eprintln!(
+            "{}",
+            progress_message(cformat!(
+                "Stashing changes in <bold>{}</>...",
+                format_path_for_display(wt_path)
+            ))
+        );
+
+        // Stash all changes including untracked files.
+        // Note: git stash push returns exit code 0 whether or not anything was stashed.
+        wt.run_command(&["stash", "push", "--include-untracked", "-m", &stash_name])?;
+
+        // Verify stash was created by checking the stash list for our entry.
+        let list_output = wt.run_command(&["stash", "list", "--format=%gd%x00%gs%x00"])?;
+        let mut parts = list_output.split('\0');
+        while let Some(id) = parts.next() {
+            if id.is_empty() {
+                continue;
+            }
+            if let Some(message) = parts.next()
+                && (message == stash_name || message.ends_with(&stash_name))
+            {
+                return Ok(Some(TargetWorktreeStash::new(wt_path, id.to_string())));
+            }
+        }
+
+        // Stash entry not found. Verify the worktree is now clean — if it's still
+        // dirty, stashing may have failed silently or our lookup missed the entry.
+        if wt.is_dirty()? {
+            bail!(
+                "Failed to stash changes in {}; worktree still has uncommitted changes. \
+                 Expected stash entry: '{}'. Check 'git stash list'.",
+                format_path_for_display(wt_path),
+                stash_name
+            );
+        }
+
+        // Worktree is clean and no stash entry — nothing needed to be stashed
+        Ok(None)
+    }
+
+    fn is_rebased_onto(&self, target: &str) -> anyhow::Result<bool> {
+        // Orphan branches have no common ancestor, so they can't be "rebased onto" target
+        let Some(merge_base) = self.merge_base("HEAD", target)? else {
+            return Ok(false);
+        };
+        let target_sha = self.run_command(&["rev-parse", target])?.trim().to_string();
+
+        if merge_base != target_sha {
+            return Ok(false); // Target has advanced past merge-base
+        }
+
+        // Check for merge commits — if present, history is not linear
+        let merge_commits = self
+            .run_command(&["rev-list", "--merges", &format!("{}..HEAD", target)])?
+            .trim()
+            .to_string();
+
+        Ok(merge_commits.is_empty())
+    }
 }
 
 /// Compute integration reason for branch deletion.
@@ -246,10 +384,89 @@ fn warn_about_untracked_files(status_output: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Stash guard that auto-restores on drop.
+///
+/// Created by `prepare_target_worktree()` when the target worktree has changes
+/// that don't conflict with the push. Automatically restores the stash when
+/// dropped, ensuring cleanup happens in both success and error paths.
+#[must_use = "stash guard restores immediately if dropped; hold it until push completes"]
+pub(crate) struct TargetWorktreeStash {
+    /// Inner data wrapped in Option so we can take() in Drop.
+    /// None means already restored (or disarmed).
+    inner: Option<StashData>,
+}
+
+struct StashData {
+    path: PathBuf,
+    stash_ref: String,
+}
+
+impl StashData {
+    /// Restore the stash, printing progress and warning on failure.
+    fn restore(self) {
+        eprintln!(
+            "{}",
+            progress_message(cformat!(
+                "Restoring stashed changes in <bold>{}</>...",
+                format_path_for_display(&self.path)
+            ))
+        );
+
+        // Don't use --quiet so git shows conflicts if any
+        let success = Repository::current()
+            .ok()
+            .and_then(|repo| {
+                repo.worktree_at(&self.path)
+                    .run_command(&["stash", "pop", &self.stash_ref])
+                    .ok()
+            })
+            .is_some();
+
+        if !success {
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "Failed to restore stash <bold>{stash_ref}</>; run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
+                    stash_ref = self.stash_ref,
+                    path = format_path_for_display(&self.path),
+                ))
+            );
+        }
+    }
+}
+
+impl Drop for TargetWorktreeStash {
+    fn drop(&mut self) {
+        if let Some(data) = self.inner.take() {
+            data.restore();
+        }
+    }
+}
+
+impl TargetWorktreeStash {
+    pub(crate) fn new(path: &Path, stash_ref: String) -> Self {
+        Self {
+            inner: Some(StashData {
+                path: path.to_path_buf(),
+                stash_ref,
+            }),
+        }
+    }
+
+    /// Explicitly restore the stash now, preventing Drop from restoring again.
+    ///
+    /// Use this when you need the restore to happen at a specific point
+    /// (e.g., before a success message). Drop handles errors/early returns.
+    pub(crate) fn restore_now(&mut self) {
+        if let Some(data) = self.inner.take() {
+            data.restore();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use worktrunk::git::parse_porcelain_z;
 
     #[test]
     fn test_parse_porcelain_z_modified_staged() {
@@ -397,5 +614,36 @@ mod tests {
     fn test_parse_untracked_files_no_untracked() {
         // All files are tracked (modified, staged, etc.)
         assert!(parse_untracked_files(" M file1.txt\0M  file2.txt\0").is_empty());
+    }
+
+    #[test]
+    fn test_stash_guard_restore_now_clears_inner() {
+        // Create a guard - note: this doesn't actually create a stash since we're not
+        // in a real git repo with that stash ref. We're just testing the state machine.
+        let mut guard = TargetWorktreeStash::new(std::path::Path::new("/tmp"), "stash@{0}".into());
+
+        // Inner should be populated
+        assert!(guard.inner.is_some());
+
+        // restore_now() should clear inner (the restore itself will fail since no real repo,
+        // but that's expected - we're testing the state transition)
+        guard.restore_now();
+
+        // Inner should now be None
+        assert!(guard.inner.is_none());
+
+        // Calling restore_now() again is a no-op
+        guard.restore_now();
+        assert!(guard.inner.is_none());
+    }
+
+    #[test]
+    fn test_stash_guard_drop_clears_inner() {
+        // Test that Drop also consumes the inner
+        let guard = TargetWorktreeStash::new(std::path::Path::new("/tmp"), "stash@{0}".into());
+
+        // Just drop it - the restore will fail (no real repo) but Drop shouldn't panic
+        drop(guard);
+        // If we get here, Drop worked without panicking
     }
 }

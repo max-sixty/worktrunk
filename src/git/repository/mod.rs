@@ -20,7 +20,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -54,7 +54,7 @@ mod worktrees;
 // Re-export WorkingTree and Branch
 pub use branch::Branch;
 pub use working_tree::WorkingTree;
-pub(crate) use working_tree::path_to_logging_context;
+pub(super) use working_tree::path_to_logging_context;
 
 /// Structured error from [`Repository::run_command_delayed_stream`].
 ///
@@ -114,6 +114,8 @@ pub(super) struct RepoCache {
     pub(super) project_identifier: OnceCell<String>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
+    /// Sparse checkout paths (empty if not a sparse checkout)
+    pub(super) sparse_checkout_paths: OnceCell<Vec<String>>,
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
     pub(super) merge_base: DashMap<(String, String), Option<String>>,
     /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
@@ -146,6 +148,25 @@ pub enum ResolvedWorktree {
         /// The branch name
         branch: String,
     },
+}
+
+/// Global base path for repository operations, set by -C flag.
+static BASE_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Default base path when -C flag is not provided.
+static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."));
+
+/// Initialize the global base path for repository operations.
+///
+/// This should be called once at program startup from main().
+/// If not called, defaults to "." (current directory).
+pub fn set_base_path(path: PathBuf) {
+    BASE_PATH.set(path).ok();
+}
+
+/// Get the base path for repository operations.
+fn base_path() -> &'static PathBuf {
+    BASE_PATH.get().unwrap_or(&DEFAULT_BASE_PATH)
 }
 
 /// Repository state for git operations.
@@ -192,7 +213,7 @@ impl Repository {
     /// For worktree-specific operations on paths other than cwd, use
     /// `repo.worktree_at(path)` to get a [`WorkingTree`].
     pub fn current() -> anyhow::Result<Self> {
-        Self::at(".")
+        Self::at(base_path().clone())
     }
 
     /// Discover the repository from the specified path.
@@ -268,7 +289,7 @@ impl Repository {
     ///
     /// This is the primary way to get a [`WorkingTree`] for worktree-specific operations.
     pub fn current_worktree(&self) -> WorkingTree<'_> {
-        self.worktree_at(".")
+        self.worktree_at(base_path().clone())
     }
 
     /// Get a worktree view at a specific path.
@@ -405,6 +426,30 @@ impl Repository {
                 .run()
                 .expect("git rev-parse failed on valid repo");
             output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
+        })
+    }
+
+    /// Get the sparse checkout paths for this repository.
+    ///
+    /// Returns the list of paths from `git sparse-checkout list`. For non-sparse
+    /// repos, returns an empty slice (the command exits with code 128).
+    ///
+    /// Assumes cone mode (the git default). Cached using `discovery_path` —
+    /// scoped to the worktree the user is running from, not per-listed-worktree.
+    pub fn sparse_checkout_paths(&self) -> &[String] {
+        self.cache.sparse_checkout_paths.get_or_init(|| {
+            let output = match self.run_command_output(&["sparse-checkout", "list"]) {
+                Ok(out) => out,
+                Err(_) => return Vec::new(),
+            };
+
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout.lines().map(String::from).collect()
+            } else {
+                // Exit 128 = not a sparse checkout (expected, not an error)
+                Vec::new()
+            }
         })
     }
 

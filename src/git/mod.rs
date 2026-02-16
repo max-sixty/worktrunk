@@ -48,15 +48,85 @@ pub use error::{
     exit_code,
 };
 pub use parse::{parse_porcelain_z, parse_untracked_files};
-pub(crate) use repository::path_to_logging_context;
-pub use repository::{Branch, Repository, ResolvedWorktree, WorkingTree};
+pub use repository::{Branch, Repository, ResolvedWorktree, WorkingTree, set_base_path};
 pub use url::GitRemoteUrl;
 pub use url::{parse_owner_repo, parse_remote_owner};
+/// Why branch content is considered integrated into the target branch.
+///
+/// Used by both `wt list` (for status symbols) and `wt remove` (for messages).
+/// Each variant corresponds to a specific integration check. In `wt list`,
+/// three symbols represent these checks:
+/// - `_` for [`SameCommit`](Self::SameCommit) with clean working tree (empty)
+/// - `–` for [`SameCommit`](Self::SameCommit) with dirty working tree
+/// - `⊂` for all others (content integrated via different history)
+///
+/// The checks are ordered by cost (cheapest first):
+/// 1. [`SameCommit`](Self::SameCommit) - commit SHA comparison (~1ms)
+/// 2. [`Ancestor`](Self::Ancestor) - ancestor check (~1ms)
+/// 3. [`NoAddedChanges`](Self::NoAddedChanges) - three-dot diff (~50-100ms)
+/// 4. [`TreesMatch`](Self::TreesMatch) - tree SHA comparison (~100-300ms)
+/// 5. [`MergeAddsNothing`](Self::MergeAddsNothing) - merge simulation (~500ms-2s)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, strum::IntoStaticStr)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
+pub enum IntegrationReason {
+    /// Branch HEAD is literally the same commit as target.
+    ///
+    /// Used by `wt remove` to determine if branch is safely deletable.
+    /// In `wt list`, same-commit state is shown via `MainState::Empty` (`_`) or
+    /// `MainState::SameCommit` (`–`) depending on working tree cleanliness.
+    SameCommit,
 
-// Re-export shared types from workspace::types for backward compatibility.
-// These types are VCS-agnostic and defined in workspace::types, but historically
-// lived here. All existing `use crate::git::LineDiff` imports continue working.
-pub use crate::workspace::types::{IntegrationReason, path_dir_name};
+    /// Branch HEAD is an ancestor of target (target has moved past this branch).
+    ///
+    /// Symbol in `wt list`: `⊂`
+    Ancestor,
+
+    /// Three-dot diff (`main...branch`) shows no files.
+    /// The branch has no file changes beyond the merge-base.
+    ///
+    /// Symbol in `wt list`: `⊂`
+    NoAddedChanges,
+
+    /// Branch tree SHA equals target tree SHA.
+    /// Commit history differs but file contents are identical.
+    ///
+    /// Symbol in `wt list`: `⊂`
+    TreesMatch,
+
+    /// Simulated merge (`git merge-tree`) produces the same tree as target.
+    /// The branch has changes, but they're already in target via a different path.
+    ///
+    /// Symbol in `wt list`: `⊂`
+    MergeAddsNothing,
+}
+
+impl IntegrationReason {
+    /// Human-readable description for use in messages (e.g., `wt remove` output).
+    ///
+    /// Returns a phrase that expects the target branch name to follow
+    /// (e.g., "same commit as" + "main" → "same commit as main").
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::SameCommit => "same commit as",
+            Self::Ancestor => "ancestor of",
+            Self::NoAddedChanges => "no added changes on",
+            Self::TreesMatch => "tree matches",
+            Self::MergeAddsNothing => "all changes in",
+        }
+    }
+
+    /// Status symbol used in `wt list` for this integration reason.
+    ///
+    /// - `SameCommit` → `_` (matches `MainState::Empty`)
+    /// - Others → `⊂` (matches `MainState::Integrated`)
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            Self::SameCommit => "_",
+            _ => "⊂",
+        }
+    }
+}
 
 /// Integration signals for checking if a branch is integrated into target.
 ///
@@ -360,6 +430,16 @@ pub struct WorktreeInfo {
     pub detached: bool,
     pub locked: Option<String>,
     pub prunable: Option<String>,
+}
+
+/// Extract the directory name from a path for display purposes.
+///
+/// Returns the last component of the path as a string, or "(unknown)" if
+/// the path has no filename or contains invalid UTF-8.
+pub fn path_dir_name(path: &std::path::Path) -> &str {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("(unknown)")
 }
 
 impl WorktreeInfo {
