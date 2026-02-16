@@ -27,11 +27,13 @@ def --env --wrapped wt [...args: string] {
 
     let directive_file = (mktemp --tmpdir)
 
-    # Run command with directive file - output streams in real-time
-    with-env { WORKTRUNK_DIRECTIVE_FILE: $directive_file } {
-        ^$worktrunk_bin ...$args
+    # Run command with directive file - capture exit code immediately
+    let exit_code = do {
+        with-env { WORKTRUNK_DIRECTIVE_FILE: $directive_file } {
+            ^$worktrunk_bin ...$args
+        }
+        $env.LAST_EXIT_CODE
     }
-    let exit_code = $env.LAST_EXIT_CODE
 
     # Process directive file line by line
     if ($directive_file | path exists) and (open $directive_file --raw | str trim | is-not-empty) {
@@ -47,7 +49,10 @@ def --env --wrapped wt [...args: string] {
                 let target_dir = $directive | str substring 4..-2
                 cd $target_dir
             } else if ($directive | is-not-empty) {
-                # Execute other commands via sh for proper shell expansion
+                # Execute via sh for POSIX shell expansion (globs, pipes, $VAR).
+                # --execute commands are user-provided shell expressions that expect
+                # this. Env changes (export) won't persist in the nushell session,
+                # but no worktrunk code emits export directives.
                 ^sh -c $directive
             }
         }
