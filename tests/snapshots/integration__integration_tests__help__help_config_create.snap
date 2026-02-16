@@ -20,6 +20,7 @@ info:
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -106,6 +107,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# full = false       # Show CI status and main…± diffstat columns (--full)[0m
   [2m# branches = false   # Include branches without worktrees (--branches)[0m
   [2m# remotes = false    # Include remote-only branches (--remotes)[0m
+  [2m# summary = false    # AI branch summaries in picker tab 5 (requires [commit.generation])[0m
   [2m#[0m
   [2m# ### Commit[0m
   [2m#[0m

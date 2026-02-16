@@ -19,6 +19,7 @@ info:
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -148,6 +149,7 @@ Persistent flag values for [2mwt list[0m. Override on command line as needed.
   [2mfull = false       # Show CI status and main…± diffstat columns (--full)[0m
   [2mbranches = false   # Include branches without worktrees (--branches)[0m
   [2mremotes = false    # Include remote-only branches (--remotes)[0m
+  [2msummary = false    # AI branch summaries in picker tab 5 (requires [commit.generation])[0m
 
 [32mCommit[0m
 

@@ -128,6 +128,11 @@ pub struct ListConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remotes: Option<bool>,
 
+    /// Show AI-generated branch summaries in the interactive picker (tab 5).
+    /// Requires `[commit.generation] command` to be configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<bool>,
+
     /// (Experimental) Per-task timeout in milliseconds.
     /// When set to a positive value, git operations that exceed this timeout are terminated.
     /// Timed-out tasks show defaults in the table. Set to 0 to explicitly disable timeout
@@ -152,6 +157,11 @@ impl ListConfig {
         self.remotes.unwrap_or(false)
     }
 
+    /// Show AI-generated branch summaries in picker (default: false)
+    pub fn summary(&self) -> bool {
+        self.summary.unwrap_or(false)
+    }
+
     /// Per-task timeout in milliseconds (default: None)
     pub fn timeout_ms(&self) -> Option<u64> {
         self.timeout_ms
@@ -164,6 +174,7 @@ impl Merge for ListConfig {
             full: other.full.or(self.full),
             branches: other.branches.or(self.branches),
             remotes: other.remotes.or(self.remotes),
+            summary: other.summary.or(self.summary),
             timeout_ms: other.timeout_ms.or(self.timeout_ms),
         }
     }

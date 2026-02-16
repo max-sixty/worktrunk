@@ -255,7 +255,7 @@ pub fn handle_select(
 
     // Queue summary generation after tabs 1-4 so git previews get rayon priority.
     let resolved = config.resolved(repo.project_identifier().ok().as_deref());
-    if resolved.commit_generation.is_configured() {
+    if resolved.list.summary() && resolved.commit_generation.is_configured() {
         let llm_command = resolved.commit_generation.command.clone().unwrap();
         for item in &items_for_precompute {
             let item = Arc::clone(item);
@@ -267,16 +267,23 @@ pub fn handle_select(
             });
         }
     } else {
-        // No LLM configured — insert config hint so the tab shows a useful
-        // message instead of a perpetual "Generating..." placeholder.
-        let hint = "Configure [commit.generation] command to enable AI summaries.\n\n\
-                     Example in ~/.config/worktrunk/config.toml:\n\n\
-                     [commit.generation]\n\
-                     command = \"llm -m haiku\"\n"
-            .to_string();
+        // No LLM configured or summaries disabled — insert config hint so the
+        // tab shows a useful message instead of a perpetual "Generating..." placeholder.
+        let hint = if !resolved.commit_generation.is_configured() {
+            "Configure [commit.generation] command to enable AI summaries.\n\n\
+             Example in ~/.config/worktrunk/config.toml:\n\n\
+             [commit.generation]\n\
+             command = \"llm -m haiku\"\n\n\
+             [list]\n\
+             summary = true\n"
+        } else {
+            "Enable summaries in ~/.config/worktrunk/config.toml:\n\n\
+             [list]\n\
+             summary = true\n"
+        };
         for item in &items_for_precompute {
             let branch = item.branch_name().to_string();
-            preview_cache.insert((branch, PreviewMode::Summary), hint.clone());
+            preview_cache.insert((branch, PreviewMode::Summary), hint.to_string());
         }
     }
 
