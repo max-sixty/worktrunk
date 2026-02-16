@@ -139,9 +139,7 @@ pub fn handle_select(
 
     // Get state path for key bindings (shell-escaped for safety)
     let state_path_display = state.path.display().to_string();
-    let state_path_str = shlex::try_quote(&state_path_display)
-        .map(|s| s.into_owned())
-        .unwrap_or(state_path_display);
+    let state_path_str = shell_escape::escape(state_path_display.into()).into_owned();
 
     // Calculate half-page scroll: skim uses 90% of terminal height, half of that = 45%
     let half_page = terminal_size::terminal_size()
