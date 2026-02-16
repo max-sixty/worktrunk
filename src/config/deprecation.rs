@@ -1991,6 +1991,65 @@ approved-commands = ["npm install"]
     }
 
     #[test]
+    fn test_remove_approved_commands_invalid_toml() {
+        let content = "this is { not valid toml";
+        let result = remove_approved_commands_from_config(content);
+        assert_eq!(result, content, "Invalid TOML should be returned unchanged");
+    }
+
+    #[test]
+    fn test_format_deprecation_details_approved_commands() {
+        let info = DeprecationInfo {
+            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
+            migration_path: None,
+            deprecations: Deprecations {
+                vars: vec![],
+                commit_gen: CommitGenerationDeprecations::default(),
+                approved_commands: true,
+            },
+            label: "User config".to_string(),
+            in_linked_worktree: false,
+        };
+        let output = format_deprecation_details(&info);
+        assert!(
+            output.contains("approved-commands"),
+            "Should mention approved-commands in output: {}",
+            output
+        );
+        assert!(
+            output.contains("approvals.toml"),
+            "Should mention approvals.toml: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_write_migration_file_with_approved_commands() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let content = r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm install"]
+"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        let deprecations = Deprecations {
+            vars: vec![],
+            commit_gen: CommitGenerationDeprecations::default(),
+            approved_commands: true,
+        };
+        let result = write_migration_file(&config_path, content, &deprecations, None);
+        assert!(
+            result.is_some(),
+            "Should write migration file for approved-commands"
+        );
+        let migration_path = result.unwrap();
+        let migrated = std::fs::read_to_string(&migration_path).unwrap();
+        assert!(!migrated.contains("approved-commands"));
+    }
+
+    #[test]
     fn test_set_implicit_suppresses_parent_header() {
         // Verifies that set_implicit(true) prevents an empty parent table from
         // rendering its own header. This is the key technique used in

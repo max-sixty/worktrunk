@@ -740,6 +740,124 @@ approved-commands = ["npm install"]
     }
 
     #[test]
+    fn test_load_from_path_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("nonexistent.toml");
+        let approvals = Approvals::load_from_path(&path).unwrap();
+        assert!(approvals.projects.is_empty());
+    }
+
+    #[test]
+    fn test_load_from_file_invalid_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("approvals.toml");
+        std::fs::write(&path, "this is { not valid toml").unwrap();
+        let err = Approvals::load_from_file(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("Failed to parse approvals file"),
+            "Expected parse error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_load_from_config_file_invalid_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(&config_path, "not { valid toml here").unwrap();
+        let err = Approvals::load_from_config_file(&config_path).unwrap_err();
+        assert!(
+            err.to_string().contains("Failed to parse config file"),
+            "Expected parse error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_revoke_command_nonexistent_project() {
+        let (_temp_dir, path) = test_dir();
+        let mut approvals = Approvals::default();
+        // Approve something first so the file exists
+        approvals
+            .approve_command("project-a".to_string(), "cmd1".to_string(), Some(&path))
+            .unwrap();
+        // Revoke from a project that doesn't exist — should be a no-op
+        approvals
+            .revoke_command("nonexistent", "cmd1", Some(&path))
+            .unwrap();
+        // Original approval still present
+        assert!(approvals.is_command_approved("project-a", "cmd1"));
+    }
+
+    #[test]
+    fn test_revoke_project_nonexistent() {
+        let (_temp_dir, path) = test_dir();
+        let mut approvals = Approvals::default();
+        approvals
+            .approve_command("project-a".to_string(), "cmd1".to_string(), Some(&path))
+            .unwrap();
+        // Revoke a project that doesn't exist — should be a no-op
+        approvals
+            .revoke_project("nonexistent", Some(&path))
+            .unwrap();
+        assert!(approvals.is_command_approved("project-a", "cmd1"));
+    }
+
+    #[test]
+    fn test_clear_all_when_empty() {
+        let (_temp_dir, path) = test_dir();
+        let mut approvals = Approvals::default();
+        // Clear when there's nothing — should be a no-op
+        approvals.clear_all(Some(&path)).unwrap();
+        assert!(approvals.projects.is_empty());
+    }
+
+    #[test]
+    fn test_save_skips_empty_project() {
+        let (_temp_dir, path) = test_dir();
+        let mut approvals = Approvals::default();
+        // Manually insert a project with empty commands
+        approvals.projects.insert(
+            "empty-project".to_string(),
+            super::ApprovedProject {
+                approved_commands: vec![],
+            },
+        );
+        approvals.projects.insert(
+            "real-project".to_string(),
+            super::ApprovedProject {
+                approved_commands: vec!["cmd1".to_string()],
+            },
+        );
+        // Call save_to directly so the empty project reaches the save logic
+        approvals.save_to(&path).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(!content.contains("empty-project"));
+        assert!(content.contains("real-project"));
+    }
+
+    #[test]
+    fn test_revoke_project_with_empty_commands() {
+        let (_temp_dir, path) = test_dir();
+        let mut approvals = Approvals::default();
+        approvals
+            .approve_command("project-a".to_string(), "cmd1".to_string(), Some(&path))
+            .unwrap();
+        // Manually clear the commands (without removing the project entry)
+        approvals
+            .projects
+            .get_mut("project-a")
+            .unwrap()
+            .approved_commands
+            .clear();
+        // Write this state to disk
+        approvals.save_to(&path).unwrap();
+        // Now revoke_project should find the project but see empty commands → no-op
+        approvals.revoke_project("project-a", Some(&path)).unwrap();
+    }
+
+    #[test]
     fn test_projects_accessor() {
         let (_temp_dir, path) = test_dir();
 
