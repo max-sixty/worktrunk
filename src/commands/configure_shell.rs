@@ -955,6 +955,12 @@ pub fn handle_unconfigure_shell(
     scan_for_uninstall(shell_filter, false, cmd)
 }
 
+/// Remove a config file with a context-rich error message.
+fn remove_config_file(path: &std::path::Path) -> Result<(), String> {
+    fs::remove_file(path)
+        .map_err(|e| format!("Failed to remove {}: {e}", format_path_for_display(path)))
+}
+
 fn scan_for_uninstall(
     shell_filter: Option<Shell>,
     dry_run: bool,
@@ -1002,13 +1008,7 @@ fn scan_for_uninstall(
                             superseded_by: None,
                         });
                     } else {
-                        fs::remove_file(fish_path).map_err(|e| {
-                            format!(
-                                "Failed to remove {}: {}",
-                                format_path_for_display(fish_path),
-                                e
-                            )
-                        })?;
+                        remove_config_file(fish_path)?;
                         results.push(UninstallResult {
                             shell,
                             path: fish_path.clone(),
@@ -1039,12 +1039,7 @@ fn scan_for_uninstall(
                             superseded_by: canonical_path.clone(),
                         });
                     } else {
-                        fs::remove_file(&legacy_path).map_err(|e| {
-                            format!(
-                                "Failed to remove {}: {e}",
-                                format_path_for_display(&legacy_path)
-                            )
-                        })?;
+                        remove_config_file(&legacy_path)?;
                         results.push(UninstallResult {
                             shell,
                             path: legacy_path,
@@ -1079,13 +1074,7 @@ fn scan_for_uninstall(
                         superseded_by: None,
                     });
                 } else {
-                    fs::remove_file(config_path).map_err(|e| {
-                        format!(
-                            "Failed to remove {}: {}",
-                            format_path_for_display(config_path),
-                            e
-                        )
-                    })?;
+                    remove_config_file(config_path)?;
                     results.push(UninstallResult {
                         shell,
                         path: config_path.clone(),
@@ -1145,13 +1134,7 @@ fn scan_for_uninstall(
                     action: UninstallAction::WouldRemove,
                 });
             } else {
-                fs::remove_file(&completion_path).map_err(|e| {
-                    format!(
-                        "Failed to remove {}: {}",
-                        format_path_for_display(&completion_path),
-                        e
-                    )
-                })?;
+                remove_config_file(&completion_path)?;
                 completion_results.push(CompletionUninstallResult {
                     shell,
                     path: completion_path,
