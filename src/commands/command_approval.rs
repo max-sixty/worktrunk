@@ -156,9 +156,6 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
     let mut response = String::new();
     io::stdin().read_line(&mut response)?;
 
-    // End the prompt line on stderr (user's input went to stdin, not stderr)
-    worktrunk::styling::eprintln!();
-
     Ok(response.trim().eq_ignore_ascii_case("y"))
 }
 

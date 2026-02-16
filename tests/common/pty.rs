@@ -1,33 +1,16 @@
 //! PTY execution helpers for integration tests.
 //!
-//! Provides unified PTY execution with consistent:
-//! - Environment isolation via `configure_pty_command()`
-//! - CRLF normalization (PTYs use CRLF on some platforms)
-//! - Coverage passthrough for subprocess coverage collection
+//! Three public functions — compose `build_pty_command` with a runner:
 //!
-//! # Usage
+//! - **`build_pty_command`** — builds a `CommandBuilder` with env isolation
+//! - **`exec_cmd_in_pty`** — pre-buffers input, for non-interactive commands
+//! - **`exec_cmd_in_pty_prompted`** — waits for prompt marker before each input
 //!
 //! ```ignore
-//! use crate::common::pty::exec_in_pty;
+//! use crate::common::pty::{build_pty_command, exec_cmd_in_pty_prompted};
 //!
-//! // Simple execution with single input
-//! let (output, exit_code) = exec_in_pty(
-//!     "wt",
-//!     &["switch", "--create", "feature"],
-//!     repo.root_path(),
-//!     &repo.test_env_vars(),
-//!     "y\n",
-//! );
-//!
-//! // With HOME override for shell config tests
-//! let (output, exit_code) = exec_in_pty_with_home(
-//!     "wt",
-//!     &["config", "shell", "install"],
-//!     repo.root_path(),
-//!     &repo.test_env_vars(),
-//!     "y\n",
-//!     temp_home.path(),
-//! );
+//! let cmd = build_pty_command("wt", &["switch", "feature"], dir, &env, None);
+//! let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
 //! ```
 
 use portable_pty::{CommandBuilder, MasterPty};
@@ -191,62 +174,29 @@ fn find_cursor_request(data: &[u8]) -> Option<usize> {
         .position(|window| window == pattern)
 }
 
-/// Execute a command in a PTY with optional interactive input.
+/// Build a CommandBuilder with standard PTY isolation and env vars.
 ///
-/// Returns (combined_output, exit_code).
+/// Compose with `exec_cmd_in_pty` or `exec_cmd_in_pty_prompted`:
 ///
-/// Output is normalized:
-/// - CRLF → LF (PTYs use CRLF on some platforms)
-///
-/// Environment is isolated via `configure_pty_command()`:
-/// - Cleared and rebuilt with minimal required vars
-/// - Coverage env vars passed through
-pub fn exec_in_pty(
+/// ```ignore
+/// let cmd = build_pty_command("wt", &["switch", "feature"], dir, &env, None);
+/// let (output, exit_code) = exec_cmd_in_pty(cmd, "y\n");
+/// ```
+pub fn build_pty_command(
     command: &str,
     args: &[&str],
     working_dir: &Path,
     env_vars: &[(String, String)],
-    input: &str,
-) -> (String, i32) {
-    exec_in_pty_impl(command, args, working_dir, env_vars, input, None)
-}
-
-/// Execute a command in a PTY with HOME directory override.
-///
-/// Same as `exec_in_pty` but overrides HOME and XDG_CONFIG_HOME to the
-/// specified directory. Use this for tests that need isolated shell config.
-pub fn exec_in_pty_with_home(
-    command: &str,
-    args: &[&str],
-    working_dir: &Path,
-    env_vars: &[(String, String)],
-    input: &str,
-    home_dir: &Path,
-) -> (String, i32) {
-    exec_in_pty_impl(command, args, working_dir, env_vars, input, Some(home_dir))
-}
-
-/// Internal implementation with optional home override.
-fn exec_in_pty_impl(
-    command: &str,
-    args: &[&str],
-    working_dir: &Path,
-    env_vars: &[(String, String)],
-    input: &str,
     home_dir: Option<&Path>,
-) -> (String, i32) {
-    let pair = super::open_pty();
-
+) -> CommandBuilder {
     let mut cmd = CommandBuilder::new(command);
     for arg in args {
         cmd.arg(*arg);
     }
     cmd.cwd(working_dir);
 
-    // Set up isolated environment with coverage passthrough
     super::configure_pty_command(&mut cmd);
 
-    // Add test-specific environment variables
     for (key, value) in env_vars {
         cmd.env(key, value);
     }
@@ -258,45 +208,22 @@ fn exec_in_pty_impl(
             "XDG_CONFIG_HOME",
             home.join(".config").to_string_lossy().to_string(),
         );
-        // Windows: the `home` crate uses USERPROFILE for home_dir()
         #[cfg(windows)]
         cmd.env("USERPROFILE", home.to_string_lossy().to_string());
         // Suppress nushell auto-detection for deterministic PTY tests
         cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
     }
 
-    let mut child = pair.slave.spawn_command(cmd).unwrap();
-    drop(pair.slave); // Close slave in parent
-
-    // Get reader and writer for the PTY master
-    let reader = pair.master.try_clone_reader().unwrap();
-    let mut writer = pair.master.take_writer().unwrap();
-
-    // Write input to the PTY (simulating user typing)
-    if !input.is_empty() {
-        writer.write_all(input.as_bytes()).unwrap();
-        writer.flush().unwrap();
-    }
-
-    // Read output and wait for exit (platform-specific handling)
-    // Note: writer is passed to read_pty_output for ConPTY cursor response handling
-    let (buf, exit_code) = read_pty_output(reader, writer, pair.master, &mut child);
-
-    // Normalize CRLF to LF (PTYs use CRLF on some platforms)
-    let normalized = buf.replace("\r\n", "\n");
-
-    (normalized, exit_code)
+    cmd
 }
 
-/// Execute a pre-configured CommandBuilder in a PTY.
+/// Execute a CommandBuilder in a PTY, writing all input immediately.
 ///
-/// Use this when you need custom command configuration beyond what `exec_in_pty`
-/// and `exec_in_pty_with_home` provide. You're responsible for:
-/// - Setting up the command (binary, args, cwd)
-/// - Calling `configure_pty_command()` or equivalent for env isolation
-/// - Any additional env vars
+/// Drops the writer before waiting for the child to signal EOF — non-interactive
+/// commands may block on stdin until it closes.
 ///
-/// Returns (combined_output, exit_code).
+/// For interactive prompts, use `exec_cmd_in_pty_prompted` instead (it waits
+/// for the child before dropping the writer to avoid PTY echo artifacts).
 pub fn exec_cmd_in_pty(cmd: CommandBuilder, input: &str) -> (String, i32) {
     let pair = super::open_pty();
 
@@ -311,61 +238,141 @@ pub fn exec_cmd_in_pty(cmd: CommandBuilder, input: &str) -> (String, i32) {
         writer.flush().unwrap();
     }
 
-    // Read output and wait for exit (platform-specific handling)
     let (buf, exit_code) = read_pty_output(reader, writer, pair.master, &mut child);
-
-    // Normalize CRLF to LF
     let normalized = buf.replace("\r\n", "\n");
 
     (normalized, exit_code)
 }
 
-/// Execute a command in a PTY with multiple sequential inputs.
+/// Execute a CommandBuilder in a PTY, waiting for prompts before sending input.
 ///
-/// Each input is written and flushed before moving to the next.
-/// Use this when multiple distinct user inputs are needed (e.g., multi-step prompts).
-///
-/// Returns (combined_output, exit_code).
-pub fn exec_in_pty_multi_input(
-    command: &str,
-    args: &[&str],
-    working_dir: &Path,
-    env_vars: &[(String, String)],
+/// For each element of `inputs`, waits until `prompt_marker` appears in the
+/// output, then writes that input. This produces output where the echo appears
+/// after the prompt — matching real terminal behavior.
+pub fn exec_cmd_in_pty_prompted(
+    cmd: CommandBuilder,
     inputs: &[&str],
+    prompt_marker: &str,
 ) -> (String, i32) {
     let pair = super::open_pty();
-
-    let mut cmd = CommandBuilder::new(command);
-    for arg in args {
-        cmd.arg(*arg);
-    }
-    cmd.cwd(working_dir);
-
-    // Set up isolated environment with coverage passthrough
-    super::configure_pty_command(&mut cmd);
-
-    // Add test-specific environment variables
-    for (key, value) in env_vars {
-        cmd.env(key, value);
-    }
 
     let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave);
 
     let reader = pair.master.try_clone_reader().unwrap();
-    let mut writer = pair.master.take_writer().unwrap();
+    let writer = pair.master.take_writer().unwrap();
 
-    // Write all inputs sequentially
+    prompted_pty_interaction(reader, writer, &mut child, inputs, prompt_marker)
+}
+
+/// Core prompt-waiting logic shared by all `_prompted` variants.
+///
+/// Reads PTY output in a background thread while the main thread waits for
+/// `prompt_marker` to appear before sending each input. After all inputs are
+/// sent, waits for the child to exit, then drops the writer.
+fn prompted_pty_interaction(
+    reader: Box<dyn std::io::Read + Send>,
+    writer: Box<dyn std::io::Write + Send>,
+    child: &mut Box<dyn portable_pty::Child + Send + Sync>,
+    inputs: &[&str],
+    prompt_marker: &str,
+) -> (String, i32) {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+
+    // Read PTY output in background, sending chunks via channel
+    let reader_thread = std::thread::spawn(move || {
+        let mut reader = reader;
+        let mut buf = [0u8; 4096];
+        loop {
+            match std::io::Read::read(&mut reader, &mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let mut accumulated = Vec::new();
+    let mut writer = writer;
+    let timeout = Duration::from_secs(10);
+    let poll = Duration::from_millis(10);
+    let marker = prompt_marker.as_bytes();
+
+    // For each input, wait for a NEW prompt marker to appear, then send
+    let mut markers_seen: usize = 0;
     for input in inputs {
+        let target = markers_seen + 1;
+        let start = Instant::now();
+
+        loop {
+            while let Ok(chunk) = rx.try_recv() {
+                accumulated.extend_from_slice(&chunk);
+            }
+
+            if count_marker_occurrences(&accumulated, marker) >= target {
+                markers_seen = target;
+                break;
+            }
+
+            if start.elapsed() > timeout {
+                panic!(
+                    "Timed out waiting for prompt marker {:?} (occurrence {}). Output so far:\n{}",
+                    prompt_marker,
+                    target,
+                    String::from_utf8_lossy(&accumulated)
+                );
+            }
+
+            std::thread::sleep(poll);
+        }
+
         writer.write_all(input.as_bytes()).unwrap();
         writer.flush().unwrap();
     }
 
-    // Read output and wait for exit (platform-specific handling)
-    let (buf, exit_code) = read_pty_output(reader, writer, pair.master, &mut child);
+    // Wait for child to exit BEFORE dropping writer.
+    //
+    // portable_pty's UnixMasterWriter::drop() sends \n + EOT to the PTY.
+    // If dropped while the child is still running, the terminal echoes this
+    // \n as \r\n, creating a spurious blank line in the captured output.
+    // By waiting for the child first, the slave side closes and the echo
+    // from the Drop's \n goes to a dead PTY — no artifact.
+    //
+    // The child won't hang: after read_line() returns for all prompts, it
+    // continues executing without reading stdin. EOF isn't needed.
+    let exit_status = child.wait().unwrap();
+    let exit_code = exit_status.exit_code() as i32;
 
-    // Normalize CRLF to LF
+    // Now safe to drop writer (child already exited, slave side closed)
+    drop(writer);
+
+    // Wait for reader thread to finish
+    let _ = reader_thread.join();
+
+    // Drain any remaining chunks
+    while let Ok(chunk) = rx.try_recv() {
+        accumulated.extend_from_slice(&chunk);
+    }
+
+    let buf = String::from_utf8_lossy(&accumulated).to_string();
     let normalized = buf.replace("\r\n", "\n");
 
     (normalized, exit_code)
+}
+
+fn count_marker_occurrences(haystack: &[u8], needle: &[u8]) -> usize {
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return 0;
+    }
+    haystack
+        .windows(needle.len())
+        .filter(|w| *w == needle)
+        .count()
 }

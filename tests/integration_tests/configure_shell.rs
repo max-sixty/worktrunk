@@ -1541,7 +1541,7 @@ fn test_uninstall_shell_dry_run_multiple(repo: TestRepo, temp_home: TempDir) {
 // PTY-based tests for interactive install preview
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {
-    use crate::common::pty::exec_cmd_in_pty;
+    use crate::common::pty::exec_cmd_in_pty_prompted;
     use crate::common::{
         TestRepo, add_pty_filters, configure_pty_command, repo, temp_home, wt_bin,
     };
@@ -1551,7 +1551,7 @@ mod pty_tests {
     use std::fs;
     use tempfile::TempDir;
 
-    /// Execute shell install command in a PTY with interactive input
+    /// Execute shell install command in a PTY, waiting for prompt before input
     fn exec_install_in_pty(temp_home: &TempDir, repo: &TestRepo, input: &str) -> (String, i32) {
         let mut cmd = CommandBuilder::new(wt_bin());
         cmd.arg("-C");
@@ -1573,7 +1573,7 @@ mod pty_tests {
         // Using MISSING=1 skips the probe while still showing the compinit advisory.
         cmd.env("WORKTRUNK_TEST_COMPINIT_MISSING", "1");
 
-        exec_cmd_in_pty(cmd, input)
+        exec_cmd_in_pty_prompted(cmd, &[input], "[y/N")
     }
 
     /// Create insta settings for install PTY tests.
@@ -1589,9 +1589,6 @@ mod pty_tests {
 
         // Remove standalone echoed input lines (just y or n on their own line)
         settings.add_filter(r"^[yn]\n", "");
-
-        // Collapse consecutive newlines (PTY timing variations)
-        settings.add_filter(r"\n{2,}", "\n");
 
         // Replace temp home path with ~/
         settings.add_filter(&regex::escape(&temp_home.path().to_string_lossy()), "~");
