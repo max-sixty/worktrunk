@@ -40,6 +40,24 @@ HEAD_SHA=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
 
 If `APPROVED_SHA == HEAD_SHA`, exit silently — this revision is already approved.
 
+If the bot approved a previous revision (`APPROVED_SHA` exists but differs from
+`HEAD_SHA`), check the incremental changes since the last approval:
+
+```bash
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+gh api "repos/$REPO/compare/$APPROVED_SHA...$HEAD_SHA" \
+  --jq '{total: ([.files[] | .additions + .deletions] | add), files: [.files[] | "\(.filename)\t+\(.additions)/-\(.deletions)"]}'
+```
+
+If the new changes are trivial, skip the full review (steps 2-3) and do not
+re-approve — the existing approval stands. Still proceed to step 4 to resolve
+any bot threads that the trivial changes addressed, then exit. Rough heuristic:
+changes under ~20 added+deleted lines that don't introduce new functions, types,
+or control flow are typically trivial (review feedback addressed, CI/formatting
+fixes, small corrections). Only proceed with a full review and potential
+re-approval for non-trivial changes (new logic, architectural changes,
+significant additions).
+
 Then check existing review comments to avoid repeating prior feedback:
 
 ```bash
@@ -84,7 +102,61 @@ tactical checklist.
 - Are the changes adequately tested?
 - Do the tests follow the project's testing conventions (see tests/CLAUDE.md)?
 
-### 4. Submit
+### 4. Resolve handled suggestions
+
+After reviewing the code, check if any unresolved review threads from the bot
+have been addressed. For each unresolved bot thread, you've already read the
+file during review — if the suggestion was applied or the issue was otherwise
+fixed, resolve the thread:
+
+```bash
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+BOT_LOGIN=$(gh api user --jq '.login')
+OWNER=$(echo "$REPO" | cut -d/ -f1)
+NAME=$(echo "$REPO" | cut -d/ -f2)
+
+# Get unresolved bot review threads
+gh api graphql -f query='
+  query($owner: String!, $repo: String!, $number: Int!) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $number) {
+        reviewThreads(first: 100) {
+          nodes {
+            id
+            isResolved
+            comments(first: 1) {
+              nodes {
+                author { login }
+                path
+                line
+                body
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+' -f owner="$OWNER" -f repo="$NAME" -F number=<number> \
+  --jq '.data.repository.pullRequest.reviewThreads.nodes[]
+    | select(.isResolved == false)
+    | select(.comments.nodes[0].author.login == "'"$BOT_LOGIN"'")
+    | {id, path: .comments.nodes[0].path, line: .comments.nodes[0].line, body: .comments.nodes[0].body}'
+
+# Resolve a thread that has been addressed
+gh api graphql -f query='
+  mutation($threadId: ID!) {
+    resolveReviewThread(input: {threadId: $threadId}) {
+      thread { id }
+    }
+  }
+' -f threadId="THREAD_ID"
+```
+
+Outdated comments (null line) are best-effort — skip if the original context
+can't be located.
+
+### 5. Submit
 
 Submit **one formal review per run** via `gh pr review`. Never call it multiple
 times.
@@ -95,6 +167,8 @@ times.
   `gh api` for inline suggestions) so feedback is threaded with the review.
 - Don't repeat suggestions already made by humans or previous bot runs
   (checked in step 1).
+- **Default to code suggestions** for specific fixes — see "Inline suggestions"
+  below. Prose comments are for changes too large or uncertain for a suggestion.
 
 ## LGTM behavior
 
@@ -111,8 +185,10 @@ When the PR has no issues worth raising:
 
 ## Inline suggestions
 
-For small, confident fixes (typos, doc updates, naming, missing imports, minor
-refactors), use GitHub suggestion format via `gh api`:
+**Code suggestions are the default format for specific fixes.** Whenever you
+have a concrete fix (typos, doc updates, naming, missing imports, minor
+refactors, any change you can express as replacement lines), use GitHub's
+suggestion format so the author can apply it with one click:
 
 `````bash
 gh api "repos/$REPO/pulls/<number>/reviews" \
