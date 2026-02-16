@@ -478,7 +478,7 @@ wt config state hints clear NAME   # re-show specific hint
         action: Option<HintsAction>,
     },
 
-    /// [experimental] Arbitrary key-value data per branch
+    /// \[experimental\] Arbitrary key-value data per branch
     #[command(
         name = "kv",
         after_long_help = r#"Store arbitrary key-value data per branch. Values are stored as-is — plain strings or JSON.
