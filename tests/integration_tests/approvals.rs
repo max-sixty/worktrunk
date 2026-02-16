@@ -3,7 +3,7 @@
 use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
-use worktrunk::config::UserConfig;
+use worktrunk::config::Approvals;
 
 /// Helper to snapshot add-approvals command
 fn snapshot_add_approvals(test_name: &str, repo: &TestRepo, args: &[&str]) {
@@ -69,12 +69,12 @@ fn test_clear_approvals_with_approvals(repo: TestRepo) {
     repo.commit("Add config");
 
     // Manually approve the command by writing to test config
-    let mut config = UserConfig::default();
-    config
+    let mut approvals = Approvals::default();
+    approvals
         .approve_command(
             project_id,
             "echo 'test'".to_string(),
-            Some(repo.test_config_path()),
+            Some(repo.test_approvals_path()),
         )
         .unwrap();
 
@@ -97,12 +97,12 @@ fn test_clear_approvals_global_with_approvals(repo: TestRepo) {
     repo.commit("Add config");
 
     // Manually approve the command
-    let mut config = UserConfig::default();
-    config
+    let mut approvals = Approvals::default();
+    approvals
         .approve_command(
             project_id,
             "echo 'test'".to_string(),
-            Some(repo.test_config_path()),
+            Some(repo.test_approvals_path()),
         )
         .unwrap();
 
@@ -124,12 +124,12 @@ fn test_clear_approvals_after_clear(repo: TestRepo) {
     repo.commit("Add config");
 
     // Manually approve the command
-    let mut config = UserConfig::default();
-    config
+    let mut approvals = Approvals::default();
+    approvals
         .approve_command(
             project_id.clone(),
             "echo 'test'".to_string(),
-            Some(repo.test_config_path()),
+            Some(repo.test_approvals_path()),
         )
         .unwrap();
 
@@ -158,26 +158,26 @@ lint = "echo 'third'"
 
     // Manually approve all commands
     let project_id = format!("{}/origin", repo.root_path().display());
-    let mut config = UserConfig::default();
-    config
+    let mut approvals = Approvals::default();
+    approvals
         .approve_command(
             project_id.clone(),
             "echo 'first'".to_string(),
-            Some(repo.test_config_path()),
+            Some(repo.test_approvals_path()),
         )
         .unwrap();
-    config
+    approvals
         .approve_command(
             project_id.clone(),
             "echo 'second'".to_string(),
-            Some(repo.test_config_path()),
+            Some(repo.test_approvals_path()),
         )
         .unwrap();
-    config
+    approvals
         .approve_command(
             project_id,
             "echo 'third'".to_string(),
-            Some(repo.test_config_path()),
+            Some(repo.test_approvals_path()),
         )
         .unwrap();
 
@@ -197,12 +197,12 @@ fn test_add_approvals_all_already_approved(repo: TestRepo) {
     repo.commit("Add config");
 
     // Manually approve the command
-    let mut config = UserConfig::default();
-    config
+    let mut approvals = Approvals::default();
+    approvals
         .approve_command(
             project_id,
             "echo 'test'".to_string(),
-            Some(repo.test_config_path()),
+            Some(repo.test_approvals_path()),
         )
         .unwrap();
 

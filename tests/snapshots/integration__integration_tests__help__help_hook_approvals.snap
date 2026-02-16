@@ -16,10 +16,12 @@ info:
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -33,8 +35,8 @@ wt hook approvals - Manage command approvals
 Usage: [1m[36mwt hook approvals[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
-  [1m[36madd[0m    Store approvals in config
-  [1m[36mclear[0m  Clear approved commands from config
+  [1m[36madd[0m    Store approvals in approvals.toml
+  [1m[36mclear[0m  Clear approved commands from approvals.toml
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
@@ -65,4 +67,4 @@ Clear global approvals:
 
 [1m[32mHow approvals work[0m
 
-Approved commands are saved to user config. Re-approval is required when the command template changes or the project moves. Use [2m--yes[0m to bypass prompts in CI.
+Approved commands are saved to [2m~/.config/worktrunk/approvals.toml[0m. Re-approval is required when the command template changes or the project moves. Use [2m--yes[0m to bypass prompts in CI.

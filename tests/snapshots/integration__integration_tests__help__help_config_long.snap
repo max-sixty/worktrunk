@@ -15,6 +15,7 @@ info:
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
@@ -191,12 +192,11 @@ Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m).
 
 [1mApproved hook commands[0m
 
-When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.
+When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved to [2m~/.config/worktrunk/approvals.toml[0m (separate from user config to allow dotfile management of config.toml).
 
-  [2m[projects."github.com/user/repo"][0m
-  [2mapproved-commands = ["npm ci", "npm test"][0m
+To reset, run [2mwt hook approvals clear[0m.
 
-To reset, delete the entry or run [2mwt hook approvals clear[0m.
+> [1mMigration note:[0m Approvals were previously stored as [2mapproved-commands[0m in config.toml. Run [2mwt config show[0m to generate a migration file that removes stale entries.
 
 [1mSetting overrides (Experimental)[0m
 

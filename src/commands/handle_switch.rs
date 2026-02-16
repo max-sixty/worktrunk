@@ -261,7 +261,7 @@ pub fn handle_switch(
                 .collect();
             let escaped_args: Vec<_> = expanded_args?
                 .iter()
-                .map(|arg| shlex::try_quote(arg).unwrap_or(arg.into()).into_owned())
+                .map(|arg| shell_escape::escape(arg.into()).into_owned())
                 .collect();
             format!("{} {}", expanded_cmd, escaped_args.join(" "))
         };

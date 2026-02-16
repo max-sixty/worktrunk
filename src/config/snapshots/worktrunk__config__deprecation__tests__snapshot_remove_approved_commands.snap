@@ -1,0 +1,9 @@
+---
+source: src/config/deprecation.rs
+expression: "migration_diff(content, &result)"
+---
+ worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+ 
+ [projects."github.com/user/repo"]
+-approved-commands = ["npm install", "npm test"]
+ worktree-path = ".worktrees/{{ branch | sanitize }}"

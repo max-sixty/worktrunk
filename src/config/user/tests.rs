@@ -316,102 +316,6 @@ fn test_worktrunk_config_default() {
 }
 
 #[test]
-fn test_worktrunk_config_is_command_approved_empty() {
-    let config = UserConfig::default();
-    assert!(!config.is_command_approved("some/project", "npm install"));
-}
-
-#[test]
-fn test_worktrunk_config_is_command_approved_with_commands() {
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            approved_commands: vec!["npm install".to_string(), "npm test".to_string()],
-            ..Default::default()
-        },
-    );
-    assert!(config.is_command_approved("github.com/user/repo", "npm install"));
-    assert!(config.is_command_approved("github.com/user/repo", "npm test"));
-    assert!(!config.is_command_approved("github.com/user/repo", "rm -rf /"));
-    assert!(!config.is_command_approved("other/project", "npm install"));
-}
-
-#[test]
-fn test_is_command_approved_normalizes_deprecated_vars() {
-    // Approval saved with deprecated variable should match command with new variable
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            approved_commands: vec![
-                "ln -sf {{ repo_root }}/node_modules".to_string(), // old var
-            ],
-            ..Default::default()
-        },
-    );
-
-    // Should match when checking with new variable name
-    assert!(config.is_command_approved(
-        "github.com/user/repo",
-        "ln -sf {{ repo_path }}/node_modules" // new var
-    ));
-
-    // Should still match exact old name too
-    assert!(config.is_command_approved(
-        "github.com/user/repo",
-        "ln -sf {{ repo_root }}/node_modules" // old var
-    ));
-}
-
-#[test]
-fn test_is_command_approved_normalizes_new_approval_matches_old_command() {
-    // Approval saved with new variable should match command with deprecated variable
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            approved_commands: vec![
-                "cd {{ worktree_path }} && npm install".to_string(), // new var
-            ],
-            ..Default::default()
-        },
-    );
-
-    // Should match when checking with old variable name
-    assert!(config.is_command_approved(
-        "github.com/user/repo",
-        "cd {{ worktree }} && npm install" // old var
-    ));
-}
-
-#[test]
-fn test_is_command_approved_normalizes_multiple_vars() {
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            approved_commands: vec![
-                "ln -sf {{ repo_root }}/modules {{ worktree }}/modules".to_string(),
-            ],
-            ..Default::default()
-        },
-    );
-
-    // Should match with all new variable names
-    assert!(config.is_command_approved(
-        "github.com/user/repo",
-        "ln -sf {{ repo_path }}/modules {{ worktree_path }}/modules"
-    ));
-
-    // Should match with mixed old/new (both normalize to same canonical form)
-    assert!(config.is_command_approved(
-        "github.com/user/repo",
-        "ln -sf {{ repo_path }}/modules {{ worktree }}/modules"
-    ));
-}
-
-#[test]
 fn test_worktrunk_config_format_path() {
     let test = test_repo();
     let config = UserConfig::default();
@@ -1969,13 +1873,9 @@ fn test_reload_projects_from_invalid_toml() {
     // Now corrupt it with invalid TOML
     std::fs::write(&config_path, "this is not valid toml [[[").unwrap();
 
-    // Try to reload - should fail with parse error
+    // Try to reload via a mutation — should fail with parse error
     let mut config = UserConfig::default();
-    let result = config.approve_command(
-        "github.com/test/repo".to_string(),
-        "echo test".to_string(),
-        Some(&config_path),
-    );
+    let result = config.set_skip_shell_integration_prompt(Some(&config_path));
 
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -2024,13 +1924,9 @@ fn test_reload_projects_from_permission_error() {
         return;
     }
 
-    // Try to reload - should fail with read error
+    // Try to reload via a mutation — should fail with read error
     let mut config = UserConfig::default();
-    let result = config.approve_command(
-        "github.com/test/repo".to_string(),
-        "echo test".to_string(),
-        Some(&config_path),
-    );
+    let result = config.set_skip_shell_integration_prompt(Some(&config_path));
 
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();

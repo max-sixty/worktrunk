@@ -82,7 +82,8 @@ Created by `wt switch <branch>` when switching to a branch that doesn't have a w
 
 | File | Created by | Purpose |
 |------|------------|---------|
-| `~/.config/worktrunk/config.toml` | `wt config create`, or approving project commands | User preferences, approved commands |
+| `~/.config/worktrunk/config.toml` | `wt config create` | User preferences |
+| `~/.config/worktrunk/approvals.toml` | Approving project commands | Approved hook commands |
 | `.config/wt.toml` | `wt config create --project` | Project hooks (checked into repo) |
 
 User config location: `$XDG_CONFIG_HOME/worktrunk/` (or `~/.config/worktrunk/`) on Linux/macOS, `%APPDATA%\worktrunk\` on Windows.

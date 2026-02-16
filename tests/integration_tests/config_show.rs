@@ -18,8 +18,12 @@ fn test_config_show_with_project_config(mut repo: TestRepo, temp_home: TempDir) 
     fs::write(
         global_config_dir.join("config.toml"),
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
-
-[projects."test-project"]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        global_config_dir.join("approvals.toml"),
+        r#"[projects."test-project"]
 approved-commands = ["npm install"]
 "#,
     )
