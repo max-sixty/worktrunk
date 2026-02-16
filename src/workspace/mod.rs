@@ -22,7 +22,7 @@
 //! This keeps `Box<dyn Workspace>` working (no GATs needed), costs one trivial
 //! heap allocation per call, and lets command handlers use a single code path:
 //!
-//! ```rust,ignore
+//! ```text
 //! // Instead of downcasting:
 //! //   if let Some(repo) = ws.as_any().downcast_ref::<Repository>() { ... }
 //! //   else { handle_merge_jj(...) }
