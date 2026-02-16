@@ -126,7 +126,7 @@ impl SwitchSuggestionCtx {
     /// separator when this context is applied.
     fn apply(&self, cmd: String) -> String {
         let mut result = cmd;
-        // Flags are pre-escaped at construction (handle_switch.rs uses shlex::try_quote)
+        // Flags are pre-escaped at construction (handle_switch.rs uses shell_escape)
         for flag in &self.extra_flags {
             result.push(' ');
             result.push_str(flag);

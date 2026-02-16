@@ -151,7 +151,7 @@ pub fn handle_switch(
     // Without this, errors like "branch already exists" would suggest `wt switch <branch>`
     // instead of the full `wt switch <branch> --execute=<cmd> -- <args>`.
     let suggestion_ctx = execute.map(|exec| {
-        let escaped = shlex::try_quote(exec).unwrap_or(exec.into());
+        let escaped = shell_escape::escape(exec.into());
         SwitchSuggestionCtx {
             extra_flags: vec![format!("--execute={escaped}")],
             trailing_args: execute_args.to_vec(),
