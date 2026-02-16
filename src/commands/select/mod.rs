@@ -6,6 +6,7 @@ mod items;
 mod log_formatter;
 mod pager;
 mod preview;
+mod summary;
 
 use std::io::IsTerminal;
 use std::sync::Arc;
@@ -184,7 +185,7 @@ pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyh
                 .to_string(),
         ))
         .bind(vec![
-            // Mode switching (1/2/3/4 keys change preview content)
+            // Mode switching (1/2/3/4/5 keys change preview content)
             format!(
                 "1:execute-silent(echo 1 > {0})+refresh-preview",
                 state_path_str
@@ -199,6 +200,10 @@ pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyh
             ),
             format!(
                 "4:execute-silent(echo 4 > {0})+refresh-preview",
+                state_path_str
+            ),
+            format!(
+                "5:execute-silent(echo 5 > {0})+refresh-preview",
                 state_path_str
             ),
             // Create new worktree with query as branch name (alt-c for "create")
@@ -227,6 +232,10 @@ pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyh
     // Thread runs until complete or process exits — no join needed since ongoing
     // git commands are harmless read-only operations even if skim exits early.
     let (preview_width, preview_height) = state.initial_layout.preview_dimensions(num_items);
+
+    // Clone items for summary thread before moving into precompute thread
+    let summary_items = items_for_precompute.clone();
+
     let precompute_cache = Arc::clone(&preview_cache);
     std::thread::spawn(move || {
         let modes = [
@@ -249,6 +258,34 @@ pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyh
             }
         }
     });
+
+    // Spawn background thread for AI summary generation (parallel LLM calls).
+    // Only spawned when commit.generation is configured.
+    if resolved.commit_generation.is_configured() {
+        let llm_command = resolved.commit_generation.command.clone().unwrap();
+        let summary_cache = Arc::clone(&preview_cache);
+        let summary_repo = repo.clone();
+        std::thread::spawn(move || {
+            summary::generate_all_summaries(
+                &summary_items,
+                &llm_command,
+                &summary_cache,
+                &summary_repo,
+            );
+        });
+    } else {
+        // No LLM configured — insert config hint for all items so the tab
+        // shows a useful message instead of a perpetual "Generating..." placeholder.
+        let hint = "Configure [commit.generation] command to enable AI summaries.\n\n\
+                     Example in ~/.config/worktrunk/config.toml:\n\n\
+                     [commit.generation]\n\
+                     command = \"llm -m haiku\"\n"
+            .to_string();
+        for item in &summary_items {
+            let branch = item.branch_name().to_string();
+            preview_cache.insert((branch, PreviewMode::Summary), hint.clone());
+        }
+    }
 
     // Run skim
     let output = Skim::run_with(&options, Some(rx));
@@ -335,6 +372,9 @@ pub mod tests {
 
         let _ = fs::write(&state_path, "4");
         assert_eq!(PreviewStateData::read_mode(), PreviewMode::UpstreamDiff);
+
+        let _ = fs::write(&state_path, "5");
+        assert_eq!(PreviewStateData::read_mode(), PreviewMode::Summary);
 
         // Cleanup
         let _ = fs::remove_file(&state_path);

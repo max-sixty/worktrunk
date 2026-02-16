@@ -55,11 +55,11 @@ const MAX_FILES: usize = 50;
 const LOCK_FILE_PATTERNS: &[&str] = &[".lock", "-lock.json", "-lock.yaml", ".lock.hcl"];
 
 /// Prepared diff output with optional filtering applied
-struct PreparedDiff {
+pub(crate) struct PreparedDiff {
     /// The diff content (possibly filtered/truncated)
-    diff: String,
+    pub(crate) diff: String,
     /// The diffstat output
-    stat: String,
+    pub(crate) stat: String,
 }
 
 /// Check if a filename matches lock file patterns
@@ -132,7 +132,7 @@ fn truncate_diff_section(section: &str, max_lines: usize) -> String {
 }
 
 /// Prepare diff for LLM consumption, applying filtering if needed
-fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
+pub(crate) fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
     // If under threshold, pass through unchanged
     if diff.len() < DIFF_SIZE_THRESHOLD {
         return PreparedDiff { diff, stat };
