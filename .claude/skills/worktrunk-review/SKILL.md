@@ -100,9 +100,9 @@ times.
 
 When the PR has no issues worth raising:
 
-1. Approve (a brief one-line remark is fine):
+1. Approve with an empty body (no fluff — silence is the best compliment):
    ```bash
-   gh pr review <number> --approve -b "Clean change, no issues."
+   gh pr review <number> --approve -b ""
    ```
 2. Add a thumbs-up reaction:
    ```bash
