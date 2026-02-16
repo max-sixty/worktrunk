@@ -822,7 +822,20 @@ pub fn step_relocate(
     };
 
     let workspace = worktrunk::workspace::open_workspace()?;
-    let repo = super::require_git_workspace(&*workspace, "step relocate")?;
+
+    // Relocate only applies to git worktrees — jj workspace paths are auto-determined
+    let Some(repo) = workspace
+        .as_any()
+        .downcast_ref::<worktrunk::git::Repository>()
+    else {
+        eprintln!(
+            "{}",
+            info_message(
+                "Relocate is not applicable for jj workspaces (paths are auto-determined)"
+            )
+        );
+        return Ok(());
+    };
     let config = UserConfig::load()?;
     let default_branch = repo.default_branch().unwrap_or_default();
 

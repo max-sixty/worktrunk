@@ -708,16 +708,157 @@ impl Workspace for JjWorkspace {
     }
 
     fn set_switch_previous(&self, name: Option<&str>) -> anyhow::Result<()> {
-        match name {
-            Some(name) => {
-                self.run_command(&["config", "set", "--repo", "worktrunk.history", name])?;
-            }
-            None => {
-                // Best-effort unset — jj config unset may not exist in older versions
-                let _ = self.run_command(&["config", "unset", "--repo", "worktrunk.history"]);
-            }
+        if let Some(name) = name {
+            self.run_command(&["config", "set", "--repo", "worktrunk.history", name])?;
         }
         Ok(())
+    }
+
+    fn clear_switch_previous(&self) -> anyhow::Result<bool> {
+        Ok(self
+            .run_command(&["config", "unset", "--repo", "worktrunk.history"])
+            .is_ok())
+    }
+
+    fn branch_marker(&self, name: &str) -> Option<String> {
+        #[derive(serde::Deserialize)]
+        struct MarkerValue {
+            marker: Option<String>,
+        }
+
+        let config_key = format!("worktrunk.state.{name}.marker");
+        let raw = self
+            .run_command(&["config", "get", &config_key])
+            .ok()
+            .map(|output| output.trim().to_string())
+            .filter(|s| !s.is_empty())?;
+
+        // Try JSON format first, fall back to plain string
+        if let Ok(parsed) = serde_json::from_str::<MarkerValue>(&raw) {
+            parsed.marker
+        } else {
+            Some(raw)
+        }
+    }
+
+    fn set_branch_marker(&self, name: &str, marker: &str, timestamp: u64) -> anyhow::Result<()> {
+        let json = serde_json::json!({
+            "marker": marker,
+            "set_at": timestamp
+        });
+        let config_key = format!("worktrunk.state.{name}.marker");
+        self.run_command(&["config", "set", "--repo", &config_key, &json.to_string()])?;
+        Ok(())
+    }
+
+    fn clear_branch_marker(&self, name: &str) -> bool {
+        let config_key = format!("worktrunk.state.{name}.marker");
+        self.run_command(&["config", "unset", "--repo", &config_key])
+            .is_ok()
+    }
+
+    fn list_all_markers(&self) -> Vec<(String, String, u64)> {
+        let output = self
+            .run_command(&[
+                "config",
+                "list",
+                "--repo",
+                "--name",
+                "worktrunk.state",
+                "-T",
+                "name ++ \"\\t\" ++ value ++ \"\\n\"",
+            ])
+            .unwrap_or_default();
+
+        let mut markers = Vec::new();
+        for line in output.lines() {
+            let Some((key, value)) = line.split_once('\t') else {
+                continue;
+            };
+            let Some(branch) = key
+                .strip_prefix("worktrunk.state.")
+                .and_then(|s| s.strip_suffix(".marker"))
+            else {
+                continue;
+            };
+
+            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) else {
+                continue;
+            };
+            let Some(marker) = parsed.get("marker").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let set_at = parsed.get("set_at").and_then(|v| v.as_u64()).unwrap_or(0);
+            markers.push((branch.to_string(), marker.to_string(), set_at));
+        }
+
+        markers.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+        markers
+    }
+
+    fn clear_all_markers(&self) -> usize {
+        let markers = self.list_all_markers();
+        let count = markers.len();
+        for (branch, _, _) in markers {
+            self.clear_branch_marker(&branch);
+        }
+        count
+    }
+
+    fn has_shown_hint(&self, name: &str) -> bool {
+        self.run_command(&["config", "get", &format!("worktrunk.hints.{name}")])
+            .is_ok()
+    }
+
+    fn mark_hint_shown(&self, name: &str) -> anyhow::Result<()> {
+        self.run_command(&[
+            "config",
+            "set",
+            "--repo",
+            &format!("worktrunk.hints.{name}"),
+            "true",
+        ])?;
+        Ok(())
+    }
+
+    fn clear_hint(&self, name: &str) -> anyhow::Result<bool> {
+        match self.run_command(&[
+            "config",
+            "unset",
+            "--repo",
+            &format!("worktrunk.hints.{name}"),
+        ]) {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    fn list_shown_hints(&self) -> Vec<String> {
+        let output = self
+            .run_command(&[
+                "config",
+                "list",
+                "--repo",
+                "--name",
+                "worktrunk.hints",
+                "-T",
+                "name ++ \"\\n\"",
+            ])
+            .unwrap_or_default();
+
+        output
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktrunk.hints.").map(String::from))
+            .collect()
+    }
+
+    fn clear_all_hints(&self) -> anyhow::Result<usize> {
+        let hints = self.list_shown_hints();
+        let count = hints.len();
+        for hint in hints {
+            self.clear_hint(&hint)?;
+        }
+        Ok(count)
     }
 
     fn as_any(&self) -> &dyn Any {

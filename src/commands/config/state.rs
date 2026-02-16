@@ -72,6 +72,24 @@ pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
     })
 }
 
+// ==================== Helpers ====================
+
+/// Resolve the current branch/workspace name from an explicit option or workspace detection.
+fn resolve_branch_name(
+    workspace: &dyn Workspace,
+    branch: Option<String>,
+) -> anyhow::Result<String> {
+    match branch {
+        Some(b) => Ok(b),
+        None => {
+            let cwd = std::env::current_dir()?;
+            workspace
+                .current_name(&cwd)?
+                .ok_or_else(|| anyhow::anyhow!("Cannot determine current branch/workspace name"))
+        }
+    }
+}
+
 // ==================== Log Management ====================
 
 /// Clear all log files from the wt-logs directory
@@ -190,14 +208,7 @@ pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::
             }
         }
         Some(hook_spec) => {
-            // Get the branch name (workspace name for jj)
-            let cwd = std::env::current_dir()?;
-            let branch = match branch {
-                Some(b) => b,
-                None => workspace
-                    .current_name(&cwd)?
-                    .ok_or_else(|| anyhow::anyhow!("Cannot determine current workspace name"))?,
-            };
+            let branch = resolve_branch_name(&*workspace, branch)?;
 
             // Parse the hook spec using HookLog
             let hook_log = HookLog::parse(&hook_spec).map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -275,58 +286,52 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
             Some(prev) => println!("{prev}"),
             None => println!(""),
         },
-        "marker" | "ci-status" => {
-            let repo = require_git_workspace(&*workspace, "config state get")?;
-
-            if key == "marker" {
-                let branch_name = match branch {
-                    Some(b) => b,
-                    None => repo.require_current_branch("get marker for current branch")?,
-                };
-                match repo.branch_marker(&branch_name) {
-                    Some(marker) => println!("{marker}"),
-                    None => println!(""),
-                }
-            } else {
-                // ci-status
-                let branch_name = match branch {
-                    Some(b) => b,
-                    None => repo.require_current_branch("get ci-status for current branch")?,
-                };
-
-                // Determine if this is a remote ref by checking git refs directly.
-                // This is authoritative - we check actual refs, not guessing from name.
-                let is_remote = repo
-                    .run_command(&[
-                        "show-ref",
-                        "--verify",
-                        "--quiet",
-                        &format!("refs/remotes/{}", branch_name),
-                    ])
-                    .is_ok();
-
-                // Get the HEAD commit for this branch
-                let head = repo
-                    .run_command(&["rev-parse", &branch_name])
-                    .map(|s| s.trim().to_string())
-                    .unwrap_or_default();
-
-                if head.is_empty() {
-                    return Err(worktrunk::git::GitError::BranchNotFound {
-                        branch: branch_name,
-                        show_create_hint: true,
-                    }
-                    .into());
-                }
-
-                let ci_branch = CiBranchName::from_branch_ref(&branch_name, is_remote, repo);
-                let ci_status = PrStatus::detect(repo, &ci_branch, &head)
-                    .map_or(super::super::list::ci_status::CiStatus::NoCI, |s| {
-                        s.ci_status
-                    });
-                let status_str: &'static str = ci_status.into();
-                println!("{status_str}");
+        "marker" => {
+            let branch_name = resolve_branch_name(&*workspace, branch)?;
+            match workspace.branch_marker(&branch_name) {
+                Some(marker) => println!("{marker}"),
+                None => println!(""),
             }
+        }
+        "ci-status" => {
+            let repo = require_git_workspace(&*workspace, "config state get ci-status")?;
+            let branch_name = match branch {
+                Some(b) => b,
+                None => repo.require_current_branch("get ci-status for current branch")?,
+            };
+
+            // Determine if this is a remote ref by checking git refs directly.
+            // This is authoritative - we check actual refs, not guessing from name.
+            let is_remote = repo
+                .run_command(&[
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/remotes/{}", branch_name),
+                ])
+                .is_ok();
+
+            // Get the HEAD commit for this branch
+            let head = repo
+                .run_command(&["rev-parse", &branch_name])
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
+
+            if head.is_empty() {
+                return Err(worktrunk::git::GitError::BranchNotFound {
+                    branch: branch_name,
+                    show_create_hint: true,
+                }
+                .into());
+            }
+
+            let ci_branch = CiBranchName::from_branch_ref(&branch_name, is_remote, repo);
+            let ci_status = PrStatus::detect(repo, &ci_branch, &head)
+                .map_or(super::super::list::ci_status::CiStatus::NoCI, |s| {
+                    s.ci_status
+                });
+            let status_str: &'static str = ci_status.into();
+            println!("{status_str}");
         }
         // TODO: Consider simplifying to just print the path and let users run `ls -al` themselves
         "logs" => {
@@ -378,22 +383,8 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
             );
         }
         "marker" => {
-            let repo = require_git_workspace(&*workspace, "config state marker set")?;
-            let branch_name = match branch {
-                Some(b) => b,
-                None => repo.require_current_branch("set marker for current branch")?,
-            };
-
-            // Store as JSON with timestamp
-            let now = get_now();
-            let json = serde_json::json!({
-                "marker": value,
-                "set_at": now
-            });
-
-            let config_key = format!("worktrunk.state.{branch_name}.marker");
-            repo.run_command(&["config", &config_key, &json.to_string()])?;
-
+            let branch_name = resolve_branch_name(&*workspace, branch)?;
+            workspace.set_branch_marker(&branch_name, &value, get_now())?;
             eprintln!(
                 "{}",
                 success_message(cformat!(
@@ -422,15 +413,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
             }
         }
         "previous-branch" => {
-            if workspace.switch_previous().is_some() {
-                // For git, set_switch_previous(None) is a no-op (designed for detached HEAD),
-                // so we need the downcast to call git config --unset directly.
-                // For jj, set_switch_previous(None) does the right thing.
-                if let Some(repo) = workspace.as_any().downcast_ref::<Repository>() {
-                    let _ = repo.run_command(&["config", "--unset", "worktrunk.history"]);
-                } else {
-                    workspace.set_switch_previous(None)?;
-                }
+            if workspace.clear_switch_previous()? {
                 eprintln!("{}", success_message("Cleared previous branch"));
             } else {
                 eprintln!("{}", info_message("No previous branch to clear"));
@@ -475,20 +458,8 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
             }
         }
         "marker" => {
-            let repo = require_git_workspace(&*workspace, "config state marker clear")?;
             if all {
-                let output = repo
-                    .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
-                    .unwrap_or_default();
-
-                let mut cleared_count = 0;
-                for line in output.lines() {
-                    if let Some(config_key) = line.split_whitespace().next() {
-                        repo.run_command(&["config", "--unset", config_key])?;
-                        cleared_count += 1;
-                    }
-                }
-
+                let cleared_count = workspace.clear_all_markers();
                 if cleared_count == 0 {
                     eprintln!("{}", info_message("No markers to clear"));
                 } else {
@@ -501,16 +472,8 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                     );
                 }
             } else {
-                let branch_name = match branch {
-                    Some(b) => b,
-                    None => repo.require_current_branch("clear marker for current branch")?,
-                };
-
-                let config_key = format!("worktrunk.state.{branch_name}.marker");
-                if repo
-                    .run_command(&["config", "--unset", &config_key])
-                    .is_ok()
-                {
+                let branch_name = resolve_branch_name(&*workspace, branch)?;
+                if workspace.clear_branch_marker(&branch_name) {
                     eprintln!(
                         "{}",
                         success_message(cformat!("Cleared marker for <bold>{branch_name}</>"))
@@ -553,13 +516,8 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
     let workspace = open_workspace()?;
     let mut cleared_any = false;
 
-    // Clear previous branch (works for both git and jj)
-    if workspace.switch_previous().is_some() {
-        if let Some(repo) = workspace.as_any().downcast_ref::<Repository>() {
-            let _ = repo.run_command(&["config", "--unset", "worktrunk.history"]);
-        } else {
-            let _ = workspace.set_switch_previous(None);
-        }
+    // Clear previous branch (trait method — works for both git and jj)
+    if workspace.clear_switch_previous()? {
         cleared_any = true;
     }
 
@@ -575,30 +533,21 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
         cleared_any = true;
     }
 
-    // Git-only state: markers, CI cache, hints
-    if let Some(repo) = workspace.as_any().downcast_ref::<Repository>() {
-        // Clear all markers
-        let markers_output = repo
-            .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
-            .unwrap_or_default();
-        for line in markers_output.lines() {
-            if let Some(config_key) = line.split_whitespace().next() {
-                let _ = repo.run_command(&["config", "--unset", config_key]);
-                cleared_any = true;
-            }
-        }
+    // Clear all markers (trait method — works for both git and jj)
+    if workspace.clear_all_markers() > 0 {
+        cleared_any = true;
+    }
 
-        // Clear all CI status cache
-        let ci_cleared = CachedCiStatus::clear_all(repo);
-        if ci_cleared > 0 {
-            cleared_any = true;
-        }
+    // Clear all hints (trait method — works for both git and jj)
+    if workspace.clear_all_hints()? > 0 {
+        cleared_any = true;
+    }
 
-        // Clear all hints
-        let hints_cleared = repo.clear_all_hints()?;
-        if hints_cleared > 0 {
-            cleared_any = true;
-        }
+    // Clear CI status cache (git-only)
+    if let Some(repo) = workspace.as_any().downcast_ref::<Repository>()
+        && CachedCiStatus::clear_all(repo) > 0
+    {
+        cleared_any = true;
     }
 
     if cleared_any {
@@ -630,25 +579,20 @@ fn handle_state_show_json(
     workspace: &dyn Workspace,
     repo: Option<&Repository>,
 ) -> anyhow::Result<()> {
-    // Trait-compatible state (works for both git and jj)
     let default_branch = workspace.default_branch_name();
     let previous_branch = workspace.switch_previous();
 
-    // Git-only state
-    let markers: Vec<serde_json::Value> = repo
-        .map(|r| {
-            get_all_markers(r)
-                .into_iter()
-                .map(|m| {
-                    serde_json::json!({
-                        "branch": m.branch,
-                        "marker": m.marker,
-                        "set_at": if m.set_at > 0 { Some(m.set_at) } else { None }
-                    })
-                })
-                .collect()
+    let markers: Vec<serde_json::Value> = workspace
+        .list_all_markers()
+        .into_iter()
+        .map(|(branch, marker, set_at)| {
+            serde_json::json!({
+                "branch": branch,
+                "marker": marker,
+                "set_at": if set_at > 0 { Some(set_at) } else { None }
+            })
         })
-        .unwrap_or_default();
+        .collect();
 
     let ci_status: Vec<serde_json::Value> = repo
         .map(|r| {
@@ -676,7 +620,7 @@ fn handle_state_show_json(
         })
         .unwrap_or_default();
 
-    // Log files (works for both git and jj)
+    // Log files
     let log_dir = workspace.wt_logs_dir();
     let logs: Vec<serde_json::Value> = if log_dir.exists() {
         let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
@@ -717,8 +661,7 @@ fn handle_state_show_json(
         vec![]
     };
 
-    // Hints (git-only)
-    let hints: Vec<String> = repo.map(|r| r.list_shown_hints()).unwrap_or_default();
+    let hints = workspace.list_shown_hints();
 
     let output = serde_json::json!({
         "default_branch": default_branch,
@@ -757,28 +700,27 @@ fn handle_state_show_table(
     }
     writeln!(out)?;
 
-    // Show branch markers (git-only)
-    if let Some(repo) = repo {
+    // Show branch markers (trait method)
+    {
+        let markers = workspace.list_all_markers();
         writeln!(out, "{}", format_heading("BRANCH MARKERS", None))?;
-        let markers = get_all_markers(repo);
         if markers.is_empty() {
             writeln!(out, "{}", format_with_gutter("(none)", None))?;
         } else {
             let mut table = String::from("| Branch | Marker | Age |\n");
             table.push_str("|--------|--------|-----|\n");
-            for entry in markers {
-                let age = format_relative_time_short(entry.set_at as i64);
-                table.push_str(&format!(
-                    "| {} | {} | {} |\n",
-                    entry.branch, entry.marker, age
-                ));
+            for (branch, marker, set_at) in markers {
+                let age = format_relative_time_short(set_at as i64);
+                table.push_str(&format!("| {branch} | {marker} | {age} |\n"));
             }
             let rendered = crate::md_help::render_markdown_table(&table);
             writeln!(out, "{}", rendered.trim_end())?;
         }
         writeln!(out)?;
+    }
 
-        // Show CI status cache (git-only)
+    // Show CI status cache (git-only)
+    if let Some(repo) = repo {
         writeln!(out, "{}", format_heading("CI STATUS CACHE", None))?;
         let mut entries = CachedCiStatus::list_all(repo);
         // Sort by age (most recent first), then by branch name for ties
@@ -811,10 +753,12 @@ fn handle_state_show_table(
             writeln!(out, "{}", rendered.trim_end())?;
         }
         writeln!(out)?;
+    }
 
-        // Show hints (git-only)
+    // Show hints (trait method)
+    {
+        let hints = workspace.list_shown_hints();
         writeln!(out, "{}", format_heading("HINTS", None))?;
-        let hints = repo.list_shown_hints();
         if hints.is_empty() {
             writeln!(out, "{}", format_with_gutter("(none)", None))?;
         } else {
@@ -837,54 +781,4 @@ fn handle_state_show_table(
     }
 
     Ok(())
-}
-
-// ==================== Marker Helpers ====================
-
-/// Marker entry with branch, text, and timestamp
-pub(super) struct MarkerEntry {
-    pub branch: String,
-    pub marker: String,
-    pub set_at: u64,
-}
-
-/// Get all branch markers from git config with timestamps
-pub(super) fn get_all_markers(repo: &Repository) -> Vec<MarkerEntry> {
-    let output = repo
-        .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
-        .unwrap_or_default();
-
-    let mut markers = Vec::new();
-    for line in output.lines() {
-        // Format: "worktrunk.state.<branch>.marker json_value"
-        let Some((key, value)) = line.split_once(' ') else {
-            continue;
-        };
-        let Some(branch) = key
-            .strip_prefix("worktrunk.state.")
-            .and_then(|s| s.strip_suffix(".marker"))
-        else {
-            continue;
-        };
-        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) else {
-            continue; // Skip invalid JSON
-        };
-        let Some(marker) = parsed.get("marker").and_then(|v| v.as_str()) else {
-            continue; // Skip if "marker" field is missing
-        };
-        let set_at = parsed.get("set_at").and_then(|v| v.as_u64()).unwrap_or(0);
-        markers.push(MarkerEntry {
-            branch: branch.to_string(),
-            marker: marker.to_string(),
-            set_at,
-        });
-    }
-
-    // Sort by age (most recent first), then by branch name for ties
-    markers.sort_by(|a, b| {
-        b.set_at
-            .cmp(&a.set_at)
-            .then_with(|| a.branch.cmp(&b.branch))
-    });
-    markers
 }

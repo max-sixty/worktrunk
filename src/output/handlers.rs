@@ -27,6 +27,7 @@ use worktrunk::styling::{
     FormattedMessage, eprintln, error_message, format_with_gutter, hint_message, info_message,
     progress_message, success_message, suggest_command, warning_message,
 };
+use worktrunk::workspace::Workspace;
 
 use super::shell_integration::{
     compute_shell_warning_reason, explicit_path_hint, git_subcommand_warning,

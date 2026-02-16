@@ -16,6 +16,7 @@ use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, suggest_command,
     warning_message,
 };
+use worktrunk::workspace::Workspace;
 
 use super::resolve::{compute_clobber_backup, compute_worktree_path, get_path_mismatch};
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};

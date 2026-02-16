@@ -8,6 +8,7 @@ use normalize_path::NormalizePath;
 
 use super::{GitError, Repository, ResolvedWorktree, WorktreeInfo};
 use crate::path::format_path_for_display;
+use crate::workspace::Workspace;
 
 impl Repository {
     /// List all worktrees for this repository.
