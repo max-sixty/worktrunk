@@ -8,7 +8,7 @@ description = "Performance testing and tracing tools for worktrunk"
 
 [dependencies]
 # For repo setup
-tempfile = "3.19"
+tempfile = "3.25"
 dunce = "1"
 
 # For CLI

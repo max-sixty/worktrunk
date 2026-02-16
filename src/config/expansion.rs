@@ -246,7 +246,6 @@ impl std::error::Error for TemplateExpandError {}
 
 /// Build a [`TemplateExpandError`] from a minijinja error, the original template
 /// source, the template name (for error messages), and the available variable names.
-/// the template name, and the available variable names.
 ///
 /// Message format: `Failed to expand {name}: {kind}[: {detail}] [@ line {n}]`
 ///

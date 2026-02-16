@@ -1756,6 +1756,85 @@ fn test_uninstall_shell_nushell(repo: TestRepo, temp_home: TempDir) {
     );
 }
 
+/// Test that nushell uninstall cleans up config files at all candidate locations.
+///
+/// Exercises the fix where uninstall iterates all nushell config candidates,
+/// not just the first. Simulates the scenario where the file was installed at
+/// a location that is no longer the primary candidate (e.g., `nu` reported
+/// a different path during install than what we'd pick now).
+#[rstest]
+fn test_uninstall_nushell_cleans_all_candidate_locations(repo: TestRepo, temp_home: TempDir) {
+    let home = std::fs::canonicalize(temp_home.path()).unwrap();
+
+    // Install nushell integration normally (goes to XDG_CONFIG_HOME/nushell)
+    let mut install_cmd = wt_command();
+    repo.configure_wt_cmd(&mut install_cmd);
+    set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("SHELL", "/bin/nu");
+    install_cmd
+        .args(["config", "shell", "install", "nu", "--yes"])
+        .current_dir(repo.root_path());
+
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+
+    let primary_config = home
+        .join(".config")
+        .join("nushell")
+        .join("vendor")
+        .join("autoload")
+        .join("wt.nu");
+    assert!(primary_config.exists(), "Primary config should exist");
+
+    // Copy the config to a secondary candidate location (~/.config is the XDG default,
+    // but also manually create one at a different path to simulate install at a
+    // non-primary location). Use a custom XDG_CONFIG_HOME to make a second candidate
+    // be the primary during uninstall.
+    let secondary_dir = home
+        .join("custom-config")
+        .join("nushell")
+        .join("vendor")
+        .join("autoload");
+    fs::create_dir_all(&secondary_dir).unwrap();
+    let secondary_config = secondary_dir.join("wt.nu");
+    fs::copy(&primary_config, &secondary_config).unwrap();
+
+    // Uninstall with XDG_CONFIG_HOME pointing to the custom location.
+    // The custom path becomes the first candidate, but the original at ~/.config/nushell
+    // should also be cleaned up since uninstall checks all candidates.
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    // Override XDG_CONFIG_HOME to point to custom dir, making it the primary candidate
+    cmd.env("HOME", &home);
+    cmd.env("USERPROFILE", &home);
+    cmd.env("XDG_CONFIG_HOME", home.join("custom-config"));
+    cmd.env("APPDATA", home.join("custom-config"));
+    cmd.env("SHELL", "/bin/nu");
+    cmd.args(["config", "shell", "uninstall", "nu", "--yes"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Both locations should be cleaned up
+    assert!(
+        !primary_config.exists(),
+        "Primary config at ~/.config/nushell should be deleted: {primary_config:?}"
+    );
+    assert!(
+        !secondary_config.exists(),
+        "Secondary config at custom XDG path should be deleted: {secondary_config:?}"
+    );
+}
+
 /// Test that WORKTRUNK_TEST_POWERSHELL_ENV=1 triggers PowerShell auto-detection.
 /// This simulates the Windows behavior where we detect PowerShell when SHELL is not set.
 #[rstest]

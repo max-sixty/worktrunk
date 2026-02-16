@@ -17,16 +17,14 @@ env:
 
 jobs:
   review:
-    # Skip draft PRs
+    # Skip draft PRs and bot PRs (e.g. Dependabot)
     # To skip PRs from repo members, uncomment the author_association conditions:
     # github.event.pull_request.author_association != 'OWNER' &&
     # github.event.pull_request.author_association != 'MEMBER' &&
     if: >-
-      github.event.pull_request.draft == false
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.type != 'Bot'
     runs-on: ubuntu-24.04
-    # Scoped environment — only CLAUDE_CODE_OAUTH_TOKEN is needed.
-    # Publishing tokens etc. are not accessible.
-    environment: claude-review
     permissions:
       contents: write
       pull-requests: write
@@ -49,8 +47,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ github.token }}
-          allowed_non_write_users: "*"
+          github_token: ${{ secrets.WORKTRUNK_REVIEW_TOKEN }}
           additional_permissions: |
             actions: read
           use_sticky_comment: true
