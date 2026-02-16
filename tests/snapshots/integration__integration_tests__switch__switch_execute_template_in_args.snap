@@ -35,6 +35,7 @@ info:
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -50,4 +51,4 @@ branch=args-test repo=repo
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
 [36m◎[39m [36mExecuting (--execute) @ [1m_REPO_.args-test[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'branch=args-test'[0m[2m [0m[2m[32m'repo=repo'[0m[2m
+[107m [0m [2m[0m[2m[34mecho[0m[2m branch=args-test repo=repo
