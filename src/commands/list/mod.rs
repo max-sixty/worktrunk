@@ -150,7 +150,6 @@ pub fn handle_list(
     cli_remotes: bool,
     cli_full: bool,
     render_mode: RenderMode,
-    config: &worktrunk::config::UserConfig,
 ) -> anyhow::Result<()> {
     // Progressive rendering only for table format with Progressive mode
     let show_progress = match format {
@@ -178,7 +177,6 @@ pub fn handle_list(
         },
         show_progress,
         render_table,
-        config,
         skip_expensive_for_stale,
     )?;
 

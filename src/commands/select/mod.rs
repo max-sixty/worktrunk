@@ -28,11 +28,7 @@ use crate::output::handle_switch_output;
 use items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
 use preview::{PreviewLayout, PreviewMode, PreviewState};
 
-pub fn handle_select(
-    show_branches: bool,
-    show_remotes: bool,
-    config: &UserConfig,
-) -> anyhow::Result<()> {
+pub fn handle_select(show_branches: bool, show_remotes: bool) -> anyhow::Result<()> {
     // Interactive picker requires a terminal for the TUI
     if !std::io::stdin().is_terminal() {
         anyhow::bail!("Interactive picker requires an interactive terminal");
@@ -69,8 +65,7 @@ pub fn handle_select(
         },
         false, // show_progress (no progress bars)
         false, // render_table (select renders its own UI)
-        config,
-        true, // skip_expensive_for_stale (faster for repos with many stale branches)
+        true,  // skip_expensive_for_stale (faster for repos with many stale branches)
     )?
     else {
         return Ok(());
