@@ -211,7 +211,6 @@ pub enum ShowConfig {
         cli_branches: bool,
         cli_remotes: bool,
         cli_full: bool,
-        raw_timeout: Option<std::time::Duration>,
     },
 }
 
@@ -336,12 +335,11 @@ pub fn collect(
             cli_branches,
             cli_remotes,
             cli_full,
-            raw_timeout,
         } => {
-            let resolved = config.resolved(project_id.as_deref());
-            let show_branches = cli_branches || resolved.list.branches();
-            let show_remotes = cli_remotes || resolved.list.remotes();
-            let show_full = cli_full || resolved.list.full();
+            let config = config.resolved(project_id.as_deref());
+            let show_branches = cli_branches || config.list.branches();
+            let show_remotes = cli_remotes || config.list.remotes();
+            let show_full = cli_full || config.list.full();
             let skip_tasks: HashSet<TaskKind> = if show_full {
                 HashSet::new()
             } else {
@@ -353,8 +351,16 @@ pub fn collect(
                 .into_iter()
                 .collect()
             };
-            // --full disables timeout for complete data collection
-            let command_timeout = if show_full { None } else { raw_timeout };
+            // Resolve timeout from merged config (--full disables timeout)
+            let command_timeout = if show_full {
+                None
+            } else {
+                config
+                    .list
+                    .timeout_ms()
+                    .filter(|&ms| ms > 0) // 0 means "no timeout" (explicit disable)
+                    .map(std::time::Duration::from_millis)
+            };
             (show_branches, show_remotes, skip_tasks, command_timeout)
         }
     };

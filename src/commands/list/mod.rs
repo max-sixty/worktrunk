@@ -169,23 +169,12 @@ pub fn handle_list(
     // For testing: allow enabling skip_expensive_for_stale via env var
     let skip_expensive_for_stale = std::env::var("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD").is_ok();
 
-    // Raw timeout from global config (--full override applied in collect after
-    // config resolution, since show_full depends on project-specific config)
-    let raw_timeout = config
-        .configs
-        .list
-        .as_ref()
-        .and_then(|l| l.timeout_ms)
-        .filter(|&ms| ms > 0) // 0 means "no timeout" (explicit disable)
-        .map(std::time::Duration::from_millis);
-
     let list_data = collect::collect(
         &repo,
         collect::ShowConfig::DeferredToParallel {
             cli_branches,
             cli_remotes,
             cli_full,
-            raw_timeout,
         },
         show_progress,
         render_table,
