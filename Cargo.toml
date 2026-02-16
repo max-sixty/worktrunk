@@ -137,7 +137,7 @@ vergen-gitcl = { version = "9.1.0", features = ["build"] }
 insta = { version = "1.46.3", features = ["yaml", "redactions", "filters"] }
 insta-cmd = "0.6"
 rstest = "0.26"
-tempfile = "3.24"
+tempfile = "3.25"
 toml = "0.9"
 criterion = "0.8"
 portable-pty = "0.9"
