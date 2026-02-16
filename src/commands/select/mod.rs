@@ -226,33 +226,29 @@ pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyh
     }
     drop(tx);
 
-    // Spawn background thread to pre-compute all preview modes for all worktrees.
-    // Use same dimension calculation as skim's preview window.
-    // Thread runs until complete or process exits — no join needed since ongoing
+    // Pre-compute all preview modes for all worktrees in parallel via rayon.
+    // Each (worktree, mode) pair is a separate rayon task, allowing the thread pool
+    // to overlap I/O-bound git commands. Tasks are fire-and-forget — ongoing
     // git commands are harmless read-only operations even if skim exits early.
     let (preview_width, preview_height) = state.initial_layout.preview_dimensions(num_items);
-    let precompute_cache = Arc::clone(&preview_cache);
-    std::thread::spawn(move || {
-        let modes = [
-            PreviewMode::WorkingTree,
-            PreviewMode::Log,
-            PreviewMode::BranchDiff,
-            PreviewMode::UpstreamDiff,
-        ];
-        for item in items_for_precompute {
-            let branch_name = item.branch_name().to_string();
-            for mode in modes {
-                let cache_key = (branch_name.clone(), mode);
-                // Skip if already cached (e.g., user viewed it before we got here)
-                if precompute_cache.contains_key(&cache_key) {
-                    continue;
-                }
-                let preview =
-                    WorktreeSkimItem::compute_preview(&item, mode, preview_width, preview_height);
-                precompute_cache.insert(cache_key, preview);
-            }
+    let modes = [
+        PreviewMode::WorkingTree,
+        PreviewMode::Log,
+        PreviewMode::BranchDiff,
+        PreviewMode::UpstreamDiff,
+    ];
+    for item in items_for_precompute {
+        for mode in modes {
+            let cache = Arc::clone(&preview_cache);
+            let item = Arc::clone(&item);
+            rayon::spawn(move || {
+                let cache_key = (item.branch_name().to_string(), mode);
+                cache.entry(cache_key).or_insert_with(|| {
+                    WorktreeSkimItem::compute_preview(&item, mode, preview_width, preview_height)
+                });
+            });
         }
-    });
+    }
 
     // Run skim
     let output = Skim::run_with(&options, Some(rx));
