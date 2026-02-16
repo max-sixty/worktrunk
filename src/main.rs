@@ -687,7 +687,9 @@ fn main() {
                 commands::statusline::run(effective_format)
             }
             None => {
-                // Load config; handle_list resolves project-specific settings internally
+                // Config resolution is deferred to collect's parallel phase so
+                // project_identifier runs concurrently with other git commands
+                // instead of blocking the critical path.
                 UserConfig::load()
                     .context("Failed to load config")
                     .and_then(|config| {

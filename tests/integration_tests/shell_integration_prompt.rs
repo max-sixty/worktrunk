@@ -167,7 +167,7 @@ fn test_switch_unsupported_shell_shows_hint(repo: TestRepo) {
         "Should show unsupported shell message: {stderr}"
     );
     assert!(
-        stderr.contains("bash, zsh, fish, PowerShell"),
+        stderr.contains("bash, zsh, fish, nu, PowerShell"),
         "Should list supported shells: {stderr}"
     );
 }

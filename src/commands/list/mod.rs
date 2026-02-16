@@ -137,13 +137,12 @@ use std::collections::HashSet;
 
 use anstyle::Style;
 use anyhow::Context;
+use collect::TaskKind;
 use model::{ListData, ListItem};
 use progressive::RenderMode;
 use worktrunk::git::Repository;
 use worktrunk::styling::INFO_SYMBOL;
 use worktrunk::workspace::JjWorkspace;
-
-use collect::TaskKind;
 
 // Re-export for statusline and other consumers
 pub use collect::{CollectOptions, build_worktree_item, populate_item};
@@ -168,23 +167,13 @@ pub fn handle_list(
         return handle_list_jj(format);
     }
 
-    // Resolve config using workspace's project identifier (avoids extra Repository::current())
-    let project_id = workspace.project_identifier().ok();
-    let resolved = config.resolved(project_id.as_deref());
+    let repo = workspace
+        .as_any()
+        .downcast_ref::<Repository>()
+        .expect("already verified git workspace")
+        .clone();
 
-    // CLI flags override config values
-    let show_branches = branches || resolved.list.branches();
-    let show_remotes = remotes || resolved.list.remotes();
-    let show_full = full || resolved.list.full();
-
-    handle_list_git(
-        format,
-        show_branches,
-        show_remotes,
-        show_full,
-        render_mode,
-        config,
-    )
+    handle_list_git(repo, format, branches, remotes, full, render_mode, config)
 }
 
 /// Handle `wt list` for jj repositories.
@@ -232,31 +221,16 @@ fn handle_list_jj(format: crate::OutputFormat) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Handle `wt list` for git repositories (existing behavior).
+/// Handle `wt list` for git repositories.
 fn handle_list_git(
+    repo: Repository,
     format: crate::OutputFormat,
-    show_branches: bool,
-    show_remotes: bool,
-    show_full: bool,
+    cli_branches: bool,
+    cli_remotes: bool,
+    cli_full: bool,
     render_mode: RenderMode,
     config: &worktrunk::config::UserConfig,
 ) -> anyhow::Result<()> {
-    let repo = Repository::current()?;
-
-    // Build skip set based on flags
-    // Without --full: skip expensive operations (BranchDiff, CiStatus, WorkingTreeConflicts)
-    let skip_tasks: HashSet<TaskKind> = if show_full {
-        HashSet::new() // Compute everything
-    } else {
-        [
-            TaskKind::BranchDiff,
-            TaskKind::CiStatus,
-            TaskKind::WorkingTreeConflicts,
-        ]
-        .into_iter()
-        .collect()
-    };
-
     // Progressive rendering only for table format with Progressive mode
     let show_progress = match format {
         crate::OutputFormat::Table | crate::OutputFormat::ClaudeCode => {
@@ -274,28 +248,27 @@ fn handle_list_git(
     // For testing: allow enabling skip_expensive_for_stale via env var
     let skip_expensive_for_stale = std::env::var("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD").is_ok();
 
-    // Per-task timeout from config (disabled with --full or timeout-ms = 0)
-    let command_timeout = if show_full {
-        None // --full disables timeout for complete data collection
-    } else {
-        config
-            .configs
-            .list
-            .as_ref()
-            .and_then(|l| l.timeout_ms)
-            .filter(|&ms| ms > 0) // 0 means "no timeout" (explicit disable)
-            .map(std::time::Duration::from_millis)
-    };
+    // Raw timeout from global config (--full override applied in collect after
+    // config resolution, since show_full depends on project-specific config)
+    let raw_timeout = config
+        .configs
+        .list
+        .as_ref()
+        .and_then(|l| l.timeout_ms)
+        .filter(|&ms| ms > 0) // 0 means "no timeout" (explicit disable)
+        .map(std::time::Duration::from_millis);
 
     let list_data = collect::collect(
         &repo,
-        show_branches,
-        show_remotes,
-        &skip_tasks,
+        collect::ShowConfig::DeferredToParallel {
+            cli_branches,
+            cli_remotes,
+            cli_full,
+            raw_timeout,
+        },
         show_progress,
         render_table,
         config,
-        command_timeout,
         skip_expensive_for_stale,
     )?;
 

@@ -71,6 +71,11 @@ impl Repository {
                         let _ = self.cache.invalid_default_branch.set(None);
                         return Some(branch.clone());
                     }
+                    // Check if this is the unborn default branch (HEAD points to it but no commits yet)
+                    if self.is_unborn_head_branch(branch) {
+                        let _ = self.cache.invalid_default_branch.set(None);
+                        return Some(branch.clone());
+                    }
                     // Configured branch doesn't exist - cache for warning, return None
                     let _ = self.cache.invalid_default_branch.set(Some(branch.clone()));
                     log::debug!(
@@ -236,6 +241,18 @@ impl Repository {
     }
 
     // Private helpers for default_branch detection
+
+    /// Check if a branch is the unborn default branch (HEAD points to it but no commits exist).
+    ///
+    /// This is the case in a freshly `git init`-ed repo: HEAD is `refs/heads/main` but the
+    /// branch doesn't exist yet (no commits). We accept this as a valid default branch.
+    fn is_unborn_head_branch(&self, branch: &str) -> bool {
+        self.run_command(&["symbolic-ref", "HEAD"])
+            .ok()
+            .and_then(|s| s.trim().strip_prefix("refs/heads/").map(String::from))
+            .is_some_and(|head_branch| head_branch == branch)
+            && self.local_branches().is_ok_and(|b| b.is_empty())
+    }
 
     fn get_local_default_branch(&self, remote: &str) -> anyhow::Result<String> {
         let stdout =

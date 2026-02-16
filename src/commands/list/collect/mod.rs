@@ -17,14 +17,15 @@
 //! - **Batching** — timestamp fetch passes all SHAs to one `git show` command
 //! - **Parallelization** — independent commands run concurrently via `join!` macro
 //!
-//! **Steady-state (5-7 commands):**
+//! **Steady-state (6-8 commands):**
 //!
 //! | Command | Purpose | Parallel |
 //! |---------|---------|----------|
-//! | `git worktree list --porcelain` | Enumerate worktrees | Sequential (required first) |
+//! | `git worktree list --porcelain` | Enumerate worktrees | ✓ |
 //! | `git config worktrunk.default-branch` | Cached default branch | ✓ |
 //! | `git config --bool core.bare` | Bare repo check for expected-path logic | ✓ |
 //! | `git rev-parse --show-toplevel` | Worktree root for project config | ✓ |
+//! | `git config remote.*.url` (1-3 calls) | Project identifier (for config + path check) | ✓ |
 //! | `git for-each-ref refs/heads` | Only with `--branches` flag | ✓ |
 //! | `git for-each-ref refs/remotes` | Only with `--remotes` flag | ✓ |
 //! | `git show -s --format='%H %ct' SHA1 SHA2 ...` | **Batched** timestamps | Sequential (needs SHAs) |
@@ -32,6 +33,7 @@
 //! **Non-git operations (negligible latency):**
 //! - Path canonicalization — detect current worktree
 //! - Project config file read — check if URL column needed (no template expansion)
+//! - Config resolution — merge project-specific settings (uses cached project identifier)
 //!
 //! ### First-Run Behavior
 //!
@@ -97,6 +99,7 @@ mod tasks;
 mod types;
 
 use anyhow::Context;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use anstyle::Style;
@@ -186,11 +189,31 @@ pub struct CollectOptions {
     pub stale_branches: std::collections::HashSet<String>,
 }
 
-fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> std::collections::HashSet<&str> {
+fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
     worktrees
         .iter()
         .filter_map(|wt| wt.branch.as_deref())
         .collect()
+}
+
+/// Controls how show flags (branches/remotes/full) are determined in [`collect`].
+#[cfg_attr(not(unix), allow(dead_code))]
+pub enum ShowConfig {
+    /// Flags already resolved by the caller (used by `wt select`).
+    Resolved {
+        show_branches: bool,
+        show_remotes: bool,
+        skip_tasks: HashSet<TaskKind>,
+        command_timeout: Option<std::time::Duration>,
+    },
+    /// Raw CLI flags; config resolution deferred to collect's parallel phase
+    /// so project_identifier runs concurrently with other git operations.
+    DeferredToParallel {
+        cli_branches: bool,
+        cli_remotes: bool,
+        cli_full: bool,
+        raw_timeout: Option<std::time::Duration>,
+    },
 }
 
 /// Collect worktree data with optional progressive rendering.
@@ -200,29 +223,41 @@ fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> std::collections::HashSet<
 /// - If `render_table` is true: renders final table (buffered mode)
 /// - If `render_table` is false: returns data without rendering (JSON mode)
 ///
-/// The `command_timeout` parameter, if set, limits how long individual git commands can run.
-/// This is useful for `wt switch` interactive picker to show the TUI faster by skipping slow operations.
-///
-/// TODO: Now that we skip expensive tasks for stale branches (see `skip_expensive_for_stale`),
-/// the timeout may be unnecessary. Consider removing it if it doesn't provide value.
-///
 /// The `skip_expensive_for_stale` parameter enables batch-fetching ahead/behind counts and
 /// skipping expensive merge-base operations for branches far behind the default branch.
 /// This dramatically improves performance for repos with many stale branches.
-#[allow(clippy::too_many_arguments)]
 pub fn collect(
     repo: &Repository,
-    show_branches: bool,
-    show_remotes: bool,
-    skip_tasks: &std::collections::HashSet<TaskKind>,
+    show_config: ShowConfig,
     show_progress: bool,
     render_table: bool,
     config: &worktrunk::config::UserConfig,
-    command_timeout: Option<std::time::Duration>,
     skip_expensive_for_stale: bool,
 ) -> anyhow::Result<Option<super::model::ListData>> {
     use super::progressive_table::ProgressiveTable;
     worktrunk::shell_exec::trace_instant("List collect started");
+
+    // Determine what to fetch speculatively in the parallel phase.
+    //
+    // For Resolved: respect the caller's flags (fetch only what's requested).
+    // For DeferredToParallel: always fetch local branches speculatively (~7ms,
+    // hidden by parallelism) since config resolution happens after. Remote
+    // branches are only fetched if the CLI flag is set (can be expensive).
+    let (fetch_branches, fetch_remotes) = match &show_config {
+        ShowConfig::Resolved {
+            show_branches,
+            show_remotes,
+            ..
+        } => (*show_branches, *show_remotes),
+        ShowConfig::DeferredToParallel { cli_remotes, .. } => {
+            // Always fetch local branches: ~7ms hidden by parallelism, needed if
+            // config says branches=true (which we won't know until after this phase).
+            // Only fetch remotes when CLI-requested (can be expensive, rarely config-only).
+            let fetch_branches = true;
+            let fetch_remotes = *cli_remotes;
+            (fetch_branches, fetch_remotes)
+        }
+    };
 
     // Phase 1: Parallel fetch of ALL independent git data
     //
@@ -233,6 +268,8 @@ pub fn collect(
     // - default_branch: independent (git config + verify)
     // - is_bare: independent (git config, cached for later use)
     // - url_template: independent (loads project config via show-toplevel)
+    // - project_identifier: independent (git config for remote URL; warms cache
+    //   for is_worktree_at_expected_path and config resolution)
     // - local_branches: independent (for-each-ref, but filtering needs worktrees)
     // - remote_branches: independent (for-each-ref)
     //
@@ -240,6 +277,7 @@ pub fn collect(
     let worktrees_cell: OnceCell<anyhow::Result<Vec<WorktreeInfo>>> = OnceCell::new();
     let default_branch_cell: OnceCell<Option<String>> = OnceCell::new();
     let url_template_cell: OnceCell<Option<String>> = OnceCell::new();
+    let project_id_cell: OnceCell<Option<String>> = OnceCell::new();
     let local_branches_cell: OnceCell<anyhow::Result<Vec<(String, String)>>> = OnceCell::new();
     let remote_branches_cell: OnceCell<anyhow::Result<Vec<(String, String)>>> = OnceCell::new();
 
@@ -258,12 +296,18 @@ pub fn collect(
             let _ = url_template_cell.set(repo.url_template());
         });
         s.spawn(|_| {
-            if show_branches {
+            // Warm project_identifier cache — used by is_worktree_at_expected_path
+            // (via compute_worktree_path) and config resolution. Running this here
+            // avoids sequential git commands later on the critical path.
+            let _ = project_id_cell.set(repo.project_identifier().ok());
+        });
+        s.spawn(|_| {
+            if fetch_branches {
                 let _ = local_branches_cell.set(repo.list_local_branches());
             }
         });
         s.spawn(|_| {
-            if show_remotes {
+            if fetch_remotes {
                 let _ = remote_branches_cell.set(repo.list_untracked_remote_branches());
             }
         });
@@ -279,10 +323,51 @@ pub fn collect(
     }
     let default_branch = default_branch_cell.into_inner().unwrap();
     let url_template = url_template_cell.into_inner().unwrap();
+    let project_id = project_id_cell.into_inner().unwrap();
+
+    // Resolve show flags: merge CLI overrides with config (now that project_id is available)
+    let (show_branches, show_remotes, skip_tasks, command_timeout) = match show_config {
+        ShowConfig::Resolved {
+            show_branches,
+            show_remotes,
+            skip_tasks,
+            command_timeout,
+        } => (show_branches, show_remotes, skip_tasks, command_timeout),
+        ShowConfig::DeferredToParallel {
+            cli_branches,
+            cli_remotes,
+            cli_full,
+            raw_timeout,
+        } => {
+            let resolved = config.resolved(project_id.as_deref());
+            let show_branches = cli_branches || resolved.list.branches();
+            let show_remotes = cli_remotes || resolved.list.remotes();
+            let show_full = cli_full || resolved.list.full();
+            let skip_tasks: HashSet<TaskKind> = if show_full {
+                HashSet::new()
+            } else {
+                [
+                    TaskKind::BranchDiff,
+                    TaskKind::CiStatus,
+                    TaskKind::WorkingTreeConflicts,
+                ]
+                .into_iter()
+                .collect()
+            };
+            // --full disables timeout for complete data collection
+            let command_timeout = if show_full { None } else { raw_timeout };
+            (show_branches, show_remotes, skip_tasks, command_timeout)
+        }
+    };
 
     // Filter local branches to those without worktrees (CPU-only, no git commands)
     let branches_without_worktrees = if show_branches {
-        let all_local = local_branches_cell.into_inner().unwrap()?;
+        let all_local = if let Some(result) = local_branches_cell.into_inner() {
+            result?
+        } else {
+            // Config-triggered (not fetched speculatively) — fetch now
+            repo.list_local_branches()?
+        };
         let worktree_branches = worktree_branch_set(&worktrees);
         all_local
             .into_iter()
@@ -292,7 +377,12 @@ pub fn collect(
         Vec::new()
     };
     let remote_branches = if show_remotes {
-        remote_branches_cell.into_inner().unwrap()?
+        if let Some(result) = remote_branches_cell.into_inner() {
+            result?
+        } else {
+            // Config-triggered (not fetched speculatively) — fetch now
+            repo.list_untracked_remote_branches()?
+        }
     } else {
         Vec::new()
     };
@@ -332,6 +422,8 @@ pub fn collect(
     // (skeleton shows placeholder gutter, actual symbols appear when data loads)
 
     // Phase 3: Batch fetch timestamps (needs all SHAs from worktrees + branches)
+    // Filter out null OIDs from unborn branches — a single null OID would cause
+    // `git show` to fail for ALL shas in the batch.
     let all_shas: Vec<&str> = worktrees
         .iter()
         .map(|wt| wt.head.as_str())
@@ -341,6 +433,7 @@ pub fn collect(
                 .map(|(_, sha)| sha.as_str()),
         )
         .chain(remote_branches.iter().map(|(_, sha)| sha.as_str()))
+        .filter(|sha| *sha != worktrunk::git::NULL_OID)
         .collect();
     let timestamps = repo.commit_timestamps(&all_shas).unwrap_or_default();
 

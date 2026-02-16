@@ -82,11 +82,6 @@ fn nushell_config_candidates(home: &std::path::Path) -> Vec<PathBuf> {
 
     // Fallbacks for when nu query fails at runtime but succeeded during install:
 
-    // etcetera's platform config dir (matches nushell_config_dir fallback)
-    if let Ok(strategy) = choose_base_strategy() {
-        candidates.push(strategy.config_dir().join("nushell"));
-    }
-
     // XDG_CONFIG_HOME/nushell if set
     if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
         candidates.push(PathBuf::from(xdg_config).join("nushell"));
@@ -104,6 +99,10 @@ fn nushell_config_candidates(home: &std::path::Path) -> Vec<PathBuf> {
                 .join("nushell"),
         );
     }
+
+    // Deduplicate while preserving priority order (queried path first)
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|p| seen.insert(p.clone()));
 
     candidates
 }
@@ -322,15 +321,34 @@ mod tests {
     }
 
     #[test]
-    fn test_nushell_config_candidates_returns_at_least_two() {
+    fn test_nushell_config_candidates_always_has_fallback() {
         let home = PathBuf::from("/home/user");
         let candidates = nushell_config_candidates(&home);
 
-        // Even without `nu` in PATH, we should get fallback candidates
-        // (etcetera config dir + ~/.config/nushell, plus macOS path on macOS)
+        // Even without `nu` in PATH, we should get at least one fallback
+        assert!(
+            !candidates.is_empty(),
+            "Should return at least 1 candidate path, got: {candidates:?}"
+        );
+
+        // On macOS, should have at least 2 (XDG default + Library/Application Support)
+        #[cfg(target_os = "macos")]
         assert!(
             candidates.len() >= 2,
-            "Should return at least 2 candidate paths, got: {candidates:?}"
+            "macOS should have at least 2 candidates, got: {candidates:?}"
+        );
+    }
+
+    #[test]
+    fn test_nushell_config_candidates_no_duplicates() {
+        let home = PathBuf::from("/home/user");
+        let candidates = nushell_config_candidates(&home);
+
+        let unique: std::collections::HashSet<_> = candidates.iter().collect();
+        assert_eq!(
+            candidates.len(),
+            unique.len(),
+            "Candidates should not contain duplicates: {candidates:?}"
         );
     }
 

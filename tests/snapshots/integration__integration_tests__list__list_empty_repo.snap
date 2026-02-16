@@ -1,12 +1,9 @@
 ---
-source: tests/integration_tests/post_start_commands.rs
+source: tests/integration_tests/list.rs
 info:
   program: wt
   args:
-    - switch
-    - "--create"
-    - feature
-    - "--yes"
+    - list
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -20,8 +17,6 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
-    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
-    PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -36,14 +31,12 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 101
+success: true
+exit_code: 0
 ----- stdout -----
+  [1mBranch[0m  [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m  [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
+@ main        [2m^[22m                         .                        [2m⋯[0m     [2m⋯
+
+[2m○[22m [2mShowing 1 worktree
 
 ----- stderr -----
-
-thread 'main' panicked at src/main.rs:847:21:
-Multiline error without context: [31m✗[39m [31mFailed to expand project post-create hook: undefined value @ line 1[39m
-[107m [0m echo 'Upstream: {{ upstream }}' > upstream.txt
-[2m↳[22m [2mAvailable variables: [90mbase, base_worktree_path, branch, commit, default_branch, main_worktree, main_worktree_path, primary_worktree_path, remote, remote_url, repo, repo_path, repo_root, short_commit, worktree, worktree_name, worktree_path[39m[22m
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

@@ -372,15 +372,10 @@ pub fn scan_shell_configs(
         // Find the first existing config file
         let target_path = paths.iter().find(|p| p.exists());
 
-        // For Fish/Nushell, also check if the parent directory exists
+        // For Fish/Nushell, also check if any candidate's parent directory exists
         // since we create the file there rather than modifying an existing one
         let has_config_location = if matches!(shell, Shell::Fish | Shell::Nushell) {
-            paths
-                .first()
-                .and_then(|p| p.parent())
-                .map(|p| p.exists())
-                .unwrap_or(false)
-                || target_path.is_some()
+            paths.iter().any(|p| p.parent().is_some_and(|d| d.exists())) || target_path.is_some()
         } else {
             target_path.is_some()
         };
@@ -957,6 +952,12 @@ pub fn handle_unconfigure_shell(
     scan_for_uninstall(shell_filter, false, cmd)
 }
 
+/// Remove a config file with a context-rich error message.
+fn remove_config_file(path: &std::path::Path) -> Result<(), String> {
+    fs::remove_file(path)
+        .map_err(|e| format!("Failed to remove {}: {e}", format_path_for_display(path)))
+}
+
 fn scan_for_uninstall(
     shell_filter: Option<Shell>,
     dry_run: bool,
@@ -1004,13 +1005,7 @@ fn scan_for_uninstall(
                             superseded_by: None,
                         });
                     } else {
-                        fs::remove_file(fish_path).map_err(|e| {
-                            format!(
-                                "Failed to remove {}: {}",
-                                format_path_for_display(fish_path),
-                                e
-                            )
-                        })?;
+                        remove_config_file(fish_path)?;
                         results.push(UninstallResult {
                             shell,
                             path: fish_path.clone(),
@@ -1041,12 +1036,7 @@ fn scan_for_uninstall(
                             superseded_by: canonical_path.clone(),
                         });
                     } else {
-                        fs::remove_file(&legacy_path).map_err(|e| {
-                            format!(
-                                "Failed to remove {}: {e}",
-                                format_path_for_display(&legacy_path)
-                            )
-                        })?;
+                        remove_config_file(&legacy_path)?;
                         results.push(UninstallResult {
                             shell,
                             path: legacy_path,
@@ -1063,35 +1053,35 @@ fn scan_for_uninstall(
             continue;
         }
 
-        // For Nushell, delete entire config file
+        // For Nushell, delete config files from all candidate locations.
+        // Installation might have written to a different path than what we'd pick now
+        // (e.g., `nu` was in PATH during install but not during uninstall).
         if matches!(shell, Shell::Nushell) {
-            if let Some(config_path) = paths.first() {
-                if config_path.exists() {
-                    if dry_run {
-                        results.push(UninstallResult {
-                            shell,
-                            path: config_path.clone(),
-                            action: UninstallAction::WouldRemove,
-                            superseded_by: None,
-                        });
-                    } else {
-                        fs::remove_file(config_path).map_err(|e| {
-                            format!(
-                                "Failed to remove {}: {}",
-                                format_path_for_display(config_path),
-                                e
-                            )
-                        })?;
-                        results.push(UninstallResult {
-                            shell,
-                            path: config_path.clone(),
-                            action: UninstallAction::Removed,
-                            superseded_by: None,
-                        });
-                    }
-                } else {
-                    not_found.push((shell, config_path.clone()));
+            let mut found_any = false;
+            for config_path in &paths {
+                if !config_path.exists() {
+                    continue;
                 }
+                found_any = true;
+                if dry_run {
+                    results.push(UninstallResult {
+                        shell,
+                        path: config_path.clone(),
+                        action: UninstallAction::WouldRemove,
+                        superseded_by: None,
+                    });
+                } else {
+                    remove_config_file(config_path)?;
+                    results.push(UninstallResult {
+                        shell,
+                        path: config_path.clone(),
+                        action: UninstallAction::Removed,
+                        superseded_by: None,
+                    });
+                }
+            }
+            if !found_any && let Some(config_path) = paths.first() {
+                not_found.push((shell, config_path.clone()));
             }
             continue;
         }
@@ -1141,13 +1131,7 @@ fn scan_for_uninstall(
                     action: UninstallAction::WouldRemove,
                 });
             } else {
-                fs::remove_file(&completion_path).map_err(|e| {
-                    format!(
-                        "Failed to remove {}: {}",
-                        format_path_for_display(&completion_path),
-                        e
-                    )
-                })?;
+                remove_config_file(&completion_path)?;
                 completion_results.push(CompletionUninstallResult {
                     shell,
                     path: completion_path,

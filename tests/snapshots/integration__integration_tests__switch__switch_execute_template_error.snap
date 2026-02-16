@@ -47,7 +47,7 @@ exit_code: 101
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
 
-thread 'main' panicked at src/main.rs:845:21:
+thread 'main' panicked at src/main.rs:847:21:
 Multiline error without context: [31m✗[39m [31mFailed to expand --execute command: syntax error: unexpected end of input, expected end of variable block @ line 1[39m
 [107m [0m echo {{ unclosed
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
