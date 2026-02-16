@@ -137,11 +137,11 @@ impl WorktreeSkimItem {
             }
         }
 
-        let tab1 = format_tab("1:diff±", mode == PreviewMode::WorkingTree);
-        let tab2 = format_tab("2:log", mode == PreviewMode::Log);
-        let tab3 = format_tab("3:main↕", mode == PreviewMode::BranchDiff);
-        let tab4 = format_tab("4:upstream⇅", mode == PreviewMode::UpstreamDiff);
-        let tab5 = format_tab("5:summary", mode == PreviewMode::Summary);
+        let tab1 = format_tab("1: HEAD±", mode == PreviewMode::WorkingTree);
+        let tab2 = format_tab("2: log", mode == PreviewMode::Log);
+        let tab3 = format_tab("3: main…±", mode == PreviewMode::BranchDiff);
+        let tab4 = format_tab("4: remote⇅", mode == PreviewMode::UpstreamDiff);
+        let tab5 = format_tab("5: summary", mode == PreviewMode::Summary);
 
         // Controls use dim yellow to distinguish from dimmed (white) tabs
         let controls = cformat!(
@@ -434,11 +434,11 @@ mod tests {
     fn test_render_preview_tabs_working_tree_mode() {
         let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::WorkingTree);
         // Tab 1 should be bold (active), tabs 2/3/4/5 dimmed
-        assert!(output.contains("1:diff"));
-        assert!(output.contains("2:log"));
-        assert!(output.contains("3:main"));
-        assert!(output.contains("4:upstream"));
-        assert!(output.contains("5:summary"));
+        assert!(output.contains("1: HEAD±"));
+        assert!(output.contains("2: log"));
+        assert!(output.contains("3: main…±"));
+        assert!(output.contains("4: remote⇅"));
+        assert!(output.contains("5: summary"));
         assert!(output.contains("Enter: switch"));
         // Verify structure: tabs on first line, controls on second
         assert!(output.contains(" | "));
@@ -448,41 +448,41 @@ mod tests {
     #[test]
     fn test_render_preview_tabs_log_mode() {
         let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::Log);
-        assert!(output.contains("1:diff"));
-        assert!(output.contains("2:log"));
-        assert!(output.contains("3:main"));
-        assert!(output.contains("4:upstream"));
-        assert!(output.contains("5:summary"));
+        assert!(output.contains("1: HEAD±"));
+        assert!(output.contains("2: log"));
+        assert!(output.contains("3: main…±"));
+        assert!(output.contains("4: remote⇅"));
+        assert!(output.contains("5: summary"));
     }
 
     #[test]
     fn test_render_preview_tabs_branch_diff_mode() {
         let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::BranchDiff);
-        assert!(output.contains("1:diff"));
-        assert!(output.contains("2:log"));
-        assert!(output.contains("3:main"));
-        assert!(output.contains("4:upstream"));
-        assert!(output.contains("5:summary"));
+        assert!(output.contains("1: HEAD±"));
+        assert!(output.contains("2: log"));
+        assert!(output.contains("3: main…±"));
+        assert!(output.contains("4: remote⇅"));
+        assert!(output.contains("5: summary"));
     }
 
     #[test]
     fn test_render_preview_tabs_upstream_diff_mode() {
         let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::UpstreamDiff);
-        assert!(output.contains("1:diff"));
-        assert!(output.contains("2:log"));
-        assert!(output.contains("3:main"));
-        assert!(output.contains("4:upstream"));
-        assert!(output.contains("5:summary"));
+        assert!(output.contains("1: HEAD±"));
+        assert!(output.contains("2: log"));
+        assert!(output.contains("3: main…±"));
+        assert!(output.contains("4: remote⇅"));
+        assert!(output.contains("5: summary"));
     }
 
     #[test]
     fn test_render_preview_tabs_summary_mode() {
         let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::Summary);
-        assert!(output.contains("1:diff"));
-        assert!(output.contains("2:log"));
-        assert!(output.contains("3:main"));
-        assert!(output.contains("4:upstream"));
-        assert!(output.contains("5:summary"));
+        assert!(output.contains("1: HEAD±"));
+        assert!(output.contains("2: log"));
+        assert!(output.contains("3: main…±"));
+        assert!(output.contains("4: remote⇅"));
+        assert!(output.contains("5: summary"));
     }
 
     #[test]
