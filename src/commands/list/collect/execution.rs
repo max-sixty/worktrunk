@@ -292,8 +292,6 @@ pub fn work_items_for_branch(
     // Check if this branch is stale and should skip expensive tasks.
     let is_stale = options.stale_branches.contains(branch_name);
 
-    let has_commits = commit_sha != worktrunk::git::NULL_OID;
-
     let mut items = Vec::with_capacity(11);
 
     // Helper to add a work item and register the expected result
@@ -322,10 +320,6 @@ pub fn work_items_for_branch(
         }
         // Skip expensive tasks for stale branches (far behind default branch)
         if is_stale && EXPENSIVE_TASKS.contains(&kind) {
-            continue;
-        }
-        // Skip commit-dependent tasks for unborn branches (no commits yet)
-        if !has_commits && COMMIT_TASKS.contains(&kind) {
             continue;
         }
         add_item(kind);

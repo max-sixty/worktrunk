@@ -2937,6 +2937,8 @@ fn test_list_nested_worktree_json_is_current(mut repo: TestRepo) {
 #[test]
 fn test_list_empty_repo() {
     let repo = TestRepo::empty();
+    // Pre-set default branch cache so the `is_unborn_head_branch` validation path is exercised
+    repo.run_git(&["config", "worktrunk.default-branch", "main"]);
     // Should show the branch with empty commit columns and no errors
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }

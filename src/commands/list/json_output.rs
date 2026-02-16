@@ -230,18 +230,12 @@ impl JsonItem {
         let is_previous = worktree_data.is_some_and(|d| d.is_previous);
 
         // Commit info — empty strings for null OID (unborn branches)
-        let is_null_oid = item.head == worktrunk::git::NULL_OID;
-        let sha = if is_null_oid {
-            String::new()
+        let (sha, short_sha) = if item.head == worktrunk::git::NULL_OID {
+            (String::new(), String::new())
         } else {
-            item.head.clone()
-        };
-        let short_sha = if is_null_oid {
-            String::new()
-        } else if sha.len() >= 7 {
-            sha[..7].to_string()
-        } else {
-            sha.clone()
+            let sha = item.head.clone();
+            let short_sha = sha[..7.min(sha.len())].to_string();
+            (sha, short_sha)
         };
         let commit = JsonCommit {
             sha,
