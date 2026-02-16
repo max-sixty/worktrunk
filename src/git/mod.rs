@@ -45,6 +45,8 @@ pub use error::{
     // Platform-specific reference type (PR vs MR)
     RefContext,
     RefType,
+    // CLI context for enriching switch suggestions in error hints
+    SwitchSuggestionCtx,
     WorktrunkError,
     // Error inspection functions
     add_hook_skip_hint,

@@ -30,6 +30,7 @@ info:
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -40,4 +41,4 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎ Removing [1mfeature-modified[22m worktree (--force) in background[39m
-[2m↳[22m [2mBranch unmerged; to delete, run [90mwt remove feature-modified -D[39m[22m
+[2m↳[22m [2mBranch unmerged; to delete, run [90mwt remove -D feature-modified[39m[22m
