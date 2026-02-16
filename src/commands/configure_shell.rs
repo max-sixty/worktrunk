@@ -832,9 +832,6 @@ fn prompt_yes_no() -> Result<bool, String> {
         .read_line(&mut input)
         .map_err(|e| e.to_string())?;
 
-    // End the prompt line on stderr (user's input went to stdin, not stderr)
-    eprintln!();
-
     let response = input.trim().to_lowercase();
     Ok(response == "y" || response == "yes")
 }
