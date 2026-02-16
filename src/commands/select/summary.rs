@@ -271,6 +271,80 @@ pub(super) fn generate_all_summaries(
 mod tests {
     use super::*;
 
+    /// Create a temporary git repo and return a Repository pointing to it.
+    /// The TempDir is returned so it stays alive for the duration of the test.
+    fn temp_repo() -> (tempfile::TempDir, Repository) {
+        let dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init", "--initial-branch=main"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        // Need at least one commit for git_common_dir to resolve
+        std::process::Command::new("git")
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        let repo = Repository::at(dir.path()).unwrap();
+        (dir, repo)
+    }
+
+    #[test]
+    fn test_cache_roundtrip() {
+        let (_dir, repo) = temp_repo();
+        let branch = "feature/test-branch";
+        let cached = CachedSummary {
+            summary: "Add tests\n\nThis adds unit tests for cache.".to_string(),
+            diff_hash: 12345,
+            branch: branch.to_string(),
+        };
+
+        // No cache initially
+        assert!(read_cache(&repo, branch).is_none());
+
+        // Write and read back
+        write_cache(&repo, branch, &cached);
+        let loaded = read_cache(&repo, branch).unwrap();
+        assert_eq!(loaded.summary, cached.summary);
+        assert_eq!(loaded.diff_hash, cached.diff_hash);
+        assert_eq!(loaded.branch, cached.branch);
+    }
+
+    #[test]
+    fn test_cache_invalidation_by_hash() {
+        let (_dir, repo) = temp_repo();
+        let branch = "main";
+        let cached = CachedSummary {
+            summary: "Old summary".to_string(),
+            diff_hash: 111,
+            branch: branch.to_string(),
+        };
+        write_cache(&repo, branch, &cached);
+
+        let loaded = read_cache(&repo, branch).unwrap();
+        // Simulate checking with a different diff hash
+        assert_ne!(loaded.diff_hash, 222);
+    }
+
+    #[test]
+    fn test_cache_file_uses_sanitized_branch() {
+        let (_dir, repo) = temp_repo();
+        let path = cache_file(&repo, "feature/my-branch");
+        let filename = path.file_name().unwrap().to_str().unwrap();
+        // sanitize_for_filename replaces `/` with `-` and appends a hash suffix
+        assert!(filename.starts_with("feature-my-branch-"));
+        assert!(filename.ends_with(".json"));
+    }
+
+    #[test]
+    fn test_cache_dir_under_git() {
+        let (_dir, repo) = temp_repo();
+        let dir = cache_dir(&repo);
+        assert!(dir.to_str().unwrap().contains("wt-cache"));
+        assert!(dir.to_str().unwrap().contains("summaries"));
+    }
+
     #[test]
     fn test_hash_diff_deterministic() {
         let hash1 = hash_diff("some diff content");
@@ -324,5 +398,16 @@ mod tests {
         let rendered = render_summary(text, 80);
         assert!(rendered.contains("First bullet"));
         assert!(rendered.contains("Second bullet"));
+    }
+
+    #[test]
+    fn test_render_summary_prestyled_skips_h4() {
+        // Pre-styled text (with ANSI escapes) should not get H4 promotion
+        let text = "\x1b[2mNo changes to summarize.\x1b[0m";
+        let rendered = render_summary(text, 80);
+        // Should NOT contain bold (H4 promotion)
+        assert!(!rendered.contains("####"));
+        // Should preserve the dim styling
+        assert!(rendered.contains("No changes to summarize."));
     }
 }
