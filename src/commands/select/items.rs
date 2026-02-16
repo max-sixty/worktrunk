@@ -172,14 +172,12 @@ impl WorktreeSkimItem {
 
         let cache_key = (self.branch_name.clone(), mode);
 
-        // Get from cache or compute
-        let result = if let Some(cached) = self.preview_cache.get(&cache_key) {
-            cached.clone()
-        } else {
-            let computed = Self::compute_preview(&self.item, mode, width, height);
-            self.preview_cache.insert(cache_key, computed.clone());
-            computed
-        };
+        let result = self
+            .preview_cache
+            .entry(cache_key)
+            .or_insert_with(|| Self::compute_preview(&self.item, mode, width, height))
+            .value()
+            .clone();
 
         // Apply pager at display time for diff modes (1, 3, 4)
         // Log mode (2) and Summary mode (5) don't benefit from diff pagers
