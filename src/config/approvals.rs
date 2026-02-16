@@ -28,8 +28,6 @@ use serde::{Deserialize, Serialize};
 use crate::config::deprecation::normalize_template_vars;
 use crate::path::format_path_for_display;
 
-use super::user::get_config_path;
-
 /// Approved commands, stored in `approvals.toml`.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Approvals {
@@ -71,7 +69,7 @@ pub fn get_approvals_path() -> Option<PathBuf> {
 
     #[cfg(not(test))]
     {
-        get_config_path().map(|p| p.with_file_name("approvals.toml"))
+        super::user::get_config_path().map(|p| p.with_file_name("approvals.toml"))
     }
 }
 
@@ -133,10 +131,15 @@ impl Approvals {
 
     /// Extract approved-commands from `config.toml` as a fallback.
     ///
+    /// Uses `get_config_path()` to find config.toml, respecting env var
+    /// overrides (`WORKTRUNK_CONFIG_PATH`). In production both paths resolve to
+    /// the same directory since `get_approvals_path()` derives from
+    /// `get_config_path()`.
+    ///
     /// This is a read-only operation — no files are written or modified.
     /// Used when `approvals.toml` doesn't exist yet.
     fn load_from_config_fallback() -> Result<Self, ConfigError> {
-        let Some(config_path) = get_config_path() else {
+        let Some(config_path) = super::user::get_config_path() else {
             return Ok(Self::default());
         };
 
@@ -260,9 +263,16 @@ impl Approvals {
     /// Reload approvals from disk (under lock).
     ///
     /// If the approvals file exists, loads from it. Otherwise falls back to
-    /// reading `config.toml` from the same directory. This ensures the first
-    /// locked mutation correctly picks up existing approvals from config.toml
-    /// even before `approvals.toml` is created.
+    /// reading `config.toml` as a sibling of the approvals file. This mirrors
+    /// `get_approvals_path()` which derives approvals.toml as a sibling of
+    /// config.toml — so the reverse derivation always finds the right file.
+    ///
+    /// Uses sibling derivation rather than `get_config_path()` because this
+    /// method receives an explicit path parameter. In tests, this path may come
+    /// from `WORKTRUNK_APPROVALS_PATH`; in production, it comes from
+    /// `get_approvals_path()` which already derived from `get_config_path()`,
+    /// so the sibling derivation finds the same config.toml. Both `load()` and
+    /// `reload_from()` share the same `load_from_config_file()` extraction logic.
     fn reload_from(&mut self, path: &Path) -> Result<(), ConfigError> {
         if path.exists() {
             let content = std::fs::read_to_string(path).map_err(|e| {
@@ -287,7 +297,7 @@ impl Approvals {
             })?;
             self.projects = disk.projects;
         } else {
-            // Fall back: look for config.toml as sibling of the approvals path
+            // Fall back: config.toml is always a sibling of approvals.toml
             let config_path = path.with_file_name("config.toml");
             if config_path.exists() {
                 let fallback = Self::load_from_config_file(&config_path)?;
@@ -708,6 +718,69 @@ mod tests {
                 "command_{i} should be preserved"
             );
         }
+    }
+
+    /// `load_from_config_file` extracts approved-commands from a config.toml file.
+    #[test]
+    fn test_load_from_config_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        std::fs::write(
+            &config_path,
+            r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install", "npm test"]
+
+[projects."github.com/other/repo"]
+approved-commands = ["cargo build"]
+"#,
+        )
+        .unwrap();
+
+        let approvals = Approvals::load_from_config_file(&config_path).unwrap();
+        assert!(approvals.is_command_approved("github.com/user/repo", "npm install"));
+        assert!(approvals.is_command_approved("github.com/user/repo", "npm test"));
+        assert!(approvals.is_command_approved("github.com/other/repo", "cargo build"));
+    }
+
+    /// When `approvals.toml` doesn't exist but `config.toml` is a sibling with
+    /// `approved-commands`, the first mutation reads the fallback and preserves
+    /// existing commands alongside the new one.
+    #[test]
+    fn test_mutation_picks_up_config_toml_fallback() {
+        let temp_dir = TempDir::new().unwrap();
+        let approvals_path = temp_dir.path().join("approvals.toml");
+        let config_path = temp_dir.path().join("config.toml");
+
+        // Write config.toml with existing approved-commands (no approvals.toml yet)
+        std::fs::write(
+            &config_path,
+            r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install"]
+"#,
+        )
+        .unwrap();
+
+        // Approve a new command — reload_from should pick up config.toml fallback
+        let mut approvals = Approvals::default();
+        approvals
+            .approve_command(
+                "github.com/user/repo".to_string(),
+                "npm test".to_string(),
+                Some(&approvals_path),
+            )
+            .unwrap();
+
+        // Both the fallback command and the new one should be present
+        assert!(approvals.is_command_approved("github.com/user/repo", "npm install"));
+        assert!(approvals.is_command_approved("github.com/user/repo", "npm test"));
+
+        // approvals.toml should now exist with both commands
+        let content = std::fs::read_to_string(&approvals_path).unwrap();
+        assert!(content.contains("npm install"));
+        assert!(content.contains("npm test"));
     }
 
     #[test]
