@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.24.1
+
+### Improved
+
+- **Template error messages**: Template expansion errors now show what failed, the failing template line, and available variables for undefined variable errors. ([#1041](https://github.com/max-sixty/worktrunk/pull/1041))
+
+- **Interactive picker preview speed**: Preview pre-computation is parallelized via rayon, reducing the chance of a blocking cache miss when switching preview tabs. ([#1048](https://github.com/max-sixty/worktrunk/pull/1048))
+
+- **`wt switch` performance**: Switching to existing worktrees defers path computation, reducing startup latency. ([#1029](https://github.com/max-sixty/worktrunk/pull/1029), [#1030](https://github.com/max-sixty/worktrunk/pull/1030), [#1031](https://github.com/max-sixty/worktrunk/pull/1031))
+
+### Fixed
+
+- **PowerShell wrapper swallows `-D` flag**: The wrapper's `[Parameter(ValueFromRemainingArguments)]` promoted it to an "advanced function", causing PowerShell to consume `-D` as `-Debug` instead of passing it to `wt.exe`. Fixes [#885](https://github.com/max-sixty/worktrunk/issues/885). ([#1057](https://github.com/max-sixty/worktrunk/pull/1057), thanks @DiTo97 for reporting)
+
+- **Nushell shell integration**: Multiple fixes for nushell — auto-detect for install even without vendor/autoload directory ([#1032](https://github.com/max-sixty/worktrunk/pull/1032)), detection checks multiple config paths ([#1038](https://github.com/max-sixty/worktrunk/pull/1038)), uninstall cleans all candidate locations ([#1050](https://github.com/max-sixty/worktrunk/pull/1050)), wrapper hardening and improved diagnostics ([#1059](https://github.com/max-sixty/worktrunk/pull/1059)). (thanks @arnaudlimbourg for [#1032](https://github.com/max-sixty/worktrunk/pull/1032), [#1038](https://github.com/max-sixty/worktrunk/pull/1038), and @omerxx for reporting in [#964](https://github.com/max-sixty/worktrunk/pull/964))
+
+- **Interactive picker leaves screen artifacts**: The picker left visual artifacts after exiting. Fixes [#1027](https://github.com/max-sixty/worktrunk/issues/1027). ([#1028](https://github.com/max-sixty/worktrunk/pull/1028), [#1044](https://github.com/max-sixty/worktrunk/pull/1044), thanks @davidbeesley)
+
+- **Statusline counts files outside sparse checkout cone**: Branch diff statistics in the statusline included files outside the sparse checkout cone, inflating counts. ([#1024](https://github.com/max-sixty/worktrunk/pull/1024), thanks @bendrucker)
+
+- **Template placeholders leak into displayed commands**: `{{ }}` delimiters in hook commands were incorrectly syntax-highlighted, showing ANSI artifacts instead of the template text. ([#1022](https://github.com/max-sixty/worktrunk/pull/1022))
+
+- **Hook announcement trailing colon**: Hook announcements like "Running post-merge project:sync:" had a trailing colon that created visual noise. ([#1025](https://github.com/max-sixty/worktrunk/pull/1025))
+
+- **Blank line after approval prompts**: Approval prompts showed an extra blank line after the user pressed Enter. ([#1040](https://github.com/max-sixty/worktrunk/pull/1040))
+
+### Internal
+
+- **Automated Claude PR review**: Added workflow for automated code review on PRs. ([#1037](https://github.com/max-sixty/worktrunk/pull/1037))
+
+- **Time-to-first-output benchmarks**: Added benchmarks for `remove`, `switch`, and `list` startup latency. ([#1023](https://github.com/max-sixty/worktrunk/pull/1023))
+
 ## 0.24.0
 
 ### Improved
