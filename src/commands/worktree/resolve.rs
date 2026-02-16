@@ -118,7 +118,7 @@ pub fn compute_worktree_path(
             &worktree_map,
             project.as_deref(),
         )
-        .map_err(|e| anyhow::anyhow!("Failed to format worktree path: {e}"))?;
+        .map_err(|e| anyhow::anyhow!(e))?;
 
     Ok(repo_root.join(expanded_path).normalize())
 }

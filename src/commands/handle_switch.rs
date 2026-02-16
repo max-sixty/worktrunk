@@ -248,18 +248,14 @@ pub(crate) fn expand_and_execute_command(
         .collect();
     let worktree_map = build_worktree_map(ctx.workspace);
 
-    let expanded_cmd = expand_template(cmd, &vars, true, &worktree_map, "--execute command")
-        .map_err(|e| anyhow::anyhow!("Failed to expand --execute template: {}", e))?;
+    let expanded_cmd = expand_template(cmd, &vars, true, &worktree_map, "--execute command")?;
 
     let full_cmd = if execute_args.is_empty() {
         expanded_cmd
     } else {
         let expanded_args: Result<Vec<_>, _> = execute_args
             .iter()
-            .map(|arg| {
-                expand_template(arg, &vars, false, &worktree_map, "--execute argument")
-                    .map_err(|e| anyhow::anyhow!("Failed to expand argument template: {}", e))
-            })
+            .map(|arg| expand_template(arg, &vars, false, &worktree_map, "--execute argument"))
             .collect();
         let escaped_args: Vec<_> = expanded_args?
             .iter()

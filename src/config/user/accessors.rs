@@ -178,5 +178,6 @@ impl UserConfig {
         vars.insert("repo_path", repo_path);
         expand_template(&template, &vars, false, worktree_map, "worktree-path")
             .map(|p| shellexpand::tilde(&p).into_owned())
+            .map_err(|e| e.to_string())
     }
 }
