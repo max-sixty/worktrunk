@@ -129,8 +129,8 @@ impl DiagnosticReport {
         // Collect data for template
         let timestamp = worktrunk::utils::now_iso8601();
         let version = version_str();
-        let os = std::env::consts::OS;
-        let arch = std::env::consts::ARCH;
+        let os = std::env::constants::OS;
+        let arch = std::env::constants::ARCH;
         let git_version = get_git_version().unwrap_or_else(|_| "(unknown)".to_string());
         let shell_integration = if output::is_shell_integration_active() {
             "active"

@@ -670,7 +670,7 @@ impl Cmd {
     pub fn stream(self) -> anyhow::Result<()> {
         #[cfg(unix)]
         use {
-            signal_hook::consts::{SIGINT, SIGTERM},
+            signal_hook::constants::{SIGINT, SIGTERM},
             signal_hook::iterator::Signals,
             std::os::unix::process::CommandExt,
         };
@@ -866,8 +866,8 @@ fn wait_for_exit(pgid: i32, grace: std::time::Duration) -> bool {
 fn forward_signal_with_escalation(pgid: i32, sig: i32) {
     let pgid = nix::unistd::Pid::from_raw(pgid);
     let initial_signal = match sig {
-        signal_hook::consts::SIGINT => nix::sys::signal::Signal::SIGINT,
-        signal_hook::consts::SIGTERM => nix::sys::signal::Signal::SIGTERM,
+        signal_hook::constants::SIGINT => nix::sys::signal::Signal::SIGINT,
+        signal_hook::constants::SIGTERM => nix::sys::signal::Signal::SIGTERM,
         _ => return,
     };
 
@@ -875,7 +875,7 @@ fn forward_signal_with_escalation(pgid: i32, sig: i32) {
 
     let grace = std::time::Duration::from_millis(200);
     // Escalate if process doesn't exit gracefully
-    if sig == signal_hook::consts::SIGINT {
+    if sig == signal_hook::constants::SIGINT {
         if !wait_for_exit(pgid.as_raw(), grace) {
             let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGTERM);
             if !wait_for_exit(pgid.as_raw(), grace) {
