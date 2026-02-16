@@ -4,10 +4,9 @@
 //! project by merging global settings with project-specific overrides.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use crate::config::HooksConfig;
-use crate::config::expansion::expand_template;
+use crate::config::expansion::{TemplateExpandError, expand_template};
 
 use super::UserConfig;
 use super::merge::{Merge, merge_optional};
@@ -154,29 +153,28 @@ impl UserConfig {
     /// # Arguments
     /// * `main_worktree` - Main worktree directory name (replaces {{ main_worktree }} in template)
     /// * `branch` - Branch name (replaces {{ branch }} in template; use `{{ branch | sanitize }}` for paths)
-    /// * `repo_path` - Repository root path (replaces {{ repo_path }} in template)
-    /// * `worktree_map` - Branch-to-path lookup for `worktree_path_of_branch()` function
+    /// * `repo` - Repository for template function access
     /// * `project` - Optional project identifier (e.g., "github.com/user/repo") to look up
     ///   project-specific worktree-path template
     pub fn format_path(
         &self,
         main_worktree: &str,
         branch: &str,
-        repo_path: &str,
-        worktree_map: &HashMap<String, PathBuf>,
+        repo: &crate::git::Repository,
         project: Option<&str>,
-    ) -> Result<String, String> {
+    ) -> Result<String, TemplateExpandError> {
         let template = match project {
             Some(p) => self.worktree_path_for_project(p),
             None => self.worktree_path(),
         };
         // Use native path format (not POSIX) since this is used for filesystem operations
+        let repo_path = repo.repo_path().to_string_lossy().to_string();
         let mut vars = HashMap::new();
         vars.insert("main_worktree", main_worktree);
         vars.insert("repo", main_worktree);
         vars.insert("branch", branch);
-        vars.insert("repo_path", repo_path);
-        expand_template(&template, &vars, false, worktree_map, "worktree-path")
+        vars.insert("repo_path", repo_path.as_str());
+        expand_template(&template, &vars, false, repo, "worktree-path")
             .map(|p| shellexpand::tilde(&p).into_owned())
     }
 }

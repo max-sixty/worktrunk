@@ -156,27 +156,6 @@ information, not restate what's already said.
 "Committing with default message... (3 files, +45, -12)"
 ```
 
-**VCS-neutral messaging:** Don't mention specific VCS backends (git, jj) in
-messages unless the context is already VCS-specific. Generic messages should work
-for any backend. Only name a backend when the user is already in that backend's
-context (e.g., a jj-specific limitation) or when contrasting backends.
-
-```rust
-// GOOD - generic, works for any VCS
-"Not in a repository"
-"Branch not found"
-"Uncommitted changes"
-
-// BAD - unnecessarily names backends the user may not be using
-"Not in a git or jj repository"
-"Not a git repository"  // (unless in git-specific code path)
-
-// OK - already in jj context, naming the limitation
-"--show-prompt is not yet supported for jj squash"
-// OK - command only works in git, telling user why
-"`wt {command}` is not yet supported for jj repositories"
-```
-
 **Two types of parenthesized content with different styling:**
 
 1. **Stats parentheses → Gray** (`[90m` bright-black): Supplementary numerical

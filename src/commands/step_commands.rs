@@ -15,18 +15,18 @@ use anyhow::Context;
 use color_print::cformat;
 use ignore::gitignore::GitignoreBuilder;
 use worktrunk::HookType;
-use worktrunk::config::{CommitGenerationConfig, UserConfig};
+use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
 };
-use worktrunk::workspace::{SquashOutcome, Workspace};
 
 use super::command_approval::approve_hooks;
 use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, run_hook_with_filter};
 use super::repository_ext::RepositoryCliExt;
+use worktrunk::shell_exec::Cmd;
 
 /// Handle `wt step commit` command
 ///
@@ -37,39 +37,15 @@ pub fn step_commit(
     stage: Option<StageMode>,
     show_prompt: bool,
 ) -> anyhow::Result<()> {
-    // --show-prompt is VCS-agnostic: build prompt from trait method and print
+    // Handle --show-prompt early: just build and output the prompt
     if show_prompt {
-        let ws = worktrunk::workspace::open_workspace()?;
-        let cwd = std::env::current_dir()?;
+        let repo = worktrunk::git::Repository::current()?;
         let config = UserConfig::load().context("Failed to load config")?;
-        let project_id = ws.project_identifier().ok();
+        let project_id = repo.project_identifier().ok();
         let commit_config = config.commit_generation(project_id.as_deref());
-
-        let (diff, diff_stat) = ws.committable_diff_for_prompt(&cwd)?;
-        let branch = ws.current_name(&cwd)?.unwrap_or_else(|| "HEAD".to_string());
-        let repo_name = ws
-            .root_path()?
-            .file_name()
-            .and_then(|n| n.to_str().map(String::from))
-            .unwrap_or_else(|| "repo".to_string());
-        let recent_commits = ws.recent_subjects(None, 5);
-
-        let input = crate::llm::CommitInput {
-            diff: &diff,
-            diff_stat: &diff_stat,
-            branch: &branch,
-            repo_name: &repo_name,
-            recent_commits: recent_commits.as_ref(),
-        };
-        let prompt = crate::llm::build_commit_prompt(&input, &commit_config)?;
+        let prompt = crate::llm::build_commit_prompt(&commit_config)?;
         println!("{}", prompt);
         return Ok(());
-    }
-
-    // Open workspace once, route by VCS type via downcast
-    let workspace = worktrunk::workspace::open_workspace()?;
-    if workspace.as_any().downcast_ref::<Repository>().is_none() {
-        return super::handle_step_jj::step_commit_jj();
     }
 
     // Load config once, run LLM setup prompt, then reuse config
@@ -77,7 +53,7 @@ pub fn step_commit(
     // One-time LLM setup prompt (errors logged internally; don't block commit)
     let _ = crate::output::prompt_commit_generation(&mut config);
 
-    let env = CommandEnv::with_workspace(workspace, "commit", config)?;
+    let env = CommandEnv::for_action("commit", config)?;
     let ctx = env.context(yes);
 
     // CLI flag overrides config value
@@ -123,81 +99,6 @@ pub enum SquashResult {
     NoNetChanges,
 }
 
-/// VCS-agnostic squash core: count, generate message, execute squash.
-///
-/// Used by both git and jj paths. Does NOT handle staging, hooks, safety backups,
-/// or progress display — those are git-specific concerns in `handle_squash`.
-pub(crate) fn do_squash(
-    workspace: &dyn Workspace,
-    target: &str,
-    path: &Path,
-    commit_gen_config: &CommitGenerationConfig,
-    branch_name: &str,
-    repo_name: &str,
-) -> anyhow::Result<SquashResult> {
-    let feature_head = workspace.feature_head(path)?;
-
-    // Check if already integrated
-    if workspace.is_integrated(&feature_head, target)?.is_some() {
-        return Ok(SquashResult::NoCommitsAhead(target.to_string()));
-    }
-
-    let (ahead, _) = workspace.ahead_behind(target, &feature_head)?;
-
-    if ahead == 0 {
-        return Ok(SquashResult::NoCommitsAhead(target.to_string()));
-    }
-
-    if ahead == 1 && !workspace.is_dirty(path)? {
-        return Ok(SquashResult::AlreadySingleCommit);
-    }
-
-    // Gather data for message generation
-    let subjects = workspace.commit_subjects(target, &feature_head)?;
-    let (diff, diff_stat) = workspace.diff_for_prompt(target, &feature_head, path)?;
-    let recent_commits = workspace.recent_subjects(Some(target), 5);
-
-    // Generate squash commit message
-    eprintln!(
-        "{}",
-        progress_message("Generating squash commit message...")
-    );
-
-    let generator = CommitGenerator::new(commit_gen_config);
-    generator.emit_hint_if_needed();
-
-    let input = crate::llm::SquashInput {
-        target_branch: target,
-        diff: &diff,
-        diff_stat: &diff_stat,
-        subjects: &subjects,
-        current_branch: branch_name,
-        repo_name,
-        recent_commits: recent_commits.as_ref(),
-    };
-    let commit_message = crate::llm::generate_squash_message(&input, commit_gen_config)?;
-
-    // Display the generated commit message
-    let formatted_message = generator.format_message_for_display(&commit_message);
-    eprintln!("{}", format_with_gutter(&formatted_message, None));
-
-    // Execute the squash
-    match workspace.squash_commits(target, &commit_message, path)? {
-        SquashOutcome::Squashed(id) => {
-            eprintln!("{}", success_message(cformat!("Squashed @ <dim>{id}</>")));
-            Ok(SquashResult::Squashed)
-        }
-        SquashOutcome::NoNetChanges => {
-            let commit_text = if ahead == 1 { "commit" } else { "commits" };
-            eprintln!(
-                "{}",
-                info_message(format!("No changes after squashing {ahead} {commit_text}"))
-            );
-            Ok(SquashResult::NoNetChanges)
-        }
-    }
-}
-
 /// Handle shared squash workflow (used by `wt step squash` and `wt merge`)
 ///
 /// # Arguments
@@ -209,39 +110,13 @@ pub fn handle_squash(
     no_verify: bool,
     stage: Option<StageMode>,
 ) -> anyhow::Result<SquashResult> {
-    // Open workspace once, route by VCS type via downcast
-    let workspace = worktrunk::workspace::open_workspace()?;
-    if workspace.as_any().downcast_ref::<Repository>().is_none() {
-        // jj path: use do_squash() directly (no staging/hooks)
-        let cwd = std::env::current_dir()?;
-        let target = workspace.resolve_integration_target(target)?;
-
-        let config = UserConfig::load().context("Failed to load config")?;
-        let project_id = workspace.project_identifier().ok();
-        let resolved = config.resolved(project_id.as_deref());
-
-        let ws_name = workspace
-            .current_name(&cwd)?
-            .unwrap_or_else(|| "default".to_string());
-        let repo_name = project_id.as_deref().unwrap_or("repo");
-
-        return do_squash(
-            &*workspace,
-            &target,
-            &cwd,
-            &resolved.commit_generation,
-            &ws_name,
-            repo_name,
-        );
-    }
-    // Workspace is git — proceed with CommandEnv which takes ownership
-    let cwd = std::env::current_dir()?;
+    // Load config once, run LLM setup prompt, then reuse config
     let mut config = UserConfig::load().context("Failed to load config")?;
     // One-time LLM setup prompt (errors logged internally; don't block commit)
     let _ = crate::output::prompt_commit_generation(&mut config);
 
-    let env = CommandEnv::with_workspace(workspace, "squash", config)?;
-    let repo = env.require_repo()?;
+    let env = CommandEnv::for_action("squash", config)?;
+    let repo = &env.repo;
     // Squash requires being on a branch (can't squash in detached HEAD)
     let current_branch = env.require_branch("squash")?.to_string();
     let ctx = env.context(yes);
@@ -415,132 +290,99 @@ pub fn handle_squash(
         .and_then(|n| n.to_str())
         .unwrap_or("repo");
 
-    // Get diff data for LLM prompt
-    let (diff, diff_stat) = repo.diff_for_prompt(&merge_base, "HEAD", &cwd)?;
-    let recent_commits = repo.recent_subjects(Some(&merge_base), 5);
-
-    let input = crate::llm::SquashInput {
-        target_branch: &integration_target,
-        diff: &diff,
-        diff_stat: &diff_stat,
-        subjects: &subjects,
-        current_branch: &current_branch,
+    let commit_message = crate::llm::generate_squash_message(
+        &integration_target,
+        &merge_base,
+        &subjects,
+        &current_branch,
         repo_name,
-        recent_commits: recent_commits.as_ref(),
-    };
-    let commit_message = crate::llm::generate_squash_message(&input, &resolved.commit_generation)?;
+        &resolved.commit_generation,
+    )?;
 
     // Display the generated commit message
     let formatted_message = generator.format_message_for_display(&commit_message);
     eprintln!("{}", format_with_gutter(&formatted_message, None));
 
-    // Execute squash via trait (reset --soft, check staged, commit)
+    // Reset to merge base (soft reset stages all changes, including any already-staged uncommitted changes)
     //
-    // TOCTOU note: Between the reset and commit inside squash_commits, an external
-    // process could modify the staging area. This is extremely unlikely and the
-    // consequence is minor (unexpected content in squash commit). Considered acceptable.
-    match repo.squash_commits(&integration_target, &commit_message, &cwd)? {
-        SquashOutcome::Squashed(commit_hash) => {
-            eprintln!(
-                "{}",
-                success_message(cformat!("Squashed @ <dim>{commit_hash}</>"))
-            );
-            Ok(SquashResult::Squashed)
-        }
-        SquashOutcome::NoNetChanges => {
-            eprintln!(
-                "{}",
-                info_message(format!(
-                    "No changes after squashing {commit_count} {commit_text}"
-                ))
-            );
-            Ok(SquashResult::NoNetChanges)
-        }
-    }
-}
+    // TOCTOU note: Between this reset and the commit below, an external process could
+    // modify the staging area. This is extremely unlikely (requires precise timing) and
+    // the consequence is minor (unexpected content in squash commit). The commit message
+    // generated above accurately reflects the original commits being squashed, so any
+    // discrepancy would be visible in the diff. Considered acceptable risk.
+    repo.run_command(&["reset", "--soft", &merge_base])
+        .context("Failed to reset to merge base")?;
 
-/// Handle `wt step push` command.
-///
-/// Fully trait-based: opens the workspace and uses `local_push`
-/// for both git and jj, with zero VcsKind branching.
-///
-/// Each VCS implementation validates push safety internally:
-/// - Git checks fast-forward (is_ancestor) — allows merge commits
-/// - Jj checks that target is ancestor of feature tip (is_rebased_onto)
-pub fn step_push(target: Option<&str>) -> anyhow::Result<()> {
-    let ws = worktrunk::workspace::open_workspace()?;
-    let cwd = std::env::current_dir()?;
-
-    let target = ws.resolve_integration_target(target)?;
-
-    let result = ws
-        .local_push(&target, &cwd, Default::default())
-        .context("Failed to push")?;
-
-    if result.commit_count > 0 {
-        let mut summary_parts = vec![format!(
-            "{} commit{}",
-            result.commit_count,
-            if result.commit_count == 1 { "" } else { "s" }
-        )];
-        summary_parts.extend(result.stats_summary);
-
-        let stats_str = summary_parts.join(", ");
-        let paren_close = cformat!("<bright-black>)</>");
+    // Check if there are actually any changes to commit
+    if !wt.has_staged_changes()? {
         eprintln!(
             "{}",
-            success_message(cformat!(
-                "Pushed to <bold>{target}</> <bright-black>({stats_str}</>{}",
-                paren_close
+            info_message(format!(
+                "No changes after squashing {commit_count} {commit_text}"
             ))
         );
-    } else {
-        eprintln!(
-            "{}",
-            info_message(cformat!("Already up to date with <bold>{target}</>"))
-        );
+        return Ok(SquashResult::NoNetChanges);
     }
 
-    Ok(())
+    // Commit with the generated message
+    repo.run_command(&["commit", "-m", &commit_message])
+        .context("Failed to create squash commit")?;
+
+    // Get commit hash for display
+    let commit_hash = repo
+        .run_command(&["rev-parse", "--short", "HEAD"])?
+        .trim()
+        .to_string();
+
+    // Show success immediately after completing the squash
+    eprintln!(
+        "{}",
+        success_message(cformat!("Squashed @ <dim>{commit_hash}</>"))
+    );
+
+    Ok(SquashResult::Squashed)
 }
 
 /// Handle `wt step squash --show-prompt`
 ///
 /// Builds and outputs the squash prompt without running the LLM or squashing.
-/// Works for both git and jj repositories.
 pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
-    let ws = worktrunk::workspace::open_workspace()?;
-    let cwd = std::env::current_dir()?;
-
+    let repo = Repository::current()?;
     let config = UserConfig::load().context("Failed to load config")?;
-    let project_id = ws.project_identifier().ok();
+    let project_id = repo.project_identifier().ok();
     let effective_config = config.commit_generation(project_id.as_deref());
 
-    let target = ws.resolve_integration_target(target)?;
-    let feature_head = ws.feature_head(&cwd)?;
+    // Get and validate target ref (any commit-ish for merge-base calculation)
+    let integration_target = repo.require_target_ref(target)?;
 
-    let current_branch = ws.current_name(&cwd)?.unwrap_or_else(|| "HEAD".to_string());
+    // Get current branch
+    let wt = repo.current_worktree();
+    let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
 
-    let subjects = ws.commit_subjects(&target, &feature_head)?;
-    let (diff, diff_stat) = ws.diff_for_prompt(&target, &feature_head, &cwd)?;
-    let recent_commits = ws.recent_subjects(Some(&target), 5);
+    // Get merge base with target branch (required for generating squash message)
+    let merge_base = repo
+        .merge_base("HEAD", &integration_target)?
+        .context("Cannot generate squash message: no common ancestor with target branch")?;
 
-    let repo_name = ws
-        .root_path()?
+    // Get commit subjects for the squash message
+    let range = format!("{}..HEAD", merge_base);
+    let subjects = repo.commit_subjects(&range)?;
+
+    // Get repo name from directory
+    let repo_root = wt.root()?;
+    let repo_name = repo_root
         .file_name()
-        .and_then(|n| n.to_str().map(String::from))
-        .unwrap_or_else(|| "repo".to_string());
+        .and_then(|n| n.to_str())
+        .unwrap_or("repo");
 
-    let input = crate::llm::SquashInput {
-        target_branch: &target,
-        diff: &diff,
-        diff_stat: &diff_stat,
-        subjects: &subjects,
-        current_branch: &current_branch,
-        repo_name: &repo_name,
-        recent_commits: recent_commits.as_ref(),
-    };
-    let prompt = crate::llm::build_squash_prompt(&input, &effective_config)?;
+    let prompt = crate::llm::build_squash_prompt(
+        &integration_target,
+        &merge_base,
+        &subjects,
+        &current_branch,
+        repo_name,
+        &effective_config,
+    )?;
     println!("{}", prompt);
     Ok(())
 }
@@ -555,24 +397,73 @@ pub enum RebaseResult {
 
 /// Handle shared rebase workflow (used by `wt step rebase` and `wt merge`)
 pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
-    let ws = worktrunk::workspace::open_workspace()?;
-    let cwd = std::env::current_dir()?;
+    let repo = Repository::current()?;
 
-    let target = ws.resolve_integration_target(target)?;
+    // Get and validate target ref (any commit-ish for rebase)
+    let integration_target = repo.require_target_ref(target)?;
 
-    if ws.is_rebased_onto(&target, &cwd)? {
-        return Ok(RebaseResult::UpToDate(target));
+    // Check if already up-to-date (linear extension of target, no merge commits)
+    if repo.is_rebased_onto(&integration_target)? {
+        return Ok(RebaseResult::UpToDate(integration_target));
     }
 
-    let outcome = ws.rebase_onto(&target, &cwd)?;
+    // Check if this is a fast-forward or true rebase
+    let merge_base = repo
+        .merge_base("HEAD", &integration_target)?
+        .context("Cannot rebase: no common ancestor with target branch")?;
+    let head_sha = repo.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
+    let is_fast_forward = merge_base == head_sha;
 
-    let msg = match outcome {
-        worktrunk::workspace::RebaseOutcome::FastForward => {
-            cformat!("Fast-forwarded to <bold>{target}</>")
+    // Only show progress for true rebases (fast-forwards are instant)
+    if !is_fast_forward {
+        eprintln!(
+            "{}",
+            progress_message(cformat!("Rebasing onto <bold>{integration_target}</>..."))
+        );
+    }
+
+    let rebase_result = repo.run_command(&["rebase", &integration_target]);
+
+    // If rebase failed, check if it's due to conflicts
+    if let Err(e) = rebase_result {
+        // Check if it's a rebase conflict
+        let is_rebasing = repo
+            .worktree_state()?
+            .is_some_and(|s| s.starts_with("REBASING"));
+        if is_rebasing {
+            // Extract git's stderr output from the error
+            let git_output = e.to_string();
+            return Err(worktrunk::git::GitError::RebaseConflict {
+                target_branch: integration_target,
+                git_output,
+            }
+            .into());
         }
-        worktrunk::workspace::RebaseOutcome::Rebased => {
-            cformat!("Rebased onto <bold>{target}</>")
+        // Not a rebase conflict, return original error
+        return Err(worktrunk::git::GitError::Other {
+            message: cformat!(
+                "Failed to rebase onto <bold>{}</>: {}",
+                integration_target,
+                e
+            ),
         }
+        .into());
+    }
+
+    // Verify rebase completed successfully (safety check for edge cases)
+    if repo.worktree_state()?.is_some() {
+        return Err(worktrunk::git::GitError::RebaseConflict {
+            target_branch: integration_target,
+            git_output: String::new(),
+        }
+        .into());
+    }
+
+    // Success
+    let msg = if is_fast_forward {
+        cformat!("Fast-forwarded to <bold>{integration_target}</>")
+    } else {
+        cformat!("Rebased onto <bold>{integration_target}</>")
     };
     eprintln!("{}", success_message(msg));
 
@@ -592,24 +483,44 @@ pub fn step_copy_ignored(
     dry_run: bool,
     force: bool,
 ) -> anyhow::Result<()> {
-    let workspace = worktrunk::workspace::open_workspace()?;
+    let repo = Repository::current()?;
 
-    // Resolve source and destination workspace paths
-    let source_path = match from {
-        Some(name) => workspace.workspace_path(name)?,
-        None => workspace
-            .default_workspace_path()?
-            .ok_or_else(|| anyhow::anyhow!("No default workspace found"))?,
+    // Resolve source and destination worktree paths
+    let (source_path, source_context) = match from {
+        Some(branch) => {
+            let path = repo.worktree_for_branch(branch)?.ok_or_else(|| {
+                worktrunk::git::GitError::WorktreeNotFound {
+                    branch: branch.to_string(),
+                }
+            })?;
+            (path, branch.to_string())
+        }
+        None => {
+            // Default source is the primary worktree (main worktree for normal repos,
+            // default branch worktree for bare repos).
+            let path = repo.primary_worktree()?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No primary worktree found (bare repo with no default branch worktree)"
+                )
+            })?;
+            let context = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            (path, context)
+        }
     };
 
     let dest_path = match to {
-        Some(name) => workspace.workspace_path(name)?,
-        None => workspace.current_workspace_path()?,
+        Some(branch) => repo.worktree_for_branch(branch)?.ok_or_else(|| {
+            worktrunk::git::GitError::WorktreeNotFound {
+                branch: branch.to_string(),
+            }
+        })?,
+        None => repo.current_worktree().root()?,
     };
 
-    if dunce::canonicalize(&source_path).unwrap_or_else(|_| source_path.clone())
-        == dunce::canonicalize(&dest_path).unwrap_or_else(|_| dest_path.clone())
-    {
+    if source_path == dest_path {
         eprintln!(
             "{}",
             info_message("Source and destination are the same worktree")
@@ -617,8 +528,9 @@ pub fn step_copy_ignored(
         return Ok(());
     }
 
-    // Get ignored entries via git ls-files (works for both git and jj with git backend)
-    let ignored_entries = workspace.list_ignored_entries(&source_path)?;
+    // Get ignored entries from git
+    // --directory stops at directory boundaries (avoids listing thousands of files in target/)
+    let ignored_entries = list_ignored_entries(&source_path, &source_context)?;
 
     // Filter to entries that match .worktreeinclude (or all if no file exists)
     let include_path = source_path.join(".worktreeinclude");
@@ -627,8 +539,10 @@ pub fn step_copy_ignored(
         let include_matcher = {
             let mut builder = GitignoreBuilder::new(&source_path);
             if let Some(err) = builder.add(&include_path) {
-                return Err(anyhow::anyhow!("{err}"))
-                    .context(cformat!("Error parsing <bold>.worktreeinclude</>"));
+                return Err(worktrunk::git::GitError::WorktreeIncludeParseError {
+                    error: err.to_string(),
+                }
+                .into());
             }
             builder.build().context("Failed to build include matcher")?
         };
@@ -641,20 +555,20 @@ pub fn step_copy_ignored(
         ignored_entries
     };
 
-    // Filter out entries that contain other workspaces (prevents recursive copying when
-    // workspaces are nested inside the source, e.g., worktree-path = ".worktrees/...")
-    let workspace_paths: Vec<PathBuf> = workspace
-        .list_workspaces()?
+    // Filter out entries that contain other worktrees (prevents recursive copying when
+    // worktrees are nested inside the source, e.g., worktree-path = ".worktrees/...")
+    let worktree_paths: Vec<PathBuf> = repo
+        .list_worktrees()?
         .into_iter()
-        .map(|ws| ws.path)
+        .map(|wt| wt.path)
         .collect();
     let entries_to_copy: Vec<_> = entries_to_copy
         .into_iter()
         .filter(|(entry_path, _)| {
-            // Exclude if any workspace (other than source) is inside or equal to this entry
-            !workspace_paths
+            // Exclude if any worktree (other than source) is inside or equal to this entry
+            !worktree_paths
                 .iter()
-                .any(|ws_path| ws_path != &source_path && ws_path.starts_with(entry_path))
+                .any(|wt_path| wt_path != &source_path && wt_path.starts_with(entry_path))
         })
         .collect();
 
@@ -692,10 +606,10 @@ pub fn step_copy_ignored(
 
     // Copy entries
     for (src_entry, is_dir) in &entries_to_copy {
-        // Paths from list_ignored_entries are always under source_path
+        // Paths from git ls-files are always under source_path
         let relative = src_entry
             .strip_prefix(&source_path)
-            .expect("ignored entry path under source workspace");
+            .expect("git ls-files path under worktree");
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
@@ -737,6 +651,46 @@ fn remove_if_exists(path: &Path) -> anyhow::Result<()> {
         anyhow::ensure!(e.kind() == ErrorKind::NotFound, e);
     }
     Ok(())
+}
+
+/// List ignored entries using git ls-files
+///
+/// Uses `git ls-files --ignored --exclude-standard -o --directory` which:
+/// - Handles all gitignore sources (global, .gitignore, .git/info/exclude, nested)
+/// - Stops at directory boundaries (--directory) to avoid listing thousands of files
+fn list_ignored_entries(
+    worktree_path: &Path,
+    context: &str,
+) -> anyhow::Result<Vec<(std::path::PathBuf, bool)>> {
+    let output = Cmd::new("git")
+        .args([
+            "ls-files",
+            "--ignored",
+            "--exclude-standard",
+            "-o",
+            "--directory",
+        ])
+        .current_dir(worktree_path)
+        .context(context)
+        .run()
+        .context("Failed to run git ls-files")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git ls-files failed: {}", stderr.trim());
+    }
+
+    // Parse output: directories end with /
+    let entries = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| {
+            let is_dir = line.ends_with('/');
+            let path = worktree_path.join(line.trim_end_matches('/'));
+            (path, is_dir)
+        })
+        .collect();
+
+    Ok(entries)
 }
 
 /// Copy a directory recursively using reflink (COW).
@@ -837,8 +791,7 @@ pub fn step_relocate(
         show_dry_run_preview, show_no_relocations_needed, show_summary, validate_candidates,
     };
 
-    let workspace = worktrunk::workspace::open_workspace()?;
-    let repo = super::require_git_workspace(&*workspace, "step relocate")?;
+    let repo = Repository::current()?;
     let config = UserConfig::load()?;
     let default_branch = repo.default_branch().unwrap_or_default();
 
@@ -854,7 +807,7 @@ pub fn step_relocate(
     let GatherResult {
         candidates,
         template_errors,
-    } = gather_candidates(repo, &config, &branches)?;
+    } = gather_candidates(&repo, &config, &branches)?;
 
     if candidates.is_empty() {
         show_no_relocations_needed(template_errors);
@@ -869,7 +822,7 @@ pub fn step_relocate(
 
     // Phase 2: Validate candidates (check locked/dirty, optionally auto-commit)
     let ValidationResult { validated, skipped } =
-        validate_candidates(repo, &config, candidates, commit, &repo_path)?;
+        validate_candidates(&repo, &config, candidates, commit, &repo_path)?;
 
     if validated.is_empty() {
         show_all_skipped(skipped);
@@ -877,7 +830,7 @@ pub fn step_relocate(
     }
 
     // Phase 3 & 4: Create executor (classifies targets) and execute relocations
-    let mut executor = RelocationExecutor::new(repo, validated, clobber)?;
+    let mut executor = RelocationExecutor::new(&repo, validated, clobber)?;
     let cwd = std::env::current_dir().ok();
     executor.execute(&repo_path, &default_branch, cwd.as_deref())?;
 

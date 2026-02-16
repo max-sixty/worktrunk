@@ -36,7 +36,7 @@ exit_code: 0
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 
-[2m[36mPROJECT CONFIG[39m  Not in a repository[22m
+[2m[36mPROJECT CONFIG[39m  Not in a git repository[22m
 
 [36mSHELL INTEGRATION[39m
 [33m▲[39m [33mShell integration not active[39m

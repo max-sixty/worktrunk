@@ -1,13 +1,6 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-
 use super::*;
 use crate::config::HooksConfig;
 use crate::git::Repository;
-
-fn empty_worktree_map() -> HashMap<String, PathBuf> {
-    HashMap::new()
-}
 
 /// Test fixture that creates a real temporary git repository.
 struct TestRepo {
@@ -243,7 +236,7 @@ fn test_worktree_path_for_project_falls_back_to_default() {
 
 #[test]
 fn test_format_path_with_project_override() {
-    let wt_map = empty_worktree_map();
+    let test = test_repo();
     let mut config = UserConfig {
         configs: OverridableConfig {
             worktree_path: Some("../{{ repo }}.{{ branch | sanitize }}".to_string()),
@@ -268,8 +261,7 @@ fn test_format_path_with_project_override() {
         .format_path(
             "myrepo",
             "feature/branch",
-            "",
-            &wt_map,
+            &test.repo,
             Some("github.com/user/repo"),
         )
         .unwrap();
@@ -277,7 +269,7 @@ fn test_format_path_with_project_override() {
 
     // Without project identifier, should use global template
     let path = config
-        .format_path("myrepo", "feature/branch", "", &wt_map, None)
+        .format_path("myrepo", "feature/branch", &test.repo, None)
         .unwrap();
     assert_eq!(path, "../myrepo.feature-branch");
 }
@@ -324,11 +316,9 @@ fn test_worktrunk_config_default() {
 #[test]
 fn test_worktrunk_config_format_path() {
     let test = test_repo();
-    let wt_map = empty_worktree_map();
-    let repo_path_str = test.repo.repo_path().to_string_lossy().to_string();
     let config = UserConfig::default();
     let path = config
-        .format_path("myrepo", "feature/branch", &repo_path_str, &wt_map, None)
+        .format_path("myrepo", "feature/branch", &test.repo, None)
         .unwrap();
     // Default path is now absolute: {{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}
     // The template uses forward slashes which work on all platforms
@@ -343,15 +333,16 @@ fn test_worktrunk_config_format_path() {
         "Expected path containing parent navigation, got: {path}"
     );
     // The path should start with the repo path (absolute)
+    let repo_path = test.repo.repo_path().to_string_lossy();
     assert!(
-        path.starts_with(&repo_path_str),
-        "Expected path starting with repo path '{repo_path_str}', got: {path}"
+        path.starts_with(repo_path.as_ref()),
+        "Expected path starting with repo path '{repo_path}', got: {path}"
     );
 }
 
 #[test]
 fn test_worktrunk_config_format_path_custom_template() {
-    let wt_map = empty_worktree_map();
+    let test = test_repo();
     let config = UserConfig {
         configs: OverridableConfig {
             worktree_path: Some(".worktrees/{{ branch }}".to_string()),
@@ -360,7 +351,7 @@ fn test_worktrunk_config_format_path_custom_template() {
         ..Default::default()
     };
     let path = config
-        .format_path("myrepo", "feature", "", &wt_map, None)
+        .format_path("myrepo", "feature", &test.repo, None)
         .unwrap();
     assert_eq!(path, ".worktrees/feature");
 }
@@ -368,8 +359,6 @@ fn test_worktrunk_config_format_path_custom_template() {
 #[test]
 fn test_worktrunk_config_format_path_repo_path_variable() {
     let test = test_repo();
-    let wt_map = empty_worktree_map();
-    let repo_path_str = test.repo.repo_path().to_string_lossy().to_string();
     let config = UserConfig {
         configs: OverridableConfig {
             // Use forward slashes in template (works on all platforms)
@@ -379,7 +368,7 @@ fn test_worktrunk_config_format_path_repo_path_variable() {
         ..Default::default()
     };
     let path = config
-        .format_path("myrepo", "feature/branch", &repo_path_str, &wt_map, None)
+        .format_path("myrepo", "feature/branch", &test.repo, None)
         .unwrap();
     // Path should contain the expected components
     assert!(
@@ -387,9 +376,10 @@ fn test_worktrunk_config_format_path_repo_path_variable() {
         "Expected path containing 'worktrees' and 'feature-branch', got: {path}"
     );
     // The path should start with the repo path
+    let repo_path = test.repo.repo_path().to_string_lossy();
     assert!(
-        path.starts_with(&repo_path_str),
-        "Expected path starting with repo path '{repo_path_str}', got: {path}"
+        path.starts_with(repo_path.as_ref()),
+        "Expected path starting with repo path '{repo_path}', got: {path}"
     );
     // The path should be absolute since repo_path is absolute
     assert!(
@@ -400,7 +390,7 @@ fn test_worktrunk_config_format_path_repo_path_variable() {
 
 #[test]
 fn test_worktrunk_config_format_path_tilde_expansion() {
-    let wt_map = empty_worktree_map();
+    let test = test_repo();
     let config = UserConfig {
         configs: OverridableConfig {
             worktree_path: Some("~/worktrees/{{ repo }}/{{ branch | sanitize }}".to_string()),
@@ -409,7 +399,7 @@ fn test_worktrunk_config_format_path_tilde_expansion() {
         ..Default::default()
     };
     let path = config
-        .format_path("myrepo", "feature/branch", "", &wt_map, None)
+        .format_path("myrepo", "feature/branch", &test.repo, None)
         .unwrap();
     // Tilde should be expanded to home directory
     assert!(

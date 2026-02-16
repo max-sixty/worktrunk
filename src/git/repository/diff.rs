@@ -308,28 +308,6 @@ impl Repository {
         LineDiff::from_numstat(&stdout)
     }
 
-    /// Whether HEAD is linearly rebased onto `target`.
-    ///
-    /// Returns `true` when merge-base equals the target SHA and there are no
-    /// merge commits between target and HEAD (i.e., history is linear).
-    pub fn is_rebased_onto(&self, target: &str) -> anyhow::Result<bool> {
-        let Some(merge_base) = self.merge_base("HEAD", target)? else {
-            return Ok(false);
-        };
-        let target_sha = self.run_command(&["rev-parse", target])?.trim().to_string();
-
-        if merge_base != target_sha {
-            return Ok(false);
-        }
-
-        let merge_commits = self
-            .run_command(&["rev-list", "--merges", &format!("{target}..HEAD")])?
-            .trim()
-            .to_string();
-
-        Ok(merge_commits.is_empty())
-    }
-
     /// Get formatted diff stats summary for display.
     ///
     /// Returns a vector of formatted strings like ["3 files", "+45", "-12"].

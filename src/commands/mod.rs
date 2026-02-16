@@ -6,11 +6,7 @@ pub(crate) mod config;
 pub(crate) mod configure_shell;
 pub(crate) mod context;
 mod for_each;
-mod handle_merge_jj;
-pub(crate) mod handle_remove_jj;
-pub(crate) mod handle_step_jj;
 mod handle_switch;
-mod handle_switch_jj;
 mod hook_commands;
 mod hook_filter;
 pub(crate) mod hooks;
@@ -20,7 +16,6 @@ pub(crate) mod merge;
 pub(crate) mod process;
 pub(crate) mod project_config;
 mod relocate;
-mod remove_command;
 pub(crate) mod repository_ext;
 #[cfg(unix)]
 pub(crate) mod select;
@@ -42,36 +37,22 @@ pub(crate) use hook_commands::{add_approvals, clear_approvals, handle_hook_show,
 pub(crate) use init::{handle_completions, handle_init};
 pub(crate) use list::handle_list;
 pub(crate) use merge::{MergeOptions, handle_merge};
-pub(crate) use remove_command::{RemoveOptions, handle_remove_command};
 #[cfg(unix)]
 pub(crate) use select::handle_select;
 pub(crate) use step_commands::{
     RebaseResult, SquashResult, handle_rebase, handle_squash, step_commit, step_copy_ignored,
-    step_push, step_relocate, step_show_squash_prompt,
+    step_relocate, step_show_squash_prompt,
 };
-pub(crate) use worktree::{is_worktree_at_expected_path, worktree_display_name};
+pub(crate) use worktree::{
+    OperationMode, handle_remove, handle_remove_current, is_worktree_at_expected_path,
+    resolve_worktree_arg, worktree_display_name,
+};
 
 // Re-export Shell from the canonical location
 pub(crate) use worktrunk::shell::Shell;
 
 use color_print::cformat;
-use worktrunk::git::Repository;
-use worktrunk::workspace::Workspace;
-
-/// Downcast a workspace to `Repository`, or error for jj repositories.
-///
-/// Replaces the old `require_git()` + `Repository::current()` two-step pattern.
-/// Returns a reference to the `Repository` if this is a git workspace,
-/// or a clear error for jj users.
-pub(crate) fn require_git_workspace<'a>(
-    workspace: &'a dyn Workspace,
-    command: &str,
-) -> anyhow::Result<&'a Repository> {
-    workspace
-        .as_any()
-        .downcast_ref::<Repository>()
-        .ok_or_else(|| anyhow::anyhow!("`wt {command}` is not yet supported for jj repositories"))
-}
+use worktrunk::styling::{eprintln, format_with_gutter};
 
 /// Format command execution label with optional command name.
 ///
@@ -83,6 +64,35 @@ pub(crate) fn format_command_label(command_type: &str, name: Option<&str>) -> St
         Some(name) => cformat!("Running {command_type} <bold>{name}</>"),
         None => format!("Running {command_type}"),
     }
+}
+
+/// Show detailed diffstat for a given commit range.
+///
+/// Displays the diff statistics (file changes, insertions, deletions) in a gutter format.
+/// Used after commit/squash to show what was included in the commit.
+///
+/// # Arguments
+/// * `repo` - The repository to query
+/// * `range` - The commit range to diff (e.g., "HEAD~1..HEAD" or "main..HEAD")
+pub(crate) fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> anyhow::Result<()> {
+    let term_width = crate::display::get_terminal_width();
+    let stat_width = term_width.saturating_sub(worktrunk::styling::GUTTER_OVERHEAD);
+    let diff_stat = repo
+        .run_command(&[
+            "diff",
+            "--color=always",
+            "--stat",
+            &format!("--stat-width={}", stat_width),
+            range,
+        ])?
+        .trim_end()
+        .to_string();
+
+    if !diff_stat.is_empty() {
+        eprintln!("{}", format_with_gutter(&diff_stat, None));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

@@ -222,7 +222,7 @@ pub fn spawn_background_hooks(
         let hook_log = HookLog::hook(cmd.source, cmd.hook_type, &name);
 
         if let Err(err) = spawn_detached(
-            &ctx.workspace.wt_logs_dir(),
+            ctx.repo,
             ctx.worktree_path,
             &cmd.prepared.expanded,
             ctx.branch_or_head(),
@@ -424,7 +424,7 @@ pub fn execute_hook(
     name_filter: Option<&str>,
     display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let project_config = ctx.workspace.load_project_config()?;
+    let project_config = ctx.repo.load_project_config()?;
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
     let (user_config, proj_config) =
         lookup_hook_configs(&user_hooks, project_config.as_ref(), hook_type);
@@ -457,7 +457,7 @@ pub(crate) fn prepare_background_hooks(
     extra_vars: &[(&str, &str)],
     display_path: Option<&Path>,
 ) -> anyhow::Result<Vec<SourcedCommand>> {
-    let project_config = ctx.workspace.load_project_config()?;
+    let project_config = ctx.repo.load_project_config()?;
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
     let (user_config, proj_config) =
         lookup_hook_configs(&user_hooks, project_config.as_ref(), hook_type);

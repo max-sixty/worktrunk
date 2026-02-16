@@ -8,27 +8,26 @@
 //! to simulate interactive terminals. The non-PTY tests in `approval_ui.rs` verify the
 //! error case (non-TTY environments).
 
-use crate::common::pty::exec_in_pty;
+use crate::common::pty::{build_pty_command, exec_cmd_in_pty_prompted};
 use crate::common::{TestRepo, add_pty_binary_path_filters, add_pty_filters, repo, wt_bin};
 use insta::assert_snapshot;
 use rstest::rstest;
 
-/// Execute wt in a PTY with interactive input.
-///
-/// Thin wrapper around `exec_in_pty` that passes the wt binary path.
+/// Execute wt in a PTY, waiting for the approval prompt before sending input.
 fn exec_wt_in_pty(
     repo: &TestRepo,
     args: &[&str],
     env_vars: &[(String, String)],
     input: &str,
 ) -> (String, i32) {
-    exec_in_pty(
+    let cmd = build_pty_command(
         wt_bin().to_str().unwrap(),
         args,
         repo.root_path(),
         env_vars,
-        input,
-    )
+        None,
+    );
+    exec_cmd_in_pty_prompted(cmd, &[input], "[y/N")
 }
 
 /// Create insta settings for approval PTY tests.

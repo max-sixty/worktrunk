@@ -955,7 +955,7 @@ fn handle_removed_worktree_output(
             );
             let remove_command = build_remove_command(worktree_path, None, force_worktree);
             spawn_detached(
-                &repo.wt_logs_dir(),
+                &repo,
                 main_path,
                 &remove_command,
                 "detached",
@@ -1024,7 +1024,7 @@ fn handle_removed_worktree_output(
 
         // Spawn the removal in background - runs from main_path (where we cd'd to)
         spawn_detached(
-            &repo.wt_logs_dir(),
+            &repo,
             main_path,
             &remove_command,
             branch_name,

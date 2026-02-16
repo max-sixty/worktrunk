@@ -7,7 +7,7 @@ use std::process::Command;
 use std::process::Stdio;
 use std::str::FromStr;
 use strum::IntoEnumIterator;
-use worktrunk::git::HookType;
+use worktrunk::git::{HookType, Repository};
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
 
 use crate::commands::hook_filter::HookSource;
@@ -187,7 +187,7 @@ fn posix_command_separator(command: &str) -> &'static str {
 /// Logs are centralized in the main worktree's `.git/wt-logs/` directory.
 ///
 /// # Arguments
-/// * `log_dir` - Directory for background hook log files
+/// * `repo` - Repository instance for accessing git common directory
 /// * `worktree_path` - Working directory for the command
 /// * `command` - Shell command to execute
 /// * `branch` - Branch name for log organization
@@ -197,23 +197,24 @@ fn posix_command_separator(command: &str) -> &'static str {
 /// # Returns
 /// Path to the log file where output is being written
 pub fn spawn_detached(
-    log_dir: &Path,
+    repo: &Repository,
     worktree_path: &Path,
     command: &str,
     branch: &str,
     hook_log: &HookLog,
     context_json: Option<&str>,
 ) -> anyhow::Result<std::path::PathBuf> {
-    // Create log directory
-    fs::create_dir_all(log_dir).with_context(|| {
+    // Create log directory in the common git directory
+    let log_dir = repo.wt_logs_dir();
+    fs::create_dir_all(&log_dir).with_context(|| {
         format!(
             "Failed to create log directory {}",
-            format_path_for_display(log_dir)
+            format_path_for_display(&log_dir)
         )
     })?;
 
     // Generate log path using the HookLog specification
-    let log_path = hook_log.path(log_dir, branch);
+    let log_path = hook_log.path(&log_dir, branch);
 
     // Create log file
     let log_file = fs::File::create(&log_path).with_context(|| {

@@ -14,13 +14,12 @@ use color_print::cformat;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
 use worktrunk::config::{Approvals, CommandConfig, ProjectConfig, UserConfig};
-use worktrunk::git::GitError;
+use worktrunk::git::{GitError, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, hint_message,
     info_message, success_message,
 };
-use worktrunk::workspace::{Workspace, build_worktree_map, open_workspace};
 
 use super::command_approval::approve_hooks_filtered;
 use super::command_executor::build_hook_context;
@@ -57,10 +56,11 @@ pub fn run_hook(
 ) -> anyhow::Result<()> {
     // Derive context from current environment (branch-optional for CI compatibility)
     let env = CommandEnv::for_action_branchless()?;
+    let repo = &env.repo;
     let ctx = env.context(yes);
 
     // Load project config (optional - user hooks can run without project config)
-    let project_config = ctx.workspace.load_project_config()?;
+    let project_config = repo.load_project_config()?;
 
     // "Approve at the Gate": approve project hooks upfront
     // Pass name_filter to only approve the targeted hook, not all hooks of this type
@@ -201,7 +201,7 @@ pub fn run_hook(
             require_hooks(user_config, project_config, hook_type)?;
             // Pre-commit hook can optionally use target branch context
             // Custom vars take precedence (added last)
-            let target_branch = ctx.workspace.default_branch_name();
+            let target_branch = repo.default_branch();
             let mut extra_vars: Vec<(&str, &str)> = target_branch
                 .as_deref()
                 .into_iter()
@@ -324,13 +324,17 @@ pub fn run_hook(
 pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     use super::command_approval::approve_command_batch;
 
-    let workspace = open_workspace()?;
-    let project_id = workspace.project_identifier()?;
+    let repo = Repository::current()?;
+    let project_id = repo.project_identifier()?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
 
     // Load project config (error if missing - this command requires it)
-    let config_path = workspace.root_path()?.join(".config").join("wt.toml");
-    let project_config = workspace
+    let config_path = repo
+        .current_worktree()
+        .root()?
+        .join(".config")
+        .join("wt.toml");
+    let project_config = repo
         .load_project_config()?
         .ok_or(GitError::ProjectConfigNotFound { config_path })?;
 
@@ -406,8 +410,8 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
         );
     } else {
         // Clear approvals for current project (default)
-        let workspace = open_workspace()?;
-        let project_id = workspace.project_identifier()?;
+        let repo = Repository::current()?;
+        let project_id = repo.project_identifier()?;
 
         // Count approvals before clearing
         let approval_count = approvals
@@ -441,11 +445,11 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
 pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyhow::Result<()> {
     use crate::help_pager::show_help_in_pager;
 
-    let workspace = open_workspace()?;
+    let repo = Repository::current()?;
     let config = UserConfig::load().context("Failed to load user config")?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
-    let project_config = workspace.load_project_config()?;
-    let project_id = workspace.project_identifier().ok();
+    let project_config = repo.load_project_config()?;
+    let project_id = repo.project_identifier().ok();
 
     // Parse hook type filter if provided
     let filter: Option<HookType> = hook_type_filter.map(|s| match s {
@@ -479,7 +483,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
     // Render project hooks
     render_project_hooks(
         &mut output,
-        &*workspace,
+        &repo,
         project_config.as_ref(),
         &approvals,
         project_id.as_deref(),
@@ -557,15 +561,15 @@ fn render_user_hooks(
 /// Render project hooks section
 fn render_project_hooks(
     out: &mut String,
-    workspace: &dyn Workspace,
+    repo: &Repository,
     project_config: Option<&ProjectConfig>,
     approvals: &Approvals,
     project_id: Option<&str>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
-    let root = workspace.root_path()?;
-    let config_path = root.join(".config").join("wt.toml");
+    let repo_root = repo.current_worktree().root()?;
+    let config_path = repo_root.join(".config").join("wt.toml");
 
     writeln!(
         out,
@@ -669,7 +673,7 @@ fn render_hook_commands(
 /// Expand a command template with context variables
 fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: HookType) -> String {
     // Build extra vars based on hook type (same logic as run_hook approval)
-    let default_branch = ctx.workspace.default_branch_name();
+    let default_branch = ctx.repo.default_branch();
     let extra_vars: Vec<(&str, &str)> = match hook_type {
         HookType::PreCommit => {
             // Pre-commit uses default branch as target (for comparison context)
@@ -690,10 +694,9 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let worktree_map = build_worktree_map(ctx.workspace);
 
     // Use the standard template expansion (shell-escaped)
     // On any error, show both the template and error message
-    worktrunk::config::expand_template(template, &vars, true, &worktree_map, "hook preview")
-        .unwrap_or_else(|err| format!("# Template error: {}\n{}", err, template))
+    worktrunk::config::expand_template(template, &vars, true, ctx.repo, "hook preview")
+        .unwrap_or_else(|err| format!("# {}\n{}", err.message, template))
 }

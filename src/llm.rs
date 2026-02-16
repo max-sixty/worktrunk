@@ -1,9 +1,10 @@
 use anyhow::Context;
 use shell_escape::escape;
 use std::borrow::Cow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
+use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::{Cmd, ShellConfig};
 use worktrunk::styling::{eprintln, warning_message};
@@ -288,7 +289,7 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"Combine these commits into a single com
 ///
 /// This is the canonical way to execute LLM commands in this codebase.
 /// All LLM execution should go through this function to maintain consistency.
-pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result<String> {
+fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result<String> {
     // Log prompt for debugging (Cmd logs the command itself)
     log::debug!("  Prompt (stdin):");
     for line in prompt.lines() {
@@ -459,24 +460,14 @@ fn build_prompt(
     Ok(rendered)
 }
 
-/// Pre-computed VCS-agnostic data needed for commit prompt/message generation.
-pub(crate) struct CommitInput<'a> {
-    pub diff: &'a str,
-    pub diff_stat: &'a str,
-    pub branch: &'a str,
-    pub repo_name: &'a str,
-    pub recent_commits: Option<&'a Vec<String>>,
-}
-
 pub(crate) fn generate_commit_message(
-    input: &CommitInput<'_>,
     commit_generation_config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
         let command = commit_generation_config.command.as_ref().unwrap();
-        let prompt = build_commit_prompt(input, commit_generation_config)?;
-        return execute_llm_command(command, &prompt).map_err(|e| {
+        // Commit generation is explicitly configured - fail if it doesn't work
+        return try_generate_commit_message(command, commit_generation_config).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
                 command: command.clone(),
                 error: e.to_string(),
@@ -489,71 +480,111 @@ pub(crate) fn generate_commit_message(
         });
     }
 
-    // Fallback: generate a descriptive commit message based on changed files.
-    // Parses diffstat lines (e.g. " src/foo.rs | 3 +") — works for both git and jj
-    // but may mis-parse filenames containing '|' (rare, low-stakes fallback).
-    let files: Vec<&str> = input
-        .diff_stat
-        .lines()
-        .filter(|l| l.contains('|'))
-        .map(|l| l.split('|').next().unwrap_or("").trim())
+    // Fallback: generate a descriptive commit message based on changed files
+    let repo = Repository::current()?;
+    // Use -z for NUL-separated output to handle filenames with spaces/newlines
+    let file_list = repo.run_command(&["diff", "--staged", "--name-only", "-z"])?;
+    let staged_files = file_list
+        .split('\0')
+        .map(|s| s.trim())
         .filter(|s| !s.is_empty())
-        .map(|path| path.rsplit('/').next().unwrap_or(path))
-        .collect();
+        .map(|path| {
+            Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path)
+        })
+        .collect::<Vec<_>>();
 
-    let message = match files.len() {
+    let message = match staged_files.len() {
         0 => "WIP: Changes".to_string(),
-        1 => format!("Changes to {}", files[0]),
-        2 => format!("Changes to {} & {}", files[0], files[1]),
-        3 => format!("Changes to {}, {} & {}", files[0], files[1], files[2]),
+        1 => format!("Changes to {}", staged_files[0]),
+        2 => format!("Changes to {} & {}", staged_files[0], staged_files[1]),
+        3 => format!(
+            "Changes to {}, {} & {}",
+            staged_files[0], staged_files[1], staged_files[2]
+        ),
         n => format!("Changes to {} files", n),
     };
 
     Ok(message)
 }
 
-/// Build the commit prompt from pre-computed VCS-agnostic data.
-///
-/// Accepts diff, branch name, repo name, and recent commits, then renders
-/// the prompt template. Used by both normal commit generation and `--show-prompt`.
-pub(crate) fn build_commit_prompt(
-    input: &CommitInput<'_>,
+fn try_generate_commit_message(
+    command: &str,
     config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
-    let prepared = prepare_diff(input.diff.to_string(), input.diff_stat.to_string());
+    let prompt = build_commit_prompt(config)?;
+    execute_llm_command(command, &prompt)
+}
+
+/// Build the commit prompt from staged changes.
+///
+/// Gathers the staged diff, branch name, repo name, and recent commits, then renders
+/// the prompt template. Used by both normal commit generation and `--show-prompt`.
+pub(crate) fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<String> {
+    let repo = Repository::current()?;
+
+    // Get staged diff and diffstat
+    // Use -c flags to ensure consistent format regardless of user's git config
+    // (diff.noprefix, diff.mnemonicPrefix, etc. could break our parsing)
+    let diff_output = repo.run_command(&[
+        "-c",
+        "diff.noprefix=false",
+        "-c",
+        "diff.mnemonicPrefix=false",
+        "--no-pager",
+        "diff",
+        "--staged",
+    ])?;
+    let diff_stat = repo.run_command(&["--no-pager", "diff", "--staged", "--stat"])?;
+
+    // Prepare diff (may filter if too large)
+    let prepared = prepare_diff(diff_output, diff_stat);
+
+    // Get current branch and repo root
+    let wt = repo.current_worktree();
+    let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
+    let repo_root = wt.root()?;
+    let repo_name = repo_root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("repo");
+
+    let recent_commits = repo.recent_commit_subjects(None, 5);
 
     let context = TemplateContext {
         git_diff: &prepared.diff,
         git_diff_stat: &prepared.stat,
-        branch: input.branch,
-        recent_commits: input.recent_commits,
-        repo_name: input.repo_name,
+        branch: &current_branch,
+        recent_commits: recent_commits.as_ref(),
+        repo_name,
         commits: &[],
         target_branch: None,
     };
     build_prompt(config, TemplateType::Commit, &context)
 }
 
-/// Pre-computed VCS-agnostic data needed for squash prompt/message generation.
-pub(crate) struct SquashInput<'a> {
-    pub target_branch: &'a str,
-    pub diff: &'a str,
-    pub diff_stat: &'a str,
-    pub subjects: &'a [String],
-    pub current_branch: &'a str,
-    pub repo_name: &'a str,
-    pub recent_commits: Option<&'a Vec<String>>,
-}
-
 pub(crate) fn generate_squash_message(
-    input: &SquashInput<'_>,
+    target_branch: &str,
+    merge_base: &str,
+    subjects: &[String],
+    current_branch: &str,
+    repo_name: &str,
     commit_generation_config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
         let command = commit_generation_config.command.as_ref().unwrap();
 
-        let prompt = build_squash_prompt(input, commit_generation_config)?;
+        let prompt = build_squash_prompt(
+            target_branch,
+            merge_base,
+            subjects,
+            current_branch,
+            repo_name,
+            commit_generation_config,
+        )?;
 
         return execute_llm_command(command, &prompt).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
@@ -569,9 +600,9 @@ pub(crate) fn generate_squash_message(
     }
 
     // Fallback: deterministic commit message (only when not configured)
-    let mut commit_message = format!("Squash commits from {}\n\n", input.target_branch);
+    let mut commit_message = format!("Squash commits from {}\n\n", target_branch);
     commit_message.push_str("Combined commits:\n");
-    for subject in input.subjects.iter().rev() {
+    for subject in subjects.iter().rev() {
         // Reverse so they're in chronological order
         commit_message.push_str(&format!("- {}\n", subject));
     }
@@ -580,23 +611,44 @@ pub(crate) fn generate_squash_message(
 
 /// Build the squash prompt from commits being squashed.
 ///
-/// Accepts pre-computed diff data (from the Workspace trait), making this
-/// VCS-agnostic. Used by both normal squash generation and `--show-prompt`.
+/// Gathers the combined diff, commit subjects, branch names, and recent commits, then
+/// renders the prompt template. Used by both normal squash generation and `--show-prompt`.
 pub(crate) fn build_squash_prompt(
-    input: &SquashInput<'_>,
+    target_branch: &str,
+    merge_base: &str,
+    subjects: &[String],
+    current_branch: &str,
+    repo_name: &str,
     config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
-    // Prepare diff (may filter if too large)
-    let prepared = prepare_diff(input.diff.to_string(), input.diff_stat.to_string());
+    let repo = Repository::current()?;
 
+    // Get the combined diff and diffstat for all commits being squashed
+    // Use -c flags to ensure consistent format regardless of user's git config
+    let diff_output = repo.run_command(&[
+        "-c",
+        "diff.noprefix=false",
+        "-c",
+        "diff.mnemonicPrefix=false",
+        "--no-pager",
+        "diff",
+        merge_base,
+        "HEAD",
+    ])?;
+    let diff_stat = repo.run_command(&["--no-pager", "diff", merge_base, "HEAD", "--stat"])?;
+
+    // Prepare diff (may filter if too large)
+    let prepared = prepare_diff(diff_output, diff_stat);
+
+    let recent_commits = repo.recent_commit_subjects(Some(merge_base), 5);
     let context = TemplateContext {
         git_diff: &prepared.diff,
         git_diff_stat: &prepared.stat,
-        branch: input.current_branch,
-        recent_commits: input.recent_commits,
-        repo_name: input.repo_name,
-        commits: input.subjects,
-        target_branch: Some(input.target_branch),
+        branch: current_branch,
+        recent_commits: recent_commits.as_ref(),
+        repo_name,
+        commits: subjects,
+        target_branch: Some(target_branch),
     };
     build_prompt(config, TemplateType::Squash, &context)
 }
@@ -1363,92 +1415,5 @@ diff --git a/Cargo.lock b/Cargo.lock
         assert!(!is_lock_file("main.rs"));
         assert!(!is_lock_file("README.md"));
         assert!(!is_lock_file("config.toml"));
-    }
-
-    #[test]
-    fn test_build_commit_prompt_with_commit_input() {
-        let config = CommitGenerationConfig::default();
-        let input = CommitInput {
-            diff: "+++ new_file.rs\n+fn main() {}\n",
-            diff_stat: "new_file.rs | 1 +\n1 file changed, 1 insertion(+)",
-            branch: "feature-ws",
-            repo_name: "myrepo",
-            recent_commits: None,
-        };
-        let result = build_commit_prompt(&input, &config);
-        assert!(result.is_ok());
-        let prompt = result.unwrap();
-        assert!(prompt.contains("new_file.rs"));
-        assert!(prompt.contains("feature-ws"));
-    }
-
-    #[test]
-    fn test_generate_commit_message_fallback_single_file() {
-        let config = CommitGenerationConfig::default();
-        let input = CommitInput {
-            diff: "",
-            diff_stat: " src/main.rs | 3 +++\n 1 file changed, 3 insertions(+)",
-            branch: "main",
-            repo_name: "test",
-            recent_commits: None,
-        };
-        let msg = generate_commit_message(&input, &config).unwrap();
-        assert_eq!(msg, "Changes to main.rs");
-    }
-
-    #[test]
-    fn test_generate_commit_message_fallback_two_files() {
-        let config = CommitGenerationConfig::default();
-        let input = CommitInput {
-            diff: "",
-            diff_stat: " src/lib.rs | 1 +\n src/main.rs | 2 ++\n 2 files changed",
-            branch: "main",
-            repo_name: "test",
-            recent_commits: None,
-        };
-        let msg = generate_commit_message(&input, &config).unwrap();
-        assert_eq!(msg, "Changes to lib.rs & main.rs");
-    }
-
-    #[test]
-    fn test_generate_commit_message_fallback_three_files() {
-        let config = CommitGenerationConfig::default();
-        let input = CommitInput {
-            diff: "",
-            diff_stat: " src/lib.rs | 1 +\n src/main.rs | 2 ++\n src/util.rs | 5 ++---\n 3 files changed",
-            branch: "main",
-            repo_name: "test",
-            recent_commits: None,
-        };
-        let msg = generate_commit_message(&input, &config).unwrap();
-        assert_eq!(msg, "Changes to lib.rs, main.rs & util.rs");
-    }
-
-    #[test]
-    fn test_generate_commit_message_fallback_no_files() {
-        let config = CommitGenerationConfig::default();
-        let input = CommitInput {
-            diff: "",
-            diff_stat: "",
-            branch: "main",
-            repo_name: "test",
-            recent_commits: None,
-        };
-        let msg = generate_commit_message(&input, &config).unwrap();
-        assert_eq!(msg, "WIP: Changes");
-    }
-
-    #[test]
-    fn test_generate_commit_message_fallback_many_files() {
-        let config = CommitGenerationConfig::default();
-        let input = CommitInput {
-            diff: "",
-            diff_stat: " a.rs | 1 +\n b.rs | 1 +\n c.rs | 1 +\n d.rs | 1 +\n 4 files changed",
-            branch: "main",
-            repo_name: "test",
-            recent_commits: None,
-        };
-        let msg = generate_commit_message(&input, &config).unwrap();
-        assert_eq!(msg, "Changes to 4 files");
     }
 }

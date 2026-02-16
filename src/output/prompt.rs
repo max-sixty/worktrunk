@@ -54,9 +54,6 @@ pub fn prompt_yes_no_preview(
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
 
-        // End the prompt line on stderr (user's input went to stdin, not stderr)
-        worktrunk::styling::eprintln!();
-
         let response = input.trim().to_lowercase();
         match response.as_str() {
             "y" | "yes" => {

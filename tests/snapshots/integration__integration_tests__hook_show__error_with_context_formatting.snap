@@ -30,4 +30,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mNot in a repository[39m
+[31m✗[39m [31mFailed to remove worktree[39m
+[107m [0m fatal: not a git repository (or any of the parent directories): .git

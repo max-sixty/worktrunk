@@ -141,9 +141,6 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
     let mut response = String::new();
     io::stdin().read_line(&mut response)?;
 
-    // End the prompt line on stderr (user's input went to stdin, not stderr)
-    worktrunk::styling::eprintln!();
-
     Ok(response.trim().eq_ignore_ascii_case("y"))
 }
 
@@ -198,7 +195,7 @@ pub fn approve_hooks_filtered(
         return Ok(true);
     }
 
-    let project_config = match ctx.workspace.load_project_config()? {
+    let project_config = match ctx.repo.load_project_config()? {
         Some(cfg) => cfg,
         None => return Ok(true), // No project config = no commands to approve
     };
@@ -218,7 +215,7 @@ pub fn approve_hooks_filtered(
         return Ok(true);
     }
 
-    let project_id = ctx.workspace.project_identifier()?;
+    let project_id = ctx.repo.project_identifier()?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
     approve_command_batch(&commands, &project_id, &approvals, ctx.yes, false)
 }

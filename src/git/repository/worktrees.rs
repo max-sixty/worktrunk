@@ -99,33 +99,6 @@ impl Repository {
         Ok(())
     }
 
-    /// Create a new worktree with a new branch.
-    ///
-    /// Runs `git worktree add -b <branch> <path> [<base>]` to create a worktree
-    /// at `path` on a new branch `branch`, optionally starting from `base`.
-    pub fn create_worktree(
-        &self,
-        branch: &str,
-        base: Option<&str>,
-        path: &Path,
-    ) -> anyhow::Result<()> {
-        let path_str = path.to_str().ok_or_else(|| {
-            anyhow::Error::from(GitError::Other {
-                message: format!(
-                    "Worktree path contains invalid UTF-8: {}",
-                    format_path_for_display(path)
-                ),
-            })
-        })?;
-
-        let mut args = vec!["worktree", "add", "-b", branch, path_str];
-        if let Some(base_ref) = base {
-            args.push(base_ref);
-        }
-        self.run_command(&args)?;
-        Ok(())
-    }
-
     /// Remove a worktree at the specified path.
     ///
     /// When `force` is true, passes `--force` to `git worktree remove`,

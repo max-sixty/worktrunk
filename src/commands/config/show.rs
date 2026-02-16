@@ -20,7 +20,6 @@ use worktrunk::styling::{
     error_message, format_bash_with_gutter, format_heading, format_toml, format_with_gutter,
     hint_message, info_message, success_message, warning_message,
 };
-use worktrunk::workspace::{Workspace, open_workspace};
 
 use super::state::require_user_config_path;
 use crate::cli::version_str;
@@ -32,12 +31,6 @@ use crate::output;
 
 /// Handle the config show command
 pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
-    // Open workspace once and try downcast for git-specific sections
-    let workspace = open_workspace().ok();
-    let repo = workspace
-        .as_ref()
-        .and_then(|ws| ws.as_any().downcast_ref::<Repository>());
-
     // Build the complete output as a string
     let mut show_output = String::new();
 
@@ -45,8 +38,8 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     render_user_config(&mut show_output)?;
     show_output.push('\n');
 
-    // Render project config if in a repository
-    render_project_config(&mut show_output, workspace.as_deref(), repo)?;
+    // Render project config if in a git repository
+    render_project_config(&mut show_output)?;
     show_output.push('\n');
 
     // Render shell integration status
@@ -59,7 +52,7 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     // Run full diagnostic checks if requested (includes slow network calls)
     if full {
         show_output.push('\n');
-        render_diagnostics(&mut show_output, workspace.as_deref(), repo)?;
+        render_diagnostics(&mut show_output)?;
     }
 
     // Render runtime info at the bottom (version, binary name, shell integration status)
@@ -266,55 +259,43 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
 }
 
 /// Run full diagnostic checks (CI tools, commit generation) and render to buffer
-fn render_diagnostics(
-    out: &mut String,
-    workspace: Option<&dyn Workspace>,
-    repo: Option<&Repository>,
-) -> anyhow::Result<()> {
+fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("DIAGNOSTICS", None))?;
 
     // Check CI tool based on detected platform (with config override support)
-    // CI detection requires git (gh/glab are git-platform tools)
-    if let Some(repo) = repo {
-        let project_config = workspace.and_then(|ws| ws.load_project_config().ok().flatten());
-        let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
-        let platform = get_platform_for_repo(repo, platform_override, None);
+    let repo = Repository::current()?;
+    let project_config = repo.load_project_config().ok().flatten();
+    let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
+    let platform = get_platform_for_repo(&repo, platform_override, None);
 
-        match platform {
-            Some(CiPlatform::GitHub) => {
-                let ci_tools = CiToolsStatus::detect(None);
-                render_ci_tool_status(
-                    out,
-                    "gh",
-                    "GitHub",
-                    ci_tools.gh_installed,
-                    ci_tools.gh_authenticated,
-                )?;
-            }
-            Some(CiPlatform::GitLab) => {
-                let ci_tools = CiToolsStatus::detect(None);
-                render_ci_tool_status(
-                    out,
-                    "glab",
-                    "GitLab",
-                    ci_tools.glab_installed,
-                    ci_tools.glab_authenticated,
-                )?;
-            }
-            None => {
-                writeln!(
-                    out,
-                    "{}",
-                    hint_message("CI status requires GitHub or GitLab remote")
-                )?;
-            }
+    match platform {
+        Some(CiPlatform::GitHub) => {
+            let ci_tools = CiToolsStatus::detect(None);
+            render_ci_tool_status(
+                out,
+                "gh",
+                "GitHub",
+                ci_tools.gh_installed,
+                ci_tools.gh_authenticated,
+            )?;
         }
-    } else {
-        writeln!(
-            out,
-            "{}",
-            hint_message("CI status requires a git repository")
-        )?;
+        Some(CiPlatform::GitLab) => {
+            let ci_tools = CiToolsStatus::detect(None);
+            render_ci_tool_status(
+                out,
+                "glab",
+                "GitLab",
+                ci_tools.glab_installed,
+                ci_tools.glab_authenticated,
+            )?;
+        }
+        None => {
+            writeln!(
+                out,
+                "{}",
+                hint_message("CI status requires GitHub or GitLab remote")
+            )?;
+        }
     }
 
     // Check for newer version on GitHub
@@ -322,7 +303,9 @@ fn render_diagnostics(
 
     // Test commit generation - use effective config for current project
     let config = UserConfig::load()?;
-    let project_id = workspace.and_then(|ws| ws.project_identifier().ok());
+    let project_id = Repository::current()
+        .ok()
+        .and_then(|r| r.project_identifier().ok());
     let commit_config = config.commit_generation(project_id.as_deref());
 
     if !commit_config.is_configured() {
@@ -451,30 +434,36 @@ pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
     out
 }
 
-fn render_project_config(
-    out: &mut String,
-    workspace: Option<&dyn Workspace>,
-    repo: Option<&Repository>,
-) -> anyhow::Result<()> {
-    // Try to get workspace root for project config path
-    let repo_root = if let Some(repo) = repo {
-        repo.current_worktree().root().ok()
-    } else {
-        workspace.and_then(|ws| ws.root_path().ok())
+fn render_project_config(out: &mut String) -> anyhow::Result<()> {
+    // Try to get current repository root
+    let repo = match Repository::current() {
+        Ok(repo) => repo,
+        Err(_) => {
+            writeln!(
+                out,
+                "{}",
+                cformat!(
+                    "<dim>{}</>",
+                    format_heading("PROJECT CONFIG", Some("Not in a git repository"))
+                )
+            )?;
+            return Ok(());
+        }
     };
-
-    let Some(repo_root) = repo_root else {
-        writeln!(
-            out,
-            "{}",
-            cformat!(
-                "<dim>{}</>",
-                format_heading("PROJECT CONFIG", Some("Not in a repository"))
-            )
-        )?;
-        return Ok(());
+    let repo_root = match repo.current_worktree().root() {
+        Ok(root) => root,
+        Err(_) => {
+            writeln!(
+                out,
+                "{}",
+                cformat!(
+                    "<dim>{}</>",
+                    format_heading("PROJECT CONFIG", Some("Not in a git repository"))
+                )
+            )?;
+            return Ok(());
+        }
     };
-
     let config_path = repo_root.join(".config").join("wt.toml");
 
     writeln!(
@@ -501,14 +490,14 @@ fn render_project_config(
     }
 
     // Check for deprecations with show_brief_warning=false (silent mode)
-    // Only show in main worktree (where .git is a directory) — git only
+    // Only show in main worktree (where .git is a directory)
     let is_main_worktree = repo_root.join(".git").is_dir();
     let has_deprecations = if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         is_main_worktree,
         "Project config",
-        repo,
+        Some(&repo),
         false, // silent mode - we'll format the output ourselves
     ) {
         // Add deprecation details to the output buffer

@@ -7,18 +7,12 @@
 //! Run with: `cargo test --test integration doc_templates`
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use rstest::rstest;
 use worktrunk::config::expand_template;
 use worktrunk::git::Repository;
-use worktrunk::workspace::build_worktree_map;
 
 use crate::common::{TestRepo, repo};
-
-fn empty_map() -> HashMap<String, PathBuf> {
-    HashMap::new()
-}
 
 /// Helper to compute hash_port for a string.
 ///
@@ -34,9 +28,9 @@ fn hash_port(s: &str) -> u16 {
 // Basic Variables (docs/content/hook.md: Template variables table)
 // =============================================================================
 
-#[test]
-fn test_doc_basic_variables() {
-    let worktree_map = empty_map();
+#[rstest]
+fn test_doc_basic_variables(repo: TestRepo) {
+    let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
     vars.insert("repo", "myproject");
     vars.insert("branch", "feature/auth");
@@ -45,19 +39,19 @@ fn test_doc_basic_variables() {
 
     // Each variable substitutes correctly
     assert_eq!(
-        expand_template("{{ repo }}", &vars, false, &worktree_map, "test").unwrap(),
+        expand_template("{{ repo }}", &vars, false, &repository, "test").unwrap(),
         "myproject"
     );
     assert_eq!(
-        expand_template("{{ branch }}", &vars, false, &worktree_map, "test").unwrap(),
+        expand_template("{{ branch }}", &vars, false, &repository, "test").unwrap(),
         "feature/auth"
     );
     assert_eq!(
-        expand_template("{{ worktree }}", &vars, false, &worktree_map, "test").unwrap(),
+        expand_template("{{ worktree }}", &vars, false, &repository, "test").unwrap(),
         "/home/user/myproject.feature-auth"
     );
     assert_eq!(
-        expand_template("{{ default_branch }}", &vars, false, &worktree_map, "test").unwrap(),
+        expand_template("{{ default_branch }}", &vars, false, &repository, "test").unwrap(),
         "main"
     );
 }
@@ -67,36 +61,22 @@ fn test_doc_basic_variables() {
 // "Replace `/` and `\` with `-`"
 // =============================================================================
 
-#[test]
-fn test_doc_sanitize_filter() {
+#[rstest]
+fn test_doc_sanitize_filter(repo: TestRepo) {
     let mut vars = HashMap::new();
-    let worktree_map = empty_map();
+    let repository = Repository::at(repo.root_path()).unwrap();
 
     // From docs: {{ branch | sanitize }} replaces / and \ with -
     vars.insert("branch", "feature/foo");
     assert_eq!(
-        expand_template(
-            "{{ branch | sanitize }}",
-            &vars,
-            false,
-            &worktree_map,
-            "test"
-        )
-        .unwrap(),
+        expand_template("{{ branch | sanitize }}", &vars, false, &repository, "test").unwrap(),
         "feature-foo",
         "sanitize should replace / with -"
     );
 
     vars.insert("branch", "user\\task");
     assert_eq!(
-        expand_template(
-            "{{ branch | sanitize }}",
-            &vars,
-            false,
-            &worktree_map,
-            "test"
-        )
-        .unwrap(),
+        expand_template("{{ branch | sanitize }}", &vars, false, &repository, "test").unwrap(),
         "user-task",
         "sanitize should replace \\ with -"
     );
@@ -104,14 +84,7 @@ fn test_doc_sanitize_filter() {
     // Nested paths
     vars.insert("branch", "user/feature/task");
     assert_eq!(
-        expand_template(
-            "{{ branch | sanitize }}",
-            &vars,
-            false,
-            &worktree_map,
-            "test"
-        )
-        .unwrap(),
+        expand_template("{{ branch | sanitize }}", &vars, false, &repository, "test").unwrap(),
         "user-feature-task",
         "sanitize should handle multiple slashes"
     );
@@ -122,10 +95,10 @@ fn test_doc_sanitize_filter() {
 // "Transform to database-safe identifier ([a-z0-9_], max 63 chars)"
 // =============================================================================
 
-#[test]
-fn test_doc_sanitize_db_filter() {
+#[rstest]
+fn test_doc_sanitize_db_filter(repo: TestRepo) {
     let mut vars = HashMap::new();
-    let worktree_map = empty_map();
+    let repository = Repository::at(repo.root_path()).unwrap();
 
     // From docs: {{ branch | sanitize_db }} transforms to database-safe identifier
     // Output includes a 3-character hash suffix for uniqueness
@@ -134,7 +107,7 @@ fn test_doc_sanitize_db_filter() {
         "{{ branch | sanitize_db }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
@@ -149,7 +122,7 @@ fn test_doc_sanitize_db_filter() {
         "{{ branch | sanitize_db }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
@@ -164,7 +137,7 @@ fn test_doc_sanitize_db_filter() {
         "{{ branch | sanitize_db }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
@@ -179,7 +152,7 @@ fn test_doc_sanitize_db_filter() {
         "{{ branch | sanitize_db }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
@@ -194,7 +167,7 @@ fn test_doc_sanitize_db_filter() {
         "{{ branch | sanitize_db }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
@@ -203,7 +176,7 @@ fn test_doc_sanitize_db_filter() {
         "{{ branch | sanitize_db }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
@@ -213,9 +186,9 @@ fn test_doc_sanitize_db_filter() {
     );
 }
 
-#[test]
-fn test_doc_sanitize_db_truncation() {
-    let worktree_map = empty_map();
+#[rstest]
+fn test_doc_sanitize_db_truncation(repo: TestRepo) {
+    let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
 
     // Truncates to 63 characters (PostgreSQL limit)
@@ -225,7 +198,7 @@ fn test_doc_sanitize_db_truncation() {
         "{{ branch | sanitize_db }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
@@ -241,17 +214,17 @@ fn test_doc_sanitize_db_truncation() {
 // "Hash to port 10000-19999"
 // =============================================================================
 
-#[test]
-fn test_doc_hash_port_filter() {
+#[rstest]
+fn test_doc_hash_port_filter(repo: TestRepo) {
     let mut vars = HashMap::new();
     vars.insert("branch", "feature-foo");
-    let worktree_map = empty_map();
+    let repository = Repository::at(repo.root_path()).unwrap();
 
     let result = expand_template(
         "{{ branch | hash_port }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
@@ -267,7 +240,7 @@ fn test_doc_hash_port_filter() {
         "{{ branch | hash_port }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
@@ -279,8 +252,8 @@ fn test_doc_hash_port_filter() {
 // CRITICAL: These test the operator precedence issue from PR #373
 // =============================================================================
 
-#[test]
-fn test_doc_hash_port_concatenation_precedence() {
+#[rstest]
+fn test_doc_hash_port_concatenation_precedence(repo: TestRepo) {
     // From docs/content/tips-patterns.md:
     // "The `'db-' ~ branch` concatenation hashes differently than plain `branch`"
     //
@@ -289,14 +262,14 @@ fn test_doc_hash_port_concatenation_precedence() {
 
     let mut vars = HashMap::new();
     vars.insert("branch", "feature");
-    let worktree_map = empty_map();
+    let repository = Repository::at(repo.root_path()).unwrap();
 
     // With parentheses (correct, as documented)
     let with_parens = expand_template(
         "{{ ('db-' ~ branch) | hash_port }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
@@ -314,7 +287,7 @@ fn test_doc_hash_port_concatenation_precedence() {
         "{{ 'db-' ~ branch | hash_port }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
@@ -335,12 +308,12 @@ fn test_doc_hash_port_concatenation_precedence() {
     );
 }
 
-#[test]
-fn test_doc_hash_port_repo_branch_concatenation() {
+#[rstest]
+fn test_doc_hash_port_repo_branch_concatenation(repo: TestRepo) {
     // From docs/content/hook.md line 176:
     // dev = "npm run dev --port {{ (repo ~ '-' ~ branch) | hash_port }}"
 
-    let worktree_map = empty_map();
+    let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
     vars.insert("repo", "myapp");
     vars.insert("branch", "feature");
@@ -349,7 +322,7 @@ fn test_doc_hash_port_repo_branch_concatenation() {
         "{{ (repo ~ '-' ~ branch) | hash_port }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
@@ -368,12 +341,12 @@ fn test_doc_hash_port_repo_branch_concatenation() {
 // These test complete template strings from the documentation
 // =============================================================================
 
-#[test]
-fn test_doc_example_docker_postgres() {
+#[rstest]
+fn test_doc_example_docker_postgres(repo: TestRepo) {
     // From docs/content/tips-patterns.md lines 75-84:
     // docker run ... -p {{ ('db-' ~ branch) | hash_port }}:5432
 
-    let worktree_map = empty_map();
+    let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
     vars.insert("repo", "myproject");
     vars.insert("branch", "feature-auth");
@@ -383,7 +356,7 @@ fn test_doc_example_docker_postgres() {
   -p {{ ('db-' ~ branch) | hash_port }}:5432 \
   postgres:16"#;
 
-    let result = expand_template(template, &vars, false, &worktree_map, "test").unwrap();
+    let result = expand_template(template, &vars, false, &repository, "test").unwrap();
 
     // Check the container name uses sanitized branch
     assert!(
@@ -399,19 +372,19 @@ fn test_doc_example_docker_postgres() {
     );
 }
 
-#[test]
-fn test_doc_example_database_url() {
+#[rstest]
+fn test_doc_example_database_url(repo: TestRepo) {
     // From docs/content/tips-patterns.md lines 96-101:
     // DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ repo }}
 
-    let worktree_map = empty_map();
+    let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
     vars.insert("repo", "myproject");
     vars.insert("branch", "feature");
 
     let template = "DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ repo }}";
 
-    let result = expand_template(template, &vars, false, &worktree_map, "test").unwrap();
+    let result = expand_template(template, &vars, false, &repository, "test").unwrap();
 
     let expected_port = hash_port("db-feature");
     assert_eq!(
@@ -420,18 +393,18 @@ fn test_doc_example_database_url() {
     );
 }
 
-#[test]
-fn test_doc_example_dev_server() {
+#[rstest]
+fn test_doc_example_dev_server(repo: TestRepo) {
     // From docs/content/hook.md lines 168-170:
     // dev = "npm run dev -- --host {{ branch }}.lvh.me --port {{ branch | hash_port }}"
 
-    let worktree_map = empty_map();
+    let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
     vars.insert("branch", "feature-auth");
 
     let template = "npm run dev -- --host {{ branch }}.lvh.me --port {{ branch | hash_port }}";
 
-    let result = expand_template(template, &vars, false, &worktree_map, "test").unwrap();
+    let result = expand_template(template, &vars, false, &repository, "test").unwrap();
 
     let expected_port = hash_port("feature-auth");
     assert_eq!(
@@ -440,19 +413,19 @@ fn test_doc_example_dev_server() {
     );
 }
 
-#[test]
-fn test_doc_example_worktree_path_sanitize() {
+#[rstest]
+fn test_doc_example_worktree_path_sanitize(repo: TestRepo) {
     // From docs/content/tips-patterns.md line 217:
     // worktree-path = "{{ branch | sanitize }}"
 
-    let worktree_map = empty_map();
+    let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
     vars.insert("branch", "feature/user/auth");
     vars.insert("main_worktree", "/home/user/project");
 
     let template = "{{ main_worktree }}.{{ branch | sanitize }}";
 
-    let result = expand_template(template, &vars, false, &worktree_map, "test").unwrap();
+    let result = expand_template(template, &vars, false, &repository, "test").unwrap();
     assert_eq!(result, "/home/user/project.feature-user-auth");
 }
 
@@ -460,9 +433,9 @@ fn test_doc_example_worktree_path_sanitize() {
 // Edge Cases
 // =============================================================================
 
-#[test]
-fn test_doc_hash_port_empty_string() {
-    let worktree_map = empty_map();
+#[rstest]
+fn test_doc_hash_port_empty_string(repo: TestRepo) {
+    let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
     vars.insert("branch", "");
 
@@ -470,7 +443,7 @@ fn test_doc_hash_port_empty_string() {
         "{{ branch | hash_port }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
@@ -482,30 +455,24 @@ fn test_doc_hash_port_empty_string() {
     );
 }
 
-#[test]
-fn test_doc_sanitize_no_slashes() {
-    let worktree_map = empty_map();
+#[rstest]
+fn test_doc_sanitize_no_slashes(repo: TestRepo) {
+    let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
     vars.insert("branch", "simple-branch");
 
-    let result = expand_template(
-        "{{ branch | sanitize }}",
-        &vars,
-        false,
-        &worktree_map,
-        "test",
-    )
-    .unwrap();
+    let result =
+        expand_template("{{ branch | sanitize }}", &vars, false, &repository, "test").unwrap();
     assert_eq!(
         result, "simple-branch",
         "sanitize should be no-op without slashes"
     );
 }
 
-#[test]
-fn test_doc_combined_filters() {
+#[rstest]
+fn test_doc_combined_filters(repo: TestRepo) {
     // sanitize then hash_port (not currently documented, but should work)
-    let worktree_map = empty_map();
+    let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
     vars.insert("branch", "feature/auth");
 
@@ -513,7 +480,7 @@ fn test_doc_combined_filters() {
         "{{ branch | sanitize | hash_port }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
@@ -528,16 +495,16 @@ fn test_doc_combined_filters() {
 // worktree_path_of_branch Function
 // =============================================================================
 
-#[test]
-fn test_worktree_path_of_branch_function_registered() {
+#[rstest]
+fn test_worktree_path_of_branch_function_registered(repo: TestRepo) {
     // Test that worktree_path_of_branch function is callable and returns empty for nonexistent branch
-    let worktree_map = empty_map();
+    let repository = Repository::at(repo.root_path()).unwrap();
     let vars: HashMap<&str, &str> = HashMap::new();
     let result = expand_template(
         "{{ worktree_path_of_branch('nonexistent') }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     );
     assert_eq!(result.unwrap(), "");
@@ -562,9 +529,7 @@ fn test_worktree_path_of_branch_shell_escape(repo: TestRepo) {
         "test-branch",
     ]);
 
-    // Build worktree map from the repo (after worktree creation so it's included)
     let repository = Repository::at(repo.root_path()).unwrap();
-    let worktree_map = build_worktree_map(&repository);
     let vars: HashMap<&str, &str> = HashMap::new();
 
     // With shell_escape=false, path is returned literally
@@ -572,7 +537,7 @@ fn test_worktree_path_of_branch_shell_escape(repo: TestRepo) {
         "{{ worktree_path_of_branch('test-branch') }}",
         &vars,
         false,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
@@ -587,7 +552,7 @@ fn test_worktree_path_of_branch_shell_escape(repo: TestRepo) {
         "{{ worktree_path_of_branch('test-branch') }}",
         &vars,
         true,
-        &worktree_map,
+        &repository,
         "test",
     )
     .unwrap();
