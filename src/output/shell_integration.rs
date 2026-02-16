@@ -91,7 +91,7 @@ fn shell_integration_unsupported_shell(shell_path: &str) -> String {
     // e.g., "/bin/tcsh" -> "tcsh", "C:\...\tcsh.exe" -> "tcsh"
     let shell_name = extract_filename_from_path(shell_path).unwrap_or(shell_path);
     format!(
-        "Shell integration not yet supported for {shell_name} (supports bash, zsh, fish, PowerShell)"
+        "Shell integration not yet supported for {shell_name} (supports bash, zsh, fish, nu, PowerShell)"
     )
 }
 

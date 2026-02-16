@@ -1952,3 +1952,42 @@ fn test_nushell_auto_detection_creates_vendor_autoload(repo: TestRepo, temp_home
         content
     );
 }
+
+/// Test that `wt config show` detects nushell integration after install.
+///
+/// Verifies that `scan_for_detection_details` includes nushell vendor autoload
+/// paths in its scan, so nushell appears in diagnostic output.
+#[rstest]
+fn test_config_show_detects_nushell_integration(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // Install nushell integration
+    let mut install_cmd = wt_command();
+    repo.configure_wt_cmd(&mut install_cmd);
+    set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("SHELL", "/bin/nu");
+    install_cmd
+        .args(["config", "shell", "install", "nu", "--yes"])
+        .current_dir(repo.root_path());
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+
+    // Run `wt config show` and verify nushell integration is detected
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    repo.configure_mock_commands(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/nu");
+    cmd.args(["config", "show"]).current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute config show");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("wt.nu") || stderr.contains("nushell"),
+        "config show should detect nushell integration:\n{stderr}"
+    );
+}

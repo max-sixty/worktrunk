@@ -459,6 +459,9 @@ pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>,
         home.join(".config/fish/conf.d").join(format!("{cmd}.fish")),
     ];
 
+    // Add Nushell vendor autoload paths (check all candidate locations)
+    config_files.extend(super::config_paths(super::Shell::Nushell, cmd).unwrap_or_default());
+
     // Add PowerShell profiles
     config_files.extend(powershell_profile_paths(&home));
 
@@ -935,10 +938,17 @@ mod tests {
     // ------------------------------------------------------------------------
 
     #[test]
-    fn test_nushell_pattern() {
-        // Nushell's config_line uses `save --force` which contains "wt config shell init"
+    fn test_nushell_save_pattern() {
+        // Nushell's config_line uses `save --force` (detected via "save" keyword)
+        let line = "if (which wt | is-not-empty) { wt config shell init nu | save --force ($nu.default-config-dir | path join vendor/autoload/wt.nu) }";
+        assert_detects(line, "wt", "nushell save pattern (actual config line)");
+    }
+
+    #[test]
+    fn test_nushell_source_pattern() {
+        // Alternative nushell pattern using source (for manual setups)
         let line = "wt config shell init nu | source";
-        assert_detects(line, "wt", "nushell pattern");
+        assert_detects(line, "wt", "nushell source pattern");
     }
 
     // ------------------------------------------------------------------------
