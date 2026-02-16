@@ -136,7 +136,12 @@ fn test_expand_template_missing_variable() {
     let result = expand_template("echo {{ undefined }}", &vars, true, &map, "test");
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("undefined"));
+    let err = result.unwrap_err();
+    assert!(
+        err.message.contains("undefined value"),
+        "got: {}",
+        err.message
+    );
 }
 
 #[test]

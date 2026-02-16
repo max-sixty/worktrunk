@@ -48,4 +48,5 @@ exit_code: 1
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
-[31m✗[39m [31mFailed to expand argument template: Template syntax error: syntax error: unexpected end of input, expected end of variable block (in --execute argument:1)[39m
+[31m✗[39m [31mFailed to expand --execute argument: syntax error: unexpected end of input, expected end of variable block @ line 1[39m
+[107m [0m invalid={{ unclosed

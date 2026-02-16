@@ -40,5 +40,7 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mSkipping [1mfeature[22m due to template error:[39m
-[107m [0m Failed to format worktree path: Template render error: undefined value (in worktree-path:1)
+[31m✗[39m [31mFailed to expand worktree-path: undefined value @ line 1[39m
+[107m [0m {{ nonexistent_variable }}
+[2m↳[22m [2mAvailable variables: [90mbranch, main_worktree, repo, repo_path[39m[22m
 [2m○[22m No relocations performed; 1 skipped due to template error

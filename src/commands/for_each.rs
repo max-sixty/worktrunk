@@ -107,8 +107,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
             true,
             &worktree_map,
             "for-each command",
-        )
-        .map_err(|e| anyhow::anyhow!("Template expansion failed: {e}"))?;
+        )?;
 
         // Build JSON context for stdin
         let context_json = serde_json::to_string(&context_map)

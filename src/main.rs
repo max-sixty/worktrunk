@@ -825,6 +825,8 @@ fn main() {
             eprintln!("{}", err);
         } else if let Some(err) = e.downcast_ref::<worktrunk::git::HookErrorWithHint>() {
             eprintln!("{}", err);
+        } else if let Some(err) = e.downcast_ref::<worktrunk::config::TemplateExpandError>() {
+            eprintln!("{}", err);
         } else {
             // Anyhow error formatting:
             // - With context: show context as header, root cause in gutter

@@ -801,7 +801,7 @@ fn test_standalone_hook_post_remove_invalid_template(repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Failed to expand command template"),
+        stderr.contains("syntax error"),
         "Error should mention template expansion failure, got: {stderr}"
     );
 }

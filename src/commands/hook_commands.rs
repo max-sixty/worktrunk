@@ -711,5 +711,5 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
     // Use the standard template expansion (shell-escaped)
     // On any error, show both the template and error message
     worktrunk::config::expand_template(template, &vars, true, &worktree_map, "hook preview")
-        .unwrap_or_else(|err| format!("# Template error: {}\n{}", err, template))
+        .unwrap_or_else(|err| format!("# {}\n{}", err.message, template))
 }
