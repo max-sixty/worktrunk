@@ -167,6 +167,26 @@ impl ProjectConfig {
     }
 }
 
+use super::user::Merge;
+
+impl Merge for ProjectConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            hooks: self.hooks.merge_with(&other.hooks),
+            list: match (&self.list, &other.list) {
+                (_, Some(local)) => Some(local.clone()),
+                (Some(base), None) => Some(base.clone()),
+                (None, None) => None,
+            },
+            ci: match (&self.ci, &other.ci) {
+                (_, Some(local)) => Some(local.clone()),
+                (Some(base), None) => Some(base.clone()),
+                (None, None) => None,
+            },
+        }
+    }
+}
+
 /// Returns all valid top-level keys in project config, derived from the JsonSchema.
 ///
 /// This includes keys from ProjectConfig and HooksConfig (flattened).
@@ -457,5 +477,121 @@ post-create = "npm install"
         let config: ProjectConfig = toml::from_str(contents).unwrap();
         let cloned = config.clone();
         assert_eq!(config, cloned);
+    }
+
+    // ============================================================================
+    // Merge Tests
+    // ============================================================================
+
+    #[test]
+    fn test_merge_local_hooks_named_commands_are_merged() {
+        use super::super::user::Merge;
+        let base: ProjectConfig = toml::from_str(
+            r#"
+[pre-merge]
+test = "cargo test"
+"#,
+        )
+        .unwrap();
+        let local: ProjectConfig = toml::from_str(
+            r#"
+[pre-merge]
+lint = "cargo clippy"
+"#,
+        )
+        .unwrap();
+        let merged = base.merge_with(&local);
+        let pre_merge = merged.hooks.pre_merge.unwrap();
+        let commands = pre_merge.commands();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].name.as_deref(), Some("test"));
+        assert_eq!(commands[1].name.as_deref(), Some("lint"));
+    }
+
+    #[test]
+    fn test_merge_local_hooks_scalar_replaced() {
+        use super::super::user::Merge;
+        let base: ProjectConfig = toml::from_str(r#"pre-merge = "cargo test""#).unwrap();
+        let local: ProjectConfig =
+            toml::from_str(r#"pre-merge = "cargo test -- --skip slow""#).unwrap();
+        let merged = base.merge_with(&local);
+        let pre_merge = merged.hooks.pre_merge.unwrap();
+        let commands = pre_merge.commands();
+        assert_eq!(commands.len(), 2);
+    }
+
+    #[test]
+    fn test_merge_local_list_overrides() {
+        use super::super::user::Merge;
+        let base: ProjectConfig = toml::from_str(
+            r#"
+[list]
+url = "http://localhost:8080"
+"#,
+        )
+        .unwrap();
+        let local: ProjectConfig = toml::from_str(
+            r#"
+[list]
+url = "http://localhost:9090"
+"#,
+        )
+        .unwrap();
+        let merged = base.merge_with(&local);
+        assert_eq!(
+            merged.list.unwrap().url.as_deref(),
+            Some("http://localhost:9090")
+        );
+    }
+
+    #[test]
+    fn test_merge_local_ci_overrides() {
+        use super::super::user::Merge;
+        let base: ProjectConfig = toml::from_str(
+            r#"
+[ci]
+platform = "github"
+"#,
+        )
+        .unwrap();
+        let local: ProjectConfig = toml::from_str(
+            r#"
+[ci]
+platform = "gitlab"
+"#,
+        )
+        .unwrap();
+        let merged = base.merge_with(&local);
+        assert_eq!(merged.ci.unwrap().platform.as_deref(), Some("gitlab"));
+    }
+
+    #[test]
+    fn test_merge_local_only_adds_hooks() {
+        use super::super::user::Merge;
+        let base: ProjectConfig = toml::from_str("").unwrap();
+        let local: ProjectConfig = toml::from_str(r#"post-create = "npm install""#).unwrap();
+        let merged = base.merge_with(&local);
+        assert!(merged.hooks.post_create.is_some());
+    }
+
+    #[test]
+    fn test_merge_base_only_preserved() {
+        use super::super::user::Merge;
+        let base: ProjectConfig = toml::from_str(
+            r#"
+pre-merge = "cargo test"
+
+[list]
+url = "http://localhost:8080"
+"#,
+        )
+        .unwrap();
+        let local: ProjectConfig = toml::from_str("").unwrap();
+        let merged = base.merge_with(&local);
+        assert!(merged.hooks.pre_merge.is_some());
+        assert_eq!(
+            merged.list.unwrap().url.as_deref(),
+            Some("http://localhost:8080")
+        );
     }
 }
