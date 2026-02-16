@@ -9,6 +9,49 @@
 //! `workspace.as_any().downcast_ref::<Repository>()`.
 //!
 //! Use [`detect_vcs`] to determine which VCS manages a given path.
+//!
+//! # Reducing downcasts: planned `VcsOps` trait
+//!
+//! There are ~16 downcast sites across 11 files, producing 5 parallel handler
+//! files (`handle_merge_jj.rs`, `handle_switch_jj.rs`, etc.) with ~17% code
+//! duplication against their git counterparts. The goal is to eliminate these
+//! by introducing a `VcsOps` trait for operations where the *caller's control
+//! flow* differs between git and jj (not just the implementation).
+//!
+//! The approach: `fn ops(&self) -> Box<dyn VcsOps + '_>` on `Workspace`.
+//! This keeps `Box<dyn Workspace>` working (no GATs needed), costs one trivial
+//! heap allocation per call, and lets command handlers use a single code path:
+//!
+//! ```rust,ignore
+//! // Instead of downcasting:
+//! //   if let Some(repo) = ws.as_any().downcast_ref::<Repository>() { ... }
+//! //   else { handle_merge_jj(...) }
+//! //
+//! // Commands call through VcsOps:
+//! //   ws.ops().prepare_commit(path, mode)?;
+//! //   ws.ops().guarded_push(target, &|| ws.local_push(...))?;
+//! ```
+//!
+//! `VcsOps` methods cover structural differences in control flow:
+//!
+//! | Method           | Git                              | Jj            |
+//! |------------------|----------------------------------|---------------|
+//! | `prepare_commit` | stage files + warn untracked     | no-op         |
+//! | `guarded_push`   | stash target worktree, push, restore | just push |
+//!
+//! Methods where only the *implementation* differs (not the caller's flow)
+//! stay on `Workspace` directly — e.g. `commit()`, `rebase_onto()`,
+//! `squash_commits()`.
+//!
+//! Migration is incremental: add `ops()` + `VcsOps` impls (additive), convert
+//! one command at a time, delete parallel handler files as each is unified,
+//! remove `as_any()` once no downcasts remain.
+//!
+//! Progress so far: `prepare_commit` is on `Workspace` directly (the simplest
+//! case — no control flow difference, just git stages / jj no-ops). The next
+//! step is introducing the `VcsOps` trait with `ops()` and moving
+//! `prepare_commit` there, then adding `guarded_push` to unify the merge
+//! command's stash-push-restore pattern.
 
 pub(crate) mod detect;
 mod git;
