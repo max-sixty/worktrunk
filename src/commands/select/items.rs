@@ -494,6 +494,81 @@ mod tests {
     }
 
     #[test]
+    fn test_compute_summary_preview_main_worktree() {
+        use crate::commands::list::model::{ItemKind, WorktreeData};
+
+        let mut item = ListItem::new_branch("abc123".to_string(), "main".to_string());
+        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            is_main: true,
+            ..Default::default()
+        }));
+
+        let output = WorktreeSkimItem::compute_summary_preview(&item);
+        assert!(output.contains("No changes to summarize on main"));
+    }
+
+    #[test]
+    fn test_compute_summary_preview_feature_branch() {
+        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+
+        let output = WorktreeSkimItem::compute_summary_preview(&item);
+        assert!(output.contains("Generating summary..."));
+        assert!(output.contains("Press 5 again"));
+    }
+
+    #[test]
+    fn test_compute_preview_summary_mode() {
+        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+
+        let output = WorktreeSkimItem::compute_preview(&item, PreviewMode::Summary, 80, 40);
+        assert!(output.contains("Generating summary..."));
+    }
+
+    #[test]
+    fn test_preview_for_mode_summary_cache_hit() {
+        let item = Arc::new(ListItem::new_branch(
+            "abc123".to_string(),
+            "feature".to_string(),
+        ));
+        let preview_cache: PreviewCache = Arc::new(DashMap::new());
+        preview_cache.insert(
+            ("feature".to_string(), PreviewMode::Summary),
+            "Add auth module\n\nImplements JWT-based authentication.".to_string(),
+        );
+
+        let skim_item = WorktreeSkimItem {
+            display_text: String::new(),
+            display_text_with_ansi: String::new(),
+            branch_name: "feature".to_string(),
+            item,
+            preview_cache,
+        };
+
+        let output = skim_item.preview_for_mode(PreviewMode::Summary, 80, 40);
+        assert!(output.contains("Add auth module"));
+    }
+
+    #[test]
+    fn test_preview_for_mode_summary_cache_miss() {
+        let item = Arc::new(ListItem::new_branch(
+            "abc123".to_string(),
+            "feature".to_string(),
+        ));
+        let preview_cache: PreviewCache = Arc::new(DashMap::new());
+
+        let skim_item = WorktreeSkimItem {
+            display_text: String::new(),
+            display_text_with_ansi: String::new(),
+            branch_name: "feature".to_string(),
+            item,
+            preview_cache,
+        };
+
+        let output = skim_item.preview_for_mode(PreviewMode::Summary, 80, 40);
+        assert!(output.contains("Generating summary..."));
+    }
+
+    #[test]
     fn test_render_preview_tabs_ansi_codes() {
         // Test that ANSI escape sequences properly reset to prevent style bleeding
         let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::WorkingTree);

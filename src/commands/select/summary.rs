@@ -144,23 +144,26 @@ fn hash_diff(diff: &str) -> u64 {
 
 /// Compute the combined diff for a branch (branch diff + working tree diff).
 ///
-/// Returns None if there's nothing to summarize (default branch with no changes).
+/// Returns None if there's nothing to summarize (default branch with no changes,
+/// or no default branch known and no working tree diff available).
 fn compute_combined_diff(item: &ListItem, repo: &Repository) -> Option<CombinedDiff> {
     let branch = item.branch_name();
-    let default_branch = repo.default_branch()?;
+    let default_branch = repo.default_branch();
 
     let mut diff = String::new();
     let mut stat = String::new();
 
-    // Branch diff: what's ahead of default branch
-    let is_default_branch = branch == default_branch;
-    if !is_default_branch {
-        let merge_base = format!("{}...{}", default_branch, item.head());
-        if let Ok(branch_stat) = repo.run_command(&["diff", &merge_base, "--stat"]) {
-            stat.push_str(&branch_stat);
-        }
-        if let Ok(branch_diff) = repo.run_command(&["diff", &merge_base]) {
-            diff.push_str(&branch_diff);
+    // Branch diff: what's ahead of default branch (skipped if default branch unknown)
+    if let Some(ref default_branch) = default_branch {
+        let is_default_branch = branch == *default_branch;
+        if !is_default_branch {
+            let merge_base = format!("{}...{}", default_branch, item.head());
+            if let Ok(branch_stat) = repo.run_command(&["diff", &merge_base, "--stat"]) {
+                stat.push_str(&branch_stat);
+            }
+            if let Ok(branch_diff) = repo.run_command(&["diff", &merge_base]) {
+                diff.push_str(&branch_diff);
+            }
         }
     }
 
@@ -362,6 +365,50 @@ mod tests {
     }
 
     #[test]
+    fn test_write_cache_handles_unwritable_path() {
+        let (_dir, repo) = temp_repo();
+        // Block cache directory creation by placing a file where the directory should be
+        let cache_parent = repo.git_common_dir().join("wt-cache");
+        fs::write(&cache_parent, "blocker").unwrap();
+
+        let cached = CachedSummary {
+            summary: "test".to_string(),
+            diff_hash: 1,
+            branch: "main".to_string(),
+        };
+        // Should not panic — just logs and returns
+        write_cache(&repo, "main", &cached);
+        assert!(read_cache(&repo, "main").is_none());
+
+        // Cleanup: remove the blocker file so TempDir cleanup works
+        fs::remove_file(&cache_parent).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_cache_handles_write_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_dir, repo) = temp_repo();
+        let cache_path = cache_dir(&repo);
+        fs::create_dir_all(&cache_path).unwrap();
+        // Make directory read-only so file writes fail
+        fs::set_permissions(&cache_path, fs::Permissions::from_mode(0o444)).unwrap();
+
+        let cached = CachedSummary {
+            summary: "test".to_string(),
+            diff_hash: 1,
+            branch: "main".to_string(),
+        };
+        // Should not panic — just logs and returns
+        write_cache(&repo, "main", &cached);
+        assert!(read_cache(&repo, "main").is_none());
+
+        // Restore permissions so TempDir cleanup works
+        fs::set_permissions(&cache_path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
     fn test_cache_invalidation_by_hash() {
         let (_dir, repo) = temp_repo();
         let branch = "main";
@@ -514,6 +561,46 @@ mod tests {
         assert!(result.is_some());
         let combined = result.unwrap();
         assert!(combined.diff.contains("new.txt"));
+    }
+
+    #[test]
+    fn test_compute_combined_diff_no_default_branch_with_worktree_changes() {
+        // Repo without default-branch config and exotic branch names that
+        // infer_default_branch_locally() won't detect (it checks "main",
+        // "master", "develop", "trunk"). This ensures default_branch() returns
+        // None, exercising the code path where branch diff is skipped.
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--initial-branch=init-branch"]);
+        fs::write(dir.path().join("README.md"), "# Project\n").unwrap();
+        git(dir.path(), &["add", "README.md"]);
+        git(dir.path(), &["commit", "-m", "initial commit"]);
+        git(dir.path(), &["checkout", "-b", "feature"]);
+        git(
+            dir.path(),
+            &["commit", "--allow-empty", "-m", "feature commit"],
+        );
+
+        // Add uncommitted changes
+        fs::write(dir.path().join("wip.txt"), "work in progress\n").unwrap();
+        git(dir.path(), &["add", "wip.txt"]);
+
+        let head = git_output(dir.path(), &["rev-parse", "HEAD"]);
+        let repo = Repository::at(dir.path()).unwrap();
+
+        // Verify default_branch() actually returns None with these branch names
+        assert!(
+            repo.default_branch().is_none(),
+            "expected no default branch with exotic branch names"
+        );
+
+        let item = feature_item(&head, dir.path());
+        let result = compute_combined_diff(&item, &repo);
+        assert!(
+            result.is_some(),
+            "should include working tree diff even without default branch"
+        );
+        let combined = result.unwrap();
+        assert!(combined.diff.contains("wip.txt"));
     }
 
     #[test]
