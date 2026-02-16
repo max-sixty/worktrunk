@@ -78,20 +78,15 @@ if ($cmd -and $cmd.CommandType -eq 'Function') {{
 /// The fix uses `$args` (simple function automatic variable) for transparent passthrough.
 #[test]
 fn test_powershell_wrapper_passes_short_flags_through() {
-    // Create a mock binary that prints each argument on its own line
+    // Create a .ps1 mock that prints each argument on its own line.
+    // Using .ps1 (not a shell script) so this works on Windows too.
     let temp_dir = tempfile::tempdir().unwrap();
-    let mock_bin = temp_dir.path().join("mock-wt");
+    let mock_bin = temp_dir.path().join("mock-wt.ps1");
     std::fs::write(
         &mock_bin,
-        "#!/bin/sh\nfor arg; do printf '%s\\n' \"$arg\"; done\n",
+        "foreach ($a in $args) { Write-Output $a }\n",
     )
     .unwrap();
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&mock_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
 
     let init = ShellInit::with_prefix(Shell::PowerShell, "wt".to_string());
     let wrapper = init.generate().unwrap();
