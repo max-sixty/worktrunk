@@ -11,3 +11,6 @@ Example in ~/.config/worktrunk/config.toml:
 
 [commit.generation]
 command = "llm -m haiku"
+
+[list]
+summary = true
