@@ -87,7 +87,7 @@ impl UserConfig {
         }
     }
 
-    /// Update the [projects] section in the document.
+    /// Update the \[projects\] section in the document.
     fn update_projects_section(&self, doc: &mut toml_edit::DocumentMut) {
         // Ensure projects table exists
         if !doc.contains_key("projects") {

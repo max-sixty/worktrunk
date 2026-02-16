@@ -2,9 +2,9 @@
 //!
 //! Scans config files for deprecated patterns and generates migration files:
 //! - Deprecated template variables (repo_root → repo_path, etc.)
-//! - Deprecated config sections ([commit-generation] → [commit.generation])
+//! - Deprecated config sections (\[commit-generation\] → \[commit.generation\])
 //! - Deprecated fields (args merged into command)
-//! - Deprecated approved-commands in [projects] (moved to approvals.toml)
+//! - Deprecated approved-commands in \[projects\] (moved to approvals.toml)
 //!
 //! Migration file write behavior:
 //! - First time a deprecation is detected: file is written automatically
@@ -402,11 +402,11 @@ pub fn migrate_commit_generation_sections(content: &str) -> String {
     }
 }
 
-/// Remove `approved-commands` from all `[projects."..."]` sections.
+/// Remove `approved-commands` from all `\[projects."..."\]` sections.
 ///
 /// For each project section, removes the `approved-commands` key.
 /// If a project section becomes empty after removal, removes the project entry.
-/// If the `[projects]` table becomes empty, removes it.
+/// If the `\[projects\]` table becomes empty, removes it.
 pub fn remove_approved_commands_from_config(content: &str) -> String {
     let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
         return content.to_string();
@@ -544,7 +544,7 @@ impl DeprecationInfo {
 /// - Deprecated template variables (repo_root → repo_path, etc.)
 /// - Deprecated [commit-generation] sections → [commit.generation]
 /// - Deprecated args field (merged into command)
-/// - Deprecated approved-commands in [projects] (moved to approvals.toml)
+/// - Deprecated approved-commands in \[projects\] (moved to approvals.toml)
 ///
 /// If deprecations are found and `warn_and_migrate` is true:
 /// 1. Emits warnings listing the deprecated patterns
