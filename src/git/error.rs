@@ -120,42 +120,25 @@ pub struct SwitchSuggestionCtx {
 impl SwitchSuggestionCtx {
     /// Append extra flags and trailing args to a suggested command string.
     ///
-    /// Handles `--` separators correctly: extra flags are inserted before any
-    /// existing `--` (so they're parsed as flags, not positional args), and
-    /// trailing args go after all existing args.
+    /// Clap's `#[arg(last = true)]` on `execute_args` means `--` always routes
+    /// to execute_args, so a dash-prefixed branch can't coexist with `--execute`
+    /// via the CLI. The suggested command therefore never has a pre-existing `--`
+    /// separator when this context is applied.
     fn apply(&self, cmd: String) -> String {
-        if let Some(separator_pos) = cmd.find(" -- ") {
-            // Base command has a -- separator (dash-prefixed branch).
-            // Insert extra flags before --, append trailing args after existing args.
-            let (before_sep, after_sep) = cmd.split_at(separator_pos);
-            let mut result = before_sep.to_string();
-            // Flags are pre-escaped at construction (handle_switch.rs uses shlex::try_quote)
-            for flag in &self.extra_flags {
-                result.push(' ');
-                result.push_str(flag);
-            }
-            result.push_str(after_sep);
+        let mut result = cmd;
+        // Flags are pre-escaped at construction (handle_switch.rs uses shlex::try_quote)
+        for flag in &self.extra_flags {
+            result.push(' ');
+            result.push_str(flag);
+        }
+        if !self.trailing_args.is_empty() {
+            result.push_str(" --");
             for arg in &self.trailing_args {
                 result.push(' ');
                 result.push_str(&escape(Cow::Borrowed(arg.as_str())));
             }
-            result
-        } else {
-            // No -- separator. Append flags, then -- + trailing args if any.
-            let mut result = cmd;
-            for flag in &self.extra_flags {
-                result.push(' ');
-                result.push_str(flag);
-            }
-            if !self.trailing_args.is_empty() {
-                result.push_str(" --");
-                for arg in &self.trailing_args {
-                    result.push(' ');
-                    result.push_str(&escape(Cow::Borrowed(arg.as_str())));
-                }
-            }
-            result
         }
+        result
     }
 }
 
