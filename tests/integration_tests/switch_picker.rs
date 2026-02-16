@@ -508,7 +508,8 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
         &["switch"],
         repo.root_path(),
         &env_vars,
-        &[], // No inputs before abort
+        // Wait for items to render before capturing (prevents flakiness on slow CI)
+        &[("", Some("feature-two"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
@@ -542,7 +543,10 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
         &["switch", "--branches"],
         repo.root_path(),
         &env_vars,
-        &[], // No inputs before abort
+        // Wait for branch items to render before capturing. On macOS CI under
+        // heavy load, skim may show the prompt and header before item rows,
+        // causing wait_for_stable to capture too early (just the header).
+        &[("", Some("orphan-branch"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
