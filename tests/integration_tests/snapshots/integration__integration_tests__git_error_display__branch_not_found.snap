@@ -3,4 +3,4 @@ source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
 [31m✗[39m [31mNo branch named [1mnonexistent[22m[39m
-[2m↳[22m [2mTo create a new branch, run [90mwt switch nonexistent --create[39m; to list branches, run [90mwt list --branches --remotes[39m[22m
+[2m↳[22m [2mTo create a new branch, run [90mwt switch --create nonexistent[39m; to list branches, run [90mwt list --branches --remotes[39m[22m

@@ -211,7 +211,6 @@ pub enum ShowConfig {
         cli_branches: bool,
         cli_remotes: bool,
         cli_full: bool,
-        raw_timeout: Option<std::time::Duration>,
     },
 }
 
@@ -230,7 +229,6 @@ pub fn collect(
     show_config: ShowConfig,
     show_progress: bool,
     render_table: bool,
-    config: &worktrunk::config::UserConfig,
     skip_expensive_for_stale: bool,
 ) -> anyhow::Result<Option<super::model::ListData>> {
     use super::progressive_table::ProgressiveTable;
@@ -276,7 +274,6 @@ pub fn collect(
     let worktrees_cell: OnceCell<anyhow::Result<Vec<WorktreeInfo>>> = OnceCell::new();
     let default_branch_cell: OnceCell<Option<String>> = OnceCell::new();
     let url_template_cell: OnceCell<Option<String>> = OnceCell::new();
-    let project_id_cell: OnceCell<Option<String>> = OnceCell::new();
     let local_branches_cell: OnceCell<anyhow::Result<Vec<(String, String)>>> = OnceCell::new();
     let remote_branches_cell: OnceCell<anyhow::Result<Vec<(String, String)>>> = OnceCell::new();
 
@@ -295,10 +292,10 @@ pub fn collect(
             let _ = url_template_cell.set(repo.url_template());
         });
         s.spawn(|_| {
-            // Warm project_identifier cache — used by is_worktree_at_expected_path
-            // (via compute_worktree_path) and config resolution. Running this here
+            // Warm project_identifier + user config caches — used by
+            // is_worktree_at_expected_path and config resolution. Running this here
             // avoids sequential git commands later on the critical path.
-            let _ = project_id_cell.set(repo.project_identifier().ok());
+            let _ = repo.config();
         });
         s.spawn(|_| {
             if fetch_branches {
@@ -322,9 +319,8 @@ pub fn collect(
     }
     let default_branch = default_branch_cell.into_inner().unwrap();
     let url_template = url_template_cell.into_inner().unwrap();
-    let project_id = project_id_cell.into_inner().unwrap();
 
-    // Resolve show flags: merge CLI overrides with config (now that project_id is available)
+    // Resolve show flags: merge CLI overrides with config (warmed in parallel phase)
     let (show_branches, show_remotes, skip_tasks, command_timeout) = match show_config {
         ShowConfig::Resolved {
             show_branches,
@@ -336,12 +332,11 @@ pub fn collect(
             cli_branches,
             cli_remotes,
             cli_full,
-            raw_timeout,
         } => {
-            let resolved = config.resolved(project_id.as_deref());
-            let show_branches = cli_branches || resolved.list.branches();
-            let show_remotes = cli_remotes || resolved.list.remotes();
-            let show_full = cli_full || resolved.list.full();
+            let config = repo.config();
+            let show_branches = cli_branches || config.list.branches();
+            let show_remotes = cli_remotes || config.list.remotes();
+            let show_full = cli_full || config.list.full();
             let skip_tasks: HashSet<TaskKind> = if show_full {
                 HashSet::new()
             } else {
@@ -353,8 +348,16 @@ pub fn collect(
                 .into_iter()
                 .collect()
             };
-            // --full disables timeout for complete data collection
-            let command_timeout = if show_full { None } else { raw_timeout };
+            // Resolve timeout from merged config (--full disables timeout)
+            let command_timeout = if show_full {
+                None
+            } else {
+                config
+                    .list
+                    .timeout_ms()
+                    .filter(|&ms| ms > 0) // 0 means "no timeout" (explicit disable)
+                    .map(std::time::Duration::from_millis)
+            };
             (show_branches, show_remotes, skip_tasks, command_timeout)
         }
     };
@@ -476,7 +479,8 @@ pub fn collect(
             let is_previous = false;
 
             // Check if worktree is at its expected path based on config template
-            let branch_worktree_mismatch = !is_worktree_at_expected_path(wt, repo, config);
+            let branch_worktree_mismatch =
+                !is_worktree_at_expected_path(wt, repo, repo.user_config());
 
             let mut worktree_data =
                 WorktreeData::from_worktree(wt, is_main, is_current, is_previous);

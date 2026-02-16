@@ -30,6 +30,7 @@ info:
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -40,4 +41,4 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mNo branch named [1m__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked6[22m[39m
-[2m↳[22m [2mTo create a new branch, run [90mwt switch '__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked6' --create[39m; to list branches, run [90mwt list --branches --remotes[39m[22m
+[2m↳[22m [2mTo create a new branch, run [90mwt switch --create '__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked6'[39m; to list branches, run [90mwt list --branches --remotes[39m[22m

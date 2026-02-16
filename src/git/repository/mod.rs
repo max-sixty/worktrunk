@@ -33,7 +33,7 @@ use anyhow::{Context, bail};
 
 use dunce::canonicalize;
 
-use crate::config::ProjectConfig;
+use crate::config::{ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
 use super::{DefaultBranchName, GitError, LineDiff, WorktreeInfo};
@@ -114,6 +114,12 @@ pub(super) struct RepoCache {
     pub(super) project_identifier: OnceCell<String>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
+    /// User config (raw, as loaded from disk).
+    /// Lazily loaded on first access.
+    pub(super) user_config: OnceCell<UserConfig>,
+    /// Resolved user config (global merged with per-project overrides, defaults applied).
+    /// Lazily loaded on first access via `Repository::config()`.
+    pub(super) resolved_config: OnceCell<ResolvedConfig>,
     /// Sparse checkout paths (empty if not a sparse checkout)
     pub(super) sparse_checkout_paths: OnceCell<Vec<String>>,
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
@@ -236,6 +242,32 @@ impl Repository {
             discovery_path,
             git_common_dir,
             cache: Arc::new(RepoCache::default()),
+        })
+    }
+
+    /// Resolved user config (global merged with per-project overrides, defaults applied).
+    ///
+    /// Lazily loads `UserConfig` and resolves it using this repository's project identifier.
+    /// Cached for the lifetime of the repository (shared across clones via Arc).
+    ///
+    /// Falls back to default config if loading fails (e.g., no config file).
+    pub fn config(&self) -> &ResolvedConfig {
+        self.cache.resolved_config.get_or_init(|| {
+            let project_id = self.project_identifier().ok();
+            self.user_config().resolved(project_id.as_deref())
+        })
+    }
+
+    /// Raw user config (as loaded from disk, before project-specific resolution).
+    ///
+    /// Prefer [`config()`](Self::config) for behavior settings. This is only needed
+    /// for operations that require the full `UserConfig` (e.g., path template formatting,
+    /// approval state, hook resolution).
+    pub fn user_config(&self) -> &UserConfig {
+        self.cache.user_config.get_or_init(|| {
+            UserConfig::load()
+                .inspect_err(|err| log::warn!("Failed to load user config, using defaults: {err}"))
+                .unwrap_or_default()
         })
     }
 
