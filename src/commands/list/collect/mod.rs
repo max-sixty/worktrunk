@@ -331,6 +331,8 @@ pub fn collect(
     // (skeleton shows placeholder gutter, actual symbols appear when data loads)
 
     // Phase 3: Batch fetch timestamps (needs all SHAs from worktrees + branches)
+    // Filter out null OIDs from unborn branches — a single null OID would cause
+    // `git show` to fail for ALL shas in the batch.
     let all_shas: Vec<&str> = worktrees
         .iter()
         .map(|wt| wt.head.as_str())
@@ -340,6 +342,7 @@ pub fn collect(
                 .map(|(_, sha)| sha.as_str()),
         )
         .chain(remote_branches.iter().map(|(_, sha)| sha.as_str()))
+        .filter(|sha| *sha != worktrunk::git::NULL_OID)
         .collect();
     let timestamps = repo.commit_timestamps(&all_shas).unwrap_or_default();
 

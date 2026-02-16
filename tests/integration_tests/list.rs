@@ -2928,3 +2928,41 @@ fn test_list_nested_worktree_json_is_current(mut repo: TestRepo) {
         "Parent worktree 'main' should NOT be marked as current"
     );
 }
+
+/// Tests that `wt list` handles a freshly `git init`-ed repo with no commits.
+///
+/// Empty repos have the null OID for HEAD and no branches. Without proper handling,
+/// this causes task failures (git operations on null OID), garbage data (00000000, 56y),
+/// and spurious "default branch does not exist locally" warnings.
+#[test]
+fn test_list_empty_repo() {
+    let repo = TestRepo::empty();
+    // Pre-set default branch cache so the `is_unborn_head_branch` validation path is exercised
+    repo.run_git(&["config", "worktrunk.default-branch", "main"]);
+    // Should show the branch with empty commit columns and no errors
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
+}
+
+/// Tests JSON output for an empty repo (no commits).
+#[test]
+fn test_list_empty_repo_json() {
+    let repo = TestRepo::empty();
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt list --format=json should succeed"
+    );
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json.len(), 1, "Should have one worktree entry");
+
+    let item = &json[0];
+    assert_eq!(item["branch"], "main");
+    assert_eq!(item["commit"]["sha"], "");
+    assert_eq!(item["commit"]["short_sha"], "");
+}
