@@ -17,7 +17,7 @@ use super::sections::CommitGenerationConfig;
 ///
 /// Uses a `.lock` file alongside the config file to coordinate between processes.
 /// The lock is released when the returned guard is dropped.
-pub(super) fn acquire_config_lock(
+pub(crate) fn acquire_config_lock(
     config_path: &std::path::Path,
 ) -> Result<std::fs::File, ConfigError> {
     let lock_path = config_path.with_extension("toml.lock");
@@ -71,48 +71,6 @@ impl UserConfig {
         Ok(())
     }
 
-    /// Check if a command is approved for the given project.
-    ///
-    /// Normalizes both the stored approvals and the incoming command to canonical
-    /// variable names before comparing. This allows approvals to match regardless
-    /// of whether they were saved with deprecated variable names (e.g., `repo_root`)
-    /// or current names (e.g., `repo_path`).
-    pub fn is_command_approved(&self, project: &str, command: &str) -> bool {
-        let normalized_command = crate::config::deprecation::normalize_template_vars(command);
-        self.projects
-            .get(project)
-            .map(|p| {
-                p.approved_commands.iter().any(|c| {
-                    crate::config::deprecation::normalize_template_vars(c) == normalized_command
-                })
-            })
-            .unwrap_or(false)
-    }
-
-    /// Add an approved command and save to config file.
-    ///
-    /// Acquires lock, reloads from disk, adds command if not present, and saves.
-    /// Pass `None` for default config path, or `Some(path)` for testing.
-    pub fn approve_command(
-        &mut self,
-        project: String,
-        command: String,
-        config_path: Option<&std::path::Path>,
-    ) -> Result<(), ConfigError> {
-        self.with_locked_mutation(config_path, |config| {
-            if config.is_command_approved(&project, &command) {
-                return false;
-            }
-            config
-                .projects
-                .entry(project)
-                .or_default()
-                .approved_commands
-                .push(command);
-            true
-        })
-    }
-
     /// Reload only the projects section from disk, preserving other in-memory state
     ///
     /// This replaces the in-memory projects with the authoritative disk state,
@@ -155,64 +113,6 @@ impl UserConfig {
         self.projects = disk_config.projects;
 
         Ok(())
-    }
-
-    /// Revoke an approved command and save to config file.
-    ///
-    /// Acquires lock, reloads from disk, removes command if present, and saves.
-    /// Pass `None` for default config path, or `Some(path)` for testing.
-    pub fn revoke_command(
-        &mut self,
-        project: &str,
-        command: &str,
-        config_path: Option<&std::path::Path>,
-    ) -> Result<(), ConfigError> {
-        let project = project.to_string();
-        let command = command.to_string();
-        self.with_locked_mutation(config_path, |config| {
-            let Some(project_config) = config.projects.get_mut(&project) else {
-                return false;
-            };
-            let len_before = project_config.approved_commands.len();
-            project_config.approved_commands.retain(|c| c != &command);
-            let changed = len_before != project_config.approved_commands.len();
-
-            // Only remove project entry if it has no other settings
-            if project_config.is_empty() {
-                config.projects.remove(&project);
-            }
-            changed
-        })
-    }
-
-    /// Remove all approvals for a project and save to config file.
-    ///
-    /// Clears only the approved-commands list, preserving other per-project settings
-    /// like worktree-path, commit-generation, list, commit, and merge configs.
-    /// The project entry is removed only if all settings are empty after clearing.
-    ///
-    /// Acquires lock, reloads from disk, clears approvals, and saves.
-    /// Pass `None` for default config path, or `Some(path)` for testing.
-    pub fn revoke_project(
-        &mut self,
-        project: &str,
-        config_path: Option<&std::path::Path>,
-    ) -> Result<(), ConfigError> {
-        let project = project.to_string();
-        self.with_locked_mutation(config_path, |config| {
-            let Some(project_config) = config.projects.get_mut(&project) else {
-                return false;
-            };
-            if project_config.approved_commands.is_empty() {
-                return false; // Nothing to clear
-            }
-            project_config.approved_commands.clear();
-            // Only remove project entry if it has no other settings
-            if project_config.is_empty() {
-                config.projects.remove(&project);
-            }
-            true
-        })
     }
 
     /// Set `skip-shell-integration-prompt = true` and save.

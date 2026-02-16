@@ -428,11 +428,9 @@ pub struct UserProjectOverrides {
 impl UserProjectOverrides {
     /// Returns true if all fields are empty/None (no settings configured).
     ///
-    /// Used to determine if a project entry can be removed from config after
-    /// clearing approvals.
+    /// Approvals are stored in `approvals.toml`, so `approved_commands` is only
+    /// kept here for backward-compatible parsing and migration — not checked.
     pub fn is_empty(&self) -> bool {
-        self.approved_commands.is_empty()
-            && self.commit_generation.is_none()
-            && self.overrides.is_empty()
+        self.commit_generation.is_none() && self.overrides.is_empty()
     }
 }

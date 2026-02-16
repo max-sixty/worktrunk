@@ -4,7 +4,7 @@
 
 mod accessors;
 mod merge;
-mod mutation;
+pub(crate) mod mutation;
 mod path;
 mod persistence;
 mod resolved;
