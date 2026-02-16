@@ -32,6 +32,21 @@ const EXPENSIVE_TASKS: &[TaskKind] = &[
     TaskKind::MergeTreeConflicts, // git merge-tree simulation
 ];
 
+/// Tasks that require a valid commit SHA. Skipped for unborn branches (no commits yet).
+/// Without this, these tasks would fail on the null OID and show as errors in the table.
+const COMMIT_TASKS: &[TaskKind] = &[
+    TaskKind::CommitDetails,
+    TaskKind::AheadBehind,
+    TaskKind::CommittedTreesMatch,
+    TaskKind::HasFileChanges,
+    TaskKind::IsAncestor,
+    TaskKind::BranchDiff,
+    TaskKind::MergeTreeConflicts,
+    TaskKind::WouldMergeAdd,
+    TaskKind::CiStatus,
+    TaskKind::Upstream,
+];
+
 // ============================================================================
 // Work Item Dispatch (for flat parallelism)
 // ============================================================================
@@ -185,6 +200,8 @@ pub fn work_items_for_worktree(
         .as_deref()
         .is_some_and(|b| options.stale_branches.contains(b));
 
+    let has_commits = wt.has_commits();
+
     let mut items = Vec::with_capacity(15);
 
     // Helper to add a work item and register the expected result
@@ -217,6 +234,10 @@ pub fn work_items_for_worktree(
         }
         // Skip expensive tasks for stale branches (far behind default branch)
         if is_stale && EXPENSIVE_TASKS.contains(&kind) {
+            continue;
+        }
+        // Skip commit-dependent tasks for unborn branches (no commits yet)
+        if !has_commits && COMMIT_TASKS.contains(&kind) {
             continue;
         }
         add_item(kind);
@@ -271,6 +292,8 @@ pub fn work_items_for_branch(
     // Check if this branch is stale and should skip expensive tasks.
     let is_stale = options.stale_branches.contains(branch_name);
 
+    let has_commits = commit_sha != worktrunk::git::NULL_OID;
+
     let mut items = Vec::with_capacity(11);
 
     // Helper to add a work item and register the expected result
@@ -299,6 +322,10 @@ pub fn work_items_for_branch(
         }
         // Skip expensive tasks for stale branches (far behind default branch)
         if is_stale && EXPENSIVE_TASKS.contains(&kind) {
+            continue;
+        }
+        // Skip commit-dependent tasks for unborn branches (no commits yet)
+        if !has_commits && COMMIT_TASKS.contains(&kind) {
             continue;
         }
         add_item(kind);
