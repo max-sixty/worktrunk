@@ -25,9 +25,6 @@ jobs:
       github.event.pull_request.draft == false &&
       github.event.pull_request.user.type != 'Bot'
     runs-on: ubuntu-24.04
-    # Scoped environment — only CLAUDE_CODE_OAUTH_TOKEN is needed.
-    # Publishing tokens etc. are not accessible.
-    environment: claude-review
     permissions:
       contents: write
       pull-requests: write

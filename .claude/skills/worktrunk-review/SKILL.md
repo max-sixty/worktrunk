@@ -61,9 +61,8 @@ Then read CLAUDE.md (project root) to understand project-specific conventions.
   changes, or comment). Never call `gh pr review` multiple times.
 - **Don't use `gh pr comment`** — the CI action manages the summary comment
   (sticky comment from Claude's stdout).
-- Only submit a formal review when **approving** or when there are **inline
-  findings**. If the PR is fine but doesn't need approval yet, just write your
-  summary to stdout (it becomes the sticky comment).
+- Always either **approve** or **comment** — never leave a PR without a
+  verdict. Don't use "request changes" (that implies authority to block).
 - **Before approving**, check if the bot already approved this revision:
   ```bash
   APPROVED_SHA=$(gh pr view <number> --json reviews --jq '[.reviews[] | select(.state == "APPROVED") | .commit.oid] | last')
@@ -75,23 +74,23 @@ Then read CLAUDE.md (project root) to understand project-specific conventions.
 
 When the PR has no issues worth raising:
 
-1. Approve with a brief summary (1-2 sentences):
+1. Approve with no body — the approval itself is the signal:
    ```bash
-   gh pr review <number> --approve --body "Clean implementation of X. Tests cover the new behavior well."
+   gh pr review <number> --approve
    ```
 2. Add a thumbs-up reaction to the PR:
    ```bash
    gh api repos/{owner}/{repo}/issues/<number>/reactions -f content="+1"
    ```
-3. Keep stdout output brief — it becomes the sticky comment. A short "Looks
-   good, approved." is fine. No essays.
+3. Write nothing to stdout — the approval speaks for itself. Only produce
+   stdout when you have actionable feedback (it becomes the sticky comment).
 
 ## Inline suggestions
 
 For small, confident fixes (typos, doc updates, naming, missing imports, minor
 refactors), use GitHub suggestion format via `gh api`:
 
-```bash
+`````bash
 gh api repos/{owner}/{repo}/pulls/<number>/reviews \
   --method POST \
   -f event=COMMENT \
@@ -101,7 +100,7 @@ gh api repos/{owner}/{repo}/pulls/<number>/reviews \
   -f 'comments[0][body]=```suggestion
 fixed line content here
 ```'
-```
+`````
 
 **Rules:**
 - Use suggestions for any small fix you're confident about — no limit on count.
