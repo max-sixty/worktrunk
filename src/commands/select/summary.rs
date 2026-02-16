@@ -270,24 +270,76 @@ pub(super) fn generate_all_summaries(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::list::model::{ItemKind, WorktreeData};
 
-    /// Create a temporary git repo and return a Repository pointing to it.
-    /// The TempDir is returned so it stays alive for the duration of the test.
+    fn git_command(dir: &std::path::Path) -> std::process::Command {
+        let mut cmd = std::process::Command::new("git");
+        cmd.current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com");
+        cmd
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let output = git_command(dir).args(args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn git_output(dir: &std::path::Path, args: &[&str]) -> String {
+        let output = git_command(dir).args(args).output().unwrap();
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    }
+
+    /// Create a minimal temp git repo (for cache-only tests that don't need branches).
     fn temp_repo() -> (tempfile::TempDir, Repository) {
         let dir = tempfile::tempdir().unwrap();
-        std::process::Command::new("git")
-            .args(["init", "--initial-branch=main"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        // Need at least one commit for git_common_dir to resolve
-        std::process::Command::new("git")
-            .args(["commit", "--allow-empty", "-m", "init"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
+        git(dir.path(), &["init", "--initial-branch=main"]);
+        git(dir.path(), &["commit", "--allow-empty", "-m", "init"]);
         let repo = Repository::at(dir.path()).unwrap();
         (dir, repo)
+    }
+
+    /// Create a temp repo with main branch, default-branch config, and a real commit.
+    fn temp_repo_configured() -> (tempfile::TempDir, Repository, String) {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--initial-branch=main"]);
+        git(dir.path(), &["config", "worktrunk.default-branch", "main"]);
+        fs::write(dir.path().join("README.md"), "# Project\n").unwrap();
+        git(dir.path(), &["add", "README.md"]);
+        git(dir.path(), &["commit", "-m", "initial commit"]);
+        let head = git_output(dir.path(), &["rev-parse", "HEAD"]);
+        let repo = Repository::at(dir.path()).unwrap();
+        (dir, repo, head)
+    }
+
+    /// Create a temp repo with main + feature branch that has real changes.
+    fn temp_repo_with_feature() -> (tempfile::TempDir, Repository, String) {
+        let (dir, _, _) = temp_repo_configured();
+
+        git(dir.path(), &["checkout", "-b", "feature"]);
+        fs::write(dir.path().join("new.txt"), "new content\n").unwrap();
+        git(dir.path(), &["add", "new.txt"]);
+        git(dir.path(), &["commit", "-m", "add new file"]);
+
+        let head = git_output(dir.path(), &["rev-parse", "HEAD"]);
+        let repo = Repository::at(dir.path()).unwrap();
+        (dir, repo, head)
+    }
+
+    fn feature_item(head: &str, path: &std::path::Path) -> ListItem {
+        let mut item = ListItem::new_branch(head.to_string(), "feature".to_string());
+        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            path: path.to_path_buf(),
+            ..Default::default()
+        }));
+        item
     }
 
     #[test]
@@ -300,10 +352,8 @@ mod tests {
             branch: branch.to_string(),
         };
 
-        // No cache initially
         assert!(read_cache(&repo, branch).is_none());
 
-        // Write and read back
         write_cache(&repo, branch, &cached);
         let loaded = read_cache(&repo, branch).unwrap();
         assert_eq!(loaded.summary, cached.summary);
@@ -323,7 +373,6 @@ mod tests {
         write_cache(&repo, branch, &cached);
 
         let loaded = read_cache(&repo, branch).unwrap();
-        // Simulate checking with a different diff hash
         assert_ne!(loaded.diff_hash, 222);
     }
 
@@ -332,7 +381,6 @@ mod tests {
         let (_dir, repo) = temp_repo();
         let path = cache_file(&repo, "feature/my-branch");
         let filename = path.file_name().unwrap().to_str().unwrap();
-        // sanitize_for_filename replaces `/` with `-` and appends a hash suffix
         assert!(filename.starts_with("feature-my-branch-"));
         assert!(filename.ends_with(".json"));
     }
@@ -379,7 +427,14 @@ mod tests {
     fn test_render_summary_subject_bold() {
         let text = "Add new feature\n\nSome body text here.";
         let rendered = render_summary(text, 80);
-        // Subject line rendered as H4 (bold)
+        assert!(rendered.contains("\x1b[1m"));
+        assert!(rendered.contains("Add new feature"));
+    }
+
+    #[test]
+    fn test_render_summary_single_line() {
+        let text = "Add new feature";
+        let rendered = render_summary(text, 80);
         assert!(rendered.contains("\x1b[1m"));
         assert!(rendered.contains("Add new feature"));
     }
@@ -388,7 +443,6 @@ mod tests {
     fn test_render_summary_wraps_body() {
         let text = format!("Subject\n\n{}", "word ".repeat(30));
         let rendered = render_summary(&text, 40);
-        // Body should wrap (subject + blank + multiple wrapped lines)
         assert!(rendered.lines().count() > 3);
     }
 
@@ -402,12 +456,127 @@ mod tests {
 
     #[test]
     fn test_render_summary_prestyled_skips_h4() {
-        // Pre-styled text (with ANSI escapes) should not get H4 promotion
         let text = "\x1b[2mNo changes to summarize.\x1b[0m";
         let rendered = render_summary(text, 80);
-        // Should NOT contain bold (H4 promotion)
         assert!(!rendered.contains("####"));
-        // Should preserve the dim styling
         assert!(rendered.contains("No changes to summarize."));
+    }
+
+    #[test]
+    fn test_compute_combined_diff_with_branch_changes() {
+        let (dir, repo, head) = temp_repo_with_feature();
+        let item = feature_item(&head, dir.path());
+
+        let result = compute_combined_diff(&item, &repo);
+        assert!(result.is_some());
+        let combined = result.unwrap();
+        assert!(combined.diff.contains("new.txt"));
+        assert!(combined.stat.contains("new.txt"));
+    }
+
+    #[test]
+    fn test_compute_combined_diff_default_branch_no_changes() {
+        let (dir, repo, head) = temp_repo_configured();
+
+        let mut item = ListItem::new_branch(head, "main".to_string());
+        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            path: dir.path().to_path_buf(),
+            ..Default::default()
+        }));
+
+        let result = compute_combined_diff(&item, &repo);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_compute_combined_diff_with_uncommitted_changes() {
+        let (dir, repo, head) = temp_repo_with_feature();
+        // Add uncommitted changes
+        fs::write(dir.path().join("uncommitted.txt"), "wip\n").unwrap();
+        git(dir.path(), &["add", "uncommitted.txt"]);
+
+        let item = feature_item(&head, dir.path());
+        let result = compute_combined_diff(&item, &repo);
+        assert!(result.is_some());
+        let combined = result.unwrap();
+        // Should contain both the branch diff and the working tree diff
+        assert!(combined.diff.contains("new.txt"));
+        assert!(combined.diff.contains("uncommitted.txt"));
+    }
+
+    #[test]
+    fn test_compute_combined_diff_branch_only_no_worktree() {
+        let (_dir, repo, head) = temp_repo_with_feature();
+        // Branch-only item (no worktree data) — only branch diff included
+        let item = ListItem::new_branch(head, "feature".to_string());
+
+        let result = compute_combined_diff(&item, &repo);
+        assert!(result.is_some());
+        let combined = result.unwrap();
+        assert!(combined.diff.contains("new.txt"));
+    }
+
+    #[test]
+    fn test_generate_summary_calls_llm() {
+        let (dir, repo, head) = temp_repo_with_feature();
+        let item = feature_item(&head, dir.path());
+
+        let summary = generate_summary(&item, "cat >/dev/null && echo 'Add new file'", &repo);
+        assert_eq!(summary, "Add new file");
+    }
+
+    #[test]
+    fn test_generate_summary_caches_result() {
+        let (dir, repo, head) = temp_repo_with_feature();
+        let item = feature_item(&head, dir.path());
+
+        let summary1 = generate_summary(&item, "cat >/dev/null && echo 'Add new file'", &repo);
+        assert_eq!(summary1, "Add new file");
+
+        // Second call with different command should return cached value
+        let summary2 = generate_summary(&item, "cat >/dev/null && echo 'Different output'", &repo);
+        assert_eq!(summary2, "Add new file");
+    }
+
+    #[test]
+    fn test_generate_summary_no_changes() {
+        let (dir, repo, head) = temp_repo_configured();
+
+        let mut item = ListItem::new_branch(head, "main".to_string());
+        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            path: dir.path().to_path_buf(),
+            ..Default::default()
+        }));
+
+        let summary = generate_summary(&item, "echo 'should not run'", &repo);
+        assert!(summary.contains("No changes to summarize"));
+    }
+
+    #[test]
+    fn test_generate_summary_llm_error() {
+        let (dir, repo, head) = temp_repo_with_feature();
+        let item = feature_item(&head, dir.path());
+
+        let summary = generate_summary(&item, "cat >/dev/null && echo 'fail' >&2 && exit 1", &repo);
+        assert!(summary.starts_with("LLM error:"));
+    }
+
+    #[test]
+    fn test_generate_all_summaries_populates_cache() {
+        let (dir, repo, head) = temp_repo_with_feature();
+        let item = feature_item(&head, dir.path());
+        let items = vec![Arc::new(item)];
+        let cache: Arc<DashMap<PreviewCacheKey, String>> = Arc::new(DashMap::new());
+
+        generate_all_summaries(
+            &items,
+            "cat >/dev/null && echo 'Add new file'",
+            &cache,
+            &repo,
+        );
+
+        let key = ("feature".to_string(), PreviewMode::Summary);
+        assert!(cache.contains_key(&key));
+        assert_eq!(cache.get(&key).unwrap().value(), "Add new file");
     }
 }
