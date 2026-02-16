@@ -259,6 +259,7 @@ pub fn handle_select(
 
     // Spawn background thread for AI summary generation (parallel LLM calls).
     // Only spawned when commit.generation is configured.
+    let resolved = config.resolved(repo.project_identifier().ok().as_deref());
     if resolved.commit_generation.is_configured() {
         let llm_command = resolved.commit_generation.command.clone().unwrap();
         let summary_cache = Arc::clone(&preview_cache);

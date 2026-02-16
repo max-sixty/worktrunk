@@ -289,7 +289,7 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"Combine these commits into a single com
 ///
 /// This is the canonical way to execute LLM commands in this codebase.
 /// All LLM execution should go through this function to maintain consistency.
-fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result<String> {
+pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result<String> {
     // Log prompt for debugging (Cmd logs the command itself)
     log::debug!("  Prompt (stdin):");
     for line in prompt.lines() {
