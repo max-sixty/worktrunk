@@ -8,7 +8,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use color_print::cformat;
 use dashmap::DashMap;
@@ -16,11 +16,18 @@ use minijinja::Environment;
 use serde::{Deserialize, Serialize};
 use worktrunk::git::Repository;
 use worktrunk::path::sanitize_for_filename;
+use worktrunk::sync::Semaphore;
 
 use super::super::list::model::ListItem;
 use super::items::PreviewCacheKey;
 use super::preview::PreviewMode;
 use crate::llm::{execute_llm_command, prepare_diff};
+
+/// Limits concurrent LLM calls to avoid overwhelming the network / LLM
+/// provider. 8 permits balances parallelism with resource usage — LLM calls
+/// are I/O-bound (1-5s network waits), so more permits than the CPU-bound
+/// `HEAVY_OPS_SEMAPHORE` (4) but still bounded.
+static LLM_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(8));
 
 /// Cached summary stored in `.git/wt-cache/summaries/<branch>.json`
 #[derive(Serialize, Deserialize)]
@@ -249,8 +256,9 @@ fn generate_summary(item: &ListItem, llm_command: &str, repo: &Repository) -> St
 
 /// Generate summaries for all items in parallel, inserting results into the preview cache.
 ///
-/// Uses `std::thread::scope` for maximum I/O concurrency — LLM calls are I/O-bound
-/// (1-5s network waits), so one thread per item outperforms a CPU-sized thread pool.
+/// Spawns one thread per item via `std::thread::scope`, but limits concurrent LLM
+/// calls with `LLM_SEMAPHORE` (8 permits). This keeps all threads ready to run while
+/// preventing resource exhaustion when many branches are visible.
 pub(super) fn generate_all_summaries(
     items: &[Arc<ListItem>],
     llm_command: &str,
@@ -262,6 +270,7 @@ pub(super) fn generate_all_summaries(
             let item = Arc::clone(item);
             let cache = Arc::clone(preview_cache);
             s.spawn(move || {
+                let _permit = LLM_SEMAPHORE.acquire();
                 let branch = item.branch_name().to_string();
                 let summary = generate_summary(&item, llm_command, repo);
                 cache.insert((branch, PreviewMode::Summary), summary);
