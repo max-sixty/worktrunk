@@ -137,10 +137,10 @@ impl WorktreeSkimItem {
             }
         }
 
-        let tab1 = format_tab("1:diff", mode == PreviewMode::WorkingTree);
+        let tab1 = format_tab("1:diff±", mode == PreviewMode::WorkingTree);
         let tab2 = format_tab("2:log", mode == PreviewMode::Log);
-        let tab3 = format_tab("3:main", mode == PreviewMode::BranchDiff);
-        let tab4 = format_tab("4:upstream", mode == PreviewMode::UpstreamDiff);
+        let tab3 = format_tab("3:main↕", mode == PreviewMode::BranchDiff);
+        let tab4 = format_tab("4:upstream⇅", mode == PreviewMode::UpstreamDiff);
         let tab5 = format_tab("5:summary", mode == PreviewMode::Summary);
 
         // Controls use dim yellow to distinguish from dimmed (white) tabs
