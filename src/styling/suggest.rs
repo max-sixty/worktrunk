@@ -9,7 +9,7 @@
 //! let branch = "feature";
 //! let cmd = suggest_command("remove", &[branch], &["--force"]);
 //! println!("{}", hint_message(cformat!("To force delete, run <bright-black>{cmd}</>")));
-//! // → ↳ To force delete, run wt remove feature --force
+//! // → ↳ To force delete, run wt remove --force feature
 //! ```
 //!
 //! Handles shell escaping and `--` separator for args starting with `-`:
@@ -17,9 +17,9 @@
 //! ```
 //! use worktrunk::styling::suggest_command;
 //!
-//! // Branch starting with dash gets -- separator
+//! // Branch starting with dash gets -- separator; flags stay before --
 //! let cmd = suggest_command("remove", &["-bugfix"], &["--force"]);
-//! assert_eq!(cmd, "wt remove -- -bugfix --force");
+//! assert_eq!(cmd, "wt remove --force -- -bugfix");
 //!
 //! // Spaces are quoted
 //! let cmd = suggest_command("remove", &["my feature"], &[]);
@@ -31,7 +31,7 @@ use std::borrow::Cow;
 
 /// Build a suggested command string for hints.
 ///
-/// Returns a copy-pasteable command like `wt remove feature --force`.
+/// Returns a copy-pasteable command like `wt remove --force feature`.
 ///
 /// # Arguments
 ///
@@ -60,6 +60,10 @@ use std::borrow::Cow;
 pub fn suggest_command(subcommand: &str, args: &[&str], flags: &[&str]) -> String {
     let mut parts = vec!["wt".to_string(), subcommand.to_string()];
 
+    // Flags go before positional args (and before any -- separator)
+    // so they're always parsed as flags, not positional arguments.
+    parts.extend(flags.iter().map(|s| s.to_string()));
+
     // Check if any arg starts with dash (needs -- separator)
     let needs_separator = args.iter().any(|arg| arg.starts_with('-'));
     let mut separator_inserted = false;
@@ -73,7 +77,6 @@ pub fn suggest_command(subcommand: &str, args: &[&str], flags: &[&str]) -> Strin
         parts.push(escape(Cow::Borrowed(*arg)).into_owned());
     }
 
-    parts.extend(flags.iter().map(|s| s.to_string()));
     parts.join(" ")
 }
 
@@ -93,7 +96,7 @@ mod tests {
     fn test_command_with_flag() {
         assert_eq!(
             suggest_command("remove", &["feature"], &["--force"]),
-            "wt remove feature --force"
+            "wt remove --force feature"
         );
     }
 
@@ -101,7 +104,7 @@ mod tests {
     fn test_command_with_multiple_flags() {
         assert_eq!(
             suggest_command("remove", &["feature"], &["--force", "--no-delete-branch"]),
-            "wt remove feature --force --no-delete-branch"
+            "wt remove --force --no-delete-branch feature"
         );
     }
 
@@ -133,7 +136,7 @@ mod tests {
     fn test_branch_starting_with_dash_and_flag() {
         assert_eq!(
             suggest_command("remove", &["-bugfix"], &["--force"]),
-            "wt remove -- -bugfix --force"
+            "wt remove --force -- -bugfix"
         );
     }
 

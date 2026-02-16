@@ -5,7 +5,10 @@ info:
   args:
     - switch
     - "--create"
-    - occupied-branch
+    - "--execute=claude"
+    - emails
+    - "--"
+    - Check my emails
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -40,5 +43,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mDirectory already exists: [1m_REPO_.occupied-branch[22m[39m
-[2m↳[22m [2mTo remove manually, run [90mrm -rf _REPO_.occupied-branch[39m; to overwrite (with backup), run [90mwt switch --create --clobber occupied-branch[39m[22m
+[31m✗[39m [31mBranch [1memails[22m already exists[39m
+[2m↳[22m [2mTo switch to the existing branch, run without [90m--create[39m: [90mwt switch emails --execute=claude -- 'Check my emails'[39m[22m

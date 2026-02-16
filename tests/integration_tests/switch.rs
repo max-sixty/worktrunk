@@ -87,6 +87,36 @@ fn test_switch_create_existing_branch_error(mut repo: TestRepo) {
     );
 }
 
+/// When --execute is passed and the branch already exists, the error hint should
+/// include --execute and trailing args in the suggested command.
+#[rstest]
+fn test_switch_create_existing_with_execute(mut repo: TestRepo) {
+    repo.add_worktree("emails");
+
+    snapshot_switch(
+        "switch_create_existing_with_execute",
+        &repo,
+        &[
+            "--create",
+            "--execute=claude",
+            "emails",
+            "--",
+            "Check my emails",
+        ],
+    );
+}
+
+/// When --execute is passed and the branch doesn't exist (without --create),
+/// the "create" suggestion should include --execute and trailing args.
+#[rstest]
+fn test_switch_nonexistent_with_execute(repo: TestRepo) {
+    snapshot_switch(
+        "switch_nonexistent_with_execute",
+        &repo,
+        &["--execute=claude", "nonexistent", "--", "Check my emails"],
+    );
+}
+
 #[rstest]
 fn test_switch_create_with_remote_branch_only(#[from(repo_with_remote)] repo: TestRepo) {
     // Create a branch on the remote only (no local branch)

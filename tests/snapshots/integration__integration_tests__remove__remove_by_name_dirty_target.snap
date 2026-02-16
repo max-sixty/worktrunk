@@ -29,6 +29,7 @@ info:
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -39,4 +40,4 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mCannot remove worktree: [1mfeature-dirty[22m has uncommitted changes[39m
-[2m↳[22m [2mCommit or stash changes first, or to lose uncommitted changes, run [90mwt remove feature-dirty --force[39m[22m
+[2m↳[22m [2mCommit or stash changes first, or to lose uncommitted changes, run [90mwt remove --force feature-dirty[39m[22m
