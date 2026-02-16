@@ -287,10 +287,12 @@ impl LayoutConfig {
                     cell.pad_to(col.width);
                 }
                 ColumnKind::Commit => {
-                    // Show actual commit hash (always available)
+                    // Show actual commit hash (empty for unborn branches with null OID)
                     let head = item.head();
-                    let short_head = &head[..8.min(head.len())];
-                    cell.push_styled(short_head, dim);
+                    if head != worktrunk::git::NULL_OID {
+                        let short_head = &head[..8.min(head.len())];
+                        cell.push_styled(short_head, dim);
+                    }
                 }
                 _ => {
                     // Show spinner for data columns (placeholder_cell handles alignment)
@@ -488,8 +490,12 @@ impl ColumnLayout {
             }
             ColumnKind::Commit => {
                 let head = item.head();
-                let short_head = &head[..8.min(head.len())];
-                self.render_text_cell(short_head, Some(Style::new().dimmed()))
+                if head == worktrunk::git::NULL_OID {
+                    self.render_text_cell("", None)
+                } else {
+                    let short_head = &head[..8.min(head.len())];
+                    self.render_text_cell(short_head, Some(Style::new().dimmed()))
+                }
             }
             ColumnKind::Message => {
                 let Some(ref commit) = item.commit else {
