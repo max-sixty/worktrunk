@@ -31,32 +31,27 @@ def --env --wrapped {{ cmd }} [...args: string] {
         $env.LAST_EXIT_CODE
     }
 
-    # Process directive file line by line, then clean up (even on error)
-    try {
-        if ($directive_file | path exists) and (open $directive_file --raw | str trim | is-not-empty) {
-            let directives = open $directive_file --raw | str trim | lines
-            for directive in $directives {
-                if ($directive | str starts-with "cd '") {
-                    # Parse cd command: worktrunk emits "cd '<path>'" with POSIX quoting.
-                    # Strip the "cd '" prefix and trailing "'" to extract the raw path.
-                    # Note: paths with embedded single quotes use POSIX '\'' escaping,
-                    # which this doesn't handle. A future improvement could have worktrunk
-                    # emit raw paths instead of POSIX shell commands, letting each shell
-                    # construct its native cd syntax.
-                    let target_dir = $directive | str substring 4..-2
-                    cd $target_dir
-                } else if ($directive | is-not-empty) {
-                    # Execute via sh for POSIX shell expansion (globs, pipes, $VAR).
-                    # --execute commands are user-provided shell expressions that expect
-                    # this. Env changes (export) won't persist in the nushell session,
-                    # but no worktrunk code emits export directives.
-                    ^sh -c $directive
-                }
+    # Process directive file line by line
+    if ($directive_file | path exists) and (open $directive_file --raw | str trim | is-not-empty) {
+        let directives = open $directive_file --raw | str trim | lines
+        for directive in $directives {
+            if ($directive | str starts-with "cd '") {
+                # Parse cd command: worktrunk emits "cd '<path>'" with POSIX quoting.
+                # Strip the "cd '" prefix and trailing "'" to extract the raw path.
+                # Note: paths with embedded single quotes use POSIX '\'' escaping,
+                # which this doesn't handle. A future improvement could have worktrunk
+                # emit raw paths instead of POSIX shell commands, letting each shell
+                # construct its native cd syntax.
+                let target_dir = $directive | str substring 4..-2
+                cd $target_dir
+            } else if ($directive | is-not-empty) {
+                # Execute via sh for POSIX shell expansion (globs, pipes, $VAR).
+                # --execute commands are user-provided shell expressions that expect
+                # this. Env changes (export) won't persist in the nushell session,
+                # but no worktrunk code emits export directives.
+                ^sh -c $directive
             }
         }
-    } catch { |err|
-        rm -f $directive_file
-        error make { msg: $"{{ cmd }}: directive processing failed: ($err.msg)" }
     }
 
     rm -f $directive_file
