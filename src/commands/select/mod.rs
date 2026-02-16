@@ -253,9 +253,8 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
     }
 
     // Queue summary generation after tabs 1-4 so git previews get rayon priority.
-    let resolved = config.resolved(repo.project_identifier().ok().as_deref());
-    if resolved.list.summary() && resolved.commit_generation.is_configured() {
-        let llm_command = resolved.commit_generation.command.clone().unwrap();
+    if config.list.summary() && config.commit_generation.is_configured() {
+        let llm_command = config.commit_generation.command.clone().unwrap();
         for item in &items_for_precompute {
             let item = Arc::clone(item);
             let cache = Arc::clone(&preview_cache);
@@ -268,7 +267,7 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
     } else {
         // No LLM configured or summaries disabled — insert config hint so the
         // tab shows a useful message instead of a perpetual "Generating..." placeholder.
-        let hint = if !resolved.commit_generation.is_configured() {
+        let hint = if !config.commit_generation.is_configured() {
             "Configure [commit.generation] command to enable AI summaries.\n\n\
              Example in ~/.config/worktrunk/config.toml:\n\n\
              [commit.generation]\n\
