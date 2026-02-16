@@ -692,36 +692,21 @@ fn main() {
                 commands::statusline::run(effective_format)
             }
             None => {
-                // Load config and merge with CLI flags (CLI flags take precedence)
+                // Config resolution is deferred to collect's parallel phase so
+                // project_identifier runs concurrently with other git commands
+                // instead of blocking the critical path.
                 UserConfig::load()
                     .context("Failed to load config")
                     .and_then(|config| {
-                        // Get resolved config (project-specific merged with global, defaults applied)
-                        let project_id = Repository::current()
-                            .ok()
-                            .and_then(|r| r.project_identifier().ok());
-                        let resolved = config.resolved(project_id.as_deref());
+                        let repo = Repository::current()?;
 
-                        // CLI flags override config
-                        let show_branches = branches || resolved.list.branches();
-                        let show_remotes = remotes || resolved.list.remotes();
-                        let show_full = full || resolved.list.full();
-
-                        // Convert two bools to Option<bool>: Some(true), Some(false), or None
                         let progressive_opt = match (progressive, no_progressive) {
                             (true, _) => Some(true),
                             (_, true) => Some(false),
                             _ => None,
                         };
                         let render_mode = RenderMode::detect(progressive_opt);
-                        handle_list(
-                            format,
-                            show_branches,
-                            show_remotes,
-                            show_full,
-                            render_mode,
-                            &config,
-                        )
+                        handle_list(repo, format, branches, remotes, full, render_mode, &config)
                     })
             }
         },
