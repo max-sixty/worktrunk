@@ -342,30 +342,6 @@ impl Approvals {
         })
     }
 
-    /// Revoke an approved command and save.
-    pub fn revoke_command(
-        &mut self,
-        project: &str,
-        command: &str,
-        approvals_path: Option<&Path>,
-    ) -> Result<(), ConfigError> {
-        let project = project.to_string();
-        let command = command.to_string();
-        self.with_locked_mutation(approvals_path, |approvals| {
-            let Some(project_config) = approvals.projects.get_mut(&project) else {
-                return false;
-            };
-            let len_before = project_config.approved_commands.len();
-            project_config.approved_commands.retain(|c| c != &command);
-            let changed = len_before != project_config.approved_commands.len();
-
-            if project_config.approved_commands.is_empty() {
-                approvals.projects.remove(&project);
-            }
-            changed
-        })
-    }
-
     /// Remove all approvals for a project and save.
     pub fn revoke_project(
         &mut self,
@@ -495,32 +471,6 @@ mod tests {
 
         assert!(approvals.is_command_approved("github.com/user/repo", "npm install"));
         assert!(approvals.is_command_approved("github.com/user/repo", "npm test"));
-    }
-
-    #[test]
-    fn test_revoke_command() {
-        let (_temp_dir, path) = test_dir();
-
-        let mut approvals = Approvals::default();
-        approvals
-            .approve_commands(
-                "github.com/user/repo".to_string(),
-                vec!["npm install".to_string(), "npm test".to_string()],
-                Some(&path),
-            )
-            .unwrap();
-
-        approvals
-            .revoke_command("github.com/user/repo", "npm install", Some(&path))
-            .unwrap();
-        assert!(!approvals.is_command_approved("github.com/user/repo", "npm install"));
-        assert!(approvals.is_command_approved("github.com/user/repo", "npm test"));
-
-        // Revoke last command removes project entry
-        approvals
-            .revoke_command("github.com/user/repo", "npm test", Some(&path))
-            .unwrap();
-        assert!(!approvals.projects.contains_key("github.com/user/repo"));
     }
 
     #[test]
@@ -771,22 +721,6 @@ approved-commands = ["npm install"]
             "Expected parse error, got: {}",
             err
         );
-    }
-
-    #[test]
-    fn test_revoke_command_nonexistent_project() {
-        let (_temp_dir, path) = test_dir();
-        let mut approvals = Approvals::default();
-        // Approve something first so the file exists
-        approvals
-            .approve_command("project-a".to_string(), "cmd1".to_string(), Some(&path))
-            .unwrap();
-        // Revoke from a project that doesn't exist — should be a no-op
-        approvals
-            .revoke_command("nonexistent", "cmd1", Some(&path))
-            .unwrap();
-        // Original approval still present
-        assert!(approvals.is_command_approved("project-a", "cmd1"));
     }
 
     #[test]

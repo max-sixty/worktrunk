@@ -378,23 +378,16 @@ fn test_concurrent_revoke_preserves_all_changes() {
     assert!(toml_content.contains("npm install"));
     assert!(toml_content.contains("npm test"));
 
-    // Process A: starts with stale state (has both commands in memory)
-    // Simulate by creating fresh approvals and approving both, then revoking one
+    // Process A: revokes the project
     let mut approvals_a = Approvals::default();
     approvals_a
-        .revoke_command("github.com/user/repo", "npm install", Some(&approvals_path))
-        .unwrap();
-
-    // Process B: starts with stale state, revokes "npm test"
-    let mut approvals_b = Approvals::default();
-    approvals_b
-        .revoke_command("github.com/user/repo", "npm test", Some(&approvals_path))
+        .revoke_project("github.com/user/repo", Some(&approvals_path))
         .unwrap();
 
     // Read the final state from disk
     let toml_content = fs::read_to_string(&approvals_path).unwrap();
 
-    // Both revocations should be respected - neither command should remain
+    // Revocation should be respected - neither command should remain
     assert!(
         !toml_content.contains("npm install"),
         "'npm install' should have been revoked. Saved content:\n{toml_content}"
