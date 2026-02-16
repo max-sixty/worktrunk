@@ -50,6 +50,8 @@ jobs:
           github_token: ${{ secrets.WORKTRUNK_REVIEW_TOKEN }}
           additional_permissions: |
             actions: read
+          # TODO: sticky comment stopped appearing after switching to WORKTRUNK_REVIEW_TOKEN PAT.
+          # Bot now puts feedback in review bodies instead of stdout, so this may be a no-op.
           use_sticky_comment: true
           prompt: |
             Use /worktrunk-review ${{ github.event.pull_request.number }}

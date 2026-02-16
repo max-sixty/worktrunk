@@ -18,16 +18,45 @@ Load these skills first:
    principles, completeness)
 2. `/developing-rust` — Rust idioms and patterns
 
-Then read CLAUDE.md (project root) to understand project-specific conventions.
+## Workflow
 
-## Instructions
+Follow these steps in order.
+
+### 1. Pre-flight checks
+
+Before reading the diff, run cheap checks to avoid redundant work. Shell state
+doesn't persist between tool calls — re-derive `REPO` in each bash invocation or
+combine commands.
+
+```bash
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+BOT_LOGIN=$(gh api user --jq '.login')
+
+# Check if bot already approved this exact revision
+APPROVED_SHA=$(gh pr view <number> --json reviews \
+  --jq "[.reviews[] | select(.state == \"APPROVED\" and .author.login == \"$BOT_LOGIN\") | .commit.oid] | last")
+HEAD_SHA=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
+```
+
+If `APPROVED_SHA == HEAD_SHA`, exit silently — this revision is already approved.
+
+Then check existing review comments to avoid repeating prior feedback:
+
+```bash
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+gh api "repos/$REPO/pulls/<number>/comments" --paginate --jq '.[].body'
+gh api "repos/$REPO/pulls/<number>/reviews" --jq '.[] | select(.body != "") | .body'
+```
+
+### 2. Read and understand the change
 
 1. Read the PR diff with `gh pr diff <number>`.
 2. Read the changed files in full (not just the diff) to understand context.
-3. Follow the `reviewing-code` skill's structure: design review first, then
-   tactical checklist.
 
-## What to review
+### 3. Review
+
+Follow the `reviewing-code` skill's structure: design review first, then
+tactical checklist.
 
 **Idiomatic Rust and project conventions:**
 
@@ -55,35 +84,30 @@ Then read CLAUDE.md (project root) to understand project-specific conventions.
 - Are the changes adequately tested?
 - Do the tests follow the project's testing conventions (see tests/CLAUDE.md)?
 
-## Review discipline
+### 4. Submit
 
-- Submit **one formal review per run** via `gh pr review` (approve, request
-  changes, or comment). Never call `gh pr review` multiple times.
-- **Don't use `gh pr comment`** — the CI action manages the summary comment
-  (sticky comment from Claude's stdout).
-- Always either **approve** or **comment** — never leave a PR without a
-  verdict. Don't use "request changes" (that implies authority to block).
-- **Before approving**, check if the bot already approved this revision:
-  ```bash
-  APPROVED_SHA=$(gh pr view <number> --json reviews --jq '[.reviews[] | select(.state == "APPROVED") | .commit.oid] | last')
-  HEAD_SHA=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
-  ```
-  If `APPROVED_SHA == HEAD_SHA`, skip the redundant re-approval.
+Submit **one formal review per run** via `gh pr review`. Never call it multiple
+times.
+
+- Always give a verdict: **approve** or **comment**. Don't use "request changes"
+  (that implies authority to block).
+- **Don't use `gh pr comment`** — use review comments (`gh pr review` or
+  `gh api` for inline suggestions) so feedback is threaded with the review.
+- Don't repeat suggestions already made by humans or previous bot runs
+  (checked in step 1).
 
 ## LGTM behavior
 
 When the PR has no issues worth raising:
 
-1. Approve with no body — the approval itself is the signal:
+1. Approve (a brief one-line remark is fine):
    ```bash
-   gh pr review <number> --approve
+   gh pr review <number> --approve -b "Clean change, no issues."
    ```
-2. Add a thumbs-up reaction to the PR:
+2. Add a thumbs-up reaction:
    ```bash
-   gh api repos/{owner}/{repo}/issues/<number>/reactions -f content="+1"
+   gh api "repos/$REPO/issues/<number>/reactions" -f content="+1"
    ```
-3. Write nothing to stdout — the approval speaks for itself. Only produce
-   stdout when you have actionable feedback (it becomes the sticky comment).
 
 ## Inline suggestions
 
@@ -91,7 +115,7 @@ For small, confident fixes (typos, doc updates, naming, missing imports, minor
 refactors), use GitHub suggestion format via `gh api`:
 
 `````bash
-gh api repos/{owner}/{repo}/pulls/<number>/reviews \
+gh api "repos/$REPO/pulls/<number>/reviews" \
   --method POST \
   -f event=COMMENT \
   -f body="Summary of suggestions" \
