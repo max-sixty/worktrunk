@@ -82,11 +82,7 @@ fn test_powershell_wrapper_passes_short_flags_through() {
     // Using .ps1 (not a shell script) so this works on Windows too.
     let temp_dir = tempfile::tempdir().unwrap();
     let mock_bin = temp_dir.path().join("mock-wt.ps1");
-    std::fs::write(
-        &mock_bin,
-        "foreach ($a in $args) { Write-Output $a }\n",
-    )
-    .unwrap();
+    std::fs::write(&mock_bin, "foreach ($a in $args) { Write-Output $a }\n").unwrap();
 
     let init = ShellInit::with_prefix(Shell::PowerShell, "wt".to_string());
     let wrapper = init.generate().unwrap();
