@@ -459,7 +459,7 @@ fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
     // The tab header line may have the count jammed against "summary" (no space)
     // or even truncate "summary" when skim's width_cjk() treats ambiguous-width
     // unicode symbols (±, …, ⇅) as double-width, consuming extra columns.
-    settings.add_filter(r"(?m)summar\w*\s*\d+/\d+\s*$", "summary [N/M]");
+    settings.add_filter(r"(?m)summary?\w*\s*\d+/\d+\s*$", "summary [N/M]");
     settings.add_filter(r"(?m)\s+\d+/\d+\s*$", " [N/M]");
 
     // Commit hashes (7-8 hex chars)
