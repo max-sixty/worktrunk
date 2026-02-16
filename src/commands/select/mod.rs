@@ -13,7 +13,6 @@ use std::sync::Arc;
 use anyhow::Context;
 use dashmap::DashMap;
 use skim::prelude::*;
-use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 
 use super::handle_switch::{
@@ -28,17 +27,18 @@ use crate::output::handle_switch_output;
 use items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
 use preview::{PreviewLayout, PreviewMode, PreviewState};
 
-pub fn handle_select(
-    show_branches: bool,
-    show_remotes: bool,
-    config: &UserConfig,
-) -> anyhow::Result<()> {
+pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()> {
     // Interactive picker requires a terminal for the TUI
     if !std::io::stdin().is_terminal() {
         anyhow::bail!("Interactive picker requires an interactive terminal");
     }
 
     let repo = Repository::current()?;
+
+    // Merge CLI flags with resolved config
+    let config = repo.config();
+    let show_branches = cli_branches || config.list.branches();
+    let show_remotes = cli_remotes || config.list.remotes();
 
     // Initialize preview mode state file (auto-cleanup on drop)
     let state = PreviewState::new();
@@ -69,8 +69,7 @@ pub fn handle_select(
         },
         false, // show_progress (no progress bars)
         false, // render_table (select renders its own UI)
-        config,
-        true, // skip_expensive_for_stale (faster for repos with many stale branches)
+        true,  // skip_expensive_for_stale (faster for repos with many stale branches)
     )?
     else {
         return Ok(());
@@ -274,18 +273,18 @@ pub fn handle_select(
         };
 
         // Load config
-        let config = UserConfig::load().context("Failed to load config")?;
         let repo = Repository::current().context("Failed to switch worktree")?;
+        let config = repo.user_config();
 
         // Switch to existing worktree or create new one
-        let plan = plan_switch(&repo, &identifier, should_create, None, false, &config)?;
-        let skip_hooks = !approve_switch_hooks(&repo, &config, &plan, false, true)?;
-        let (result, branch_info) = execute_switch(&repo, plan, &config, false, skip_hooks)?;
+        let plan = plan_switch(&repo, &identifier, should_create, None, false, config)?;
+        let skip_hooks = !approve_switch_hooks(&repo, config, &plan, false, true)?;
+        let (result, branch_info) = execute_switch(&repo, plan, config, false, skip_hooks)?;
 
         // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
         let branch_info = match &result {
             SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-                let expected_path = get_path_mismatch(&repo, &branch_info.branch, path, &config);
+                let expected_path = get_path_mismatch(&repo, &branch_info.branch, path, config);
                 SwitchBranchInfo {
                     expected_path,
                     ..branch_info
@@ -306,7 +305,7 @@ pub fn handle_select(
             let extra_vars = switch_extra_vars(&result);
             spawn_switch_background_hooks(
                 &repo,
-                &config,
+                config,
                 &result,
                 &branch_info.branch,
                 false,
