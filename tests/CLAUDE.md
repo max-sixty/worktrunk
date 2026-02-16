@@ -167,29 +167,22 @@ This makes snapshots **not directly copyable** into README.md because:
 
 For tests that generate README examples, use the PTY-based execution pattern from `tests/integration_tests/shell_wrapper.rs`:
 
-**Key function:** `exec_in_pty()` (line 235)
-- Uses `portable_pty` to execute commands in a pseudo-terminal
-- Returns combined stdout+stderr as a single `String`
-- Captures output exactly as users see it in their terminal
-- Includes ANSI color codes and proper temporal ordering
+**Key functions** in `tests/common/pty.rs`:
+- `build_pty_command()` — builds a `CommandBuilder` with standard PTY isolation
+- `exec_cmd_in_pty()` — executes in a PTY, writing all input immediately (non-interactive)
+- `exec_cmd_in_pty_prompted()` — executes in a PTY, waiting for prompts before sending input
+
+These use `portable_pty` to execute commands in a pseudo-terminal, returning
+combined stdout+stderr as a single `String` with ANSI color codes and proper
+temporal ordering.
 
 **Pattern to use:**
 
 ```rust
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use crate::common::pty::{build_pty_command, exec_cmd_in_pty};
 
-fn exec_in_pty(
-    shell: &str,
-    script: &str,
-    working_dir: &Path,
-    env_vars: &[(String, String)],
-) -> (String, i32) {
-    // Execute command in PTY
-    // Returns (combined_output, exit_code)
-}
-
-// In your test:
-let (combined_output, exit_code) = exec_in_pty("bash", "wt merge", &repo_path, &env_vars);
+let cmd = build_pty_command("wt", &["merge"], &repo_path, &env_vars, None);
+let (combined_output, exit_code) = exec_cmd_in_pty(cmd, "");
 assert_snapshot!("readme_example_name", combined_output);
 ```
 
@@ -200,9 +193,8 @@ assert_snapshot!("readme_example_name", combined_output);
 - No manual merging of stdout/stderr needed
 
 **Example:** See `tests/integration_tests/shell_wrapper.rs`:
-- Line 65-66: `ShellOutput` struct with `combined: String`
-- Line 235-323: `exec_in_pty()` implementation using `portable_pty`
-- Line 397+: Usage pattern in tests
+- `ShellOutput` struct with `combined: String`
+- `exec_in_pty_interactive()` — shell-wrapper-specific PTY helper
 
 ### When to Use Each Approach
 
@@ -212,7 +204,7 @@ assert_snapshot!("readme_example_name", combined_output);
 - Tests checking exit codes and specific error messages
 - Most tests in the codebase
 
-**Use `exec_in_pty` (PTY-based snapshots):**
+**Use PTY-based execution (PTY-based snapshots):**
 - Tests generating output for README.md examples
 - Tests verifying shell integration (`wt` function, directives)
 - Tests needing to verify complete user experience
@@ -238,8 +230,8 @@ assert_snapshot!("readme_example_name", combined_output);
 When converting a README example test from `insta_cmd` to PTY-based:
 
 1. ✅ Import `portable_pty` dependencies
-2. ✅ Extract or create `exec_in_pty()` helper (can reuse from shell_wrapper.rs)
-3. ✅ Replace `make_snapshot_cmd()` + `assert_cmd_snapshot!()` with `exec_in_pty()` + `assert_snapshot!()`
+2. ✅ Use `build_pty_command()` + `exec_cmd_in_pty()` from `tests/common/pty.rs`
+3. ✅ Replace `make_snapshot_cmd()` + `assert_cmd_snapshot!()` with PTY execution + `assert_snapshot!()`
 4. ✅ Ensure environment variables include `CLICOLOR_FORCE=1` for ANSI codes
 5. ✅ Update snapshot file format (file snapshot, not inline)
 6. ✅ Verify output matches expected README format
