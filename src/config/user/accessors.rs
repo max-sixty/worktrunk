@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use crate::config::HooksConfig;
-use crate::config::expansion::expand_template;
+use crate::config::expansion::{TemplateExpandError, expand_template};
 
 use super::UserConfig;
 use super::merge::{Merge, merge_optional};
@@ -162,7 +162,7 @@ impl UserConfig {
         branch: &str,
         repo: &crate::git::Repository,
         project: Option<&str>,
-    ) -> Result<String, String> {
+    ) -> Result<String, TemplateExpandError> {
         let template = match project {
             Some(p) => self.worktree_path_for_project(p),
             None => self.worktree_path(),

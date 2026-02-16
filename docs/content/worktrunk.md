@@ -75,9 +75,9 @@ git branch -d feat{% end %}</td>
   </tbody>
 </table>
 
-**Workflow automation:**
-
 > Expand into the more advanced commands as needed
+
+**Workflow automation:**
 
 - **[Hooks](@/hook.md)** — run commands on create, pre-merge, post-merge, etc
 - **[LLM commit messages](@/llm-commits.md)** — generate commit messages from diffs
@@ -158,7 +158,7 @@ This creates a new branch and worktree, then switches to it. Do your work, then 
 
 <!-- END AUTO-GENERATED -->
 
-The `@` marks the current worktree. `+` means uncommitted changes, `↕` means unpushed commits.
+The `@` marks the current worktree. `+` means staged changes, `⇡` means unpushed commits.
 
 When done, either:
 

@@ -296,7 +296,15 @@ impl Repository {
 
         // Use two-dot syntax with the cached merge-base
         let range = format!("{}..{}", merge_base, head);
-        let stdout = self.run_command(&["diff", "--numstat", &range])?;
+        let mut args = vec!["diff", "--numstat", &range];
+
+        let sparse_paths = self.sparse_checkout_paths();
+        if !sparse_paths.is_empty() {
+            args.push("--");
+            args.extend(sparse_paths.iter().map(|s| s.as_str()));
+        }
+
+        let stdout = self.run_command(&args)?;
         LineDiff::from_numstat(&stdout)
     }
 

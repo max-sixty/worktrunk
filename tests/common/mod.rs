@@ -584,7 +584,7 @@ const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK", "1"),
     // Disable delayed streaming for deterministic output across platforms.
     // Without this, slow CI triggers progress messages that don't appear on faster systems.
-    ("WT_TEST_DELAYED_STREAM_MS", "-1"),
+    ("WORKTRUNK_TEST_DELAYED_STREAM_MS", "-1"),
 ];
 
 // NOTE: TERM is intentionally NOT in STATIC_TEST_ENV_VARS because:
@@ -699,7 +699,9 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env_remove("PSModulePath");
     // Disable auto PowerShell detection (tests that need it should set to "1")
     cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "0");
-    cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
+    // Disable auto nushell detection (tests that need it should set to "1")
+    cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
+    cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
     // Enable warn-level logging so diagnostics show up in test failures
     cmd.env("RUST_LOG", "warn");
     // Treat Claude as not installed by default (tests can override with "1")
@@ -750,7 +752,7 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
     cmd.env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z");
     cmd.env("LC_ALL", "C");
     cmd.env("LANG", "C");
-    cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
+    cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
     cmd.env("GIT_TERMINAL_PROMPT", "0");
 }
 
@@ -1167,7 +1169,7 @@ impl TestRepo {
                 "XDG_CONFIG_HOME".to_string(),
                 self.home_path().join(".config").display().to_string(),
             ),
-            ("WT_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
+            ("WORKTRUNK_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
             (
                 "WORKTRUNK_CONFIG_PATH".to_string(),
                 self.test_config_path().display().to_string(),
@@ -2734,6 +2736,12 @@ fn setup_snapshot_settings_for_paths_with_home(
         r"(git: \x1b\[1m)[0-9]+\.[0-9]+\.[0-9]+[^\x1b]*",
         "${1}[VERSION]",
     );
+    // Version check: "Up to date (<bold>VERSION</>)" or "current: VERSION)"
+    // version_str() can be: v0.8.5, v0.8.5-2-gabcdef, v0.8.5-dirty, 0.8.5, or bare hash (8465a1f)
+    settings.add_filter(
+        r"(current: |Up to date \(\x1b\[1m)(?:v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40})",
+        "${1}[VERSION]",
+    );
 
     // Normalize project root paths in "Binary invoked as:" debug output
     // Tests run cargo which produces paths like /path/to/worktrunk/target/debug/wt
@@ -2784,10 +2792,12 @@ fn setup_snapshot_settings_for_paths_with_home(
     // Format: "* " + yellow code + 7-char hex hash + reset
     settings.add_filter(r"\* \x1b\[33m[a-f0-9]{7}\x1b\[m", "* \x1b[33m[HASH]\x1b[m");
 
-    // Filter out CARGO_LLVM_COV env variables from snapshot YAML headers.
+    // Filter out cargo-llvm-cov env variables from snapshot YAML headers.
     // These are only present during coverage runs and cause snapshot mismatches.
-    settings.add_filter(r#"  CARGO_LLVM_COV: "1"\n"#, "");
-    settings.add_filter(r#"  CARGO_LLVM_COV_TARGET_DIR: "[^"]+"\n"#, "");
+    // Note: YAML indentation in the info.env section is 4 spaces.
+    settings.add_filter(r#"    CARGO_LLVM_COV: "1"\n"#, "");
+    settings.add_filter(r#"    CARGO_LLVM_COV_TARGET_DIR: "[^"]+"\n"#, "");
+    settings.add_filter(r#"    LLVM_PROFILE_FILE: "[^"]+"\n"#, "");
 
     settings
 }

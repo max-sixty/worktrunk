@@ -64,9 +64,9 @@ git branch -d feat{% end %}</td>
   </tbody>
 </table>
 
-**Workflow automation:**
-
 > Expand into the more advanced commands as needed
+
+**Workflow automation:**
 
 - **[Hooks](https://worktrunk.dev/hook/)** — run commands on create, pre-merge, post-merge, etc
 - **[LLM commit messages](https://worktrunk.dev/llm-commits/)** — generate commit messages from diffs
@@ -127,7 +127,7 @@ This creates a new branch and worktree, then switches to it. Do your work, then 
 
 <span class=d>○</span> <span class=d>Showing 2 worktrees, 1 with changes, 1 column hidden</span>
 
-The `@` marks the current worktree. `+` means uncommitted changes, `↕` means unpushed commits.
+The `@` marks the current worktree. `+` means staged changes, `⇡` means unpushed commits.
 
 When done, either:
 

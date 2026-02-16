@@ -25,6 +25,11 @@ wt config shell init fish | source
 Zsh (~/.zshrc):
 ```zsh
 eval "$(wt config shell init zsh)"
+```
+
+Nushell (experimental) — save to vendor autoload directory:
+```console
+wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/autoload/wt.nu)
 ```"#
     )]
     Init {
@@ -222,10 +227,11 @@ wt config show --full
 
 This tests:
 - **CI tool status** — Whether `gh` (GitHub) or `glab` (GitLab) is installed and authenticated
-- **Commit generation** — Whether the LLM command can generate commit messages"#
+- **Commit generation** — Whether the LLM command can generate commit messages
+- **Version check** — Whether a newer version is available on GitHub"#
     )]
     Show {
-        /// Run diagnostic checks (CI tools, commit generation)
+        /// Run diagnostic checks (CI tools, commit generation, version)
         #[arg(long)]
         full: bool,
     },

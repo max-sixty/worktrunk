@@ -205,6 +205,15 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
             ));
             script.push_str("set -x CLICOLOR_FORCE 1\n");
         }
+        "nu" => {
+            // Nushell uses $env.VAR syntax for environment variables
+            script.push_str(&format!("$env.WORKTRUNK_BIN = {}\n", wt_bin_quoted));
+            script.push_str(&format!(
+                "$env.WORKTRUNK_CONFIG_PATH = {}\n",
+                config_path_quoted
+            ));
+            script.push_str("$env.CLICOLOR_FORCE = '1'\n");
+        }
         "zsh" => {
             // For zsh, initialize the completion system first
             // This allows static completions (which call compdef) to work in isolated mode
@@ -280,6 +289,11 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
             // (see templates/fish.fish - psub causes buffering). Tests document current behavior.
             format!("begin\n{}\nend 2>&1", script)
         }
+        "nu" => {
+            // Nushell doesn't need explicit stderr redirect - PTY captures both streams
+            // The script is executed directly
+            script
+        }
         "bash" => {
             // For bash, we don't use a subshell wrapper because it would isolate job control messages.
             // Instead, we use exec to redirect stderr to stdout, then run the script.
@@ -301,9 +315,8 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
     }
 }
 
-/// Execute a command in a PTY with interactive input support
+/// Execute a command in a PTY with interactive input support.
 ///
-/// This is similar to `exec_in_pty` but allows sending input during execution.
 /// The PTY will automatically echo the input (like a real terminal), so you'll
 /// see both the prompts and the input in the captured output.
 ///
@@ -428,13 +441,18 @@ fn exec_in_pty_interactive(
             cmd.arg("-File");
             cmd.arg(script_path.to_string_lossy().to_string());
         }
+        "nu" => {
+            // Nushell: isolate from user config
+            cmd.arg("--no-config-file");
+            cmd.arg("-c");
+            cmd.arg(script);
+        }
         _ => {
             // fish and other shells
             cmd.arg("-c");
             cmd.arg(script);
         }
     }
-
     cmd.cwd(working_dir);
 
     // Add test-specific environment variables (convert &str tuples to String tuples)
@@ -696,7 +714,7 @@ const STANDARD_TEST_ENV: &[(&str, &str)] = &[
     ("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z"),
     ("LANG", "C"),
     ("LC_ALL", "C"),
-    ("WT_TEST_EPOCH", "1735776000"),
+    ("WORKTRUNK_TEST_EPOCH", "1735776000"),
 ];
 
 /// Build standard test env vars with config path
@@ -753,6 +771,7 @@ mod unix_tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_wrapper_handles_command_failure(#[case] shell: &str, mut repo: TestRepo) {
         // Create a worktree that already exists
         repo.add_worktree("existing");
@@ -786,6 +805,7 @@ mod unix_tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_wrapper_switch_create(#[case] shell: &str, repo: TestRepo) {
         let output = exec_through_wrapper(shell, &repo, "switch", &["--create", "feature"]);
 
@@ -812,6 +832,7 @@ mod unix_tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_wrapper_remove(#[case] shell: &str, mut repo: TestRepo) {
         // Create a worktree to remove
         repo.add_worktree("to-remove");
@@ -834,6 +855,7 @@ mod unix_tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_wrapper_step_for_each(#[case] shell: &str, mut repo: TestRepo) {
         // Remove fixture worktrees so we can create our own feature-a and feature-b
         repo.remove_fixture_worktrees();
@@ -897,6 +919,7 @@ mod unix_tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_wrapper_merge(#[case] shell: &str, mut repo: TestRepo) {
         // Disable LLM prompt (PTY tests are interactive, claude may be installed)
         repo.write_test_config("");
@@ -922,6 +945,7 @@ mod unix_tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_wrapper_switch_with_execute(#[case] shell: &str, repo: TestRepo) {
         // Use --yes to skip approval prompt in tests
         let output = exec_through_wrapper(
@@ -962,6 +986,7 @@ mod unix_tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_wrapper_execute_exit_code_propagation(#[case] shell: &str, repo: TestRepo) {
         // Use --yes to skip approval prompt in tests
         // wt should succeed (creates worktree), but the execute command should fail with exit 42
@@ -1522,6 +1547,7 @@ approved-commands = ["echo 'fish background task'"]
     // This test runs `cargo run` inside a PTY which can take longer than the
     // default 60s timeout when cargo checks/compiles dependencies. Extended
     // timeout configured in .config/nextest.toml.
+    // Note: Nushell not included - this test builds custom scripts with bash syntax
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1589,7 +1615,7 @@ approved-commands = ["echo 'fish background task'"]
             ("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z"),
             ("LANG", "C"),
             ("LC_ALL", "C"),
-            ("WT_TEST_EPOCH", "1735776000"),
+            ("WORKTRUNK_TEST_EPOCH", "1735776000"),
         ];
 
         let (combined, exit_code) =
@@ -1910,6 +1936,7 @@ approved-commands = ["echo 'bash background'"]
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_branch_name_with_slashes(#[case] shell: &str, repo: TestRepo) {
         // Branch name with slashes (common git convention)
         let output =
@@ -1930,6 +1957,7 @@ approved-commands = ["echo 'bash background'"]
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_branch_name_with_dashes_underscores(#[case] shell: &str, repo: TestRepo) {
         let output = exec_through_wrapper(shell, &repo, "switch", &["--create", "fix-bug_123"]);
 
@@ -1948,6 +1976,7 @@ approved-commands = ["echo 'bash background'"]
     // ========================================================================
 
     /// Test that shell integration works when wt is not in PATH but WORKTRUNK_BIN is set
+    // Note: Nushell not included - this test builds custom scripts with bash syntax
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -2200,6 +2229,7 @@ approved-commands = ["echo 'bash background'"]
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_shell_completes_cleanly(#[case] shell: &str, repo: TestRepo) {
         // Configure a post-start command to exercise the background job code path
         let config_dir = repo.root_path().join(".config");
@@ -3035,6 +3065,7 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     /// shell wrapper. The issue being tested: in some shells (particularly fish),
     /// command substitution doesn't propagate stderr redirects, causing help
     /// output to appear on the terminal even when redirected.
+    // Note: Nushell not included - this test builds custom scripts with bash syntax
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -3185,6 +3216,7 @@ echo "SCRIPT_COMPLETED"
     ///
     /// We verify pager invocation by setting GIT_PAGER to a script that creates
     /// a marker file before passing through the content.
+    // Note: Nushell not included - this test builds custom scripts with bash syntax
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -3382,12 +3414,18 @@ mod windows_tests {
     /// This test runs cmd.exe which is simpler than PowerShell and validates the core ConPTY fix.
     #[test]
     fn test_conpty_basic_cmd() {
-        use crate::common::pty::exec_in_pty;
+        use crate::common::pty::{build_pty_command, exec_cmd_in_pty};
 
         // Use cmd.exe for simplest possible test
         let tmp = tempfile::tempdir().unwrap();
-        let (output, exit_code) =
-            exec_in_pty("cmd.exe", &["/C", "echo CONPTY_WORKS"], tmp.path(), &[], "");
+        let cmd = build_pty_command(
+            "cmd.exe",
+            &["/C", "echo CONPTY_WORKS"],
+            tmp.path(),
+            &[],
+            None,
+        );
+        let (output, exit_code) = exec_cmd_in_pty(cmd, "");
 
         eprintln!("ConPTY test output: {:?}", output);
         eprintln!("ConPTY test exit code: {}", exit_code);
@@ -3405,19 +3443,20 @@ mod windows_tests {
     /// Diagnostic test: Verify wt --version works via ConPTY.
     #[test]
     fn test_conpty_wt_version() {
-        use crate::common::pty::exec_in_pty;
+        use crate::common::pty::{build_pty_command, exec_cmd_in_pty};
         use crate::common::wt_bin;
 
         let wt_bin = wt_bin();
         let tmp = tempfile::tempdir().unwrap();
 
-        let (output, exit_code) = exec_in_pty(
+        let cmd = build_pty_command(
             wt_bin.to_str().unwrap(),
             &["--version"],
             tmp.path(),
             &[],
-            "",
+            None,
         );
+        let (output, exit_code) = exec_cmd_in_pty(cmd, "");
 
         eprintln!("wt --version output: {:?}", output);
         eprintln!("wt --version exit code: {}", exit_code);

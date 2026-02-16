@@ -49,6 +49,8 @@ pub fn shell_from_name(shell_name: &str) -> Option<Shell> {
         Some(Shell::Bash)
     } else if name_lower.starts_with("fish") {
         Some(Shell::Fish)
+    } else if name_lower.starts_with("nu") {
+        Some(Shell::Nushell)
     } else if name_lower.starts_with("pwsh") || name_lower.starts_with("powershell") {
         Some(Shell::PowerShell)
     } else {
@@ -250,6 +252,8 @@ mod tests {
     #[case::zsh("zsh", Some(Shell::Zsh))]
     #[case::zsh_versioned("zsh-5.9", Some(Shell::Zsh))]
     #[case::fish("fish", Some(Shell::Fish))]
+    #[case::nu("nu", Some(Shell::Nushell))]
+    #[case::nushell("nushell", Some(Shell::Nushell))]
     #[case::powershell("powershell", Some(Shell::PowerShell))]
     #[case::pwsh("pwsh", Some(Shell::PowerShell))]
     #[case::pwsh_preview("pwsh-preview", Some(Shell::PowerShell))]

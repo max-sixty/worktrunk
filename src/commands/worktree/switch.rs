@@ -17,7 +17,7 @@ use worktrunk::styling::{
     warning_message,
 };
 
-use super::resolve::{compute_clobber_backup, compute_worktree_path, paths_match};
+use super::resolve::{compute_clobber_backup, compute_worktree_path};
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::commands::command_executor::CommandContext;
 
@@ -445,32 +445,6 @@ fn resolve_switch_target(
     })
 }
 
-/// Check if branch already has a worktree.
-///
-/// Returns `Some(Existing)` if worktree exists and is valid.
-/// Returns error if worktree record exists but directory is missing.
-/// Returns `None` if no worktree exists for this branch.
-fn check_existing_worktree(
-    repo: &Repository,
-    branch: &str,
-    expected_path: &Path,
-    new_previous: Option<String>,
-) -> anyhow::Result<Option<SwitchPlan>> {
-    match repo.worktree_for_branch(branch)? {
-        Some(existing_path) if existing_path.exists() => Ok(Some(SwitchPlan::Existing {
-            path: canonicalize(&existing_path).unwrap_or(existing_path),
-            branch: branch.to_string(),
-            expected_path: expected_path.to_path_buf(),
-            new_previous,
-        })),
-        Some(_) => Err(GitError::WorktreeMissing {
-            branch: branch.to_string(),
-        }
-        .into()),
-        None => Ok(None),
-    }
-}
-
 /// Validate that we can create a worktree at the given path.
 ///
 /// Checks:
@@ -609,15 +583,27 @@ pub fn plan_switch(
     // Phase 1: Resolve target (handles pr:, validates --create/--base, may do network)
     let target = resolve_switch_target(repo, branch, create, base)?;
 
-    // Phase 2: Compute expected path
-    let expected_path = compute_worktree_path(repo, &target.branch, config)?;
-
-    // Phase 3: Check if worktree already exists for this branch
-    if let Some(existing) =
-        check_existing_worktree(repo, &target.branch, &expected_path, new_previous.clone())?
-    {
-        return Ok(existing);
+    // Phase 2: Check if worktree already exists for this branch (fast path)
+    // This avoids computing the worktree path template (~7 git commands) for existing switches.
+    match repo.worktree_for_branch(&target.branch)? {
+        Some(existing_path) if existing_path.exists() => {
+            return Ok(SwitchPlan::Existing {
+                path: canonicalize(&existing_path).unwrap_or(existing_path),
+                branch: target.branch,
+                new_previous,
+            });
+        }
+        Some(_) => {
+            return Err(GitError::WorktreeMissing {
+                branch: target.branch,
+            }
+            .into());
+        }
+        None => {}
     }
+
+    // Phase 3: Compute expected path (only needed for create)
+    let expected_path = compute_worktree_path(repo, &target.branch, config)?;
 
     // Phase 4: Validate we can create at this path
     let clobber_backup = validate_worktree_creation(
@@ -641,7 +627,9 @@ pub fn plan_switch(
 /// Execute a validated switch plan.
 ///
 /// Takes a `SwitchPlan` from `plan_switch()` and executes it.
-/// For `SwitchPlan::Existing`, just records history.
+/// For `SwitchPlan::Existing`, just records history. The returned
+/// `SwitchBranchInfo` has `expected_path: None` — callers fill it in after
+/// first output to avoid computing path mismatch on the hot path.
 /// For `SwitchPlan::Create`, creates the worktree and runs hooks.
 pub fn execute_switch(
     repo: &Repository,
@@ -654,7 +642,6 @@ pub fn execute_switch(
         SwitchPlan::Existing {
             path,
             branch,
-            expected_path,
             new_previous,
         } => {
             let current_dir = std::env::current_dir()
@@ -672,23 +659,19 @@ pub fn execute_switch(
                 let _ = repo.set_switch_previous(new_previous.as_deref());
             }
 
-            let mismatch_path = if !paths_match(&path, &expected_path) {
-                Some(expected_path)
-            } else {
-                None
-            };
-
             let result = if already_at_worktree {
                 SwitchResult::AlreadyAt(path)
             } else {
                 SwitchResult::Existing { path }
             };
 
+            // Path mismatch is computed lazily by callers after first output,
+            // avoiding ~7 git commands on the hot path for existing switches.
             Ok((
                 result,
                 SwitchBranchInfo {
                     branch,
-                    expected_path: mismatch_path,
+                    expected_path: None,
                 },
             ))
         }
@@ -922,6 +905,8 @@ pub fn execute_switch(
     }
 }
 
+/// Resolve the deferred path mismatch for existing worktree switches.
+///
 fn worktree_creation_error(
     err: &anyhow::Error,
     branch: String,

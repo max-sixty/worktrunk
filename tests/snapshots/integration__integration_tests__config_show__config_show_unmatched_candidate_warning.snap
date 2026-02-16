@@ -28,10 +28,10 @@ info:
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_COMPINIT_CONFIGURED: "1"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -55,7 +55,7 @@ exit_code: 0
 [2m↳[22m [2mbash: Not configured shell extension & completions[22m
 [2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
 [2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
-
+[2m○[22m [2mnu: Skipped; ~/.config/nushell/vendor/autoload not found[22m
 [2m↳[22m [2mTo configure, run [90mwt config shell install[39m[22m
 [33m▲[39m [33mFound [1mwt[22m in [1m~/.bashrc:3[22m but not detected as integration:[39m
 [107m [0m [2m[0m[2m[34malias[0m[2m wt=[0m[2m[32m"git worktree"[0m[2m

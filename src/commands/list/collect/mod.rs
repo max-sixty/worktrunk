@@ -331,6 +331,8 @@ pub fn collect(
     // (skeleton shows placeholder gutter, actual symbols appear when data loads)
 
     // Phase 3: Batch fetch timestamps (needs all SHAs from worktrees + branches)
+    // Filter out null OIDs from unborn branches — a single null OID would cause
+    // `git show` to fail for ALL shas in the batch.
     let all_shas: Vec<&str> = worktrees
         .iter()
         .map(|wt| wt.head.as_str())
@@ -340,6 +342,7 @@ pub fn collect(
                 .map(|(_, sha)| sha.as_str()),
         )
         .chain(remote_branches.iter().map(|(_, sha)| sha.as_str()))
+        .filter(|sha| *sha != worktrunk::git::NULL_OID)
         .collect();
     let timestamps = repo.commit_timestamps(&all_shas).unwrap_or_default();
 
@@ -502,8 +505,10 @@ pub fn collect(
         None
     };
 
-    // Early exit for benchmarking skeleton render time
-    if std::env::var("WORKTRUNK_SKELETON_ONLY").is_ok() {
+    // Early exit for benchmarking skeleton render time / time-to-first-output
+    if std::env::var_os("WORKTRUNK_SKELETON_ONLY").is_some()
+        || std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some()
+    {
         return Ok(None);
     }
 
@@ -610,9 +615,11 @@ pub fn collect(
     let mut errors: Vec<TaskError> = Vec::new();
 
     // Collect all work items upfront, then execute in a single Rayon pool.
-    // This avoids nested parallelism (Rayon par_iter → thread::scope per worktree)
-    // which could create 100+ threads. Instead, we have one pool with the configured
-    // thread count (default 2x CPU cores unless overridden by RAYON_NUM_THREADS).
+    // This avoids nested parallelism (Rayon par_iter → scope per worktree)
+    // which can deadlock when outer tasks block pool threads waiting for inner
+    // tasks that can't get scheduled. Instead, we have one flat pool with the
+    // configured thread count (default 2x CPU cores unless overridden by
+    // RAYON_NUM_THREADS).
     let sorted_worktrees_clone = sorted_worktrees.clone();
     let tx_worker = tx.clone();
     let expected_results_clone = expected_results.clone();
@@ -757,11 +764,10 @@ pub fn collect(
         items_with_missing,
     } = drain_outcome
     {
-        // Build diagnostic message showing what's MISSING (more useful for debugging)
+        // Warning: what happened + gutter showing which results are missing
         let mut diag = format!("wt list timed out after 30s ({received_count} results received)");
 
         if !items_with_missing.is_empty() {
-            diag.push_str("\nMissing results:");
             let missing_lines: Vec<String> = items_with_missing
                 .iter()
                 .map(|result| {
@@ -776,14 +782,14 @@ pub fn collect(
             ));
         }
 
-        diag.push_str(
-            "\n\nThis likely indicates a git command hung. Run with -v for details, -vv to create a diagnostic file.",
-        );
-
         eprintln!("{}", warning_message(&diag));
 
-        // Show issue reporting hint (free function - doesn't collect diagnostic data)
-        eprintln!("{}", hint_message(crate::diagnostic::issue_hint()));
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "A git command likely hung; run with <bright-black>-v</> for details, <bright-black>-vv</> to create a diagnostic file"
+            ))
+        );
     }
 
     // Compute status symbols for prunable worktrees (skipped during task spawning).

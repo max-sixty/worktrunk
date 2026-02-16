@@ -20,7 +20,9 @@ use super::handle_switch::{
     approve_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
 use super::list::collect;
-use super::worktree::{execute_switch, plan_switch};
+use super::worktree::{
+    SwitchBranchInfo, SwitchResult, execute_switch, get_path_mismatch, plan_switch,
+};
 use crate::output::handle_switch_output;
 
 use items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
@@ -152,6 +154,10 @@ pub fn handle_select(
     // Configure skim options with Rust-based preview and mode switching keybindings
     let options = SkimOptionsBuilder::default()
         .height("90%".to_string())
+        // Workaround for skim-tuikit bug: partial-height mode skips smcup but
+        // cleanup still sends rmcup, leaving artifacts. no_clear_start forces
+        // cursor_goto + erase_down cleanup instead. See skim-rs/skim#880.
+        .no_clear_start(true)
         .layout("reverse".to_string())
         .header_lines(1) // Make first line (header) non-selectable
         .multi(false)
@@ -214,33 +220,29 @@ pub fn handle_select(
     }
     drop(tx);
 
-    // Spawn background thread to pre-compute all preview modes for all worktrees.
-    // Use same dimension calculation as skim's preview window.
-    // Thread runs until complete or process exits — no join needed since ongoing
+    // Pre-compute all preview modes for all worktrees in parallel via rayon.
+    // Each (worktree, mode) pair is a separate rayon task, allowing the thread pool
+    // to overlap I/O-bound git commands. Tasks are fire-and-forget — ongoing
     // git commands are harmless read-only operations even if skim exits early.
     let (preview_width, preview_height) = state.initial_layout.preview_dimensions(num_items);
-    let precompute_cache = Arc::clone(&preview_cache);
-    std::thread::spawn(move || {
-        let modes = [
-            PreviewMode::WorkingTree,
-            PreviewMode::Log,
-            PreviewMode::BranchDiff,
-            PreviewMode::UpstreamDiff,
-        ];
-        for item in items_for_precompute {
-            let branch_name = item.branch_name().to_string();
-            for mode in modes {
-                let cache_key = (branch_name.clone(), mode);
-                // Skip if already cached (e.g., user viewed it before we got here)
-                if precompute_cache.contains_key(&cache_key) {
-                    continue;
-                }
-                let preview =
-                    WorktreeSkimItem::compute_preview(&item, mode, preview_width, preview_height);
-                precompute_cache.insert(cache_key, preview);
-            }
+    let modes = [
+        PreviewMode::WorkingTree,
+        PreviewMode::Log,
+        PreviewMode::BranchDiff,
+        PreviewMode::UpstreamDiff,
+    ];
+    for item in items_for_precompute {
+        for mode in modes {
+            let cache = Arc::clone(&preview_cache);
+            let item = Arc::clone(&item);
+            rayon::spawn(move || {
+                let cache_key = (item.branch_name().to_string(), mode);
+                cache.entry(cache_key).or_insert_with(|| {
+                    WorktreeSkimItem::compute_preview(&item, mode, preview_width, preview_height)
+                });
+            });
         }
-    });
+    }
 
     // Run skim
     let output = Skim::run_with(&options, Some(rx));
@@ -277,6 +279,18 @@ pub fn handle_select(
         let plan = plan_switch(&repo, &identifier, should_create, None, false, &config)?;
         let skip_hooks = !approve_switch_hooks(&repo, &config, &plan, false, true)?;
         let (result, branch_info) = execute_switch(&repo, plan, &config, false, skip_hooks)?;
+
+        // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
+        let branch_info = match &result {
+            SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
+                let expected_path = get_path_mismatch(&repo, &branch_info.branch, path, &config);
+                SwitchBranchInfo {
+                    expected_path,
+                    ..branch_info
+                }
+            }
+            _ => branch_info,
+        };
 
         // Show success message; emit cd directive if shell integration is active
         // Interactive picker always performs cd (change_dir: true)

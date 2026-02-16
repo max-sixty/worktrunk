@@ -853,6 +853,11 @@ fn main() {
                         handle_remove_current(!delete_branch, force_delete, force, &config)
                             .context("Failed to remove worktree")?;
 
+                    // Early exit for benchmarking time-to-first-output
+                    if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
+                        return Ok(());
+                    }
+
                     // "Approve at the Gate": approval happens AFTER validation passes
                     let run_hooks = verify && approve_remove(yes)?;
 
@@ -962,6 +967,11 @@ fn main() {
                         anyhow::bail!("");
                     }
 
+                    // Early exit for benchmarking time-to-first-output
+                    if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
+                        return Ok(());
+                    }
+
                     // Phase 2: Approve hooks (only if we have valid plans)
                     // TODO(pre-remove-context): Approval context uses current worktree,
                     // but hooks execute in each target worktree.
@@ -1037,6 +1047,8 @@ fn main() {
         } else if let Some(err) = e.downcast_ref::<worktrunk::git::WorktrunkError>() {
             eprintln!("{}", err);
         } else if let Some(err) = e.downcast_ref::<worktrunk::git::HookErrorWithHint>() {
+            eprintln!("{}", err);
+        } else if let Some(err) = e.downcast_ref::<worktrunk::config::TemplateExpandError>() {
             eprintln!("{}", err);
         } else {
             // Anyhow error formatting:

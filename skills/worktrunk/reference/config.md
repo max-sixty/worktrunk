@@ -407,6 +407,7 @@ wt config show --full
 This tests:
 - **CI tool status** — Whether `gh` (GitHub) or `glab` (GitLab) is installed and authenticated
 - **Commit generation** — Whether the LLM command can generate commit messages
+- **Version check** — Whether a newer version is available on GitHub
 
 ### Command reference
 
@@ -416,7 +417,7 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--full</span></b>
-          Run diagnostic checks (CI tools, commit generation)
+          Run diagnostic checks (CI tools, commit generation, version)
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

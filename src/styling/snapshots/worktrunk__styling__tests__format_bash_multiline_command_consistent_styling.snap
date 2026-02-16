@@ -6,7 +6,7 @@ expression: result
 [107m [0m [2m[0m[2m[34mmkdir[0m[2m [0m[2m[36m-p[0m[2m [0m[2m[32m{{[0m[2m worktree [0m[2m[32m}}[0m[2m/target/debug/deps [0m[2m[36m&&[0m[2m[0m
 [107m [0m [2m[0m[2m[34mcp[0m[2m [0m[2m[36m-c[0m[2m [0m[2m[32m{{[0m[2m repo_root [0m[2m[32m}}[0m[2m/target/debug/deps/*.rlib [0m[2m[32m{{[0m[2m repo_root [0m
 [107m [0m [2m[0m[2m[32m}}[0m[2m/target/debug/deps/*.rmeta [0m[2m[32m{{[0m[2m worktree[0m
-[107m [0m [2m[0m[2m[32m}}[0m[2m/target/debug/deps/[0m[2m [0m[2m[36m&&[0m[2m[0m
+[107m [0m [2m[0m[2m[32m}}[0m[2m[0m[2m/target/debug/deps/ [0m[2m[36m&&[0m[2m[0m
 [107m [0m [2m[0m[2m[34mcp[0m[2m [0m[2m[36m-cR[0m[2m [0m[2m[32m{{[0m[2m repo_root [0m[2m[32m}}[0m[2m/target/debug/.fingerprint [0m[2m[32m{{[0m[2m repo_root [0m
 [107m [0m [2m[0m[2m[32m}}[0m[2m/target/debug/build [0m[2m[32m{{[0m[2m worktree[0m
-[107m [0m [2m[0m[2m[32m}}[0m[2m/target/debug/[0m[2m[0m
+[107m [0m [2m[0m[2m[32m}}[0m[2m[0m[2m/target/debug/[0m

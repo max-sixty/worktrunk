@@ -74,7 +74,7 @@ cargo test --test integration --features shell-integration-tests  # with shell t
 
 ### Claude Code Web Environment
 
-Run `task setup-web` to install required shells (zsh, fish), `gh`, and other dev tools. Install `task` first if needed:
+Run `task setup-web` to install required shells (zsh, fish, nushell), `gh`, and other dev tools. Install `task` first if needed:
 
 ```bash
 sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin
