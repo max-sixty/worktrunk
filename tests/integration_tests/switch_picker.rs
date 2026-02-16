@@ -453,8 +453,10 @@ fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
     // \A anchors to absolute start of string, matching only the first line.
     settings.add_filter(r"\A> [^\n]*", "> [QUERY]");
 
-    // Skim count indicators (matched/total) at end of lines
-    settings.add_filter(r"(?m)\d+/\d+\s*$", "[N/M]");
+    // Skim count indicators (matched/total) at end of lines.
+    // Normalize leading whitespace too — skim right-aligns the count with padding
+    // that varies based on unicode character width calculations across platforms.
+    settings.add_filter(r"(?m)\s+\d+/\d+\s*$", " [N/M]");
 
     // Commit hashes (7-8 hex chars)
     settings.add_filter(r"\b[0-9a-f]{7,8}\b", "[HASH]");
