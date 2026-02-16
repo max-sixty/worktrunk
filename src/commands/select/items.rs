@@ -157,40 +157,29 @@ impl WorktreeSkimItem {
 
     /// Render preview for the given mode with specified dimensions.
     /// Uses cache if available, otherwise computes and caches.
-    /// Applies pager at display time for diff modes (not cached).
+    /// Post-processing (diff pager, markdown render) applied at display time.
     fn preview_for_mode(&self, mode: PreviewMode, width: usize, height: usize) -> String {
-        // Summary mode: check the shared cache for background-generated summaries.
-        // Render as markdown with word wrapping for terminal display.
-        if mode == PreviewMode::Summary {
-            let cache_key = (self.branch_name.clone(), mode);
-            if let Some(cached) = self.preview_cache.get(&cache_key) {
-                return super::summary::render_summary(&cached, width);
-            }
-            // Not yet available — compute synchronous fallback
-            return Self::compute_summary_preview(&self.item);
-        }
-
         let cache_key = (self.branch_name.clone(), mode);
 
-        let result = self
+        let content = self
             .preview_cache
             .entry(cache_key)
             .or_insert_with(|| Self::compute_preview(&self.item, mode, width, height))
             .value()
             .clone();
 
-        // Apply pager at display time for diff modes (1, 3, 4)
-        // Log mode (2) and Summary mode (5) don't benefit from diff pagers
-        let is_diff_mode = matches!(
-            mode,
-            PreviewMode::WorkingTree | PreviewMode::BranchDiff | PreviewMode::UpstreamDiff
-        );
-
-        if is_diff_mode && let Some(pager_cmd) = get_diff_pager() {
-            return pipe_through_pager(&result, pager_cmd, width);
+        // Post-processing at display time (not cached)
+        match mode {
+            PreviewMode::Summary => super::summary::render_summary(&content, width),
+            PreviewMode::WorkingTree | PreviewMode::BranchDiff | PreviewMode::UpstreamDiff => {
+                if let Some(pager_cmd) = get_diff_pager() {
+                    pipe_through_pager(&content, pager_cmd, width)
+                } else {
+                    content
+                }
+            }
+            PreviewMode::Log => content,
         }
-
-        result
     }
 
     /// Compute preview for any mode. Called from cache miss and background pre-computation.
@@ -205,8 +194,6 @@ impl WorktreeSkimItem {
             PreviewMode::Log => Self::compute_log_preview(item, width, height),
             PreviewMode::BranchDiff => Self::compute_branch_diff_preview(item, width),
             PreviewMode::UpstreamDiff => Self::compute_upstream_diff_preview(item, width),
-            // Only reached from background precompute thread; preview_for_mode
-            // handles Summary separately (checks cache, renders markdown).
             PreviewMode::Summary => Self::compute_summary_preview(item),
         }
     }

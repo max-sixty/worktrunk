@@ -238,14 +238,10 @@ pub fn handle_select(
         PreviewMode::UpstreamDiff,
     ];
 
-    // Clone items for the summary thread before the rayon loop consumes them.
-    // Arc clones are cheap (refcount bumps only).
-    let summary_items = items_for_precompute.clone();
-
-    for item in items_for_precompute {
+    for item in &items_for_precompute {
         for mode in modes {
             let cache = Arc::clone(&preview_cache);
-            let item = Arc::clone(&item);
+            let item = Arc::clone(item);
             rayon::spawn(move || {
                 let cache_key = (item.branch_name().to_string(), mode);
                 cache.entry(cache_key).or_insert_with(|| {
@@ -255,30 +251,28 @@ pub fn handle_select(
         }
     }
 
-    // Spawn background thread for AI summary generation (parallel LLM calls).
-    // Only spawned when commit.generation is configured.
+    // Queue summary generation after tabs 1-4 so git previews get rayon priority.
     let resolved = config.resolved(repo.project_identifier().ok().as_deref());
     if resolved.commit_generation.is_configured() {
         let llm_command = resolved.commit_generation.command.clone().unwrap();
-        let summary_cache = Arc::clone(&preview_cache);
-        let summary_repo = repo.clone();
-        std::thread::spawn(move || {
-            summary::generate_all_summaries(
-                &summary_items,
-                &llm_command,
-                &summary_cache,
-                &summary_repo,
-            );
-        });
+        for item in &items_for_precompute {
+            let item = Arc::clone(item);
+            let cache = Arc::clone(&preview_cache);
+            let cmd = llm_command.clone();
+            let repo = repo.clone();
+            rayon::spawn(move || {
+                summary::generate_and_cache_summary(&item, &cmd, &cache, &repo);
+            });
+        }
     } else {
-        // No LLM configured — insert config hint for all items so the tab
-        // shows a useful message instead of a perpetual "Generating..." placeholder.
+        // No LLM configured — insert config hint so the tab shows a useful
+        // message instead of a perpetual "Generating..." placeholder.
         let hint = "Configure [commit.generation] command to enable AI summaries.\n\n\
                      Example in ~/.config/worktrunk/config.toml:\n\n\
                      [commit.generation]\n\
                      command = \"llm -m haiku\"\n"
             .to_string();
-        for item in &summary_items {
+        for item in &items_for_precompute {
             let branch = item.branch_name().to_string();
             preview_cache.insert((branch, PreviewMode::Summary), hint.clone());
         }

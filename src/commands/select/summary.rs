@@ -8,7 +8,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 
 use color_print::cformat;
 use dashmap::DashMap;
@@ -254,29 +254,18 @@ fn generate_summary(item: &ListItem, llm_command: &str, repo: &Repository) -> St
     summary
 }
 
-/// Generate summaries for all items in parallel, inserting results into the preview cache.
-///
-/// Spawns one thread per item via `std::thread::scope`, but limits concurrent LLM
-/// calls with `LLM_SEMAPHORE` (8 permits). This keeps all threads ready to run while
-/// preventing resource exhaustion when many branches are visible.
-pub(super) fn generate_all_summaries(
-    items: &[Arc<ListItem>],
+/// Generate a summary for one item and insert it into the preview cache.
+/// Acquires the LLM semaphore to limit concurrent calls across rayon tasks.
+pub(super) fn generate_and_cache_summary(
+    item: &ListItem,
     llm_command: &str,
-    preview_cache: &Arc<DashMap<PreviewCacheKey, String>>,
+    preview_cache: &DashMap<PreviewCacheKey, String>,
     repo: &Repository,
 ) {
-    std::thread::scope(|s| {
-        for item in items {
-            let item = Arc::clone(item);
-            let cache = Arc::clone(preview_cache);
-            s.spawn(move || {
-                let _permit = LLM_SEMAPHORE.acquire();
-                let branch = item.branch_name().to_string();
-                let summary = generate_summary(&item, llm_command, repo);
-                cache.insert((branch, PreviewMode::Summary), summary);
-            });
-        }
-    });
+    let _permit = LLM_SEMAPHORE.acquire();
+    let branch = item.branch_name().to_string();
+    let summary = generate_summary(item, llm_command, repo);
+    preview_cache.insert((branch, PreviewMode::Summary), summary);
 }
 
 #[cfg(test)]
@@ -658,14 +647,13 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_all_summaries_populates_cache() {
+    fn test_generate_and_cache_summary_populates_cache() {
         let (dir, repo, head) = temp_repo_with_feature();
         let item = feature_item(&head, dir.path());
-        let items = vec![Arc::new(item)];
-        let cache: Arc<DashMap<PreviewCacheKey, String>> = Arc::new(DashMap::new());
+        let cache: DashMap<PreviewCacheKey, String> = DashMap::new();
 
-        generate_all_summaries(
-            &items,
+        generate_and_cache_summary(
+            &item,
             "cat >/dev/null && echo 'Add new file'",
             &cache,
             &repo,
