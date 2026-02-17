@@ -29,10 +29,7 @@ use shell_escape::unix::escape;
 
 use crate::config::WorktrunkConfig;
 use crate::shell_exec::Cmd;
-use crate::styling::{
-    eprintln, format_bash_with_gutter, format_with_gutter, hint_message, info_message,
-    warning_message,
-};
+use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
 
 /// Tracks which config paths have already shown deprecation warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
@@ -766,29 +763,9 @@ pub fn check_and_migrate(
         }
 
         // Still write migration file if needed (first time only)
-        if !should_skip_write
-            && let Some(new_path) = write_migration_file(path, content, &info.deprecations, repo)
-        {
-            // Show apply hint for first-time migration file write
-            let new_filename = new_path
-                .file_name()
-                .map(|n| n.to_string_lossy())
-                .unwrap_or_default();
-            let new_path_str = escape(new_path.to_slash_lossy());
-            let path_str = escape(path.to_slash_lossy());
-
-            eprintln!(
-                "{}",
-                info_message(cformat!(
-                    "Wrote migrated <bold>{new_filename}</>. To apply:"
-                ))
-            );
-            eprintln!(
-                "{}",
-                format_bash_with_gutter(&format!("mv -- {} {}", new_path_str, path_str))
-            );
-
-            info.migration_path = Some(new_path);
+        // The file is needed for `wt config update` / `wt config show` to work
+        if !should_skip_write {
+            info.migration_path = write_migration_file(path, content, &info.deprecations, repo);
         }
 
         std::io::stderr().flush().ok();
@@ -810,7 +787,7 @@ pub fn check_and_migrate(
 /// caller is responsible for output.
 pub fn format_brief_warning(label: &str) -> String {
     warning_message(cformat!(
-        "{} has deprecated settings. To see details, run <bold>wt config show</>",
+        "{} has deprecated settings. Run <bold>wt config show</> for details or <bold>wt config update</> to apply updates",
         label
     ))
     .to_string()
@@ -892,8 +869,8 @@ pub fn format_migration_diff(original_path: &Path, new_path: &Path) -> Option<St
 /// Format deprecation warning lines (without apply hints or diff).
 ///
 /// Lists which deprecated patterns were found: template variables, config sections,
-/// approved-commands. Used by both `format_deprecation_details` (which adds the "mv"
-/// hint) and `config migrate` (which applies automatically).
+/// approved-commands. Used by both `format_deprecation_details` (which adds the
+/// `wt config update` hint and diff) and `wt config update` (which applies directly).
 pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
     use std::fmt::Write;
     let mut out = String::new();
@@ -988,31 +965,15 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
 
     // Migration hint with apply command
     if let Some(new_path) = &info.migration_path {
-        let new_filename = new_path
-            .file_name()
-            .map(|n| n.to_string_lossy())
-            .unwrap_or_default();
-        // Shell-escape paths for safe copy/paste
-        let new_path_str = escape(new_path.to_slash_lossy());
-        let path_str = escape(info.config_path.to_slash_lossy());
-
         let _ = writeln!(
             out,
             "{}",
-            info_message(cformat!(
-                "Wrote migrated <bold>{new_filename}</>. To apply:"
-            ))
-        );
-        let _ = writeln!(
-            out,
-            "{}",
-            format_bash_with_gutter(&format!("mv -- {} {}", new_path_str, path_str))
+            hint_message(cformat!("Run <bright-black>wt config update</> to apply"))
         );
 
-        // Inline diff with intro
+        // Inline diff — git diff header shows the file paths
         if let Some(diff) = format_migration_diff(&info.config_path, new_path) {
-            let _ = writeln!(out, "{}", info_message("Diff:"));
-            let _ = writeln!(out, "{}", diff);
+            let _ = writeln!(out, "{diff}");
         }
     } else if info.in_linked_worktree {
         // In linked worktree - migration file is written to main worktree
@@ -1020,7 +981,7 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
             out,
             "{}",
             hint_message(cformat!(
-                "To generate migration file, run <bright-black>wt config show</> from main worktree",
+                "Run <bright-black>wt config update</> from main worktree to apply",
             ))
         );
     }
