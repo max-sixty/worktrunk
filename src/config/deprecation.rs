@@ -479,11 +479,7 @@ fn copy_approved_commands_to_approvals_file(config_path: &Path) -> Option<PathBu
     let approvals = super::approvals::Approvals::load_from_config_file(config_path).ok()?;
     approvals.projects().next()?; // Nothing to copy if empty
 
-    if let Err(e) = approvals.save_to(&approvals_path) {
-        log::warn!("Could not write approvals file: {}", e);
-        return None;
-    }
-
+    approvals.save_to(&approvals_path).ok()?;
     Some(approvals_path)
 }
 
