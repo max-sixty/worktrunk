@@ -1085,6 +1085,44 @@ fn test_switch_picker_merge() {
 }
 
 #[test]
+fn test_switch_config_merge() {
+    use crate::config::user::{Merge, SwitchConfig, SwitchPickerConfig};
+
+    // Both have picker
+    let base = SwitchConfig {
+        picker: Some(SwitchPickerConfig {
+            pager: Some("delta".to_string()),
+            timeout_ms: None,
+        }),
+    };
+    let other = SwitchConfig {
+        picker: Some(SwitchPickerConfig {
+            pager: None,
+            timeout_ms: Some(300),
+        }),
+    };
+    let merged = base.merge_with(&other);
+    assert_eq!(
+        merged.picker.as_ref().unwrap().pager.as_deref(),
+        Some("delta")
+    );
+    assert_eq!(merged.picker.as_ref().unwrap().timeout_ms, Some(300));
+
+    // Base has picker, other doesn't
+    let other_none = SwitchConfig { picker: None };
+    let merged = base.merge_with(&other_none);
+    assert_eq!(
+        merged.picker.as_ref().unwrap().pager.as_deref(),
+        Some("delta")
+    );
+
+    // Neither has picker
+    let base_none = SwitchConfig { picker: None };
+    let merged = base_none.merge_with(&other_none);
+    assert!(merged.picker.is_none());
+}
+
+#[test]
 fn test_switch_picker_fallback_from_select() {
     // When only [select] is configured, switch_picker() should use its pager
     let config = UserConfig {
