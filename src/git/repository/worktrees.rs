@@ -24,11 +24,11 @@ impl Repository {
         let raw_worktrees = WorktreeInfo::parse_porcelain_list(&stdout)?;
         let mut worktrees: Vec<_> = raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
 
-        // Git submodules: `git worktree list` reports the main worktree path as the
-        // git data directory (e.g., `.git/modules/sub`) instead of the actual working
-        // directory. Detect this by comparing the first worktree's path against
-        // git_common_dir and correct it using repo_path() which resolves via
-        // `--show-toplevel` (reading core.worktree config).
+        // Submodule workaround: `git worktree list` reports the main worktree as
+        // the git data directory (`.git/modules/sub`) rather than the actual working
+        // directory. Detect this (first worktree path == git_common_dir, which never
+        // holds for normal repos) and correct using repo_path() which resolves the
+        // working directory via core.worktree.
         if let Some(first) = worktrees.first_mut()
             && canonicalize(&first.path).ok().as_deref() == Some(self.git_common_dir())
         {
