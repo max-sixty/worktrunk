@@ -527,6 +527,8 @@ mod commit_generation_prompt_tests {
         repo.run_git(&["add", "test.txt"]);
 
         let mut env_vars = repo.test_env_vars();
+        // Re-enable prompts (suppressed by default in test env)
+        env_vars.retain(|(k, _)| k != "WORKTRUNK_NO_PROMPTS");
         // Use minimal PATH to ensure claude/codex aren't found
         env_vars.push(("PATH".to_string(), "/usr/bin:/bin".to_string()));
 
@@ -562,6 +564,8 @@ mod commit_generation_prompt_tests {
         repo.run_git(&["add", "test.txt"]);
 
         let mut env_vars = repo.test_env_vars();
+        // Re-enable prompts (suppressed by default in test env)
+        env_vars.retain(|(k, _)| k != "WORKTRUNK_NO_PROMPTS");
         // Add our fake claude to PATH
         let path = format!("{}:/usr/bin:/bin", bin_dir.display());
         env_vars.push(("PATH".to_string(), path));
@@ -603,6 +607,8 @@ mod commit_generation_prompt_tests {
         repo.run_git(&["add", "test.txt"]);
 
         let mut env_vars = repo.test_env_vars();
+        // Re-enable prompts (suppressed by default in test env)
+        env_vars.retain(|(k, _)| k != "WORKTRUNK_NO_PROMPTS");
         let path = format!("{}:/usr/bin:/bin", bin_dir.display());
         env_vars.push(("PATH".to_string(), path));
 
@@ -644,6 +650,8 @@ mod commit_generation_prompt_tests {
         repo.run_git(&["add", "test.txt"]);
 
         let mut env_vars = repo.test_env_vars();
+        // Re-enable prompts (suppressed by default in test env)
+        env_vars.retain(|(k, _)| k != "WORKTRUNK_NO_PROMPTS");
         let path = format!("{}:/usr/bin:/bin", bin_dir.display());
         env_vars.push(("PATH".to_string(), path));
 

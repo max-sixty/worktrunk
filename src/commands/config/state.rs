@@ -4,7 +4,7 @@
 //! previous branch, CI status, markers, and logs.
 
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use color_print::cformat;
 use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
@@ -14,9 +14,11 @@ use worktrunk::styling::{
     eprintln, format_heading, format_with_gutter, info_message, println, success_message,
     warning_message,
 };
+use worktrunk::workspace::{Workspace, open_workspace};
 
 use crate::cli::OutputFormat;
 use crate::commands::process::HookLog;
+use crate::commands::require_git_workspace;
 use worktrunk::utils::get_now;
 
 use super::super::list::ci_status::{CachedCiStatus, CiBranchName};
@@ -70,18 +72,34 @@ pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
     })
 }
 
+// ==================== Helpers ====================
+
+/// Resolve the current branch/workspace name from an explicit option or workspace detection.
+fn resolve_branch_name(
+    workspace: &dyn Workspace,
+    branch: Option<String>,
+) -> anyhow::Result<String> {
+    match branch {
+        Some(b) => Ok(b),
+        None => {
+            let cwd = std::env::current_dir()?;
+            workspace
+                .current_name(&cwd)?
+                .ok_or_else(|| anyhow::anyhow!("Cannot determine current branch/workspace name"))
+        }
+    }
+}
+
 // ==================== Log Management ====================
 
 /// Clear all log files from the wt-logs directory
-fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
-    let log_dir = repo.wt_logs_dir();
-
+fn clear_logs(log_dir: &Path) -> anyhow::Result<usize> {
     if !log_dir.exists() {
         return Ok(0);
     }
 
     let mut cleared = 0;
-    for entry in std::fs::read_dir(&log_dir)? {
+    for entry in std::fs::read_dir(log_dir)? {
         let entry = entry?;
         let path = entry.path();
         if path.is_file() && path.extension().is_some_and(|ext| ext == "log") {
@@ -91,17 +109,16 @@ fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
     }
 
     // Remove the directory if empty
-    if std::fs::read_dir(&log_dir)?.next().is_none() {
-        let _ = std::fs::remove_dir(&log_dir);
+    if std::fs::read_dir(log_dir)?.next().is_none() {
+        let _ = std::fs::remove_dir(log_dir);
     }
 
     Ok(cleared)
 }
 
 /// Render the LOG FILES section (heading + table or "(none)") into the output buffer
-pub(super) fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
-    let log_dir = repo.wt_logs_dir();
-    let log_dir_display = format_path_for_display(&log_dir);
+pub(super) fn render_log_files(out: &mut String, log_dir: &Path) -> anyhow::Result<()> {
+    let log_dir_display = format_path_for_display(log_dir);
 
     writeln!(
         out,
@@ -114,7 +131,7 @@ pub(super) fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::R
         return Ok(());
     }
 
-    let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
+    let mut entries: Vec<_> = std::fs::read_dir(log_dir)?
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "log"))
         .collect();
@@ -176,13 +193,14 @@ pub(super) fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::R
 /// - `source:hook-type:name` for hook commands (e.g., `user:post-start:server`)
 /// - `internal:op` for internal operations (e.g., `internal:remove`)
 pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::Result<()> {
-    let repo = Repository::current()?;
+    let workspace = open_workspace()?;
+    let log_dir = workspace.wt_logs_dir();
 
     match hook {
         None => {
             // No hook specified, show all log files (existing behavior)
             let mut out = String::new();
-            render_log_files(&mut out, &repo)?;
+            render_log_files(&mut out, &log_dir)?;
 
             // Display through pager (fall back to stderr if pager unavailable)
             if show_help_in_pager(&out, true).is_err() {
@@ -190,13 +208,7 @@ pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::
             }
         }
         Some(hook_spec) => {
-            // Get the branch name
-            let branch = match branch {
-                Some(b) => b,
-                None => repo.require_current_branch("get log for current branch")?,
-            };
-
-            let log_dir = repo.wt_logs_dir();
+            let branch = resolve_branch_name(&*workspace, branch)?;
 
             // Parse the hook spec using HookLog
             let hook_log = HookLog::parse(&hook_spec).map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -259,32 +271,30 @@ pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::
 pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()> {
     use super::super::list::ci_status::PrStatus;
 
-    let repo = Repository::current()?;
+    let workspace = open_workspace()?;
 
     match key {
         "default-branch" => {
-            let branch_name = repo.default_branch().ok_or_else(|| {
+            let branch_name = workspace.default_branch_name().ok_or_else(|| {
                 anyhow::anyhow!(cformat!(
                     "Cannot determine default branch. To configure, run <bold>wt config state default-branch set BRANCH</>"
                 ))
             })?;
             println!("{branch_name}");
         }
-        "previous-branch" => match repo.switch_previous() {
+        "previous-branch" => match workspace.switch_previous() {
             Some(prev) => println!("{prev}"),
             None => println!(""),
         },
         "marker" => {
-            let branch_name = match branch {
-                Some(b) => b,
-                None => repo.require_current_branch("get marker for current branch")?,
-            };
-            match repo.branch_marker(&branch_name) {
+            let branch_name = resolve_branch_name(&*workspace, branch)?;
+            match workspace.branch_marker(&branch_name) {
                 Some(marker) => println!("{marker}"),
                 None => println!(""),
             }
         }
         "ci-status" => {
+            let repo = require_git_workspace(&*workspace, "config state get ci-status")?;
             let branch_name = match branch {
                 Some(b) => b,
                 None => repo.require_current_branch("get ci-status for current branch")?,
@@ -315,8 +325,8 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
                 .into());
             }
 
-            let ci_branch = CiBranchName::from_branch_ref(&branch_name, is_remote, &repo);
-            let ci_status = PrStatus::detect(&repo, &ci_branch, &head)
+            let ci_branch = CiBranchName::from_branch_ref(&branch_name, is_remote, repo);
+            let ci_status = PrStatus::detect(repo, &ci_branch, &head)
                 .map_or(super::super::list::ci_status::CiStatus::NoCI, |s| {
                     s.ci_status
                 });
@@ -325,8 +335,9 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
         }
         // TODO: Consider simplifying to just print the path and let users run `ls -al` themselves
         "logs" => {
+            let log_dir = workspace.wt_logs_dir();
             let mut out = String::new();
-            render_log_files(&mut out, &repo)?;
+            render_log_files(&mut out, &log_dir)?;
 
             // Display through pager (fall back to stderr if pager unavailable)
             if show_help_in_pager(&out, true).is_err() {
@@ -345,46 +356,35 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
 
 /// Handle the state set command
 pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> anyhow::Result<()> {
-    let repo = Repository::current()?;
+    let workspace = open_workspace()?;
 
     match key {
         "default-branch" => {
-            // Warn if the branch doesn't exist locally
-            if !repo.branch(&value).exists_locally()? {
+            // Warn if the branch doesn't exist locally (git-only check)
+            if let Some(repo) = workspace.as_any().downcast_ref::<Repository>()
+                && !repo.branch(&value).exists_locally()?
+            {
                 eprintln!(
                     "{}",
                     warning_message(cformat!("Branch <bold>{value}</> does not exist locally"))
                 );
             }
-            repo.set_default_branch(&value)?;
+            workspace.set_default_branch(&value)?;
             eprintln!(
                 "{}",
                 success_message(cformat!("Set default branch to <bold>{value}</>"))
             );
         }
         "previous-branch" => {
-            repo.set_switch_previous(Some(&value))?;
+            workspace.set_switch_previous(Some(&value))?;
             eprintln!(
                 "{}",
                 success_message(cformat!("Set previous branch to <bold>{value}</>"))
             );
         }
         "marker" => {
-            let branch_name = match branch {
-                Some(b) => b,
-                None => repo.require_current_branch("set marker for current branch")?,
-            };
-
-            // Store as JSON with timestamp
-            let now = get_now();
-            let json = serde_json::json!({
-                "marker": value,
-                "set_at": now
-            });
-
-            let config_key = format!("worktrunk.state.{branch_name}.marker");
-            repo.run_command(&["config", &config_key, &json.to_string()])?;
-
+            let branch_name = resolve_branch_name(&*workspace, branch)?;
+            workspace.set_branch_marker(&branch_name, &value, get_now())?;
             eprintln!(
                 "{}",
                 success_message(cformat!(
@@ -402,29 +402,27 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
 
 /// Handle the state clear command
 pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyhow::Result<()> {
-    let repo = Repository::current()?;
+    let workspace = open_workspace()?;
 
     match key {
         "default-branch" => {
-            if repo.clear_default_branch_cache()? {
+            if workspace.clear_default_branch()? {
                 eprintln!("{}", success_message("Cleared default branch cache"));
             } else {
                 eprintln!("{}", info_message("No default branch cache to clear"));
             }
         }
         "previous-branch" => {
-            if repo
-                .run_command(&["config", "--unset", "worktrunk.history"])
-                .is_ok()
-            {
+            if workspace.clear_switch_previous()? {
                 eprintln!("{}", success_message("Cleared previous branch"));
             } else {
                 eprintln!("{}", info_message("No previous branch to clear"));
             }
         }
         "ci-status" => {
+            let repo = require_git_workspace(&*workspace, "config state ci-status clear")?;
             if all {
-                let cleared = CachedCiStatus::clear_all(&repo);
+                let cleared = CachedCiStatus::clear_all(repo);
                 if cleared == 0 {
                     eprintln!("{}", info_message("No CI cache entries to clear"));
                 } else {
@@ -461,18 +459,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
         }
         "marker" => {
             if all {
-                let output = repo
-                    .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
-                    .unwrap_or_default();
-
-                let mut cleared_count = 0;
-                for line in output.lines() {
-                    if let Some(config_key) = line.split_whitespace().next() {
-                        repo.run_command(&["config", "--unset", config_key])?;
-                        cleared_count += 1;
-                    }
-                }
-
+                let cleared_count = workspace.clear_all_markers();
                 if cleared_count == 0 {
                     eprintln!("{}", info_message("No markers to clear"));
                 } else {
@@ -485,16 +472,8 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                     );
                 }
             } else {
-                let branch_name = match branch {
-                    Some(b) => b,
-                    None => repo.require_current_branch("clear marker for current branch")?,
-                };
-
-                let config_key = format!("worktrunk.state.{branch_name}.marker");
-                if repo
-                    .run_command(&["config", "--unset", &config_key])
-                    .is_ok()
-                {
+                let branch_name = resolve_branch_name(&*workspace, branch)?;
+                if workspace.clear_branch_marker(&branch_name) {
                     eprintln!(
                         "{}",
                         success_message(cformat!("Cleared marker for <bold>{branch_name}</>"))
@@ -508,7 +487,8 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
             }
         }
         "logs" => {
-            let cleared = clear_logs(&repo)?;
+            let log_dir = workspace.wt_logs_dir();
+            let cleared = clear_logs(&log_dir)?;
             if cleared == 0 {
                 eprintln!("{}", info_message("No logs to clear"));
             } else {
@@ -533,48 +513,40 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
 
 /// Handle the state clear all command
 pub fn handle_state_clear_all() -> anyhow::Result<()> {
-    let repo = Repository::current()?;
+    let workspace = open_workspace()?;
     let mut cleared_any = false;
 
-    // Clear default branch cache
-    if matches!(repo.clear_default_branch_cache(), Ok(true)) {
+    // Clear previous branch (trait method — works for both git and jj)
+    if workspace.clear_switch_previous()? {
         cleared_any = true;
     }
 
-    // Clear previous branch
-    if repo
-        .run_command(&["config", "--unset", "worktrunk.history"])
-        .is_ok()
-    {
-        cleared_any = true;
-    }
-
-    // Clear all markers
-    let markers_output = repo
-        .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
-        .unwrap_or_default();
-    for line in markers_output.lines() {
-        if let Some(config_key) = line.split_whitespace().next() {
-            let _ = repo.run_command(&["config", "--unset", config_key]);
-            cleared_any = true;
-        }
-    }
-
-    // Clear all CI status cache
-    let ci_cleared = CachedCiStatus::clear_all(&repo);
-    if ci_cleared > 0 {
-        cleared_any = true;
-    }
-
-    // Clear all logs
-    let logs_cleared = clear_logs(&repo)?;
+    // Clear logs (works for both git and jj)
+    let log_dir = workspace.wt_logs_dir();
+    let logs_cleared = clear_logs(&log_dir)?;
     if logs_cleared > 0 {
         cleared_any = true;
     }
 
-    // Clear all hints
-    let hints_cleared = repo.clear_all_hints()?;
-    if hints_cleared > 0 {
+    // Clear default branch cache (works for both git and jj)
+    if matches!(workspace.clear_default_branch(), Ok(true)) {
+        cleared_any = true;
+    }
+
+    // Clear all markers (trait method — works for both git and jj)
+    if workspace.clear_all_markers() > 0 {
+        cleared_any = true;
+    }
+
+    // Clear all hints (trait method — works for both git and jj)
+    if workspace.clear_all_hints()? > 0 {
+        cleared_any = true;
+    }
+
+    // Clear CI status cache (git-only)
+    if let Some(repo) = workspace.as_any().downcast_ref::<Repository>()
+        && CachedCiStatus::clear_all(repo) > 0
+    {
         cleared_any = true;
     }
 
@@ -591,59 +563,65 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
 
 /// Handle the state get command (shows all state)
 pub fn handle_state_show(format: OutputFormat) -> anyhow::Result<()> {
-    let repo = Repository::current()?;
+    let workspace = open_workspace()?;
+    let repo = workspace.as_any().downcast_ref::<Repository>();
 
     match format {
-        OutputFormat::Json => handle_state_show_json(&repo),
-        OutputFormat::Table | OutputFormat::ClaudeCode => handle_state_show_table(&repo),
+        OutputFormat::Json => handle_state_show_json(&*workspace, repo),
+        OutputFormat::Table | OutputFormat::ClaudeCode => {
+            handle_state_show_table(&*workspace, repo)
+        }
     }
 }
 
 /// Output state as JSON
-fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
-    // Get default branch
-    let default_branch = repo.default_branch();
+fn handle_state_show_json(
+    workspace: &dyn Workspace,
+    repo: Option<&Repository>,
+) -> anyhow::Result<()> {
+    let default_branch = workspace.default_branch_name();
+    let previous_branch = workspace.switch_previous();
 
-    // Get previous branch
-    let previous_branch = repo.switch_previous();
-
-    // Get markers
-    let markers: Vec<serde_json::Value> = get_all_markers(repo)
+    let markers: Vec<serde_json::Value> = workspace
+        .list_all_markers()
         .into_iter()
-        .map(|m| {
-            serde_json::json!({
-                "branch": m.branch,
-                "marker": m.marker,
-                "set_at": if m.set_at > 0 { Some(m.set_at) } else { None }
-            })
-        })
-        .collect();
-
-    // Get CI status cache
-    let mut ci_entries = CachedCiStatus::list_all(repo);
-    ci_entries.sort_by(|a, b| {
-        b.1.checked_at
-            .cmp(&a.1.checked_at)
-            .then_with(|| a.0.cmp(&b.0))
-    });
-    let ci_status: Vec<serde_json::Value> = ci_entries
-        .into_iter()
-        .map(|(branch, cached)| {
-            let status = cached
-                .status
-                .as_ref()
-                .map(|s| -> &'static str { s.ci_status.into() });
+        .map(|(branch, marker, set_at)| {
             serde_json::json!({
                 "branch": branch,
-                "status": status,
-                "checked_at": cached.checked_at,
-                "head": cached.head
+                "marker": marker,
+                "set_at": if set_at > 0 { Some(set_at) } else { None }
             })
         })
         .collect();
 
-    // Get log files
-    let log_dir = repo.wt_logs_dir();
+    let ci_status: Vec<serde_json::Value> = repo
+        .map(|r| {
+            let mut ci_entries = CachedCiStatus::list_all(r);
+            ci_entries.sort_by(|a, b| {
+                b.1.checked_at
+                    .cmp(&a.1.checked_at)
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+            ci_entries
+                .into_iter()
+                .map(|(branch, cached)| {
+                    let status = cached
+                        .status
+                        .as_ref()
+                        .map(|s| -> &'static str { s.ci_status.into() });
+                    serde_json::json!({
+                        "branch": branch,
+                        "status": status,
+                        "checked_at": cached.checked_at,
+                        "head": cached.head
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Log files
+    let log_dir = workspace.wt_logs_dir();
     let logs: Vec<serde_json::Value> = if log_dir.exists() {
         let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
             .filter_map(|e| e.ok())
@@ -683,8 +661,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         vec![]
     };
 
-    // Get hints
-    let hints = repo.list_shown_hints();
+    let hints = workspace.list_shown_hints();
 
     let output = serde_json::json!({
         "default_branch": default_branch,
@@ -700,94 +677,101 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
 }
 
 /// Output state as human-readable table
-fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
+fn handle_state_show_table(
+    workspace: &dyn Workspace,
+    repo: Option<&Repository>,
+) -> anyhow::Result<()> {
     // Build complete output as a string
     let mut out = String::new();
 
-    // Show default branch cache
+    // Show default branch cache (trait method)
     writeln!(out, "{}", format_heading("DEFAULT BRANCH", None))?;
-    match repo.default_branch() {
+    match workspace.default_branch_name() {
         Some(branch) => writeln!(out, "{}", format_with_gutter(&branch, None))?,
         None => writeln!(out, "{}", format_with_gutter("(not available)", None))?,
     }
     writeln!(out)?;
 
-    // Show previous branch (for `wt switch -`)
+    // Show previous branch (trait method)
     writeln!(out, "{}", format_heading("PREVIOUS BRANCH", None))?;
-    match repo.switch_previous() {
+    match workspace.switch_previous() {
         Some(prev) => writeln!(out, "{}", format_with_gutter(&prev, None))?,
         None => writeln!(out, "{}", format_with_gutter("(none)", None))?,
     }
     writeln!(out)?;
 
-    // Show branch markers
-    writeln!(out, "{}", format_heading("BRANCH MARKERS", None))?;
-    let markers = get_all_markers(repo);
-    if markers.is_empty() {
-        writeln!(out, "{}", format_with_gutter("(none)", None))?;
-    } else {
-        let mut table = String::from("| Branch | Marker | Age |\n");
-        table.push_str("|--------|--------|-----|\n");
-        for entry in markers {
-            let age = format_relative_time_short(entry.set_at as i64);
-            table.push_str(&format!(
-                "| {} | {} | {} |\n",
-                entry.branch, entry.marker, age
-            ));
+    // Show branch markers (trait method)
+    {
+        let markers = workspace.list_all_markers();
+        writeln!(out, "{}", format_heading("BRANCH MARKERS", None))?;
+        if markers.is_empty() {
+            writeln!(out, "{}", format_with_gutter("(none)", None))?;
+        } else {
+            let mut table = String::from("| Branch | Marker | Age |\n");
+            table.push_str("|--------|--------|-----|\n");
+            for (branch, marker, set_at) in markers {
+                let age = format_relative_time_short(set_at as i64);
+                table.push_str(&format!("| {branch} | {marker} | {age} |\n"));
+            }
+            let rendered = crate::md_help::render_markdown_table(&table);
+            writeln!(out, "{}", rendered.trim_end())?;
         }
-        let rendered = crate::md_help::render_markdown_table(&table);
-        writeln!(out, "{}", rendered.trim_end())?;
+        writeln!(out)?;
     }
-    writeln!(out)?;
 
-    // Show CI status cache
-    writeln!(out, "{}", format_heading("CI STATUS CACHE", None))?;
-    let mut entries = CachedCiStatus::list_all(repo);
-    // Sort by age (most recent first), then by branch name for ties
-    entries.sort_by(|a, b| {
-        b.1.checked_at
-            .cmp(&a.1.checked_at)
-            .then_with(|| a.0.cmp(&b.0))
-    });
-    if entries.is_empty() {
-        writeln!(out, "{}", format_with_gutter("(none)", None))?;
-    } else {
-        // Build markdown table
-        let mut table = String::from("| Branch | Status | Age | Head |\n");
-        table.push_str("|--------|--------|-----|------|\n");
-        for (branch, cached) in entries {
-            let status = match &cached.status {
-                Some(pr_status) => {
-                    let status: &'static str = pr_status.ci_status.into();
-                    status.to_string()
-                }
-                None => "none".to_string(),
-            };
-            let age = format_relative_time_short(cached.checked_at as i64);
-            let head: String = cached.head.chars().take(8).collect();
+    // Show CI status cache (git-only)
+    if let Some(repo) = repo {
+        writeln!(out, "{}", format_heading("CI STATUS CACHE", None))?;
+        let mut entries = CachedCiStatus::list_all(repo);
+        // Sort by age (most recent first), then by branch name for ties
+        entries.sort_by(|a, b| {
+            b.1.checked_at
+                .cmp(&a.1.checked_at)
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        if entries.is_empty() {
+            writeln!(out, "{}", format_with_gutter("(none)", None))?;
+        } else {
+            // Build markdown table
+            let mut table = String::from("| Branch | Status | Age | Head |\n");
+            table.push_str("|--------|--------|-----|------|\n");
+            for (branch, cached) in entries {
+                let status = match &cached.status {
+                    Some(pr_status) => {
+                        let status: &'static str = pr_status.ci_status.into();
+                        status.to_string()
+                    }
+                    None => "none".to_string(),
+                };
+                let age = format_relative_time_short(cached.checked_at as i64);
+                let head: String = cached.head.chars().take(8).collect();
 
-            table.push_str(&format!("| {branch} | {status} | {age} | {head} |\n"));
+                table.push_str(&format!("| {branch} | {status} | {age} | {head} |\n"));
+            }
+
+            let rendered = crate::md_help::render_markdown_table(&table);
+            writeln!(out, "{}", rendered.trim_end())?;
         }
-
-        let rendered = crate::md_help::render_markdown_table(&table);
-        writeln!(out, "{}", rendered.trim_end())?;
+        writeln!(out)?;
     }
-    writeln!(out)?;
 
-    // Show hints
-    writeln!(out, "{}", format_heading("HINTS", None))?;
-    let hints = repo.list_shown_hints();
-    if hints.is_empty() {
-        writeln!(out, "{}", format_with_gutter("(none)", None))?;
-    } else {
-        for hint in hints {
-            writeln!(out, "{}", format_with_gutter(&hint, None))?;
+    // Show hints (trait method)
+    {
+        let hints = workspace.list_shown_hints();
+        writeln!(out, "{}", format_heading("HINTS", None))?;
+        if hints.is_empty() {
+            writeln!(out, "{}", format_with_gutter("(none)", None))?;
+        } else {
+            for hint in hints {
+                writeln!(out, "{}", format_with_gutter(&hint, None))?;
+            }
         }
+        writeln!(out)?;
     }
-    writeln!(out)?;
 
-    // Show log files
-    render_log_files(&mut out, repo)?;
+    // Show log files (trait method)
+    let log_dir = workspace.wt_logs_dir();
+    render_log_files(&mut out, &log_dir)?;
 
     // Display through pager (fall back to stderr if pager unavailable)
     if let Err(e) = show_help_in_pager(&out, true) {
@@ -797,54 +781,4 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-// ==================== Marker Helpers ====================
-
-/// Marker entry with branch, text, and timestamp
-pub(super) struct MarkerEntry {
-    pub branch: String,
-    pub marker: String,
-    pub set_at: u64,
-}
-
-/// Get all branch markers from git config with timestamps
-pub(super) fn get_all_markers(repo: &Repository) -> Vec<MarkerEntry> {
-    let output = repo
-        .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
-        .unwrap_or_default();
-
-    let mut markers = Vec::new();
-    for line in output.lines() {
-        // Format: "worktrunk.state.<branch>.marker json_value"
-        let Some((key, value)) = line.split_once(' ') else {
-            continue;
-        };
-        let Some(branch) = key
-            .strip_prefix("worktrunk.state.")
-            .and_then(|s| s.strip_suffix(".marker"))
-        else {
-            continue;
-        };
-        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) else {
-            continue; // Skip invalid JSON
-        };
-        let Some(marker) = parsed.get("marker").and_then(|v| v.as_str()) else {
-            continue; // Skip if "marker" field is missing
-        };
-        let set_at = parsed.get("set_at").and_then(|v| v.as_u64()).unwrap_or(0);
-        markers.push(MarkerEntry {
-            branch: branch.to_string(),
-            marker: marker.to_string(),
-            set_at,
-        });
-    }
-
-    // Sort by age (most recent first), then by branch name for ties
-    markers.sort_by(|a, b| {
-        b.set_at
-            .cmp(&a.set_at)
-            .then_with(|| a.branch.cmp(&b.branch))
-    });
-    markers
 }

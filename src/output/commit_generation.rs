@@ -122,6 +122,11 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
         return Ok(false);
     }
 
+    // Skip if prompts are suppressed (test environments, CI)
+    if std::env::var("WORKTRUNK_NO_PROMPTS").is_ok() {
+        return Ok(false);
+    }
+
     // Detect available tool
     let Some(tool) = detect_llm_tool() else {
         // No tool found - set skip flag so we don't check every time

@@ -25,6 +25,8 @@ use color_print::cformat;
 use minijinja::Environment;
 use path_slash::PathExt as _;
 use regex::Regex;
+
+use crate::workspace::Workspace;
 use shell_escape::unix::escape;
 
 use crate::config::WorktrunkConfig;

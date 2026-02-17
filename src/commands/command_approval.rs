@@ -195,7 +195,7 @@ pub fn approve_hooks_filtered(
         return Ok(true);
     }
 
-    let project_config = match ctx.repo.load_project_config()? {
+    let project_config = match ctx.workspace.load_project_config()? {
         Some(cfg) => cfg,
         None => return Ok(true), // No project config = no commands to approve
     };
@@ -215,7 +215,7 @@ pub fn approve_hooks_filtered(
         return Ok(true);
     }
 
-    let project_id = ctx.repo.project_identifier()?;
+    let project_id = ctx.workspace.project_identifier()?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
     approve_command_batch(&commands, &project_id, &approvals, ctx.yes, false)
 }

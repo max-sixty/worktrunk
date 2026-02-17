@@ -1,9 +1,13 @@
-//! Git config, hints, marker, and default branch operations for Repository.
+//! Git config, default branch, and project config operations for Repository.
+//!
+//! Markers, hints, and switch-previous are on the `Workspace` trait
+//! (implemented in `workspace/git.rs`).
 
 use anyhow::Context;
 use color_print::cformat;
 
 use crate::config::ProjectConfig;
+use crate::workspace::Workspace;
 
 use super::{DefaultBranchName, GitError, Repository};
 
@@ -22,98 +26,9 @@ impl Repository {
         Ok(())
     }
 
-    /// Read a user-defined marker from `worktrunk.state.<branch>.marker` in git config.
-    ///
-    /// Markers are stored as JSON: `{"marker": "text", "set_at": unix_timestamp}`.
-    pub fn branch_marker(&self, branch: &str) -> Option<String> {
-        #[derive(serde::Deserialize)]
-        struct MarkerValue {
-            marker: Option<String>,
-        }
-
-        let config_key = format!("worktrunk.state.{branch}.marker");
-        let raw = self
-            .run_command(&["config", "--get", &config_key])
-            .ok()
-            .map(|output| output.trim().to_string())
-            .filter(|s| !s.is_empty())?;
-
-        let parsed: MarkerValue = serde_json::from_str(&raw).ok()?;
-        parsed.marker
-    }
-
-    /// Read user-defined branch-keyed marker.
+    /// Read user-defined branch-keyed marker via the `Workspace` trait.
     pub fn user_marker(&self, branch: Option<&str>) -> Option<String> {
         branch.and_then(|branch| self.branch_marker(branch))
-    }
-
-    /// Set the previous branch in worktrunk.history for `wt switch -` support.
-    ///
-    /// Stores the branch we're switching FROM, so `wt switch -` can return to it.
-    pub fn set_switch_previous(&self, previous: Option<&str>) -> anyhow::Result<()> {
-        if let Some(prev) = previous {
-            self.run_command(&["config", "worktrunk.history", prev])?;
-        }
-        // If previous is None (detached HEAD), don't update history
-        Ok(())
-    }
-
-    /// Get the previous branch from worktrunk.history for `wt switch -`.
-    ///
-    /// Returns the branch we came from, enabling ping-pong switching.
-    pub fn switch_previous(&self) -> Option<String> {
-        self.run_command(&["config", "--get", "worktrunk.history"])
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-    }
-
-    /// Check if a hint has been shown in this repo.
-    ///
-    /// Hints are stored as `worktrunk.hints.<name> = true`.
-    /// TODO: Could move to global git config if we accumulate more global hints.
-    pub fn has_shown_hint(&self, name: &str) -> bool {
-        self.run_command(&["config", "--get", &format!("worktrunk.hints.{name}")])
-            .is_ok()
-    }
-
-    /// Mark a hint as shown in this repo.
-    pub fn mark_hint_shown(&self, name: &str) -> anyhow::Result<()> {
-        self.run_command(&["config", &format!("worktrunk.hints.{name}"), "true"])?;
-        Ok(())
-    }
-
-    /// Clear a hint so it will show again.
-    pub fn clear_hint(&self, name: &str) -> anyhow::Result<bool> {
-        match self.run_command(&["config", "--unset", &format!("worktrunk.hints.{name}")]) {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false), // Key didn't exist
-        }
-    }
-
-    /// List all hints that have been shown in this repo.
-    pub fn list_shown_hints(&self) -> Vec<String> {
-        self.run_command(&["config", "--get-regexp", r"^worktrunk\.hints\."])
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|line| {
-                // Format: "worktrunk.hints.worktree-path true"
-                line.split_whitespace()
-                    .next()
-                    .and_then(|key| key.strip_prefix("worktrunk.hints."))
-                    .map(String::from)
-            })
-            .collect()
-    }
-
-    /// Clear all hints so they will show again.
-    pub fn clear_all_hints(&self) -> anyhow::Result<usize> {
-        let hints = self.list_shown_hints();
-        let count = hints.len();
-        for hint in hints {
-            self.clear_hint(&hint)?;
-        }
-        Ok(count)
     }
 
     // =========================================================================

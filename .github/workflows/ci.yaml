@@ -77,10 +77,16 @@ jobs:
         packages: zsh fish
         version: 1.0
 
-    - name: Install shells (fish) - macOS
+    - name: Install jj (Jujutsu) - Linux
+      if: runner.os == 'Linux'
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: jj-cli
+
+    - name: Install shells and jj (Jujutsu) - macOS
       if: runner.os == 'macOS'
       run: |
-        brew install fish
+        brew install fish jj
         # bash and zsh are pre-installed on macOS
 
     - name: Install nushell
@@ -248,6 +254,11 @@ jobs:
       with:
         packages: zsh fish
         version: 1.0
+
+    - name: Install jj (Jujutsu)
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: jj-cli
 
     - name: Install nushell
       uses: hustcer/setup-nu@v3

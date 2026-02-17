@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use crossbeam_channel as chan;
 use worktrunk::git::{BranchRef, Repository, WorktreeInfo};
+use worktrunk::workspace::build_worktree_map;
 
 use super::CollectOptions;
 use super::tasks::{
@@ -168,8 +169,15 @@ pub fn work_items_for_worktree(
             wt.branch.as_ref().and_then(|branch| {
                 let mut vars = std::collections::HashMap::new();
                 vars.insert("branch", branch.as_str());
-                worktrunk::config::expand_template(template, &vars, false, repo, "url-template")
-                    .ok()
+                let worktree_map = build_worktree_map(repo);
+                worktrunk::config::expand_template(
+                    template,
+                    &vars,
+                    false,
+                    &worktree_map,
+                    "url-template",
+                )
+                .ok()
             })
         })
     } else {

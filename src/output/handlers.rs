@@ -27,6 +27,7 @@ use worktrunk::styling::{
     FormattedMessage, eprintln, error_message, format_with_gutter, hint_message, info_message,
     progress_message, success_message, suggest_command, warning_message,
 };
+use worktrunk::workspace::Workspace;
 
 use super::shell_integration::{
     compute_shell_warning_reason, explicit_path_hint, git_subcommand_warning,
@@ -955,7 +956,7 @@ fn handle_removed_worktree_output(
             );
             let remove_command = build_remove_command(worktree_path, None, force_worktree);
             spawn_detached(
-                &repo,
+                &repo.wt_logs_dir(),
                 main_path,
                 &remove_command,
                 "detached",
@@ -1024,7 +1025,7 @@ fn handle_removed_worktree_output(
 
         // Spawn the removal in background - runs from main_path (where we cd'd to)
         spawn_detached(
-            &repo,
+            &repo.wt_logs_dir(),
             main_path,
             &remove_command,
             branch_name,

@@ -1,19 +1,17 @@
 use anyhow::Context;
+use color_print::cformat;
 use worktrunk::HookType;
-use worktrunk::config::{Approvals, UserConfig};
-use worktrunk::git::Repository;
-use worktrunk::styling::{eprintln, info_message};
+use worktrunk::config::UserConfig;
+use worktrunk::git::{GitError, Repository};
+use worktrunk::styling::{eprintln, info_message, success_message};
+use worktrunk::workspace::LocalPushDisplay;
 
-use super::command_approval::approve_command_batch;
+use super::command_approval::approve_hooks;
 use super::command_executor::CommandContext;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, execute_hook};
-use super::project_config::{HookCommand, collect_commands_for_hooks};
-use super::repository_ext::RepositoryCliExt;
-use super::worktree::{
-    BranchDeletionMode, MergeOperations, RemoveResult, get_path_mismatch, handle_push,
-};
+use super::worktree::{BranchDeletionMode, RemoveResult, get_path_mismatch};
 
 /// Options for the merge command
 ///
@@ -36,47 +34,13 @@ pub struct MergeOptions<'a> {
     pub stage: Option<super::commit::StageMode>,
 }
 
-/// Collect all commands that will be executed during merge.
-///
-/// Returns (commands, project_identifier) for batch approval.
-fn collect_merge_commands(
-    repo: &Repository,
-    commit: bool,
-    verify: bool,
-    will_remove: bool,
-    squash_enabled: bool,
-) -> anyhow::Result<(Vec<HookCommand>, String)> {
-    let mut all_commands = Vec::new();
-    let project_config = match repo.load_project_config()? {
-        Some(cfg) => cfg,
-        None => return Ok((all_commands, repo.project_identifier()?)),
-    };
-
-    let mut hooks = Vec::new();
-
-    // Pre-commit hooks run when a commit will actually be created
-    let will_create_commit = repo.current_worktree().is_dirty()? || squash_enabled;
-    if commit && verify && will_create_commit {
-        hooks.push(HookType::PreCommit);
-    }
-
-    if verify {
-        hooks.push(HookType::PreMerge);
-        hooks.push(HookType::PostMerge);
-        if will_remove {
-            hooks.push(HookType::PreRemove);
-            hooks.push(HookType::PostRemove);
-            hooks.push(HookType::PostSwitch);
-        }
-    }
-
-    all_commands.extend(collect_commands_for_hooks(&project_config, &hooks));
-
-    let project_id = repo.project_identifier()?;
-    Ok((all_commands, project_id))
-}
-
 pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
+    // Open workspace once, route by VCS type via downcast
+    let workspace = worktrunk::workspace::open_workspace()?;
+    if workspace.as_any().downcast_ref::<Repository>().is_none() {
+        return super::handle_merge_jj::handle_merge_jj(opts);
+    }
+
     let MergeOptions {
         target,
         squash: squash_opt,
@@ -95,8 +59,8 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         let _ = crate::output::prompt_commit_generation(&mut config);
     }
 
-    let env = CommandEnv::for_action("merge", config)?;
-    let repo = &env.repo;
+    let env = CommandEnv::with_workspace(workspace, "merge", config)?;
+    let repo = env.require_repo()?;
     let config = &env.config;
     // Merge requires being on a branch (can't merge from detached HEAD)
     let current_branch = env.require_branch("merge")?.to_string();
@@ -138,21 +102,37 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let on_target = current_branch == target_branch;
     let remove_effective = remove && !on_target && !in_main;
 
-    // Collect and approve all commands upfront for batch permission request
-    let (all_commands, project_id) =
-        collect_merge_commands(repo, commit, verify, remove_effective, squash_enabled)?;
+    // "Approve at the Gate": approve all hooks upfront
+    let verify = if verify {
+        let ctx = env.context(yes);
 
-    // Approve all commands in a single batch (shows templates, not expanded values)
-    let approvals = Approvals::load().context("Failed to load approvals")?;
-    let approved = approve_command_batch(&all_commands, &project_id, &approvals, yes, false)?;
+        let mut hook_types = Vec::new();
 
-    // If commands were declined, skip hooks but continue with merge
-    // Shadow verify to gate all subsequent hook execution on approval
-    let verify = if !approved {
-        eprintln!("{}", info_message("Commands declined, continuing merge"));
-        false
+        // Pre-commit hooks run when a commit will actually be created
+        let will_create_commit = repo.current_worktree().is_dirty()? || squash_enabled;
+        if commit && will_create_commit {
+            hook_types.push(HookType::PreCommit);
+        }
+
+        hook_types.push(HookType::PreMerge);
+        hook_types.push(HookType::PostMerge);
+        if remove_effective {
+            hook_types.extend_from_slice(&[
+                HookType::PreRemove,
+                HookType::PostRemove,
+                HookType::PostSwitch,
+            ]);
+        }
+
+        let approved = approve_hooks(&ctx, &hook_types)?;
+        if !approved {
+            eprintln!("{}", info_message("Commands declined, continuing merge"));
+            false
+        } else {
+            true
+        }
     } else {
-        verify
+        false
     };
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
@@ -165,7 +145,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             options.target_branch = Some(&target_branch);
             options.no_verify = !verify;
             options.stage_mode = stage_mode;
-            options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
             options.show_no_squash_note = true;
 
             options.commit()?;
@@ -219,16 +198,95 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         )?;
     }
 
-    // Fast-forward push to target branch with commit/squash/rebase info for consolidated message
-    handle_push(
-        Some(&target_branch),
-        "Merged to",
-        Some(MergeOperations {
-            committed,
-            squashed,
-            rebased,
-        }),
-    )?;
+    // Build operations note for the progress line (e.g., " (no commit/squash needed)")
+    let operations_note = {
+        let mut skipped_ops = Vec::new();
+        if !committed && !squashed {
+            skipped_ops.push("commit/squash");
+        }
+        if !rebased {
+            skipped_ops.push("rebase");
+        }
+        if skipped_ops.is_empty() {
+            String::new()
+        } else {
+            format!(" (no {} needed)", skipped_ops.join("/"))
+        }
+    };
+
+    // Local push: advance target branch ref to include feature commits
+    let push_result = env
+        .workspace
+        .local_push(
+            &target_branch,
+            &env.worktree_path,
+            LocalPushDisplay {
+                verb: "Merging",
+                notes: &operations_note,
+            },
+        )
+        .map_err(|e| {
+            // Rewrite NotFastForward hint for merge context
+            if let Some(GitError::NotFastForward {
+                target_branch,
+                commits_formatted,
+                ..
+            }) = e.downcast_ref::<GitError>()
+            {
+                return GitError::NotFastForward {
+                    target_branch: target_branch.clone(),
+                    commits_formatted: commits_formatted.clone(),
+                    in_merge_context: true,
+                }
+                .into();
+            }
+            e
+        })?;
+
+    // Format merge-specific success/info message
+    if push_result.commit_count > 0 {
+        let mut summary_parts = vec![format!(
+            "{} commit{}",
+            push_result.commit_count,
+            if push_result.commit_count == 1 {
+                ""
+            } else {
+                "s"
+            }
+        )];
+        summary_parts.extend(push_result.stats_summary);
+
+        let stats_str = summary_parts.join(", ");
+        let paren_close = cformat!("<bright-black>)</>");
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Merged to <bold>{target_branch}</> <bright-black>({stats_str}</>{}",
+                paren_close
+            ))
+        );
+    } else {
+        // Explain why nothing was pushed
+        let mut notes = Vec::new();
+        if !committed && !squashed {
+            notes.push("no new commits");
+        }
+        if !rebased {
+            notes.push("no rebase needed");
+        }
+        let context = if notes.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", notes.join(", "))
+        };
+
+        eprintln!(
+            "{}",
+            info_message(cformat!(
+                "Already up to date with <bold>{target_branch}</>{context}"
+            ))
+        );
+    }
 
     // Destination: prefer the target branch's worktree; fall back to home path.
     let destination_path = match target_worktree_path {
@@ -268,7 +326,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             removed_commit,
         };
         // Run hooks during merge removal (pass through verify flag)
-        // Approval was handled at the gate (collect_merge_commands)
+        // Approval was handled at the gate (approve_hooks)
         crate::output::handle_remove_output(&remove_result, true, verify)?;
     } else {
         // Worktree preserved - show reason (priority: main worktree > on target > --no-remove flag)

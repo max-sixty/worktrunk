@@ -739,6 +739,7 @@ const STANDARD_TEST_ENV: &[(&str, &str)] = &[
     ("LANG", "C"),
     ("LC_ALL", "C"),
     ("WORKTRUNK_TEST_EPOCH", "1735776000"),
+    ("WORKTRUNK_NO_PROMPTS", "1"),
 ];
 
 /// Build standard test env vars with config and approvals paths

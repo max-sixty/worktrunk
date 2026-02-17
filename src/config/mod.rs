@@ -83,8 +83,8 @@ pub use deprecation::normalize_template_vars;
 pub use deprecation::write_migration_file;
 pub use deprecation::{DEPRECATED_SECTION_KEYS, key_belongs_in, warn_unknown_fields};
 pub use expansion::{
-    DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, TemplateExpandError, expand_template,
-    redact_credentials, sanitize_branch_name, sanitize_db, short_hash,
+    DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, expand_template, redact_credentials,
+    sanitize_branch_name, sanitize_db, short_hash,
 };
 pub use hooks::HooksConfig;
 pub use project::{
@@ -101,29 +101,9 @@ pub use user::{
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::Repository;
 
-    /// Test fixture that creates a real temporary git repository.
-    struct TestRepo {
-        _dir: tempfile::TempDir,
-        repo: Repository,
-    }
-
-    impl TestRepo {
-        fn new() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            std::process::Command::new("git")
-                .args(["init"])
-                .current_dir(dir.path())
-                .output()
-                .unwrap();
-            let repo = Repository::at(dir.path()).unwrap();
-            Self { _dir: dir, repo }
-        }
-    }
-
-    fn test_repo() -> TestRepo {
-        TestRepo::new()
+    fn empty_worktree_map() -> std::collections::HashMap<String, std::path::PathBuf> {
+        std::collections::HashMap::new()
     }
 
     #[test]
@@ -167,7 +147,7 @@ mod tests {
 
     #[test]
     fn test_format_worktree_path() {
-        let test = test_repo();
+        let wt_map = empty_worktree_map();
         let config = UserConfig {
             configs: OverridableConfig {
                 worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
@@ -177,7 +157,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", "feature-x", &test.repo, None)
+                .format_path("myproject", "feature-x", "", &wt_map, None)
                 .unwrap(),
             "myproject.feature-x"
         );
@@ -185,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_format_worktree_path_custom_template() {
-        let test = test_repo();
+        let wt_map = empty_worktree_map();
         let config = UserConfig {
             configs: OverridableConfig {
                 worktree_path: Some("{{ main_worktree }}-{{ branch }}".to_string()),
@@ -195,7 +175,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", "feature-x", &test.repo, None)
+                .format_path("myproject", "feature-x", "", &wt_map, None)
                 .unwrap(),
             "myproject-feature-x"
         );
@@ -203,7 +183,7 @@ mod tests {
 
     #[test]
     fn test_format_worktree_path_only_branch() {
-        let test = test_repo();
+        let wt_map = empty_worktree_map();
         let config = UserConfig {
             configs: OverridableConfig {
                 worktree_path: Some(".worktrees/{{ main_worktree }}/{{ branch }}".to_string()),
@@ -213,7 +193,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", "feature-x", &test.repo, None)
+                .format_path("myproject", "feature-x", "", &wt_map, None)
                 .unwrap(),
             ".worktrees/myproject/feature-x"
         );
@@ -221,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_format_worktree_path_with_slashes() {
-        let test = test_repo();
+        let wt_map = empty_worktree_map();
         // Use {{ branch | sanitize }} to replace slashes with dashes
         let config = UserConfig {
             configs: OverridableConfig {
@@ -232,7 +212,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", "feature/foo", &test.repo, None)
+                .format_path("myproject", "feature/foo", "", &wt_map, None)
                 .unwrap(),
             "myproject.feature-foo"
         );
@@ -240,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_format_worktree_path_with_multiple_slashes() {
-        let test = test_repo();
+        let wt_map = empty_worktree_map();
         let config = UserConfig {
             configs: OverridableConfig {
                 worktree_path: Some(
@@ -252,7 +232,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", "feature/sub/task", &test.repo, None)
+                .format_path("myproject", "feature/sub/task", "", &wt_map, None)
                 .unwrap(),
             ".worktrees/myproject/feature-sub-task"
         );
@@ -260,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_format_worktree_path_with_backslashes() {
-        let test = test_repo();
+        let wt_map = empty_worktree_map();
         // Windows-style path separators should also be sanitized
         let config = UserConfig {
             configs: OverridableConfig {
@@ -273,7 +253,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", "feature\\foo", &test.repo, None)
+                .format_path("myproject", "feature\\foo", "", &wt_map, None)
                 .unwrap(),
             ".worktrees/myproject/feature-foo"
         );
@@ -281,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_format_worktree_path_raw_branch() {
-        let test = test_repo();
+        let wt_map = empty_worktree_map();
         // {{ branch }} without filter gives raw branch name
         let config = UserConfig {
             configs: OverridableConfig {
@@ -292,7 +272,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", "feature/foo", &test.repo, None)
+                .format_path("myproject", "feature/foo", "", &wt_map, None)
                 .unwrap(),
             "myproject.feature/foo"
         );
@@ -472,7 +452,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
     fn test_expand_template_basic() {
         use std::collections::HashMap;
 
-        let test = test_repo();
+        let wt_map = empty_worktree_map();
         let mut vars = HashMap::new();
         vars.insert("main_worktree", "myrepo");
         vars.insert("branch", "feature-x");
@@ -480,7 +460,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
             "../{{ main_worktree }}.{{ branch }}",
             &vars,
             true,
-            &test.repo,
+            &wt_map,
             "test",
         )
         .unwrap();
@@ -491,7 +471,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
     fn test_expand_template_sanitizes_branch() {
         use std::collections::HashMap;
 
-        let test = test_repo();
+        let wt_map = empty_worktree_map();
 
         // Use {{ branch | sanitize }} filter for filesystem-safe paths
         // shell_escape=false to test filter in isolation (shell escaping tested separately)
@@ -502,7 +482,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
             "{{ main_worktree }}/{{ branch | sanitize }}",
             &vars,
             false,
-            &test.repo,
+            &wt_map,
             "test",
         )
         .unwrap();
@@ -515,7 +495,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
             ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}",
             &vars,
             false,
-            &test.repo,
+            &wt_map,
             "test",
         )
         .unwrap();
@@ -526,6 +506,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
     fn test_expand_template_with_extra_vars() {
         use std::collections::HashMap;
 
+        let wt_map = empty_worktree_map();
         let mut vars = HashMap::new();
         vars.insert("worktree", "/path/to/worktree");
         vars.insert("repo_root", "/path/to/repo");
@@ -534,7 +515,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
             "{{ repo_root }}/target -> {{ worktree }}/target",
             &vars,
             true,
-            &test_repo().repo,
+            &wt_map,
             "test",
         )
         .unwrap();

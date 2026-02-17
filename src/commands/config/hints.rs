@@ -1,15 +1,17 @@
 //! Hint management commands.
 //!
 //! Commands for viewing and clearing shown hints.
+//!
+//! Hints are stored in VCS-local config (git config or jj repo config).
 
 use color_print::cformat;
-use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, info_message, println, success_message};
+use worktrunk::workspace::open_workspace;
 
 /// Handle the hints get command (list shown hints)
 pub fn handle_hints_get() -> anyhow::Result<()> {
-    let repo = Repository::current()?;
-    let hints = repo.list_shown_hints();
+    let workspace = open_workspace()?;
+    let hints = workspace.list_shown_hints();
 
     if hints.is_empty() {
         eprintln!("{}", info_message("No hints have been shown"));
@@ -24,11 +26,12 @@ pub fn handle_hints_get() -> anyhow::Result<()> {
 
 /// Handle the hints clear command
 pub fn handle_hints_clear(name: Option<String>) -> anyhow::Result<()> {
-    let repo = Repository::current()?;
+    let workspace = open_workspace()?;
 
     match name {
         Some(hint_name) => {
-            let msg = if repo.clear_hint(&hint_name)? {
+            let cleared = workspace.clear_hint(&hint_name)?;
+            let msg = if cleared {
                 success_message(cformat!("Cleared hint <bold>{hint_name}</>"))
             } else {
                 info_message(cformat!("Hint <bold>{hint_name}</> was not set"))
@@ -36,7 +39,7 @@ pub fn handle_hints_clear(name: Option<String>) -> anyhow::Result<()> {
             eprintln!("{msg}");
         }
         None => {
-            let cleared = repo.clear_all_hints()?;
+            let cleared = workspace.clear_all_hints()?;
             let msg = if cleared == 0 {
                 info_message("No hints to clear")
             } else {

@@ -14,38 +14,49 @@ use std::sync::Arc;
 use anyhow::Context;
 use dashmap::DashMap;
 use skim::prelude::*;
+use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
+use worktrunk::workspace::JjWorkspace;
 
 use super::handle_switch::{
-    approve_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
+    SwitchOptions, approve_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
 use super::list::collect;
-use super::worktree::{
-    SwitchBranchInfo, SwitchResult, execute_switch, get_path_mismatch, plan_switch,
-};
+use super::list::collect_jj;
+use super::worktree::{execute_switch, plan_switch, resolve_path_mismatch};
 use crate::output::handle_switch_output;
 
 use items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
 use preview::{PreviewLayout, PreviewMode, PreviewState};
 
-pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()> {
+/// Handle the interactive select/switch picker.
+///
+/// `branches` and `remotes` are raw CLI flags (false when not passed).
+/// Config resolution (project-specific merged with global) happens internally.
+pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyhow::Result<()> {
     // Interactive picker requires a terminal for the TUI
     if !std::io::stdin().is_terminal() {
         anyhow::bail!("Interactive picker requires an interactive terminal");
     }
 
-    let repo = Repository::current()?;
+    let workspace = worktrunk::workspace::open_workspace()?;
+    let is_jj = (*workspace)
+        .as_any()
+        .downcast_ref::<JjWorkspace>()
+        .is_some();
 
-    // Merge CLI flags with resolved config
-    let config = repo.config();
-    let show_branches = cli_branches || config.list.branches();
-    let show_remotes = cli_remotes || config.list.remotes();
+    // Resolve config using workspace's project identifier (avoids extra Repository::current())
+    let project_id = workspace.project_identifier().ok();
+    let resolved = config.resolved(project_id.as_deref());
+
+    // CLI flags override config values
+    let show_branches = branches || resolved.list.branches();
+    let show_remotes = remotes || resolved.list.remotes();
 
     // Initialize preview mode state file (auto-cleanup on drop)
     let state = PreviewState::new();
 
-    // Gather list data using simplified collection (buffered mode)
-    // Skip expensive operations not needed for select UI
+    // Gather list data — branch on VCS type for collection
     let skip_tasks: std::collections::HashSet<collect::TaskKind> = [
         collect::TaskKind::BranchDiff,
         collect::TaskKind::CiStatus,
@@ -54,26 +65,33 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
     .into_iter()
     .collect();
 
-    // Use 500ms timeout for git commands to show TUI faster on large repos.
-    // Typical slow operations: merge-tree ~400-1800ms, rev-list ~200-600ms.
-    // 500ms allows most operations to complete while cutting off tail latency.
-    // Operations that timeout fail silently (data not shown), but TUI stays responsive.
-    let command_timeout = Some(std::time::Duration::from_millis(500));
+    // Extract repo reference at function scope (needed for summary generation and post-selection switch)
+    let repo = (*workspace).as_any().downcast_ref::<Repository>();
 
-    let Some(list_data) = collect::collect(
-        &repo,
-        collect::ShowConfig::Resolved {
-            show_branches,
-            show_remotes,
-            skip_tasks: skip_tasks.clone(),
-            command_timeout,
-        },
-        false, // show_progress (no progress bars)
-        false, // render_table (select renders its own UI)
-        true,  // skip_expensive_for_stale (faster for repos with many stale branches)
-    )?
-    else {
-        return Ok(());
+    let list_data = if let Some(jj_ws) = (*workspace).as_any().downcast_ref::<JjWorkspace>() {
+        collect_jj::collect_jj(jj_ws)?
+    } else {
+        let repo =
+            repo.ok_or_else(|| anyhow::anyhow!("`wt select` is not supported for this VCS"))?;
+
+        // Use 500ms timeout for git commands to show TUI faster on large repos.
+        let command_timeout = Some(std::time::Duration::from_millis(500));
+
+        match collect::collect(
+            repo,
+            collect::ShowConfig::Resolved {
+                show_branches,
+                show_remotes,
+                skip_tasks: skip_tasks.clone(),
+                command_timeout,
+            },
+            false, // show_progress
+            false, // render_table
+            true,  // skip_expensive_for_stale
+        )? {
+            Some(data) => data,
+            None => return Ok(()),
+        }
     };
 
     // Use the same layout system as `wt list` for proper column alignment
@@ -251,8 +269,12 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
     }
 
     // Queue summary generation after tabs 1-4 so git previews get rayon priority.
-    if config.list.summary() && config.commit_generation.is_configured() {
-        let llm_command = config.commit_generation.command.clone().unwrap();
+    // Summary generation requires a git repo (not jj)
+    if let Some(repo) = repo
+        && resolved.list.summary()
+        && resolved.commit_generation.is_configured()
+    {
+        let llm_command = resolved.commit_generation.command.clone().unwrap();
         for item in &items_for_precompute {
             let item = Arc::clone(item);
             let cache = Arc::clone(&preview_cache);
@@ -265,7 +287,7 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
     } else {
         // No LLM configured or summaries disabled — insert config hint so the
         // tab shows a useful message instead of a perpetual "Generating..." placeholder.
-        let hint = if !config.commit_generation.is_configured() {
+        let hint = if !resolved.commit_generation.is_configured() {
             "Configure [commit.generation] command to enable AI summaries.\n\n\
              Example in ~/.config/worktrunk/config.toml:\n\n\
              [commit.generation]\n\
@@ -310,46 +332,59 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
             (selected.output().to_string(), false)
         };
 
-        // Load config
-        let repo = Repository::current().context("Failed to switch worktree")?;
-        let config = repo.user_config();
+        // Load config (fresh load for switch operation)
+        let mut config = UserConfig::load().context("Failed to load config")?;
 
-        // Switch to existing worktree or create new one
-        let plan = plan_switch(&repo, &identifier, should_create, None, false, config)?;
-        let skip_hooks = !approve_switch_hooks(&repo, config, &plan, false, true)?;
-        let (result, branch_info) = execute_switch(&repo, plan, config, false, skip_hooks)?;
+        if is_jj {
+            // jj switch path: use handle_switch_jj
+            let opts = SwitchOptions {
+                branch: &identifier,
+                create: should_create,
+                base: None,
+                change_dir: true,
+                yes: false,
+                clobber: false,
+                verify: true,
+                execute: None,
+                execute_args: &[],
+            };
+            let binary_name = std::env::args().next().unwrap_or_else(|| "wt".to_string());
+            super::handle_switch_jj::handle_switch_jj(opts, &mut config, &binary_name)?;
+        } else {
+            // git switch path
+            let repo = (*workspace)
+                .as_any()
+                .downcast_ref::<Repository>()
+                .expect("already verified git workspace");
 
-        // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
-        let branch_info = match &result {
-            SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-                let expected_path = get_path_mismatch(&repo, &branch_info.branch, path, config);
-                SwitchBranchInfo {
-                    expected_path,
-                    ..branch_info
-                }
+            let plan = plan_switch(repo, &identifier, should_create, None, false, &config)?;
+            let skip_hooks = !approve_switch_hooks(repo, &config, &plan, false, true)?;
+            let (result, branch_info) = execute_switch(repo, plan, &config, false, skip_hooks)?;
+
+            // Compute path mismatch lazily (deferred from plan_switch for existing worktrees).
+            // No early exit here — select's TUI already dominates latency.
+            let branch_info = resolve_path_mismatch(branch_info, &result, repo, &config);
+
+            // Show success message; emit cd directive if shell integration is active
+            // Interactive picker always performs cd (change_dir: true)
+            let cwd = std::env::current_dir().context("Failed to get current directory")?;
+            let source_root = repo.current_worktree().root()?;
+            let hooks_display_path =
+                handle_switch_output(&result, &branch_info, true, Some(&source_root), &cwd)?;
+
+            // Spawn background hooks after success message
+            if !skip_hooks {
+                let extra_vars = switch_extra_vars(&result);
+                spawn_switch_background_hooks(
+                    repo,
+                    &config,
+                    &result,
+                    &branch_info.branch,
+                    false,
+                    &extra_vars,
+                    hooks_display_path.as_deref(),
+                )?;
             }
-            _ => branch_info,
-        };
-
-        // Show success message; emit cd directive if shell integration is active
-        // Interactive picker always performs cd (change_dir: true)
-        let cwd = std::env::current_dir().context("Failed to get current directory")?;
-        let source_root = repo.current_worktree().root()?;
-        let hooks_display_path =
-            handle_switch_output(&result, &branch_info, true, Some(&source_root), &cwd)?;
-
-        // Spawn background hooks after success message
-        if !skip_hooks {
-            let extra_vars = switch_extra_vars(&result);
-            spawn_switch_background_hooks(
-                &repo,
-                config,
-                &result,
-                &branch_info.branch,
-                false,
-                &extra_vars,
-                hooks_display_path.as_deref(),
-            )?;
         }
     }
 

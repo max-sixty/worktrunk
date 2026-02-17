@@ -156,13 +156,9 @@ pub fn gather_candidates(
             }
             Err(e) => {
                 // Template expansion failed - warn user so they can fix config
-                eprintln!(
-                    "{}",
-                    warning_message(cformat!(
-                        "Skipping <bold>{branch}</> due to template error:"
-                    ))
-                );
-                eprintln!("{}", e);
+                let header = cformat!("Skipping <bold>{branch}</> due to template error:");
+                let detail = format_with_gutter(&e.to_string(), None);
+                eprintln!("{}\n{}", warning_message(header), detail);
                 template_errors += 1;
             }
         }

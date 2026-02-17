@@ -10,6 +10,7 @@ use normalize_path::NormalizePath;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{GitError, Repository, ResolvedWorktree};
 use worktrunk::path::format_path_for_display;
+use worktrunk::workspace::build_worktree_map;
 
 use super::types::OperationMode;
 
@@ -107,7 +108,17 @@ pub fn compute_worktree_path(
         })?;
 
     let project = repo.project_identifier().ok();
-    let expanded_path = config.format_path(repo_name, branch, repo, project.as_deref())?;
+    let repo_path_str = repo.repo_path().to_string_lossy().to_string();
+    let worktree_map = build_worktree_map(repo);
+    let expanded_path = config
+        .format_path(
+            repo_name,
+            branch,
+            &repo_path_str,
+            &worktree_map,
+            project.as_deref(),
+        )
+        .map_err(|e| anyhow::anyhow!(e))?;
 
     Ok(repo_root.join(expanded_path).normalize())
 }

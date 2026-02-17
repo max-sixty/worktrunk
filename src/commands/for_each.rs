@@ -27,15 +27,14 @@ use std::process::Stdio;
 
 use color_print::cformat;
 use worktrunk::config::{UserConfig, expand_template};
-use worktrunk::git::Repository;
 use worktrunk::git::WorktrunkError;
 use worktrunk::shell_exec::ShellConfig;
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, progress_message, success_message, warning_message,
 };
+use worktrunk::workspace::build_worktree_map;
 
 use crate::commands::command_executor::{CommandContext, build_hook_context};
-use crate::commands::worktree_display_name;
 
 /// Run a command in each worktree sequentially.
 ///
@@ -44,31 +43,54 @@ use crate::commands::worktree_display_name;
 ///
 /// All template variables from hooks are available, and context JSON is piped to stdin.
 pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
-    let repo = Repository::current()?;
-    // Filter out prunable worktrees (directory deleted) - can't run commands there
-    let worktrees: Vec<_> = repo
-        .list_worktrees()?
-        .into_iter()
-        .filter(|wt| !wt.is_prunable())
-        .collect();
+    let workspace = worktrunk::workspace::open_workspace()?;
     let config = UserConfig::load()?;
 
+    // Build workspace items — works for both git and jj
+    let workspaces: Vec<_> = if let Some(repo) = workspace
+        .as_any()
+        .downcast_ref::<worktrunk::git::Repository>()
+    {
+        // Git path: use WorktreeInfo, filter prunable
+        repo.list_worktrees()?
+            .into_iter()
+            .filter(|wt| !wt.is_prunable())
+            .map(|wt| {
+                let display_name = crate::commands::worktree_display_name(&wt, repo, &config);
+                let branch = wt.branch.clone();
+                let path = wt.path.clone();
+                (display_name, branch, path)
+            })
+            .collect()
+    } else {
+        // Jj/generic path: use trait's list_workspaces
+        workspace
+            .list_workspaces()?
+            .into_iter()
+            .filter(|ws| ws.prunable.is_none())
+            .map(|ws| {
+                let display_name = cformat!("<bold>{}</>", ws.name);
+                let branch = Some(ws.name);
+                let path = ws.path;
+                (display_name, branch, path)
+            })
+            .collect()
+    };
+
     let mut failed: Vec<String> = Vec::new();
-    let total = worktrees.len();
+    let total = workspaces.len();
 
     // Join args into a template string (will be expanded per-worktree)
     let command_template = args.join(" ");
 
-    for wt in &worktrees {
-        let display_name = worktree_display_name(wt, &repo, &config);
+    for (display_name, branch, path) in &workspaces {
         eprintln!(
             "{}",
             progress_message(format!("Running in {display_name}..."))
         );
 
         // Build full hook context for this worktree
-        // Pass wt.branch directly (not the display string) so detached HEAD maps to None -> "HEAD"
-        let ctx = CommandContext::new(&repo, &config, wt.branch.as_deref(), &wt.path, false);
+        let ctx = CommandContext::new(&*workspace, &config, branch.as_deref(), path, false);
         let context_map = build_hook_context(&ctx, &[]);
 
         // Convert to &str references for expand_template
@@ -78,7 +100,14 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
             .collect();
 
         // Expand template with full context (shell-escaped)
-        let command = expand_template(&command_template, &vars, true, &repo, "for-each command")?;
+        let worktree_map = build_worktree_map(&*workspace);
+        let command = expand_template(
+            &command_template,
+            &vars,
+            true,
+            &worktree_map,
+            "for-each command",
+        )?;
 
         // Build JSON context for stdin
         let context_json = serde_json::to_string(&context_map)
@@ -86,7 +115,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
 
         // Execute command: stream both stdout and stderr in real-time
         // Pipe context JSON to stdin for scripts that want structured data
-        match run_command_streaming(&command, &wt.path, Some(&context_json)) {
+        match run_command_streaming(&command, path, Some(&context_json)) {
             Ok(()) => {}
             Err(CommandError::SpawnFailed(err)) => {
                 eprintln!(
