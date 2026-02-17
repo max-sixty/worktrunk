@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.25.0
+
+### Improved
+
+- **System-wide config file**: Load organization-wide defaults from a system config file (`/etc/xdg/worktrunk/config.toml` on Linux, `/Library/Application Support/worktrunk/config.toml` on macOS) before user config. Override the path with `$WORKTRUNK_SYSTEM_CONFIG_PATH`. Visible in `wt config show`. ([#963](https://github.com/max-sixty/worktrunk/pull/963), thanks @goodtune)
+
+- **AI summary preview in `wt switch`**: New 5th tab shows AI-generated branch summaries using your configured `[commit.generation]` LLM command. Opt-in via `[list] summary = true` in config. Summaries are cached in `.git/wt-cache/summaries/` with hash-based invalidation. [Docs](https://worktrunk.dev/llm-commits/) ([#1049](https://github.com/max-sixty/worktrunk/pull/1049))
+
+- **Approvals stored in dedicated file**: Approved commands moved from `config.toml` to `approvals.toml`, enabling dotfile management of config without exposing machine-local trust state. Existing approvals in `config.toml` are read automatically with a deprecation warning and migration instructions in `wt config show`. ([#1042](https://github.com/max-sixty/worktrunk/pull/1042))
+
+- **Error hints include `--execute` context**: When `wt switch --execute=<cmd>` fails, suggested commands now include the full `--execute` and trailing args so you can copy-paste the fix directly. ([#1064](https://github.com/max-sixty/worktrunk/pull/1064))
+
+- **`wt list` startup performance**: Config resolution moved into the parallel phase, running concurrently with other git commands instead of sequentially on the critical path. ([#1054](https://github.com/max-sixty/worktrunk/pull/1054))
+
+### Fixed
+
+- **Submodule worktree path resolution**: `wt switch` resolved to `.git/modules/` instead of the working directory inside git submodules. Fixes [#1069](https://github.com/max-sixty/worktrunk/issues/1069). ([#1070](https://github.com/max-sixty/worktrunk/pull/1070), thanks @SokiKawashima for reporting)
+
+- **Per-project `[list] timeout` ignored**: The timeout setting from per-project config (`[projects."name".list]`) was not applied — only the global config value was used. ([#1063](https://github.com/max-sixty/worktrunk/pull/1063))
+
+- **Empty repos crash `wt list`**: Repositories with no commits (unborn HEAD) caused errors. Now renders empty cells for commit-dependent fields. ([#1058](https://github.com/max-sixty/worktrunk/pull/1058))
+
+- **Stray blank lines before hints in error output**: Error messages with hints (↳) had an extra blank line separating the hint from its subject. ([#1072](https://github.com/max-sixty/worktrunk/pull/1072))
+
+### Internal
+
+- **Shell escaping consolidation**: Dropped `shlex` crate, consolidated on `shell_escape` across the codebase. ([#1065](https://github.com/max-sixty/worktrunk/pull/1065))
+
+- **CI reviewer improvements**: Resolve review threads, skip trivial re-approvals, default to suggestions. ([#1068](https://github.com/max-sixty/worktrunk/pull/1068))
+
 ## 0.24.1
 
 ### Improved
