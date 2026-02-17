@@ -450,6 +450,40 @@ optional-var = "echo {{ base }}"
     });
 }
 
+/// Test that `wt hook show` displays merged hooks from both wt.toml and wt.local.toml
+#[rstest]
+fn test_hook_show_with_local_config(repo: TestRepo, temp_home: TempDir) {
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        r#"[pre-merge]
+test = "cargo test"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        config_dir.join("wt.local.toml"),
+        r#"[pre-merge]
+lint = "cargo clippy"
+"#,
+    )
+    .unwrap();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["hook", "show"]).current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Test that valid templates expand correctly with --expanded.
 #[rstest]
 fn test_hook_show_expanded_valid_template(repo: TestRepo, temp_home: TempDir) {

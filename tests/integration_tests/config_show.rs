@@ -2383,6 +2383,50 @@ command = "llm -m gpt-4"
     );
 }
 
+/// Test that `wt config show` displays both wt.toml and wt.local.toml with annotation
+#[rstest]
+fn test_config_show_with_local_config(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        r#"post-create = "npm install"
+
+[pre-merge]
+test = "cargo test"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        config_dir.join("wt.local.toml"),
+        r#"[pre-merge]
+lint = "cargo clippy"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Test that explicitly specified --config path that doesn't exist shows a warning
 #[rstest]
 fn test_explicit_config_path_not_found_shows_warning(repo: TestRepo) {
