@@ -191,7 +191,7 @@ All gitignored files are copied by default. Tracked files are never touched.
 
 To limit what gets copied, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
 
-```gitignore
+```text
 # .worktreeinclude
 .env
 node_modules/
