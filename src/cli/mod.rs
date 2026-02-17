@@ -335,7 +335,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
 ```toml
-[select]
+[switch.picker]
 pager = "delta --paging=never --width=$COLUMNS"
 ```
 
@@ -1590,16 +1590,18 @@ remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
 ```
 
-### Select
+### Switch picker
 
-Pager behavior for `wt switch` interactive picker diff previews.
+Configuration for `wt switch` interactive picker.
 
 ```toml
-[select]
-# Pager command with flags for diff preview (overrides git's core.pager)
-# Use this to specify pager flags needed for non-TTY contexts
-# Example:
+[switch.picker]
+# Pager command for diff preview (overrides git's core.pager)
 # pager = "delta --paging=never"
+
+# Timeout (ms) for git commands during picker loading (default: 200)
+# Lower values show the TUI faster; 0 disables timeouts
+# timeout-ms = 200
 ```
 
 ### User project-specific settings

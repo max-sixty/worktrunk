@@ -49,20 +49,12 @@ pub(super) fn get_diff_pager() -> Option<&'static String> {
     CACHED_PAGER
         .get_or_init(|| {
             // Check user config first - use exactly as specified (no auto-detection)
-            // Prefer [switch.picker] pager, fall back to deprecated [select] pager
-            if let Ok(config) = UserConfig::load() {
-                let pager = config
-                    .configs
-                    .switch
-                    .as_ref()
-                    .and_then(|s| s.picker.as_ref())
-                    .and_then(|p| p.pager.clone())
-                    .or_else(|| config.configs.select.as_ref().and_then(|s| s.pager.clone()));
-                if let Some(pager) = pager
-                    && !pager.trim().is_empty()
-                {
-                    return Some(pager);
-                }
+            // Uses switch_picker() accessor which handles [switch.picker] → [select] fallback
+            if let Ok(config) = UserConfig::load()
+                && let Some(pager) = config.switch_picker(None).pager
+                && !pager.trim().is_empty()
+            {
+                return Some(pager);
             }
 
             // GIT_PAGER or core.pager - apply auto-detection for delta/bat

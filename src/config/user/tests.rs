@@ -987,7 +987,7 @@ fn test_commit_config_accessor_methods() {
 }
 
 #[test]
-fn test_select_config_accessor_methods() {
+fn test_select_config_fields() {
     let config = SelectConfig::default();
     assert!(config.pager.is_none());
 

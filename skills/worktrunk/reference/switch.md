@@ -86,7 +86,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
 ```toml
-[select]
+[switch.picker]
 pager = "delta --paging=never --width=$COLUMNS"
 ```
 
