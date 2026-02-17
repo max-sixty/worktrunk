@@ -15,7 +15,9 @@ info:
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
@@ -28,9 +30,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt switch - Switch to a worktree[0m
-
-Creates one if needed.[0m
+wt switch - Switch to a worktree; create if needed
 
 Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m][0m
 
