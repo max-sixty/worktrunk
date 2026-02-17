@@ -42,9 +42,10 @@ static ANSI_LITERAL_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[[0-
 
 /// Regex to find docs snapshot markers (HTML output)
 /// Format: <!-- ⚠️ AUTO-GENERATED-HTML from path.snap — edit source to update -->
+/// Matches both old `{% terminal() %}` and new `{% terminal(cmd="...") %}` forms
 static DOCS_SNAPSHOT_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?s)<!-- ⚠️ AUTO-GENERATED-HTML from ([^\s]+\.snap) — edit source to update -->\n+\{% terminal\(\) %\}\n(.*?)\{% end %\}\n+<!-- END AUTO-GENERATED -->",
+        r#"(?s)<!-- ⚠️ AUTO-GENERATED-HTML from ([^\s]+\.snap) — edit source to update -->\n+\{% terminal\([^)]*\) %\}\n(.*?)\{% end %\}\n+<!-- END AUTO-GENERATED -->"#,
     )
     .unwrap()
 });
@@ -286,9 +287,17 @@ fn replace_placeholders(content: &str) -> String {
 fn format_replacement(id: &str, content: &str, format: &OutputFormat) -> String {
     match format {
         OutputFormat::DocsHtml => {
+            // Extract command from <span class="cmd"> in body to also emit as cmd= parameter
+            // The cmd= parameter enables giallo syntax highlighting in the shortcode
+            // The span is kept in body for stable sync comparisons
+            let cmd_re = Regex::new(r#"^<span class="cmd">([^<]+)</span>"#).unwrap();
+            let cmd_attr = cmd_re
+                .captures(content)
+                .map(|c| format!(r#"cmd="{}""#, c.get(1).unwrap().as_str()))
+                .unwrap_or_default();
             format!(
-                "<!-- ⚠️ AUTO-GENERATED-HTML from {} — edit source to update -->\n\n{{% terminal() %}}\n{}\n{{% end %}}\n\n<!-- END AUTO-GENERATED -->",
-                id, content
+                "<!-- ⚠️ AUTO-GENERATED-HTML from {} — edit source to update -->\n\n{{% terminal({}) %}}\n{}\n{{% end %}}\n\n<!-- END AUTO-GENERATED -->",
+                id, cmd_attr, content
             )
         }
         OutputFormat::Unwrapped => {
@@ -414,11 +423,11 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
         let normalized = trim_lines(&html);
 
         // Build the terminal shortcode with standard template markers
+        // cmd= parameter enables giallo syntax highlighting on the command line
         // Prompt ($) is added via CSS ::before, so not included in HTML
         let replacement = format!(
             "<!-- ⚠️ AUTO-GENERATED from tests/snapshots/{} — edit source to update -->\n\n\
-             {{% terminal() %}}\n\
-             <span class=\"cmd\">{}</span>\n\
+             {{% terminal(cmd=\"{}\") %}}\n\
              {}\n\
              {{% end %}}\n\n\
              <!-- END AUTO-GENERATED -->",
@@ -737,9 +746,10 @@ fn heading_to_anchor(heading: &str) -> String {
 /// Regex to match terminal shortcodes with AUTO-GENERATED-HTML markers
 /// Optionally captures a preceding bash code block (which becomes redundant)
 /// These need to be converted to plain code blocks for README
+/// Matches both `{% terminal() %}` and `{% terminal(cmd="...") %}` forms
 static TERMINAL_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?s)(?:```bash\n[^\n]+\n```\n+)?<!-- ⚠️ AUTO-GENERATED-HTML from [^\n]+ -->\n+\{% terminal\(\) %\}\n(.*?)\{% end %\}\n+<!-- END AUTO-GENERATED -->",
+        r#"(?s)(?:```bash\n[^\n]+\n```\n+)?<!-- ⚠️ AUTO-GENERATED-HTML from [^\n]+ -->\n+\{% terminal\([^)]*\) %\}\n(.*?)\{% end %\}\n+<!-- END AUTO-GENERATED -->"#,
     )
     .unwrap()
 });

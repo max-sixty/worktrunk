@@ -43,7 +43,7 @@ exit_code: 0
 ----- stderr -----
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [33m▲[39m [33mUser config uses deprecated template variables: [2mrepo_root[22m → [1mrepo_path[22m, [2mmain_worktree[22m → [1mrepo[22m[39m
-[2m↳[22m [2mWrote migrated [90mconfig.toml.new[39m. To apply:[22m
+[2m○[22m Wrote migrated [1mconfig.toml.new[22m. To apply:
 [107m [0m [2m[0m[2m[34mmv[0m[2m [0m[2m[36m--[0m[2m [TEMP_HOME]/.config/worktrunk/config.toml.new [TEMP_HOME]/.config/worktrunk/config.toml
 [2m○[22m Diff:
 [107m [0m [1mdiff --git a[TEMP_HOME]/.config/worktrunk/config.toml b[TEMP_HOME]/.config/worktrunk/config.toml.new

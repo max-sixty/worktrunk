@@ -550,6 +550,27 @@ pub fn migrate_select_to_switch_picker(content: &str) -> String {
     doc.to_string()
 }
 
+/// Copy approved-commands from config.toml to approvals.toml.
+///
+/// Called during migration to ensure approved-commands are preserved before
+/// the migration file removes them from config.toml. Without this, applying
+/// `mv config.toml.new config.toml` would lose approval data.
+///
+/// Returns `Some(path)` if approvals.toml was created, `None` if it already
+/// existed or there was nothing to copy.
+fn copy_approved_commands_to_approvals_file(config_path: &Path) -> Option<PathBuf> {
+    let approvals_path = config_path.with_file_name("approvals.toml");
+    if approvals_path.exists() {
+        return None; // Already authoritative, don't overwrite
+    }
+
+    let approvals = super::approvals::Approvals::load_from_config_file(config_path).ok()?;
+    approvals.projects().next()?; // Nothing to copy if empty
+
+    approvals.save_to(&approvals_path).ok()?;
+    Some(approvals_path)
+}
+
 /// Merge args array into command string
 ///
 /// Converts: command = "llm", args = ["-m", "haiku"]
@@ -617,6 +638,8 @@ pub struct DeprecationInfo {
     pub label: String,
     /// True if in a linked worktree (migration file written to main worktree only)
     pub in_linked_worktree: bool,
+    /// Path to approvals.toml if approved-commands were copied there during migration
+    pub approvals_copied_to: Option<PathBuf>,
 }
 
 impl DeprecationInfo {
@@ -696,6 +719,7 @@ pub fn check_and_migrate(
         deprecations,
         label: label.to_string(),
         in_linked_worktree: !warn_and_migrate,
+        approvals_copied_to: None,
     };
 
     // Skip warning entirely if not in main worktree (for project config)
@@ -717,9 +741,29 @@ pub fn check_and_migrate(
         guard.insert(canonical_path.clone());
     }
 
+    // Copy approved-commands to approvals.toml before generating the migration
+    // file that removes them from config.toml. Without this, applying the
+    // migration (`mv config.toml.new config.toml`) would lose approval data.
+    if info.deprecations.approved_commands {
+        info.approvals_copied_to = copy_approved_commands_to_approvals_file(path);
+    }
+
     // For brief warnings (non-config-show commands), just show a pointer
     if show_brief_warning {
         eprintln!("{}", format_brief_warning(label));
+
+        if let Some(approvals_path) = &info.approvals_copied_to {
+            let approvals_filename = approvals_path
+                .file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_default();
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "Copied approved commands to <bright-black>{approvals_filename}</>"
+                ))
+            );
+        }
 
         // Still write migration file if needed (first time only)
         if !should_skip_write
@@ -735,8 +779,8 @@ pub fn check_and_migrate(
 
             eprintln!(
                 "{}",
-                hint_message(cformat!(
-                    "Wrote migrated <bright-black>{new_filename}</>. To apply:"
+                info_message(cformat!(
+                    "Wrote migrated <bold>{new_filename}</>. To apply:"
                 ))
             );
             eprintln!(
@@ -905,6 +949,19 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
                 info.label
             ))
         );
+        if let Some(approvals_path) = &info.approvals_copied_to {
+            let approvals_filename = approvals_path
+                .file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_default();
+            let _ = writeln!(
+                out,
+                "{}",
+                hint_message(cformat!(
+                    "Copied approved commands to <bright-black>{approvals_filename}</>"
+                ))
+            );
+        }
     }
 
     if info.deprecations.select {
@@ -931,8 +988,8 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            hint_message(cformat!(
-                "Wrote migrated <bright-black>{new_filename}</>. To apply:"
+            info_message(cformat!(
+                "Wrote migrated <bold>{new_filename}</>. To apply:"
             ))
         );
         let _ = writeln!(
@@ -2112,6 +2169,7 @@ approved-commands = ["npm install"]
             },
             label: "User config".to_string(),
             in_linked_worktree: false,
+            approvals_copied_to: None,
         };
         let output = format_deprecation_details(&info);
         assert!(
@@ -2122,6 +2180,29 @@ approved-commands = ["npm install"]
         assert!(
             output.contains("approvals.toml"),
             "Should mention approvals.toml: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_format_deprecation_details_approvals_copied() {
+        let info = DeprecationInfo {
+            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
+            migration_path: None,
+            deprecations: Deprecations {
+                vars: vec![],
+                commit_gen: CommitGenerationDeprecations::default(),
+                approved_commands: true,
+                select: false,
+            },
+            label: "User config".to_string(),
+            in_linked_worktree: false,
+            approvals_copied_to: Some(std::path::PathBuf::from("/tmp/approvals.toml")),
+        };
+        let output = format_deprecation_details(&info);
+        assert!(
+            output.contains("Copied approved commands"),
+            "Should mention approvals were copied: {}",
             output
         );
     }
@@ -2151,6 +2232,80 @@ approved-commands = ["npm install"]
         let migration_path = result.unwrap();
         let migrated = std::fs::read_to_string(&migration_path).unwrap();
         assert!(!migrated.contains("approved-commands"));
+    }
+
+    #[test]
+    fn test_copy_approved_commands_creates_approvals_file() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install", "npm test"]
+
+[projects."github.com/other/repo"]
+approved-commands = ["cargo build"]
+"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        let result = copy_approved_commands_to_approvals_file(&config_path);
+        assert!(result.is_some(), "Should create approvals.toml");
+
+        let approvals_path = result.unwrap();
+        assert_eq!(approvals_path, temp_dir.path().join("approvals.toml"));
+
+        let approvals_content = std::fs::read_to_string(&approvals_path).unwrap();
+        assert!(
+            approvals_content.contains("npm install"),
+            "Should contain npm install: {}",
+            approvals_content
+        );
+        assert!(
+            approvals_content.contains("npm test"),
+            "Should contain npm test: {}",
+            approvals_content
+        );
+        assert!(
+            approvals_content.contains("cargo build"),
+            "Should contain cargo build: {}",
+            approvals_content
+        );
+    }
+
+    #[test]
+    fn test_copy_approved_commands_skips_when_approvals_exists() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let approvals_path = temp_dir.path().join("approvals.toml");
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install"]
+"#;
+        std::fs::write(&config_path, content).unwrap();
+        std::fs::write(&approvals_path, "# existing approvals\n").unwrap();
+
+        let result = copy_approved_commands_to_approvals_file(&config_path);
+        assert!(result.is_none(), "Should skip when approvals.toml exists");
+
+        // Verify existing file was not overwritten
+        let existing = std::fs::read_to_string(&approvals_path).unwrap();
+        assert_eq!(existing, "# existing approvals\n");
+    }
+
+    #[test]
+    fn test_copy_approved_commands_skips_when_empty() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let content = r#"
+[projects."github.com/user/repo"]
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        let result = copy_approved_commands_to_approvals_file(&config_path);
+        assert!(
+            result.is_none(),
+            "Should skip when no approved-commands exist"
+        );
     }
 
     #[test]
@@ -2329,6 +2484,7 @@ branches = true
             },
             label: "User config".to_string(),
             in_linked_worktree: false,
+            approvals_copied_to: None,
         };
         let output = format_deprecation_details(&info);
         assert!(
