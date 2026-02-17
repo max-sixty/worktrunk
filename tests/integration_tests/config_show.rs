@@ -1441,9 +1441,8 @@ alias wt="git worktree"
 
 /// When a config uses deprecated variables (repo_root, worktree, main_worktree),
 /// the CLI should:
-/// 1. Show a warning listing the deprecated variables and their replacements
+/// 1. Show a warning pointing to `wt config show` and `wt config update`
 /// 2. Create a .new migration file with replacements
-/// 3. Show a hint with the mv command to apply the migration
 #[rstest]
 fn test_deprecated_template_variables_show_warning(repo: TestRepo, temp_home: TempDir) {
     // Write config with deprecated variables to the test config path
@@ -1548,15 +1547,13 @@ fn test_deprecated_template_variables_hint_deduplication(repo: TestRepo, temp_ho
             "First run should succeed: {:?}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("Wrote migrated"),
-            "First run should write migration file, got: {stderr}"
-        );
     }
 
     let migration_file = project_config_path.with_extension("toml.new");
-    assert!(migration_file.exists());
+    assert!(
+        migration_file.exists(),
+        "First run should create migration file"
+    );
 
     let original_content = fs::read_to_string(&migration_file).unwrap();
 
@@ -1688,11 +1685,6 @@ fn test_deleted_migration_file_regenerated(repo: TestRepo, temp_home: TempDir) {
             "Second run should succeed: {:?}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("Wrote migrated"),
-            "Should write migration file when it doesn't exist, got: {stderr}"
-        );
     }
 
     // Migration file should exist again
@@ -1727,12 +1719,11 @@ fn test_fixing_deprecated_config_clears_hint_for_future_deprecations(
         set_temp_home_env(&mut cmd, temp_home.path());
         let output = cmd.output().unwrap();
         assert!(output.status.success());
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("Wrote migrated"),
-            "First run should write migration file"
-        );
     }
+    assert!(
+        project_config_path.with_extension("toml.new").exists(),
+        "First run should create migration file"
+    );
 
     // User fixes the config (removes deprecation)
     fs::write(
@@ -1770,7 +1761,7 @@ fn test_fixing_deprecated_config_clears_hint_for_future_deprecations(
     )
     .unwrap();
 
-    // Third run with new deprecation - should get FULL warning (not just brief)
+    // Third run with new deprecation - should get full treatment
     // because hint was cleared when config was clean
     {
         let mut cmd = repo.wt_command();
@@ -1780,8 +1771,8 @@ fn test_fixing_deprecated_config_clears_hint_for_future_deprecations(
         assert!(output.status.success());
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("Wrote migrated"),
-            "New deprecation should get full treatment with file write, got: {stderr}"
+            stderr.contains("deprecated settings"),
+            "New deprecation should show warning, got: {stderr}"
         );
     }
 
@@ -1853,7 +1844,7 @@ fn test_deprecated_project_config_silent_in_feature_worktree(repo: TestRepo, tem
 
 /// User config migration file write is deduplicated based on file existence.
 /// First run creates the migration file. Subsequent runs skip the write
-/// if the file already exists (brief warning only, pointing to `wt config show`).
+/// if the file already exists (brief warning only).
 #[rstest]
 fn test_user_config_deprecated_variables_deduplication(repo: TestRepo, temp_home: TempDir) {
     // Write user config with deprecated variables using the test config path
@@ -1870,20 +1861,18 @@ fn test_user_config_deprecated_variables_deduplication(repo: TestRepo, temp_home
         cmd.arg("list").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         let output = cmd.output().unwrap();
-        let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             output.status.success(),
             "First run should succeed: {:?}",
-            stderr
-        );
-        assert!(
-            stderr.contains("Wrote migrated"),
-            "First run should write migration file, got: {stderr}"
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 
     let migration_file = user_config_path.with_extension("toml.new");
-    assert!(migration_file.exists());
+    assert!(
+        migration_file.exists(),
+        "First run should create migration file"
+    );
 
     // Second run - hint is already marked shown, skip file write
     // Should show brief warning only, NOT regenerate the file

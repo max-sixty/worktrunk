@@ -47,6 +47,4 @@ exit_code: 0
 [2m○[22m [2mShowing 4 worktrees, 3 ahead
 
 ----- stderr -----
-[33m▲[39m [33mUser config has deprecated settings. To see details, run [1mwt config show[22m[39m
-[2m○[22m Wrote migrated [1mtest-config.toml.new[22m. To apply:
-[107m [0m [2m[0m[2m[34mmv[0m[2m [0m[2m[36m--[0m[2m [TEST_CONFIG_NEW] [TEST_CONFIG]
+[33m▲[39m [33mUser config has deprecated settings. Run [1mwt config show[22m for details or [1mwt config update[22m to apply updates[39m

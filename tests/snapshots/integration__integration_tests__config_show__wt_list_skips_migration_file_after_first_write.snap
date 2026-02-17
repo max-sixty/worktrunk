@@ -24,10 +24,13 @@ info:
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -44,4 +47,4 @@ exit_code: 0
 [2m○[22m [2mShowing 4 worktrees, 1 with changes, 3 ahead
 
 ----- stderr -----
-[33m▲[39m [33mProject config has deprecated settings. To see details, run [1mwt config show[22m[39m
+[33m▲[39m [33mProject config has deprecated settings. Run [1mwt config show[22m for details or [1mwt config update[22m to apply updates[39m
