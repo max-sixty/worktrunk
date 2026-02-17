@@ -50,6 +50,7 @@ pub mod shell_integration_prompt;
 pub mod shell_integration_windows;
 pub mod shell_powershell;
 pub mod shell_wrapper;
+pub mod snapshot_formatting_guard;
 pub mod spacing_edge_cases;
 pub mod statusline;
 pub mod step_copy_ignored;
