@@ -476,6 +476,10 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 /// Shows all changes since branching from the target: committed, staged, unstaged,
 /// and untracked files in a single diff. Uses a temporary index to include untracked
 /// files without modifying the real git index.
+///
+/// TODO: consider adding `--stage` flag (all/tracked/none) like `step commit` to
+/// control which change types are included. `tracked` would skip the temp index,
+/// `none` would diff only committed changes.
 pub fn step_diff(target: Option<&str>, extra_args: &[String]) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let wt = repo.current_worktree();
