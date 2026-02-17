@@ -72,8 +72,7 @@ pub fn get_system_config_path() -> Option<PathBuf> {
     // Priority 2+3: Check XDG_CONFIG_DIRS (if set), otherwise platform defaults.
     // When XDG_CONFIG_DIRS is set, system_config_dirs() returns only those dirs
     // (per XDG spec, no fallback to platform defaults).
-    let (dirs, _) = system_config_dirs();
-    for dir in &dirs {
+    for dir in &system_config_dirs() {
         let path = dir.join("worktrunk").join("config.toml");
         if path.exists() {
             return Some(path);
@@ -93,22 +92,18 @@ pub fn default_system_config_path() -> Option<PathBuf> {
         return Some(PathBuf::from(path));
     }
 
-    let (dirs, _) = system_config_dirs();
-    dirs.first()
+    system_config_dirs()
+        .first()
         .map(|dir| dir.join("worktrunk").join("config.toml"))
 }
 
 /// System config directories in priority order.
 ///
-/// Returns `(dirs, xdg_was_set)` where `xdg_was_set` indicates whether
-/// `XDG_CONFIG_DIRS` was present in the environment. When set, it defines
-/// the search path exclusively (per XDG spec) — callers should not fall
-/// through to platform defaults.
-///
-/// On Unix, checks `XDG_CONFIG_DIRS` first. On all platforms, includes
-/// platform-specific defaults (macOS: `/Library/Application Support`,
-/// Windows: `%PROGRAMDATA%`, Unix: `/etc/xdg`).
-fn system_config_dirs() -> (Vec<PathBuf>, bool) {
+/// On Unix, checks `XDG_CONFIG_DIRS` first. When set, it defines the search
+/// path exclusively (per XDG spec) — no fallback to platform defaults.
+/// Otherwise, returns platform-specific defaults (macOS: `/Library/Application
+/// Support`, Windows: `%PROGRAMDATA%`, Unix: `/etc/xdg`).
+fn system_config_dirs() -> Vec<PathBuf> {
     #[cfg(unix)]
     if let Ok(dirs_str) = std::env::var("XDG_CONFIG_DIRS") {
         let dirs: Vec<PathBuf> = dirs_str
@@ -117,11 +112,11 @@ fn system_config_dirs() -> (Vec<PathBuf>, bool) {
             .map(PathBuf::from)
             .collect();
         if !dirs.is_empty() {
-            return (dirs, true);
+            return dirs;
         }
     }
 
-    (platform_default_dirs(), false)
+    platform_default_dirs()
 }
 
 /// Platform-specific default system config directories.

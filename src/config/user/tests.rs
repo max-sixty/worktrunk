@@ -1996,17 +1996,19 @@ command = "my-preferred-llm"
 }
 
 #[test]
-fn test_system_config_hooks_append_semantics() {
-    // System config hooks and user config hooks should merge with append semantics
-    let system_hooks = parse_hooks("pre-merge = \"company-lint\"");
-    let user_hooks = parse_hooks("pre-merge = \"my-lint\"");
+fn test_hooks_merge_trait_appends_for_global_project_merge() {
+    // The Merge trait uses append semantics — used for global→per-project merging
+    // (in accessors.rs). NOT used for system→user config merging, which goes
+    // through the config crate's replacement semantics instead.
+    let global_hooks = parse_hooks("pre-merge = \"global-lint\"");
+    let project_hooks = parse_hooks("pre-merge = \"project-lint\"");
 
-    let merged = system_hooks.merge_with(&user_hooks);
+    let merged = global_hooks.merge_with(&project_hooks);
     let pre_merge = merged.pre_merge.unwrap();
     let commands = pre_merge.commands();
     assert_eq!(commands.len(), 2);
-    assert_eq!(commands[0].template, "company-lint"); // System first
-    assert_eq!(commands[1].template, "my-lint"); // User second
+    assert_eq!(commands[0].template, "global-lint"); // Global first
+    assert_eq!(commands[1].template, "project-lint"); // Project second
 }
 
 /// Test that reload_projects_from handles permission errors
