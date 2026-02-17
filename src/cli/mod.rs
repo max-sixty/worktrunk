@@ -247,9 +247,7 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
-    /// Switch to a worktree
-    ///
-    /// Creates one if needed.
+    /// Switch to a worktree; create if needed
     #[command(
         after_long_help = r#"Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
 
