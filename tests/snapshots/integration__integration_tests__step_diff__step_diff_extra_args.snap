@@ -5,6 +5,7 @@ info:
   args:
     - step
     - diff
+    - "--"
     - "--stat"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
@@ -39,7 +40,8 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+ feature.txt   | 1 +
+ untracked.txt | 1 +
+ 2 files changed, 2 insertions(+)
 
 ----- stderr -----
-[107m [0m  untracked.txt | 1 [32m+[m
-[107m [0m  1 file changed, 1 insertion(+)

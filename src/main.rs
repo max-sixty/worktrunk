@@ -534,7 +534,7 @@ fn main() {
                     }
                 })
             }
-            StepCommand::Diff { target, stat } => step_diff(target.as_deref(), stat),
+            StepCommand::Diff { target, extra_args } => step_diff(target.as_deref(), &extra_args),
             StepCommand::CopyIgnored {
                 from,
                 to,

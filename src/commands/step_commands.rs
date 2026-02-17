@@ -476,7 +476,7 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 /// Shows all changes since branching from the target: committed, staged, unstaged,
 /// and untracked files in a single diff. Uses a temporary index to include untracked
 /// files without modifying the real git index.
-pub fn step_diff(target: Option<&str>, stat: bool) -> anyhow::Result<()> {
+pub fn step_diff(target: Option<&str>, extra_args: &[String]) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let wt = repo.current_worktree();
 
@@ -518,42 +518,15 @@ pub fn step_diff(target: Option<&str>, stat: bool) -> anyhow::Result<()> {
         .run()
         .context("Failed to register untracked files")?;
 
-    if stat {
-        // Stat summary — capture and display with gutter
-        let term_width = crate::display::get_terminal_width();
-        let stat_width = term_width.saturating_sub(worktrunk::styling::GUTTER_OVERHEAD);
-        let diff_stat = Cmd::new("git")
-            .args([
-                "diff",
-                "--color=always",
-                "--stat",
-                &format!("--stat-width={}", stat_width),
-                &merge_base,
-            ])
-            .current_dir(&worktree_root)
-            .context(&current_branch)
-            .env("GIT_INDEX_FILE", temp_index_path)
-            .run()
-            .context("Failed to run git diff --stat")?;
-
-        let stat_output = String::from_utf8_lossy(&diff_stat.stdout)
-            .trim_end()
-            .to_string();
-
-        if stat_output.is_empty() {
-            eprintln!("{}", info_message("No changes"));
-        } else {
-            eprintln!("{}", format_with_gutter(&stat_output, None));
-        }
-    } else {
-        // Full diff — stream directly to stdout (git handles pager)
-        Cmd::new("git")
-            .args(["diff", &merge_base])
-            .current_dir(&worktree_root)
-            .context(&current_branch)
-            .env("GIT_INDEX_FILE", temp_index_path)
-            .stream()?;
-    }
+    // Stream diff to stdout — git handles pager and coloring
+    let mut diff_args = vec!["diff".to_string(), merge_base];
+    diff_args.extend_from_slice(extra_args);
+    Cmd::new("git")
+        .args(&diff_args)
+        .current_dir(&worktree_root)
+        .context(&current_branch)
+        .env("GIT_INDEX_FILE", temp_index_path)
+        .stream()?;
 
     Ok(())
 }

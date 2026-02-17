@@ -87,25 +87,10 @@ fn test_step_diff_all_change_types(mut repo: TestRepo) {
     ));
 }
 
-/// Stat mode produces diffstat summary
+/// Extra args are forwarded to git diff
 #[rstest]
-fn test_step_diff_stat_mode(mut repo: TestRepo) {
+fn test_step_diff_extra_args(mut repo: TestRepo) {
     let feature_path = setup_feature_with_commit(&mut repo);
-    let settings = setup_snapshot_settings(&repo);
-    let _guard = settings.bind_to_scope();
-
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["diff", "-s"],
-        Some(&feature_path),
-    ));
-}
-
-/// Stat mode with untracked files
-#[rstest]
-fn test_step_diff_stat_untracked(mut repo: TestRepo) {
-    let feature_path = repo.add_worktree("feature");
     fs::write(feature_path.join("untracked.txt"), "untracked content").unwrap();
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
@@ -113,7 +98,7 @@ fn test_step_diff_stat_untracked(mut repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",
-        &["diff", "--stat"],
+        &["diff", "--", "--stat"],
         Some(&feature_path),
     ));
 }
