@@ -481,6 +481,7 @@ pub fn step_copy_ignored(
     from: Option<&str>,
     to: Option<&str>,
     dry_run: bool,
+    force: bool,
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
 
@@ -612,11 +613,14 @@ pub fn step_copy_ignored(
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
-            copy_dir_recursive(src_entry, &dest_entry)?;
+            copy_dir_recursive(src_entry, &dest_entry, force)?;
             copied_count += 1;
         } else {
             if let Some(parent) = dest_entry.parent() {
                 fs::create_dir_all(parent)?;
+            }
+            if force {
+                remove_if_exists(&dest_entry)?;
             }
             // Skip existing files for idempotent hook usage
             match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
@@ -638,6 +642,14 @@ pub fn step_copy_ignored(
         success_message(format!("Copied {copied_count} {entry_word}"))
     );
 
+    Ok(())
+}
+
+/// Remove a file, ignoring "not found" errors.
+fn remove_if_exists(path: &Path) -> anyhow::Result<()> {
+    if let Err(e) = fs::remove_file(path) {
+        anyhow::ensure!(e.kind() == ErrorKind::NotFound, e);
+    }
     Ok(())
 }
 
@@ -702,14 +714,14 @@ fn list_ignored_entries(
 ///
 /// Apple recommends `copyfile()` with `COPYFILE_CLONE` for directories, which
 /// internally walks the tree and clones per-file — equivalent to what we do here.
-fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
-    copy_dir_recursive_fallback(src, dest)
+fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
+    copy_dir_recursive_fallback(src, dest, force)
 }
 
 /// File-by-file recursive copy with reflink per file.
 ///
 /// Used as fallback when atomic directory clone isn't available or fails.
-fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
+fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
     fs::create_dir_all(dest)?;
 
     for entry in fs::read_dir(src)? {
@@ -720,6 +732,9 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
 
         if file_type.is_symlink() {
             // Copy symlink (preserves the link, doesn't follow it)
+            if force {
+                remove_if_exists(&dest_path)?;
+            }
             if !dest_path.exists() {
                 let target = fs::read_link(&src_path)?;
                 #[cfg(unix)]
@@ -736,8 +751,11 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
                 }
             }
         } else if file_type.is_dir() {
-            copy_dir_recursive_fallback(&src_path, &dest_path)?;
+            copy_dir_recursive_fallback(&src_path, &dest_path, force)?;
         } else {
+            if force {
+                remove_if_exists(&dest_path)?;
+            }
             // Skip existing files for idempotent hook usage
             match reflink_copy::reflink_or_copy(&src_path, &dest_path) {
                 Ok(_) => {}
@@ -866,5 +884,18 @@ mod tests {
         } else {
             panic!("Expected UpToDate variant");
         }
+    }
+
+    #[test]
+    fn test_remove_if_exists_nonexistent() {
+        // NotFound is silently ignored
+        assert!(remove_if_exists(Path::new("/nonexistent/file")).is_ok());
+    }
+
+    #[test]
+    fn test_remove_if_exists_not_a_file() {
+        // Trying to remove a directory with remove_file produces a non-NotFound error
+        let dir = std::env::temp_dir();
+        assert!(remove_if_exists(&dir).is_err());
     }
 }

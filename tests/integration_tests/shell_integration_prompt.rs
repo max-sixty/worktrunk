@@ -167,7 +167,7 @@ fn test_switch_unsupported_shell_shows_hint(repo: TestRepo) {
         "Should show unsupported shell message: {stderr}"
     );
     assert!(
-        stderr.contains("bash, zsh, fish, PowerShell"),
+        stderr.contains("bash, zsh, fish, nu, PowerShell"),
         "Should list supported shells: {stderr}"
     );
 }
@@ -203,7 +203,7 @@ fn test_switch_no_shell_env_shows_hint(repo: TestRepo) {
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {
     use super::*;
-    use crate::common::pty::exec_in_pty_with_home;
+    use crate::common::pty::{build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted};
     use crate::common::{add_pty_filters, setup_snapshot_settings, wt_bin};
     use insta::assert_snapshot;
     use std::path::Path;
@@ -250,14 +250,14 @@ mod pty_tests {
         // Set SHELL to bash since we're testing with .bashrc
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
-        let (output, exit_code) = exec_in_pty_with_home(
+        let cmd = build_pty_command(
             wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
-            "", // No input needed - should not prompt
-            temp_home.path(),
+            Some(temp_home.path()),
         );
+        let (output, exit_code) = exec_cmd_in_pty(cmd, "");
 
         assert_eq!(exit_code, 0);
 
@@ -295,14 +295,14 @@ mod pty_tests {
         // Set SHELL to bash since we're testing with .bashrc
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
-        let (output, exit_code) = exec_in_pty_with_home(
+        let cmd = build_pty_command(
             wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
-            "n\n", // User declines
-            temp_home.path(),
+            Some(temp_home.path()),
         );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
 
         assert_eq!(exit_code, 0);
 
@@ -351,14 +351,14 @@ mod pty_tests {
         // Set SHELL to bash since we're testing with .bashrc
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
-        let (output, exit_code) = exec_in_pty_with_home(
+        let cmd = build_pty_command(
             wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
-            "y\n", // User accepts
-            temp_home.path(),
+            Some(temp_home.path()),
         );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
 
         assert_eq!(exit_code, 0);
 
@@ -408,14 +408,15 @@ mod pty_tests {
         // Set SHELL to bash since we're testing with .bashrc
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
-        let (output, exit_code) = exec_in_pty_with_home(
+        let cmd = build_pty_command(
             wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature"],
             repo.root_path(),
             &env_vars,
-            "?\nn\n", // User requests preview, then declines
-            temp_home.path(),
+            Some(temp_home.path()),
         );
+        // User requests preview, then declines
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["?\n", "n\n"], "[y/N");
 
         assert_eq!(exit_code, 0);
 
@@ -464,24 +465,24 @@ mod pty_tests {
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
         // First switch - decline the prompt
-        let (_, _) = exec_in_pty_with_home(
+        let cmd = build_pty_command(
             wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature1"],
             repo.root_path(),
             &env_vars,
-            "n\n",
-            temp_home.path(),
+            Some(temp_home.path()),
         );
+        let (_, _) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
 
         // Second switch - should NOT prompt again
-        let (output, exit_code) = exec_in_pty_with_home(
+        let cmd = build_pty_command(
             wt_bin().to_str().unwrap(),
             &["switch", "--create", "feature2"],
             repo.root_path(),
             &env_vars,
-            "", // No input needed
-            temp_home.path(),
+            Some(temp_home.path()),
         );
+        let (output, exit_code) = exec_cmd_in_pty(cmd, "");
 
         assert_eq!(exit_code, 0);
 
@@ -496,7 +497,7 @@ mod pty_tests {
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod commit_generation_prompt_tests {
     use super::*;
-    use crate::common::pty::exec_in_pty_with_home;
+    use crate::common::pty::{build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted};
     use crate::common::wt_bin;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
@@ -529,14 +530,14 @@ mod commit_generation_prompt_tests {
         // Use minimal PATH to ensure claude/codex aren't found
         env_vars.push(("PATH".to_string(), "/usr/bin:/bin".to_string()));
 
-        let (output, exit_code) = exec_in_pty_with_home(
+        let cmd = build_pty_command(
             wt_bin().to_str().unwrap(),
             &["step", "commit"],
             repo.root_path(),
             &env_vars,
-            "", // No input needed - prompt should be skipped
-            temp_home.path(),
+            Some(temp_home.path()),
         );
+        let (output, exit_code) = exec_cmd_in_pty(cmd, "");
 
         // Should succeed (using fallback commit message)
         assert_eq!(exit_code, 0, "Command should succeed: {output}");
@@ -565,14 +566,14 @@ mod commit_generation_prompt_tests {
         let path = format!("{}:/usr/bin:/bin", bin_dir.display());
         env_vars.push(("PATH".to_string(), path));
 
-        let (output, exit_code) = exec_in_pty_with_home(
+        let cmd = build_pty_command(
             wt_bin().to_str().unwrap(),
             &["step", "commit"],
             repo.root_path(),
             &env_vars,
-            "n\n", // Decline the prompt
-            temp_home.path(),
+            Some(temp_home.path()),
         );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
 
         assert_eq!(exit_code, 0, "Command should succeed: {output}");
 
@@ -605,14 +606,14 @@ mod commit_generation_prompt_tests {
         let path = format!("{}:/usr/bin:/bin", bin_dir.display());
         env_vars.push(("PATH".to_string(), path));
 
-        let (output, _exit_code) = exec_in_pty_with_home(
+        let cmd = build_pty_command(
             wt_bin().to_str().unwrap(),
             &["step", "commit"],
             repo.root_path(),
             &env_vars,
-            "y\n", // Accept the prompt
-            temp_home.path(),
+            Some(temp_home.path()),
         );
+        let (output, _exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
 
         // Note: exit_code may be non-zero because our fake claude doesn't generate
         // a real commit message. We're testing the prompt flow, not the LLM result.
@@ -646,14 +647,15 @@ mod commit_generation_prompt_tests {
         let path = format!("{}:/usr/bin:/bin", bin_dir.display());
         env_vars.push(("PATH".to_string(), path));
 
-        let (output, exit_code) = exec_in_pty_with_home(
+        let cmd = build_pty_command(
             wt_bin().to_str().unwrap(),
             &["step", "commit"],
             repo.root_path(),
             &env_vars,
-            "?\nn\n", // Request preview, then decline
-            temp_home.path(),
+            Some(temp_home.path()),
         );
+        // Request preview, then decline
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["?\n", "n\n"], "[y/N");
 
         assert_eq!(exit_code, 0, "Command should succeed: {output}");
 

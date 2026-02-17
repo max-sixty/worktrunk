@@ -5,8 +5,13 @@
 //! what the user actually sees on screen, enabling meaningful snapshot testing of
 //! the skim-based TUI interface.
 //!
-//! The tests normalize timing-sensitive parts of the output (query line, count
-//! indicators) to ensure stable snapshots despite TUI rendering variations.
+//! ## Capture-Before-Abort Pattern
+//!
+//! Abort tests snapshot the screen BEFORE sending Escape, not after. Skim's teardown
+//! is asynchronous — sending Escape races with rendering, producing non-deterministic
+//! output (variable border painting, incomplete rows). By capturing the stable pre-abort
+//! state, we eliminate this entire class of flakiness. After capture, Escape is sent and
+//! only the exit code is checked.
 //!
 //! ## Timing Strategy
 //!
@@ -38,7 +43,9 @@ const READY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Maximum time to wait for screen to stabilize after input.
 /// Long timeout ensures reliability on slow CI.
-const STABILIZE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Increased from 5s to 10s to handle macOS CI under heavy load where branch
+/// loading can be slow (particularly when waiting for async branch lists to populate).
+const STABILIZE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long screen must be unchanged to consider it "stable".
 /// Must be long enough for preview content to load (preview commands run async).
@@ -49,6 +56,56 @@ const STABLE_DURATION: Duration = Duration::from_millis(500);
 /// Polling interval when waiting for output.
 /// Fast polling ensures tests complete quickly when ready.
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Column where skim renders the │ border between list and preview panels.
+/// TERM_COLS=120, preview window spec `right:60` → list gets 60 cols, separator at 60.
+const SEPARATOR_COL: u16 = 60;
+
+/// Result of executing a command in a PTY, holding the parsed terminal state.
+struct PtyResult {
+    parser: vt100::Parser,
+    exit_code: i32,
+}
+
+impl PtyResult {
+    /// Full screen content as rows of text.
+    ///
+    /// Trailing whitespace is trimmed from each row because `vt100::rows()` pads
+    /// rows to the full column width with spaces. This padding is terminal buffer
+    /// fill, not meaningful content, and varies across platforms. Trailing empty
+    /// lines are also removed (unwritten terminal rows become empty after trim).
+    fn screen(&self) -> String {
+        self.parser
+            .screen()
+            .rows(0, TERM_COLS)
+            .map(|row| row.trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim_end()
+            .to_string()
+    }
+
+    /// List and preview panel content, split at the skim border column.
+    /// Avoids the │ border character that causes cross-platform rendering issues.
+    fn panels(&self) -> (String, String) {
+        let screen = self.parser.screen();
+        let list = screen
+            .rows(0, SEPARATOR_COL)
+            .map(|row| row.trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim_end()
+            .to_string();
+        let preview = screen
+            .rows(SEPARATOR_COL + 1, TERM_COLS - SEPARATOR_COL - 1)
+            .map(|row| row.trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim_end()
+            .to_string();
+        (list, preview)
+    }
+}
 
 /// Assert that exit code is valid for skim abort (0, 1, or 130)
 fn assert_valid_abort_exit_code(exit_code: i32) {
@@ -69,7 +126,7 @@ fn is_skim_ready(screen_content: &str) -> bool {
     screen_content.starts_with("> ") || screen_content.contains("\n> ")
 }
 
-/// Execute a command in a PTY and return raw output bytes
+/// Execute a command in a PTY and return the parsed terminal state.
 ///
 /// Uses polling with stabilization detection instead of fixed delays.
 fn exec_in_pty_with_input(
@@ -78,7 +135,7 @@ fn exec_in_pty_with_input(
     working_dir: &Path,
     env_vars: &[(String, String)],
     input: &str,
-) -> (Vec<u8>, i32) {
+) -> PtyResult {
     exec_in_pty_with_input_expectations(command, args, working_dir, env_vars, &[(input, None)])
 }
 
@@ -98,7 +155,7 @@ fn exec_in_pty_with_input_expectations(
     working_dir: &Path,
     env_vars: &[(String, String)],
     inputs: &[(&str, Option<&str>)],
-) -> (Vec<u8>, i32) {
+) -> PtyResult {
     let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
 
     let mut cmd = CommandBuilder::new(command);
@@ -141,21 +198,18 @@ fn exec_in_pty_with_input_expectations(
     });
 
     let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
-    let mut raw_output = Vec::new();
 
     // Helper to drain available output from the channel (non-blocking)
-    let drain_output =
-        |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser, raw_output: &mut Vec<u8>| {
-            while let Ok(chunk) = rx.try_recv() {
-                raw_output.extend_from_slice(&chunk);
-                parser.process(&chunk);
-            }
-        };
+    let drain_output = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
+        while let Ok(chunk) = rx.try_recv() {
+            parser.process(&chunk);
+        }
+    };
 
     // Wait for skim to be ready (show "> " prompt)
     let start = Instant::now();
     loop {
-        drain_output(&rx, &mut parser, &mut raw_output);
+        drain_output(&rx, &mut parser);
 
         let screen_content = parser.screen().contents();
         if is_skim_ready(&screen_content) {
@@ -174,7 +228,7 @@ fn exec_in_pty_with_input_expectations(
     }
 
     // Wait for initial render to stabilize
-    wait_for_stable(&rx, &mut parser, &mut raw_output);
+    wait_for_stable(&rx, &mut parser);
 
     // Send each input and wait for screen to stabilize after each
     for (input, expected_content) in inputs {
@@ -182,7 +236,7 @@ fn exec_in_pty_with_input_expectations(
         writer.flush().unwrap();
 
         // Wait for screen to stabilize after this input, optionally requiring specific content
-        wait_for_stable_with_content(&rx, &mut parser, &mut raw_output, *expected_content);
+        wait_for_stable_with_content(&rx, &mut parser, *expected_content);
     }
 
     // Drop writer to signal EOF on stdin
@@ -200,21 +254,141 @@ fn exec_in_pty_with_input_expectations(
     let _ = child.kill(); // Kill if still running after timeout
 
     // Drain any remaining output
-    drain_output(&rx, &mut parser, &mut raw_output);
+    drain_output(&rx, &mut parser);
 
     let exit_status = child.wait().unwrap();
     let exit_code = exit_status.exit_code() as i32;
 
-    (raw_output, exit_code)
+    PtyResult { parser, exit_code }
+}
+
+/// Execute a command in a PTY, capture screen state, then abort with Escape.
+///
+/// This is the key fix for flaky abort snapshot tests. The problem: snapshotting
+/// screen state AFTER sending Escape races with skim's teardown, producing
+/// non-deterministic output (variable border painting, incomplete rows, trailing
+/// whitespace). The fix: capture the stable screen BEFORE aborting, then only
+/// check exit code after abort.
+///
+/// `pre_abort_inputs` are sent before capturing (e.g., typing a filter or switching
+/// preview panels). Each input can optionally specify content that must appear before
+/// the screen is considered stable.
+fn exec_in_pty_capture_before_abort(
+    command: &str,
+    args: &[&str],
+    working_dir: &Path,
+    env_vars: &[(String, String)],
+    pre_abort_inputs: &[(&str, Option<&str>)],
+) -> PtyResult {
+    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
+
+    let mut cmd = CommandBuilder::new(command);
+    for arg in args {
+        cmd.arg(arg);
+    }
+    cmd.cwd(working_dir);
+
+    crate::common::configure_pty_command(&mut cmd);
+    cmd.env("CLICOLOR_FORCE", "1");
+    cmd.env("TERM", "xterm-256color");
+
+    for (key, value) in env_vars {
+        cmd.env(key, value);
+    }
+
+    let mut child = pair.slave.spawn_command(cmd).unwrap();
+    drop(pair.slave);
+
+    let mut reader = pair.master.try_clone_reader().unwrap();
+    let mut writer = pair.master.take_writer().unwrap();
+
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut temp_buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut temp_buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if tx.send(temp_buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+
+    let drain_output = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
+        while let Ok(chunk) = rx.try_recv() {
+            parser.process(&chunk);
+        }
+    };
+
+    // Wait for skim to be ready
+    let start = Instant::now();
+    loop {
+        drain_output(&rx, &mut parser);
+
+        let screen_content = parser.screen().contents();
+        if is_skim_ready(&screen_content) {
+            break;
+        }
+
+        if start.elapsed() > READY_TIMEOUT {
+            eprintln!(
+                "Warning: Timed out waiting for skim ready state. Screen content:\n{}",
+                screen_content
+            );
+            break;
+        }
+
+        std::thread::sleep(POLL_INTERVAL);
+    }
+
+    // Wait for initial render to stabilize
+    wait_for_stable(&rx, &mut parser);
+
+    // Send pre-abort inputs (filter text, panel switches, etc.)
+    for (input, expected_content) in pre_abort_inputs {
+        writer.write_all(input.as_bytes()).unwrap();
+        writer.flush().unwrap();
+        wait_for_stable_with_content(&rx, &mut parser, *expected_content);
+    }
+
+    // === CAPTURE: screen state is now stable — snapshot BEFORE aborting ===
+    // The parser retains this state because we stop feeding output to it.
+
+    // Send Escape to abort
+    writer.write_all(b"\x1b").unwrap();
+    writer.flush().unwrap();
+    drop(writer);
+
+    // Drain remaining output WITHOUT feeding to parser — preserves pre-abort screen
+    let start = Instant::now();
+    let timeout = Duration::from_secs(5);
+    loop {
+        while rx.try_recv().is_ok() {} // discard chunks
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let exit_status = child.wait().unwrap();
+    let exit_code = exit_status.exit_code() as i32;
+
+    PtyResult { parser, exit_code }
 }
 
 /// Wait for screen content to stabilize (no changes for STABLE_DURATION)
-fn wait_for_stable(
-    rx: &mpsc::Receiver<Vec<u8>>,
-    parser: &mut vt100::Parser,
-    raw_output: &mut Vec<u8>,
-) {
-    wait_for_stable_with_content(rx, parser, raw_output, None);
+fn wait_for_stable(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
+    wait_for_stable_with_content(rx, parser, None);
 }
 
 /// Wait for screen content to stabilize, optionally requiring specific content.
@@ -222,10 +396,12 @@ fn wait_for_stable(
 /// If `expected_content` is provided, waits until the screen contains that string
 /// AND has stabilized. This is essential for async preview panels where the initial
 /// render may show placeholder content before the actual data loads.
+///
+/// Tip: include the panel border character (`│`) in `expected_content` to ensure
+/// the full TUI frame has rendered, not just the preview text content.
 fn wait_for_stable_with_content(
     rx: &mpsc::Receiver<Vec<u8>>,
     parser: &mut vt100::Parser,
-    raw_output: &mut Vec<u8>,
     expected_content: Option<&str>,
 ) {
     let start = Instant::now();
@@ -235,7 +411,6 @@ fn wait_for_stable_with_content(
     while start.elapsed() < STABILIZE_TIMEOUT {
         // Drain available output
         while let Ok(chunk) = rx.try_recv() {
-            raw_output.extend_from_slice(&chunk);
             parser.process(&chunk);
         }
 
@@ -266,65 +441,37 @@ fn wait_for_stable_with_content(
     );
 }
 
-/// Render raw PTY output through vt100 terminal emulator to get clean screen text
-fn render_terminal_screen(raw_output: &[u8]) -> String {
-    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
-    parser.process(raw_output);
+/// Create insta settings with filters for switch picker snapshot stability.
+///
+/// Replaces the manual `normalize_output()` approach with declarative insta filters.
+/// Since `rows()` returns plain text (no ANSI codes, no OSC 8 hyperlinks),
+/// `add_pty_filters()` and `strip_osc8_hyperlinks()` are not needed.
+fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
+    let mut settings = crate::common::setup_snapshot_settings(repo);
 
-    let screen = parser.screen();
-    let mut result = String::new();
+    // Query line has timing variations (shows typed chars at different rates).
+    // \A anchors to absolute start of string, matching only the first line.
+    settings.add_filter(r"\A> [^\n]*", "> [QUERY]");
 
-    for row in 0..TERM_ROWS {
-        let mut line = String::new();
-        for col in 0..TERM_COLS {
-            if let Some(cell) = screen.cell(row, col) {
-                line.push_str(cell.contents());
-            }
-        }
-        // Trim trailing whitespace but preserve the line
-        result.push_str(line.trim_end());
-        result.push('\n');
-    }
+    // Skim count indicators (matched/total) at end of lines.
+    // Normalize leading whitespace too — skim right-aligns the count with padding
+    // that varies based on unicode character width calculations across platforms.
+    // The tab header line may have the count jammed against "summary" (no space)
+    // or even truncate "summary" when skim's width_cjk() treats ambiguous-width
+    // unicode symbols (±, …, ⇅) as double-width, consuming extra columns.
+    settings.add_filter(r"(?m)summary?\w*\s*\d+/\d+\s*$", "summary [N/M]");
+    settings.add_filter(r"(?m)\s+\d+/\d+\s*$", " [N/M]");
 
-    // Trim trailing empty lines
-    while result.ends_with("\n\n") {
-        result.pop();
-    }
+    // Commit hashes (7-8 hex chars)
+    settings.add_filter(r"\b[0-9a-f]{7,8}\b", "[HASH]");
 
-    result
-}
+    // Truncated commit hashes (6+ hex chars followed by ..) in narrow columns
+    settings.add_filter(r"\b[0-9a-f]{6,8}\.\.", "[HASH]..");
 
-/// Normalize output for snapshot stability
-fn normalize_output(output: &str) -> String {
-    // Strip OSC 8 hyperlinks first (git on macOS generates these in diffs)
-    let output = worktrunk::styling::strip_osc8_hyperlinks(output);
+    // Relative timestamps (1d, 16h, etc.)
+    settings.add_filter(r"\b\d+[dhms]\b", "[TIME]");
 
-    let mut lines: Vec<&str> = output.lines().collect();
-
-    // Normalize line 1 (query line) - replace with fixed marker
-    // This line shows typed query which has timing variations
-    if !lines.is_empty() {
-        lines[0] =
-            "> [QUERY]                                                     │[PREVIEW_HEADER]";
-    }
-
-    let output = lines.join("\n");
-
-    // Replace temp paths like /var/folders/.../repo.XXX with _REPO_
-    let re = regex::Regex::new(r"/[^\s]+\.tmp[^\s/]*").unwrap();
-    let output = re.replace_all(&output, "_REPO_");
-
-    // Replace count indicators like "1/4", "3/4" etc at end of lines
-    let count_re = regex::Regex::new(r"\d+/\d+$").unwrap();
-    let output = count_re.replace_all(&output, "[N/M]");
-
-    // Replace home directory paths
-    if let Some(home) = home::home_dir() {
-        let home_str = home.to_string_lossy();
-        output.replace(&*home_str, "~")
-    } else {
-        output.to_string()
-    }
+    settings
 }
 
 #[rstest]
@@ -334,19 +481,22 @@ fn test_switch_picker_abort_with_escape(mut repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     let env_vars = repo.test_env_vars();
-    let (raw_output, exit_code) = exec_in_pty_with_input(
+    let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
         &env_vars,
-        "\x1b", // Escape key to abort
+        &[], // No inputs before abort
     );
 
-    assert_valid_abort_exit_code(exit_code);
+    assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = render_terminal_screen(&raw_output);
-    let normalized = normalize_output(&screen);
-    assert_snapshot!("switch_picker_abort_escape", normalized);
+    let (list, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_abort_escape_list", list);
+        assert_snapshot!("switch_picker_abort_escape_preview", preview);
+    });
 }
 
 #[rstest]
@@ -359,19 +509,23 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
     repo.add_worktree("feature-two");
 
     let env_vars = repo.test_env_vars();
-    let (raw_output, exit_code) = exec_in_pty_with_input(
+    let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
         &env_vars,
-        "\x1b", // Escape to abort after viewing
+        // Wait for items to render before capturing (prevents flakiness on slow CI)
+        &[("", Some("feature-two"))],
     );
 
-    assert_valid_abort_exit_code(exit_code);
+    assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = render_terminal_screen(&raw_output);
-    let normalized = normalize_output(&screen);
-    assert_snapshot!("switch_picker_multiple_worktrees", normalized);
+    let (list, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_multiple_worktrees_list", list);
+        assert_snapshot!("switch_picker_multiple_worktrees_preview", preview);
+    });
 }
 
 #[rstest]
@@ -390,19 +544,25 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
     assert!(output.status.success(), "Failed to create branch");
 
     let env_vars = repo.test_env_vars();
-    let (raw_output, exit_code) = exec_in_pty_with_input(
+    let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch", "--branches"],
         repo.root_path(),
         &env_vars,
-        "\x1b", // Escape to abort
+        // Wait for branch items to render before capturing. On macOS CI under
+        // heavy load, skim may show the prompt and header before item rows,
+        // causing wait_for_stable to capture too early (just the header).
+        &[("", Some("orphan-branch"))],
     );
 
-    assert_valid_abort_exit_code(exit_code);
+    assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = render_terminal_screen(&raw_output);
-    let normalized = normalize_output(&screen);
-    assert_snapshot!("switch_picker_with_branches", normalized);
+    let (list, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_with_branches_list", list);
+        assert_snapshot!("switch_picker_with_branches_preview", preview);
+    });
 }
 
 #[rstest]
@@ -444,23 +604,25 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
     let env_vars = repo.test_env_vars();
     // Type "feature" to filter to just the feature worktree, press 1 for HEAD± panel
     // Wait for "diff --git" to appear after pressing 1 - the async preview can be slow under congestion
-    let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
+    let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
         &env_vars,
         &[
             ("feature", None),
-            ("1", Some("diff --git")), // Wait for diff to load
-            ("\x1b", None),
+            ("1", Some("│diff --git")), // Wait for diff to load (│ = border drawn)
         ],
     );
 
-    assert_valid_abort_exit_code(exit_code);
+    assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = render_terminal_screen(&raw_output);
-    let normalized = normalize_output(&screen);
-    assert_snapshot!("switch_picker_preview_uncommitted", normalized);
+    let (list, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_preview_uncommitted_list", list);
+        assert_snapshot!("switch_picker_preview_uncommitted_preview", preview);
+    });
 }
 
 #[rstest]
@@ -501,23 +663,25 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
     let env_vars = repo.test_env_vars();
     // Type "feature" to filter, press 2 for log panel
     // Wait for commit log format "* [hash]" to appear - the async preview can be slow under congestion
-    let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
+    let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
         &env_vars,
         &[
             ("feature", None),
-            ("2", Some("* ")), // Wait for git log output (starts with "* [hash]")
-            ("\x1b", None),
+            ("2", Some("│* ")), // Wait for git log output (│ = border drawn)
         ],
     );
 
-    assert_valid_abort_exit_code(exit_code);
+    assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = render_terminal_screen(&raw_output);
-    let normalized = normalize_output(&screen);
-    assert_snapshot!("switch_picker_preview_log", normalized);
+    let (list, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_preview_log_list", list);
+        assert_snapshot!("switch_picker_preview_log_preview", preview);
+    });
 }
 
 #[rstest]
@@ -591,23 +755,78 @@ fn test_new_feature() {
     let env_vars = repo.test_env_vars();
     // Type "feature" to filter, press 3 for main…± panel
     // Wait for "diff --git" to appear after pressing 3 - the async preview can be slow under congestion
-    let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
+    let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
         &env_vars,
         &[
             ("feature", None),
-            ("3", Some("diff --git")), // Wait for diff to load
-            ("\x1b", None),
+            ("3", Some("│diff --git")), // Wait for diff to load (│ = border drawn)
         ],
     );
 
-    assert_valid_abort_exit_code(exit_code);
+    assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = render_terminal_screen(&raw_output);
-    let normalized = normalize_output(&screen);
-    assert_snapshot!("switch_picker_preview_main_diff", normalized);
+    let (list, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_preview_main_diff_list", list);
+        assert_snapshot!("switch_picker_preview_main_diff_preview", preview);
+    });
+}
+
+#[rstest]
+fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so snapshots don't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    let feature_path = repo.add_worktree("feature");
+
+    // Make a commit so there's content to potentially summarize
+    std::fs::write(feature_path.join("new.txt"), "content\n").unwrap();
+    let output = repo
+        .git_command()
+        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "Failed to add file");
+    let output = repo
+        .git_command()
+        .args([
+            "-C",
+            feature_path.to_str().unwrap(),
+            "commit",
+            "-m",
+            "Add new file",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "Failed to commit");
+
+    let env_vars = repo.test_env_vars();
+    // Type "feature" to filter, press 5 for summary panel
+    // Wait for "commit.generation" hint since no LLM is configured
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("feature", None),
+            ("5", Some("│Configure")), // Wait for config hint (│ = border drawn)
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (list, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_preview_summary_list", list);
+        assert_snapshot!("switch_picker_preview_summary_preview", preview);
+    });
 }
 
 #[rstest]
@@ -631,17 +850,18 @@ branches = true
     );
 
     let env_vars = repo.test_env_vars();
-    let (raw_output, exit_code) = exec_in_pty_with_input(
+    // Capture screen BEFORE sending Escape. Screen must stabilize with orphan-branch visible.
+    let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"], // No --branches flag - config should enable it
         repo.root_path(),
         &env_vars,
-        "\x1b", // Escape to abort
+        &[("", Some("│orphan-branch"))], // Wait for orphan-branch to appear before abort
     );
 
-    assert_valid_abort_exit_code(exit_code);
+    assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = render_terminal_screen(&raw_output);
+    let screen = result.screen();
     // Verify that orphan-branch appears (enabled by config, not CLI flag)
     assert!(
         screen.contains("orphan-branch"),
@@ -659,7 +879,7 @@ fn test_switch_picker_create_worktree_with_alt_c(mut repo: TestRepo) {
     let env_vars = repo.test_env_vars();
 
     // Type branch name "new-feature", then press Alt-C (escape + c) to create
-    let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
+    let result = exec_in_pty_with_input_expectations(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
@@ -671,9 +891,12 @@ fn test_switch_picker_create_worktree_with_alt_c(mut repo: TestRepo) {
     );
 
     // Alt-C triggers accept which should exit normally
-    assert_eq!(exit_code, 0, "Expected exit code 0 for successful create");
+    assert_eq!(
+        result.exit_code, 0,
+        "Expected exit code 0 for successful create"
+    );
 
-    let screen = render_terminal_screen(&raw_output);
+    let screen = result.screen();
 
     // Verify the success message shows the new branch
     assert!(
@@ -703,7 +926,7 @@ fn test_switch_picker_create_with_empty_query_fails(mut repo: TestRepo) {
     let env_vars = repo.test_env_vars();
 
     // Press Alt-C without typing a query - should error
-    let (raw_output, exit_code) = exec_in_pty_with_input(
+    let result = exec_in_pty_with_input(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
@@ -712,9 +935,12 @@ fn test_switch_picker_create_with_empty_query_fails(mut repo: TestRepo) {
     );
 
     // Should exit with error (non-zero)
-    assert_ne!(exit_code, 0, "Expected non-zero exit for empty query");
+    assert_ne!(
+        result.exit_code, 0,
+        "Expected non-zero exit for empty query"
+    );
 
-    let screen = render_terminal_screen(&raw_output);
+    let screen = result.screen();
 
     // Verify the error message
     assert!(
@@ -736,7 +962,7 @@ fn test_switch_picker_switch_to_existing_worktree(mut repo: TestRepo) {
     let env_vars = repo.test_env_vars();
 
     // Navigate to target-branch and press Enter to switch
-    let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
+    let result = exec_in_pty_with_input_expectations(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
@@ -748,9 +974,12 @@ fn test_switch_picker_switch_to_existing_worktree(mut repo: TestRepo) {
     );
 
     // Should exit successfully
-    assert_eq!(exit_code, 0, "Expected exit code 0 for successful switch");
+    assert_eq!(
+        result.exit_code, 0,
+        "Expected exit code 0 for successful switch"
+    );
 
-    let screen = render_terminal_screen(&raw_output);
+    let screen = result.screen();
 
     // Verify the success message or cd directive
     assert!(

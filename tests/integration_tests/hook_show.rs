@@ -191,10 +191,15 @@ fn test_hook_show_approval_status(repo: TestRepo, temp_home: TempDir) {
     let config_path = global_config_dir.join("config.toml");
     fs::write(
         &config_path,
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+    let approvals_path = global_config_dir.join("approvals.toml");
+    fs::write(
+        &approvals_path,
         format!(
-            r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
-
-[projects.'{project_id_str}']
+            r#"[projects.'{project_id_str}']
 approved-commands = ["cargo build"]
 "#
         ),
@@ -214,8 +219,9 @@ test = "cargo test"
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        // Override config path to point to our test config with approval
+        // Override config and approvals paths to point to our test files
         cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
+        cmd.env("WORKTRUNK_APPROVALS_PATH", &approvals_path);
         cmd.arg("hook").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
 
@@ -341,10 +347,9 @@ fn test_hook_clear_with_approvals(repo: TestRepo, temp_home: TempDir) {
     // Get the canonical path for the project identifier (escaped for TOML)
     let project_id_str = repo.project_id();
 
-    // Create user config with approved commands for this project
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    let config_path = global_config_dir.join("config.toml");
+    // Write approved commands as a sibling config.toml of the test approvals path.
+    // The fallback reads config.toml from the same directory as approvals.toml.
+    let config_path = repo.test_approvals_path().with_file_name("config.toml");
     fs::write(
         &config_path,
         format!(

@@ -49,6 +49,8 @@ pub fn shell_from_name(shell_name: &str) -> Option<Shell> {
         Some(Shell::Bash)
     } else if name_lower.starts_with("fish") {
         Some(Shell::Fish)
+    } else if name_lower.starts_with("nu") {
+        Some(Shell::Nushell)
     } else if name_lower.starts_with("pwsh") || name_lower.starts_with("powershell") {
         Some(Shell::PowerShell)
     } else {
@@ -56,19 +58,36 @@ pub fn shell_from_name(shell_name: &str) -> Option<Shell> {
     }
 }
 
-/// Get the current shell from `$SHELL` environment variable.
+/// Detect the current shell from the environment.
 ///
-/// Returns `None` if `$SHELL` is not set or doesn't match a known shell.
-/// Handles versioned/prefixed binaries like `/nix/store/.../zsh-5.9` or `bash5`
-/// by checking if the name starts with a known shell.
+/// Uses two strategies:
+/// 1. `$SHELL` environment variable (Unix standard, also set by Git Bash on Windows)
+/// 2. `PSModulePath` environment variable (indicates PowerShell on all platforms)
+///
+/// Returns `None` if neither heuristic matches a known shell.
 ///
 /// Works on both Unix and Windows:
 /// - Unix: `/usr/bin/bash` -> Bash
 /// - Windows Git Bash: `C:\Program Files\Git\usr\bin\bash.exe` -> Bash
+/// - Windows PowerShell: `PSModulePath` set -> PowerShell
 pub fn current_shell() -> Option<Shell> {
-    let shell_path = std::env::var("SHELL").ok()?;
-    let shell_name = extract_filename_from_path(&shell_path)?;
-    shell_from_name(shell_name)
+    // Primary: $SHELL (Unix standard, also set by Git Bash on Windows)
+    if let Ok(shell_path) = std::env::var("SHELL")
+        && let Some(name) = extract_filename_from_path(&shell_path)
+    {
+        return shell_from_name(name);
+    }
+
+    // Fallback: PSModulePath indicates PowerShell (set on all platforms when
+    // running inside PowerShell). On Windows this has some false positives
+    // (PSModulePath can be set system-wide), but for diagnostic purposes
+    // that's acceptable — a slightly less accurate message is better than
+    // "shell integration not installed" when it IS installed.
+    if std::env::var_os("PSModulePath").is_some() {
+        return Some(Shell::PowerShell);
+    }
+
+    None
 }
 
 /// Detect if user's zsh has compinit enabled by probing for the compdef function.
@@ -233,6 +252,8 @@ mod tests {
     #[case::zsh("zsh", Some(Shell::Zsh))]
     #[case::zsh_versioned("zsh-5.9", Some(Shell::Zsh))]
     #[case::fish("fish", Some(Shell::Fish))]
+    #[case::nu("nu", Some(Shell::Nushell))]
+    #[case::nushell("nushell", Some(Shell::Nushell))]
     #[case::powershell("powershell", Some(Shell::PowerShell))]
     #[case::pwsh("pwsh", Some(Shell::PowerShell))]
     #[case::pwsh_preview("pwsh-preview", Some(Shell::PowerShell))]

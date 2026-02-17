@@ -23,10 +23,10 @@ Any command that reads a prompt from stdin and outputs a commit message works. A
 
 ```toml
 [commit.generation]
-command = "MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 ```
 
-The flags disable tools, skills, settings, and system prompt for fast text-only output. See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
+`CLAUDECODE=` unsets the nesting guard so `claude -p` works from within a Claude Code session. The other flags disable tools, skills, settings, and system prompt for fast text-only output. See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
 
 ### llm
 
@@ -92,6 +92,19 @@ $ wt step squash
 ```
 
 See [`wt merge`](@/merge.md) and [`wt step`](@/step.md) for full documentation.
+
+## Picker summaries
+
+The `wt switch` [interactive picker](@/switch.md#interactive-picker) can show AI-generated branch summaries in preview tab 5. Summaries use the same `[commit.generation] command` and describe each branch's changes in a few sentences.
+
+Enable in user config:
+
+```toml
+[list]
+summary = true
+```
+
+Summaries are generated in parallel across all worktrees when the picker opens, cached in `.git/wt-cache/summaries/`, and invalidated when the branch's diff changes.
 
 ## Prompt templates
 

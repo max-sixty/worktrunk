@@ -5,7 +5,7 @@ default-members = [".", "tests/helpers/mock-stub"]
 
 [package]
 name = "worktrunk"
-version = "0.23.1"
+version = "0.24.1"
 edition = "2024"
 rust-version = "1.89"
 build = "build.rs"
@@ -21,7 +21,7 @@ allow-branch = ["*"]
 consolidate-commits = true
 pre-release-replacements = [
     # Update skill version marker
-    { file = ".claude-plugin/skills/worktrunk/SKILL.md", search = "worktrunk-skill-version: [0-9.]+", replace = "worktrunk-skill-version: {{version}}" },
+    { file = "skills/worktrunk/SKILL.md", search = "worktrunk-skill-version: [0-9.]+", replace = "worktrunk-skill-version: {{version}}" },
 ]
 
 [package.metadata.cargo-udeps.ignore]
@@ -63,7 +63,7 @@ required-features = ["git-wt"]
 
 [dependencies]
 anyhow = "1.0"
-anstream = "0.6"
+anstream = "1.0"
 anstyle = "1.0"
 ansi-str = "0.9"
 color-print = "0.3"
@@ -86,7 +86,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 shell-escape = "0.1"
 shellexpand = "3.1"
-shlex = "1.3"
 strum = { version = "0.27", features = ["derive"] }
 synoptic = "2"
 terminal_size = "0.4"
@@ -137,7 +136,7 @@ vergen-gitcl = { version = "9.1.0", features = ["build"] }
 insta = { version = "1.46.3", features = ["yaml", "redactions", "filters"] }
 insta-cmd = "0.6"
 rstest = "0.26"
-tempfile = "3.24"
+tempfile = "3.25"
 toml = "0.9"
 criterion = "0.8"
 portable-pty = "0.9"
@@ -157,6 +156,10 @@ harness = false
 
 [[bench]]
 name = "cow_copy"
+harness = false
+
+[[bench]]
+name = "time_to_first_output"
 harness = false
 
 [lints.rust]

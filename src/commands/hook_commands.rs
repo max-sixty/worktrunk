@@ -13,7 +13,7 @@ use anyhow::Context;
 use color_print::cformat;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
-use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig};
+use worktrunk::config::{Approvals, CommandConfig, ProjectConfig, UserConfig};
 use worktrunk::git::{GitError, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
@@ -326,7 +326,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
 
     let repo = Repository::current()?;
     let project_id = repo.project_identifier()?;
-    let config = UserConfig::load().context("Failed to load config")?;
+    let approvals = Approvals::load().context("Failed to load approvals")?;
 
     // Load project config (error if missing - this command requires it)
     let config_path = repo
@@ -351,7 +351,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     let commands_to_approve = if !show_all {
         let unapproved: Vec<_> = commands
             .into_iter()
-            .filter(|cmd| !config.is_command_approved(&project_id, &cmd.command.template))
+            .filter(|cmd| !approvals.is_command_approved(&project_id, &cmd.command.template))
             .collect();
 
         if unapproved.is_empty() {
@@ -368,7 +368,8 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     // When show_all=true, we've already included all commands in commands_to_approve
     // When show_all=false, we've already filtered to unapproved commands
     // So we pass skip_approval_filter=true to prevent double-filtering
-    let approved = approve_command_batch(&commands_to_approve, &project_id, &config, false, true)?;
+    let approved =
+        approve_command_batch(&commands_to_approve, &project_id, &approvals, false, true)?;
 
     // Show result
     if approved {
@@ -382,35 +383,23 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
 
 /// Handle `wt hook approvals clear` command - clear approved commands
 pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
-    let mut config = UserConfig::load().context("Failed to load config")?;
+    let mut approvals = Approvals::load().context("Failed to load approvals")?;
 
     if global {
-        // Clear all approvals for all projects (preserving other per-project settings)
-        let projects_with_approvals: Vec<String> = config
-            .projects
-            .iter()
-            .filter(|(_, p)| !p.approved_commands.is_empty())
-            .map(|(id, _)| id.clone())
-            .collect();
+        // Count projects with approvals before clearing
+        let project_count = approvals
+            .projects()
+            .filter(|(_, cmds)| !cmds.is_empty())
+            .count();
 
-        if projects_with_approvals.is_empty() {
+        if project_count == 0 {
             eprintln!("{}", info_message("No approvals to clear"));
             return Ok(());
         }
 
-        let project_count = projects_with_approvals.len();
-
-        // Clear only approved_commands, preserve other settings
-        for project_id in &projects_with_approvals {
-            if let Some(project_config) = config.projects.get_mut(project_id) {
-                project_config.approved_commands.clear();
-                // Remove project entry only if it has no other settings
-                if project_config.is_empty() {
-                    config.projects.remove(project_id);
-                }
-            }
-        }
-        config.save().context("Failed to save config")?;
+        approvals
+            .clear_all(None)
+            .context("Failed to clear approvals")?;
 
         eprintln!(
             "{}",
@@ -424,25 +413,19 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
         let repo = Repository::current()?;
         let project_id = repo.project_identifier()?;
 
-        // Check if project has any approvals (not just if it exists)
-        let had_approvals = config
-            .projects
-            .get(&project_id)
-            .is_some_and(|p| !p.approved_commands.is_empty());
+        // Count approvals before clearing
+        let approval_count = approvals
+            .projects()
+            .find(|(id, _)| *id == project_id)
+            .map(|(_, cmds)| cmds.len())
+            .unwrap_or(0);
 
-        if !had_approvals {
+        if approval_count == 0 {
             eprintln!("{}", info_message("No approvals to clear for this project"));
             return Ok(());
         }
 
-        // Count approvals before removing
-        let approval_count = config
-            .projects
-            .get(&project_id)
-            .map(|p| p.approved_commands.len())
-            .unwrap_or(0);
-
-        config
+        approvals
             .revoke_project(&project_id, None)
             .context("Failed to clear project approvals")?;
 
@@ -464,6 +447,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
 
     let repo = Repository::current()?;
     let config = UserConfig::load().context("Failed to load user config")?;
+    let approvals = Approvals::load().context("Failed to load approvals")?;
     let project_config = repo.load_project_config()?;
     let project_id = repo.project_identifier().ok();
 
@@ -501,7 +485,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
         &mut output,
         &repo,
         project_config.as_ref(),
-        &config,
+        &approvals,
         project_id.as_deref(),
         filter,
         ctx.as_ref(),
@@ -579,7 +563,7 @@ fn render_project_hooks(
     out: &mut String,
     repo: &Repository,
     project_config: Option<&ProjectConfig>,
-    user_config: &UserConfig,
+    approvals: &Approvals,
     project_id: Option<&str>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
@@ -624,7 +608,7 @@ fn render_project_hooks(
 
         if let Some(cfg) = hook_config {
             has_any = true;
-            render_hook_commands(out, hook_type, cfg, Some((user_config, project_id)), ctx)?;
+            render_hook_commands(out, hook_type, cfg, Some((approvals, project_id)), ctx)?;
         }
     }
 
@@ -640,8 +624,8 @@ fn render_hook_commands(
     out: &mut String,
     hook_type: HookType,
     config: &CommandConfig,
-    // For project hooks: (user_config, project_id) to check approval status
-    approval_context: Option<(&UserConfig, Option<&str>)>,
+    // For project hooks: (approvals, project_id) to check approval status
+    approval_context: Option<(&Approvals, Option<&str>)>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
     let commands = config.commands();
@@ -657,8 +641,8 @@ fn render_hook_commands(
         };
 
         // Check approval status for project hooks
-        let needs_approval = if let Some((user_config, Some(project_id))) = approval_context {
-            !user_config.is_command_approved(project_id, &cmd.template)
+        let needs_approval = if let Some((approvals, Some(project_id))) = approval_context {
+            !approvals.is_command_approved(project_id, &cmd.template)
         } else {
             false
         };
@@ -714,5 +698,5 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
     // Use the standard template expansion (shell-escaped)
     // On any error, show both the template and error message
     worktrunk::config::expand_template(template, &vars, true, ctx.repo, "hook preview")
-        .unwrap_or_else(|err| format!("# Template error: {}\n{}", err, template))
+        .unwrap_or_else(|err| format!("# {}\n{}", err.message, template))
 }

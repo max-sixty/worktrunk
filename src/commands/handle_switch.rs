@@ -6,12 +6,14 @@ use std::path::Path;
 use anyhow::Context;
 use worktrunk::HookType;
 use worktrunk::config::{UserConfig, expand_template};
-use worktrunk::git::Repository;
+use worktrunk::git::{GitError, Repository, SwitchSuggestionCtx};
 use worktrunk::styling::{eprintln, info_message};
 
 use super::command_approval::approve_hooks;
 use super::command_executor::{CommandContext, build_hook_context};
-use super::worktree::{SwitchPlan, SwitchResult, execute_switch, plan_switch};
+use super::worktree::{
+    SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, get_path_mismatch, plan_switch,
+};
 use crate::output::{
     execute_user_command, handle_switch_output, is_shell_integration_active,
     prompt_shell_integration,
@@ -145,8 +147,31 @@ pub fn handle_switch(
 
     let repo = Repository::current().context("Failed to switch worktree")?;
 
+    // Build switch suggestion context for enriching error hints with --execute/trailing args.
+    // Without this, errors like "branch already exists" would suggest `wt switch <branch>`
+    // instead of the full `wt switch <branch> --execute=<cmd> -- <args>`.
+    let suggestion_ctx = execute.map(|exec| {
+        let escaped = shell_escape::escape(exec.into());
+        SwitchSuggestionCtx {
+            extra_flags: vec![format!("--execute={escaped}")],
+            trailing_args: execute_args.to_vec(),
+        }
+    });
+
     // Validate FIRST (before approval) - fails fast if branch doesn't exist, etc.
-    let plan = plan_switch(&repo, branch, create, base, clobber, config)?;
+    let plan = plan_switch(&repo, branch, create, base, clobber, config).map_err(|err| {
+        match suggestion_ctx {
+            Some(ref ctx) => match err.downcast::<GitError>() {
+                Ok(git_err) => GitError::WithSwitchSuggestion {
+                    source: Box::new(git_err),
+                    ctx: ctx.clone(),
+                }
+                .into(),
+                Err(err) => err,
+            },
+            None => err,
+        }
+    })?;
 
     // "Approve at the Gate": collect and approve hooks upfront
     // This ensures approval happens once at the command entry point
@@ -155,6 +180,23 @@ pub fn handle_switch(
 
     // Execute the validated plan
     let (result, branch_info) = execute_switch(&repo, plan, config, yes, skip_hooks)?;
+
+    // Early exit for benchmarking time-to-first-output
+    if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
+        return Ok(());
+    }
+
+    // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
+    let branch_info = match &result {
+        SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
+            let expected_path = get_path_mismatch(&repo, &branch_info.branch, path, config);
+            SwitchBranchInfo {
+                expected_path,
+                ..branch_info
+            }
+        }
+        _ => branch_info,
+    };
 
     // Show success message (temporal locality: immediately after worktree operation)
     // Returns path to display in hooks when user's shell won't be in the worktree
@@ -206,8 +248,7 @@ pub fn handle_switch(
             .collect();
 
         // Expand template variables in command (shell_escape: true for safety)
-        let expanded_cmd = expand_template(cmd, &vars, true, &repo, "--execute command")
-            .map_err(|e| anyhow::anyhow!("Failed to expand --execute template: {}", e))?;
+        let expanded_cmd = expand_template(cmd, &vars, true, &repo, "--execute command")?;
 
         // Append any trailing args (after --) to the execute command
         // Each arg is also expanded, then shell-escaped
@@ -216,14 +257,11 @@ pub fn handle_switch(
         } else {
             let expanded_args: Result<Vec<_>, _> = execute_args
                 .iter()
-                .map(|arg| {
-                    expand_template(arg, &vars, false, &repo, "--execute argument")
-                        .map_err(|e| anyhow::anyhow!("Failed to expand argument template: {}", e))
-                })
+                .map(|arg| expand_template(arg, &vars, false, &repo, "--execute argument"))
                 .collect();
             let escaped_args: Vec<_> = expanded_args?
                 .iter()
-                .map(|arg| shlex::try_quote(arg).unwrap_or(arg.into()).into_owned())
+                .map(|arg| shell_escape::escape(arg.into()).into_owned())
                 .collect();
             format!("{} {}", expanded_cmd, escaped_args.join(" "))
         };

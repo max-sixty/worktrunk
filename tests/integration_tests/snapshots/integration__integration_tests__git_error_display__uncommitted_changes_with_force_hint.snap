@@ -3,4 +3,4 @@ source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
 [31m✗[39m [31mCannot remove worktree: [1mfeature-branch[22m has uncommitted changes[39m
-[2m↳[22m [2mCommit or stash changes first, or to lose uncommitted changes, run [90mwt remove feature-branch --force[39m[22m
+[2m↳[22m [2mCommit or stash changes first, or to lose uncommitted changes, run [90mwt remove --force feature-branch[39m[22m

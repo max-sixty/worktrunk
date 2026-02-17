@@ -121,6 +121,7 @@ Persistent flag values for `wt list`. Override on command line as needed.
 full = false       # Show CI status and main…± diffstat columns (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
+summary = false    # AI branch summaries in picker tab 5 (requires [commit.generation])
 ```
 
 ### Commit
@@ -169,14 +170,11 @@ Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
 #### Approved hook commands
 
-When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.
+When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved to `~/.config/worktrunk/approvals.toml` (separate from user config to allow dotfile management of config.toml).
 
-```toml
-[projects."github.com/user/repo"]
-approved-commands = ["npm ci", "npm test"]
-```
+To reset, run `wt hook approvals clear`.
 
-To reset, delete the entry or run `wt hook approvals clear`.
+> **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config show` to generate a migration file that removes stale entries.
 
 #### Setting overrides (Experimental)
 
@@ -313,18 +311,7 @@ Worktrunk needs shell integration to change directories when switching worktrees
 wt config shell install
 ```
 
-Or manually add to the shell config:
-
-```bash
-# For bash: add to ~/.bashrc
-eval "$(wt config shell init bash)"
-
-# For zsh: add to ~/.zshrc
-eval "$(wt config shell init zsh)"
-
-# For fish: add to ~/.config/fish/config.fish
-wt config shell init fish | source
-```
+For manual setup, see `wt config shell init --help`.
 
 Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
 
@@ -424,6 +411,7 @@ wt config show --full
 This tests:
 - **CI tool status** — Whether `gh` (GitHub) or `glab` (GitLab) is installed and authenticated
 - **Commit generation** — Whether the LLM command can generate commit messages
+- **Version check** — Whether a newer version is available on GitHub
 
 ### Command reference
 
@@ -434,7 +422,7 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--full</span></b>
-          Run diagnostic checks (CI tools, commit generation)
+          Run diagnostic checks (CI tools, commit generation, version)
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

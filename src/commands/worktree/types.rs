@@ -23,14 +23,13 @@ pub enum SwitchResult {
     /// Created new worktree at the given path
     Created {
         path: PathBuf,
-        /// True if we used `-b` to create a new branch (--create flag)
+        /// True if the user requested branch creation (--create flag)
         created_branch: bool,
         /// Base branch when creating new branch (e.g., "main")
         base_branch: Option<String>,
         /// Absolute path to base branch's worktree (POSIX format for shell compatibility)
         base_worktree_path: Option<String>,
-        /// Remote tracking branch if created from remote (e.g., "origin/feature")
-        /// This is set when git's DWIM created a local branch from a remote
+        /// Remote tracking branch if auto-created from remote (e.g., "origin/feature")
         from_remote: Option<String>,
     },
 }
@@ -98,8 +97,6 @@ pub enum SwitchPlan {
     Existing {
         path: PathBuf,
         branch: String,
-        /// Expected path for mismatch detection
-        expected_path: PathBuf,
         /// Branch to record as "previous" for `wt switch -`
         new_previous: Option<String>,
     },

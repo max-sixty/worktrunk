@@ -232,18 +232,27 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
     let content = content.replace("\r\n", "\n");
     let content = content.trim_end_matches('\n');
 
-    // Replace Jinja template delimiters with quoted string placeholders before parsing.
+    // Replace Jinja template delimiters with identifier placeholders before parsing.
     // Tree-sitter can't parse `{{` and `}}` (especially when split across lines),
-    // so we swap them out and restore after highlighting. Using quoted strings
-    // ensures consistent "string" styling regardless of position in the line.
-    const TPL_OPEN: &str = "\"WTO\"";
-    const TPL_CLOSE: &str = "\"WTC\"";
-    let normalized = content.replace("{{", TPL_OPEN).replace("}}", TPL_CLOSE);
+    // so we swap them out and restore after highlighting. Placeholders must NOT
+    // contain quote characters — they break quote boundaries when adjacent to
+    // existing quotes (e.g., `"{{ var }}"` → `""WTO" var "WTC""` with double quotes,
+    // or `'text {{ var }}'` → `'text 'WTO'...'WTC''` with single quotes).
+    //
+    // TPL_CLOSE gets a trailing space so tree-sitter doesn't merge it with adjacent
+    // path characters (e.g., `}}/path` → `WTC/path` would be one "function" token,
+    // giving the path the wrong color). The space is stripped during restoration.
+    const TPL_OPEN: &str = "WTO";
+    const TPL_CLOSE: &str = "WTC";
+    let normalized = content
+        .replace("{{", TPL_OPEN)
+        .replace("}}", &format!("{TPL_CLOSE} "));
     let content = normalized.as_str();
 
     let gutter = super::GUTTER;
     let reset = anstyle::Reset;
     let dim = anstyle::Style::new().dimmed();
+    let string_style = bash_token_style("string").unwrap_or(dim);
 
     // Calculate available width for content
     let term_width = width_override.unwrap_or_else(get_terminal_width);
@@ -281,22 +290,68 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
 
     let content_bytes = content.as_bytes();
 
-    // Phase 1: Build styled content with ANSI codes, restoring style after newlines
+    // Phase 1: Build styled content with ANSI codes, restoring style after newlines.
+    // Template placeholders are restored here (not in a separate phase) because we
+    // need the active style context to correctly style `{{ }}` as green (string).
+    // A post-hoc replace can't know whether the delimiter was inside a string
+    // (inherits green) or bare (needs green injected).
     let mut styled = format!("{dim}");
     let mut pending_highlight: Option<usize> = None;
     let mut active_style: Option<anstyle::Style> = None;
+    let mut ate_tpl_boundary = false;
+    let close_with_space = format!("{TPL_CLOSE} ");
 
     for event in highlights {
         match event.unwrap() {
             HighlightEvent::Source { start, end } => {
                 if let Ok(text) = std::str::from_utf8(&content_bytes[start..end]) {
-                    // Apply pending highlight style
+                    // Strip boundary space inserted after TPL_CLOSE for token separation.
+                    // The space may land in a separate Source event from TPL_CLOSE itself.
+                    let text = if ate_tpl_boundary {
+                        ate_tpl_boundary = false;
+                        text.strip_prefix(' ').unwrap_or(text)
+                    } else {
+                        text
+                    };
+
+                    // Apply pending highlight style. Skip for pure placeholder tokens —
+                    // tree-sitter sees e.g. `WTC` as a "function" but that's meaningless;
+                    // placeholder restoration handles the styling.
+                    let is_placeholder = text == TPL_CLOSE || text == TPL_OPEN;
                     if let Some(idx) = pending_highlight.take()
                         && let Some(name) = highlight_names.get(idx)
                         && let Some(style) = bash_token_style(name)
+                        && !is_placeholder
                     {
                         styled.push_str(&format!("{reset}{style}"));
                         active_style = Some(style);
+                    }
+
+                    // Restore template placeholders with string styling for `{{ }}`.
+                    // When already inside a string (green context), just replace the
+                    // text — no ANSI injection needed since `{{ }}` inherits the style.
+                    // Otherwise, inject string styling and restore the active context.
+                    //
+                    // Replace "WTC " before "WTC" to consume the boundary space when
+                    // both land in the same Source event (e.g., inside a string token).
+                    let has_placeholder = text.contains(TPL_OPEN) || text.contains(TPL_CLOSE);
+                    let ends_with_close = text.ends_with(TPL_CLOSE);
+                    let text = if !has_placeholder {
+                        text.to_string()
+                    } else if active_style == Some(string_style) {
+                        text.replace(TPL_OPEN, "{{")
+                            .replace(&close_with_space, "}}")
+                            .replace(TPL_CLOSE, "}}")
+                    } else {
+                        let restore = format!("{reset}{}", active_style.unwrap_or(dim));
+                        let close_repl = format!("{reset}{string_style}}}}}{restore}");
+                        text.replace(TPL_OPEN, &format!("{reset}{string_style}{{{{{restore}"))
+                            .replace(&close_with_space, &close_repl)
+                            .replace(TPL_CLOSE, &close_repl)
+                    };
+
+                    if ends_with_close {
+                        ate_tpl_boundary = true;
                     }
 
                     // Insert style restore after each newline so lines are self-contained
@@ -317,11 +372,6 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
             }
         }
     }
-
-    // Phase 2: Restore original template delimiters before wrapping.
-    // This ensures line width calculations use the actual 2-char `{{`/`}}`
-    // instead of the longer placeholders.
-    let styled = styled.replace(TPL_OPEN, "{{").replace(TPL_CLOSE, "}}");
 
     // Phase 3: Split into lines, wrap each, add gutters
     styled
@@ -640,6 +690,29 @@ mod tests {
             3,
             "Should identify all three echo commands"
         );
+    }
+
+    /// Regression test: template variables inside quotes are restored correctly.
+    ///
+    /// When `{{ }}` appears inside double quotes (e.g., `"{{ target }}"`), the
+    /// placeholder must not contain quote characters — otherwise tree-sitter
+    /// reinterprets quote boundaries and ANSI codes break the contiguous
+    /// placeholder, making the restore `.replace()` fail silently.
+    #[test]
+    #[cfg(feature = "syntax-highlighting")]
+    fn test_template_vars_inside_quotes_restored() {
+        use ansi_str::AnsiStr;
+
+        let cmd = r#"if [ "{{ target }}" = "main" ]; then git pull && git push; fi"#;
+        let result = format_bash_with_gutter_at_width(cmd, 120);
+
+        let plain = result.ansi_strip();
+
+        // The output must contain {{ and }}, not the placeholders
+        assert!(plain.contains("{{"), "{plain}");
+        assert!(plain.contains("}}"), "{plain}");
+        assert!(!plain.contains("WTO"), "{plain}");
+        assert!(!plain.contains("WTC"), "{plain}");
     }
 
     /// Regression test: template syntax ({{ }}) doesn't break highlighting.

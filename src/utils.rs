@@ -27,11 +27,11 @@ pub fn now_iso8601() -> String {
 
 /// Get current Unix timestamp in seconds.
 ///
-/// When `WT_TEST_EPOCH` environment variable is set (by tests), returns that
+/// When `WORKTRUNK_TEST_EPOCH` environment variable is set (by tests), returns that
 /// value instead of the actual current time. This enables deterministic test
 /// snapshots.
 ///
-/// Note: We use `WT_TEST_EPOCH` rather than `SOURCE_DATE_EPOCH` because the
+/// Note: We use `WORKTRUNK_TEST_EPOCH` rather than `SOURCE_DATE_EPOCH` because the
 /// latter is a build-time standard for reproducible builds, commonly set by
 /// NixOS/direnv in development shells. Using it at runtime causes incorrect
 /// age display. See: <https://github.com/max-sixty/worktrunk/issues/763>
@@ -39,7 +39,7 @@ pub fn now_iso8601() -> String {
 /// All code that needs timestamps for display or storage should use this
 /// function rather than `SystemTime::now()` directly.
 pub fn get_now() -> u64 {
-    std::env::var("WT_TEST_EPOCH")
+    std::env::var("WORKTRUNK_TEST_EPOCH")
         .ok()
         .and_then(|val| val.parse::<u64>().ok())
         .unwrap_or_else(|| {
@@ -62,9 +62,9 @@ mod tests {
     }
 
     #[test]
-    fn test_get_now_respects_wt_test_epoch() {
-        // When WT_TEST_EPOCH is set (by test harness), get_now() returns it
-        if let Ok(epoch) = std::env::var("WT_TEST_EPOCH") {
+    fn test_get_now_respects_test_epoch() {
+        // When WORKTRUNK_TEST_EPOCH is set (by test harness), get_now() returns it
+        if let Ok(epoch) = std::env::var("WORKTRUNK_TEST_EPOCH") {
             let expected: u64 = epoch.parse().unwrap();
             assert_eq!(get_now(), expected);
         }

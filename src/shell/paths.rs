@@ -18,6 +18,95 @@ pub fn home_dir_required() -> Result<PathBuf, std::io::Error> {
     })
 }
 
+/// Parse the stdout of `nu -c "echo $nu.default-config-dir"` into a path.
+///
+/// Returns `Some(path)` if stdout contains a non-empty trimmed path, `None` otherwise.
+fn parse_nu_config_output(stdout: &[u8]) -> Option<PathBuf> {
+    let path_str = std::str::from_utf8(stdout).ok()?;
+    let path = PathBuf::from(path_str.trim());
+    (!path.as_os_str().is_empty()).then_some(path)
+}
+
+/// Query `nu` for its default config directory.
+///
+/// Returns `Some(path)` if the `nu` binary is in PATH and reports its config dir,
+/// `None` otherwise (not installed, PATH issues, timeout, etc.).
+fn query_nu_config_dir() -> Option<PathBuf> {
+    let output = crate::shell_exec::Cmd::new("nu")
+        .args(["-c", "echo $nu.default-config-dir"])
+        .run()
+        .ok()
+        .filter(|o| o.status.success())?;
+    parse_nu_config_output(&output.stdout)
+}
+
+/// Resolve the nushell config directory from a queried path or platform defaults.
+///
+/// If `queried` is `Some`, uses that directly. Otherwise falls back to etcetera's
+/// platform config dir, then `home/.config`.
+fn resolve_nushell_config_dir(home: &std::path::Path, queried: Option<PathBuf>) -> PathBuf {
+    queried.unwrap_or_else(|| {
+        choose_base_strategy()
+            .map(|s| s.config_dir())
+            .unwrap_or_else(|_| home.join(".config"))
+            .join("nushell")
+    })
+}
+
+/// Get Nushell's default config directory (single best path for writing).
+///
+/// Used by `completion_path()` to determine where to write completions.
+/// Queries `nu` for `$nu.default-config-dir` to handle platform-specific paths.
+/// On macOS, this is `~/Library/Application Support/nushell` rather than `~/.config/nushell`.
+/// Falls back to etcetera's config_dir if the nu command fails.
+fn nushell_config_dir(home: &std::path::Path) -> PathBuf {
+    resolve_nushell_config_dir(home, query_nu_config_dir())
+}
+
+/// Get candidate nushell config directories for checking if integration is installed.
+///
+/// Returns multiple paths to check because:
+/// - Installation might use the path from `nu -c "echo $nu.default-config-dir"`
+/// - Runtime detection might fail the `nu` command (PATH issues, timeout, etc.)
+/// - We need to find the config file regardless of which path was used
+///
+/// Returns paths in priority order: queried path first, then fallbacks.
+/// Callers that pick `first()` to write get the same path as `nushell_config_dir()`.
+fn nushell_config_candidates(home: &std::path::Path) -> Vec<PathBuf> {
+    let mut candidates = vec![];
+
+    // Best path: query nu directly (same source of truth as nushell_config_dir)
+    if let Some(queried) = query_nu_config_dir() {
+        candidates.push(queried);
+    }
+
+    // Fallbacks for when nu query fails at runtime but succeeded during install:
+
+    // XDG_CONFIG_HOME/nushell if set
+    if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
+        candidates.push(PathBuf::from(xdg_config).join("nushell"));
+    }
+
+    // ~/.config/nushell (XDG default)
+    candidates.push(home.join(".config").join("nushell"));
+
+    // On macOS, add ~/Library/Application Support/nushell
+    #[cfg(target_os = "macos")]
+    {
+        candidates.push(
+            home.join("Library")
+                .join("Application Support")
+                .join("nushell"),
+        );
+    }
+
+    // Deduplicate while preserving priority order (queried path first)
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|p| seen.insert(p.clone()));
+
+    candidates
+}
+
 /// Get PowerShell profile paths in order of preference.
 /// On Windows, returns both PowerShell Core (7+) and Windows PowerShell (5.1) paths.
 /// On Unix, uses the conventional ~/.config/powershell location.
@@ -75,6 +164,21 @@ pub fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf>, std:
                     .join(format!("{}.fish", cmd)),
             ]
         }
+        super::Shell::Nushell => {
+            // Nushell vendor autoload directory - check multiple candidate locations because:
+            // - Installation might use the path from `nu -c "echo $nu.default-config-dir"`
+            // - Runtime detection might fail the `nu` command (PATH issues, timeout, etc.)
+            // - We need to find the config file regardless of which path was used during install
+            nushell_config_candidates(&home)
+                .into_iter()
+                .map(|config_dir| {
+                    config_dir
+                        .join("vendor")
+                        .join("autoload")
+                        .join(format!("{}.nu", cmd))
+                })
+                .collect()
+        }
         super::Shell::PowerShell => powershell_profile_paths(&home),
     })
 }
@@ -122,7 +226,6 @@ pub fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf, std::i
         }
         super::Shell::Zsh => home.join(".zfunc").join(format!("_{}", cmd)),
         super::Shell::Fish => {
-            // XDG_CONFIG_HOME defaults to ~/.config
             let config_home = strategy
                 .as_ref()
                 .map(|s| s.config_dir())
@@ -132,6 +235,15 @@ pub fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf, std::i
                 .join("completions")
                 .join(format!("{}.fish", cmd))
         }
+        super::Shell::Nushell => {
+            // Nushell completions are defined inline in the init script
+            // Return a path in the vendor autoload directory (same as config)
+            let config_dir = nushell_config_dir(&home);
+            config_dir
+                .join("vendor")
+                .join("autoload")
+                .join(format!("{}.nu", cmd))
+        }
         super::Shell::PowerShell => {
             // PowerShell doesn't use a separate completion file - completions are
             // registered inline in the profile using Register-ArgumentCompleter
@@ -139,4 +251,125 @@ pub fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf, std::i
             home.join(format!(".{}-powershell-completions", cmd))
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_nu_config_output_valid_path() {
+        let stdout = b"/home/user/.config/nushell\n";
+        assert_eq!(
+            parse_nu_config_output(stdout),
+            Some(PathBuf::from("/home/user/.config/nushell"))
+        );
+    }
+
+    #[test]
+    fn test_parse_nu_config_output_trims_whitespace() {
+        let stdout = b"  /home/user/.config/nushell  \n";
+        assert_eq!(
+            parse_nu_config_output(stdout),
+            Some(PathBuf::from("/home/user/.config/nushell"))
+        );
+    }
+
+    #[test]
+    fn test_parse_nu_config_output_empty() {
+        assert_eq!(parse_nu_config_output(b""), None);
+        assert_eq!(parse_nu_config_output(b"  \n"), None);
+    }
+
+    #[test]
+    fn test_parse_nu_config_output_invalid_utf8() {
+        assert_eq!(parse_nu_config_output(&[0xFF, 0xFE]), None);
+    }
+
+    #[test]
+    fn test_nushell_config_candidates_includes_xdg_and_defaults() {
+        let home = PathBuf::from("/home/user");
+
+        let candidates = nushell_config_candidates(&home);
+
+        // Should include default XDG path
+        assert!(
+            candidates
+                .iter()
+                .any(|p| p == &home.join(".config").join("nushell")),
+            "Should include ~/.config/nushell in candidates"
+        );
+
+        // On macOS, should include ~/Library/Application Support/nushell
+        #[cfg(target_os = "macos")]
+        {
+            assert!(
+                candidates.iter().any(|p| p
+                    == &home
+                        .join("Library")
+                        .join("Application Support")
+                        .join("nushell")),
+                "Should include ~/Library/Application Support/nushell in candidates on macOS"
+            );
+        }
+
+        // All candidates should be nushell config dirs
+        assert!(
+            candidates.iter().all(|p| p.ends_with("nushell")),
+            "All candidates should end with 'nushell'"
+        );
+    }
+
+    #[test]
+    fn test_nushell_config_candidates_always_has_fallback() {
+        let home = PathBuf::from("/home/user");
+        let candidates = nushell_config_candidates(&home);
+
+        // Even without `nu` in PATH, we should get at least one fallback
+        assert!(
+            !candidates.is_empty(),
+            "Should return at least 1 candidate path, got: {candidates:?}"
+        );
+
+        // On macOS, should have at least 2 (XDG default + Library/Application Support)
+        #[cfg(target_os = "macos")]
+        assert!(
+            candidates.len() >= 2,
+            "macOS should have at least 2 candidates, got: {candidates:?}"
+        );
+    }
+
+    #[test]
+    fn test_nushell_config_candidates_no_duplicates() {
+        let home = PathBuf::from("/home/user");
+        let candidates = nushell_config_candidates(&home);
+
+        let unique: std::collections::HashSet<_> = candidates.iter().collect();
+        assert_eq!(
+            candidates.len(),
+            unique.len(),
+            "Candidates should not contain duplicates: {candidates:?}"
+        );
+    }
+
+    #[test]
+    fn test_resolve_nushell_config_dir_with_queried_path() {
+        let home = PathBuf::from("/home/user");
+        let queried = PathBuf::from("/custom/nushell");
+        assert_eq!(
+            resolve_nushell_config_dir(&home, Some(queried.clone())),
+            queried
+        );
+    }
+
+    #[test]
+    fn test_resolve_nushell_config_dir_without_queried_path() {
+        let home = PathBuf::from("/home/user");
+        let result = resolve_nushell_config_dir(&home, None);
+        // Should fall back to a platform config dir ending in "nushell"
+        assert!(
+            result.ends_with("nushell"),
+            "Fallback should end with 'nushell': {result:?}"
+        );
+    }
 }

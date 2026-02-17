@@ -24,6 +24,12 @@ pub enum PlatformData {
     },
     /// GitLab-specific data.
     GitLab {
+        /// GitLab host (e.g., "gitlab.com", "gitlab.example.com").
+        host: String,
+        /// Owner/namespace of the base (target) project.
+        base_owner: String,
+        /// Name of the base (target) project.
+        base_repo: String,
         /// Source project ID (used for deferred URL fetching).
         source_project_id: u64,
         /// Target project ID (used for deferred URL fetching).
@@ -229,6 +235,9 @@ mod tests {
             url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
             fork_push_url: Some("git@gitlab.com:contributor/repo.git".to_string()),
             platform_data: PlatformData::GitLab {
+                host: "gitlab.com".to_string(),
+                base_owner: "owner".to_string(),
+                base_repo: "repo".to_string(),
                 source_project_id: 456,
                 target_project_id: 123,
             },
@@ -277,6 +286,9 @@ mod tests {
             url: "https://gitlab.com/owner/repo/-/merge_requests/101".to_string(),
             fork_push_url: Some("git@gitlab.com:contributor/repo.git".to_string()),
             platform_data: PlatformData::GitLab {
+                host: "gitlab.com".to_string(),
+                base_owner: "owner".to_string(),
+                base_repo: "repo".to_string(),
                 source_project_id: 456,
                 target_project_id: 123,
             },

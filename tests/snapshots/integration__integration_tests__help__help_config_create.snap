@@ -16,12 +16,14 @@ info:
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
 ---
 success: true
 exit_code: 0
@@ -106,6 +108,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# full = false       # Show CI status and main…± diffstat columns (--full)[0m
   [2m# branches = false   # Include branches without worktrees (--branches)[0m
   [2m# remotes = false    # Include remote-only branches (--remotes)[0m
+  [2m# summary = false    # AI branch summaries in picker tab 5 (requires [commit.generation])[0m
   [2m#[0m
   [2m# ### Commit[0m
   [2m#[0m
@@ -147,12 +150,11 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# #### Approved hook commands[0m
   [2m#[0m
-  [2m# When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.[0m
+  [2m# When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved to `~/.config/worktrunk/approvals.toml` (separate from user config to allow dotfile management of config.toml).[0m
   [2m#[0m
-  [2m# [projects."github.com/user/repo"][0m
-  [2m# approved-commands = ["npm ci", "npm test"][0m
+  [2m# To reset, run `wt hook approvals clear`.[0m
   [2m#[0m
-  [2m# To reset, delete the entry or run `wt hook approvals clear`.[0m
+  [2m# > **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config show` to generate a migration file that removes stale entries.[0m
   [2m#[0m
   [2m# #### Setting overrides (Experimental)[0m
   [2m#[0m

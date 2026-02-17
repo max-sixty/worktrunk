@@ -195,6 +195,7 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
     // Properly quote paths to handle special characters like single quotes
     let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
     let config_path_quoted = shell_quote(&repo.test_config_path().display().to_string());
+    let approvals_path_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
 
     match shell {
         "fish" => {
@@ -203,7 +204,24 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
                 "set -x WORKTRUNK_CONFIG_PATH {}\n",
                 config_path_quoted
             ));
+            script.push_str(&format!(
+                "set -x WORKTRUNK_APPROVALS_PATH {}\n",
+                approvals_path_quoted
+            ));
             script.push_str("set -x CLICOLOR_FORCE 1\n");
+        }
+        "nu" => {
+            // Nushell uses $env.VAR syntax for environment variables
+            script.push_str(&format!("$env.WORKTRUNK_BIN = {}\n", wt_bin_quoted));
+            script.push_str(&format!(
+                "$env.WORKTRUNK_CONFIG_PATH = {}\n",
+                config_path_quoted
+            ));
+            script.push_str(&format!(
+                "$env.WORKTRUNK_APPROVALS_PATH = {}\n",
+                approvals_path_quoted
+            ));
+            script.push_str("$env.CLICOLOR_FORCE = '1'\n");
         }
         "zsh" => {
             // For zsh, initialize the completion system first
@@ -217,16 +235,26 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
                 "export WORKTRUNK_CONFIG_PATH={}\n",
                 config_path_quoted
             ));
+            script.push_str(&format!(
+                "export WORKTRUNK_APPROVALS_PATH={}\n",
+                approvals_path_quoted
+            ));
             script.push_str("export CLICOLOR_FORCE=1\n");
         }
         "powershell" | "pwsh" => {
             // PowerShell uses $env: for environment variables
             let wt_bin_ps = powershell_quote(&wt_bin.display().to_string());
             let config_path_ps = powershell_quote(&repo.test_config_path().display().to_string());
+            let approvals_path_ps =
+                powershell_quote(&repo.test_approvals_path().display().to_string());
             script.push_str(&format!("$env:WORKTRUNK_BIN = {}\n", wt_bin_ps));
             script.push_str(&format!(
                 "$env:WORKTRUNK_CONFIG_PATH = {}\n",
                 config_path_ps
+            ));
+            script.push_str(&format!(
+                "$env:WORKTRUNK_APPROVALS_PATH = {}\n",
+                approvals_path_ps
             ));
             script.push_str("$env:CLICOLOR_FORCE = '1'\n");
         }
@@ -236,6 +264,10 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
             script.push_str(&format!(
                 "export WORKTRUNK_CONFIG_PATH={}\n",
                 config_path_quoted
+            ));
+            script.push_str(&format!(
+                "export WORKTRUNK_APPROVALS_PATH={}\n",
+                approvals_path_quoted
             ));
             script.push_str("export CLICOLOR_FORCE=1\n");
         }
@@ -280,6 +312,11 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
             // (see templates/fish.fish - psub causes buffering). Tests document current behavior.
             format!("begin\n{}\nend 2>&1", script)
         }
+        "nu" => {
+            // Nushell doesn't need explicit stderr redirect - PTY captures both streams
+            // The script is executed directly
+            script
+        }
         "bash" => {
             // For bash, we don't use a subshell wrapper because it would isolate job control messages.
             // Instead, we use exec to redirect stderr to stdout, then run the script.
@@ -301,9 +338,8 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
     }
 }
 
-/// Execute a command in a PTY with interactive input support
+/// Execute a command in a PTY with interactive input support.
 ///
-/// This is similar to `exec_in_pty` but allows sending input during execution.
 /// The PTY will automatically echo the input (like a real terminal), so you'll
 /// see both the prompts and the input in the captured output.
 ///
@@ -428,13 +464,18 @@ fn exec_in_pty_interactive(
             cmd.arg("-File");
             cmd.arg(script_path.to_string_lossy().to_string());
         }
+        "nu" => {
+            // Nushell: isolate from user config
+            cmd.arg("--no-config-file");
+            cmd.arg("-c");
+            cmd.arg(script);
+        }
         _ => {
             // fish and other shells
             cmd.arg("-c");
             cmd.arg(script);
         }
     }
-
     cmd.cwd(working_dir);
 
     // Add test-specific environment variables (convert &str tuples to String tuples)
@@ -667,8 +708,9 @@ fn exec_through_wrapper_with_env(
     let script = build_shell_script(shell, repo, subcommand, args);
 
     let config_path = repo.test_config_path().to_string_lossy().to_string();
+    let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
 
-    let mut env_vars = build_test_env_vars(&config_path);
+    let mut env_vars = build_test_env_vars(&config_path, &approvals_path);
     env_vars.push(("CLICOLOR_FORCE", "1"));
     // Add extra env vars (these can override defaults if needed)
     env_vars.extend(extra_env.iter().copied());
@@ -696,16 +738,23 @@ const STANDARD_TEST_ENV: &[(&str, &str)] = &[
     ("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z"),
     ("LANG", "C"),
     ("LC_ALL", "C"),
-    ("WT_TEST_EPOCH", "1735776000"),
+    ("WORKTRUNK_TEST_EPOCH", "1735776000"),
 ];
 
-/// Build standard test env vars with config path
+/// Build standard test env vars with config and approvals paths
 ///
-/// Returns a Vec containing STANDARD_TEST_ENV plus WORKTRUNK_CONFIG_PATH.
-/// The caller must keep `config_path` alive for the duration of the returned Vec's use.
+/// Returns a Vec containing STANDARD_TEST_ENV plus WORKTRUNK_CONFIG_PATH and
+/// WORKTRUNK_APPROVALS_PATH. The caller must keep both path strings alive for
+/// the duration of the returned Vec's use.
 #[cfg(test)]
-fn build_test_env_vars(config_path: &str) -> Vec<(&str, &str)> {
-    let mut env_vars: Vec<(&str, &str)> = vec![("WORKTRUNK_CONFIG_PATH", config_path)];
+fn build_test_env_vars<'a>(
+    config_path: &'a str,
+    approvals_path: &'a str,
+) -> Vec<(&'a str, &'a str)> {
+    let mut env_vars: Vec<(&str, &str)> = vec![
+        ("WORKTRUNK_CONFIG_PATH", config_path),
+        ("WORKTRUNK_APPROVALS_PATH", approvals_path),
+    ];
     env_vars.extend_from_slice(STANDARD_TEST_ENV);
     env_vars
 }
@@ -753,6 +802,7 @@ mod unix_tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_wrapper_handles_command_failure(#[case] shell: &str, mut repo: TestRepo) {
         // Create a worktree that already exists
         repo.add_worktree("existing");
@@ -786,6 +836,7 @@ mod unix_tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_wrapper_switch_create(#[case] shell: &str, repo: TestRepo) {
         let output = exec_through_wrapper(shell, &repo, "switch", &["--create", "feature"]);
 
@@ -812,6 +863,7 @@ mod unix_tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_wrapper_remove(#[case] shell: &str, mut repo: TestRepo) {
         // Create a worktree to remove
         repo.add_worktree("to-remove");
@@ -834,6 +886,7 @@ mod unix_tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_wrapper_step_for_each(#[case] shell: &str, mut repo: TestRepo) {
         // Remove fixture worktrees so we can create our own feature-a and feature-b
         repo.remove_fixture_worktrees();
@@ -897,6 +950,7 @@ mod unix_tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_wrapper_merge(#[case] shell: &str, mut repo: TestRepo) {
         // Disable LLM prompt (PTY tests are interactive, claude may be installed)
         repo.write_test_config("");
@@ -922,6 +976,7 @@ mod unix_tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_wrapper_switch_with_execute(#[case] shell: &str, repo: TestRepo) {
         // Use --yes to skip approval prompt in tests
         let output = exec_through_wrapper(
@@ -962,6 +1017,7 @@ mod unix_tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_wrapper_execute_exit_code_propagation(#[case] shell: &str, repo: TestRepo) {
         // Use --yes to skip approval prompt in tests
         // wt should succeed (creates worktree), but the execute command should fail with exit 42
@@ -1025,9 +1081,8 @@ watch = "echo 'Watching for file changes'"
 
         repo.commit("Add hooks");
 
-        // Pre-approve the commands in user config
-        fs::write(
-            repo.test_config_path(),
+        // Pre-approve the commands
+        repo.write_test_approvals(
             r#"[projects."../origin"]
 approved-commands = [
     "echo 'Installing dependencies...'",
@@ -1036,8 +1091,7 @@ approved-commands = [
     "echo 'Watching for file changes'",
 ]
 "#,
-        )
-        .unwrap();
+        );
 
         let output = exec_through_wrapper(shell, &repo, "switch", &["--create", "feature-hooks"]);
 
@@ -1075,7 +1129,7 @@ test = "echo '✓ All 47 tests passed in 2.3s'"
         let feature_wt = repo.add_feature();
 
         // Pre-approve commands
-        repo.write_test_config(
+        repo.write_test_approvals(
             r#"[projects."../origin"]
 approved-commands = [
     "echo '✓ Code formatting check passed'",
@@ -1131,7 +1185,7 @@ test = "echo '✗ Test suite failed: 3 tests failing' && exit 1"
         );
 
         // Pre-approve the commands
-        repo.write_test_config(
+        repo.write_test_approvals(
             r#"[projects."../origin"]
 approved-commands = [
     "echo '✓ Code formatting check passed'",
@@ -1195,11 +1249,11 @@ check2 = "{} check2 3"
         repo.commit("Add pre-merge validation with mixed output");
         let feature_wt = repo.add_feature();
 
-        // Pre-approve commands
-        repo.write_test_config(&format!(
-            r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
+        repo.write_test_config(r#"worktree-path = "../{{ repo }}.{{ branch }}""#);
 
-[projects."../origin"]
+        // Pre-approve commands
+        repo.write_test_approvals(&format!(
+            r#"[projects."../origin"]
 approved-commands = [
     "{} check1 3",
     "{} check2 3",
@@ -1246,14 +1300,12 @@ approved-commands = [
 
         repo.commit("Add post-start command");
 
-        // Pre-approve the command in user config
-        fs::write(
-            repo.test_config_path(),
+        // Pre-approve the command
+        repo.write_test_approvals(
             r#"[projects."../origin"]
 approved-commands = ["echo 'test command executed'"]
 "#,
-        )
-        .unwrap();
+        );
 
         let output =
             exec_through_wrapper("bash", &repo, "switch", &["--create", "feature-with-hooks"]);
@@ -1388,14 +1440,12 @@ approved-commands = ["echo 'test command executed'"]
 
         repo.commit("Add post-start command");
 
-        // Pre-approve the command in user config
-        fs::write(
-            repo.test_config_path(),
+        // Pre-approve the command
+        repo.write_test_approvals(
             r#"[projects."../origin"]
 approved-commands = ["echo 'background task'"]
 "#,
-        )
-        .unwrap();
+        );
 
         let output = exec_through_wrapper("bash", &repo, "switch", &["--create", "feature-bg"]);
 
@@ -1435,14 +1485,12 @@ approved-commands = ["echo 'background task'"]
 
         repo.commit("Add post-start command");
 
-        // Pre-approve the command in user config
-        fs::write(
-            repo.test_config_path(),
+        // Pre-approve the command
+        repo.write_test_approvals(
             r#"[projects."../origin"]
 approved-commands = ["echo 'fish background task'"]
 "#,
-        )
-        .unwrap();
+        );
 
         let output = exec_through_wrapper("fish", &repo, "switch", &["--create", "fish-bg"]);
 
@@ -1522,6 +1570,7 @@ approved-commands = ["echo 'fish background task'"]
     // This test runs `cargo run` inside a PTY which can take longer than the
     // default 60s timeout when cargo checks/compiles dependencies. Extended
     // timeout configured in .config/nextest.toml.
+    // Note: Nushell not included - this test builds custom scripts with bash syntax
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1541,22 +1590,35 @@ approved-commands = ["echo 'fish background task'"]
         // Set environment variables (use shell_quote to handle paths with special chars)
         let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
         let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
+        let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
         match shell {
             "fish" => {
                 script.push_str(&format!("set -x WORKTRUNK_BIN {}\n", wt_bin_quoted));
                 script.push_str(&format!("set -x WORKTRUNK_CONFIG_PATH {}\n", config_quoted));
+                script.push_str(&format!(
+                    "set -x WORKTRUNK_APPROVALS_PATH {}\n",
+                    approvals_quoted
+                ));
                 script.push_str("set -x CLICOLOR_FORCE 1\n");
             }
             "zsh" => {
                 script.push_str("autoload -Uz compinit && compinit -i 2>/dev/null\n");
                 script.push_str(&format!("export WORKTRUNK_BIN={}\n", wt_bin_quoted));
                 script.push_str(&format!("export WORKTRUNK_CONFIG_PATH={}\n", config_quoted));
+                script.push_str(&format!(
+                    "export WORKTRUNK_APPROVALS_PATH={}\n",
+                    approvals_quoted
+                ));
                 script.push_str("export CLICOLOR_FORCE=1\n");
             }
             _ => {
                 // bash
                 script.push_str(&format!("export WORKTRUNK_BIN={}\n", wt_bin_quoted));
                 script.push_str(&format!("export WORKTRUNK_CONFIG_PATH={}\n", config_quoted));
+                script.push_str(&format!(
+                    "export WORKTRUNK_APPROVALS_PATH={}\n",
+                    approvals_quoted
+                ));
                 script.push_str("export CLICOLOR_FORCE=1\n");
             }
         }
@@ -1577,9 +1639,11 @@ approved-commands = ["echo 'fish background task'"]
         };
 
         let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
         let env_vars: Vec<(&str, &str)> = vec![
             ("CLICOLOR_FORCE", "1"),
             ("WORKTRUNK_CONFIG_PATH", &config_path),
+            ("WORKTRUNK_APPROVALS_PATH", &approvals_path),
             ("TERM", "xterm"),
             ("GIT_AUTHOR_NAME", "Test User"),
             ("GIT_AUTHOR_EMAIL", "test@example.com"),
@@ -1589,7 +1653,7 @@ approved-commands = ["echo 'fish background task'"]
             ("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z"),
             ("LANG", "C"),
             ("LC_ALL", "C"),
-            ("WT_TEST_EPOCH", "1735776000"),
+            ("WORKTRUNK_TEST_EPOCH", "1735776000"),
         ];
 
         let (combined, exit_code) =
@@ -1650,13 +1714,11 @@ approved-commands = ["echo 'fish background task'"]
         repo.commit("Add post-start command");
 
         // Pre-approve the command
-        fs::write(
-            repo.test_config_path(),
+        repo.write_test_approvals(
             r#"[projects."../origin"]
 approved-commands = ["echo 'background job'"]
 "#,
-        )
-        .unwrap();
+        );
 
         let output = exec_through_wrapper("zsh", &repo, "switch", &["--create", "zsh-job-test"]);
 
@@ -1700,31 +1762,33 @@ approved-commands = ["echo 'background job'"]
         repo.commit("Add post-start command");
 
         // Pre-approve the command
-        fs::write(
-            repo.test_config_path(),
+        repo.write_test_approvals(
             r#"[projects."../origin"]
 approved-commands = ["echo 'bash background'"]
 "#,
-        )
-        .unwrap();
+        );
 
         // Build the setup script that defines the wt function
         let wt_bin = wt_bin();
         let wrapper_script = generate_wrapper(&repo, "bash");
         let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
         let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
+        let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
         let setup_script = format!(
             "export WORKTRUNK_BIN={}\n\
              export WORKTRUNK_CONFIG_PATH={}\n\
+             export WORKTRUNK_APPROVALS_PATH={}\n\
              export CLICOLOR_FORCE=1\n\
              {}",
-            wt_bin_quoted, config_quoted, wrapper_script
+            wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script
         );
 
         let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
         let env_vars: Vec<(&str, &str)> = vec![
             ("CLICOLOR_FORCE", "1"),
             ("WORKTRUNK_CONFIG_PATH", &config_path),
+            ("WORKTRUNK_APPROVALS_PATH", &approvals_path),
             ("TERM", "xterm"),
             ("GIT_AUTHOR_NAME", "Test User"),
             ("GIT_AUTHOR_EMAIL", "test@example.com"),
@@ -1775,21 +1839,27 @@ approved-commands = ["echo 'bash background'"]
         // (completions are inline in the wrapper via lazy loading)
         let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
         let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
+        let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
         let script = format!(
             r#"
             export WORKTRUNK_BIN={}
             export WORKTRUNK_CONFIG_PATH={}
+            export WORKTRUNK_APPROVALS_PATH={}
             {}
             # Check if wt completion is registered
             complete -p wt 2>/dev/null && echo "__COMPLETION_REGISTERED__" || echo "__NO_COMPLETION__"
             "#,
-            wt_bin_quoted, config_quoted, wrapper_script
+            wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script
         );
 
         let final_script = format!("( {} ) 2>&1", script);
         let config_path = repo.test_config_path().to_string_lossy().to_string();
-        let env_vars: Vec<(&str, &str)> =
-            vec![("WORKTRUNK_CONFIG_PATH", &config_path), ("TERM", "xterm")];
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let env_vars: Vec<(&str, &str)> = vec![
+            ("WORKTRUNK_CONFIG_PATH", &config_path),
+            ("WORKTRUNK_APPROVALS_PATH", &approvals_path),
+            ("TERM", "xterm"),
+        ];
 
         let (combined, exit_code) =
             exec_in_pty_interactive("bash", &final_script, repo.root_path(), &env_vars, &[]);
@@ -1812,10 +1882,12 @@ approved-commands = ["echo 'bash background'"]
         // Script that sources wrapper, completions, and checks if completion is registered
         let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
         let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
+        let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
         let script = format!(
             r#"
             set -x WORKTRUNK_BIN {}
             set -x WORKTRUNK_CONFIG_PATH {}
+            set -x WORKTRUNK_APPROVALS_PATH {}
             {}
             {}
             # Check if wt completions are registered
@@ -1825,13 +1897,17 @@ approved-commands = ["echo 'bash background'"]
                 echo "__NO_COMPLETION__"
             end
             "#,
-            wt_bin_quoted, config_quoted, wrapper_script, completions_script
+            wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script, completions_script
         );
 
         let final_script = format!("begin\n{}\nend 2>&1", script);
         let config_path = repo.test_config_path().to_string_lossy().to_string();
-        let env_vars: Vec<(&str, &str)> =
-            vec![("WORKTRUNK_CONFIG_PATH", &config_path), ("TERM", "xterm")];
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let env_vars: Vec<(&str, &str)> = vec![
+            ("WORKTRUNK_CONFIG_PATH", &config_path),
+            ("WORKTRUNK_APPROVALS_PATH", &approvals_path),
+            ("TERM", "xterm"),
+        ];
 
         let (combined, exit_code) =
             exec_in_pty_interactive("fish", &final_script, repo.root_path(), &env_vars, &[]);
@@ -1859,11 +1935,13 @@ approved-commands = ["echo 'bash background'"]
         // Script that sources wrapper and checks if wt function exists
         let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
         let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
+        let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
         let marker_quoted = shell_quote(&marker_path);
         let script = format!(
             r#"
             export WORKTRUNK_BIN={wt_bin}
             export WORKTRUNK_CONFIG_PATH={config}
+            export WORKTRUNK_APPROVALS_PATH={approvals}
             {wrapper}
             # Check if wt wrapper function is defined and write result to marker file
             if (( $+functions[wt] )); then
@@ -1874,14 +1952,17 @@ approved-commands = ["echo 'bash background'"]
             "#,
             wt_bin = wt_bin_quoted,
             config = config_quoted,
+            approvals = approvals_quoted,
             wrapper = wrapper_script,
             marker = marker_quoted,
         );
 
         let final_script = format!("( {} ) 2>&1", script);
         let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
         let env_vars: Vec<(&str, &str)> = vec![
             ("WORKTRUNK_CONFIG_PATH", &config_path),
+            ("WORKTRUNK_APPROVALS_PATH", &approvals_path),
             ("TERM", "xterm"),
             ("ZDOTDIR", "/dev/null"),
         ];
@@ -1910,6 +1991,7 @@ approved-commands = ["echo 'bash background'"]
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_branch_name_with_slashes(#[case] shell: &str, repo: TestRepo) {
         // Branch name with slashes (common git convention)
         let output =
@@ -1930,6 +2012,7 @@ approved-commands = ["echo 'bash background'"]
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_branch_name_with_dashes_underscores(#[case] shell: &str, repo: TestRepo) {
         let output = exec_through_wrapper(shell, &repo, "switch", &["--create", "fix-bug_123"]);
 
@@ -1948,6 +2031,7 @@ approved-commands = ["echo 'bash background'"]
     // ========================================================================
 
     /// Test that shell integration works when wt is not in PATH but WORKTRUNK_BIN is set
+    // Note: Nushell not included - this test builds custom scripts with bash syntax
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -1959,6 +2043,7 @@ approved-commands = ["echo 'bash background'"]
         // Use shell_quote to handle paths with special chars (like single quotes)
         let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
         let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
+        let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
 
         // Script that explicitly removes wt from PATH but sets WORKTRUNK_BIN
         let script = match shell {
@@ -1969,12 +2054,13 @@ approved-commands = ["echo 'bash background'"]
                 export PATH="/usr/bin:/bin"
                 export WORKTRUNK_BIN={}
                 export WORKTRUNK_CONFIG_PATH={}
+                export WORKTRUNK_APPROVALS_PATH={}
                 export CLICOLOR_FORCE=1
                 {}
                 wt switch --create fallback-test
                 echo "__PWD__ $PWD"
                 "#,
-                wt_bin_quoted, config_quoted, wrapper_script
+                wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script
             ),
             "fish" => format!(
                 r#"
@@ -1982,12 +2068,13 @@ approved-commands = ["echo 'bash background'"]
                 set -x PATH /usr/bin /bin
                 set -x WORKTRUNK_BIN {}
                 set -x WORKTRUNK_CONFIG_PATH {}
+                set -x WORKTRUNK_APPROVALS_PATH {}
                 set -x CLICOLOR_FORCE 1
                 {}
                 wt switch --create fallback-test
                 echo "__PWD__ $PWD"
                 "#,
-                wt_bin_quoted, config_quoted, wrapper_script
+                wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script
             ),
             _ => format!(
                 r#"
@@ -1995,12 +2082,13 @@ approved-commands = ["echo 'bash background'"]
                 export PATH="/usr/bin:/bin"
                 export WORKTRUNK_BIN={}
                 export WORKTRUNK_CONFIG_PATH={}
+                export WORKTRUNK_APPROVALS_PATH={}
                 export CLICOLOR_FORCE=1
                 {}
                 wt switch --create fallback-test
                 echo "__PWD__ $PWD"
                 "#,
-                wt_bin_quoted, config_quoted, wrapper_script
+                wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script
             ),
         };
 
@@ -2010,7 +2098,8 @@ approved-commands = ["echo 'bash background'"]
         };
 
         let config_path = repo.test_config_path().to_string_lossy().to_string();
-        let env_vars = build_test_env_vars(&config_path);
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path, &approvals_path);
 
         let (combined, exit_code) =
             exec_in_pty_interactive(shell, &final_script, repo.root_path(), &env_vars, &[]);
@@ -2077,7 +2166,8 @@ approved-commands = ["echo 'bash background'"]
         let final_script = format!("begin\n{}\nend 2>&1", script);
 
         let config_path = repo.test_config_path().to_string_lossy().to_string();
-        let env_vars = build_test_env_vars(&config_path);
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path, &approvals_path);
 
         let (combined, exit_code) =
             exec_in_pty_interactive(shell, &final_script, repo.root_path(), &env_vars, &[]);
@@ -2146,7 +2236,8 @@ approved-commands = ["echo 'bash background'"]
         let final_script = format!("begin\n{}\nend 2>&1", script);
 
         let config_path = repo.test_config_path().to_string_lossy().to_string();
-        let env_vars = build_test_env_vars(&config_path);
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path, &approvals_path);
 
         let (combined, exit_code) =
             exec_in_pty_interactive(shell, &final_script, repo.root_path(), &env_vars, &[]);
@@ -2200,6 +2291,7 @@ approved-commands = ["echo 'bash background'"]
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    #[case("nu")]
     fn test_shell_completes_cleanly(#[case] shell: &str, repo: TestRepo) {
         // Configure a post-start command to exercise the background job code path
         let config_dir = repo.root_path().join(".config");
@@ -2213,13 +2305,11 @@ approved-commands = ["echo 'bash background'"]
         repo.commit("Add post-start command");
 
         // Pre-approve the command
-        fs::write(
-            repo.test_config_path(),
+        repo.write_test_approvals(
             r#"[projects."../origin"]
 approved-commands = ["echo 'cleanup test'"]
 "#,
-        )
-        .unwrap();
+        );
 
         // Run a command that exercises the full FIFO/background job code path
         let output = exec_through_wrapper(shell, &repo, "switch", &["--create", "cleanup-test"]);
@@ -3035,6 +3125,7 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     /// shell wrapper. The issue being tested: in some shells (particularly fish),
     /// command substitution doesn't propagate stderr redirects, causing help
     /// output to appear on the terminal even when redirected.
+    // Note: Nushell not included - this test builds custom scripts with bash syntax
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -3185,6 +3276,7 @@ echo "SCRIPT_COMPLETED"
     ///
     /// We verify pager invocation by setting GIT_PAGER to a script that creates
     /// a marker file before passing through the content.
+    // Note: Nushell not included - this test builds custom scripts with bash syntax
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -3382,12 +3474,18 @@ mod windows_tests {
     /// This test runs cmd.exe which is simpler than PowerShell and validates the core ConPTY fix.
     #[test]
     fn test_conpty_basic_cmd() {
-        use crate::common::pty::exec_in_pty;
+        use crate::common::pty::{build_pty_command, exec_cmd_in_pty};
 
         // Use cmd.exe for simplest possible test
         let tmp = tempfile::tempdir().unwrap();
-        let (output, exit_code) =
-            exec_in_pty("cmd.exe", &["/C", "echo CONPTY_WORKS"], tmp.path(), &[], "");
+        let cmd = build_pty_command(
+            "cmd.exe",
+            &["/C", "echo CONPTY_WORKS"],
+            tmp.path(),
+            &[],
+            None,
+        );
+        let (output, exit_code) = exec_cmd_in_pty(cmd, "");
 
         eprintln!("ConPTY test output: {:?}", output);
         eprintln!("ConPTY test exit code: {}", exit_code);
@@ -3405,19 +3503,20 @@ mod windows_tests {
     /// Diagnostic test: Verify wt --version works via ConPTY.
     #[test]
     fn test_conpty_wt_version() {
-        use crate::common::pty::exec_in_pty;
+        use crate::common::pty::{build_pty_command, exec_cmd_in_pty};
         use crate::common::wt_bin;
 
         let wt_bin = wt_bin();
         let tmp = tempfile::tempdir().unwrap();
 
-        let (output, exit_code) = exec_in_pty(
+        let cmd = build_pty_command(
             wt_bin.to_str().unwrap(),
             &["--version"],
             tmp.path(),
             &[],
-            "",
+            None,
         );
+        let (output, exit_code) = exec_cmd_in_pty(cmd, "");
 
         eprintln!("wt --version output: {:?}", output);
         eprintln!("wt --version exit code: {}", exit_code);
@@ -3638,6 +3737,7 @@ mod windows_tests {
         let script = format!(
             "$env:WORKTRUNK_BIN = {}\n\
              $env:WORKTRUNK_CONFIG_PATH = {}\n\
+             $env:WORKTRUNK_APPROVALS_PATH = {}\n\
              {}\n\
              if (Get-Command wt -CommandType Function -ErrorAction SilentlyContinue) {{\n\
                  Write-Host 'WRAPPER_REGISTERED'\n\
@@ -3648,11 +3748,13 @@ mod windows_tests {
              }}",
             powershell_quote(&wt_bin.display().to_string()),
             powershell_quote(&repo.test_config_path().display().to_string()),
+            powershell_quote(&repo.test_approvals_path().display().to_string()),
             wrapper_script
         );
 
         let config_path = repo.test_config_path().to_string_lossy().to_string();
-        let env_vars = build_test_env_vars(&config_path);
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path, &approvals_path);
 
         let (combined, exit_code) =
             exec_in_pty_interactive("powershell", &script, repo.root_path(), &env_vars, &[]);
@@ -3681,6 +3783,7 @@ mod windows_tests {
         let script = format!(
             "$env:WORKTRUNK_BIN = {}\n\
              $env:WORKTRUNK_CONFIG_PATH = {}\n\
+             $env:WORKTRUNK_APPROVALS_PATH = {}\n\
              {}\n\
              $completers = Get-ArgumentCompleter -Native\n\
              if ($completers | Where-Object {{ $_.CommandName -eq 'wt' }}) {{\n\
@@ -3692,11 +3795,13 @@ mod windows_tests {
              }}",
             powershell_quote(&wt_bin.display().to_string()),
             powershell_quote(&repo.test_config_path().display().to_string()),
+            powershell_quote(&repo.test_approvals_path().display().to_string()),
             wrapper_script
         );
 
         let config_path = repo.test_config_path().to_string_lossy().to_string();
-        let env_vars = build_test_env_vars(&config_path);
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path, &approvals_path);
 
         let (combined, exit_code) =
             exec_in_pty_interactive("powershell", &script, repo.root_path(), &env_vars, &[]);
@@ -3767,15 +3872,18 @@ mod windows_tests {
         let script = format!(
             "$env:WORKTRUNK_BIN = {}\n\
              $env:WORKTRUNK_CONFIG_PATH = {}\n\
+             $env:WORKTRUNK_APPROVALS_PATH = {}\n\
              {}\n\
              Write-Host \"BIN_PATH: $env:WORKTRUNK_BIN\"",
             powershell_quote(&wt_bin.display().to_string()),
             powershell_quote(&repo.test_config_path().display().to_string()),
+            powershell_quote(&repo.test_approvals_path().display().to_string()),
             wrapper_script
         );
 
         let config_path = repo.test_config_path().to_string_lossy().to_string();
-        let env_vars = build_test_env_vars(&config_path);
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path, &approvals_path);
 
         let (combined, exit_code) =
             exec_in_pty_interactive("powershell", &script, repo.root_path(), &env_vars, &[]);

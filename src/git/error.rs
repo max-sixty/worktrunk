@@ -18,8 +18,8 @@ use shell_escape::escape;
 use super::HookType;
 use crate::path::format_path_for_display;
 use crate::styling::{
-    ERROR_SYMBOL, HINT_SYMBOL, error_message, format_with_gutter, hint_message, info_message,
-    suggest_command,
+    ERROR_SYMBOL, HINT_SYMBOL, error_message, format_bash_with_gutter, format_with_gutter,
+    hint_message, info_message, suggest_command,
 };
 
 /// Platform-specific reference type (PR vs MR).
@@ -93,6 +93,55 @@ pub trait RefContext {
     fn source_ref(&self) -> String;
 }
 
+/// Information about a failed command, for display in error messages.
+///
+/// Separates the command string from exit information so Display impls
+/// can style each part differently (bold command, gray exit code).
+#[derive(Debug, Clone)]
+pub struct FailedCommand {
+    /// The full command string, e.g., "git worktree add /path -b fix main"
+    pub command: String,
+    /// Exit information, e.g., "exit code 255" or "killed by signal"
+    pub exit_info: String,
+}
+
+/// Extra CLI context for enriching `wt switch` suggestions in error hints.
+///
+/// When a switch error is raised deep in the planning layer, the error only knows
+/// the branch name. The command handler wraps the error with this context so the
+/// Display impl can produce a fully copy-pasteable suggestion including flags like
+/// `--execute` and trailing args.
+#[derive(Debug, Clone)]
+pub struct SwitchSuggestionCtx {
+    pub extra_flags: Vec<String>,
+    pub trailing_args: Vec<String>,
+}
+
+impl SwitchSuggestionCtx {
+    /// Append extra flags and trailing args to a suggested command string.
+    ///
+    /// Clap's `#[arg(last = true)]` on `execute_args` means `--` always routes
+    /// to execute_args, so a dash-prefixed branch can't coexist with `--execute`
+    /// via the CLI. The suggested command therefore never has a pre-existing `--`
+    /// separator when this context is applied.
+    fn apply(&self, cmd: String) -> String {
+        let mut result = cmd;
+        // Flags are pre-escaped at construction (handle_switch.rs uses shell_escape)
+        for flag in &self.extra_flags {
+            result.push(' ');
+            result.push_str(flag);
+        }
+        if !self.trailing_args.is_empty() {
+            result.push_str(" --");
+            for arg in &self.trailing_args {
+                result.push(' ');
+                result.push_str(&escape(Cow::Borrowed(arg.as_str())));
+            }
+        }
+        result
+    }
+}
+
 /// Domain errors for git and worktree operations.
 ///
 /// This enum provides structured error data that can be pattern-matched and tested.
@@ -163,6 +212,8 @@ pub enum GitError {
         branch: String,
         base_branch: Option<String>,
         error: String,
+        /// The git command that failed, shown separately from git output
+        command: Option<FailedCommand>,
     },
     WorktreeRemovalFailed {
         branch: String,
@@ -258,13 +309,33 @@ pub enum GitError {
     Other {
         message: String,
     },
+
+    /// Wrapper that enriches an inner error's switch suggestions with CLI context.
+    ///
+    /// The inner error renders normally, but any `wt switch` suggestion includes
+    /// the extra flags and trailing args from the context.
+    WithSwitchSuggestion {
+        source: Box<GitError>,
+        ctx: SwitchSuggestionCtx,
+    },
 }
 
 impl std::error::Error for GitError {}
 
-impl std::fmt::Display for GitError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl GitError {
+    /// Format with optional switch suggestion context.
+    ///
+    /// Most variants ignore `ctx`. The three that render `wt switch` suggestions
+    /// (`BranchAlreadyExists`, `BranchNotFound`, `WorktreePathExists`) use it
+    /// to append extra flags and trailing args for a copy-pasteable command.
+    fn fmt_with_ctx(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        ctx: Option<&SwitchSuggestionCtx>,
+    ) -> std::fmt::Result {
         match self {
+            GitError::WithSwitchSuggestion { source, ctx } => source.fmt_with_ctx(f, Some(ctx)),
+
             GitError::DetachedHead { action } => {
                 let message = match action {
                     Some(action) => format!("Cannot {action}: not on a branch (detached HEAD)"),
@@ -311,7 +382,10 @@ impl std::fmt::Display for GitError {
             }
 
             GitError::BranchAlreadyExists { branch } => {
-                let switch_cmd = suggest_command("switch", &[branch], &[]);
+                let mut switch_cmd = suggest_command("switch", &[branch], &[]);
+                if let Some(ctx) = ctx {
+                    switch_cmd = ctx.apply(switch_cmd);
+                }
                 write!(
                     f,
                     "{}\n{}",
@@ -328,7 +402,10 @@ impl std::fmt::Display for GitError {
             } => {
                 let list_cmd = suggest_command("list", &[], &["--branches", "--remotes"]);
                 let hint = if *show_create_hint {
-                    let create_cmd = suggest_command("switch", &[branch], &["--create"]);
+                    let mut create_cmd = suggest_command("switch", &[branch], &["--create"]);
+                    if let Some(ctx) = ctx {
+                        create_cmd = ctx.apply(create_cmd);
+                    }
                     cformat!(
                         "To create a new branch, run <bright-black>{create_cmd}</>; to list branches, run <bright-black>{list_cmd}</>"
                     )
@@ -424,7 +501,10 @@ impl std::fmt::Display for GitError {
                 } else {
                     &["--clobber"]
                 };
-                let switch_cmd = suggest_command("switch", &[branch], flags);
+                let mut switch_cmd = suggest_command("switch", &[branch], flags);
+                if let Some(ctx) = ctx {
+                    switch_cmd = ctx.apply(switch_cmd);
+                }
                 write!(
                     f,
                     "{}\n{}",
@@ -441,6 +521,7 @@ impl std::fmt::Display for GitError {
                 branch,
                 base_branch,
                 error,
+                command,
             } => {
                 let header = if let Some(base) = base_branch {
                     error_message(cformat!(
@@ -449,7 +530,19 @@ impl std::fmt::Display for GitError {
                 } else {
                     error_message(cformat!("Failed to create worktree for <bold>{branch}</>"))
                 };
-                write!(f, "{}", format_error_block(header, error))
+                write!(f, "{}", format_error_block(header, error))?;
+                if let Some(cmd) = command {
+                    write!(
+                        f,
+                        "\n{}\n{}",
+                        hint_message(cformat!(
+                            "Failed command, <bright-black>{}</>:",
+                            cmd.exit_info
+                        )),
+                        format_bash_with_gutter(&cmd.command)
+                    )?;
+                }
+                Ok(())
             }
 
             GitError::WorktreeRemovalFailed {
@@ -778,6 +871,12 @@ impl std::fmt::Display for GitError {
     }
 }
 
+impl std::fmt::Display for GitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.fmt_with_ctx(f, None)
+    }
+}
+
 /// Semantic errors that require special handling in main.rs
 ///
 /// Most errors use anyhow::bail! with formatted messages. This enum is only
@@ -970,7 +1069,7 @@ mod tests {
         };
         assert_snapshot!(err.to_string(), @"
         [31m✗[39m [31mDirectory already exists: [1m/some/path[22m[39m
-        [2m↳[22m [2mTo remove manually, run [90mrm -rf /some/path[39m; to overwrite (with backup), run [90mwt switch feature --create --clobber[39m[22m
+        [2m↳[22m [2mTo remove manually, run [90mrm -rf /some/path[39m; to overwrite (with backup), run [90mwt switch --create --clobber feature[39m[22m
         ");
     }
 
@@ -1150,6 +1249,7 @@ mod tests {
             branch: "feature".into(),
             base_branch: Some("main".into()),
             error: "git error".into(),
+            command: None,
         };
         let display = err.to_string();
         assert!(display.contains("feature"));
@@ -1161,9 +1261,26 @@ mod tests {
             branch: "feature".into(),
             base_branch: None,
             error: "git error".into(),
+            command: None,
         };
         let display = err.to_string();
         assert!(display.contains("feature"));
+
+        // With command info
+        let err = GitError::WorktreeCreationFailed {
+            branch: "feature".into(),
+            base_branch: Some("main".into()),
+            error: "fatal: ref exists".into(),
+            command: Some(FailedCommand {
+                command: "git worktree add /path -b feature main".into(),
+                exit_info: "exit code 128".into(),
+            }),
+        };
+        let display = err.to_string();
+        assert!(display.contains("fatal: ref exists"));
+        assert!(display.contains("worktree add"));
+        assert!(display.contains("Failed command"));
+        assert!(display.contains("exit code 128"));
     }
 
     #[test]
@@ -1292,7 +1409,7 @@ mod tests {
         };
         let display = err.to_string();
         assert!(display.contains("Cannot remove worktree"));
-        assert!(display.contains("wt remove feature --force"));
+        assert!(display.contains("wt remove --force feature"));
         assert!(display.contains("to lose uncommitted changes, run"));
     }
 
@@ -1441,5 +1558,93 @@ mod tests {
         assert!(display.contains("incomplete"));
         assert!(display.contains("main"));
         // Empty output shouldn't cause issues
+    }
+
+    #[test]
+    fn snapshot_with_switch_suggestion_branch_already_exists() {
+        let err = GitError::WithSwitchSuggestion {
+            source: Box::new(GitError::BranchAlreadyExists {
+                branch: "emails".into(),
+            }),
+            ctx: SwitchSuggestionCtx {
+                extra_flags: vec!["--execute=claude".into()],
+                trailing_args: vec!["Check my emails".into()],
+            },
+        };
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mBranch [1memails[22m already exists[39m
+        [2m↳[22m [2mTo switch to the existing branch, run without [90m--create[39m: [90mwt switch emails --execute=claude -- 'Check my emails'[39m[22m
+        ");
+    }
+
+    #[test]
+    fn snapshot_with_switch_suggestion_worktree_path_exists() {
+        let err = GitError::WithSwitchSuggestion {
+            source: Box::new(GitError::WorktreePathExists {
+                branch: "emails".into(),
+                path: PathBuf::from("/tmp/repo.emails"),
+                create: true,
+            }),
+            ctx: SwitchSuggestionCtx {
+                extra_flags: vec!["--execute=claude".into()],
+                trailing_args: vec!["Check my emails".into()],
+            },
+        };
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mDirectory already exists: [1m/tmp/repo.emails[22m[39m
+        [2m↳[22m [2mTo remove manually, run [90mrm -rf /tmp/repo.emails[39m; to overwrite (with backup), run [90mwt switch --create --clobber emails --execute=claude -- 'Check my emails'[39m[22m
+        ");
+    }
+
+    #[test]
+    fn snapshot_with_switch_suggestion_no_trailing_args() {
+        let err = GitError::WithSwitchSuggestion {
+            source: Box::new(GitError::BranchAlreadyExists {
+                branch: "emails".into(),
+            }),
+            ctx: SwitchSuggestionCtx {
+                extra_flags: vec!["--execute=claude".into()],
+                trailing_args: vec![],
+            },
+        };
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mBranch [1memails[22m already exists[39m
+        [2m↳[22m [2mTo switch to the existing branch, run without [90m--create[39m: [90mwt switch emails --execute=claude[39m[22m
+        ");
+    }
+
+    #[test]
+    fn snapshot_with_switch_suggestion_branch_not_found() {
+        let err = GitError::WithSwitchSuggestion {
+            source: Box::new(GitError::BranchNotFound {
+                branch: "emails".into(),
+                show_create_hint: true,
+            }),
+            ctx: SwitchSuggestionCtx {
+                extra_flags: vec!["--execute=claude".into()],
+                trailing_args: vec!["Check my emails".into()],
+            },
+        };
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mNo branch named [1memails[22m[39m
+        [2m↳[22m [2mTo create a new branch, run [90mwt switch --create emails --execute=claude -- 'Check my emails'[39m; to list branches, run [90mwt list --branches --remotes[39m[22m
+        ");
+    }
+
+    #[test]
+    fn test_with_switch_suggestion_unwrapped_errors_unaffected() {
+        // Non-switch-suggestion errors should be completely unaffected by the wrapper
+        let inner = GitError::DetachedHead {
+            action: Some("merge".into()),
+        };
+        let wrapped = GitError::WithSwitchSuggestion {
+            source: Box::new(inner.clone()),
+            ctx: SwitchSuggestionCtx {
+                extra_flags: vec!["--execute=claude".into()],
+                trailing_args: vec!["Check my emails".into()],
+            },
+        };
+        // Errors without switch suggestions should render identically
+        assert_eq!(inner.to_string(), wrapped.to_string());
     }
 }

@@ -280,6 +280,7 @@ fn test_list_config_serde() {
         full: Some(true),
         branches: Some(false),
         remotes: None,
+        summary: None,
         timeout_ms: Some(500),
     };
     let json = serde_json::to_string(&config).unwrap();
@@ -287,6 +288,7 @@ fn test_list_config_serde() {
     assert_eq!(parsed.full, Some(true));
     assert_eq!(parsed.branches, Some(false));
     assert_eq!(parsed.remotes, None);
+    assert_eq!(parsed.summary, None);
     assert_eq!(parsed.timeout_ms, Some(500));
 }
 
@@ -311,102 +313,6 @@ fn test_worktrunk_config_default() {
     assert!(config.configs.merge.is_none());
     assert!(config.commit_generation.is_none());
     assert!(!config.skip_shell_integration_prompt);
-}
-
-#[test]
-fn test_worktrunk_config_is_command_approved_empty() {
-    let config = UserConfig::default();
-    assert!(!config.is_command_approved("some/project", "npm install"));
-}
-
-#[test]
-fn test_worktrunk_config_is_command_approved_with_commands() {
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            approved_commands: vec!["npm install".to_string(), "npm test".to_string()],
-            ..Default::default()
-        },
-    );
-    assert!(config.is_command_approved("github.com/user/repo", "npm install"));
-    assert!(config.is_command_approved("github.com/user/repo", "npm test"));
-    assert!(!config.is_command_approved("github.com/user/repo", "rm -rf /"));
-    assert!(!config.is_command_approved("other/project", "npm install"));
-}
-
-#[test]
-fn test_is_command_approved_normalizes_deprecated_vars() {
-    // Approval saved with deprecated variable should match command with new variable
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            approved_commands: vec![
-                "ln -sf {{ repo_root }}/node_modules".to_string(), // old var
-            ],
-            ..Default::default()
-        },
-    );
-
-    // Should match when checking with new variable name
-    assert!(config.is_command_approved(
-        "github.com/user/repo",
-        "ln -sf {{ repo_path }}/node_modules" // new var
-    ));
-
-    // Should still match exact old name too
-    assert!(config.is_command_approved(
-        "github.com/user/repo",
-        "ln -sf {{ repo_root }}/node_modules" // old var
-    ));
-}
-
-#[test]
-fn test_is_command_approved_normalizes_new_approval_matches_old_command() {
-    // Approval saved with new variable should match command with deprecated variable
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            approved_commands: vec![
-                "cd {{ worktree_path }} && npm install".to_string(), // new var
-            ],
-            ..Default::default()
-        },
-    );
-
-    // Should match when checking with old variable name
-    assert!(config.is_command_approved(
-        "github.com/user/repo",
-        "cd {{ worktree }} && npm install" // old var
-    ));
-}
-
-#[test]
-fn test_is_command_approved_normalizes_multiple_vars() {
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            approved_commands: vec![
-                "ln -sf {{ repo_root }}/modules {{ worktree }}/modules".to_string(),
-            ],
-            ..Default::default()
-        },
-    );
-
-    // Should match with all new variable names
-    assert!(config.is_command_approved(
-        "github.com/user/repo",
-        "ln -sf {{ repo_path }}/modules {{ worktree_path }}/modules"
-    ));
-
-    // Should match with mixed old/new (both normalize to same canonical form)
-    assert!(config.is_command_approved(
-        "github.com/user/repo",
-        "ln -sf {{ repo_path }}/modules {{ worktree }}/modules"
-    ));
 }
 
 #[test]
@@ -587,12 +493,14 @@ fn test_merge_list_config() {
         full: Some(true),
         branches: Some(false),
         remotes: None,
+        summary: Some(true),
         timeout_ms: Some(1000),
     };
     let override_config = ListConfig {
         full: None,           // Should fall back to base
         branches: Some(true), // Should override
         remotes: Some(true),  // Should override (base was None)
+        summary: None,        // Should fall back to base
         timeout_ms: None,     // Should fall back to base
     };
 
@@ -600,6 +508,7 @@ fn test_merge_list_config() {
     assert_eq!(merged.full, Some(true)); // From base
     assert_eq!(merged.branches, Some(true)); // From override
     assert_eq!(merged.remotes, Some(true)); // From override
+    assert_eq!(merged.summary, Some(true)); // From base
     assert_eq!(merged.timeout_ms, Some(1000)); // From base
 }
 
@@ -936,9 +845,7 @@ fn test_effective_list_project_only() {
             overrides: OverridableConfig {
                 list: Some(ListConfig {
                     full: Some(true),
-                    branches: None,
-                    remotes: None,
-                    timeout_ms: None,
+                    ..Default::default()
                 }),
                 ..Default::default()
             },
@@ -1030,11 +937,13 @@ fn test_list_config_accessor_methods_with_values() {
         full: Some(true),
         branches: Some(true),
         remotes: Some(false),
+        summary: Some(true),
         timeout_ms: Some(5000),
     };
     assert!(config.full());
     assert!(config.branches());
     assert!(!config.remotes());
+    assert!(config.summary());
     assert_eq!(config.timeout_ms(), Some(5000));
 }
 
@@ -1964,13 +1873,9 @@ fn test_reload_projects_from_invalid_toml() {
     // Now corrupt it with invalid TOML
     std::fs::write(&config_path, "this is not valid toml [[[").unwrap();
 
-    // Try to reload - should fail with parse error
+    // Try to reload via a mutation — should fail with parse error
     let mut config = UserConfig::default();
-    let result = config.approve_command(
-        "github.com/test/repo".to_string(),
-        "echo test".to_string(),
-        Some(&config_path),
-    );
+    let result = config.set_skip_shell_integration_prompt(Some(&config_path));
 
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -2019,13 +1924,9 @@ fn test_reload_projects_from_permission_error() {
         return;
     }
 
-    // Try to reload - should fail with read error
+    // Try to reload via a mutation — should fail with read error
     let mut config = UserConfig::default();
-    let result = config.approve_command(
-        "github.com/test/repo".to_string(),
-        "echo test".to_string(),
-        Some(&config_path),
-    );
+    let result = config.set_skip_shell_integration_prompt(Some(&config_path));
 
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
