@@ -236,6 +236,29 @@ This tests:
         full: bool,
     },
 
+    /// Update deprecated config settings
+    #[command(
+        after_long_help = r#"Updates deprecated settings in user and project config files
+to their current equivalents. Shows a diff and asks for confirmation.
+
+## Examples
+
+Preview and apply updates:
+```console
+wt config update
+```
+
+Apply without confirmation:
+```console
+wt config update --yes
+```"#
+    )]
+    Update {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+
     /// Manage internal data and cache
     #[command(
         after_long_help = r#"State is stored in `.git/` (config entries and log files), separate from configuration files.

@@ -367,6 +367,7 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
   <b><span class=c>shell</span></b>   Shell integration setup
   <b><span class=c>create</span></b>  Create configuration file
   <b><span class=c>show</span></b>    Show configuration files &amp; locations
+  <b><span class=c>update</span></b>  Update deprecated config settings
   <b><span class=c>state</span></b>   Manage internal data and cache
 
 <b><span class=g>Options:</span></b>
