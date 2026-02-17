@@ -41,9 +41,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36mSYSTEM CONFIG[39m  /etc/xdg/worktrunk/config.toml
-[2m↳[22m [2mNot found (optional)[22m
-
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [2m↳[22m [2mEmpty file (using defaults)[22m
 

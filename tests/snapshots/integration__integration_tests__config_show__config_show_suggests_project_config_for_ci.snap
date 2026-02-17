@@ -25,10 +25,13 @@ info:
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -38,15 +41,13 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36mSYSTEM CONFIG[39m  /etc/xdg/worktrunk/config.toml
-[2m↳[22m [2mNot found (optional)[22m
-
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [33m▲[39m [33mKey [1mci[22m belongs in project config (will be ignored)[39m
 [107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 [107m [0m 
 [107m [0m [1m[36m[ci]
 [107m [0m platform = [32m"github"
+[2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
 
 [36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
 [2m↳[22m [2mNot found[22m

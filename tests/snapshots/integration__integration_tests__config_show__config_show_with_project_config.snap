@@ -27,6 +27,7 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
@@ -40,11 +41,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36mSYSTEM CONFIG[39m  /etc/xdg/worktrunk/config.toml
-[2m↳[22m [2mNot found (optional)[22m
-
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
+[2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
 
 [36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
 [107m [0m post-create = [32m"npm install"

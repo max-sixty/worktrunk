@@ -35,12 +35,14 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     // Build the complete output as a string
     let mut show_output = String::new();
 
-    // Render system config (organization-wide defaults)
-    render_system_config(&mut show_output)?;
-    show_output.push('\n');
+    // Render system config section (only when a system config file exists)
+    let has_system_config = render_system_config(&mut show_output)?;
+    if has_system_config {
+        show_output.push('\n');
+    }
 
     // Render user config
-    render_user_config(&mut show_output)?;
+    render_user_config(&mut show_output, has_system_config)?;
     show_output.push('\n');
 
     // Render project config if in a git repository
@@ -345,28 +347,20 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn render_system_config(out: &mut String) -> anyhow::Result<()> {
-    let system_path = get_system_config_path();
-
-    // Determine the display path: actual path if found, or platform default as hint
-    let display_path = match &system_path {
-        Some(path) => format_path_for_display(path),
-        None => match default_system_config_path() {
-            Some(path) => format_path_for_display(&path),
-            None => "(unavailable)".to_string(),
-        },
+/// Render the SYSTEM CONFIG section. Returns true if a system config file was found.
+fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
+    let Some(system_path) = get_system_config_path() else {
+        return Ok(false);
     };
 
     writeln!(
         out,
         "{}",
-        format_heading("SYSTEM CONFIG", Some(&display_path))
+        format_heading(
+            "SYSTEM CONFIG",
+            Some(&format_path_for_display(&system_path))
+        )
     )?;
-
-    let Some(system_path) = system_path else {
-        writeln!(out, "{}", hint_message("Not found (optional)"))?;
-        return Ok(());
-    };
 
     // Read and display the file contents
     let contents =
@@ -374,7 +368,7 @@ fn render_system_config(out: &mut String) -> anyhow::Result<()> {
 
     if contents.trim().is_empty() {
         writeln!(out, "{}", hint_message("Empty file (no system defaults)"))?;
-        return Ok(());
+        return Ok(true);
     }
 
     // Validate config (syntax + schema) and warn if invalid
@@ -391,10 +385,10 @@ fn render_system_config(out: &mut String) -> anyhow::Result<()> {
     // Display TOML with syntax highlighting
     writeln!(out, "{}", format_toml(&contents))?;
 
-    Ok(())
+    Ok(true)
 }
 
-fn render_user_config(out: &mut String) -> anyhow::Result<()> {
+fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Result<()> {
     let config_path = require_user_config_path()?;
 
     writeln!(
@@ -460,6 +454,24 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
     // Display TOML with syntax highlighting (gutter at column 0)
     writeln!(out, "{}", format_toml(&contents))?;
 
+    if !has_system_config {
+        render_system_config_hint(out)?;
+    }
+
+    Ok(())
+}
+
+fn render_system_config_hint(out: &mut String) -> anyhow::Result<()> {
+    if let Some(path) = default_system_config_path() {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Optional system config not found @ <dim>{}</>",
+                format_path_for_display(&path)
+            ))
+        )?;
+    }
     Ok(())
 }
 

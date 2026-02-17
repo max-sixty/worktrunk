@@ -215,22 +215,36 @@ fn test_user_config_overrides_system_config(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_config_show_system_config_shows_platform_default_path(repo: TestRepo) {
-    // When WORKTRUNK_SYSTEM_CONFIG_PATH is not set, config show should display
-    // the platform-specific default path (e.g., /etc/xdg/worktrunk/config.toml
-    // on Linux, /Library/Application Support/worktrunk/config.toml on macOS)
+fn test_config_show_system_config_hint_under_user_config(repo: TestRepo, temp_home: TempDir) {
+    // When no system config exists but user config does, config show should
+    // display a hint under USER CONFIG with the platform-specific default path
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n",
+    )
+    .unwrap();
+
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
     cmd.env_remove("WORKTRUNK_SYSTEM_CONFIG_PATH");
     cmd.arg("config").arg("show").current_dir(repo.root_path());
 
     let output = cmd.output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Should show a system config path containing "worktrunk/config.toml"
+    // Should NOT show a full SYSTEM CONFIG heading
     assert!(
-        stderr.contains("SYSTEM CONFIG") && stderr.contains("worktrunk/config.toml"),
-        "Expected platform default system config path in output, got:\n{stderr}"
+        !stderr.contains("SYSTEM CONFIG"),
+        "Should not show SYSTEM CONFIG section when absent, got:\n{stderr}"
+    );
+    // Should show a system config hint under USER CONFIG
+    assert!(
+        stderr.contains("Optional system config not found")
+            && stderr.contains("worktrunk/config.toml"),
+        "Expected system config hint in output, got:\n{stderr}"
     );
 }
 
