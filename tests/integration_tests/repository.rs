@@ -662,6 +662,35 @@ fn test_repo_path_in_submodule() {
         "git_common_dir should be in parent's .git/modules/ for a submodule, got: {:?}",
         git_common_dir
     );
+
+    // Verify list_worktrees() returns corrected paths for submodule main worktree.
+    // Git's `worktree list` reports the main worktree as .git/modules/sub for submodules,
+    // which is wrong — it should be the actual working directory.
+    let worktrees = repository.list_worktrees().unwrap();
+    assert!(
+        !worktrees.is_empty(),
+        "list_worktrees() should return at least the main worktree"
+    );
+    let main_wt_path = dunce::canonicalize(&worktrees[0].path).unwrap();
+    assert_eq!(
+        main_wt_path, expected,
+        "list_worktrees()[0].path should be the submodule working directory, not .git/modules/sub"
+    );
+
+    // Verify worktree_for_branch() returns the corrected path (this is what `wt switch` uses)
+    let main_branch = worktrees[0]
+        .branch
+        .as_deref()
+        .expect("submodule main worktree should have a branch");
+    let found_path = repository
+        .worktree_for_branch(main_branch)
+        .unwrap()
+        .unwrap();
+    let found_canonical = dunce::canonicalize(&found_path).unwrap();
+    assert_eq!(
+        found_canonical, expected,
+        "worktree_for_branch() should return submodule working directory for default branch"
+    );
 }
 
 // =============================================================================
