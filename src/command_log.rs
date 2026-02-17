@@ -104,18 +104,22 @@ pub fn log_command(label: &str, command: &str, exit_code: Option<i32>, duration:
         "dur_ms": duration.map(|d| d.as_millis() as u64),
     });
 
-    let _ = writeln!(file, "{}", entry);
+    // Single write_all to avoid interleaving with concurrent wt processes
+    let mut buf = entry.to_string();
+    buf.push('\n');
+    let _ = file.write_all(buf.as_bytes());
 }
 
 /// Truncate a command string to `MAX_CMD_LENGTH` characters, appending `…` if truncated.
-/// Uses char-based indexing to avoid panicking on multi-byte UTF-8.
+/// Uses char_indices to find the byte boundary in a single scan.
 fn truncate_cmd(command: &str) -> String {
-    if command.chars().count() > MAX_CMD_LENGTH {
-        let mut s: String = command.chars().take(MAX_CMD_LENGTH).collect();
-        s.push('…');
-        s
-    } else {
-        command.to_string()
+    match command.char_indices().nth(MAX_CMD_LENGTH) {
+        Some((byte_idx, _)) => {
+            let mut s = command[..byte_idx].to_string();
+            s.push('…');
+            s
+        }
+        None => command.to_string(),
     }
 }
 
