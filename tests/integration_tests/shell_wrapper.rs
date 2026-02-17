@@ -1128,6 +1128,9 @@ test = "echo '✓ All 47 tests passed in 2.3s'"
         repo.commit("Add pre-merge validation");
         let feature_wt = repo.add_feature();
 
+        // Suppress commit generation prompt (fires in PTY when claude is on PATH)
+        repo.write_test_config("");
+
         // Pre-approve commands
         repo.write_test_approvals(
             r#"[projects."../origin"]
@@ -1175,6 +1178,9 @@ test = "echo '✗ Test suite failed: 3 tests failing' && exit 1"
         .unwrap();
 
         repo.commit("Add failing pre-merge validation");
+
+        // Suppress commit generation prompt (fires in PTY when claude is on PATH)
+        repo.write_test_config("");
 
         // Create feature worktree with a commit
         let feature_wt = repo.add_worktree_with_commit(
