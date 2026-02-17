@@ -678,7 +678,10 @@ fn test_repo_path_in_submodule() {
     );
 
     // Verify worktree_for_branch() returns the corrected path (this is what `wt switch` uses)
-    let main_branch = worktrees[0].branch.as_deref().unwrap();
+    let main_branch = worktrees[0]
+        .branch
+        .as_deref()
+        .expect("submodule main worktree should have a branch");
     let found_path = repository
         .worktree_for_branch(main_branch)
         .unwrap()
