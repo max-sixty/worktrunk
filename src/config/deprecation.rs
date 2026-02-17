@@ -57,7 +57,7 @@ const DEPRECATED_VARS: &[(&str, &str)] = &[
 
 /// Top-level section keys that are deprecated and handled separately.
 /// Callers should filter these out before calling `warn_unknown_fields` to avoid duplicate warnings.
-pub const DEPRECATED_SECTION_KEYS: &[&str] = &["commit-generation"];
+pub const DEPRECATED_SECTION_KEYS: &[&str] = &["commit-generation", "select"];
 
 /// Normalize a template string by replacing deprecated variables with their canonical names.
 ///
@@ -186,12 +186,17 @@ pub struct Deprecations {
     pub commit_gen: CommitGenerationDeprecations,
     /// Has `approved-commands` in any `[projects."..."]` section (moved to approvals.toml)
     pub approved_commands: bool,
+    /// Has `[select]` section (moved to `[switch.picker]`)
+    pub select: bool,
 }
 
 impl Deprecations {
     /// Returns true if any deprecations were found
     pub fn is_empty(&self) -> bool {
-        self.vars.is_empty() && self.commit_gen.is_empty() && !self.approved_commands
+        self.vars.is_empty()
+            && self.commit_gen.is_empty()
+            && !self.approved_commands
+            && !self.select
     }
 }
 
@@ -204,6 +209,7 @@ pub fn detect_deprecations(content: &str) -> Deprecations {
         vars: find_deprecated_vars(content),
         commit_gen: find_commit_generation_deprecations(content),
         approved_commands: find_approved_commands_deprecation(content),
+        select: find_select_deprecation(content),
     }
 }
 
@@ -460,6 +466,88 @@ pub fn remove_approved_commands_from_config(content: &str) -> String {
     } else {
         content.to_string()
     }
+}
+
+/// Check if config has a deprecated `[select]` section without a corresponding `[switch.picker]`.
+///
+/// Returns true if `[select]` exists, is non-empty, and `[switch.picker]` does not exist.
+pub fn find_select_deprecation(content: &str) -> bool {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+
+    // Check if new [switch.picker] already exists
+    let has_new_section = doc
+        .get("switch")
+        .and_then(|s| s.as_table())
+        .and_then(|t| t.get("picker"))
+        .is_some_and(|p| p.is_table() || p.is_inline_table());
+
+    if has_new_section {
+        return false;
+    }
+
+    // Check if [select] exists and is non-empty
+    if let Some(section) = doc.get("select") {
+        if let Some(table) = section.as_table() {
+            return !table.is_empty();
+        }
+        if let Some(inline) = section.as_inline_table() {
+            return !inline.is_empty();
+        }
+    }
+
+    false
+}
+
+/// Migrate `[select]` section to `[switch.picker]`.
+///
+/// Renames `[select]` to `[switch.picker]`, preserving all fields.
+/// Skips migration if `[switch.picker]` already exists.
+pub fn migrate_select_to_switch_picker(content: &str) -> String {
+    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return content.to_string();
+    };
+
+    // Check if [switch.picker] already exists
+    let has_new_section = doc
+        .get("switch")
+        .and_then(|s| s.as_table())
+        .and_then(|t| t.get("picker"))
+        .is_some_and(|p| p.is_table() || p.is_inline_table());
+
+    if has_new_section {
+        return content.to_string();
+    }
+
+    // Remove [select] and migrate to [switch.picker]
+    let Some(old_section) = doc.remove("select") else {
+        return content.to_string();
+    };
+
+    let table_opt = match old_section {
+        toml_edit::Item::Table(t) => Some(t),
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => Some(it.into_table()),
+        _ => None,
+    };
+
+    let Some(table) = table_opt else {
+        return content.to_string();
+    };
+
+    // Ensure [switch] section exists (implicit so only [switch.picker] renders)
+    if !doc.contains_key("switch") {
+        let mut switch_table = toml_edit::Table::new();
+        switch_table.set_implicit(true);
+        doc.insert("switch", toml_edit::Item::Table(switch_table));
+    }
+
+    // Move to [switch.picker]
+    if let Some(switch_table) = doc["switch"].as_table_mut() {
+        switch_table.insert("picker", toml_edit::Item::Table(table));
+    }
+
+    doc.to_string()
 }
 
 /// Copy approved-commands from config.toml to approvals.toml.
@@ -763,6 +851,9 @@ pub fn write_migration_file(
     if deprecations.approved_commands {
         new_content = remove_approved_commands_from_config(&new_content);
     }
+    if deprecations.select {
+        new_content = migrate_select_to_switch_picker(&new_content);
+    }
 
     if let Err(e) = std::fs::write(&new_path, &new_content) {
         // Log write failure but don't block config loading
@@ -869,6 +960,17 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
                 ))
             );
         }
+    }
+
+    if info.deprecations.select {
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(format!(
+                "{} uses deprecated config section: [select] → [switch.picker]",
+                info.label
+            ))
+        );
     }
 
     out
@@ -2074,6 +2176,7 @@ approved-commands = ["npm install"]
                 vars: vec![],
                 commit_gen: CommitGenerationDeprecations::default(),
                 approved_commands: true,
+                select: false,
             },
             label: "User config".to_string(),
             in_linked_worktree: false,
@@ -2101,6 +2204,7 @@ approved-commands = ["npm install"]
                 vars: vec![],
                 commit_gen: CommitGenerationDeprecations::default(),
                 approved_commands: true,
+                select: false,
             },
             label: "User config".to_string(),
             in_linked_worktree: false,
@@ -2129,6 +2233,7 @@ approved-commands = ["npm install"]
             vars: vec![],
             commit_gen: CommitGenerationDeprecations::default(),
             approved_commands: true,
+            select: false,
         };
         let result = write_migration_file(&config_path, content, &deprecations, None);
         assert!(
@@ -2238,6 +2343,199 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
         assert!(
             result.contains("[commit.generation]"),
             "Should have [commit.generation] header"
+        );
+    }
+
+    // Tests for [select] → [switch.picker] deprecation
+
+    #[test]
+    fn test_find_select_deprecation_none() {
+        let content = r#"
+[switch.picker]
+pager = "delta --paging=never"
+"#;
+        assert!(!find_select_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_select_deprecation_present() {
+        let content = r#"
+[select]
+pager = "delta --paging=never"
+"#;
+        assert!(find_select_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_select_deprecation_empty_not_flagged() {
+        let content = r#"
+[select]
+"#;
+        assert!(!find_select_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_select_deprecation_skips_when_new_exists() {
+        // When both [select] and [switch.picker] exist, don't flag
+        let content = r#"
+[select]
+pager = "old"
+
+[switch.picker]
+pager = "new"
+"#;
+        assert!(!find_select_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_select_deprecation_inline_table() {
+        let content = r#"
+select = { pager = "delta" }
+"#;
+        assert!(find_select_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_select_deprecation_empty_inline_table() {
+        let content = r#"
+select = {}
+"#;
+        assert!(!find_select_deprecation(content));
+    }
+
+    #[test]
+    fn test_migrate_select_simple() {
+        let content = r#"
+[select]
+pager = "delta --paging=never"
+"#;
+        let result = migrate_select_to_switch_picker(content);
+        assert!(
+            result.contains("[switch.picker]"),
+            "Should have [switch.picker]: {result}"
+        );
+        assert!(
+            result.contains("pager = \"delta --paging=never\""),
+            "Should preserve pager: {result}"
+        );
+        assert!(
+            !result.contains("[select]"),
+            "Should remove [select]: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_select_skips_when_new_exists() {
+        let content = r#"
+[select]
+pager = "old"
+
+[switch.picker]
+pager = "new"
+"#;
+        let result = migrate_select_to_switch_picker(content);
+        assert_eq!(
+            result, content,
+            "Should not migrate when new section exists"
+        );
+    }
+
+    #[test]
+    fn test_migrate_select_invalid_toml() {
+        let content = "this is { not valid toml";
+        let result = migrate_select_to_switch_picker(content);
+        assert_eq!(result, content, "Invalid TOML should be returned unchanged");
+    }
+
+    #[test]
+    fn test_migrate_select_no_select_section() {
+        let content = r#"
+[list]
+full = true
+"#;
+        let result = migrate_select_to_switch_picker(content);
+        assert_eq!(result, content, "No [select] section means no migration");
+    }
+
+    #[test]
+    fn test_detect_deprecations_includes_select() {
+        let content = r#"
+[select]
+pager = "delta"
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.select);
+        assert!(!deprecations.is_empty());
+    }
+
+    #[test]
+    fn snapshot_migrate_select_to_switch_picker() {
+        let content = r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+[select]
+pager = "delta --paging=never"
+
+[list]
+branches = true
+"#;
+        let result = migrate_select_to_switch_picker(content);
+        insta::assert_snapshot!(migration_diff(content, &result));
+    }
+
+    #[test]
+    fn test_format_deprecation_details_select() {
+        let info = DeprecationInfo {
+            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
+            migration_path: None,
+            deprecations: Deprecations {
+                vars: vec![],
+                commit_gen: CommitGenerationDeprecations::default(),
+                approved_commands: false,
+                select: true,
+            },
+            label: "User config".to_string(),
+            in_linked_worktree: false,
+            approvals_copied_to: None,
+        };
+        let output = format_deprecation_details(&info);
+        assert!(
+            output.contains("[select]"),
+            "Should mention [select] in output: {output}"
+        );
+        assert!(
+            output.contains("[switch.picker]"),
+            "Should mention [switch.picker]: {output}"
+        );
+    }
+
+    #[test]
+    fn test_write_migration_file_with_select() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let content = r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+[select]
+pager = "delta --paging=never"
+"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        let deprecations = Deprecations {
+            vars: vec![],
+            commit_gen: CommitGenerationDeprecations::default(),
+            approved_commands: false,
+            select: true,
+        };
+        let result = write_migration_file(&config_path, content, &deprecations, None);
+        assert!(result.is_some(), "Should write migration file for select");
+        let migration_path = result.unwrap();
+        let migrated = std::fs::read_to_string(&migration_path).unwrap();
+        assert!(
+            migrated.contains("[switch.picker]"),
+            "Migrated content should have [switch.picker]: {migrated}"
+        );
+        assert!(
+            !migrated.contains("[select]"),
+            "Migrated content should not have [select]: {migrated}"
         );
     }
 }

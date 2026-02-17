@@ -146,6 +146,12 @@ impl UserConfig {
                 Self::serialize_project_config_section(
                     projects,
                     project_id,
+                    "switch",
+                    project_config.overrides.switch.as_ref(),
+                );
+                Self::serialize_project_config_section(
+                    projects,
+                    project_id,
                     "select",
                     project_config.overrides.select.as_ref(),
                 );

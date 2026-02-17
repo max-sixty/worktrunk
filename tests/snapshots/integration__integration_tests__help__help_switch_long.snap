@@ -180,7 +180,7 @@ When called without arguments, [2mwt switch[0m opens an interactive picker to 
 
 [1mPager configuration:[0m The preview panel pipes diff output through git's pager. Override in user config:
 
-  [2m[select][0m
+  [2m[switch.picker][0m
   [2mpager = "delta --paging=never --width=$COLUMNS"[0m
 
 Available on Unix only (macOS, Linux). On Windows, use [2mwt list[0m or [2mwt switch <branch>[0m directly.

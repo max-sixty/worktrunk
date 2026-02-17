@@ -1045,6 +1045,53 @@ fn test_config_source_generates_example_toml() {
     }
 }
 
+/// Verify that all config section keys appear in the user config documentation.
+///
+/// When a new config section is added (e.g., `[switch.picker]`), this test ensures
+/// it also appears in the user config docs in `src/cli/mod.rs`. Without this, new
+/// config sections can ship undocumented.
+#[test]
+fn test_config_docs_include_all_sections() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cli_mod_path = project_root.join("src/cli/mod.rs");
+    let cli_mod_content = fs::read_to_string(&cli_mod_path).unwrap();
+    let user_config_content = extract_user_config_from_cli(&cli_mod_content);
+
+    // Config sections that MUST be documented (non-deprecated, non-hook table sections).
+    // When adding a new config section, add it here — the test will fail if it's
+    // missing from the docs.
+    let required_sections = [
+        "list",
+        "commit",
+        "commit.generation",
+        "merge",
+        "switch.picker",
+    ];
+
+    // Deprecated sections — should NOT appear in docs (old users get migration guidance)
+    let deprecated_sections = ["select", "commit-generation"];
+
+    // Check required sections appear as TOML headers in code blocks
+    for section in &required_sections {
+        let header = format!("[{section}]");
+        assert!(
+            user_config_content.contains(&header),
+            "Config section `{header}` is missing from user config docs in src/cli/mod.rs.\n\
+             All config sections must be documented between USER_CONFIG_START/END markers."
+        );
+    }
+
+    // Check deprecated sections do NOT appear as TOML headers
+    for section in &deprecated_sections {
+        let header = format!("[{section}]");
+        assert!(
+            !user_config_content.contains(&header),
+            "Deprecated section `{header}` should not appear in user config docs.\n\
+             Use the new section name instead."
+        );
+    }
+}
+
 #[test]
 fn test_config_source_templates_are_in_sync() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
