@@ -450,6 +450,16 @@ main {
     background-color: transparent;
 }
 
+// Quoted strings get olive color via CSS sibling selector (light mode only).
+// Giallo emits: <span class="z-punctuation z-definition z-string">'</span><span class="z-string">content</span>
+// Bare strings (subcommands like `switch`) are just <span class="z-string"> without a preceding quote span.
+// Must match punctuation.definition.string in worktrunk-light.json (#588a10).
+@media (prefers-color-scheme: light) {
+    .z-punctuation.z-definition.z-string + .z-string {
+        color: #588a10;
+    }
+}
+
 // Shared styles for code blocks and terminal output
 %code-block-base {
     position: relative;
