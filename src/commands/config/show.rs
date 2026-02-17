@@ -501,8 +501,10 @@ fn render_project_config(
     }
 
     // Check for deprecations with show_brief_warning=false (silent mode)
-    // Only show in main worktree (where .git is a directory) — git only
-    let is_main_worktree = repo_root.join(".git").is_dir();
+    // Only write migration file in main worktree, not linked worktrees
+    let is_main_worktree = repo
+        .map(|r| !r.current_worktree().is_linked().unwrap_or(true))
+        .unwrap_or(false);
     let has_deprecations = if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
         &config_path,
         &contents,

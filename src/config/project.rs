@@ -151,10 +151,9 @@ impl ProjectConfig {
             .map_err(|e| ConfigError::Message(format!("Failed to read config file: {}", e)))?;
 
         // Check for deprecated template variables and create migration file if needed
-        // Only write migration file in main worktree (where .git is a directory)
-        // Linked worktrees have .git as a file pointing to the main worktree
+        // Only write migration file in main worktree, not linked worktrees
         // Use show_brief_warning=true to emit a brief pointer to `wt config show`
-        let is_main_worktree = repo_root.join(".git").is_dir();
+        let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
         let repo_for_hints = if write_hints { Some(repo) } else { None };
         let _ = super::deprecation::check_and_migrate(
             &config_path,
