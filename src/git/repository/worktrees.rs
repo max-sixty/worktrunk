@@ -22,8 +22,34 @@ impl Repository {
     pub fn list_worktrees(&self) -> anyhow::Result<Vec<WorktreeInfo>> {
         let stdout = self.run_command(&["worktree", "list", "--porcelain"])?;
         let raw_worktrees = WorktreeInfo::parse_porcelain_list(&stdout)?;
+        let mut worktrees: Vec<_> = raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
 
-        Ok(raw_worktrees.into_iter().filter(|wt| !wt.bare).collect())
+        // Submodule path correction.
+        //
+        // Git's `get_main_worktree()` computes the main worktree path by stripping
+        // a trailing `/.git` from the common dir. For submodules, the common dir is
+        // `.git/modules/sub` (no trailing `/.git`), so git leaves it unchanged —
+        // reporting the git data directory as the "main worktree" path. Git does not
+        // consult `core.worktree` in this code path.
+        //
+        // We detect this by checking whether the first worktree's path equals
+        // git_common_dir (which never holds for normal repos, where git_common_dir
+        // is `.git` inside the worktree). When matched, we correct it using
+        // repo_path(), which resolves the actual working directory via
+        // `git rev-parse --show-toplevel` (which does read core.worktree).
+        //
+        // We fix this here rather than at each call site because list_worktrees()
+        // is the single point where worktree paths enter the system — all consumers
+        // (worktree_for_branch, current_worktree_info, resolve_worktree, etc.)
+        // depend on paths being working directories. If git fixes this upstream,
+        // the condition stops triggering.
+        if let Some(first) = worktrees.first_mut()
+            && canonicalize(&first.path).ok().as_deref() == Some(self.git_common_dir())
+        {
+            first.path = self.repo_path().to_path_buf();
+        }
+
+        Ok(worktrees)
     }
 
     /// Get the WorktreeInfo struct for the current worktree, if we're inside one.
