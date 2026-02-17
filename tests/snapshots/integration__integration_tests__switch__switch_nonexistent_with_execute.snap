@@ -4,8 +4,10 @@ info:
   program: wt
   args:
     - switch
-    - "--create"
-    - occupied-branch
+    - "--execute=claude"
+    - nonexistent
+    - "--"
+    - Check my emails
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -40,5 +42,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mDirectory already exists: [1m_REPO_.occupied-branch[22m[39m
-[2m↳[22m [2mTo remove manually, run [90mrm -rf _REPO_.occupied-branch[39m; to overwrite (with backup), run [90mwt switch --create --clobber occupied-branch[39m[22m
+[31m✗[39m [31mNo branch named [1mnonexistent[22m[39m
+[2m↳[22m [2mTo create a new branch, run [90mwt switch --create nonexistent --execute=claude -- 'Check my emails'[39m; to list branches, run [90mwt list --branches --remotes[39m[22m

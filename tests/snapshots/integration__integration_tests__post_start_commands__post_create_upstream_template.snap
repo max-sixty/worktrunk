@@ -27,6 +27,7 @@ info:
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
@@ -42,7 +43,7 @@ exit_code: 101
 
 ----- stderr -----
 
-thread 'main' panicked at src/main.rs:847:21:
+thread 'main' panicked at src/main.rs:843:21:
 Multiline error without context: [31m✗[39m [31mFailed to expand project post-create hook: undefined value @ line 1[39m
 [107m [0m echo 'Upstream: {{ upstream }}' > upstream.txt
 [2m↳[22m [2mAvailable variables: [90mbase, base_worktree_path, branch, commit, default_branch, main_worktree, main_worktree_path, primary_worktree_path, remote, remote_url, repo, repo_path, repo_root, short_commit, worktree, worktree_name, worktree_path[39m[22m

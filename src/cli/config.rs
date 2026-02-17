@@ -156,9 +156,9 @@ Detects various forms of the integration pattern regardless of:
 
 #[derive(Subcommand)]
 pub enum ApprovalsCommand {
-    /// Store approvals in config
+    /// Store approvals in approvals.toml
     #[command(
-        after_long_help = r#"Prompts for approval of all project commands and saves them to user config.
+        after_long_help = r#"Prompts for approval of all project commands and saves them to approvals.toml.
 
 By default, shows only unapproved commands. Use `--all` to review all commands
 including previously approved ones."#
@@ -169,7 +169,7 @@ including previously approved ones."#
         all: bool,
     },
 
-    /// Clear approved commands from config
+    /// Clear approved commands from approvals.toml
     #[command(
         after_long_help = r#"Removes saved approvals, requiring re-approval on next command run.
 

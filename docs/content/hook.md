@@ -475,7 +475,7 @@ wt hook approvals clear --global
 
 ### How approvals work
 
-Approved commands are saved to user config. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI.
+Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI.
 
 ### Command reference
 
@@ -485,8 +485,8 @@ wt hook approvals - Manage command approvals
 Usage: <b><span class=c>wt hook approvals</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>add</span></b>    Store approvals in config
-  <b><span class=c>clear</span></b>  Clear approved commands from config
+  <b><span class=c>add</span></b>    Store approvals in approvals.toml
+  <b><span class=c>clear</span></b>  Clear approved commands from approvals.toml
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>

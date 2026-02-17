@@ -121,6 +121,7 @@ Persistent flag values for `wt list`. Override on command line as needed.
 full = false       # Show CI status and main…± diffstat columns (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
+summary = false    # AI branch summaries in picker tab 5 (requires [commit.generation])
 ```
 
 ### Commit
@@ -169,14 +170,11 @@ Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
 #### Approved hook commands
 
-When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.
+When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved to `~/.config/worktrunk/approvals.toml` (separate from user config to allow dotfile management of config.toml).
 
-```toml
-[projects."github.com/user/repo"]
-approved-commands = ["npm ci", "npm test"]
-```
+To reset, run `wt hook approvals clear`.
 
-To reset, delete the entry or run `wt hook approvals clear`.
+> **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config show` to generate a migration file that removes stale entries.
 
 #### Setting overrides (Experimental)
 

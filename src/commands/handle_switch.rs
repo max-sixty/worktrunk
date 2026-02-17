@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::Context;
 use worktrunk::HookType;
 use worktrunk::config::{UserConfig, expand_template};
-use worktrunk::git::Repository;
+use worktrunk::git::{GitError, Repository, SwitchSuggestionCtx};
 use worktrunk::styling::{eprintln, info_message};
 use worktrunk::workspace::build_worktree_map;
 
@@ -158,8 +158,32 @@ pub fn handle_switch(
         verify,
     } = opts;
 
+    // Build switch suggestion context for enriching error hints with --execute/trailing args.
+    // Without this, errors like "branch already exists" would suggest `wt switch <branch>`
+    // instead of the full `wt switch <branch> --execute=<cmd> -- <args>`.
+    let suggestion_ctx = execute.map(|exec| {
+        let escaped = shell_escape::escape(exec.into());
+        SwitchSuggestionCtx {
+            extra_flags: vec![format!("--execute={escaped}")],
+            trailing_args: execute_args.to_vec(),
+        }
+    });
+
     // Validate FIRST (before approval) - fails fast if branch doesn't exist, etc.
-    let plan = plan_switch(repo, branch, create, base, clobber, config)?;
+    let plan =
+        plan_switch(repo, branch, create, base, clobber, config).map_err(
+            |err| match suggestion_ctx {
+                Some(ref ctx) => match err.downcast::<GitError>() {
+                    Ok(git_err) => GitError::WithSwitchSuggestion {
+                        source: Box::new(git_err),
+                        ctx: ctx.clone(),
+                    }
+                    .into(),
+                    Err(err) => err,
+                },
+                None => err,
+            },
+        )?;
 
     // "Approve at the Gate": collect and approve hooks upfront
     // This ensures approval happens once at the command entry point
@@ -259,7 +283,7 @@ pub(crate) fn expand_and_execute_command(
             .collect();
         let escaped_args: Vec<_> = expanded_args?
             .iter()
-            .map(|arg| shlex::try_quote(arg).unwrap_or(arg.into()).into_owned())
+            .map(|arg| shell_escape::escape(arg.into()).into_owned())
             .collect();
         format!("{} {}", expanded_cmd, escaped_args.join(" "))
     };

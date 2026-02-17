@@ -690,17 +690,13 @@ fn main() {
                 // Config resolution is deferred to collect's parallel phase so
                 // project_identifier runs concurrently with other git commands
                 // instead of blocking the critical path.
-                UserConfig::load()
-                    .context("Failed to load config")
-                    .and_then(|config| {
-                        let progressive_opt = match (progressive, no_progressive) {
-                            (true, _) => Some(true),
-                            (_, true) => Some(false),
-                            _ => None,
-                        };
-                        let render_mode = RenderMode::detect(progressive_opt);
-                        handle_list(format, branches, remotes, full, render_mode, &config)
-                    })
+                let progressive_opt = match (progressive, no_progressive) {
+                    (true, _) => Some(true),
+                    (_, true) => Some(false),
+                    _ => None,
+                };
+                let render_mode = RenderMode::detect(progressive_opt);
+                handle_list(format, branches, remotes, full, render_mode)
             }
         },
         Commands::Switch {

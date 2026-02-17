@@ -50,7 +50,7 @@ fn test_post_create_single_command(repo: TestRepo) {
     repo.commit("Add config");
 
     // Pre-approve the command by writing to the isolated test config
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["echo 'Setup complete'"]
 "#,
@@ -77,7 +77,7 @@ setup = "echo 'Running setup'"
     repo.commit("Add config with named commands");
 
     // Pre-approve both commands in temp HOME
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = [
     "echo 'Installing deps'",
@@ -102,7 +102,7 @@ fn test_post_create_failing_command(repo: TestRepo) {
     repo.commit("Add config with failing command");
 
     // Pre-approve the command in temp HOME
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["exit 1"]
 "#,
@@ -133,10 +133,9 @@ root = "echo 'Root: {{ repo_path }}' >> info.txt"
 
     // Pre-approve all commands in isolated test config
     let repo_name = "repo";
-    repo.write_test_config(
-        r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
-
-[projects."../origin"]
+    repo.write_test_config(r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}""#);
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
 approved-commands = [
     "echo 'Repo: {{ repo }}' > info.txt",
     "echo 'Branch: {{ branch }}' >> info.txt",
@@ -210,10 +209,9 @@ setup = "echo 'Setting up {{ branch | sanitize }} in {{ worktree_path }}'"
     repo.commit("Add config with templates");
 
     // Pre-approve commands
-    repo.write_test_config(
-        r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
-
-[projects."../origin"]
+    repo.write_test_config(r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}""#);
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
 approved-commands = [
     "echo 'Setting up {{ branch | sanitize }} in {{ worktree_path }}'",
 ]
@@ -247,7 +245,7 @@ fn test_post_create_default_branch_template(repo: TestRepo) {
     repo.commit("Add config with default_branch template");
 
     // Pre-approve the command
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["echo 'Default: {{ default_branch }}' > default.txt"]
 "#,
@@ -401,7 +399,7 @@ fn test_post_create_upstream_conditional(#[from(repo_with_remote)] repo: TestRep
     repo.commit("Add config with conditional upstream");
 
     // Pre-approve the command
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["{% if not upstream %}echo 'no-upstream' > upstream.txt{% else %}echo '{{ upstream }}' > upstream.txt{% endif %}"]
 "#,
@@ -444,7 +442,7 @@ base_path = "echo 'Base Path: {{ base_worktree_path }}' >> base_info.txt"
     repo.commit("Add config with base template variables");
 
     // Pre-approve the commands
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = [
     "echo 'Base: {{ base }}' > base_info.txt",
@@ -512,7 +510,7 @@ fn test_post_create_json_stdin(repo: TestRepo) {
     repo.commit("Add config");
 
     // Pre-approve the command
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["cat > context.json"]
 "#,
@@ -523,7 +521,8 @@ approved-commands = ["cat > context.json"]
     let mut cmd = wt_command();
     cmd.args(["switch", "--create", "feature-json"])
         .current_dir(repo.root_path())
-        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
+        .env("WORKTRUNK_APPROVALS_PATH", repo.test_approvals_path());
     set_temp_home_env(&mut cmd, temp_home.path());
     let output = cmd.output().expect("failed to run wt switch");
 
@@ -611,7 +610,7 @@ setup = "./scripts/setup.py"
     repo.commit("Add setup script and config");
 
     // Pre-approve the command
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["./scripts/setup.py"]
 "#,
@@ -622,7 +621,8 @@ approved-commands = ["./scripts/setup.py"]
     let mut cmd = wt_command();
     cmd.args(["switch", "--create", "feature-script"])
         .current_dir(repo.root_path())
-        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
+        .env("WORKTRUNK_APPROVALS_PATH", repo.test_approvals_path());
     set_temp_home_env(&mut cmd, temp_home.path());
     let output = cmd.output().expect("failed to run wt switch");
 
@@ -678,7 +678,7 @@ fn test_post_start_json_stdin(repo: TestRepo) {
     repo.commit("Add config");
 
     // Pre-approve the command
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["cat > context.json"]
 "#,
@@ -689,7 +689,8 @@ approved-commands = ["cat > context.json"]
     let mut cmd = wt_command();
     cmd.args(["switch", "--create", "bg-json"])
         .current_dir(repo.root_path())
-        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
+        .env("WORKTRUNK_APPROVALS_PATH", repo.test_approvals_path());
     set_temp_home_env(&mut cmd, temp_home.path());
     let output = cmd.output().expect("failed to run wt switch");
 
@@ -734,7 +735,7 @@ fn test_post_start_single_background_command(repo: TestRepo) {
     repo.commit("Add background command");
 
     // Pre-approve the command
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["sleep 0.1 && echo 'Background task done' > background.txt"]
 "#,
@@ -771,7 +772,7 @@ setup = "echo 'verbose test' > verbose.txt"
     repo.commit("Add background command");
 
     // Pre-approve the command
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["echo 'verbose test' > verbose.txt"]
 "#,
@@ -798,7 +799,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
     repo.commit("Add multiple background commands");
 
     // Pre-approve both commands
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = [
     "echo 'Task 1 running' > task1.txt",
@@ -834,7 +835,7 @@ server = "sleep 0.05 && echo 'Server running' > server.txt"
     repo.commit("Add both command types");
 
     // Pre-approve all commands
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = [
     "echo 'Setup done' > setup.txt",
@@ -880,7 +881,7 @@ fn test_post_start_log_file_captures_output(repo: TestRepo) {
     repo.commit("Add command with stdout/stderr");
 
     // Pre-approve the command
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
 "#,
@@ -934,7 +935,7 @@ fn test_post_start_invalid_command_handling(repo: TestRepo) {
     repo.commit("Add invalid command");
 
     // Pre-approve the command
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["echo 'unclosed quote"]
 "#,
@@ -969,7 +970,7 @@ task3 = "echo 'TASK3_OUTPUT'"
     repo.commit("Add three background commands");
 
     // Pre-approve all commands
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = [
     "echo 'TASK1_OUTPUT'",
@@ -1042,7 +1043,7 @@ fn test_execute_flag_with_post_start_commands(repo: TestRepo) {
     repo.commit("Add background command");
 
     // Pre-approve the command
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["echo 'Background task' > background.txt"]
 "#,
@@ -1082,7 +1083,7 @@ fn test_post_start_complex_shell_commands(repo: TestRepo) {
     repo.commit("Add complex shell command");
 
     // Pre-approve the command
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["echo 'line1\nline2\nline3' | grep line2 > filtered.txt"]
 "#,
@@ -1118,10 +1119,9 @@ echo 'third line' >> multiline.txt
 echo 'second line' >> multiline.txt
 echo 'third line' >> multiline.txt
 ";
-    repo.write_test_config(&format!(
-        r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
-
-[projects."../origin"]
+    repo.write_test_config(r#"worktree-path = "../{{ repo }}.{{ branch }}""#);
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
 approved-commands = ["""
 {}"""]
 "#,
@@ -1170,10 +1170,9 @@ else
   echo 'File exists' > result.txt
 fi
 ";
-    repo.write_test_config(&format!(
-        r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
-
-[projects."../origin"]
+    repo.write_test_config(r#"worktree-path = "../{{ repo }}.{{ branch }}""#);
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
 approved-commands = ["""
 {}"""]
 "#,
@@ -1213,7 +1212,7 @@ fn test_post_start_skipped_on_existing_worktree(repo: TestRepo) {
     repo.commit("Add post-start config");
 
     // Pre-approve the command
-    repo.write_test_config(
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["echo 'POST-START-RAN' > post_start_marker.txt"]
 "#,

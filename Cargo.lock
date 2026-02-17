@@ -3219,7 +3219,6 @@ dependencies = [
  "serde_json",
  "shell-escape",
  "shellexpand",
- "shlex",
  "signal-hook 0.4.3",
  "similar",
  "skim",

@@ -6,6 +6,7 @@ mod items;
 mod log_formatter;
 mod pager;
 mod preview;
+mod summary;
 
 use std::io::IsTerminal;
 use std::sync::Arc;
@@ -64,13 +65,14 @@ pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyh
     .into_iter()
     .collect();
 
+    // Extract repo reference at function scope (needed for summary generation and post-selection switch)
+    let repo = (*workspace).as_any().downcast_ref::<Repository>();
+
     let list_data = if let Some(jj_ws) = (*workspace).as_any().downcast_ref::<JjWorkspace>() {
         collect_jj::collect_jj(jj_ws)?
     } else {
-        let repo = (*workspace)
-            .as_any()
-            .downcast_ref::<Repository>()
-            .ok_or_else(|| anyhow::anyhow!("`wt select` is not supported for this VCS"))?;
+        let repo =
+            repo.ok_or_else(|| anyhow::anyhow!("`wt select` is not supported for this VCS"))?;
 
         // Use 500ms timeout for git commands to show TUI faster on large repos.
         let command_timeout = Some(std::time::Duration::from_millis(500));
@@ -85,8 +87,7 @@ pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyh
             },
             false, // show_progress
             false, // render_table
-            config,
-            true, // skip_expensive_for_stale
+            true,  // skip_expensive_for_stale
         )? {
             Some(data) => data,
             None => return Ok(()),
@@ -156,9 +157,7 @@ pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyh
 
     // Get state path for key bindings (shell-escaped for safety)
     let state_path_display = state.path.display().to_string();
-    let state_path_str = shlex::try_quote(&state_path_display)
-        .map(|s| s.into_owned())
-        .unwrap_or(state_path_display);
+    let state_path_str = shell_escape::escape(state_path_display.into()).into_owned();
 
     // Calculate half-page scroll: skim uses 90% of terminal height, half of that = 45%
     let half_page = terminal_size::terminal_size()
@@ -201,7 +200,7 @@ pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyh
                 .to_string(),
         ))
         .bind(vec![
-            // Mode switching (1/2/3/4 keys change preview content)
+            // Mode switching (1/2/3/4/5 keys change preview content)
             format!(
                 "1:execute-silent(echo 1 > {0})+refresh-preview",
                 state_path_str
@@ -216,6 +215,10 @@ pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyh
             ),
             format!(
                 "4:execute-silent(echo 4 > {0})+refresh-preview",
+                state_path_str
+            ),
+            format!(
+                "5:execute-silent(echo 5 > {0})+refresh-preview",
                 state_path_str
             ),
             // Create new worktree with query as branch name (alt-c for "create")
@@ -244,22 +247,61 @@ pub fn handle_select(branches: bool, remotes: bool, config: &UserConfig) -> anyh
     // to overlap I/O-bound git commands. Tasks are fire-and-forget — ongoing
     // git commands are harmless read-only operations even if skim exits early.
     let (preview_width, preview_height) = state.initial_layout.preview_dimensions(num_items);
+
     let modes = [
         PreviewMode::WorkingTree,
         PreviewMode::Log,
         PreviewMode::BranchDiff,
         PreviewMode::UpstreamDiff,
     ];
-    for item in items_for_precompute {
+
+    for item in &items_for_precompute {
         for mode in modes {
             let cache = Arc::clone(&preview_cache);
-            let item = Arc::clone(&item);
+            let item = Arc::clone(item);
             rayon::spawn(move || {
                 let cache_key = (item.branch_name().to_string(), mode);
                 cache.entry(cache_key).or_insert_with(|| {
                     WorktreeSkimItem::compute_preview(&item, mode, preview_width, preview_height)
                 });
             });
+        }
+    }
+
+    // Queue summary generation after tabs 1-4 so git previews get rayon priority.
+    // Summary generation requires a git repo (not jj)
+    if let Some(repo) = repo
+        && resolved.list.summary()
+        && resolved.commit_generation.is_configured()
+    {
+        let llm_command = resolved.commit_generation.command.clone().unwrap();
+        for item in &items_for_precompute {
+            let item = Arc::clone(item);
+            let cache = Arc::clone(&preview_cache);
+            let cmd = llm_command.clone();
+            let repo = repo.clone();
+            rayon::spawn(move || {
+                summary::generate_and_cache_summary(&item, &cmd, &cache, &repo);
+            });
+        }
+    } else {
+        // No LLM configured or summaries disabled — insert config hint so the
+        // tab shows a useful message instead of a perpetual "Generating..." placeholder.
+        let hint = if !resolved.commit_generation.is_configured() {
+            "Configure [commit.generation] command to enable AI summaries.\n\n\
+             Example in ~/.config/worktrunk/config.toml:\n\n\
+             [commit.generation]\n\
+             command = \"llm -m haiku\"\n\n\
+             [list]\n\
+             summary = true\n"
+        } else {
+            "Enable summaries in ~/.config/worktrunk/config.toml:\n\n\
+             [list]\n\
+             summary = true\n"
+        };
+        for item in &items_for_precompute {
+            let branch = item.branch_name().to_string();
+            preview_cache.insert((branch, PreviewMode::Summary), hint.to_string());
         }
     }
 
@@ -370,6 +412,9 @@ pub mod tests {
 
         let _ = fs::write(&state_path, "4");
         assert_eq!(PreviewStateData::read_mode(), PreviewMode::UpstreamDiff);
+
+        let _ = fs::write(&state_path, "5");
+        assert_eq!(PreviewStateData::read_mode(), PreviewMode::Summary);
 
         // Cleanup
         let _ = fs::remove_file(&state_path);

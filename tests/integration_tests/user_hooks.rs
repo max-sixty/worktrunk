@@ -70,8 +70,10 @@ fn test_user_hooks_run_before_project_hooks(repo: TestRepo) {
     repo.write_test_config(
         r#"[post-create]
 log = "echo 'USER_HOOK' >> hook_order.txt"
-
-[projects."../origin"]
+"#,
+    );
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
 approved-commands = ["echo 'PROJECT_HOOK' >> hook_order.txt"]
 "#,
     );
@@ -122,8 +124,10 @@ fn test_no_verify_flag_skips_all_hooks(repo: TestRepo) {
     repo.write_test_config(
         r#"[post-create]
 log = "echo 'USER_HOOK' > user_marker.txt"
-
-[projects."../origin"]
+"#,
+    );
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
 approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
 "#,
     );
@@ -937,8 +941,10 @@ fn test_user_and_project_unnamed_post_start(repo: TestRepo) {
     // Write user config with unnamed hook AND pre-approve project command
     repo.write_test_config(
         r#"post-start = "echo 'USER_POST_START' > user_bg.txt"
-
-[projects."../origin"]
+"#,
+    );
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
 approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
 "#,
     );
@@ -976,8 +982,10 @@ fn test_user_and_project_post_start_both_run(repo: TestRepo) {
     repo.write_test_config(
         r#"[post-start]
 bg = "echo 'USER_POST_START' > user_bg.txt"
-
-[projects."../origin"]
+"#,
+    );
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
 approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
 "#,
     );

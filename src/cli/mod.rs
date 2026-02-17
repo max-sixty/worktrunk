@@ -322,7 +322,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | `Enter` | Switch to selected worktree |
 | `Alt-c` | Create new worktree from query |
 | `Esc` | Cancel |
-| `1`/`2`/`3`/`4` | Switch preview tab |
+| `1`–`5` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
@@ -332,6 +332,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 2. **log** — Recent commits; commits already on the default branch have dimmed hashes
 3. **main…±** — Diff of changes since the merge-base with the default branch
 4. **remote⇅** — Diff vs upstream tracking branch (ahead/behind)
+5. **summary** — AI-generated branch summary (requires `[list] summary = true` and `[commit.generation]`)
 
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
@@ -1564,6 +1565,7 @@ Persistent flag values for `wt list`. Override on command line as needed.
 full = false       # Show CI status and main…± diffstat columns (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
+summary = false    # AI branch summaries in picker tab 5 (requires [commit.generation])
 ```
 
 ### Commit
@@ -1612,14 +1614,11 @@ Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
 #### Approved hook commands
 
-When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.
+When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved to `~/.config/worktrunk/approvals.toml` (separate from user config to allow dotfile management of config.toml).
 
-```toml
-[projects."github.com/user/repo"]
-approved-commands = ["npm ci", "npm test"]
-```
+To reset, run `wt hook approvals clear`.
 
-To reset, delete the entry or run `wt hook approvals clear`.
+> **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config show` to generate a migration file that removes stale entries.
 
 #### Setting overrides (Experimental)
 
