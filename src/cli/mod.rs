@@ -262,6 +262,7 @@ wt switch -                      # Previous worktree (like cd -)
 wt switch --create new-feature   # Create new branch and worktree
 wt switch --create hotfix --base production
 wt switch pr:123                 # Switch to PR #123's branch
+wt switch feature/foo            # Remote branch → creates local tracking branch
 ```
 
 ## Creating a branch
@@ -270,7 +271,12 @@ The `--create` flag creates a new branch from the `--base` branch (defaults to d
 
 **Upstream tracking:** Branches created with `--create` have no upstream tracking configured. This prevents accidental pushes to the wrong branch — for example, `--base origin/main` would otherwise make `git push` target `main`. Use `git push -u origin <branch>` to set up tracking when you're ready.
 
-Without `--create`, switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local branch tracking the remote — this is the standard git behavior and is preserved.
+Without `--create`, switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local branch tracking the remote — this is the standard git behavior and is preserved. This is useful for checking out a teammate's branch:
+
+```console
+git fetch
+wt switch feature/foo            # Creates local branch tracking origin/feature/foo
+```
 
 ## Creating worktrees
 
