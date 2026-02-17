@@ -79,6 +79,8 @@ pub use deprecation::check_and_migrate;
 pub use deprecation::detect_deprecations;
 pub use deprecation::format_brief_warning;
 pub use deprecation::format_deprecation_details;
+pub use deprecation::format_deprecation_warnings;
+pub use deprecation::format_migration_diff;
 pub use deprecation::normalize_template_vars;
 pub use deprecation::write_migration_file;
 pub use deprecation::{DEPRECATED_SECTION_KEYS, key_belongs_in, warn_unknown_fields};

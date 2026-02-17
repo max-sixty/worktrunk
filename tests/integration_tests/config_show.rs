@@ -2442,6 +2442,147 @@ approved-commands = ["npm install", "npm test"]
     );
 }
 
+// ==================== config update tests ====================
+
+/// `wt config update` with no deprecated settings reports nothing to do
+#[rstest]
+fn test_config_update_no_deprecations(repo: TestRepo) {
+    // Write a clean config with no deprecated patterns
+    fs::write(
+        repo.test_config_path(),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "update", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// `wt config update --yes` applies template variable migration
+#[rstest]
+fn test_config_update_applies_template_var_migration(repo: TestRepo) {
+    let config_path = repo.test_config_path();
+    fs::write(
+        config_path,
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "update", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Config file should now contain the updated variables
+    let updated = fs::read_to_string(config_path).unwrap();
+    assert!(
+        updated.contains("{{ repo }}"),
+        "Should replace main_worktree with repo"
+    );
+    assert!(
+        updated.contains("{{ repo_path }}"),
+        "Should replace repo_root with repo_path"
+    );
+    assert!(
+        updated.contains("{{ worktree_path }}"),
+        "Should replace worktree with worktree_path"
+    );
+
+    // Migration .new file should be gone (renamed over original)
+    assert!(
+        !config_path.with_extension("toml.new").exists(),
+        ".new file should be consumed by the update"
+    );
+}
+
+/// `wt config update --yes` applies commit-generation section rename
+#[rstest]
+fn test_config_update_applies_commit_generation_migration(repo: TestRepo) {
+    let config_path = repo.test_config_path();
+    fs::write(
+        config_path,
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[commit-generation]
+command = "llm"
+args = ["-m", "haiku"]
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "update", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Config file should have the renamed section and merged args
+    let updated = fs::read_to_string(config_path).unwrap();
+    assert!(
+        updated.contains("[commit.generation]"),
+        "Should rename section"
+    );
+    assert!(
+        updated.contains("command = \"llm -m haiku\""),
+        "Should merge args into command"
+    );
+    assert!(
+        !updated.contains("[commit-generation]"),
+        "Old section name should be gone"
+    );
+    assert!(!updated.contains("args ="), "Args field should be removed");
+}
+
+/// `wt config update --yes` handles approved-commands migration
+#[rstest]
+fn test_config_update_applies_approved_commands_migration(repo: TestRepo) {
+    let config_path = repo.test_config_path();
+    fs::write(
+        config_path,
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm install", "npm test"]
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "update", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Config should no longer have approved-commands
+    let updated = fs::read_to_string(config_path).unwrap();
+    assert!(
+        !updated.contains("approved-commands"),
+        "approved-commands should be removed from config"
+    );
+
+    // Approvals should be in approvals.toml
+    let approvals_file = config_path.with_file_name("approvals.toml");
+    assert!(approvals_file.exists(), "approvals.toml should exist");
+    let approvals = fs::read_to_string(&approvals_file).unwrap();
+    assert!(approvals.contains("npm install"));
+    assert!(approvals.contains("npm test"));
+}
+
 /// Test that explicitly specified --config path that doesn't exist shows a warning
 #[rstest]
 fn test_explicit_config_path_not_found_shows_warning(repo: TestRepo) {

@@ -889,17 +889,15 @@ pub fn format_migration_diff(original_path: &Path, new_path: &Path) -> Option<St
     None
 }
 
-/// Format deprecation details for display (for use by wt config show)
+/// Format deprecation warning lines (without apply hints or diff).
 ///
-/// Returns formatted output including:
-/// - Warning message listing deprecated patterns
-/// - Migration hint with apply command
-/// - Inline diff showing the changes
-pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
+/// Lists which deprecated patterns were found: template variables, config sections,
+/// approved-commands. Used by both `format_deprecation_details` (which adds the "mv"
+/// hint) and `config migrate` (which applies automatically).
+pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
     use std::fmt::Write;
     let mut out = String::new();
 
-    // Warning message listing deprecated patterns
     if !info.deprecations.vars.is_empty() {
         let var_list: Vec<String> = info
             .deprecations
@@ -974,6 +972,19 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
             ))
         );
     }
+
+    out
+}
+
+/// Format deprecation details for display (for use by `wt config show`).
+///
+/// Returns formatted output including:
+/// - Warning message listing deprecated patterns
+/// - Migration hint with apply command
+/// - Inline diff showing the changes
+pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
+    use std::fmt::Write;
+    let mut out = format_deprecation_warnings(info);
 
     // Migration hint with apply command
     if let Some(new_path) = &info.migration_path {

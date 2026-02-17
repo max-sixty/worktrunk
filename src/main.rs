@@ -47,9 +47,9 @@ use commands::worktree::handle_push;
 use commands::{
     MergeOptions, OperationMode, RebaseResult, SquashResult, SwitchOptions, add_approvals,
     clear_approvals, handle_completions, handle_config_create, handle_config_show,
-    handle_configure_shell, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
-    handle_list, handle_logs_get, handle_merge, handle_rebase, handle_remove,
-    handle_remove_current, handle_show_theme, handle_squash, handle_state_clear,
+    handle_config_update, handle_configure_shell, handle_hints_clear, handle_hints_get,
+    handle_hook_show, handle_init, handle_list, handle_logs_get, handle_merge, handle_rebase,
+    handle_remove, handle_remove_current, handle_show_theme, handle_squash, handle_state_clear,
     handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show, handle_switch,
     handle_unconfigure_shell, resolve_worktree_arg, run_hook, step_commit, step_copy_ignored,
     step_for_each, step_relocate,
@@ -430,6 +430,7 @@ fn main() {
             }
             ConfigCommand::Create { project } => handle_config_create(project),
             ConfigCommand::Show { full } => handle_config_show(full),
+            ConfigCommand::Update { yes } => handle_config_update(yes),
             ConfigCommand::State { action } => match action {
                 StateCommand::DefaultBranch { action } => match action {
                     Some(DefaultBranchAction::Get) | None => {
