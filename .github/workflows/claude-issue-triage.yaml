@@ -1,0 +1,95 @@
+name: claude-issue-triage
+# Runner versions pinned; see ci.yaml header comment for rationale.
+
+# Automatic triage when new issues are opened.
+on:
+  issues:
+    types: [opened]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+# Consistent with ci.yaml for cache compatibility
+env:
+  CARGO_TERM_COLOR: always
+  CLICOLOR_FORCE: 1
+  RUSTFLAGS: "-C debuginfo=0"
+  RUSTDOCFLAGS: "-Dwarnings"
+
+jobs:
+  triage:
+    # Skip bot-created issues and @claude mentions (handled by claude-mention.yaml)
+    if: >-
+      github.event.issue.user.type != 'Bot' &&
+      !contains(github.event.issue.body, '@claude') &&
+      !contains(github.event.issue.title, '@claude')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: 📂 Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          # Use bot token so pushed commits trigger CI workflows
+          token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
+      - name: 🔧 Configure git for Claude
+        run: |
+          git config --global user.name "Claude Code"
+          git config --global user.email "claude@anthropic.com"
+
+      - name: Install cargo-insta
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-insta
+
+      - name: Install cargo-nextest
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-nextest
+
+      - name: 💰 Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ hashFiles('Cargo.lock') }}
+          save-if: false
+
+      - name: Install shells (zsh, fish)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh fish
+
+      - name: 🤖 Run Claude Code to triage issue
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Use bot token so pushed commits trigger CI workflows
+          github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          additional_permissions: |
+            actions: read
+
+          prompt: |
+            Use /issue-triage ${{ github.event.issue.number }}
+
+          claude_args: |
+            --model opus
+            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill
+            --append-system-prompt "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
+
+      - name: 📋 Upload Claude Code session logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: claude-session-logs
+          path: ~/.claude/
+          retention-days: 30
+          if-no-files-found: warn
