@@ -234,14 +234,6 @@ impl Merge for ProjectConfig {
     }
 }
 
-/// Check if a local config override exists (.config/wt.local.toml)
-pub fn has_local_config(repo: &crate::git::Repository) -> bool {
-    repo.current_worktree()
-        .root()
-        .map(|root| root.join(".config").join("wt.local.toml").exists())
-        .unwrap_or(false)
-}
-
 /// Returns all valid top-level keys in project config, derived from the JsonSchema.
 ///
 /// This includes keys from ProjectConfig and HooksConfig (flattened).

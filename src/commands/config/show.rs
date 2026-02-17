@@ -531,6 +531,47 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         }
     };
     let config_path = repo_root.join(".config").join("wt.toml");
+    let local_config_path = repo_root.join(".config").join("wt.local.toml");
+    let has_local = local_config_path.exists();
+
+    // Check if wt.toml exists; if not, check for local-only config
+    if !config_path.exists() {
+        if has_local {
+            // Only wt.local.toml exists — show its contents with the local path in heading
+            writeln!(
+                out,
+                "{}",
+                format_heading(
+                    "PROJECT CONFIG",
+                    Some(&format_path_for_display(&local_config_path))
+                )
+            )?;
+            let local_contents = std::fs::read_to_string(&local_config_path)
+                .context("Failed to read local config file")?;
+            if local_contents.trim().is_empty() {
+                writeln!(out, "{}", hint_message("Empty file"))?;
+            } else {
+                writeln!(out, "{}", format_toml(&local_contents))?;
+            }
+            writeln!(
+                out,
+                "{}",
+                info_message("Local overrides only (no .config/wt.toml)")
+            )?;
+            return Ok(());
+        }
+
+        writeln!(
+            out,
+            "{}",
+            format_heading(
+                "PROJECT CONFIG",
+                Some(&format_path_for_display(&config_path))
+            )
+        )?;
+        writeln!(out, "{}", hint_message("Not found"))?;
+        return Ok(());
+    }
 
     writeln!(
         out,
@@ -540,12 +581,6 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             Some(&format_path_for_display(&config_path))
         )
     )?;
-
-    // Check if file exists
-    if !config_path.exists() {
-        writeln!(out, "{}", hint_message("Not found"))?;
-        return Ok(());
-    }
 
     // Read and display the file contents
     let contents = std::fs::read_to_string(&config_path).context("Failed to read config file")?;
@@ -594,14 +629,13 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_toml(&contents))?;
 
     // Note when local overrides are active
-    if worktrunk::config::has_local_config(&repo) {
-        let local_path = repo_root.join(".config").join("wt.local.toml");
+    if has_local {
         writeln!(
             out,
             "{}",
             info_message(cformat!(
                 "Includes overrides from <bold>{}</>",
-                format_path_for_display(&local_path)
+                format_path_for_display(&local_config_path)
             ))
         )?;
     }

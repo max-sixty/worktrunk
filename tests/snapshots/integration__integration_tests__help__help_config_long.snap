@@ -76,10 +76,11 @@ Show current configuration and file locations:
 
 [1m[32mConfiguration files[0m
 
-        File                 Location                                Contains                     Committed & shared 
-   ────────────── ─────────────────────────────── ─────────────────────────────────────────────── ────────────────── 
-   User config    ~/.config/worktrunk/config.toml Worktree path template, LLM commit configs, etc ✗                  
-   Project config .config/wt.toml                 Project hooks, dev server URL                   ✓                  
+           File                    Location                                Contains                     Committed & shared 
+   ──────────────────── ─────────────────────────────── ─────────────────────────────────────────────── ────────────────── 
+   User config          ~/.config/worktrunk/config.toml Worktree path template, LLM commit configs, etc ✗                  
+   Project config       .config/wt.toml                 Project hooks, dev server URL                   ✓                  
+   Local project config .config/wt.local.toml           Personal project overrides                      ✗                  
 
 Organizations can also deploy a system-wide config file for shared defaults — run [2mwt config show[0m for the platform-specific location.
 
@@ -300,6 +301,10 @@ Default template:
 [32mPROJECT CONFIGURATION[0m
 
 Project config ([2m.config/wt.toml[0m) defines lifecycle hooks and project-specific settings. This file is checked into version control and shared with the team. Create with [2mwt config create --project[0m.
+
+[1m[32mLocal Overrides[0m
+
+[2m.config/wt.local.toml[0m provides per-developer overrides that are not checked into git. Same format as [2mwt.toml[0m. Hooks are appended (both run); other settings (list, ci) are replaced.
 
 See [2mwt hook[0m for hook types, execution order, template variables, and examples.
 
