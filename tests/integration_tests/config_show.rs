@@ -2383,6 +2383,65 @@ command = "llm -m gpt-4"
     );
 }
 
+/// Test that deprecated approved-commands in [projects] sections are copied to approvals.toml
+#[rstest]
+fn test_deprecated_approved_commands_copies_to_approvals_file(repo: TestRepo, temp_home: TempDir) {
+    // Write user config with approved-commands in [projects] section
+    let config_path = repo.test_config_path();
+    fs::write(
+        config_path,
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm install", "npm test"]
+"#,
+    )
+    .unwrap();
+
+    // Use `wt list` which loads config and triggers deprecation check
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify migration file removes approved-commands
+    let migration_file = config_path.with_extension("toml.new");
+    assert!(
+        migration_file.exists(),
+        "Migration file should be created at {:?}",
+        migration_file
+    );
+    let migrated_content = fs::read_to_string(&migration_file).unwrap();
+    assert!(
+        !migrated_content.contains("approved-commands"),
+        "Migration should remove approved-commands"
+    );
+
+    // Verify approvals were copied to approvals.toml (sibling of config file)
+    let approvals_file = config_path.with_file_name("approvals.toml");
+    assert!(
+        approvals_file.exists(),
+        "Approvals should be copied to {:?}",
+        approvals_file
+    );
+    let approvals_content = fs::read_to_string(&approvals_file).unwrap();
+    assert!(
+        approvals_content.contains("npm install"),
+        "Approvals file should contain npm install: {}",
+        approvals_content
+    );
+    assert!(
+        approvals_content.contains("npm test"),
+        "Approvals file should contain npm test: {}",
+        approvals_content
+    );
+}
+
 /// Test that explicitly specified --config path that doesn't exist shows a warning
 #[rstest]
 fn test_explicit_config_path_not_found_shows_warning(repo: TestRepo) {
