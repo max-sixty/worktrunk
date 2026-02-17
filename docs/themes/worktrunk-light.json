@@ -29,8 +29,15 @@
       }
     },
     {
-      "name": "Punctuation",
-      "scope": "punctuation.definition.string, punctuation.definition.variable, punctuation.definition.parameters, punctuation.definition.array",
+      "name": "String Punctuation",
+      "scope": "punctuation.definition.string",
+      "settings": {
+        "foreground": "#4a7030"
+      }
+    },
+    {
+      "name": "Other Punctuation",
+      "scope": "punctuation.definition.variable, punctuation.definition.parameters, punctuation.definition.array",
       "settings": {
         "foreground": "#3d3632"
       }
@@ -60,7 +67,8 @@
       "name": "Functions",
       "scope": "entity.name.function, meta.require, support.function.any-method",
       "settings": {
-        "foreground": "#946300"
+        "foreground": "#946300",
+        "fontStyle": "bold"
       }
     },
     {
@@ -81,7 +89,8 @@
       "name": "Storage",
       "scope": "storage",
       "settings": {
-        "foreground": "#a03c15"
+        "foreground": "#a03c15",
+        "fontStyle": "bold"
       }
     },
     {
