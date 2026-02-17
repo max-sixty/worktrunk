@@ -65,10 +65,16 @@ def --env --wrapped wt [...args: string] {
         let stdout_file = (mktemp --tmpdir)
 
         # Capture stdout to file for pipeline passthrough; stderr flows to terminal.
-        with-env { WORKTRUNK_DIRECTIVE_FILE: $directive_file } {
-            ^$worktrunk_bin ...$args o> $stdout_file
-        }
-        let exit_code = $env.LAST_EXIT_CODE
+        # Nushell 0.98+ throws ShellError on non-zero exit (like bash `set -e`).
+        # `try` catches it so directive processing and temp file cleanup still run.
+        let exit_code = (try {
+            with-env { WORKTRUNK_DIRECTIVE_FILE: $directive_file } {
+                ^$worktrunk_bin ...$args o> $stdout_file
+            }
+            0
+        } catch {
+            $env.LAST_EXIT_CODE
+        })
 
         # Process directive file line by line
         if ($directive_file | path exists) and (open $directive_file --raw | str trim | is-not-empty) {
