@@ -41,6 +41,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m [1mfeature[22m → [1mmain[22m [90m([32m+1 ahead[39m[39m[90m)[39m
 [107m [0m  feature.txt | 1 [32m+[m
 [107m [0m  1 file changed, 1 insertion(+)

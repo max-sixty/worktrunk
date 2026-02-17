@@ -488,28 +488,7 @@ pub fn step_diff(target: Option<&str>, stat: bool) -> anyhow::Result<()> {
         .merge_base("HEAD", &integration_target)?
         .context("No common ancestor with target branch")?;
 
-    // Build header: branch → target (+N ahead, -M behind)
     let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
-    let (ahead, behind) = repo.ahead_behind(&integration_target, "HEAD")?;
-
-    let counts: Vec<String> = [
-        (ahead > 0).then(|| cformat!("<green>+{ahead} ahead</>")),
-        (behind > 0).then(|| cformat!("<red>-{behind} behind</>")),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-
-    let header = if counts.is_empty() {
-        cformat!("<bold>{current_branch}</> → <bold>{integration_target}</>")
-    } else {
-        let counts_str = counts.join(", ");
-        let paren_close = cformat!("<bright-black>)</>");
-        cformat!(
-            "<bold>{current_branch}</> → <bold>{integration_target}</> <bright-black>({counts_str}</>{paren_close}"
-        )
-    };
-    eprintln!("{}", info_message(header));
 
     // Create an empty temporary index and register all working tree files with
     // `git add -N .` so untracked files become visible to `git diff`.
