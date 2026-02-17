@@ -52,7 +52,7 @@ use commands::{
     handle_remove, handle_remove_current, handle_show_theme, handle_squash, handle_state_clear,
     handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show, handle_switch,
     handle_unconfigure_shell, resolve_worktree_arg, run_hook, step_commit, step_copy_ignored,
-    step_for_each, step_relocate,
+    step_diff, step_for_each, step_relocate,
 };
 use output::handle_remove_output;
 
@@ -535,6 +535,7 @@ fn main() {
                     }
                 })
             }
+            StepCommand::Diff { target, extra_args } => step_diff(target.as_deref(), &extra_args),
             StepCommand::CopyIgnored {
                 from,
                 to,

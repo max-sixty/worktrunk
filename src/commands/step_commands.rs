@@ -5,6 +5,7 @@
 //! - `handle_squash` - Squash commits into one
 //! - `step_show_squash_prompt` - Show squash prompt without executing
 //! - `handle_rebase` - Rebase onto target branch
+//! - `step_diff` - Show all changes since branching
 //! - `step_copy_ignored` - Copy gitignored files matching .worktreeinclude
 
 use std::fs;
@@ -468,6 +469,70 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     eprintln!("{}", success_message(msg));
 
     Ok(RebaseResult::Rebased)
+}
+
+/// Handle `wt step diff` command
+///
+/// Shows all changes since branching from the target: committed, staged, unstaged,
+/// and untracked files in a single diff. Uses a temporary index to include untracked
+/// files without modifying the real git index.
+///
+/// TODO: consider adding `--stage` flag (all/tracked/none) like `step commit` to
+/// control which change types are included. `tracked` would skip the temp index,
+/// `none` would diff only committed changes.
+pub fn step_diff(target: Option<&str>, extra_args: &[String]) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+    let wt = repo.current_worktree();
+
+    // Get and validate target ref
+    let integration_target = repo.require_target_ref(target)?;
+
+    // Get merge base
+    let merge_base = repo
+        .merge_base("HEAD", &integration_target)?
+        .context("No common ancestor with target branch")?;
+
+    let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
+
+    // Create an empty temporary index and register all working tree files with
+    // `git add -N .` so untracked files become visible to `git diff`.
+    let worktree_root = wt.root()?;
+
+    let temp_index = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
+    let temp_index_path = temp_index
+        .path()
+        .to_str()
+        .context("Temporary index path is not valid UTF-8")?;
+
+    // Initialize a valid empty index
+    Cmd::new("git")
+        .args(["read-tree", "--empty"])
+        .current_dir(&worktree_root)
+        .context(&current_branch)
+        .env("GIT_INDEX_FILE", temp_index_path)
+        .run()
+        .context("Failed to initialize temporary index")?;
+
+    // Register all working tree files as intent-to-add
+    Cmd::new("git")
+        .args(["add", "--intent-to-add", "."])
+        .current_dir(&worktree_root)
+        .context(&current_branch)
+        .env("GIT_INDEX_FILE", temp_index_path)
+        .run()
+        .context("Failed to register untracked files")?;
+
+    // Stream diff to stdout — git handles pager and coloring
+    let mut diff_args = vec!["diff".to_string(), merge_base];
+    diff_args.extend_from_slice(extra_args);
+    Cmd::new("git")
+        .args(&diff_args)
+        .current_dir(&worktree_root)
+        .context(&current_branch)
+        .env("GIT_INDEX_FILE", temp_index_path)
+        .stream()?;
+
+    Ok(())
 }
 
 /// Handle `wt step copy-ignored` command
