@@ -22,7 +22,20 @@ impl Repository {
     pub fn list_worktrees(&self) -> anyhow::Result<Vec<WorktreeInfo>> {
         let stdout = self.run_command(&["worktree", "list", "--porcelain"])?;
         let raw_worktrees = WorktreeInfo::parse_porcelain_list(&stdout)?;
-        Ok(raw_worktrees.into_iter().filter(|wt| !wt.bare).collect())
+        let mut worktrees: Vec<_> = raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
+
+        // Git submodules: `git worktree list` reports the main worktree path as the
+        // git data directory (e.g., `.git/modules/sub`) instead of the actual working
+        // directory. Detect this by comparing the first worktree's path against
+        // git_common_dir and correct it using repo_path() which resolves via
+        // `--show-toplevel` (reading core.worktree config).
+        if let Some(first) = worktrees.first_mut()
+            && canonicalize(&first.path).ok().as_deref() == Some(self.git_common_dir())
+        {
+            first.path = self.repo_path().to_path_buf();
+        }
+
+        Ok(worktrees)
     }
 
     /// Get the WorktreeInfo struct for the current worktree, if we're inside one.
