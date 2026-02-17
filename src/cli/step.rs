@@ -196,7 +196,8 @@ wt step diff | delta
 Equivalent to:
 
 ```console
-GIT_INDEX_FILE=/tmp/idx git read-tree --empty && git add --intent-to-add .
+GIT_INDEX_FILE=/tmp/idx git read-tree --empty
+GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
 GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
 ```
 
