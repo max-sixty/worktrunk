@@ -375,6 +375,9 @@ pub struct Cmd {
     stdin_cfg: Option<std::process::Stdio>,
     /// If true, forward signals to child process group (for stream(), Unix only)
     forward_signals: bool,
+    /// When set, log this command to the command log after execution.
+    /// The label identifies what triggered the command (e.g., "pre-merge user:lint").
+    external_label: Option<String>,
 }
 
 impl Cmd {
@@ -396,6 +399,7 @@ impl Cmd {
             stdout_cfg: None,
             stdin_cfg: None,
             forward_signals: false,
+            external_label: None,
         }
     }
 
@@ -419,6 +423,7 @@ impl Cmd {
             stdout_cfg: None,
             stdin_cfg: None,
             forward_signals: false,
+            external_label: None,
         }
     }
 
@@ -512,6 +517,15 @@ impl Cmd {
     /// Only affects `.stream()` on Unix. No-op on Windows.
     pub fn forward_signals(mut self) -> Self {
         self.forward_signals = true;
+        self
+    }
+
+    /// Mark this command as an external (user-configured) command for logging.
+    ///
+    /// When set, the command execution is logged to `.git/wt-logs/commands.jsonl`
+    /// with the given label (e.g., "pre-merge user:lint", "commit.generation").
+    pub fn external(mut self, label: impl Into<String>) -> Self {
+        self.external_label = Some(label.into());
         self
     }
 
@@ -650,6 +664,15 @@ impl Cmd {
             }
         }
 
+        // Log to command log if this is an external command
+        if let Some(label) = &self.external_label {
+            let (exit_code, duration) = match &result {
+                Ok(output) => (output.status.code(), Some(t0.elapsed())),
+                Err(_) => (None, Some(t0.elapsed())),
+            };
+            crate::command_log::log_command(label, &cmd_str, exit_code, duration);
+        }
+
         result
     }
 
@@ -667,13 +690,18 @@ impl Cmd {
     /// shell (`sh -c` on Unix, Git Bash on Windows).
     ///
     /// Returns error if command exits with non-zero status.
-    pub fn stream(self) -> anyhow::Result<()> {
+    pub fn stream(mut self) -> anyhow::Result<()> {
         #[cfg(unix)]
         use {
             signal_hook::consts::{SIGINT, SIGTERM},
             signal_hook::iterator::Signals,
             std::os::unix::process::CommandExt,
         };
+
+        // Extract external label for command logging (must happen before self is consumed).
+        // t0 is Some iff external_label is Some — both initialized together so timing is accurate.
+        let external_label = self.external_label.take();
+        let t0 = external_label.as_ref().map(|_| Instant::now());
 
         // Shell-wrapped commands don't use args (the command string is the full command)
         assert!(
@@ -703,6 +731,14 @@ impl Cmd {
             self.program.clone()
         } else {
             format!("{} {}", self.program, self.args.join(" "))
+        };
+
+        // Closure for command log entries (deduplicates 4 exit-path logging blocks)
+        let log_external = |exit_code: Option<i32>| {
+            if let Some(label) = &external_label {
+                let duration = t0.map(|t| t.elapsed());
+                crate::command_log::log_command(label, &cmd_str, exit_code, duration);
+            }
         };
 
         // Log command for debugging (output goes to logger, not stdout/stderr)
@@ -814,6 +850,7 @@ impl Cmd {
         // Handle signals (Unix only)
         #[cfg(unix)]
         if let Some(sig) = seen_signal {
+            log_external(Some(128 + sig));
             return Err(WorktrunkError::ChildProcessExited {
                 code: 128 + sig,
                 message: format!("terminated by signal {}", sig),
@@ -823,6 +860,7 @@ impl Cmd {
 
         #[cfg(unix)]
         if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&status) {
+            log_external(Some(128 + sig));
             return Err(WorktrunkError::ChildProcessExited {
                 code: 128 + sig,
                 message: format!("terminated by signal {}", sig),
@@ -832,12 +870,15 @@ impl Cmd {
 
         if !status.success() {
             let code = status.code().unwrap_or(1);
+            log_external(status.code());
             return Err(WorktrunkError::ChildProcessExited {
                 code,
                 message: format!("exit status: {}", code),
             }
             .into());
         }
+
+        log_external(Some(0));
 
         Ok(())
     }

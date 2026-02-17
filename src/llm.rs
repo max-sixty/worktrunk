@@ -306,6 +306,7 @@ pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result
     let output = Cmd::new(shell.executable.to_string_lossy())
         .args(&shell.args)
         .arg(command)
+        .external("commit.generation")
         .stdin_bytes(prompt)
         .env_remove("CLAUDECODE")
         .run()

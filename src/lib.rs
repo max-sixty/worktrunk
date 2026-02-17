@@ -7,6 +7,7 @@
 //! with worktrunk, please [open an issue](https://github.com/max-sixty/worktrunk/issues)
 //! to discuss your use case.
 
+pub mod command_log;
 pub mod config;
 pub mod git;
 pub mod path;

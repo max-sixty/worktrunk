@@ -150,6 +150,12 @@ fn main() {
     let verbose_level = cli.verbose;
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
 
+    // Initialize command log for always-on logging of hooks and LLM commands.
+    // Directory and file are created lazily on first log_command() call.
+    if let Ok(repo) = worktrunk::git::Repository::current() {
+        worktrunk::command_log::init(&repo.wt_logs_dir(), &command_line);
+    }
+
     // Set global verbosity level for styled verbose output
     output::set_verbosity(verbose_level);
 

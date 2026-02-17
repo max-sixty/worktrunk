@@ -221,6 +221,7 @@ pub fn spawn_background_hooks(
         // Use HookLog with the command's own hook_type for consistent log file naming
         let hook_log = HookLog::hook(cmd.source, cmd.hook_type, &name);
 
+        let log_label = format!("{} {}", cmd.hook_type, cmd.summary_name());
         if let Err(err) = spawn_detached(
             ctx.repo,
             ctx.worktree_path,
@@ -235,6 +236,9 @@ pub fn spawn_background_hooks(
                 None => format!("Failed to spawn command: {err_msg}"),
             };
             eprintln!("{}", warning_message(message));
+        } else {
+            // Background: outcome unknown, log with null exit/duration
+            worktrunk::command_log::log_command(&log_label, &cmd.prepared.expanded, None, None);
         }
     }
 
@@ -342,10 +346,12 @@ pub fn run_hook_with_filter(
     for cmd in commands {
         cmd.announce()?;
 
+        let log_label = format!("{} {}", cmd.hook_type, cmd.summary_name());
         if let Err(err) = execute_command_in_worktree(
             ctx.worktree_path,
             &cmd.prepared.expanded,
             Some(&cmd.prepared.context_json),
+            Some(&log_label),
         ) {
             // Extract raw message and exit code from error
             let (err_msg, exit_code) = if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {
