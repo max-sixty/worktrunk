@@ -99,12 +99,15 @@ def --env --wrapped {{ cmd }} [...args: string] {
         let output = (open $stdout_file --raw)
         rm -f $stdout_file
 
+        # Return stdout or propagate failure as the function's last expression.
+        # Using a failing external command (not `error make`) so nushell treats it
+        # identically to the original non-zero exit — minimal display in scripts,
+        # no verbose source trace.
         if $exit_code != 0 {
             if ($output | is-not-empty) { print -n $output }
-            error make { msg: $"{{ cmd }} exited with code ($exit_code)" }
+            ^sh -c $"exit ($exit_code)"
+        } else if ($output | is-not-empty) {
+            $output
         }
-
-        # Return stdout as the last expression so it flows through pipelines.
-        if ($output | is-not-empty) { $output }
     }
 }
