@@ -647,8 +647,8 @@ pub fn check_and_migrate(
 
             eprintln!(
                 "{}",
-                hint_message(cformat!(
-                    "Wrote migrated <bright-black>{new_filename}</>. To apply:"
+                info_message(cformat!(
+                    "Wrote migrated <bold>{new_filename}</>. To apply:"
                 ))
             );
             eprintln!(
@@ -829,8 +829,8 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            hint_message(cformat!(
-                "Wrote migrated <bright-black>{new_filename}</>. To apply:"
+            info_message(cformat!(
+                "Wrote migrated <bold>{new_filename}</>. To apply:"
             ))
         );
         let _ = writeln!(

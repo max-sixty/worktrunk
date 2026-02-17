@@ -25,10 +25,13 @@ info:
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -46,7 +49,7 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mUser config has deprecated settings. To see details, run [1mwt config show[22m[39m
-[2m↳[22m [2mWrote migrated [90mtest-config.toml.new[39m. To apply:[22m
+[2m○[22m Wrote migrated [1mtest-config.toml.new[22m. To apply:
 [107m [0m [2m[0m[2m[34mmv[0m[2m [0m[2m[36m--[0m[2m [TEST_CONFIG_NEW] [TEST_CONFIG]
 [2m○[22m Expanding [1mworktree-path[22m
 [107m [0m ../{{ main_worktree }}.{{ branch }} [2m→[22m ../repo.feature-a
