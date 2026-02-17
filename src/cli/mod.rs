@@ -1018,6 +1018,7 @@ wt step push
 - `squash` — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
 - `rebase` — Rebase onto target branch
 - `push` — Fast-forward target to current branch
+- `diff` — Show all changes since branching (committed, staged, unstaged, untracked)
 - `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
 

@@ -122,6 +122,7 @@ fs2 = "0.4.3"
 sanitize-filename = "0.6.0"
 schemars = { version = "1.2.1", features = ["derive"] }
 
+tempfile = "3.25"
 wait-timeout = "0.2"
 
 [target.'cfg(unix)'.dependencies]

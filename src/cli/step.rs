@@ -169,6 +169,52 @@ wt step rebase develop    # Rebase onto develop
         target: Option<String>,
     },
 
+    /// Show all changes since branching
+    ///
+    /// Includes committed, staged, unstaged, and untracked files.
+    #[command(
+        after_long_help = r#"Shows all changes that `wt merge` would include: committed, staged, unstaged, and untracked files — in a single diff against the merge base. Output goes through the git pager.
+
+## Stat summary
+
+With `--stat`, shows only the diffstat (files changed, insertions, deletions):
+
+```console
+wt step diff --stat
+```
+
+## Piping
+
+The diff is pipeable to tools like `delta`:
+
+```console
+wt step diff | delta
+```
+
+## How it works
+
+Equivalent to:
+
+```console
+GIT_INDEX_FILE=/tmp/idx git read-tree --empty && git add --intent-to-add .
+GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
+```
+
+`git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a temporary empty index so the real one is never modified.
+"#
+    )]
+    Diff {
+        /// Target branch
+        ///
+        /// Defaults to default branch.
+        #[arg(add = crate::completion::branch_value_completer())]
+        target: Option<String>,
+
+        /// Show only diffstat summary
+        #[arg(short, long)]
+        stat: bool,
+    },
+
     /// Copy gitignored files to another worktree
     ///
     /// Eliminates cold starts by copying build caches and dependencies.
