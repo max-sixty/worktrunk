@@ -41,19 +41,28 @@ fn needs_paging_disabled(pager_cmd: &str) -> bool {
 ///
 /// Returns the pager command with any necessary flags (like `--paging=never`)
 /// already appended. Precedence:
-/// 1. `[select] pager` in user config (used as-is)
-/// 2. `GIT_PAGER` environment variable (auto-detection applied)
-/// 3. `core.pager` git config (auto-detection applied)
+/// 1. `[switch.picker] pager` in user config (used as-is)
+/// 2. `[select] pager` in user config (deprecated, used as-is)
+/// 3. `GIT_PAGER` environment variable (auto-detection applied)
+/// 4. `core.pager` git config (auto-detection applied)
 pub(super) fn get_diff_pager() -> Option<&'static String> {
     CACHED_PAGER
         .get_or_init(|| {
             // Check user config first - use exactly as specified (no auto-detection)
-            if let Ok(config) = UserConfig::load()
-                && let Some(select_config) = config.configs.select
-                && let Some(pager) = select_config.pager
-                && !pager.trim().is_empty()
-            {
-                return Some(pager);
+            // Prefer [switch.picker] pager, fall back to deprecated [select] pager
+            if let Ok(config) = UserConfig::load() {
+                let pager = config
+                    .configs
+                    .switch
+                    .as_ref()
+                    .and_then(|s| s.picker.as_ref())
+                    .and_then(|p| p.pager.clone())
+                    .or_else(|| config.configs.select.as_ref().and_then(|s| s.pager.clone()));
+                if let Some(pager) = pager
+                    && !pager.trim().is_empty()
+                {
+                    return Some(pager);
+                }
             }
 
             // GIT_PAGER or core.pager - apply auto-detection for delta/bat

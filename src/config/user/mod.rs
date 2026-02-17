@@ -26,7 +26,7 @@ pub use resolved::ResolvedConfig;
 pub use schema::{find_unknown_keys, valid_user_config_keys};
 pub use sections::{
     CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig, SelectConfig,
-    StageMode, UserProjectOverrides,
+    StageMode, SwitchConfig, SwitchPickerConfig, UserProjectOverrides,
 };
 
 /// User-level configuration for worktree path formatting and LLM integration.
@@ -86,7 +86,7 @@ pub struct UserConfig {
     #[serde(default)]
     pub projects: std::collections::BTreeMap<String, UserProjectOverrides>,
 
-    /// Settings that can be overridden per-project (worktree-path, list, commit, merge, select, hooks)
+    /// Settings that can be overridden per-project (worktree-path, list, commit, merge, switch, select, hooks)
     #[serde(flatten, default)]
     pub configs: OverridableConfig,
 
