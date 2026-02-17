@@ -601,7 +601,7 @@ impl GitError {
                 )?;
                 if !files.is_empty() {
                     let joined_files = files.join("\n");
-                    write!(f, "\n{}\n", format_with_gutter(&joined_files, None))?;
+                    write!(f, "\n{}", format_with_gutter(&joined_files, None))?;
                 }
                 let path_display = format_path_for_display(worktree_path);
                 write!(
@@ -626,7 +626,7 @@ impl GitError {
                     ))
                 )?;
                 if !commits_formatted.is_empty() {
-                    write!(f, "\n{}\n", format_with_gutter(commits_formatted, None))?;
+                    write!(f, "\n{}", format_with_gutter(commits_formatted, None))?;
                 }
                 // Context-appropriate hint
                 let merge_cmd = suggest_command("merge", &[target_branch], &[]);
