@@ -222,6 +222,7 @@ pub struct ListData {
     /// Tasks that were skipped during collection (includes runtime gating like
     /// SummaryGenerate disabled when no LLM configured). Callers that recalculate
     /// layout (e.g., the picker at a different width) should use this set.
+    #[cfg_attr(windows, allow(dead_code))] // Used only by select module (unix-only)
     pub skip_tasks: std::collections::HashSet<super::super::collect::TaskKind>,
 }
 
