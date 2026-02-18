@@ -1830,3 +1830,25 @@ check = "echo 'SHOULD_NOT_RUN' > pre_switch_marker.txt"
         "Pre-switch hook should be skipped with --no-verify"
     );
 }
+
+/// Test that `wt hook pre-switch` runs pre-switch hooks manually
+#[rstest]
+fn test_user_pre_switch_manual_hook(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[pre-switch]
+check = "echo 'MANUAL_PRE_SWITCH' > pre_switch_marker.txt"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "hook", &["pre-switch"], None);
+        assert_cmd_snapshot!("user_pre_switch_manual", cmd);
+    });
+
+    let marker_file = repo.root_path().join("pre_switch_marker.txt");
+    assert!(
+        marker_file.exists(),
+        "Manual pre-switch hook should have created marker"
+    );
+}
