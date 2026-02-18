@@ -12,7 +12,7 @@ use std::path::PathBuf;
 /// 2. Log: Commit history since diverging from the default branch (git log with merge-base)
 /// 3. BranchDiff: Line diffs since the merge-base with the default branch (git diff --stat DEFAULT…)
 /// 4. UpstreamDiff: Diff vs upstream tracking branch (ahead/behind)
-/// 5. Summary: AI-generated branch summary (requires [commit.generation] config)
+/// 5. Summary: LLM-generated branch summary (requires [commit.generation] config)
 ///
 /// Loosely aligned with `wt list` columns, though not a perfect match:
 /// - Tab 1 corresponds to "HEAD±" column

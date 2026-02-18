@@ -264,7 +264,7 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
         // No LLM configured or summaries disabled — insert config hint so the
         // tab shows a useful message instead of a perpetual "Generating..." placeholder.
         let hint = if !config.commit_generation.is_configured() {
-            "Configure [commit.generation] command to enable AI summaries.\n\n\
+            "Configure [commit.generation] command to enable LLM summaries.\n\n\
              Example in ~/.config/worktrunk/config.toml:\n\n\
              [commit.generation]\n\
              command = \"llm -m haiku\"\n\n\

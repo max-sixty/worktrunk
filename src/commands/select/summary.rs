@@ -1,4 +1,4 @@
-//! AI summary generation for the interactive selector.
+//! LLM summary generation for the interactive selector.
 //!
 //! Thin adapter over `crate::summary` that adds TUI-specific rendering
 //! and integrates with the selector's preview cache.

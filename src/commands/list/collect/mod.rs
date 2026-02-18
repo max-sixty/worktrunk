@@ -536,9 +536,10 @@ pub fn collect(
         effective_skip_tasks.insert(TaskKind::UrlStatus);
     }
 
-    // If no LLM command configured, skip SummaryGenerate (even in --full)
-    let llm_command = repo.config().commit_generation.command.clone();
-    if llm_command.is_none() {
+    // Skip SummaryGenerate unless summary is enabled and an LLM command is configured
+    let config = repo.config();
+    let llm_command = config.commit_generation.command.clone();
+    if !config.list.summary() || llm_command.is_none() {
         effective_skip_tasks.insert(TaskKind::SummaryGenerate);
     }
 

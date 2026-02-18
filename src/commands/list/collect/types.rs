@@ -154,7 +154,7 @@ pub(crate) enum TaskResult {
         /// Whether the port is listening (None if no URL or couldn't parse port)
         active: Option<bool>,
     },
-    /// AI-generated branch summary (--full only, requires LLM command configured)
+    /// LLM-generated branch summary (--full only, requires LLM command configured)
     SummaryGenerate {
         item_idx: usize,
         summary: Option<String>,

@@ -128,7 +128,7 @@ pub struct ListConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remotes: Option<bool>,
 
-    /// Show AI-generated branch summaries in the interactive picker (tab 5).
+    /// Enable LLM-generated branch summaries (picker tab 5 + list Summary column).
     /// Requires `[commit.generation] command` to be configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<bool>,
@@ -157,7 +157,7 @@ impl ListConfig {
         self.remotes.unwrap_or(false)
     }
 
-    /// Show AI-generated branch summaries in picker (default: false)
+    /// Enable LLM-generated branch summaries (default: false)
     pub fn summary(&self) -> bool {
         self.summary.unwrap_or(false)
     }

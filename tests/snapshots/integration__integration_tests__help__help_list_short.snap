@@ -15,10 +15,13 @@ info:
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -39,7 +42,7 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
       [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m  Output format (table, json) [default: table]
       [1m[36m--branches[0m         Include branches without worktrees
       [1m[36m--remotes[0m          Include remote branches
-      [1m[36m--full[0m             Include CI status and diff analysis (slower)
+      [1m[36m--full[0m             Show CI, diff analysis, and LLM summaries
       [1m[36m--progressive[0m      Show fast info immediately, update with slow info
   [1m[36m-h[0m, [1m[36m--help[0m             Print help (see more with '--help')
 

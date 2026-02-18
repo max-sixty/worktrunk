@@ -657,7 +657,7 @@ impl Task for UrlStatusTask {
     }
 }
 
-/// Task 14: AI-generated branch summary (--full only, requires LLM command)
+/// Task 14: LLM-generated branch summary (--full only, requires LLM command)
 pub struct SummaryGenerateTask;
 
 impl Task for SummaryGenerateTask {

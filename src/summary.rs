@@ -1,4 +1,4 @@
-//! Shared AI summary generation for branches.
+//! Shared LLM summary generation for branches.
 //!
 //! Generates branch summaries using the configured LLM command, with caching
 //! in `.git/wt-cache/summaries/`. Summaries are invalidated when the combined

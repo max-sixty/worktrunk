@@ -151,10 +151,11 @@ See LLM commits docs for setup and Custom prompt templates for template customiz
 Persistent flag values for [2mwt list[0m. Override on command line as needed.
 
   [2m[list][0m
-  [2mfull = false       # Show CI status and main…± diffstat columns (--full)[0m
+  [2msummary = false    # Enable LLM branch summaries (requires [commit.generation])[0m
+  [2m[0m
+  [2mfull = false       # Show CI, main…± diffstat, and LLM summaries (--full)[0m
   [2mbranches = false   # Include branches without worktrees (--branches)[0m
   [2mremotes = false    # Include remote-only branches (--remotes)[0m
-  [2msummary = false    # AI branch summaries in picker tab 5 (requires [commit.generation])[0m
 
 [32mCommit[0m
 

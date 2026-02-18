@@ -195,7 +195,7 @@ pub struct ListItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url_active: Option<bool>,
 
-    /// AI-generated branch summary: None = not loaded, Some(None) = no summary, Some(Some) = has summary
+    /// LLM-generated branch summary: None = not loaded, Some(None) = no summary, Some(Some) = has summary
     #[serde(skip)]
     pub summary: Option<Option<String>>,
 
