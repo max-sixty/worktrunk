@@ -751,21 +751,7 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::
             if dest_path.symlink_metadata().is_err() {
                 let target = fs::read_link(&src_path)
                     .with_context(|| format!("reading symlink {}", src_path.display()))?;
-                #[cfg(unix)]
-                std::os::unix::fs::symlink(&target, &dest_path)
-                    .with_context(|| format!("creating symlink {}", dest_path.display()))?;
-                #[cfg(windows)]
-                {
-                    // Check source to determine symlink type (target may be relative/broken)
-                    let is_dir = src_path.metadata().map(|m| m.is_dir()).unwrap_or(false);
-                    if is_dir {
-                        std::os::windows::fs::symlink_dir(&target, &dest_path)
-                            .with_context(|| format!("creating symlink {}", dest_path.display()))?;
-                    } else {
-                        std::os::windows::fs::symlink_file(&target, &dest_path)
-                            .with_context(|| format!("creating symlink {}", dest_path.display()))?;
-                    }
-                }
+                create_symlink(&target, &src_path, &dest_path)?;
             }
         } else if file_type.is_dir() {
             copy_dir_recursive_fallback(&src_path, &dest_path, force)?;
@@ -789,6 +775,37 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::
         }
     }
 
+    Ok(())
+}
+
+/// Create a symlink, handling platform differences.
+///
+/// On Windows, distinguishes between file and directory symlinks by checking the
+/// source path's metadata (the target may be relative or broken, so we use the
+/// source to determine the type).
+fn create_symlink(target: &Path, src_path: &Path, dest_path: &Path) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        let _ = src_path; // Used on Windows to determine symlink type
+        std::os::unix::fs::symlink(target, dest_path)
+            .with_context(|| format!("creating symlink {}", dest_path.display()))?;
+    }
+    #[cfg(windows)]
+    {
+        let is_dir = src_path.metadata().map(|m| m.is_dir()).unwrap_or(false);
+        if is_dir {
+            std::os::windows::fs::symlink_dir(target, dest_path)
+                .with_context(|| format!("creating symlink {}", dest_path.display()))?;
+        } else {
+            std::os::windows::fs::symlink_file(target, dest_path)
+                .with_context(|| format!("creating symlink {}", dest_path.display()))?;
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (target, src_path, dest_path);
+        anyhow::bail!("symlink creation not supported on this platform");
+    }
     Ok(())
 }
 
