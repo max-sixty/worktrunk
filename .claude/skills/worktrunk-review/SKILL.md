@@ -109,37 +109,43 @@ have been addressed. For each unresolved bot thread, you've already read the
 file during review — if the suggestion was applied or the issue was otherwise
 fixed, resolve the thread:
 
-```bash
-REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
-BOT_LOGIN=$(gh api user --jq '.login')
-OWNER=$(echo "$REPO" | cut -d/ -f1)
-NAME=$(echo "$REPO" | cut -d/ -f2)
+**IMPORTANT: GraphQL queries with `$` variables fail when passed inline** —
+Claude mangles the quoting. Always write the query to a file first, then use
+`-F query=@file`.
 
-# Get unresolved bot review threads
-# NOTE: Pipe to jq (don't use --jq) and use --arg to pass BOT_LOGIN cleanly.
-# Avoid quote-nesting patterns like "'"$VAR"'" — Claude mangles them.
-gh api graphql -f query='
-  query($owner: String!, $repo: String!, $number: Int!) {
-    repository(owner: $owner, name: $repo) {
-      pullRequest(number: $number) {
-        reviewThreads(first: 100) {
-          nodes {
-            id
-            isResolved
-            comments(first: 1) {
-              nodes {
-                author { login }
-                path
-                line
-                body
-              }
+```bash
+# Step 1: Write query to temp file (quoted heredoc delimiter prevents $ expansion)
+cat > /tmp/review-threads.graphql << 'GRAPHQL'
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          isResolved
+          comments(first: 1) {
+            nodes {
+              author { login }
+              path
+              line
+              body
             }
           }
         }
       }
     }
   }
-' -f owner="$OWNER" -f repo="$NAME" -F number=<number> \
+}
+GRAPHQL
+
+# Step 2: Run query using -F query=@file (reads from file, no shell quoting issues)
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+BOT_LOGIN=$(gh api user --jq '.login')
+OWNER=$(echo "$REPO" | cut -d/ -f1)
+NAME=$(echo "$REPO" | cut -d/ -f2)
+
+gh api graphql -F query=@/tmp/review-threads.graphql \
+  -f owner="$OWNER" -f repo="$NAME" -F number=<number> \
   | jq --arg bot "$BOT_LOGIN" '
     .data.repository.pullRequest.reviewThreads.nodes[]
     | select(.isResolved == false)
@@ -147,13 +153,15 @@ gh api graphql -f query='
     | {id, path: .comments.nodes[0].path, line: .comments.nodes[0].line, body: .comments.nodes[0].body}'
 
 # Resolve a thread that has been addressed
-gh api graphql -f query='
-  mutation($threadId: ID!) {
-    resolveReviewThread(input: {threadId: $threadId}) {
-      thread { id }
-    }
+cat > /tmp/resolve-thread.graphql << 'GRAPHQL'
+mutation($threadId: ID!) {
+  resolveReviewThread(input: {threadId: $threadId}) {
+    thread { id }
   }
-' -f threadId="THREAD_ID"
+}
+GRAPHQL
+
+gh api graphql -F query=@/tmp/resolve-thread.graphql -f threadId="THREAD_ID"
 ```
 
 Outdated comments (null line) are best-effort — skip if the original context
