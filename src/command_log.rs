@@ -19,7 +19,7 @@ use std::time::Duration;
 const MAX_LOG_SIZE: u64 = 1_048_576;
 
 /// Maximum command string length in log entries.
-const MAX_CMD_LENGTH: usize = 200;
+const MAX_CMD_LENGTH: usize = 2000;
 
 static COMMAND_LOG: OnceLock<Mutex<Option<CommandLog>>> = OnceLock::new();
 
@@ -47,7 +47,7 @@ pub fn init(log_dir: &Path, wt_command: &str) {
 /// Log an external command execution.
 ///
 /// - `label`: identifies what triggered this command (e.g., "pre-merge user:lint", "commit.generation")
-/// - `command`: the shell command that was executed (truncated to 200 chars)
+/// - `command`: the shell command that was executed (truncated to 2000 chars)
 /// - `exit_code`: `None` for background commands where outcome is unknown
 /// - `duration`: `None` for background commands
 pub fn log_command(label: &str, command: &str, exit_code: Option<i32>, duration: Option<Duration>) {
@@ -129,15 +129,15 @@ mod tests {
 
     #[test]
     fn test_command_truncation_ascii() {
-        let long_cmd = "x".repeat(300);
+        let long_cmd = "x".repeat(MAX_CMD_LENGTH + 100);
         let truncated = truncate_cmd(&long_cmd);
-        assert_eq!(truncated.chars().count(), MAX_CMD_LENGTH + 1); // 200 + ellipsis
+        assert_eq!(truncated.chars().count(), MAX_CMD_LENGTH + 1);
         assert!(truncated.ends_with('…'));
     }
 
     #[test]
     fn test_command_truncation_multibyte() {
-        let long_cmd = "é".repeat(300);
+        let long_cmd = "é".repeat(MAX_CMD_LENGTH + 100);
         let truncated = truncate_cmd(&long_cmd);
         assert_eq!(truncated.chars().count(), MAX_CMD_LENGTH + 1);
         assert!(truncated.ends_with('…'));
