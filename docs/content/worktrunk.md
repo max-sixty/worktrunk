@@ -82,6 +82,8 @@ git branch -d feat{% end %}</td>
 - **[Hooks](@/hook.md)** — run commands on create, pre-merge, post-merge, etc
 - **[LLM commit messages](@/llm-commits.md)** — generate commit messages from diffs
 - **[Merge workflow](@/merge.md)** — squash, rebase, merge, clean up in one command
+- **[Interactive picker](@/switch.md#interactive-picker)** — browse worktrees with live diff and log previews
+- **[Copy build caches](@/step.md)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
 - ...and **[lots more](#next-steps)**
 
 A demo with some advanced features:
@@ -91,7 +93,7 @@ A demo with some advanced features:
   <source srcset="/assets/docs/dark/wt-zellij-omnibus.gif" media="(prefers-color-scheme: dark)">
   <img src="/assets/docs/light/wt-zellij-omnibus.gif" alt="Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow" width="1600" height="900">
 </picture>
-<figcaption>Multiple Claude agents in parallel with hooks, LLM commits, and merge</figcaption>
+<figcaption>Multiple Claude agents in parallel with interactive picker, hooks, LLM commits, and merge</figcaption>
 </figure>
 
 ## Install

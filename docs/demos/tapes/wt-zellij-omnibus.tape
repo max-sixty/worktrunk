@@ -16,12 +16,12 @@ Output "{{OUTPUT_GIF}}"
 #   TAB 1: wt list → wt switch api → claude (simple task)
 #   TAB 2: [NEW TAB] wsl abbreviation (wt switch -x claude --create) → claude
 #   TAB 3: [NEW TAB] wt switch --create → wt step commit → git push
-#   TAB 4: [NEW TAB] wt switch auth → wt list → wt remove → wt list --full
+#   TAB 4: [NEW TAB] wt switch (picker) → wt remove → wt list --full
 #   Then back to TAB 1: [NEW PANE] git diff → wt merge (on Claude's completed work)
 #
 # Features demonstrated:
 # - wt list / wt list --full (URLs, CI status, diff stats)
-# - wt switch (simple navigation)
+# - wt switch (simple navigation + interactive picker)
 # - wsl abbreviation (wt switch --execute=claude --create)
 # - wt switch --create (with post-start hooks)
 # - wt step commit (LLM commit message, standalone)
@@ -63,14 +63,17 @@ Enter
 Sleep 3s
 
 # Simple switch with Tab completion - navigate to existing worktree
-# NOTE: Maintainer marked Tab cycling as excellent in wt-core demo
-# - "wt switch a" + Tab → shows api/auth/alpha menu (400ms to review)
-# - Tab → selects api (300ms to see selection)
-# - Enter → accepts selection (dismisses pager)
-# - 50ms then Enter again → executes command
+# Inside Zellij, fish completion needs a moment to render after Tab.
+# - "wt switch a" + pause → let fish process input
+# - Tab → triggers completion menu (alpha/api/auth)
+# - 500ms pause → menu renders and viewer reads it
+# - Tab → cycles to api
+# - 300ms → see selection
+# - Enter → accepts (dismisses pager), 50ms, Enter → executes
 Type "wt switch a"
+Sleep 200ms
 Tab
-Sleep 400ms
+Sleep 500ms
 Tab
 Sleep 300ms
 Enter
@@ -125,20 +128,23 @@ Type "git push -u origin feature"
 Enter
 Sleep 2s
 
-# ==== TAB 4: Navigation, list, and cleanup ====
+# ==== TAB 4: Interactive picker, list, and cleanup ====
 # [NEW TAB]
 Ctrl+t
 Sleep 2s
 
-# wt switch - navigate to auth worktree
-Type "wt switch auth"
+# wt switch (no args) - opens interactive picker
+Type "wt switch"
 Enter
 Sleep 1.5s
 
-# wt list - see current state (before removal)
-Type "wt list"
+# Filter to auth branch
+Type "au"
+Sleep 1s
+
+# Select it
 Enter
-Sleep 2.5s
+Sleep 1.5s
 
 # wt remove - delete current worktree (we're in auth)
 Type "wt remove"

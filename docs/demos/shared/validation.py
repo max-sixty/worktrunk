@@ -29,14 +29,15 @@ from pathlib import Path
 
 TUI_CHECKPOINTS: dict[str, list[tuple[int, list[str], list[str]]]] = {
     # Frame numbers calibrated with permissions cache fix (no permission dialog).
-    # At 30fps: frame 100 = ~3.3s, frame 500 = ~16.7s, frame 2000 = ~66.7s
+    # At 30fps: frame 100 = ~3.3s, frame 500 = ~16.7s, frame 2060 = ~68.7s
     "wt-zellij-omnibus": [
         # Frame 100: After wt list - should see branch table, no permission dialog
         (100, ["Branch", "Status", "main", "hooks"], ["Allow?", "permission"]),
-        # Frame 500: Claude UI visible - shows Opus model indicator and worktree
-        (500, ["Opus", "acme"], ["command not found", "Unknown command"]),
-        # Frame 2000: Near end - wt list --full showing all worktrees
-        (2000, ["Branch", "main", "feature", "billing"], ["CONFLICT", "error:", "failed"]),
+        # Frame 300: Claude UI visible on TAB 1 (api) - shows Opus model and task
+        (300, ["Opus", "acme", "Add a test"], ["command not found", "Unknown command"]),
+        # Frame 1980: Near end - wt list --full showing all worktrees
+        # (shifted ~75 frames earlier after removing wt list before wt remove)
+        (1980, ["Branch", "main", "feature", "billing"], ["CONFLICT", "error:", "failed"]),
     ],
 }
 
