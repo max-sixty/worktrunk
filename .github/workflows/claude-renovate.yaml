@@ -117,6 +117,6 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: claude-session-logs
-          path: ~/.claude/
+          path: ${{ env.HOME }}/.claude/
           retention-days: 30
           if-no-files-found: warn
