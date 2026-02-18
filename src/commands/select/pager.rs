@@ -41,16 +41,17 @@ fn needs_paging_disabled(pager_cmd: &str) -> bool {
 ///
 /// Returns the pager command with any necessary flags (like `--paging=never`)
 /// already appended. Precedence:
-/// 1. `[select] pager` in user config (used as-is)
-/// 2. `GIT_PAGER` environment variable (auto-detection applied)
-/// 3. `core.pager` git config (auto-detection applied)
+/// 1. `[switch.picker] pager` in user config (used as-is)
+/// 2. `[select] pager` in user config (deprecated, used as-is)
+/// 3. `GIT_PAGER` environment variable (auto-detection applied)
+/// 4. `core.pager` git config (auto-detection applied)
 pub(super) fn get_diff_pager() -> Option<&'static String> {
     CACHED_PAGER
         .get_or_init(|| {
             // Check user config first - use exactly as specified (no auto-detection)
+            // Uses switch_picker() accessor which handles [switch.picker] → [select] fallback
             if let Ok(config) = UserConfig::load()
-                && let Some(select_config) = config.configs.select
-                && let Some(pager) = select_config.pager
+                && let Some(pager) = config.switch_picker(None).pager
                 && !pager.trim().is_empty()
             {
                 return Some(pager);

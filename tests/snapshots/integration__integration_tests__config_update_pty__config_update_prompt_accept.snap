@@ -1,0 +1,17 @@
+---
+source: tests/integration_tests/config_update_pty.rs
+expression: "&output"
+---
+[33m▲[39m [33mUser config uses deprecated template variables: [2mrepo_root[22m → [1mrepo_path[22m, [2mmain_worktree[22m → [1mrepo[22m[39m
+[107m [0m [1mdiff --git a[TEST_CONFIG] b[TEST_CONFIG_NEW][m
+[107m [0m [1mindex d95d100..ceb381d 100644[m
+[107m [0m [1m--- a[TEST_CONFIG][m
+[107m [0m [1m+++ b[TEST_CONFIG_NEW][m
+[107m [0m [36m@@ -1,2 +1,2 @@[m
+[107m [0m [31m-worktree-path = "../{{ main_worktree }}.{{ branch }}"[m
+[107m [0m [31m-post-create = "ln -sf {{ repo_root }}/node_modules"[m
+[107m [0m [32m+[m[32mworktree-path = "../{{ repo }}.{{ branch }}"[m
+[107m [0m [32m+[m[32mpost-create = "ln -sf {{ repo_path }}/node_modules"[m
+
+[36m❯[39m Apply updates? [1m[y/N/?][22m y
+[32m✓[39m [32mUpdated user config[39m

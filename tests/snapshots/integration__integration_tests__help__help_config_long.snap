@@ -40,6 +40,7 @@ Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36mshell[0m   Shell integration setup
   [1m[36mcreate[0m  Create configuration file
   [1m[36mshow[0m    Show configuration files & locations
+  [1m[36mupdate[0m  Update deprecated config settings
   [1m[36mstate[0m   Manage internal data and cache
 
 [1m[32mOptions:[0m
@@ -173,15 +174,17 @@ All flags are on by default. Set to false to change default behavior.
   [2mremove = true      # Remove worktree after merge (--no-remove to keep)[0m
   [2mverify = true      # Run project hooks (--no-verify to skip)[0m
 
-[32mSelect[0m
+[32mSwitch picker[0m
 
-Pager behavior for [2mwt switch[0m interactive picker diff previews.
+Configuration for [2mwt switch[0m interactive picker.
 
-  [2m[select][0m
-  [2m# Pager command with flags for diff preview (overrides git's core.pager)[0m
-  [2m# Use this to specify pager flags needed for non-TTY contexts[0m
-  [2m# Example:[0m
+  [2m[switch.picker][0m
+  [2m# Pager command for diff preview (overrides git's core.pager)[0m
   [2m# pager = "delta --paging=never"[0m
+  [2m[0m
+  [2m# Timeout (ms) for git commands during picker loading (default: 200)[0m
+  [2m# Lower values show the TUI faster; 0 disables timeouts[0m
+  [2m# timeout-ms = 200[0m
 
 [32mUser project-specific settings[0m
 

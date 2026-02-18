@@ -18,6 +18,7 @@ info:
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
@@ -128,15 +129,17 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# remove = true      # Remove worktree after merge (--no-remove to keep)[0m
   [2m# verify = true      # Run project hooks (--no-verify to skip)[0m
   [2m#[0m
-  [2m# ### Select[0m
+  [2m# ### Switch picker[0m
   [2m#[0m
-  [2m# Pager behavior for `wt switch` interactive picker diff previews.[0m
+  [2m# Configuration for `wt switch` interactive picker.[0m
   [2m#[0m
-  [2m# [select][0m
-  [2m# # Pager command with flags for diff preview (overrides git's core.pager)[0m
-  [2m# # Use this to specify pager flags needed for non-TTY contexts[0m
-  [2m# # Example:[0m
+  [2m# [switch.picker][0m
+  [2m# # Pager command for diff preview (overrides git's core.pager)[0m
   [2m# # pager = "delta --paging=never"[0m
+  [2m#[0m
+  [2m# # Timeout (ms) for git commands during picker loading (default: 200)[0m
+  [2m# # Lower values show the TUI faster; 0 disables timeouts[0m
+  [2m# # timeout-ms = 200[0m
   [2m#[0m
   [2m# ### User project-specific settings[0m
   [2m#[0m

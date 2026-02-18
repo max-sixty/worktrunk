@@ -450,6 +450,16 @@ main {
     background-color: transparent;
 }
 
+// Quoted strings get olive color via CSS sibling selector (light mode only).
+// Giallo emits: <span class="z-punctuation z-definition z-string">'</span><span class="z-string">content</span>
+// Bare strings (subcommands like `switch`) are just <span class="z-string"> without a preceding quote span.
+// Must match punctuation.definition.string in worktrunk-light.json (#588a10).
+@media (prefers-color-scheme: light) {
+    .z-punctuation.z-definition.z-string + .z-string {
+        color: #588a10;
+    }
+}
+
 // Shared styles for code blocks and terminal output
 %code-block-base {
     position: relative;
@@ -532,16 +542,14 @@ main {
     line-height: 1.5;
     color: var(--wt-color-text);  // Default text color for terminal (not syntax-highlighted)
 
-    // Command text - bold amber for visibility
-    // Prompt ($) is generated via ::before, making it non-copyable
+    // Command text with $ prompt (generated via ::before, making it non-copyable)
+    // When giallo spans are present, their colors take precedence over the base color
     .cmd {
         color: var(--wt-color-accent);
-        font-weight: 600;
 
         &::before {
             content: "$ ";
             color: var(--wt-color-text-soft);
-            font-weight: 400;
         }
     }
 

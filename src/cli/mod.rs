@@ -247,9 +247,7 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
-    /// Switch to a worktree
-    ///
-    /// Creates one if needed.
+    /// Switch to a worktree; create if needed
     #[command(
         after_long_help = r#"Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
 
@@ -337,7 +335,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
 ```toml
-[select]
+[switch.picker]
 pager = "delta --paging=never --width=$COLUMNS"
 ```
 
@@ -1018,6 +1016,7 @@ wt step push
 - `squash` — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
 - `rebase` — Rebase onto target branch
 - `push` — Fast-forward target to current branch
+- `diff` — Show all changes since branching (committed, staged, unstaged, untracked)
 - `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
 
@@ -1592,16 +1591,18 @@ remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
 ```
 
-### Select
+### Switch picker
 
-Pager behavior for `wt switch` interactive picker diff previews.
+Configuration for `wt switch` interactive picker.
 
 ```toml
-[select]
-# Pager command with flags for diff preview (overrides git's core.pager)
-# Use this to specify pager flags needed for non-TTY contexts
-# Example:
+[switch.picker]
+# Pager command for diff preview (overrides git's core.pager)
 # pager = "delta --paging=never"
+
+# Timeout (ms) for git commands during picker loading (default: 200)
+# Lower values show the TUI faster; 0 disables timeouts
+# timeout-ms = 200
 ```
 
 ### User project-specific settings

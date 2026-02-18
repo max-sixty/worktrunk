@@ -264,7 +264,7 @@ impl Approvals {
     }
 
     /// Extract approved-commands from a specific config file.
-    fn load_from_config_file(config_path: &Path) -> Result<Self, ConfigError> {
+    pub(crate) fn load_from_config_file(config_path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(config_path).map_err(|e| {
             ConfigError::Message(format!(
                 "Failed to read config file {}: {}",

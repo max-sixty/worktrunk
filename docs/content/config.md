@@ -148,16 +148,18 @@ remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
 ```
 
-### Select
+### Switch picker
 
-Pager behavior for `wt switch` interactive picker diff previews.
+Configuration for `wt switch` interactive picker.
 
 ```toml
-[select]
-# Pager command with flags for diff preview (overrides git's core.pager)
-# Use this to specify pager flags needed for non-TTY contexts
-# Example:
+[switch.picker]
+# Pager command for diff preview (overrides git's core.pager)
 # pager = "delta --paging=never"
+
+# Timeout (ms) for git commands during picker loading (default: 200)
+# Lower values show the TUI faster; 0 disables timeouts
+# timeout-ms = 200
 ```
 
 ### User project-specific settings
@@ -376,6 +378,7 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
   <b><span class=c>shell</span></b>   Shell integration setup
   <b><span class=c>create</span></b>  Create configuration file
   <b><span class=c>show</span></b>    Show configuration files &amp; locations
+  <b><span class=c>update</span></b>  Update deprecated config settings
   <b><span class=c>state</span></b>   Manage internal data and cache
 
 <b><span class=g>Options:</span></b>

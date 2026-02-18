@@ -987,18 +987,270 @@ fn test_commit_config_accessor_methods() {
 }
 
 #[test]
-fn test_select_config_accessor_methods() {
+fn test_select_config_fields() {
     let config = SelectConfig::default();
-    assert!(config.pager().is_none());
+    assert!(config.pager.is_none());
 
     let config = SelectConfig {
         pager: Some("delta --paging=never".to_string()),
     };
+    assert_eq!(config.pager.as_deref(), Some("delta --paging=never"));
+}
+
+// =========================================================================
+// SwitchPickerConfig tests
+// =========================================================================
+
+#[test]
+fn test_switch_picker_config_accessor_methods() {
+    use crate::config::user::SwitchPickerConfig;
+
+    let config = SwitchPickerConfig::default();
+    assert!(config.pager().is_none());
+    // Default timeout is 200ms
+    assert_eq!(
+        config.picker_command_timeout(),
+        Some(std::time::Duration::from_millis(200))
+    );
+
+    let config = SwitchPickerConfig {
+        pager: Some("delta --paging=never".to_string()),
+        timeout_ms: Some(500),
+    };
     assert_eq!(config.pager(), Some("delta --paging=never"));
+    assert_eq!(
+        config.picker_command_timeout(),
+        Some(std::time::Duration::from_millis(500))
+    );
+}
+
+#[test]
+fn test_switch_picker_timeout_zero_disables() {
+    use crate::config::user::SwitchPickerConfig;
+
+    let config = SwitchPickerConfig {
+        timeout_ms: Some(0),
+        ..Default::default()
+    };
+    assert!(config.picker_command_timeout().is_none());
+}
+
+#[test]
+fn test_switch_picker_timeout_none_uses_default() {
+    use crate::config::user::SwitchPickerConfig;
+
+    let config = SwitchPickerConfig::default();
+    assert_eq!(
+        config.picker_command_timeout(),
+        Some(std::time::Duration::from_millis(200))
+    );
+}
+
+#[test]
+fn test_switch_picker_config_parse_toml() {
+    let content = r#"
+[switch.picker]
+pager = "delta --paging=never"
+timeout-ms = 300
+"#;
+    let config: UserConfig = toml::from_str(content).unwrap();
+    let picker = config
+        .configs
+        .switch
+        .as_ref()
+        .unwrap()
+        .picker
+        .as_ref()
+        .unwrap();
+    assert_eq!(picker.pager.as_deref(), Some("delta --paging=never"));
+    assert_eq!(picker.timeout_ms, Some(300));
+}
+
+#[test]
+fn test_switch_picker_merge() {
+    use crate::config::user::{Merge, SwitchPickerConfig};
+
+    let base = SwitchPickerConfig {
+        pager: Some("delta".to_string()),
+        timeout_ms: Some(500),
+    };
+    let override_config = SwitchPickerConfig {
+        pager: None,         // Fall back to base
+        timeout_ms: Some(0), // Override: disable timeout
+    };
+
+    let merged = base.merge_with(&override_config);
+    assert_eq!(merged.pager.as_deref(), Some("delta"));
+    assert_eq!(merged.timeout_ms, Some(0));
+}
+
+#[test]
+fn test_switch_config_merge() {
+    use crate::config::user::{Merge, SwitchConfig, SwitchPickerConfig};
+
+    // Both have picker
+    let base = SwitchConfig {
+        picker: Some(SwitchPickerConfig {
+            pager: Some("delta".to_string()),
+            timeout_ms: None,
+        }),
+    };
+    let other = SwitchConfig {
+        picker: Some(SwitchPickerConfig {
+            pager: None,
+            timeout_ms: Some(300),
+        }),
+    };
+    let merged = base.merge_with(&other);
+    assert_eq!(
+        merged.picker.as_ref().unwrap().pager.as_deref(),
+        Some("delta")
+    );
+    assert_eq!(merged.picker.as_ref().unwrap().timeout_ms, Some(300));
+
+    // Base has picker, other doesn't
+    let other_none = SwitchConfig { picker: None };
+    let merged = base.merge_with(&other_none);
+    assert_eq!(
+        merged.picker.as_ref().unwrap().pager.as_deref(),
+        Some("delta")
+    );
+
+    // Neither has picker
+    let base_none = SwitchConfig { picker: None };
+    let merged = base_none.merge_with(&other_none);
+    assert!(merged.picker.is_none());
+}
+
+#[test]
+fn test_switch_picker_fallback_from_select() {
+    // When only [select] is configured, switch_picker() should use its pager
+    let config = UserConfig {
+        configs: OverridableConfig {
+            select: Some(SelectConfig {
+                pager: Some("bat".to_string()),
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let picker = config.switch_picker(None);
+    assert_eq!(picker.pager.as_deref(), Some("bat"));
+    // timeout_ms not available from select, so default applies
+    assert_eq!(picker.timeout_ms, None);
+    assert_eq!(
+        picker.picker_command_timeout(),
+        Some(std::time::Duration::from_millis(200))
+    );
+}
+
+#[test]
+fn test_switch_picker_prefers_new_over_select() {
+    use crate::config::user::{SwitchConfig, SwitchPickerConfig};
+
+    // When both [switch.picker] and [select] are configured, switch.picker wins
+    let config = UserConfig {
+        configs: OverridableConfig {
+            switch: Some(SwitchConfig {
+                picker: Some(SwitchPickerConfig {
+                    pager: Some("delta".to_string()),
+                    timeout_ms: Some(100),
+                }),
+            }),
+            select: Some(SelectConfig {
+                pager: Some("bat".to_string()),
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let picker = config.switch_picker(None);
+    assert_eq!(picker.pager.as_deref(), Some("delta"));
+    assert_eq!(picker.timeout_ms, Some(100));
+}
+
+#[test]
+fn test_switch_picker_project_override() {
+    use crate::config::user::{SwitchConfig, SwitchPickerConfig};
+
+    let mut config = UserConfig {
+        configs: OverridableConfig {
+            switch: Some(SwitchConfig {
+                picker: Some(SwitchPickerConfig {
+                    pager: Some("delta".to_string()),
+                    timeout_ms: Some(200),
+                }),
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    config.projects.insert(
+        "github.com/user/repo".to_string(),
+        UserProjectOverrides {
+            overrides: OverridableConfig {
+                switch: Some(SwitchConfig {
+                    picker: Some(SwitchPickerConfig {
+                        pager: Some("bat".to_string()),
+                        timeout_ms: None, // Fall back to global
+                    }),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let picker = config.switch_picker(Some("github.com/user/repo"));
+    assert_eq!(picker.pager.as_deref(), Some("bat")); // From project
+    assert_eq!(picker.timeout_ms, Some(200)); // From global
+}
+
+#[test]
+fn test_switch_picker_project_fallback_from_select() {
+    // Project has [select], global has [switch.picker]
+    // Project's select pager should be used
+    use crate::config::user::{SwitchConfig, SwitchPickerConfig};
+
+    let mut config = UserConfig {
+        configs: OverridableConfig {
+            switch: Some(SwitchConfig {
+                picker: Some(SwitchPickerConfig {
+                    pager: Some("delta".to_string()),
+                    timeout_ms: Some(300),
+                }),
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    config.projects.insert(
+        "github.com/user/repo".to_string(),
+        UserProjectOverrides {
+            overrides: OverridableConfig {
+                select: Some(SelectConfig {
+                    pager: Some("bat".to_string()),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let picker = config.switch_picker(Some("github.com/user/repo"));
+    assert_eq!(picker.pager.as_deref(), Some("bat")); // Project select fallback
+    assert_eq!(picker.timeout_ms, Some(300)); // From global (select has no timeout)
 }
 
 #[test]
 fn test_resolved_config_for_project() {
+    use crate::config::user::SwitchConfig;
+    use crate::config::user::SwitchPickerConfig;
+
     let config = UserConfig {
         configs: OverridableConfig {
             list: Some(ListConfig {
@@ -1013,8 +1265,11 @@ fn test_resolved_config_for_project() {
                 stage: Some(StageMode::None),
                 ..Default::default()
             }),
-            select: Some(SelectConfig {
-                pager: Some("less".to_string()),
+            switch: Some(SwitchConfig {
+                picker: Some(SwitchPickerConfig {
+                    pager: Some("less".to_string()),
+                    timeout_ms: Some(300),
+                }),
             }),
             ..Default::default()
         },
@@ -1029,7 +1284,8 @@ fn test_resolved_config_for_project() {
     assert!(!resolved.merge.squash()); // Overridden to false
     assert!(resolved.merge.commit()); // Default true
     assert_eq!(resolved.commit.stage(), StageMode::None);
-    assert_eq!(resolved.select.pager(), Some("less"));
+    assert_eq!(resolved.switch_picker.pager(), Some("less"));
+    assert_eq!(resolved.switch_picker.timeout_ms, Some(300));
 }
 
 // =========================================================================
@@ -1738,7 +1994,7 @@ fn test_valid_user_config_keys_all_deserialize() {
             "worktree-path" => {
                 scalar_lines.push(format!("{key} = \"test-value\""));
             }
-            "list" | "commit" | "merge" | "select" | "commit-generation" => {
+            "list" | "commit" | "merge" | "switch" | "select" | "commit-generation" => {
                 // Table sections with minimal content
                 table_lines.push(format!("[{key}]"));
             }

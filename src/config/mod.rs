@@ -79,6 +79,8 @@ pub use deprecation::check_and_migrate;
 pub use deprecation::detect_deprecations;
 pub use deprecation::format_brief_warning;
 pub use deprecation::format_deprecation_details;
+pub use deprecation::format_deprecation_warnings;
+pub use deprecation::format_migration_diff;
 pub use deprecation::normalize_template_vars;
 pub use deprecation::write_migration_file;
 pub use deprecation::{DEPRECATED_SECTION_KEYS, key_belongs_in, warn_unknown_fields};
@@ -93,9 +95,9 @@ pub use project::{
 };
 pub use user::{
     CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig,
-    ResolvedConfig, SelectConfig, StageMode, UserConfig, UserProjectOverrides,
-    default_system_config_path, find_unknown_keys as find_unknown_user_keys, get_config_path,
-    get_system_config_path, set_config_path,
+    ResolvedConfig, SelectConfig, StageMode, SwitchConfig, SwitchPickerConfig, UserConfig,
+    UserProjectOverrides, default_system_config_path, find_unknown_keys as find_unknown_user_keys,
+    get_config_path, get_system_config_path, set_config_path,
 };
 
 #[cfg(test)]
