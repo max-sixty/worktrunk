@@ -19,6 +19,7 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
+    verbosity,
 };
 
 use super::command_approval::approve_hooks;
@@ -577,10 +578,11 @@ pub fn step_copy_ignored(
         return Ok(());
     }
 
+    let verbose = verbosity();
     let mut copied_count = 0;
 
-    // Handle dry-run: show what would be copied in a gutter list
-    if dry_run {
+    // Show entries in verbose or dry-run mode
+    if verbose >= 1 || dry_run {
         let items: Vec<String> = entries_to_copy
             .iter()
             .map(|(src_entry, is_dir)| {
@@ -592,16 +594,19 @@ pub fn step_copy_ignored(
             })
             .collect();
         let entry_word = if items.len() == 1 { "entry" } else { "entries" };
+        let verb = if dry_run { "Would copy" } else { "Copying" };
         eprintln!(
             "{}",
             info_message(format!(
-                "Would copy {} {}:\n{}",
+                "{verb} {} {}:\n{}",
                 items.len(),
                 entry_word,
                 format_with_gutter(&items.join("\n"), None)
             ))
         );
-        return Ok(());
+        if dry_run {
+            return Ok(());
+        }
     }
 
     // Copy entries
@@ -613,11 +618,13 @@ pub fn step_copy_ignored(
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
-            copy_dir_recursive(src_entry, &dest_entry, force)?;
+            copy_dir_recursive(src_entry, &dest_entry, force)
+                .with_context(|| format!("copying directory {}", relative.display()))?;
             copied_count += 1;
         } else {
             if let Some(parent) = dest_entry.parent() {
-                fs::create_dir_all(parent)?;
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("creating directory for {}", relative.display()))?;
             }
             if force {
                 remove_if_exists(&dest_entry)?;
@@ -626,7 +633,11 @@ pub fn step_copy_ignored(
             match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
                 Ok(_) => copied_count += 1,
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    return Err(
+                        anyhow::Error::from(e).context(format!("copying {}", relative.display()))
+                    );
+                }
             }
         }
     }
@@ -722,7 +733,7 @@ fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()
 ///
 /// Used as fallback when atomic directory clone isn't available or fails.
 fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
-    fs::create_dir_all(dest)?;
+    fs::create_dir_all(dest).with_context(|| format!("creating directory {}", dest.display()))?;
 
     for entry in fs::read_dir(src)? {
         let entry = entry?;
@@ -735,23 +746,32 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::
             if force {
                 remove_if_exists(&dest_path)?;
             }
-            if !dest_path.exists() {
-                let target = fs::read_link(&src_path)?;
+            // Use symlink_metadata to detect broken symlinks (exists() follows symlinks
+            // and returns false for broken ones, causing EEXIST on the next symlink call)
+            if dest_path.symlink_metadata().is_err() {
+                let target = fs::read_link(&src_path)
+                    .with_context(|| format!("reading symlink {}", src_path.display()))?;
                 #[cfg(unix)]
-                std::os::unix::fs::symlink(&target, &dest_path)?;
+                std::os::unix::fs::symlink(&target, &dest_path)
+                    .with_context(|| format!("creating symlink {}", dest_path.display()))?;
                 #[cfg(windows)]
                 {
                     // Check source to determine symlink type (target may be relative/broken)
                     let is_dir = src_path.metadata().map(|m| m.is_dir()).unwrap_or(false);
                     if is_dir {
-                        std::os::windows::fs::symlink_dir(&target, &dest_path)?;
+                        std::os::windows::fs::symlink_dir(&target, &dest_path)
+                            .with_context(|| format!("creating symlink {}", dest_path.display()))?;
                     } else {
-                        std::os::windows::fs::symlink_file(&target, &dest_path)?;
+                        std::os::windows::fs::symlink_file(&target, &dest_path)
+                            .with_context(|| format!("creating symlink {}", dest_path.display()))?;
                     }
                 }
             }
         } else if file_type.is_dir() {
             copy_dir_recursive_fallback(&src_path, &dest_path, force)?;
+        } else if !file_type.is_file() {
+            // Skip non-regular files (sockets, FIFOs, etc.)
+            log::debug!("skipping non-regular file: {}", src_path.display());
         } else {
             if force {
                 remove_if_exists(&dest_path)?;
@@ -760,7 +780,11 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::
             match reflink_copy::reflink_or_copy(&src_path, &dest_path) {
                 Ok(_) => {}
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    return Err(
+                        anyhow::Error::from(e).context(format!("copying {}", src_path.display()))
+                    );
+                }
             }
         }
     }
