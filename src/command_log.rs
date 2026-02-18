@@ -21,7 +21,7 @@ const MAX_LOG_SIZE: u64 = 1_048_576;
 /// Maximum command string length in log entries.
 const MAX_CMD_LENGTH: usize = 2000;
 
-static COMMAND_LOG: OnceLock<Mutex<Option<CommandLog>>> = OnceLock::new();
+static COMMAND_LOG: OnceLock<Mutex<CommandLog>> = OnceLock::new();
 
 struct CommandLog {
     log_path: PathBuf,
@@ -41,7 +41,7 @@ pub fn init(log_dir: &Path, wt_command: &str) {
     };
 
     // OnceLock::set fails if already initialized — that's fine, ignore the error
-    let _ = COMMAND_LOG.set(Mutex::new(Some(logger)));
+    let _ = COMMAND_LOG.set(Mutex::new(logger));
 }
 
 /// Log an external command execution.
@@ -56,14 +56,8 @@ pub fn log_command(label: &str, command: &str, exit_code: Option<i32>, duration:
         None => return,
     };
 
-    let mut guard = match mutex.lock() {
-        Ok(g) => g,
-        Err(_) => return,
-    };
-
-    let logger = match guard.as_mut() {
-        Some(l) => l,
-        None => return,
+    let Ok(mut logger) = mutex.lock() else {
+        return;
     };
 
     // Rotate if needed
@@ -87,13 +81,7 @@ pub fn log_command(label: &str, command: &str, exit_code: Option<i32>, duration:
             .ok();
     }
 
-    let file = match logger.file.as_mut() {
-        Some(f) => f,
-        None => return,
-    };
-
     let cmd_display = truncate_cmd(command);
-
     let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let entry = serde_json::json!({
         "ts": ts,
@@ -107,6 +95,10 @@ pub fn log_command(label: &str, command: &str, exit_code: Option<i32>, duration:
     // Single write_all to avoid interleaving with concurrent wt processes
     let mut buf = entry.to_string();
     buf.push('\n');
+
+    let Some(file) = logger.file.as_mut() else {
+        return;
+    };
     let _ = file.write_all(buf.as_bytes());
 }
 
