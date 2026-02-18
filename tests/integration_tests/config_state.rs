@@ -24,8 +24,9 @@ fn internal_log_filename(branch: &str, op: &str) -> String {
 /// Settings for `wt config state get` snapshots (normalizes log paths)
 fn state_get_settings() -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
-    // LOG FILES path varies per test (temp dir), normalize for stable snapshots
-    settings.add_filter(r"(LOG FILES\x1b\[39m\s+@ )[^\n]+", "${1}<PATH>");
+    // COMMAND LOG / HOOK OUTPUT paths vary per test (temp dir), normalize for stable snapshots
+    settings.add_filter(r"(COMMAND LOG\x1b\[39m\s+@ )[^\n]+", "${1}<PATH>");
+    settings.add_filter(r"(HOOK OUTPUT\x1b\[39m\s+@ )[^\n]+", "${1}<PATH>");
     settings
 }
 
@@ -470,8 +471,12 @@ fn test_state_get_logs_empty(repo: TestRepo) {
     // Path is dynamic (temp dir), so check pattern instead of exact snapshot
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("LOG FILES"),
-        "Expected LOG FILES heading: {stderr}"
+        stderr.contains("COMMAND LOG"),
+        "Expected COMMAND LOG heading: {stderr}"
+    );
+    assert!(
+        stderr.contains("HOOK OUTPUT"),
+        "Expected HOOK OUTPUT heading: {stderr}"
     );
     // Path separator varies by platform, so check for either / or \
     assert!(
@@ -482,7 +487,7 @@ fn test_state_get_logs_empty(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_logs_with_files(repo: TestRepo) {
-    // Create wt-logs directory with some log files
+    // Create wt-logs directory with hook output and command log files
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt-logs");
     std::fs::create_dir_all(&log_dir).unwrap();
@@ -492,30 +497,30 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
     )
     .unwrap();
     std::fs::write(log_dir.join("bugfix-remove.log"), "remove output").unwrap();
+    std::fs::write(log_dir.join("commands.jsonl"), r#"{"ts":"2026-01-01"}"#).unwrap();
 
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    // Verify we get a table with file info
     let stderr = String::from_utf8_lossy(&output.stderr);
+    // Verify both sections are present
     assert!(
-        stderr.contains("LOG FILES"),
-        "Expected LOG FILES heading: {stderr}"
+        stderr.contains("COMMAND LOG"),
+        "Expected COMMAND LOG heading: {stderr}"
     );
-    // Path separator varies by platform, so check for either / or \
     assert!(
-        stderr.contains(".git/wt-logs") || stderr.contains(".git\\wt-logs"),
-        "Expected .git/wt-logs or .git\\wt-logs in output: {stderr}"
+        stderr.contains("HOOK OUTPUT"),
+        "Expected HOOK OUTPUT heading: {stderr}"
     );
-    assert!(stderr.contains("File"));
-    assert!(stderr.contains("Size"));
-    assert!(stderr.contains("Age"));
+    // Command log section shows jsonl file
+    assert!(stderr.contains("commands.jsonl"));
+    // Hook output section shows .log files
     assert!(stderr.contains("feature-post-start-npm.log"));
     assert!(stderr.contains("bugfix-remove.log"));
 }
 
 #[rstest]
 fn test_state_get_logs_dir_exists_no_log_files(repo: TestRepo) {
-    // Create wt-logs directory with non-.log files (empty of actual log files)
+    // Create wt-logs directory with non-log files (empty of actual log files)
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt-logs");
     std::fs::create_dir_all(&log_dir).unwrap();
@@ -524,16 +529,19 @@ fn test_state_get_logs_dir_exists_no_log_files(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    // Should show "(none)" since no .log files exist
+    // Both sections should show "(none)" since no log files exist
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("LOG FILES"),
-        "Expected LOG FILES heading: {stderr}"
+        stderr.contains("COMMAND LOG"),
+        "Expected COMMAND LOG heading: {stderr}"
     );
     assert!(
-        stderr.contains("(none)"),
-        "Expected (none) when log dir exists but has no .log files: {stderr}"
+        stderr.contains("HOOK OUTPUT"),
+        "Expected HOOK OUTPUT heading: {stderr}"
     );
+    // Count "(none)" occurrences — should appear twice (once per section)
+    let none_count = stderr.matches("(none)").count();
+    assert_eq!(none_count, 2, "Expected two (none) entries: {stderr}");
 }
 
 #[rstest]
@@ -545,16 +553,17 @@ fn test_state_clear_logs_empty(repo: TestRepo) {
 
 #[rstest]
 fn test_state_clear_logs_with_files(repo: TestRepo) {
-    // Create wt-logs directory with some log files
+    // Create wt-logs directory with hook output and command log files
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt-logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
     std::fs::write(log_dir.join("bugfix-remove.log"), "remove output").unwrap();
+    std::fs::write(log_dir.join("commands.jsonl"), "jsonl data").unwrap();
 
     let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m2[22m log files[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m3[22m log files[39m");
 
     // Verify logs are gone
     assert!(!log_dir.exists());
@@ -686,7 +695,10 @@ fn test_state_get_empty(repo: TestRepo) {
         [36mHINTS[39m
         [107m [0m (none)
 
-        [36mLOG FILES[39m  @ <PATH>
+        [36mCOMMAND LOG[39m  @ <PATH>
+        [107m [0m (none)
+
+        [36mHOOK OUTPUT[39m  @ <PATH>
         [107m [0m (none)
         ");
     });
@@ -788,7 +800,8 @@ fn test_state_get_json_empty(repo: TestRepo) {
     assert_eq!(json["markers"], serde_json::json!([]));
     assert_eq!(json["ci_status"], serde_json::json!([]));
     assert_eq!(json["hints"], serde_json::json!([]));
-    assert_eq!(json["logs"], serde_json::json!([]));
+    assert_eq!(json["command_log"], serde_json::json!([]));
+    assert_eq!(json["hook_output"], serde_json::json!([]));
 }
 
 #[rstest]
@@ -845,12 +858,13 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_json_with_logs(repo: TestRepo) {
-    // Create log files
+    // Create hook output and command log files
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt-logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
     std::fs::write(log_dir.join("bugfix-remove.log"), "remove log output").unwrap();
+    std::fs::write(log_dir.join("commands.jsonl"), r#"{"ts":"2026-01-01"}"#).unwrap();
 
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
@@ -858,21 +872,26 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
     let json_str = String::from_utf8_lossy(&output.stdout);
     let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
 
-    // Check logs - they should be present and have expected fields
-    let logs = json["logs"].as_array().unwrap();
-    assert_eq!(logs.len(), 2);
+    // Check command_log — should contain the commands.jsonl file
+    let command_log = json["command_log"].as_array().unwrap();
+    assert_eq!(command_log.len(), 1);
+    assert_eq!(command_log[0]["file"], "commands.jsonl");
 
-    // Logs are sorted by modified time (newest first), but in test both are same time
-    // Just check that both log files are present with expected fields
-    let log_files: Vec<&str> = logs.iter().map(|l| l["file"].as_str().unwrap()).collect();
+    // Check hook_output — should contain the .log files
+    let hook_output = json["hook_output"].as_array().unwrap();
+    assert_eq!(hook_output.len(), 2);
+    let log_files: Vec<&str> = hook_output
+        .iter()
+        .map(|l| l["file"].as_str().unwrap())
+        .collect();
     assert!(log_files.contains(&"feature-post-start-npm.log"));
     assert!(log_files.contains(&"bugfix-remove.log"));
 
-    // Each log entry should have file, size, and modified_at
-    for log in logs {
-        assert!(log.get("file").is_some());
-        assert!(log.get("size").is_some());
-        assert!(log.get("modified_at").is_some());
+    // Each entry should have file, size, and modified_at
+    for entry in command_log.iter().chain(hook_output.iter()) {
+        assert!(entry.get("file").is_some());
+        assert!(entry.get("size").is_some());
+        assert!(entry.get("modified_at").is_some());
     }
 }
 

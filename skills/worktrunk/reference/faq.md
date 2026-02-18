@@ -109,6 +109,7 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 | `.git/config` keys under `worktrunk.*` | Cached default branch, switch history, branch markers | Various commands |
 | `.git/wt-cache/ci-status/*.json` | CI status cache (~1KB each) | `wt list` when `gh` or `glab` CLI is installed |
 | `.git/wt-logs/*.log` | Background command output | Hooks, background `wt remove` |
+| `.git/wt-logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |
 
 None of this is tracked by git or pushed to remotes.
 
@@ -178,6 +179,22 @@ User hooks don't require approval (you defined them). Commands from project hook
 ```
 
 Use `--yes` to bypass prompts (useful for CI/automation).
+
+### Command log
+
+All hook executions and LLM commands are recorded in `.git/wt-logs/commands.jsonl` — one JSON object per line with timestamp, command, exit code, and duration. This provides a debugging trail without requiring `-vv` verbose output. The file rotates to `commands.jsonl.old` at 1MB, bounding storage to ~2MB.
+
+View the log with `wt config state logs get`, or query directly:
+
+```bash
+# Recent commands
+tail -5 .git/wt-logs/commands.jsonl | jq .
+
+# Failed commands
+jq 'select(.exit != 0 and .exit != null)' .git/wt-logs/commands.jsonl
+```
+
+Clear with `wt config state logs clear`.
 
 ## Does Worktrunk work on Windows?
 

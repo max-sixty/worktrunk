@@ -72,6 +72,16 @@ pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
 
 // ==================== Log Management ====================
 
+/// Check if a file in `.git/wt-logs/` is a worktrunk log file.
+///
+/// Matches `.log` (hook output), `.jsonl` (command audit log), and `.jsonl.old` (rotated).
+fn is_wt_log_file(path: &std::path::Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    name.ends_with(".log") || name.ends_with(".jsonl") || name.ends_with(".jsonl.old")
+}
+
 /// Clear all log files from the wt-logs directory
 fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
     let log_dir = repo.wt_logs_dir();
@@ -84,7 +94,7 @@ fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
     for entry in std::fs::read_dir(&log_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_file() && path.extension().is_some_and(|ext| ext == "log") {
+        if path.is_file() && is_wt_log_file(&path) {
             std::fs::remove_file(&path)?;
             cleared += 1;
         }
@@ -98,27 +108,13 @@ fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
     Ok(cleared)
 }
 
-/// Render the LOG FILES section (heading + table or "(none)") into the output buffer
-pub(super) fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
-    let log_dir = repo.wt_logs_dir();
-    let log_dir_display = format_path_for_display(&log_dir);
+/// Check if a filename belongs to the command audit log (`.jsonl` / `.jsonl.old`).
+fn is_command_log_file(name: &str) -> bool {
+    name.ends_with(".jsonl") || name.ends_with(".jsonl.old")
+}
 
-    writeln!(
-        out,
-        "{}",
-        format_heading("LOG FILES", Some(&format!("@ {log_dir_display}")))
-    )?;
-
-    if !log_dir.exists() {
-        writeln!(out, "{}", format_with_gutter("(none)", None))?;
-        return Ok(());
-    }
-
-    let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "log"))
-        .collect();
-
+/// Render a table of log file entries, or "(none)" if empty.
+fn render_log_table(out: &mut String, entries: &mut [std::fs::DirEntry]) -> std::fmt::Result {
     if entries.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
         return Ok(());
@@ -133,11 +129,10 @@ pub(super) fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::R
             .then_with(|| a.file_name().cmp(&b.file_name()))
     });
 
-    // Build table
     let mut table = String::from("| File | Size | Age |\n");
     table.push_str("|------|------|-----|\n");
 
-    for entry in entries {
+    for entry in entries.iter() {
         let path = entry.path();
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         let meta = entry.metadata().ok();
@@ -164,6 +159,62 @@ pub(super) fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::R
     Ok(())
 }
 
+/// Render the COMMAND LOG section into the output buffer.
+pub(super) fn render_command_log(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    let log_dir = repo.wt_logs_dir();
+    let log_dir_display = format_path_for_display(&log_dir);
+
+    writeln!(
+        out,
+        "{}",
+        format_heading("COMMAND LOG", Some(&format!("@ {log_dir_display}")))
+    )?;
+
+    if !log_dir.exists() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+        return Ok(());
+    }
+
+    let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            e.path().is_file() && is_command_log_file(&name)
+        })
+        .collect();
+
+    render_log_table(out, &mut entries)?;
+    Ok(())
+}
+
+/// Render the HOOK OUTPUT section into the output buffer.
+pub(super) fn render_hook_output(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    let log_dir = repo.wt_logs_dir();
+    let log_dir_display = format_path_for_display(&log_dir);
+
+    writeln!(
+        out,
+        "{}",
+        format_heading("HOOK OUTPUT", Some(&format!("@ {log_dir_display}")))
+    )?;
+
+    if !log_dir.exists() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+        return Ok(());
+    }
+
+    let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            e.path().is_file() && is_wt_log_file(&e.path()) && !is_command_log_file(&name)
+        })
+        .collect();
+
+    render_log_table(out, &mut entries)?;
+    Ok(())
+}
+
 // ==================== Logs Get Command ====================
 
 /// Handle the logs get command
@@ -180,9 +231,11 @@ pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::
 
     match hook {
         None => {
-            // No hook specified, show all log files (existing behavior)
+            // No hook specified, show all log files
             let mut out = String::new();
-            render_log_files(&mut out, &repo)?;
+            render_command_log(&mut out, &repo)?;
+            writeln!(out)?;
+            render_hook_output(&mut out, &repo)?;
 
             // Display through pager (fall back to stderr if pager unavailable)
             if show_help_in_pager(&out, true).is_err() {
@@ -326,7 +379,9 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
         // TODO: Consider simplifying to just print the path and let users run `ls -al` themselves
         "logs" => {
             let mut out = String::new();
-            render_log_files(&mut out, &repo)?;
+            render_command_log(&mut out, &repo)?;
+            writeln!(out)?;
+            render_hook_output(&mut out, &repo)?;
 
             // Display through pager (fall back to stderr if pager unavailable)
             if show_help_in_pager(&out, true).is_err() {
@@ -642,23 +697,22 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         })
         .collect();
 
-    // Get log files
+    // Get log files, partitioned into command log and hook output
     let log_dir = repo.wt_logs_dir();
-    let logs: Vec<serde_json::Value> = if log_dir.exists() {
-        let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "log"))
-            .collect();
+    let (command_log, hook_output): (Vec<serde_json::Value>, Vec<serde_json::Value>) =
+        if log_dir.exists() {
+            let mut all_entries: Vec<_> = std::fs::read_dir(&log_dir)?
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_file() && is_wt_log_file(&e.path()))
+                .collect();
 
-        entries.sort_by(|a, b| {
-            let a_time = a.metadata().and_then(|m| m.modified()).ok();
-            let b_time = b.metadata().and_then(|m| m.modified()).ok();
-            b_time.cmp(&a_time)
-        });
+            all_entries.sort_by(|a, b| {
+                let a_time = a.metadata().and_then(|m| m.modified()).ok();
+                let b_time = b.metadata().and_then(|m| m.modified()).ok();
+                b_time.cmp(&a_time)
+            });
 
-        entries
-            .into_iter()
-            .map(|entry| {
+            let to_json = |entry: &std::fs::DirEntry| -> serde_json::Value {
                 let path = entry.path();
                 let name = path
                     .file_name()
@@ -677,11 +731,22 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
                     "size": size,
                     "modified_at": modified
                 })
-            })
-            .collect()
-    } else {
-        vec![]
-    };
+            };
+
+            let mut cmd_log = Vec::new();
+            let mut hook_out = Vec::new();
+            for entry in &all_entries {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if is_command_log_file(&name) {
+                    cmd_log.push(to_json(entry));
+                } else {
+                    hook_out.push(to_json(entry));
+                }
+            }
+            (cmd_log, hook_out)
+        } else {
+            (vec![], vec![])
+        };
 
     // Get hints
     let hints = repo.list_shown_hints();
@@ -691,7 +756,8 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "previous_branch": previous_branch,
         "markers": markers,
         "ci_status": ci_status,
-        "logs": logs,
+        "command_log": command_log,
+        "hook_output": hook_output,
         "hints": hints
     });
 
@@ -786,8 +852,12 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     }
     writeln!(out)?;
 
-    // Show log files
-    render_log_files(&mut out, repo)?;
+    // Show command log
+    render_command_log(&mut out, repo)?;
+    writeln!(out)?;
+
+    // Show hook output logs
+    render_hook_output(&mut out, repo)?;
 
     // Display through pager (fall back to stderr if pager unavailable)
     if let Err(e) = show_help_in_pager(&out, true) {

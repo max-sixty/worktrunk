@@ -92,7 +92,7 @@ pub fn log_command(label: &str, command: &str, exit_code: Option<i32>, duration:
         "dur_ms": duration.map(|d| d.as_millis() as u64),
     });
 
-    // Single write_all to avoid interleaving with concurrent wt processes
+    // Single write_all so each JSON line is written atomically
     let mut buf = entry.to_string();
     buf.push('\n');
 
