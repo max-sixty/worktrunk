@@ -148,6 +148,16 @@ Always comment via `gh issue comment`. Keep it brief, polite, and specific. A
 maintainer will always review — never claim the issue is fully resolved by
 automation alone.
 
+**Use heredoc to avoid shell quoting issues** — inline `--body "..."` causes
+Claude to over-escape characters like `!`:
+
+```bash
+gh issue comment $ARGUMENTS --body "$(cat <<'EOF'
+Your comment here — no escaping needed inside heredoc.
+EOF
+)"
+```
+
 Choose the appropriate template:
 
 ### Fix PR created
