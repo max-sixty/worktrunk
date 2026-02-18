@@ -1043,6 +1043,7 @@ wt step push
 
 | Hook | When | Blocking | Fail-fast |
 |------|------|----------|-----------|
+| `pre-switch` | Before every switch | Yes | Yes |
 | `post-start` | After worktree created | No (background) | No |
 | `post-create` | After worktree created | Yes | No |
 | `post-switch` | After every switch | No (background) | No |
@@ -1056,6 +1057,23 @@ wt step push
 **Fail-fast**: First failure aborts the operation.
 
 Background hooks show a single-line summary by default. Use `-v` to see expanded command details.
+
+The most common starting point is `post-start` — it runs background tasks (dev servers, file copying, builds) when creating a worktree.
+
+### pre-switch
+
+Runs before every `wt switch` — before branch validation or worktree creation. Useful for ensuring the repository is up to date before switching. Template variables reflect the current worktree (where you're switching from), not the destination. Failure aborts the switch.
+
+```toml
+[pre-switch]
+# Fetch if last fetch was more than 6 hours ago
+fetch = """
+FETCH_HEAD="$(git rev-parse --git-common-dir)/FETCH_HEAD"
+if [ "$(find "$FETCH_HEAD" -mmin +360 2>/dev/null)" ] || [ ! -f "$FETCH_HEAD" ]; then
+    git fetch
+fi
+"""
+```
 
 ### post-start
 

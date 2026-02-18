@@ -326,6 +326,7 @@ pub fn branch_tracks_ref(
 )]
 #[strum(serialize_all = "kebab-case")]
 pub enum HookType {
+    PreSwitch,
     PostCreate,
     PostStart,
     PostSwitch,

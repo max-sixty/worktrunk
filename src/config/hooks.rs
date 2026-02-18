@@ -8,6 +8,14 @@ use super::commands::CommandConfig;
 /// Shared hook configuration for user and project configs.
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct HooksConfig {
+    /// Commands to execute before switch begins (blocking, fail-fast)
+    #[serde(
+        default,
+        rename = "pre-switch",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pre_switch: Option<CommandConfig>,
+
     /// Commands to execute after worktree creation (blocking)
     #[serde(
         default,
@@ -72,6 +80,7 @@ pub struct HooksConfig {
 impl HooksConfig {
     pub fn get(&self, hook: HookType) -> Option<&CommandConfig> {
         match hook {
+            HookType::PreSwitch => self.pre_switch.as_ref(),
             HookType::PostCreate => self.post_create.as_ref(),
             HookType::PostStart => self.post_start.as_ref(),
             HookType::PostSwitch => self.post_switch.as_ref(),
@@ -105,6 +114,7 @@ impl Merge for HooksConfig {
     /// Both global and per-project hooks run (global first, then per-project).
     fn merge_with(&self, other: &Self) -> Self {
         Self {
+            pre_switch: merge_append_hooks(&self.pre_switch, &other.pre_switch),
             post_create: merge_append_hooks(&self.post_create, &other.post_create),
             post_start: merge_append_hooks(&self.post_start, &other.post_start),
             post_switch: merge_append_hooks(&self.post_switch, &other.post_switch),

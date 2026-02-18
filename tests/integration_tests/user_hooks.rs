@@ -1752,3 +1752,81 @@ submodule = "echo '4' >> hook_order.txt"
         "Hooks should execute in TOML insertion order (vscode, claude, copy, submodule)"
     );
 }
+
+// ============================================================================
+// User Pre-Switch Hook Tests
+// ============================================================================
+
+/// Test that a pre-switch hook executes before switching to an existing worktree
+#[rstest]
+fn test_user_pre_switch_hook_executes(mut repo: TestRepo) {
+    // Create a worktree to switch to
+    let _feature_wt = repo.add_worktree("feature");
+
+    // Write user config with pre-switch hook that creates a marker in the current worktree
+    repo.write_test_config(
+        r#"[pre-switch]
+check = "echo 'USER_PRE_SWITCH_RAN' > pre_switch_marker.txt"
+"#,
+    );
+
+    snapshot_switch("user_pre_switch_executes", &repo, &["feature"]);
+
+    // Verify user hook ran in the source worktree (main), not the destination
+    let marker_file = repo.root_path().join("pre_switch_marker.txt");
+    assert!(
+        marker_file.exists(),
+        "User pre-switch hook should have created marker in source worktree"
+    );
+
+    let contents = fs::read_to_string(&marker_file).unwrap();
+    assert!(
+        contents.contains("USER_PRE_SWITCH_RAN"),
+        "Marker file should contain expected content"
+    );
+}
+
+/// Test that a failing pre-switch hook blocks the switch (including --create)
+#[rstest]
+fn test_user_pre_switch_failure_blocks_switch(repo: TestRepo) {
+    // Write user config with failing pre-switch hook
+    repo.write_test_config(
+        r#"[pre-switch]
+block = "exit 1"
+"#,
+    );
+
+    // Failing pre-switch should prevent worktree creation
+    snapshot_switch("user_pre_switch_failure", &repo, &["--create", "feature"]);
+
+    // Worktree should NOT have been created
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    assert!(
+        !worktree_path.exists(),
+        "Worktree should not be created when pre-switch hook fails"
+    );
+}
+
+/// Test that --no-verify skips the pre-switch hook
+#[rstest]
+fn test_user_pre_switch_skipped_with_no_verify(repo: TestRepo) {
+    // Write user config with pre-switch hook that creates a marker
+    repo.write_test_config(
+        r#"[pre-switch]
+check = "echo 'SHOULD_NOT_RUN' > pre_switch_marker.txt"
+"#,
+    );
+
+    snapshot_switch(
+        "user_pre_switch_no_verify",
+        &repo,
+        &["--create", "feature", "--no-verify"],
+    );
+
+    // Pre-switch hook should NOT have run (--no-verify skips all hooks)
+    let marker_file = repo.root_path().join("pre_switch_marker.txt");
+    assert!(
+        !marker_file.exists(),
+        "Pre-switch hook should be skipped with --no-verify"
+    );
+}

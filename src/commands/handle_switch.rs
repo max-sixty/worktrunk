@@ -11,6 +11,7 @@ use worktrunk::styling::{eprintln, info_message};
 
 use super::command_approval::approve_hooks;
 use super::command_executor::{CommandContext, build_hook_context};
+use super::hooks::{HookFailureStrategy, execute_hook};
 use super::worktree::{
     SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, get_path_mismatch, plan_switch,
 };
@@ -31,6 +32,35 @@ pub struct SwitchOptions<'a> {
     /// Whether to change directory after switching (default: true)
     pub change_dir: bool,
     pub verify: bool,
+}
+
+/// Run pre-switch hooks before branch validation or worktree creation.
+///
+/// Uses current worktree context since the destination is unknown at this point.
+pub(crate) fn run_pre_switch_hooks(
+    repo: &Repository,
+    config: &UserConfig,
+    yes: bool,
+) -> anyhow::Result<()> {
+    let current_branch = repo
+        .current_worktree()
+        .branch()
+        .context("Failed to determine current branch")?;
+    let current_path = repo.current_worktree().path().to_path_buf();
+    let pre_ctx = CommandContext::new(repo, config, current_branch.as_deref(), &current_path, yes);
+
+    let pre_switch_approved = approve_hooks(&pre_ctx, &[HookType::PreSwitch])?;
+    if pre_switch_approved {
+        execute_hook(
+            &pre_ctx,
+            HookType::PreSwitch,
+            &[],
+            HookFailureStrategy::FailFast,
+            None,
+            crate::output::pre_hook_display_path(pre_ctx.worktree_path),
+        )?;
+    }
+    Ok(())
 }
 
 /// Approve switch hooks upfront and show "Commands declined" if needed.
@@ -146,6 +176,11 @@ pub fn handle_switch(
     } = opts;
 
     let repo = Repository::current().context("Failed to switch worktree")?;
+
+    // Run pre-switch hooks before anything else (before branch validation, planning, etc.)
+    if verify {
+        run_pre_switch_hooks(&repo, config, yes)?;
+    }
 
     // Build switch suggestion context for enriching error hints with --execute/trailing args.
     // Without this, errors like "branch already exists" would suggest `wt switch <branch>`

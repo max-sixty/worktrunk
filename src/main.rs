@@ -555,6 +555,9 @@ fn main() {
                 hook_type,
                 expanded,
             } => handle_hook_show(hook_type.as_deref(), expanded),
+            HookCommand::PreSwitch { name, yes, vars } => {
+                run_hook(HookType::PreSwitch, yes, None, name.as_deref(), &vars)
+            }
             HookCommand::PostCreate { name, yes, vars } => {
                 run_hook(HookType::PostCreate, yes, None, name.as_deref(), &vars)
             }

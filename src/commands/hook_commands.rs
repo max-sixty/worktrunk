@@ -97,6 +97,24 @@ pub fn run_hook(
 
     // Execute the hook based on type
     match hook_type {
+        HookType::PreSwitch => {
+            let user_config = user_hooks.pre_switch.as_ref();
+            let project_config = project_config
+                .as_ref()
+                .and_then(|c| c.hooks.pre_switch.as_ref());
+            require_hooks(user_config, project_config, hook_type)?;
+            // Manual wt hook: user stays at cwd (no cd happens)
+            run_hook_with_filter(
+                &ctx,
+                user_config,
+                project_config,
+                hook_type,
+                &custom_vars_refs,
+                HookFailureStrategy::FailFast,
+                name_filter,
+                crate::output::pre_hook_display_path(ctx.worktree_path),
+            )
+        }
         HookType::PostCreate => {
             let user_config = user_hooks.post_create.as_ref();
             let project_config = project_config
@@ -453,6 +471,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
 
     // Parse hook type filter if provided
     let filter: Option<HookType> = hook_type_filter.map(|s| match s {
+        "pre-switch" => HookType::PreSwitch,
         "post-create" => HookType::PostCreate,
         "post-start" => HookType::PostStart,
         "post-switch" => HookType::PostSwitch,
@@ -526,6 +545,7 @@ fn render_user_hooks(
     // Note: uses overrides.hooks for display, not the merged hooks() accessor
     let user_hooks = &config.configs.hooks;
     let hooks = [
+        (HookType::PreSwitch, &user_hooks.pre_switch),
         (HookType::PostCreate, &user_hooks.post_create),
         (HookType::PostStart, &user_hooks.post_start),
         (HookType::PostSwitch, &user_hooks.post_switch),
@@ -587,6 +607,7 @@ fn render_project_hooks(
 
     // Collect all project hooks
     let hooks = [
+        (HookType::PreSwitch, &config.hooks.pre_switch),
         (HookType::PostCreate, &config.hooks.post_create),
         (HookType::PostStart, &config.hooks.post_start),
         (HookType::PostSwitch, &config.hooks.post_switch),

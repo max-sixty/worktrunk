@@ -17,7 +17,7 @@ use skim::prelude::*;
 use worktrunk::git::Repository;
 
 use super::handle_switch::{
-    approve_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
+    approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
 use super::list::collect;
 use super::worktree::{
@@ -311,6 +311,9 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
         // Load config
         let repo = Repository::current().context("Failed to switch worktree")?;
         let config = repo.user_config();
+
+        // Run pre-switch hooks before anything else (before branch validation, planning, etc.)
+        run_pre_switch_hooks(&repo, config, true)?;
 
         // Switch to existing worktree or create new one
         let plan = plan_switch(&repo, &identifier, should_create, None, false, config)?;
