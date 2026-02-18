@@ -1078,7 +1078,8 @@ mod tests {
         assert_eq!(w, 8);
         assert!(matches!(fmt, ColumnFormat::Text));
 
-        // Message returns None (handled specially)
+        // Flexible columns return None (handled specially in allocation loop)
+        assert!(ColumnKind::Summary.ideal(&widths, 20, 8).is_none());
         assert!(ColumnKind::Message.ideal(&widths, 20, 8).is_none());
 
         // Diff columns return (width, ColumnFormat::Diff(_))
@@ -1415,5 +1416,237 @@ mod tests {
 
         // With hyperlinks: has ":{{" pattern, compact display = 6
         assert_eq!(estimate_url_width(Some(template), true), 6);
+    }
+
+    // --- Flexible column (Summary/Message) allocation tests ---
+
+    /// Helper: create a minimal ListItem for layout tests.
+    fn make_test_item(branch: &str) -> super::super::model::ListItem {
+        use crate::commands::list::model::{
+            ActiveGitOperation, DisplayFields, ItemKind, WorktreeData,
+        };
+        super::super::model::ListItem {
+            head: "abc12345".to_string(),
+            branch: Some(branch.to_string()),
+            commit: None,
+            counts: None,
+            branch_diff: None,
+            committed_trees_match: None,
+            has_file_changes: None,
+            would_merge_add: None,
+            is_ancestor: None,
+            is_orphan: None,
+            upstream: None,
+            pr_status: None,
+            url: None,
+            url_active: None,
+            summary: None,
+            status_symbols: None,
+            display: DisplayFields::default(),
+            kind: ItemKind::Worktree(Box::new(WorktreeData {
+                path: PathBuf::from("/test/wt"),
+                detached: false,
+                locked: None,
+                prunable: None,
+                working_tree_diff: None,
+                git_operation: ActiveGitOperation::None,
+                is_main: false,
+                is_current: false,
+                is_previous: false,
+                branch_worktree_mismatch: false,
+                working_diff_display: None,
+            })),
+        }
+    }
+
+    /// Helper: compute layout with explicit terminal width and skip_tasks.
+    fn layout_at_width(width: usize, skip_tasks: &HashSet<TaskKind>) -> LayoutConfig {
+        let items = vec![make_test_item("feature-branch")];
+        calculate_layout_with_width(&items, skip_tasks, width, Path::new("/test"), None)
+    }
+
+    /// Default skip_tasks for non-full mode (Summary, BranchDiff, CI, WorkingTreeConflicts skipped).
+    fn non_full_skip_tasks() -> HashSet<TaskKind> {
+        [
+            TaskKind::BranchDiff,
+            TaskKind::CiStatus,
+            TaskKind::WorkingTreeConflicts,
+            TaskKind::SummaryGenerate,
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    /// Full mode skip_tasks (nothing skipped).
+    fn full_skip_tasks() -> HashSet<TaskKind> {
+        HashSet::new()
+    }
+
+    fn find_column(layout: &LayoutConfig, kind: ColumnKind) -> Option<&ColumnLayout> {
+        layout.columns.iter().find(|c| c.kind == kind)
+    }
+
+    #[test]
+    fn test_summary_absent_when_skipped() {
+        // Non-full mode: SummaryGenerate in skip_tasks → no Summary column
+        let layout = layout_at_width(200, &non_full_skip_tasks());
+
+        assert!(
+            find_column(&layout, ColumnKind::Summary).is_none(),
+            "Summary should not appear when SummaryGenerate is skipped"
+        );
+        assert_eq!(layout.max_summary_len, 0);
+
+        // Message should still be present and get leftover space
+        assert!(find_column(&layout, ColumnKind::Message).is_some());
+        assert!(layout.max_message_len > 0);
+    }
+
+    #[test]
+    fn test_summary_present_in_full_mode() {
+        let layout = layout_at_width(200, &full_skip_tasks());
+
+        assert!(
+            find_column(&layout, ColumnKind::Summary).is_some(),
+            "Summary should appear in full mode"
+        );
+        assert!(layout.max_summary_len > 0);
+    }
+
+    #[test]
+    fn test_summary_expands_before_message() {
+        // At a moderate width, Summary should expand toward its max (70)
+        // before Message gets leftover space.
+        let layout = layout_at_width(200, &full_skip_tasks());
+
+        let summary = find_column(&layout, ColumnKind::Summary);
+        let message = find_column(&layout, ColumnKind::Message);
+
+        assert!(summary.is_some(), "Summary should be allocated");
+        assert!(message.is_some(), "Message should be allocated");
+
+        let summary_width = summary.unwrap().width;
+        let message_width = message.unwrap().width;
+
+        // Summary should have expanded beyond its minimum of 10
+        assert!(
+            summary_width > 10,
+            "Summary should expand beyond minimum: got {summary_width}"
+        );
+        assert_eq!(layout.max_summary_len, summary_width);
+        assert_eq!(layout.max_message_len, message_width);
+    }
+
+    #[test]
+    fn test_summary_capped_at_max() {
+        // Very wide terminal: Summary should cap at MAX_SUMMARY (70)
+        let layout = layout_at_width(500, &full_skip_tasks());
+
+        let summary = find_column(&layout, ColumnKind::Summary).unwrap();
+        assert_eq!(summary.width, 70, "Summary should cap at MAX_SUMMARY (70)");
+        assert_eq!(layout.max_summary_len, 70);
+    }
+
+    #[test]
+    fn test_message_capped_at_max() {
+        // Very wide terminal: Message should cap at MAX_MESSAGE (100)
+        let layout = layout_at_width(500, &full_skip_tasks());
+
+        let message = find_column(&layout, ColumnKind::Message).unwrap();
+        assert_eq!(
+            message.width, 100,
+            "Message should cap at MAX_MESSAGE (100)"
+        );
+        assert_eq!(layout.max_message_len, 100);
+    }
+
+    #[test]
+    fn test_message_gets_more_space_when_summary_skipped() {
+        // Compare Message width with and without Summary
+        let with_summary = layout_at_width(200, &full_skip_tasks());
+        let without_summary = layout_at_width(200, &non_full_skip_tasks());
+
+        let msg_with = find_column(&with_summary, ColumnKind::Message)
+            .unwrap()
+            .width;
+        let msg_without = find_column(&without_summary, ColumnKind::Message)
+            .unwrap()
+            .width;
+
+        // Without Summary, Message should get more space (or equal if both maxed)
+        assert!(
+            msg_without >= msg_with,
+            "Message should get at least as much space without Summary: \
+             with={msg_with}, without={msg_without}"
+        );
+    }
+
+    #[test]
+    fn test_summary_display_order() {
+        // Summary should appear between BranchDiff and Upstream in display order
+        let layout = layout_at_width(500, &full_skip_tasks());
+
+        let kinds: Vec<ColumnKind> = layout.columns.iter().map(|c| c.kind).collect();
+
+        if let Some(summary_pos) = kinds.iter().position(|k| *k == ColumnKind::Summary) {
+            // Summary should come after BranchDiff (if present) and before Upstream (if present)
+            if let Some(branch_diff_pos) = kinds.iter().position(|k| *k == ColumnKind::BranchDiff) {
+                assert!(
+                    summary_pos > branch_diff_pos,
+                    "Summary should appear after BranchDiff"
+                );
+            }
+            if let Some(upstream_pos) = kinds.iter().position(|k| *k == ColumnKind::Upstream) {
+                assert!(
+                    summary_pos < upstream_pos,
+                    "Summary should appear before Upstream"
+                );
+            }
+        } else {
+            panic!("Summary column should be present at width 500");
+        }
+    }
+
+    #[test]
+    fn test_narrow_terminal_drops_flexible_columns() {
+        // At a very narrow width, neither Summary nor Message should fit
+        // after the critical fixed columns are allocated.
+        let layout = layout_at_width(40, &full_skip_tasks());
+
+        // At 40 chars, only Gutter (2) + Branch (~14) can fit
+        assert!(
+            find_column(&layout, ColumnKind::Summary).is_none(),
+            "Summary should not fit at 40 chars"
+        );
+        assert!(
+            find_column(&layout, ColumnKind::Message).is_none(),
+            "Message should not fit at 40 chars"
+        );
+    }
+
+    #[test]
+    fn test_summary_skipped_preserves_other_full_columns() {
+        // Even with SummaryGenerate skipped, other full-mode columns should still appear
+        let mut skip_only_summary: HashSet<TaskKind> = HashSet::new();
+        skip_only_summary.insert(TaskKind::SummaryGenerate);
+
+        let layout = layout_at_width(300, &skip_only_summary);
+
+        assert!(
+            find_column(&layout, ColumnKind::Summary).is_none(),
+            "Summary should be skipped"
+        );
+        assert!(
+            find_column(&layout, ColumnKind::BranchDiff).is_some(),
+            "BranchDiff should still appear"
+        );
+        assert!(
+            find_column(&layout, ColumnKind::CiStatus).is_some(),
+            "CiStatus should still appear"
+        );
+        assert!(
+            find_column(&layout, ColumnKind::Message).is_some(),
+            "Message should still appear"
+        );
     }
 }
