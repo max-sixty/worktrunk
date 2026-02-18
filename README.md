@@ -85,6 +85,8 @@ git branch -d feat</pre></td>
 - **[Hooks](https://worktrunk.dev/hook/)** — run commands on create, pre-merge, post-merge, etc
 - **[LLM commit messages](https://worktrunk.dev/llm-commits/)** — generate commit messages from diffs
 - **[Merge workflow](https://worktrunk.dev/merge/)** — squash, rebase, merge, clean up in one command
+- **[Interactive picker](https://worktrunk.dev/switch/#interactive-picker)** — browse worktrees with live diff and log previews
+- **[Copy build caches](https://worktrunk.dev/step/)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
 - ...and **[lots more](#next-steps)**
 
 A demo with some advanced features:
