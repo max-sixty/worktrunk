@@ -109,12 +109,10 @@ have been addressed. For each unresolved bot thread, you've already read the
 file during review — if the suggestion was applied or the issue was otherwise
 fixed, resolve the thread:
 
-**IMPORTANT: GraphQL queries with `$` variables fail when passed inline** —
-Claude mangles the quoting. Always write the query to a file first, then use
-`-F query=@file`.
+Use the file-based GraphQL pattern from `/running-in-ci` to avoid quoting
+issues with `$` variables:
 
 ```bash
-# Step 1: Write query to temp file (quoted heredoc delimiter prevents $ expansion)
 cat > /tmp/review-threads.graphql << 'GRAPHQL'
 query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
@@ -138,7 +136,6 @@ query($owner: String!, $repo: String!, $number: Int!) {
 }
 GRAPHQL
 
-# Step 2: Run query using -F query=@file (reads from file, no shell quoting issues)
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 BOT_LOGIN=$(gh api user --jq '.login')
 OWNER=$(echo "$REPO" | cut -d/ -f1)
