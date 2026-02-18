@@ -840,9 +840,12 @@ fn test_copy_ignored_skips_non_regular_files(mut repo: TestRepo) {
 }
 
 /// Test that copy errors include file paths in the message (GitHub issue #1084)
+///
+/// Tests both the directory recursive copy error path (copy_dir_recursive_fallback)
+/// and the top-level file copy error path (step_copy_ignored main loop).
 #[cfg(unix)]
 #[rstest]
-fn test_copy_ignored_error_includes_path(mut repo: TestRepo) {
+fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
     use std::os::unix::fs::PermissionsExt;
 
     let feature_path = repo.add_worktree("feature");
@@ -873,7 +876,43 @@ fn test_copy_ignored_error_includes_path(mut repo: TestRepo) {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("copying") || stderr.contains("target"),
+        stderr.contains("copying"),
+        "Error should mention the file path, got: {stderr}"
+    );
+}
+
+/// Test that top-level file copy errors include file paths (GitHub issue #1084)
+///
+/// This exercises the error path in the main copy loop (not copy_dir_recursive_fallback).
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_error_includes_path_file(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let feature_path = repo.add_worktree("feature");
+
+    // Create a top-level file that's gitignored
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+
+    // Make the destination worktree root read-only so reflink_or_copy fails
+    // with PermissionDenied (not AlreadyExists)
+    fs::set_permissions(&feature_path, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    // Restore permissions for cleanup
+    fs::set_permissions(&feature_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("copying") && stderr.contains(".env"),
         "Error should mention the file path, got: {stderr}"
     );
 }
