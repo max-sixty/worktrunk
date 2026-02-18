@@ -103,7 +103,7 @@
 //!
 //! ## Special Cases
 //!
-//! Three columns have non-standard behavior that extends beyond the basic two-tier model:
+//! Four columns have non-standard behavior that extends beyond the basic two-tier model:
 //!
 //! 1. **BranchDiff** - Visibility gate (`show_full` flag)
 //!    - Hidden by default as too noisy for typical usage
@@ -114,10 +114,14 @@
 //!    - Bypasses the tier system entirely when `fetch_ci=false`
 //!    - Within the visibility gate, follows normal two-tier priority (priority 9 with data, 19 when empty)
 //!
-//! 3. **Message** - Flexible sizing with post-allocation expansion
-//!    - Allocated at priority 11 with flexible width (min 20, preferred 50)
-//!    - After all columns allocated (including empty ones), expands up to max 100 using leftover space
-//!    - Two-step process ensures critical columns get space before message grows
+//! 3. **Summary** - Flexible sizing with post-allocation expansion
+//!    - Allocated at priority 10 with minimum width 10
+//!    - After all columns allocated, expands up to 70 using leftover space
+//!    - Expands BEFORE Message, so Summary gets priority for space
+//!
+//! 4. **Message** - Flexible sizing with post-allocation expansion
+//!    - Allocated at priority 13 with minimum width 10
+//!    - After Summary expansion, expands up to max 100 using remaining leftover space
 //!
 //! ## Implementation
 //!
@@ -152,7 +156,10 @@
 //!     }
 //! }
 //!
-//! // Message post-allocation expansion (uses truly leftover space)
+//! // Post-allocation expansion: Summary first, then Message with leftovers
+//! if let Some(summary_col) = pending.iter_mut().find(|col| col.spec.kind == ColumnKind::Summary) {
+//!     summary_col.width += remaining.min(MAX_SUMMARY - summary_col.width);
+//! }
 //! if let Some(message_col) = pending.iter_mut().find(|col| col.spec.kind == ColumnKind::Message) {
 //!     message_col.width += remaining.min(MAX_MESSAGE - message_col.width);
 //! }
@@ -242,7 +249,6 @@ pub struct ColumnWidths {
     pub time: usize,
     pub url: usize,
     pub ci_status: usize,
-    pub message: usize,
     pub ahead_behind: DiffWidths,
     pub working_diff: DiffWidths,
     pub branch_diff: DiffWidths,
@@ -450,7 +456,7 @@ impl ColumnKind {
             ColumnKind::Url => text(widths.url),
             ColumnKind::CiStatus => text(widths.ci_status),
             ColumnKind::Commit => text(commit_width),
-            ColumnKind::Summary => Some((50, ColumnFormat::Text)),
+            ColumnKind::Summary => None, // Flexible: handled specially in allocation loop
             ColumnKind::Message => None,
             ColumnKind::WorkingDiff => diff(widths.working_diff),
             ColumnKind::AheadBehind => diff(widths.ahead_behind),
@@ -590,7 +596,6 @@ fn build_estimated_widths(
         time: age_estimate,
         url: url_estimate,
         ci_status: ci_estimate,
-        message: 50, // Will be flexible during allocation
         // Commit counts (Arrows): compact notation, 2 digits covers up to 99
         ahead_behind: DiffWidths {
             total: ahead_behind_fixed,
@@ -664,6 +669,8 @@ fn allocate_columns_with_priority(
         .map(|c| (c.spec.kind, c.spec.kind.has_data(&metadata.data_flags)))
         .collect();
 
+    const MIN_SUMMARY: usize = 10;
+    const MAX_SUMMARY: usize = 70;
     const MIN_MESSAGE: usize = 10;
     const MAX_MESSAGE: usize = 100;
 
@@ -685,33 +692,24 @@ fn allocate_columns_with_priority(
     for candidate in candidates {
         let spec = candidate.spec;
 
-        // Special handling for Message column
-        if spec.kind == ColumnKind::Message {
+        // Flexible columns: allocate at minimum, expand post-loop
+        if matches!(spec.kind, ColumnKind::Summary | ColumnKind::Message) {
+            let min_width = match spec.kind {
+                ColumnKind::Summary => MIN_SUMMARY,
+                _ => MIN_MESSAGE,
+            };
             let spacing_cost = if needs_spacing(&pending) { spacing } else { 0 };
-
-            if remaining <= spacing_cost {
-                continue;
+            if remaining > spacing_cost {
+                let available = remaining - spacing_cost;
+                if available >= min_width {
+                    remaining = remaining.saturating_sub(min_width + spacing_cost);
+                    pending.push(PendingColumn {
+                        spec,
+                        width: min_width,
+                        format: ColumnFormat::Text,
+                    });
+                }
             }
-
-            let available = remaining - spacing_cost;
-            let mut message_width = 0;
-
-            // Allocate at minimum width initially. Post-allocation expansion will
-            // bring it up to preferred/max width after empty columns have a chance
-            // to be allocated.
-            if available >= MIN_MESSAGE {
-                message_width = MIN_MESSAGE.min(metadata.widths.message);
-            }
-
-            if message_width > 0 {
-                remaining = remaining.saturating_sub(message_width + spacing_cost);
-                pending.push(PendingColumn {
-                    spec,
-                    width: message_width,
-                    format: ColumnFormat::Text,
-                });
-            }
-
             continue;
         }
 
@@ -734,14 +732,20 @@ fn allocate_columns_with_priority(
         }
     }
 
-    // Capture summary column width (fixed allocation, no expansion needed)
-    let max_summary_len = pending
-        .iter()
+    // Post-allocation expansion: Summary first, then Message with leftovers.
+    let mut max_summary_len = 0;
+    if let Some(summary_col) = pending
+        .iter_mut()
         .find(|col| col.spec.kind == ColumnKind::Summary)
-        .map(|col| col.width)
-        .unwrap_or(0);
+    {
+        if summary_col.width < MAX_SUMMARY && remaining > 0 {
+            let expansion = remaining.min(MAX_SUMMARY - summary_col.width);
+            summary_col.width += expansion;
+            remaining -= expansion;
+        }
+        max_summary_len = summary_col.width;
+    }
 
-    // Expand message column with leftover space
     let mut max_message_len = 0;
     if let Some(message_col) = pending
         .iter_mut()
@@ -1027,7 +1031,6 @@ mod tests {
             time: 4,
             url: 0,
             ci_status: 2,
-            message: 50,
             ahead_behind: DiffWidths {
                 total: 7,
                 positive_digits: 2,
@@ -1094,7 +1097,6 @@ mod tests {
             time: 0,
             url: 0,
             ci_status: 0,
-            message: 0,
             ahead_behind: DiffWidths {
                 total: 0,
                 positive_digits: 0,
