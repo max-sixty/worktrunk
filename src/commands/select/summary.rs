@@ -1,69 +1,15 @@
 //! AI summary generation for the interactive selector.
 //!
-//! Generates branch summaries using the configured LLM command, with caching
-//! in `.git/wt-cache/summaries/`. Summaries are invalidated when the combined
-//! diff (branch diff + working tree diff) changes.
+//! Thin adapter over `crate::summary` that adds TUI-specific rendering
+//! and integrates with the selector's preview cache.
 
-use std::collections::hash_map::DefaultHasher;
-use std::fs;
-use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
-use std::sync::LazyLock;
-
-use color_print::cformat;
 use dashmap::DashMap;
-use minijinja::Environment;
-use serde::{Deserialize, Serialize};
 use worktrunk::git::Repository;
-use worktrunk::path::sanitize_for_filename;
-use worktrunk::sync::Semaphore;
 
 use super::super::list::model::ListItem;
 use super::items::PreviewCacheKey;
 use super::preview::PreviewMode;
-use crate::llm::{execute_llm_command, prepare_diff};
-
-/// Limits concurrent LLM calls to avoid overwhelming the network / LLM
-/// provider. 8 permits balances parallelism with resource usage — LLM calls
-/// are I/O-bound (1-5s network waits), so more permits than the CPU-bound
-/// `HEAVY_OPS_SEMAPHORE` (4) but still bounded.
-static LLM_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(8));
-
-/// Cached summary stored in `.git/wt-cache/summaries/<branch>.json`
-#[derive(Serialize, Deserialize)]
-struct CachedSummary {
-    summary: String,
-    diff_hash: u64,
-    /// Original branch name (useful for humans inspecting cache files)
-    branch: String,
-}
-
-/// Combined diff output for a branch (branch diff + working tree diff)
-struct CombinedDiff {
-    diff: String,
-    stat: String,
-}
-
-/// Template for summary generation.
-///
-/// Uses commit-message format (subject + body) which naturally produces
-/// imperative-mood summaries without "This branch..." preamble.
-const SUMMARY_TEMPLATE: &str = r#"Write a summary of this branch's changes as a commit message.
-
-<format>
-- Subject line under 50 chars, imperative mood ("Add feature" not "Adds feature")
-- Blank line, then a body paragraph or bullet list explaining the key changes
-- Output only the message — no quotes, code blocks, or labels
-</format>
-
-<diffstat>
-{{ git_diff_stat }}
-</diffstat>
-
-<diff>
-{{ git_diff }}
-</diff>
-"#;
+use crate::summary::LLM_SEMAPHORE;
 
 /// Render LLM summary for terminal display using the project's markdown theme.
 ///
@@ -89,171 +35,6 @@ pub(super) fn render_summary(text: &str, width: usize) -> String {
     crate::md_help::render_markdown_in_help_with_width(&markdown, Some(width))
 }
 
-/// Get the cache directory for summaries
-fn cache_dir(repo: &Repository) -> PathBuf {
-    repo.git_common_dir().join("wt-cache").join("summaries")
-}
-
-/// Get the cache file path for a branch
-fn cache_file(repo: &Repository, branch: &str) -> PathBuf {
-    let safe_branch = sanitize_for_filename(branch);
-    cache_dir(repo).join(format!("{safe_branch}.json"))
-}
-
-/// Read cached summary from file
-fn read_cache(repo: &Repository, branch: &str) -> Option<CachedSummary> {
-    let path = cache_file(repo, branch);
-    let json = fs::read_to_string(&path).ok()?;
-    serde_json::from_str(&json).ok()
-}
-
-/// Write summary to cache file (atomic write via temp file + rename)
-fn write_cache(repo: &Repository, branch: &str, cached: &CachedSummary) {
-    let path = cache_file(repo, branch);
-
-    if let Some(parent) = path.parent()
-        && let Err(e) = fs::create_dir_all(parent)
-    {
-        log::debug!("Failed to create summary cache dir for {}: {}", branch, e);
-        return;
-    }
-
-    let Ok(json) = serde_json::to_string(cached) else {
-        log::debug!("Failed to serialize summary cache for {}", branch);
-        return;
-    };
-
-    let temp_path = path.with_extension("json.tmp");
-    if let Err(e) = fs::write(&temp_path, &json) {
-        log::debug!(
-            "Failed to write summary cache temp file for {}: {}",
-            branch,
-            e
-        );
-        return;
-    }
-
-    #[cfg(windows)]
-    let _ = fs::remove_file(&path);
-
-    if let Err(e) = fs::rename(&temp_path, &path) {
-        log::debug!("Failed to rename summary cache file for {}: {}", branch, e);
-        let _ = fs::remove_file(&temp_path);
-    }
-}
-
-/// Hash a string to produce a cache invalidation key
-fn hash_diff(diff: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    diff.hash(&mut hasher);
-    hasher.finish()
-}
-
-/// Compute the combined diff for a branch (branch diff + working tree diff).
-///
-/// Returns None if there's nothing to summarize (default branch with no changes,
-/// or no default branch known and no working tree diff available).
-fn compute_combined_diff(item: &ListItem, repo: &Repository) -> Option<CombinedDiff> {
-    let branch = item.branch_name();
-    let default_branch = repo.default_branch();
-
-    let mut diff = String::new();
-    let mut stat = String::new();
-
-    // Branch diff: what's ahead of default branch (skipped if default branch unknown)
-    if let Some(ref default_branch) = default_branch {
-        let is_default_branch = branch == *default_branch;
-        if !is_default_branch {
-            let merge_base = format!("{}...{}", default_branch, item.head());
-            if let Ok(branch_stat) = repo.run_command(&["diff", &merge_base, "--stat"]) {
-                stat.push_str(&branch_stat);
-            }
-            if let Ok(branch_diff) = repo.run_command(&["diff", &merge_base]) {
-                diff.push_str(&branch_diff);
-            }
-        }
-    }
-
-    // Working tree diff: uncommitted changes
-    if let Some(wt_data) = item.worktree_data() {
-        let path = wt_data.path.display().to_string();
-        if let Ok(wt_stat) = repo.run_command(&["-C", &path, "diff", "HEAD", "--stat"])
-            && !wt_stat.trim().is_empty()
-        {
-            stat.push_str(&wt_stat);
-        }
-        if let Ok(wt_diff) = repo.run_command(&["-C", &path, "diff", "HEAD"])
-            && !wt_diff.trim().is_empty()
-        {
-            diff.push_str(&wt_diff);
-        }
-    }
-
-    if diff.trim().is_empty() {
-        return None;
-    }
-
-    Some(CombinedDiff { diff, stat })
-}
-
-/// Render the summary prompt template
-fn render_prompt(diff: &str, stat: &str) -> anyhow::Result<String> {
-    let env = Environment::new();
-    let tmpl = env.template_from_str(SUMMARY_TEMPLATE)?;
-    let rendered = tmpl.render(minijinja::context! {
-        git_diff => diff,
-        git_diff_stat => stat,
-    })?;
-    Ok(rendered)
-}
-
-/// Generate a summary for a single item, using cache when available.
-fn generate_summary(item: &ListItem, llm_command: &str, repo: &Repository) -> String {
-    let branch = item.branch_name();
-
-    // Compute combined diff
-    let Some(combined) = compute_combined_diff(item, repo) else {
-        return cformat!("<dim>No changes to summarize on {branch}.</>");
-    };
-
-    let diff_hash = hash_diff(&combined.diff);
-
-    // Check cache
-    if let Some(cached) = read_cache(repo, branch)
-        && cached.diff_hash == diff_hash
-    {
-        return cached.summary;
-    }
-
-    // Prepare diff (filter large diffs)
-    let prepared = prepare_diff(combined.diff, combined.stat);
-
-    // Render template
-    let prompt = match render_prompt(&prepared.diff, &prepared.stat) {
-        Ok(p) => p,
-        Err(e) => return format!("Template error: {e}"),
-    };
-
-    // Call LLM
-    let summary = match execute_llm_command(llm_command, &prompt) {
-        Ok(s) => s,
-        Err(e) => return format!("LLM error: {e}"),
-    };
-
-    // Write cache
-    write_cache(
-        repo,
-        branch,
-        &CachedSummary {
-            summary: summary.clone(),
-            diff_hash,
-            branch: branch.to_string(),
-        },
-    );
-
-    summary
-}
-
 /// Generate a summary for one item and insert it into the preview cache.
 /// Acquires the LLM semaphore to limit concurrent calls across rayon tasks.
 pub(super) fn generate_and_cache_summary(
@@ -263,15 +44,18 @@ pub(super) fn generate_and_cache_summary(
     repo: &Repository,
 ) {
     let _permit = LLM_SEMAPHORE.acquire();
-    let branch = item.branch_name().to_string();
-    let summary = generate_summary(item, llm_command, repo);
-    preview_cache.insert((branch, PreviewMode::Summary), summary);
+    let branch = item.branch_name();
+    let worktree_path = item.worktree_data().map(|d| d.path.as_path());
+    let summary =
+        crate::summary::generate_summary(branch, item.head(), worktree_path, llm_command, repo);
+    preview_cache.insert((branch.to_string(), PreviewMode::Summary), summary);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::commands::list::model::{ItemKind, WorktreeData};
+    use std::fs;
 
     fn git_command(dir: &std::path::Path) -> std::process::Command {
         let mut cmd = std::process::Command::new("git");
@@ -345,6 +129,7 @@ mod tests {
 
     #[test]
     fn test_cache_roundtrip() {
+        use crate::summary::{CachedSummary, read_cache, write_cache};
         let (_dir, repo) = temp_repo();
         let branch = "feature/test-branch";
         let cached = CachedSummary {
@@ -364,6 +149,7 @@ mod tests {
 
     #[test]
     fn test_write_cache_handles_unwritable_path() {
+        use crate::summary::{CachedSummary, read_cache, write_cache};
         let (_dir, repo) = temp_repo();
         // Block cache directory creation by placing a file where the directory should be
         let cache_parent = repo.git_common_dir().join("wt-cache");
@@ -385,6 +171,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_write_cache_handles_write_failure() {
+        use crate::summary::{CachedSummary, cache_dir, read_cache, write_cache};
         use std::os::unix::fs::PermissionsExt;
 
         let (_dir, repo) = temp_repo();
@@ -408,6 +195,7 @@ mod tests {
 
     #[test]
     fn test_cache_invalidation_by_hash() {
+        use crate::summary::{CachedSummary, read_cache, write_cache};
         let (_dir, repo) = temp_repo();
         let branch = "main";
         let cached = CachedSummary {
@@ -423,6 +211,7 @@ mod tests {
 
     #[test]
     fn test_cache_file_uses_sanitized_branch() {
+        use crate::summary::cache_file;
         let (_dir, repo) = temp_repo();
         let path = cache_file(&repo, "feature/my-branch");
         let filename = path.file_name().unwrap().to_str().unwrap();
@@ -432,6 +221,7 @@ mod tests {
 
     #[test]
     fn test_cache_dir_under_git() {
+        use crate::summary::cache_dir;
         let (_dir, repo) = temp_repo();
         let dir = cache_dir(&repo);
         assert!(dir.to_str().unwrap().contains("wt-cache"));
@@ -440,6 +230,7 @@ mod tests {
 
     #[test]
     fn test_hash_diff_deterministic() {
+        use crate::summary::hash_diff;
         let hash1 = hash_diff("some diff content");
         let hash2 = hash_diff("some diff content");
         assert_eq!(hash1, hash2);
@@ -447,6 +238,7 @@ mod tests {
 
     #[test]
     fn test_hash_diff_different_inputs() {
+        use crate::summary::hash_diff;
         let hash1 = hash_diff("diff A");
         let hash2 = hash_diff("diff B");
         assert_ne!(hash1, hash2);
@@ -454,6 +246,7 @@ mod tests {
 
     #[test]
     fn test_render_prompt() {
+        use crate::summary::render_prompt;
         let result = render_prompt("diff content", "1 file changed");
         assert!(result.is_ok());
         let prompt = result.unwrap();
@@ -463,6 +256,7 @@ mod tests {
 
     #[test]
     fn test_render_prompt_commit_message_format() {
+        use crate::summary::render_prompt;
         let result = render_prompt("", "").unwrap();
         assert!(result.contains("commit message"));
         assert!(result.contains("imperative mood"));
@@ -509,10 +303,10 @@ mod tests {
 
     #[test]
     fn test_compute_combined_diff_with_branch_changes() {
+        use crate::summary::compute_combined_diff;
         let (dir, repo, head) = temp_repo_with_feature();
-        let item = feature_item(&head, dir.path());
 
-        let result = compute_combined_diff(&item, &repo);
+        let result = compute_combined_diff("feature", &head, Some(dir.path()), &repo);
         assert!(result.is_some());
         let combined = result.unwrap();
         assert!(combined.diff.contains("new.txt"));
@@ -521,27 +315,22 @@ mod tests {
 
     #[test]
     fn test_compute_combined_diff_default_branch_no_changes() {
+        use crate::summary::compute_combined_diff;
         let (dir, repo, head) = temp_repo_configured();
 
-        let mut item = ListItem::new_branch(head, "main".to_string());
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-            path: dir.path().to_path_buf(),
-            ..Default::default()
-        }));
-
-        let result = compute_combined_diff(&item, &repo);
+        let result = compute_combined_diff("main", &head, Some(dir.path()), &repo);
         assert!(result.is_none());
     }
 
     #[test]
     fn test_compute_combined_diff_with_uncommitted_changes() {
+        use crate::summary::compute_combined_diff;
         let (dir, repo, head) = temp_repo_with_feature();
         // Add uncommitted changes
         fs::write(dir.path().join("uncommitted.txt"), "wip\n").unwrap();
         git(dir.path(), &["add", "uncommitted.txt"]);
 
-        let item = feature_item(&head, dir.path());
-        let result = compute_combined_diff(&item, &repo);
+        let result = compute_combined_diff("feature", &head, Some(dir.path()), &repo);
         assert!(result.is_some());
         let combined = result.unwrap();
         // Should contain both the branch diff and the working tree diff
@@ -551,11 +340,10 @@ mod tests {
 
     #[test]
     fn test_compute_combined_diff_branch_only_no_worktree() {
+        use crate::summary::compute_combined_diff;
         let (_dir, repo, head) = temp_repo_with_feature();
         // Branch-only item (no worktree data) — only branch diff included
-        let item = ListItem::new_branch(head, "feature".to_string());
-
-        let result = compute_combined_diff(&item, &repo);
+        let result = compute_combined_diff("feature", &head, None, &repo);
         assert!(result.is_some());
         let combined = result.unwrap();
         assert!(combined.diff.contains("new.txt"));
@@ -563,6 +351,7 @@ mod tests {
 
     #[test]
     fn test_compute_combined_diff_no_default_branch_with_worktree_changes() {
+        use crate::summary::compute_combined_diff;
         // Repo without default-branch config and exotic branch names that
         // infer_default_branch_locally() won't detect (it checks "main",
         // "master", "develop", "trunk"). This ensures default_branch() returns
@@ -591,8 +380,7 @@ mod tests {
             "expected no default branch with exotic branch names"
         );
 
-        let item = feature_item(&head, dir.path());
-        let result = compute_combined_diff(&item, &repo);
+        let result = compute_combined_diff("feature", &head, Some(dir.path()), &repo);
         assert!(
             result.is_some(),
             "should include working tree diff even without default branch"
@@ -604,22 +392,38 @@ mod tests {
     #[test]
     fn test_generate_summary_calls_llm() {
         let (dir, repo, head) = temp_repo_with_feature();
-        let item = feature_item(&head, dir.path());
 
-        let summary = generate_summary(&item, "cat >/dev/null && echo 'Add new file'", &repo);
+        let summary = crate::summary::generate_summary(
+            "feature",
+            &head,
+            Some(dir.path()),
+            "cat >/dev/null && echo 'Add new file'",
+            &repo,
+        );
         assert_eq!(summary, "Add new file");
     }
 
     #[test]
     fn test_generate_summary_caches_result() {
         let (dir, repo, head) = temp_repo_with_feature();
-        let item = feature_item(&head, dir.path());
 
-        let summary1 = generate_summary(&item, "cat >/dev/null && echo 'Add new file'", &repo);
+        let summary1 = crate::summary::generate_summary(
+            "feature",
+            &head,
+            Some(dir.path()),
+            "cat >/dev/null && echo 'Add new file'",
+            &repo,
+        );
         assert_eq!(summary1, "Add new file");
 
         // Second call with different command should return cached value
-        let summary2 = generate_summary(&item, "cat >/dev/null && echo 'Different output'", &repo);
+        let summary2 = crate::summary::generate_summary(
+            "feature",
+            &head,
+            Some(dir.path()),
+            "cat >/dev/null && echo 'Different output'",
+            &repo,
+        );
         assert_eq!(summary2, "Add new file");
     }
 
@@ -627,23 +431,28 @@ mod tests {
     fn test_generate_summary_no_changes() {
         let (dir, repo, head) = temp_repo_configured();
 
-        let mut item = ListItem::new_branch(head, "main".to_string());
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-            path: dir.path().to_path_buf(),
-            ..Default::default()
-        }));
-
-        let summary = generate_summary(&item, "echo 'should not run'", &repo);
+        let summary = crate::summary::generate_summary(
+            "main",
+            &head,
+            Some(dir.path()),
+            "echo 'should not run'",
+            &repo,
+        );
         assert!(summary.contains("No changes to summarize"));
     }
 
     #[test]
     fn test_generate_summary_llm_error() {
         let (dir, repo, head) = temp_repo_with_feature();
-        let item = feature_item(&head, dir.path());
 
-        let summary = generate_summary(&item, "cat >/dev/null && echo 'fail' >&2 && exit 1", &repo);
-        assert!(summary.starts_with("LLM error:"));
+        let summary = crate::summary::generate_summary(
+            "feature",
+            &head,
+            Some(dir.path()),
+            "cat >/dev/null && echo 'fail' >&2 && exit 1",
+            &repo,
+        );
+        assert!(summary.starts_with("Error:"));
     }
 
     #[test]

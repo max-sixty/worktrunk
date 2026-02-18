@@ -87,6 +87,9 @@ pub(super) fn apply_default(
             // URL is set at item creation, only default url_active
             items[idx].url_active = None;
         }
+        TaskKind::SummaryGenerate => {
+            // Leave as None — no summary available
+        }
     }
 }
 
@@ -289,6 +292,9 @@ pub(super) fn drain_results(
                 if active.is_some() {
                     item.url_active = active;
                 }
+            }
+            TaskResult::SummaryGenerate { summary, .. } => {
+                item.summary = Some(summary);
             }
         }
 

@@ -195,6 +195,10 @@ pub struct ListItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url_active: Option<bool>,
 
+    /// AI-generated branch summary: None = not loaded, Some(None) = no summary, Some(Some) = has summary
+    #[serde(skip)]
+    pub summary: Option<Option<String>>,
+
     /// Git status symbols - None until all dependencies are ready.
     /// Note: This field is not serialized directly. JSON output converts to JsonItem first.
     #[serde(skip)]
@@ -235,6 +239,7 @@ impl ListItem {
             pr_status: None,
             url: None,
             url_active: None,
+            summary: None,
             status_symbols: None,
             display: DisplayFields::default(),
             kind: ItemKind::Branch,

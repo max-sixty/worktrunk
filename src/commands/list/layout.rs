@@ -412,6 +412,7 @@ impl ColumnKind {
             ColumnKind::Time => true,
             ColumnKind::CiStatus => flags.ci_status,
             ColumnKind::Commit => true,
+            ColumnKind::Summary => true, // Placeholder shown until data arrives
             ColumnKind::Message => true,
         }
     }
@@ -449,6 +450,7 @@ impl ColumnKind {
             ColumnKind::Url => text(widths.url),
             ColumnKind::CiStatus => text(widths.ci_status),
             ColumnKind::Commit => text(commit_width),
+            ColumnKind::Summary => Some((50, ColumnFormat::Text)),
             ColumnKind::Message => None,
             ColumnKind::WorkingDiff => diff(widths.working_diff),
             ColumnKind::AheadBehind => diff(widths.ahead_behind),
@@ -485,6 +487,7 @@ pub struct LayoutConfig {
     pub columns: Vec<ColumnLayout>,
     pub main_worktree_path: PathBuf,
     pub max_message_len: usize,
+    pub max_summary_len: usize,
     pub hidden_column_count: usize,
     pub status_position_mask: super::model::PositionMask,
 }
@@ -731,6 +734,13 @@ fn allocate_columns_with_priority(
         }
     }
 
+    // Capture summary column width (fixed allocation, no expansion needed)
+    let max_summary_len = pending
+        .iter()
+        .find(|col| col.spec.kind == ColumnKind::Summary)
+        .map(|col| col.width)
+        .unwrap_or(0);
+
     // Expand message column with leftover space
     let mut max_message_len = 0;
     if let Some(message_col) = pending
@@ -791,6 +801,7 @@ fn allocate_columns_with_priority(
         columns,
         main_worktree_path,
         max_message_len,
+        max_summary_len,
         hidden_column_count,
         status_position_mask: metadata.status_position_mask,
     }
@@ -1214,6 +1225,7 @@ mod tests {
             pr_status: None,
             url: None,
             url_active: None,
+            summary: None,
             status_symbols: Some(StatusSymbols::default()),
             display: DisplayFields::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
@@ -1312,6 +1324,7 @@ mod tests {
             pr_status: None,
             url: None,
             url_active: None,
+            summary: None,
             status_symbols: Some(StatusSymbols::default()),
             display: DisplayFields::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {

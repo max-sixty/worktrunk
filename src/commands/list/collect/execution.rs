@@ -14,9 +14,9 @@ use worktrunk::git::{BranchRef, Repository, WorktreeInfo};
 use super::CollectOptions;
 use super::tasks::{
     AheadBehindTask, BranchDiffTask, CiStatusTask, CommitDetailsTask, CommittedTreesMatchTask,
-    GitOperationTask, HasFileChangesTask, IsAncestorTask, MergeTreeConflictsTask, Task,
-    TaskContext, UpstreamTask, UrlStatusTask, UserMarkerTask, WorkingTreeConflictsTask,
-    WorkingTreeDiffTask, WouldMergeAddTask,
+    GitOperationTask, HasFileChangesTask, IsAncestorTask, MergeTreeConflictsTask,
+    SummaryGenerateTask, Task, TaskContext, UpstreamTask, UrlStatusTask, UserMarkerTask,
+    WorkingTreeConflictsTask, WorkingTreeDiffTask, WouldMergeAddTask,
 };
 use super::types::{TaskError, TaskKind, TaskResult};
 
@@ -91,6 +91,7 @@ fn dispatch_task(kind: TaskKind, ctx: TaskContext) -> Result<TaskResult, TaskErr
         TaskKind::Upstream => UpstreamTask::compute(ctx),
         TaskKind::CiStatus => CiStatusTask::compute(ctx),
         TaskKind::UrlStatus => UrlStatusTask::compute(ctx),
+        TaskKind::SummaryGenerate => SummaryGenerateTask::compute(ctx),
     }
 }
 
@@ -192,6 +193,7 @@ pub fn work_items_for_worktree(
         branch_ref: BranchRef::from(wt),
         item_idx,
         item_url,
+        llm_command: options.llm_command.clone(),
     };
 
     // Check if this branch is stale and should skip expensive tasks.
@@ -228,6 +230,7 @@ pub fn work_items_for_worktree(
         TaskKind::MergeTreeConflicts,
         TaskKind::CiStatus,
         TaskKind::WouldMergeAdd,
+        TaskKind::SummaryGenerate,
     ] {
         if skip.contains(&kind) {
             continue;
@@ -287,6 +290,7 @@ pub fn work_items_for_branch(
         branch_ref,
         item_idx,
         item_url: None, // Branches without worktrees don't have URLs
+        llm_command: options.llm_command.clone(),
     };
 
     // Check if this branch is stale and should skip expensive tasks.
@@ -314,6 +318,7 @@ pub fn work_items_for_branch(
         TaskKind::MergeTreeConflicts,
         TaskKind::CiStatus,
         TaskKind::WouldMergeAdd,
+        TaskKind::SummaryGenerate,
     ] {
         if skip.contains(&kind) {
             continue;
@@ -358,6 +363,7 @@ mod tests {
         let options = CollectOptions {
             skip_tasks,
             url_template: Some("http://localhost/{{ branch }}".to_string()),
+            llm_command: None,
             stale_branches: HashSet::new(),
         };
 

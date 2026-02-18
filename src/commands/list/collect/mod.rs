@@ -145,6 +145,10 @@ pub struct CollectOptions {
     /// Expanded per-item in task spawning (post-skeleton) to minimize time-to-skeleton.
     pub url_template: Option<String>,
 
+    /// LLM command for summary generation (from commit.generation config).
+    /// None if not configured — SummaryGenerate task will be skipped.
+    pub llm_command: Option<String>,
+
     /// Branches to skip expensive tasks for (behind > threshold).
     ///
     /// Presence in set = skip expensive tasks for this branch (HasFileChanges,
@@ -344,6 +348,7 @@ pub fn collect(
                     TaskKind::BranchDiff,
                     TaskKind::CiStatus,
                     TaskKind::WorkingTreeConflicts,
+                    TaskKind::SummaryGenerate,
                 ]
                 .into_iter()
                 .collect()
@@ -502,6 +507,7 @@ pub fn collect(
                 pr_status: None,
                 url: None,
                 url_active: None,
+                summary: None,
                 status_symbols: None,
                 display: DisplayFields::default(),
                 kind: ItemKind::Worktree(Box::new(worktree_data)),
@@ -530,6 +536,12 @@ pub fn collect(
         effective_skip_tasks.insert(TaskKind::UrlStatus);
     }
 
+    // If no LLM command configured, skip SummaryGenerate (even in --full)
+    let llm_command = repo.config().commit_generation.command.clone();
+    if llm_command.is_none() {
+        effective_skip_tasks.insert(TaskKind::SummaryGenerate);
+    }
+
     // Calculate layout from items (worktrees, local branches, and remote branches)
     let layout = super::layout::calculate_layout_from_basics(
         &all_items,
@@ -545,6 +557,7 @@ pub fn collect(
     let mut options = CollectOptions {
         skip_tasks: effective_skip_tasks,
         url_template: url_template.clone(),
+        llm_command,
         ..Default::default()
     };
 
@@ -1096,6 +1109,7 @@ pub fn build_worktree_item(
         pr_status: None,
         url: None,
         url_active: None,
+        summary: None,
         status_symbols: None,
         display: DisplayFields::default(),
         kind: ItemKind::Worktree(Box::new(WorktreeData::from_worktree(

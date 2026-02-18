@@ -32,6 +32,7 @@ mod llm;
 mod md_help;
 mod output;
 mod pager;
+mod summary;
 mod verbose_log;
 
 // Re-export invocation utilities at crate level for use by other modules
