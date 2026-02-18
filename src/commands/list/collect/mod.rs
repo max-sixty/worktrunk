@@ -555,6 +555,7 @@ pub fn collect(
     let max_width = crate::display::get_terminal_width();
 
     // Create collection options from skip set
+    let returned_skip_tasks = effective_skip_tasks.clone();
     let mut options = CollectOptions {
         skip_tasks: effective_skip_tasks,
         url_template: url_template.clone(),
@@ -1025,6 +1026,7 @@ pub fn collect(
     Ok(Some(super::model::ListData {
         items,
         main_worktree_path: main_worktree.path.clone(),
+        skip_tasks: returned_skip_tasks,
     }))
 }
 

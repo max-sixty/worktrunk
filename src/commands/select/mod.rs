@@ -85,7 +85,7 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
     };
     let layout = super::list::layout::calculate_layout_with_width(
         &list_data.items,
-        &skip_tasks,
+        &list_data.skip_tasks,
         skim_list_width,
         &list_data.main_worktree_path,
         None, // URL column not shown in select
