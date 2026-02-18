@@ -116,6 +116,8 @@ OWNER=$(echo "$REPO" | cut -d/ -f1)
 NAME=$(echo "$REPO" | cut -d/ -f2)
 
 # Get unresolved bot review threads
+# NOTE: Pipe to jq (don't use --jq) and use --arg to pass BOT_LOGIN cleanly.
+# Avoid quote-nesting patterns like "'"$VAR"'" — Claude mangles them.
 gh api graphql -f query='
   query($owner: String!, $repo: String!, $number: Int!) {
     repository(owner: $owner, name: $repo) {
@@ -138,9 +140,10 @@ gh api graphql -f query='
     }
   }
 ' -f owner="$OWNER" -f repo="$NAME" -F number=<number> \
-  --jq '.data.repository.pullRequest.reviewThreads.nodes[]
+  | jq --arg bot "$BOT_LOGIN" '
+    .data.repository.pullRequest.reviewThreads.nodes[]
     | select(.isResolved == false)
-    | select(.comments.nodes[0].author.login == "'"$BOT_LOGIN"'")
+    | select(.comments.nodes[0].author.login == $bot)
     | {id, path: .comments.nodes[0].path, line: .comments.nodes[0].line, body: .comments.nodes[0].body}'
 
 # Resolve a thread that has been addressed
