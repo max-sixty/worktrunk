@@ -796,3 +796,28 @@ pub(super) fn parse_working_tree_status(status_output: &str) -> (WorkingTreeStat
 
     (working_tree_status, is_dirty, has_conflicts)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_first_line_simple() {
+        assert_eq!(first_line("Add feature\n\nDetails here"), "Add feature");
+    }
+
+    #[test]
+    fn test_first_line_skips_empty() {
+        assert_eq!(first_line("\n\nAdd feature\nMore"), "Add feature");
+    }
+
+    #[test]
+    fn test_first_line_single_line() {
+        assert_eq!(first_line("Single line"), "Single line");
+    }
+
+    #[test]
+    fn test_first_line_empty_string() {
+        assert_eq!(first_line(""), "");
+    }
+}

@@ -250,3 +250,29 @@ pub(crate) fn generate_summary(
         Err(e) => format!("Error: {e}"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_render_prompt_includes_diff_and_stat() {
+        let result = render_prompt("diff content here", "stat content here").unwrap();
+        assert!(result.contains("diff content here"));
+        assert!(result.contains("stat content here"));
+    }
+
+    #[test]
+    fn test_hash_diff_deterministic() {
+        let h1 = hash_diff("hello world");
+        let h2 = hash_diff("hello world");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_hash_diff_different_inputs() {
+        let h1 = hash_diff("hello");
+        let h2 = hash_diff("world");
+        assert_ne!(h1, h2);
+    }
+}
