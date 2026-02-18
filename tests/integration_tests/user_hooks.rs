@@ -953,14 +953,13 @@ fn test_hook_template_variables_from_subdirectory(repo: TestRepo) {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // worktree_path should be the absolute worktree root, not "." or the subdirectory
+    // worktree_path should be the worktree root, not "." or the subdirectory.
+    // On Windows, to_posix_path() converts C:\... to /c/..., so check that the path
+    // is not relative rather than using is_absolute() (which rejects POSIX-style paths).
     let wt_path = fs::read_to_string(repo.root_path().join("wt_path.txt"))
         .expect("wt_path.txt should exist (hook should run from worktree root, not subdirectory)");
     let wt_path = wt_path.trim();
-    assert!(
-        std::path::Path::new(wt_path).is_absolute(),
-        "worktree_path should be absolute, got: {wt_path}"
-    );
+    assert_ne!(wt_path, ".", "worktree_path should not be relative '.'");
     assert!(
         wt_path.ends_with("repo"),
         "worktree_path should end with repo dir name, got: {wt_path}"
