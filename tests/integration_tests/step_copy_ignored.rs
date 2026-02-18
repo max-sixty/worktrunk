@@ -802,6 +802,82 @@ fn test_copy_ignored_broken_symlink_idempotent(mut repo: TestRepo) {
     );
 }
 
+/// Test that non-regular files (sockets) inside directories are skipped (GitHub issue #1084)
+///
+/// node_modules and similar directories can contain sockets or FIFOs.
+/// These should be silently skipped instead of failing with
+/// "source path is not an existing regular file".
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_skips_non_regular_files(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Create target directory with a socket and a regular file
+    let target_dir = repo.root_path().join("target");
+    fs::create_dir_all(&target_dir).unwrap();
+    let socket_path = target_dir.join("test.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+    fs::write(target_dir.join("data.txt"), "content").unwrap();
+
+    fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
+
+    // Should succeed, skipping the socket
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "copy-ignored should succeed with socket in directory: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Regular file should be copied, socket should NOT be copied
+    assert!(feature_path.join("target").join("data.txt").exists());
+    assert!(!feature_path.join("target").join("test.sock").exists());
+}
+
+/// Test that copy errors include file paths in the message (GitHub issue #1084)
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_error_includes_path(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let feature_path = repo.add_worktree("feature");
+
+    // Create target directory with files
+    let target_dir = repo.root_path().join("target");
+    fs::create_dir_all(target_dir.join("sub")).unwrap();
+    fs::write(target_dir.join("sub").join("file.txt"), "content").unwrap();
+
+    fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
+
+    // Create destination target/sub as read-only so file copy fails
+    let dest_sub = feature_path.join("target").join("sub");
+    fs::create_dir_all(&dest_sub).unwrap();
+    fs::set_permissions(&dest_sub, fs::Permissions::from_mode(0o555)).unwrap();
+
+    // Copy should fail — error message should mention the file path
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    // Restore permissions for cleanup
+    fs::set_permissions(&dest_sub, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("copying") || stderr.contains("target"),
+        "Error should mention the file path, got: {stderr}"
+    );
+}
+
 /// Test that worktrees nested inside the source are not copied (GitHub issue #641)
 ///
 /// When worktree-path is configured to place worktrees inside the primary worktree
