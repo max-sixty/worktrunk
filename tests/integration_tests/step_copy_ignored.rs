@@ -839,6 +839,36 @@ fn test_copy_ignored_skips_non_regular_files(mut repo: TestRepo) {
     assert!(!feature_path.join("target").join("test.sock").exists());
 }
 
+/// Test that symlinks inside directories are copied correctly
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_directory_with_symlinks(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Create a gitignored directory containing a symlink
+    let target_dir = repo.root_path().join("target");
+    fs::create_dir_all(&target_dir).unwrap();
+    fs::write(target_dir.join("data.txt"), "content").unwrap();
+    std::os::unix::fs::symlink("data.txt", target_dir.join("link.txt")).unwrap();
+
+    fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    // Both the regular file and the symlink should be copied
+    assert!(feature_path.join("target").join("data.txt").exists());
+    let link = feature_path.join("target").join("link.txt");
+    assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+    assert_eq!(fs::read_link(&link).unwrap().to_str().unwrap(), "data.txt");
+}
+
 /// Test that copy errors include file paths in the message (GitHub issue #1084)
 ///
 /// Tests both the directory recursive copy error path (copy_dir_recursive_fallback)
