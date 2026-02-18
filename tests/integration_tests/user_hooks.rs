@@ -926,6 +926,69 @@ vars = "echo 'repo={{ repo }} branch={{ branch }}' > template_vars.txt"
     );
 }
 
+#[rstest]
+fn test_hook_template_variables_from_subdirectory(repo: TestRepo) {
+    // Hook that writes template variables and pwd to files so we can verify their values.
+    // This tests that running from a subdirectory still resolves worktree_path to the
+    // worktree root (not "." or the subdirectory) and sets hook CWD to the root.
+    repo.write_project_config(
+        r#"pre-merge = "echo '{{ worktree_path }}' > wt_path.txt && echo '{{ worktree_name }}' > wt_name.txt && pwd > hook_cwd.txt""#,
+    );
+    repo.commit("Add pre-merge hook");
+
+    // Create a subdirectory and run the hook from there
+    let subdir = repo.root_path().join("src").join("components");
+    fs::create_dir_all(&subdir).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-merge", "--yes"])
+        .current_dir(&subdir) // override: run from subdirectory
+        .output()
+        .expect("Failed to run wt hook pre-merge");
+
+    assert!(
+        output.status.success(),
+        "wt hook pre-merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // worktree_path should be the absolute worktree root, not "." or the subdirectory
+    let wt_path = fs::read_to_string(repo.root_path().join("wt_path.txt"))
+        .expect("wt_path.txt should exist (hook should run from worktree root, not subdirectory)");
+    let wt_path = wt_path.trim();
+    assert!(
+        std::path::Path::new(wt_path).is_absolute(),
+        "worktree_path should be absolute, got: {wt_path}"
+    );
+    assert!(
+        wt_path.ends_with("repo"),
+        "worktree_path should end with repo dir name, got: {wt_path}"
+    );
+
+    // worktree_name should be the directory name, not "unknown"
+    let wt_name =
+        fs::read_to_string(repo.root_path().join("wt_name.txt")).expect("wt_name.txt should exist");
+    assert_eq!(
+        wt_name.trim(),
+        "repo",
+        "worktree_name should be the directory name, not 'unknown'"
+    );
+
+    // Hook CWD should be the worktree root, not the subdirectory
+    let hook_cwd = fs::read_to_string(repo.root_path().join("hook_cwd.txt"))
+        .expect("hook_cwd.txt should exist");
+    let hook_cwd = hook_cwd.trim();
+    assert!(
+        !hook_cwd.contains("src/components"),
+        "Hook should run from worktree root, not subdirectory. CWD was: {hook_cwd}"
+    );
+    assert!(
+        hook_cwd.ends_with("repo"),
+        "Hook CWD should be worktree root, got: {hook_cwd}"
+    );
+}
+
 // ============================================================================
 // Combined User and Project Hooks Tests
 // ============================================================================
