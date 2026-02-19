@@ -725,16 +725,17 @@ if echo "$input" | grep -qi "summary"; then
         echo "Add TODO notes for caching improvements"
     elif echo "$input" | grep -q "multiply\|subtract\|math"; then
         echo "Add math operations and consolidate tests"
+    elif echo "$input" | grep -q "User settings"; then
+        echo "Add user settings module placeholder"
     else
         echo "Expand README with contributing and license sections"
     fi
 else
     # Commit message generation
     sleep 0.5
-    echo "feat(validation): add input validation utilities"
+    echo "feat: add user settings module"
     echo ""
-    echo "Add validation module with is_positive and is_non_empty helpers"
-    echo "for validating user input. Includes comprehensive test coverage."
+    echo "Add placeholder module for user profile settings."
 fi
 """)
     llm_mock.chmod(0o755)

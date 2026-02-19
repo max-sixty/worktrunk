@@ -231,34 +231,6 @@ url = "http://localhost:{{ branch | hash_port }}"
     # Enable git colors for non-TTY environments (VHS)
     git(["-C", str(env.repo), "config", "color.ui", "always"])
 
-    # Override llm mock with different commit message for this demo
-    llm_mock = env.home / ".local" / "bin" / "llm"
-    llm_mock.write_text(r"""#!/bin/bash
-input=$(cat)
-
-if echo "$input" | grep -qi "summary"; then
-    # Summary generation — return branch-appropriate one-liner
-    if echo "$input" | grep -q "utils\.rs"; then
-        echo "Add utility functions module with string and math helpers"
-    elif echo "$input" | grep -q "notes\.txt"; then
-        echo "Add TODO notes for caching improvements"
-    elif echo "$input" | grep -q "multiply\|subtract\|math"; then
-        echo "Add math operations and consolidate tests"
-    elif echo "$input" | grep -q "User settings"; then
-        echo "Add user settings module placeholder"
-    else
-        echo "Expand README with contributing and license sections"
-    fi
-else
-    # Commit message generation
-    sleep 0.5
-    echo "feat: add user settings module"
-    echo ""
-    echo "Add placeholder module for user profile settings."
-fi
-""")
-    llm_mock.chmod(0o755)
-
     _write_user_config(
         env,
         ["npm run dev -- --port {{ branch | hash_port }}", "cargo nextest run"],
