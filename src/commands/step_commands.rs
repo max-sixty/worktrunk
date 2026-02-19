@@ -1,11 +1,13 @@
-//! Step commands for the merge workflow.
+//! Step commands for the merge workflow and standalone worktree utilities.
 //!
-//! This module contains the individual steps that make up `wt merge`:
+//! Merge steps:
 //! - `step_commit` - Commit working tree changes
 //! - `handle_squash` - Squash commits into one
 //! - `step_show_squash_prompt` - Show squash prompt without executing
 //! - `handle_rebase` - Rebase onto target branch
 //! - `step_diff` - Show all changes since branching
+//!
+//! Standalone:
 //! - `step_copy_ignored` - Copy gitignored files matching .worktreeinclude
 //! - `handle_promote` - Put a branch into the main worktree
 
@@ -537,6 +539,52 @@ pub fn step_diff(target: Option<&str>, extra_args: &[String]) -> anyhow::Result<
     Ok(())
 }
 
+/// List gitignored entries in a worktree, filtered by `.worktreeinclude` and excluding
+/// entries that contain nested worktrees.
+///
+/// Combines three steps:
+/// 1. `list_ignored_entries()` — git ls-files for ignored entries
+/// 2. `.worktreeinclude` filtering — only matching entries if the file exists
+/// 3. Nested worktree filtering — exclude entries containing other worktrees
+fn list_and_filter_ignored_entries(
+    worktree_path: &Path,
+    context: &str,
+    worktree_paths: &[PathBuf],
+) -> anyhow::Result<Vec<(PathBuf, bool)>> {
+    let ignored_entries = list_ignored_entries(worktree_path, context)?;
+
+    // Filter to entries that match .worktreeinclude (or all if no file exists)
+    let include_path = worktree_path.join(".worktreeinclude");
+    let filtered: Vec<_> = if include_path.exists() {
+        let include_matcher = {
+            let mut builder = GitignoreBuilder::new(worktree_path);
+            if let Some(err) = builder.add(&include_path) {
+                return Err(worktrunk::git::GitError::WorktreeIncludeParseError {
+                    error: err.to_string(),
+                }
+                .into());
+            }
+            builder.build().context("Failed to build include matcher")?
+        };
+        ignored_entries
+            .into_iter()
+            .filter(|(path, is_dir)| include_matcher.matched(path, *is_dir).is_ignore())
+            .collect()
+    } else {
+        ignored_entries
+    };
+
+    // Filter out entries that contain other worktrees
+    Ok(filtered
+        .into_iter()
+        .filter(|(entry_path, _)| {
+            !worktree_paths
+                .iter()
+                .any(|wt_path| wt_path != worktree_path && wt_path.starts_with(entry_path))
+        })
+        .collect())
+}
+
 /// Handle `wt step copy-ignored` command
 ///
 /// Copies gitignored files from a source worktree to a destination worktree.
@@ -595,49 +643,13 @@ pub fn step_copy_ignored(
         return Ok(());
     }
 
-    // Get ignored entries from git
-    // --directory stops at directory boundaries (avoids listing thousands of files in target/)
-    let ignored_entries = list_ignored_entries(&source_path, &source_context)?;
-
-    // Filter to entries that match .worktreeinclude (or all if no file exists)
-    let include_path = source_path.join(".worktreeinclude");
-    let entries_to_copy: Vec<_> = if include_path.exists() {
-        // Build include matcher from .worktreeinclude
-        let include_matcher = {
-            let mut builder = GitignoreBuilder::new(&source_path);
-            if let Some(err) = builder.add(&include_path) {
-                return Err(worktrunk::git::GitError::WorktreeIncludeParseError {
-                    error: err.to_string(),
-                }
-                .into());
-            }
-            builder.build().context("Failed to build include matcher")?
-        };
-        ignored_entries
-            .into_iter()
-            .filter(|(path, is_dir)| include_matcher.matched(path, *is_dir).is_ignore())
-            .collect()
-    } else {
-        // No .worktreeinclude file — default to copying all ignored entries
-        ignored_entries
-    };
-
-    // Filter out entries that contain other worktrees (prevents recursive copying when
-    // worktrees are nested inside the source, e.g., worktree-path = ".worktrees/...")
     let worktree_paths: Vec<PathBuf> = repo
         .list_worktrees()?
         .into_iter()
         .map(|wt| wt.path)
         .collect();
-    let entries_to_copy: Vec<_> = entries_to_copy
-        .into_iter()
-        .filter(|(entry_path, _)| {
-            // Exclude if any worktree (other than source) is inside or equal to this entry
-            !worktree_paths
-                .iter()
-                .any(|wt_path| wt_path != &source_path && wt_path.starts_with(entry_path))
-        })
-        .collect();
+    let entries_to_copy =
+        list_and_filter_ignored_entries(&source_path, &source_context, &worktree_paths)?;
 
     if entries_to_copy.is_empty() {
         eprintln!("{}", info_message("No matching files to copy"));
@@ -844,12 +856,295 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::
     Ok(())
 }
 
+/// Move a file or directory, falling back to copy+delete on cross-device errors.
+fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
+    // Ensure parent directory exists
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("creating parent directory for {}", dest.display()))?;
+    }
+
+    match fs::rename(src, dest) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::CrossesDevices => {
+            // Cross-device: copy then delete
+            if is_dir {
+                copy_dir_recursive(src, dest, true)?;
+                fs::remove_dir_all(src)
+                    .with_context(|| format!("removing source directory {}", src.display()))?;
+            } else {
+                reflink_copy::reflink_or_copy(src, dest)
+                    .with_context(|| format!("copying {} to {}", src.display(), dest.display()))?;
+                fs::remove_file(src)
+                    .with_context(|| format!("removing source file {}", src.display()))?;
+            }
+            Ok(())
+        }
+        Err(e) => Err(anyhow::Error::from(e).context(format!(
+            "moving {} to {}",
+            src.display(),
+            dest.display()
+        ))),
+    }
+}
+
+const PROMOTE_STAGING_DIR: &str = "wt-promote-staging";
+
+/// Move gitignored files from both worktrees into a staging directory.
+///
+/// Called BEFORE the branch exchange so that `git switch` doesn't collide with
+/// ignored files (e.g., a tracked file on the other branch at the same path).
+///
+/// Returns the staging directory path and the count of entries staged.
+fn stage_ignored(
+    repo: &Repository,
+    path_a: &Path,
+    entries_a: &[(PathBuf, bool)],
+    path_b: &Path,
+    entries_b: &[(PathBuf, bool)],
+) -> anyhow::Result<(PathBuf, usize)> {
+    let staging_dir = repo.git_common_dir().join(PROMOTE_STAGING_DIR);
+
+    // Bail if a leftover staging dir exists from a previous interrupted run —
+    // it may contain the user's only copy of files from the failed swap.
+    if staging_dir.exists() {
+        anyhow::bail!(
+            "Found leftover staging directory from an interrupted promote.\n\
+             Files may need manual recovery from: {}\n\
+             Remove it to retry: rm -rf \"{}\"",
+            staging_dir.display(),
+            staging_dir.display()
+        );
+    }
+    fs::create_dir_all(&staging_dir).context("creating promote staging directory")?;
+
+    let staging_a = staging_dir.join("a");
+    let staging_b = staging_dir.join("b");
+    let mut count = 0;
+
+    // Move A's entries → staging/a
+    for (src_entry, is_dir) in entries_a {
+        let relative = src_entry
+            .strip_prefix(path_a)
+            .context("entry not under worktree A")?;
+        let staging_entry = staging_a.join(relative);
+        if src_entry.exists() {
+            move_entry(src_entry, &staging_entry, *is_dir)
+                .with_context(|| format!("staging {}", relative.display()))?;
+            count += 1;
+        }
+    }
+
+    // Move B's entries → staging/b
+    for (src_entry, is_dir) in entries_b {
+        let relative = src_entry
+            .strip_prefix(path_b)
+            .context("entry not under worktree B")?;
+        let staging_entry = staging_b.join(relative);
+        if src_entry.exists() {
+            move_entry(src_entry, &staging_entry, *is_dir)
+                .with_context(|| format!("staging {}", relative.display()))?;
+            count += 1;
+        }
+    }
+
+    // Clean up empty staging directory (can happen if all entries vanished
+    // between listing and staging due to TOCTOU)
+    if count == 0 && staging_dir.exists() {
+        let _ = fs::remove_dir_all(&staging_dir);
+    }
+
+    Ok((staging_dir, count))
+}
+
+/// Distribute staged files to their new worktrees after a branch exchange.
+///
+/// B's original files (in staging/b) go to worktree A (which now has B's branch).
+/// A's original files (in staging/a) go to worktree B (which now has A's branch).
+fn distribute_staged(
+    staging_dir: &Path,
+    path_a: &Path,
+    entries_a: &[(PathBuf, bool)],
+    path_b: &Path,
+    entries_b: &[(PathBuf, bool)],
+) -> anyhow::Result<usize> {
+    let staging_a = staging_dir.join("a");
+    let staging_b = staging_dir.join("b");
+    let mut count = 0;
+
+    // Move B's staged entries → A (A now has B's branch)
+    for (src_entry, is_dir) in entries_b {
+        let relative = src_entry
+            .strip_prefix(path_b)
+            .context("entry not under worktree B")?;
+        let staging_entry = staging_b.join(relative);
+        let dest_entry = path_a.join(relative);
+        if staging_entry.exists() {
+            move_entry(&staging_entry, &dest_entry, *is_dir).with_context(|| {
+                format!(
+                    "distributing {} to {}",
+                    relative.display(),
+                    path_a.display()
+                )
+            })?;
+            count += 1;
+        }
+    }
+
+    // Move A's staged entries → B (B now has A's branch)
+    for (src_entry, is_dir) in entries_a {
+        let relative = src_entry
+            .strip_prefix(path_a)
+            .context("entry not under worktree A")?;
+        let staging_entry = staging_a.join(relative);
+        let dest_entry = path_b.join(relative);
+        if staging_entry.exists() {
+            move_entry(&staging_entry, &dest_entry, *is_dir).with_context(|| {
+                format!(
+                    "distributing {} to {}",
+                    relative.display(),
+                    path_b.display()
+                )
+            })?;
+            count += 1;
+        }
+    }
+
+    // Clean up staging directory (best-effort — files are already distributed)
+    let _ = fs::remove_dir_all(staging_dir);
+
+    Ok(count)
+}
+
+/// Restore staged files to their original worktrees (undo staging on failure).
+///
+/// Unlike `distribute_staged` which crosses entries (A→B, B→A), this puts each
+/// side's entries back where they came from (staging-a→A, staging-b→B).
+fn restore_staged(
+    staging_dir: &Path,
+    path_a: &Path,
+    entries_a: &[(PathBuf, bool)],
+    path_b: &Path,
+    entries_b: &[(PathBuf, bool)],
+) -> anyhow::Result<()> {
+    let staging_a = staging_dir.join("a");
+    let staging_b = staging_dir.join("b");
+
+    // Move staging-a entries back to A
+    for (src_entry, is_dir) in entries_a {
+        let relative = src_entry
+            .strip_prefix(path_a)
+            .context("entry not under worktree A")?;
+        let staging_entry = staging_a.join(relative);
+        if staging_entry.exists() {
+            move_entry(&staging_entry, src_entry, *is_dir)
+                .with_context(|| format!("restoring {}", relative.display()))?;
+        }
+    }
+
+    // Move staging-b entries back to B
+    for (src_entry, is_dir) in entries_b {
+        let relative = src_entry
+            .strip_prefix(path_b)
+            .context("entry not under worktree B")?;
+        let staging_entry = staging_b.join(relative);
+        if staging_entry.exists() {
+            move_entry(&staging_entry, src_entry, *is_dir)
+                .with_context(|| format!("restoring {}", relative.display()))?;
+        }
+    }
+
+    // Clean up staging directory
+    if staging_dir.exists() {
+        fs::remove_dir_all(staging_dir).context("cleaning up promote staging directory")?;
+    }
+
+    Ok(())
+}
+
+/// Best-effort restore with user-visible warning on failure.
+fn restore_staged_or_warn(
+    staging_dir: &Path,
+    path_a: &Path,
+    entries_a: &[(PathBuf, bool)],
+    path_b: &Path,
+    entries_b: &[(PathBuf, bool)],
+) {
+    if let Err(restore_err) = restore_staged(staging_dir, path_a, entries_a, path_b, entries_b) {
+        eprintln!(
+            "{}",
+            warning_message(format!(
+                "Failed to restore staged files: {restore_err:#}. \
+                 Files may need manual recovery from: {}",
+                staging_dir.display()
+            ))
+        );
+    }
+}
+
 /// Result of a promote operation
 pub enum PromoteResult {
     /// Branch was promoted successfully
     Promoted,
     /// Already in canonical state (requested branch is already in main)
     AlreadyInMain(String),
+}
+
+/// Exchange branches between two worktrees with rollback on failure.
+///
+/// Steps: detach target → detach main → switch main → switch target.
+/// On failure at any step, attempts to restore both worktrees to their original branches.
+fn exchange_branches(
+    main_wt: &worktrunk::git::WorkingTree<'_>,
+    main_branch: &str,
+    target_wt: &worktrunk::git::WorkingTree<'_>,
+    target_branch: &str,
+) -> anyhow::Result<()> {
+    // Step 1: Detach target (if this fails, nothing has changed)
+    target_wt
+        .run_command(&["checkout", "--detach"])
+        .context("Failed to detach HEAD in target worktree")?;
+
+    // Step 2: Detach main (if this fails, re-attach target)
+    if let Err(e) = main_wt
+        .run_command(&["checkout", "--detach"])
+        .context("Failed to detach HEAD in main worktree")
+    {
+        if let Err(rb) = target_wt.run_command(&["switch", target_branch]) {
+            log::warn!("Rollback failed re-attaching target: {rb}");
+        }
+        return Err(e);
+    }
+
+    // Step 3: Switch main to target_branch (if this fails, re-attach both)
+    if let Err(e) = main_wt
+        .run_command(&["switch", target_branch])
+        .context("Failed to switch to branch in main worktree")
+    {
+        if let Err(rb) = main_wt.run_command(&["switch", main_branch]) {
+            log::warn!("Rollback failed re-attaching main: {rb}");
+        }
+        if let Err(rb) = target_wt.run_command(&["switch", target_branch]) {
+            log::warn!("Rollback failed re-attaching target: {rb}");
+        }
+        return Err(e);
+    }
+
+    // Step 4: Switch target to main_branch (if this fails, reverse step 3)
+    if let Err(e) = target_wt
+        .run_command(&["switch", main_branch])
+        .context("Failed to switch to branch in target worktree")
+    {
+        if let Err(rb) = main_wt.run_command(&["switch", main_branch]) {
+            log::warn!("Rollback failed re-attaching main: {rb}");
+        }
+        if let Err(rb) = target_wt.run_command(&["switch", target_branch]) {
+            log::warn!("Rollback failed re-attaching target: {rb}");
+        }
+        return Err(e);
+    }
+
+    Ok(())
 }
 
 /// Handle `wt step promote` command
@@ -946,29 +1241,80 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         }
     }
 
-    // Perform the exchange:
+    // Discover gitignored entries BEFORE branch exchange — .gitignore rules belong
+    // to the current branch and will change after `git switch`.
+    let worktree_paths: Vec<PathBuf> = worktrees.iter().map(|wt| wt.path.clone()).collect();
+    let main_entries = list_and_filter_ignored_entries(main_path, &main_branch, &worktree_paths)?;
+    let target_entries =
+        list_and_filter_ignored_entries(target_path, &target_branch, &worktree_paths)?;
+
+    // Move gitignored files to staging BEFORE branch exchange.
+    // This prevents `git switch` from colliding with ignored files (e.g., when
+    // a tracked file on the other branch occupies the same path as an ignored file).
+    let staging_path = repo.git_common_dir().join(PROMOTE_STAGING_DIR);
+    let staged = if !main_entries.is_empty() || !target_entries.is_empty() {
+        let (dir, count) = stage_ignored(
+            &repo,
+            main_path,
+            &main_entries,
+            target_path,
+            &target_entries,
+        )
+        .with_context(|| {
+            format!(
+                "Failed to stage ignored files. Already-staged files may be recoverable from: {}",
+                staging_path.display()
+            )
+        })?;
+        if count > 0 { Some((dir, count)) } else { None }
+    } else {
+        None
+    };
+
+    // Perform the branch exchange with rollback on failure:
     // 1. Detach both worktrees (releases branch locks)
     // 2. Switch to exchanged branches
     //
     // Detach target first so if it fails, main worktree is unchanged.
-    // Use `git switch` for branch checkouts (branch-only, no path ambiguity).
+    if let Err(e) = exchange_branches(
+        &main_working_tree,
+        &main_branch,
+        &target_working_tree,
+        &target_branch,
+    ) {
+        // Branch exchange failed — restore staged files to their original worktrees.
+        if let Some((ref staging_dir, _)) = staged {
+            restore_staged_or_warn(
+                staging_dir,
+                main_path,
+                &main_entries,
+                target_path,
+                &target_entries,
+            );
+        }
+        return Err(e);
+    }
 
-    // Detach HEAD in both worktrees (target first for safer failure mode)
-    target_working_tree
-        .run_command(&["checkout", "--detach"])
-        .context("Failed to detach HEAD in target worktree")?;
-    main_working_tree
-        .run_command(&["checkout", "--detach"])
-        .context("Failed to detach HEAD in main worktree")?;
+    // Distribute staged files to their new worktrees (after branch exchange)
+    let swapped = if let Some((ref staging_dir, _)) = staged {
+        distribute_staged(
+            staging_dir,
+            main_path,
+            &main_entries,
+            target_path,
+            &target_entries,
+        )
+        .with_context(|| {
+            format!(
+                "Failed to distribute staged files. Staged files may be recoverable from: {}",
+                staging_dir.display()
+            )
+        })?
+    } else {
+        0
+    };
 
-    // Switch to exchanged branches
-    main_working_tree
-        .run_command(&["switch", &target_branch])
-        .context("Failed to switch to branch in main worktree")?;
-    target_working_tree
-        .run_command(&["switch", &main_branch])
-        .context("Failed to switch to branch in target worktree")?;
-
+    // Print success messages only after everything succeeded
     eprintln!(
         "{}",
         success_message(cformat!(
@@ -976,6 +1322,13 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
             worktrunk::path::format_path_for_display(target_path)
         ))
     );
+    if swapped > 0 {
+        let path_word = if swapped == 1 { "path" } else { "paths" };
+        eprintln!(
+            "{}",
+            success_message(format!("Swapped {swapped} gitignored {path_word}"))
+        );
+    }
 
     Ok(PromoteResult::Promoted)
 }
