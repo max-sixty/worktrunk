@@ -96,6 +96,9 @@ tactical checklist.
 - Are there edge cases that aren't handled?
 - Could the changes break existing functionality?
 - Are error messages helpful and consistent with the project style?
+- Does new code use `.expect()` or `.unwrap()` in functions returning `Result`?
+  These should use `?` or `bail!` instead — panics in fallible code bypass error
+  handling.
 
 **Testing:**
 

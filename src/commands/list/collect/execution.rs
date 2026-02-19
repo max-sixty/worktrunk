@@ -145,6 +145,10 @@ impl ExpectedResults {
 /// worktree. Expected results are registered internally as each work item is added.
 /// The caller is responsible for executing the work items.
 ///
+/// Task preconditions (stale branch, unborn branch, missing llm_command) are
+/// enforced here — not in callers. This function is called from both `collect()`
+/// and `populate_item()`, so guards must live here to cover all entry points.
+///
 /// The `repo` parameter is cloned into each TaskContext, sharing its cache via Arc.
 pub fn work_items_for_worktree(
     repo: &Repository,
@@ -243,8 +247,7 @@ pub fn work_items_for_worktree(
         if !has_commits && COMMIT_TASKS.contains(&kind) {
             continue;
         }
-        // Skip SummaryGenerate when no LLM command is configured.
-        // (Also skipped via skip_tasks in collect(), but populate_item() bypasses that path.)
+        // Skip SummaryGenerate when no LLM command is configured
         if kind == TaskKind::SummaryGenerate && options.llm_command.is_none() {
             continue;
         }
@@ -269,6 +272,8 @@ pub fn work_items_for_worktree(
 ///
 /// Returns a list of work items representing all tasks that should run for this
 /// branch. Branches have fewer tasks than worktrees (no working tree operations).
+///
+/// Task preconditions are enforced here, same as [`work_items_for_worktree`].
 ///
 /// The `repo` parameter is cloned into each TaskContext, sharing its cache via Arc.
 /// The `is_remote` flag indicates whether this is a remote-tracking branch (e.g., "origin/feature")
@@ -332,8 +337,7 @@ pub fn work_items_for_branch(
         if is_stale && EXPENSIVE_TASKS.contains(&kind) {
             continue;
         }
-        // Skip SummaryGenerate when no LLM command is configured.
-        // (Also skipped via skip_tasks in collect(), but populate_item() bypasses that path.)
+        // Skip SummaryGenerate when no LLM command is configured
         if kind == TaskKind::SummaryGenerate && options.llm_command.is_none() {
             continue;
         }
