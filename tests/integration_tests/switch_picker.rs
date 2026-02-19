@@ -831,6 +831,12 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
 
 #[rstest]
 fn test_switch_picker_respects_list_config(mut repo: TestRepo) {
+    // Use the same reliable setup as test_switch_picker_with_branches:
+    // remove fixture worktrees (which use relative gitdir paths that can fail
+    // to resolve under concurrent operations) and origin (to avoid remote branch noise)
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.add_worktree("active-worktree");
     // Create a branch without a worktree
     let output = repo
