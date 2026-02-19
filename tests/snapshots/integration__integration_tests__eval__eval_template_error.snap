@@ -26,12 +26,15 @@ info:
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: false
@@ -39,4 +42,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mTemplate expansion failed: Template render error: undefined value (in eval:1)[39m
+[31m✗[39m [31mFailed to expand eval: undefined value @ line 1[39m
+[107m [0m {{ undefined_var }}
+[2m↳[22m [2mAvailable variables: [90mbranch, commit, default_branch, main_worktree, main_worktree_path, primary_worktree_path, remote, remote_url, repo, repo_path, repo_root, short_commit, upstream, worktree, worktree_name, worktree_path[39m[22m

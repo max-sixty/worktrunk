@@ -32,8 +32,7 @@ pub fn step_eval(template: &str) -> anyhow::Result<()> {
         .collect();
 
     // No shell escaping — output is literal for scripting
-    let result = expand_template(template, &vars, false, &repo, "eval")
-        .map_err(|e| anyhow::anyhow!("Template expansion failed: {e}"))?;
+    let result = expand_template(template, &vars, false, &repo, "eval")?;
 
     println!("{result}");
     Ok(())
