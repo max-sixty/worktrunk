@@ -28,6 +28,7 @@ wt step push
 - `diff` — Show all changes since branching (committed, staged, unstaged, untracked)
 - `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
+- `relocate` — [experimental] Move worktrees to expected paths
 
 ## Command reference
 
@@ -407,6 +408,101 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
           Command template (see --help for all variables)
 
 <b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+## wt step relocate
+
+[experimental] Move worktrees to expected paths. Relocates worktrees whose path doesn't match the worktree-path template.
+
+Moves worktrees to match the configured `worktree-path` template.
+
+### Examples
+
+Preview what would be moved:
+
+```bash
+wt step relocate --dry-run
+```
+
+Move all mismatched worktrees:
+
+```bash
+wt step relocate
+```
+
+Auto-commit and clobber blockers (never fails):
+
+```bash
+wt step relocate --commit --clobber
+```
+
+Move specific worktrees:
+
+```bash
+wt step relocate feature bugfix
+```
+
+### Swap handling
+
+When worktrees are at each other's expected locations (e.g., `alpha` at
+`repo.beta` and `beta` at `repo.alpha`), relocate automatically resolves
+this by using a temporary location.
+
+### Clobbering
+
+With `--clobber`, non-worktree paths at target locations are moved to
+`<path>.bak-<timestamp>` before relocating.
+
+### Main worktree behavior
+
+The main worktree can't be moved with `git worktree move`. Instead, relocate
+switches it to the default branch and creates a new linked worktree at the
+expected path. Untracked and gitignored files remain at the original location.
+
+### Skipped worktrees
+
+- **Dirty** (without `--commit`) — use `--commit` to auto-commit first
+- **Locked** — unlock with `git worktree unlock`
+- **Target blocked** (without `--clobber`) — use `--clobber` to backup blocker
+- **Detached HEAD** — no branch to compute expected path
+
+Note: This command is experimental and may change in future versions.
+
+### Command reference
+
+wt step relocate - [experimental] Move worktrees to expected paths
+
+Relocates worktrees whose path doesn&#39;t match the <b>worktree-path</b> template.
+
+Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</span> <span class=c>[BRANCHES]...</span>
+
+<b><span class=g>Arguments:</span></b>
+  <span class=c>[BRANCHES]...</span>
+          Worktrees to relocate (defaults to all mismatched)
+
+<b><span class=g>Options:</span></b>
+      <b><span class=c>--dry-run</span></b>
+          Show what would be moved
+
+      <b><span class=c>--commit</span></b>
+          Commit uncommitted changes before relocating
+
+      <b><span class=c>--clobber</span></b>
+          Backup non-worktree paths at target locations
+
+          Moves blocking paths to <b>&lt;path&gt;.bak-&lt;timestamp&gt;</b>.
+
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 
