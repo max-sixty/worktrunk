@@ -3,7 +3,7 @@ name: worktrunk
 description: Guidance for Worktrunk, a CLI tool for managing git worktrees. Covers configuration (user config at ~/.config/worktrunk/config.toml and project hooks at .config/wt.toml), usage, and troubleshooting. Use for "setting up commit message generation", "configuring hooks", "automating tasks", or general worktrunk questions.
 ---
 
-<!-- worktrunk-skill-version: 0.9.3 -->
+<!-- worktrunk-skill-version: 0.26.1 -->
 
 # Worktrunk
 

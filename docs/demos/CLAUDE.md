@@ -251,7 +251,7 @@ After spawning the shell, these files control Claude Code behavior:
 
 - `$HOME/.claude.json` - Claude Code global config (onboarding flags, marketplace settings)
 - `$HOME/.claude/settings.json` - Claude Code settings (statusLine config)
-- `$HOME/.config/worktrunk/config.toml` - Worktrunk user config (approved commands)
+- `$HOME/.config/worktrunk/config.toml` - Worktrunk user config
 - `$HOME/w/acme/.config/wt.toml` - Project hooks config
 
 Key fields in `.claude.json` for suppressing notifications:

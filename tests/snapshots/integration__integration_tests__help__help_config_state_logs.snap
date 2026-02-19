@@ -17,10 +17,13 @@ info:
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -55,6 +58,14 @@ View and manage logs from background operations.
 
 [1m[32mWhat's logged[0m
 
+Two kinds of logs live in [2m.git/wt-logs/[0m:
+
+[32mCommand log (`commands.jsonl`)[0m
+
+All hook executions and LLM commands are recorded automatically — one JSON object per line with timestamp, command, exit code, and duration. Rotates to [2mcommands.jsonl.old[0m at 1MB (~2MB total).
+
+[32mHook output logs[0m
+
        Operation                     Log file                 
    ────────────────── ─────────────────────────────────────── 
    post-start hooks   {branch}-{source}-post-start-{name}.log 
@@ -77,7 +88,10 @@ All logs are stored in [2m.git/wt-logs/[0m (in the main worktree's git directo
 List all log files:
   [2mwt config state logs get[0m
 
-View a specific log:
+Query the command log:
+  [2mtail -5 .git/wt-logs/commands.jsonl | jq .[0m
+
+View a specific hook log:
   [2mcat "$(git rev-parse --git-dir)/wt-logs/feature-project-post-start-build.log"[0m
 
 Clear all logs:
