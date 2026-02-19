@@ -739,6 +739,16 @@ Kv data is available in hook templates as `{{ kv.<key> }}`. Use the `default` fi
 dev = "ENV={{ kv.env | default('development') }} npm start -- --port {{ kv.port | default('3000') }}"
 ```
 
+JSON object and array values support dot access:
+
+```bash
+wt config state kv set config '{"port": 3000, "debug": true}'
+```
+```toml
+[post-start]
+dev = "npm start -- --port {{ kv.config.port }}"
+```
+
 ### Storage
 
 Stored in git config as `worktrunk.state.<branch>.kv.<key>`.

@@ -1262,11 +1262,11 @@ Some variables may not be defined: `upstream` is only set when the branch tracks
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
 ```
 
-Kv data uses dot access and the `default` filter for missing keys:
+Kv data uses dot access and the `default` filter for missing keys. JSON object/array values are parsed automatically, so `{{ kv.config.port }}` works when the value is `{"port": 3000}`:
 
 ```toml
 [post-start]
-dev = "ENV={{ kv.env | default('development') }} npm start -- --port {{ kv.port | default('3000') }}"
+dev = "ENV={{ kv.env | default('development') }} npm start -- --port {{ kv.config.port | default('3000') }}"
 ```
 
 ### Worktrunk filters
