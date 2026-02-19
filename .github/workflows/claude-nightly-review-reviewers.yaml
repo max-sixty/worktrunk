@@ -1,0 +1,152 @@
+name: claude-nightly-review-reviewers
+# Runner versions pinned; see ci.yaml header comment for rationale.
+
+# Nightly analysis of Claude CI session logs — identifies behavioral problems,
+# skill gaps, and workflow issues across all Claude-powered CI runs.
+on:
+  schedule:
+    # Run at 5:47 AM UTC daily (off-peak minute, after nightly-benchmark at 4:17)
+    - cron: '47 5 * * *'
+  workflow_dispatch:
+
+# Consistent with ci.yaml for cache compatibility
+env:
+  CARGO_TERM_COLOR: always
+  CLICOLOR_FORCE: 1
+  RUSTFLAGS: "-C debuginfo=0"
+  RUSTDOCFLAGS: "-Dwarnings"
+
+jobs:
+  review-reviewers:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+      id-token: write
+    steps:
+      - name: 📂 Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          # Use bot token so pushed commits trigger CI workflows
+          token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
+      - name: 🔧 Configure git for Claude
+        run: |
+          git config --global user.name "Claude Code"
+          git config --global user.email "claude@anthropic.com"
+
+      - name: Install cargo-insta
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-insta
+
+      - name: Install cargo-nextest
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-nextest
+
+      - name: 💰 Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ hashFiles('Cargo.lock') }}
+          save-if: false
+
+      - name: Install shells (zsh, fish)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh fish
+
+      - name: 🤖 Run Claude Code to review reviewers
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          additional_permissions: |
+            actions: read
+
+          prompt: |
+            You are running as a nightly job that reviews the behavior of all Claude-powered CI workflows from the past 24 hours. Your goal is to identify behavioral problems, skill gaps, and workflow issues — then create issues and/or PRs to fix them.
+
+            ## Step 1: Find recent Claude CI runs
+
+            Use `gh run list` to find all runs from Claude workflows in the past 24 hours:
+
+            ```
+            for wf in claude-review claude-ci-fix claude-issue-triage claude-mention claude-renovate claude-nightly-review-reviewers claude-nightly-cleaner; do
+              gh run list --workflow "${wf}.yaml" --created ">=$(date -d '24 hours ago' +%Y-%m-%dT%H:%M:%S)" --json databaseId,conclusion,createdAt --limit 50
+            done
+            ```
+
+            If no Claude CI runs occurred in the past 24 hours, report "no runs to review" and exit.
+
+            ## Step 2: Download session logs
+
+            For each run found, download the session log artifact:
+
+            ```
+            gh run download <run-id> --name claude-session-logs --dir /tmp/logs/<run-id>/
+            ```
+
+            Some runs may not have artifacts (e.g., skipped runs). That's fine — skip them.
+
+            ## Step 3: Analyze session logs
+
+            For each session log, analyze using jq extraction and gap analysis:
+            - Find JSONL files: `find /tmp/logs/ -name '*.jsonl' -type f`
+            - Extract conversation turns: `jq -c 'select(.type == "assistant" or .type == "tool_result")' < file.jsonl`
+            - Extract tool calls: `jq -c 'select(.type == "assistant") | .message.content[]? | select(.type == "tool_use") | {tool: .name, input: .input}' < file.jsonl`
+            - Look for tool calls, decisions, and outcomes
+            - Trace decision chains: what did Claude decide, what evidence did it use, what was the outcome?
+
+            ## Step 4: Identify problems
+
+            Compare each session against CLAUDE.md and project conventions. Flag anything where Claude's behavior diverged from the guidelines or produced a poor outcome.
+
+            ## Step 5: Check for existing issues
+
+            Before creating any new issues or PRs, check for duplicates:
+            ```
+            gh issue list --state open --json number,title
+            gh pr list --state open --json number,title,headRefName
+            ```
+
+            ## Step 6: Report findings
+
+            For each problem found:
+            1. **Create a GitHub issue** with label `claude-behavior`:
+               - Title: Clear description of the behavioral problem
+               - Body: Include the run ID, specific log excerpts showing the problem, analysis of root cause, and suggested fix
+               - Use `gh issue create`
+
+            2. **For actionable fixes** (skill edits, workflow tweaks, CLAUDE.md updates):
+               - Create a branch: `git checkout -b nightly/review-${{ github.run_id }}`
+               - Make the changes
+               - Commit and push
+               - Create a PR referencing the issue
+
+            ## Step 7: Summary
+
+            If no problems were found, report "all clear" with summary statistics:
+            - Number of runs analyzed
+            - Number of sessions reviewed
+            - Brief quality assessment
+
+          claude_args: |
+            --model opus
+            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill
+            --append-system-prompt "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
+
+      - name: 📋 Upload Claude Code session logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: claude-session-logs
+          path: /home/runner/.claude/projects/
+          retention-days: 30
+          if-no-files-found: warn

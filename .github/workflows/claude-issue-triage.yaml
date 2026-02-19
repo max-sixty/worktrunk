@@ -19,9 +19,14 @@ env:
 
 jobs:
   triage:
-    # Skip bot-created issues and @claude mentions (handled by claude-mention.yaml)
+    # Skip bot-created issues, @claude mentions (handled by claude-mention.yaml),
+    # and issues from worktrunk-bot (nightly workflows, ci-fix, etc.). Nightly
+    # workflows handle their own remediation because they have richer context
+    # (session logs, aggregate diffs) that would be lost if the triager
+    # re-derived it from the issue body alone.
     if: >-
       github.event.issue.user.type != 'Bot' &&
+      github.event.issue.user.login != 'worktrunk-bot' &&
       !contains(github.event.issue.body, '@claude') &&
       !contains(github.event.issue.title, '@claude')
     runs-on: ubuntu-24.04
@@ -92,6 +97,6 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: claude-session-logs
-          path: ${{ env.HOME }}/.claude/
+          path: /home/runner/.claude/projects/
           retention-days: 30
           if-no-files-found: warn
