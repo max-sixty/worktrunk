@@ -304,3 +304,46 @@ pub(super) fn drain_results(
 
     DrainOutcome::Complete
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::types::ErrorCause;
+    use super::*;
+
+    #[test]
+    fn test_apply_default_summary_generate() {
+        let mut items = vec![ListItem::new_branch("abc123".into(), "feat".into())];
+        let mut status_contexts = vec![StatusContext::default()];
+
+        let error = TaskError::new(
+            0,
+            TaskKind::SummaryGenerate,
+            "llm failed",
+            ErrorCause::Other,
+        );
+        apply_default(&mut items, &mut status_contexts, &error);
+
+        // SummaryGenerate default leaves summary as None
+        assert!(items[0].summary.is_none());
+    }
+
+    #[test]
+    fn test_drain_results_summary_generate() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut items = vec![ListItem::new_branch("abc123".into(), "feat".into())];
+        let mut errors = Vec::new();
+        let expected = ExpectedResults::default();
+
+        // Send a SummaryGenerate result
+        tx.send(Ok(TaskResult::SummaryGenerate {
+            item_idx: 0,
+            summary: Some("Add feature".into()),
+        }))
+        .unwrap();
+        drop(tx);
+
+        let outcome = drain_results(rx, &mut items, &mut errors, &expected, |_, _, _| {});
+        assert!(matches!(outcome, DrainOutcome::Complete));
+        assert_eq!(items[0].summary, Some(Some("Add feature".into())));
+    }
+}

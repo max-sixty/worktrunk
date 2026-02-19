@@ -1293,4 +1293,39 @@ mod tests {
         assert!(arrow_rendered2.contains("50"));
         assert!(arrow_rendered2.contains("↓1") && arrow_rendered2.contains('K'));
     }
+
+    #[test]
+    fn test_summary_column_rendering() {
+        use super::super::layout::ColumnLayout;
+        use super::super::model::{ListItem, PositionMask};
+        use std::path::PathBuf;
+
+        let summary_col = ColumnLayout {
+            kind: ColumnKind::Summary,
+            header: "Summary",
+            start: 0,
+            width: 40,
+            format: ColumnFormat::Text,
+        };
+
+        let mask = PositionMask::FULL;
+        let main_path = PathBuf::from("/tmp");
+
+        // Case 1: summary = None (not loaded yet → placeholder)
+        let mut item = ListItem::new_branch("abc123".into(), "feat".into());
+        item.summary = None;
+        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40);
+        assert!(cell.render().contains('⋯'));
+
+        // Case 2: summary = Some(None) (loaded, no summary → blank)
+        item.summary = Some(None);
+        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40);
+        assert!(cell.render().is_empty());
+
+        // Case 3: summary = Some(Some(text)) (has summary)
+        item.summary = Some(Some("Add user authentication".into()));
+        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40);
+        let rendered = cell.render();
+        assert!(rendered.contains("Add user authentication"));
+    }
 }
