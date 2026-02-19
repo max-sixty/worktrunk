@@ -1,21 +1,21 @@
 //! Performance testing and tracing tools for worktrunk.
 //!
 //! This crate provides:
-//! - Benchmark repository setup (used by `benches/list.rs`)
+//! - Benchmark repository setup (used by `benches/list.rs`, `benches/time_to_first_output.rs`)
 //! - Cache invalidation for cold benchmark runs
 //! - Trace analysis utilities
 //!
 //! # Library Usage
 //!
 //! ```rust,ignore
-//! use wt_perf::{RepoConfig, create_repo, invalidate_caches};
+//! use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto};
 //!
 //! // Create a test repo with 8 worktrees
 //! let temp = create_repo(&RepoConfig::typical(8));
 //! let repo_path = temp.path().join("main");
 //!
 //! // Invalidate caches for cold benchmark
-//! invalidate_caches(&repo_path, 8);
+//! invalidate_caches_auto(&repo_path);
 //! ```
 //!
 //! # CLI Usage
@@ -100,7 +100,7 @@ impl RepoConfig {
         }
     }
 
-    /// Config for testing `wt select` (6 worktrees with varying commits).
+    /// Config for testing `wt switch` interactive picker (6 worktrees with varying commits).
     pub const fn select_test() -> Self {
         Self {
             commits_on_main: 3,
@@ -115,7 +115,7 @@ impl RepoConfig {
 }
 
 /// Run a git command in the given directory.
-fn run_git(path: &Path, args: &[&str]) {
+pub fn run_git(path: &Path, args: &[&str]) {
     let output = Command::new("git")
         .args(args)
         .current_dir(path)
@@ -218,16 +218,28 @@ pub fn create_repo_at(config: &RepoConfig, base_path: &Path) {
         run_git(&repo_path, &["checkout", "main"]);
     }
 
-    // Add worktrees (siblings with .branch suffix, worktrunk convention)
-    let repo_name = base_path.file_name().unwrap().to_str().unwrap();
-    let parent_dir = base_path.parent().unwrap();
+    add_worktrees(config, &repo_path);
+
+    // Set up fake remote for default branch detection
+    setup_fake_remote(&repo_path);
+}
+
+/// Add worktrees to an existing repo using worktrunk naming convention.
+///
+/// Creates `config.worktrees - 1` linked worktrees as siblings of `repo_path`
+/// (e.g., `repo.feature-wt-1`), each with diverging commits and uncommitted files
+/// controlled by `config.worktree_commits_ahead` and `config.worktree_uncommitted_files`.
+pub fn add_worktrees(config: &RepoConfig, repo_path: &Path) {
+    let repo_name = repo_path.file_name().unwrap().to_str().unwrap();
+    let parent_dir = repo_path.parent().unwrap();
+
     for wt_num in 1..config.worktrees {
         let branch = format!("feature-wt-{wt_num}");
         let wt_path = parent_dir.join(format!("{repo_name}.{branch}"));
 
         let head_output = Command::new("git")
             .args(["rev-parse", "HEAD"])
-            .current_dir(&repo_path)
+            .current_dir(repo_path)
             .output()
             .unwrap();
         let base_commit = String::from_utf8_lossy(&head_output.stdout)
@@ -235,7 +247,7 @@ pub fn create_repo_at(config: &RepoConfig, base_path: &Path) {
             .to_string();
 
         run_git(
-            &repo_path,
+            repo_path,
             &[
                 "worktree",
                 "add",
@@ -246,7 +258,6 @@ pub fn create_repo_at(config: &RepoConfig, base_path: &Path) {
             ],
         );
 
-        // Add diverging commits
         for i in 0..config.worktree_commits_ahead {
             let file_path = wt_path.join(format!("feature_{wt_num}_file_{i}.txt"));
             std::fs::write(&file_path, format!("Feature {wt_num} content {i}\n")).unwrap();
@@ -257,15 +268,11 @@ pub fn create_repo_at(config: &RepoConfig, base_path: &Path) {
             );
         }
 
-        // Add uncommitted changes
         for i in 0..config.worktree_uncommitted_files {
             let file_path = wt_path.join(format!("uncommitted_{i}.txt"));
             std::fs::write(&file_path, "Uncommitted content\n").unwrap();
         }
     }
-
-    // Set up fake remote for default branch detection
-    setup_fake_remote(&repo_path);
 }
 
 /// Set up a fake remote for default branch detection.
@@ -279,34 +286,6 @@ pub fn setup_fake_remote(repo_path: &Path) {
         .output()
         .unwrap();
     std::fs::write(refs_dir.join("main"), head_sha.stdout).unwrap();
-}
-
-/// Invalidate git caches for cold benchmarks.
-///
-/// Removes:
-/// - Index files (main + worktrees)
-/// - Commit graph
-/// - Packed refs
-pub fn invalidate_caches(repo_path: &Path, num_worktrees: usize) {
-    let git_dir = repo_path.join(".git");
-
-    // Remove index files
-    let _ = std::fs::remove_file(git_dir.join("index"));
-    for i in 1..num_worktrees {
-        let _ = std::fs::remove_file(
-            git_dir
-                .join("worktrees")
-                .join(format!("wt-{i}"))
-                .join("index"),
-        );
-    }
-
-    // Remove commit graph
-    let _ = std::fs::remove_file(git_dir.join("objects/info/commit-graph"));
-    let _ = std::fs::remove_dir_all(git_dir.join("objects/info/commit-graphs"));
-
-    // Remove packed refs
-    let _ = std::fs::remove_file(git_dir.join("packed-refs"));
 }
 
 /// Invalidate caches for any repo (auto-detects worktrees).
@@ -377,6 +356,55 @@ pub fn ensure_rust_repo() -> PathBuf {
         .clone()
 }
 
+/// Clone rust-lang/rust into `temp/repo` for benchmarking.
+///
+/// Returns the clone path. Configures git user for commits.
+/// The `temp` dir must outlive usage.
+pub fn clone_rust_repo(temp: &TempDir) -> PathBuf {
+    let rust_repo = ensure_rust_repo();
+    let workspace_main = temp.path().join("repo");
+
+    let clone_output = Command::new("git")
+        .args([
+            "clone",
+            "--local",
+            rust_repo.to_str().unwrap(),
+            workspace_main.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        clone_output.status.success(),
+        "Failed to clone rust repo to workspace"
+    );
+
+    run_git(&workspace_main, &["config", "user.name", "Benchmark"]);
+    run_git(&workspace_main, &["config", "user.email", "bench@test.com"]);
+
+    workspace_main
+}
+
+/// Create branches pointing at different depths in the repo's commit history.
+///
+/// Samples `count` commits evenly spread across the last 5000 commits and
+/// creates `feature-NNN` branches pointing at them. This reproduces the
+/// GH #461 scenario where branch divergence depth (not count) drives cost.
+pub fn add_history_spread_branches(repo_path: &Path, count: usize) {
+    let log_output = Command::new("git")
+        .args(["log", "--oneline", "-n", "5000", "--format=%H"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let log_str = String::from_utf8_lossy(&log_output.stdout);
+    let step = 5000 / count;
+    let commits: Vec<&str> = log_str.lines().step_by(step).take(count).collect();
+
+    for (i, commit) in commits.iter().enumerate() {
+        let branch_name = format!("feature-{i:03}");
+        run_git(repo_path, &["branch", &branch_name, commit]);
+    }
+}
+
 /// Canonicalize path without Windows `\\?\` prefix.
 pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
     dunce::canonicalize(path)
@@ -389,7 +417,7 @@ pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
 /// - `branches-N` - N branches with 1 commit each
 /// - `branches-N-M` - N branches with M commits each
 /// - `divergent` - many divergent branches (GH #461)
-/// - `select-test` - config for wt select testing
+/// - `select-test` - config for wt switch interactive picker testing
 pub fn parse_config(s: &str) -> Option<RepoConfig> {
     if let Some(n) = s.strip_prefix("typical-") {
         let worktrees: usize = n.parse().ok()?;

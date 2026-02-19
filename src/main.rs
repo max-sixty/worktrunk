@@ -32,6 +32,7 @@ mod llm;
 mod md_help;
 mod output;
 mod pager;
+mod summary;
 mod verbose_log;
 
 // Re-export invocation utilities at crate level for use by other modules
@@ -47,12 +48,12 @@ use commands::worktree::handle_push;
 use commands::{
     MergeOptions, OperationMode, RebaseResult, SquashResult, SwitchOptions, add_approvals,
     clear_approvals, handle_completions, handle_config_create, handle_config_show,
-    handle_configure_shell, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
-    handle_list, handle_logs_get, handle_merge, handle_promote, handle_rebase, handle_remove,
-    handle_remove_current, handle_show_theme, handle_squash, handle_state_clear,
-    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show, handle_switch,
-    handle_unconfigure_shell, resolve_worktree_arg, run_hook, step_commit, step_copy_ignored,
-    step_for_each, step_relocate,
+    handle_config_update, handle_configure_shell, handle_hints_clear, handle_hints_get,
+    handle_hook_show, handle_init, handle_list, handle_logs_get, handle_merge, handle_promote,
+    handle_rebase, handle_remove, handle_remove_current, handle_show_theme, handle_squash,
+    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
+    handle_state_show, handle_switch, handle_unconfigure_shell, resolve_worktree_arg, run_hook,
+    step_commit, step_copy_ignored, step_diff, step_for_each, step_relocate,
 };
 use output::handle_remove_output;
 
@@ -65,7 +66,6 @@ use worktrunk::HookType;
 
 /// Enhance clap errors with command-specific hints, then exit.
 ///
-/// For `wt switch` missing the branch argument, adds hints about shortcuts.
 /// For unrecognized subcommands that match nested commands, suggests the full path.
 fn enhance_and_exit_error(err: clap::Error) -> ! {
     // For unrecognized subcommands, check if they match a nested subcommand
@@ -84,24 +84,8 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
         }
     }
 
-    // Enhance `wt switch` missing argument error with shortcut hints.
-    // Hints go to stderr, which is safe since stdout is reserved for data output.
-    // Check for both "wt switch" and "wt.exe switch" (Windows)
-    let err_str = format!("{err}");
-    let is_switch_missing_arg = err.kind() == ClapErrorKind::MissingRequiredArgument
-        && (err_str.contains("wt switch") || err_str.contains("wt.exe switch"));
-    if is_switch_missing_arg {
-        ceprintln!(
-            "{}
-
-<green,bold>Quick switches:</>
-  <cyan,bold>wt switch ^</>    # default branch's worktree
-  <cyan,bold>wt switch -</>    # previous worktree
-  <cyan,bold>wt select</>      # interactive picker",
-            err.render().ansi()
-        );
-        process::exit(2);
-    }
+    // Note: `wt switch` without arguments now opens the interactive picker,
+    // so this error enhancement is no longer triggered for that case.
 
     err.exit()
 }
@@ -166,6 +150,12 @@ fn main() {
     // Capture verbose level and command line before cli is partially consumed
     let verbose_level = cli.verbose;
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
+
+    // Initialize command log for always-on logging of hooks and LLM commands.
+    // Directory and file are created lazily on first log_command() call.
+    if let Ok(repo) = worktrunk::git::Repository::current() {
+        worktrunk::command_log::init(&repo.wt_logs_dir(), &command_line);
+    }
 
     // Set global verbosity level for styled verbose output
     output::set_verbosity(verbose_level);
@@ -447,6 +437,7 @@ fn main() {
             }
             ConfigCommand::Create { project } => handle_config_create(project),
             ConfigCommand::Show { full } => handle_config_show(full),
+            ConfigCommand::Update { yes } => handle_config_update(yes),
             ConfigCommand::State { action } => match action {
                 StateCommand::DefaultBranch { action } => match action {
                     Some(DefaultBranchAction::Get) | None => {
@@ -551,9 +542,13 @@ fn main() {
                     }
                 })
             }
-            StepCommand::CopyIgnored { from, to, dry_run } => {
-                step_copy_ignored(from.as_deref(), to.as_deref(), dry_run)
-            }
+            StepCommand::Diff { target, extra_args } => step_diff(target.as_deref(), &extra_args),
+            StepCommand::CopyIgnored {
+                from,
+                to,
+                dry_run,
+                force,
+            } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force),
             StepCommand::ForEach { args } => step_for_each(args),
             StepCommand::Promote { branch } => {
                 use commands::PromoteResult;
@@ -581,6 +576,9 @@ fn main() {
                 hook_type,
                 expanded,
             } => handle_hook_show(hook_type.as_deref(), expanded),
+            HookCommand::PreSwitch { name, yes, vars } => {
+                run_hook(HookType::PreSwitch, yes, None, name.as_deref(), &vars)
+            }
             HookCommand::PostCreate { name, yes, vars } => {
                 run_hook(HookType::PostCreate, yes, None, name.as_deref(), &vars)
             }
@@ -657,29 +655,28 @@ fn main() {
         },
         #[cfg(unix)]
         Commands::Select { branches, remotes } => {
-            UserConfig::load()
-                .context("Failed to load config")
-                .and_then(|config| {
-                    // Get effective settings (project-specific merged with global, defaults applied)
-                    let project_id = Repository::current()
-                        .ok()
-                        .and_then(|r| r.project_identifier().ok());
-                    let resolved = config.resolved(project_id.as_deref());
+            // Deprecated: show warning and delegate to handle_select
+            eprintln!(
+                "{}",
+                warning_message("wt select is deprecated; use wt switch instead")
+            );
 
-                    // CLI flags override config
-                    let show_branches = branches || resolved.list.branches();
-                    let show_remotes = remotes || resolved.list.remotes();
-
-                    handle_select(show_branches, show_remotes, &config)
-                })
+            handle_select(branches, remotes)
         }
         #[cfg(not(unix))]
         Commands::Select { .. } => {
-            eprintln!("{}", error_message("wt select is not available on Windows"));
+            eprintln!(
+                "{}",
+                warning_message("wt select is deprecated; use wt switch instead")
+            );
+            eprintln!(
+                "{}",
+                error_message("Interactive picker is not available on Windows")
+            );
             eprintln!(
                 "{}",
                 hint_message(cformat!(
-                    "To see all worktrees, run <bright-black>wt list</>; to switch directly, run <bright-black>wt switch BRANCH</>"
+                    "Specify a branch: <bright-black>wt switch BRANCH</>"
                 ))
             );
             std::process::exit(1);
@@ -706,52 +703,59 @@ fn main() {
                 };
                 commands::statusline::run(effective_format)
             }
-            None => {
-                // Load config and merge with CLI flags (CLI flags take precedence)
-                UserConfig::load()
-                    .context("Failed to load config")
-                    .and_then(|config| {
-                        // Get resolved config (project-specific merged with global, defaults applied)
-                        let project_id = Repository::current()
-                            .ok()
-                            .and_then(|r| r.project_identifier().ok());
-                        let resolved = config.resolved(project_id.as_deref());
+            None => (|| {
+                let repo = Repository::current()?;
 
-                        // CLI flags override config
-                        let show_branches = branches || resolved.list.branches();
-                        let show_remotes = remotes || resolved.list.remotes();
-                        let show_full = full || resolved.list.full();
-
-                        // Convert two bools to Option<bool>: Some(true), Some(false), or None
-                        let progressive_opt = match (progressive, no_progressive) {
-                            (true, _) => Some(true),
-                            (_, true) => Some(false),
-                            _ => None,
-                        };
-                        let render_mode = RenderMode::detect(progressive_opt);
-                        handle_list(
-                            format,
-                            show_branches,
-                            show_remotes,
-                            show_full,
-                            render_mode,
-                            &config,
-                        )
-                    })
-            }
+                let progressive_opt = match (progressive, no_progressive) {
+                    (true, _) => Some(true),
+                    (_, true) => Some(false),
+                    _ => None,
+                };
+                let render_mode = RenderMode::detect(progressive_opt);
+                handle_list(repo, format, branches, remotes, full, render_mode)
+            })(),
         },
         Commands::Switch {
             branch,
+            branches,
+            remotes,
             create,
             base,
             execute,
             execute_args,
             yes,
             clobber,
+            no_cd,
             verify,
         } => UserConfig::load()
             .context("Failed to load config")
             .and_then(|mut config| {
+                // No branch argument: open interactive picker
+                let Some(branch) = branch else {
+                    #[cfg(unix)]
+                    {
+                        return handle_select(branches, remotes);
+                    }
+
+                    #[cfg(not(unix))]
+                    {
+                        // Suppress unused variable warnings on Windows
+                        let _ = (branches, remotes);
+
+                        eprintln!(
+                            "{}",
+                            error_message("Interactive picker is not available on Windows")
+                        );
+                        eprintln!(
+                            "{}",
+                            hint_message(cformat!(
+                                "Specify a branch: <bright-black>wt switch BRANCH</>"
+                            ))
+                        );
+                        std::process::exit(2);
+                    }
+                };
+
                 handle_switch(
                     SwitchOptions {
                         branch: &branch,
@@ -761,6 +765,7 @@ fn main() {
                         execute_args: &execute_args,
                         yes,
                         clobber,
+                        change_dir: !no_cd,
                         verify,
                     },
                     &mut config,
@@ -822,6 +827,11 @@ fn main() {
                     let result =
                         handle_remove_current(!delete_branch, force_delete, force, &config)
                             .context("Failed to remove worktree")?;
+
+                    // Early exit for benchmarking time-to-first-output
+                    if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
+                        return Ok(());
+                    }
 
                     // "Approve at the Gate": approval happens AFTER validation passes
                     let run_hooks = verify && approve_remove(yes)?;
@@ -932,6 +942,11 @@ fn main() {
                         anyhow::bail!("");
                     }
 
+                    // Early exit for benchmarking time-to-first-output
+                    if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
+                        return Ok(());
+                    }
+
                     // Phase 2: Approve hooks (only if we have valid plans)
                     // TODO(pre-remove-context): Approval context uses current worktree,
                     // but hooks execute in each target worktree.
@@ -1007,6 +1022,8 @@ fn main() {
         } else if let Some(err) = e.downcast_ref::<worktrunk::git::WorktrunkError>() {
             eprintln!("{}", err);
         } else if let Some(err) = e.downcast_ref::<worktrunk::git::HookErrorWithHint>() {
+            eprintln!("{}", err);
+        } else if let Some(err) = e.downcast_ref::<worktrunk::config::TemplateExpandError>() {
             eprintln!("{}", err);
         } else {
             // Anyhow error formatting:

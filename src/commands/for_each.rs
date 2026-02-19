@@ -78,8 +78,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
             .collect();
 
         // Expand template with full context (shell-escaped)
-        let command = expand_template(&command_template, &vars, true, &repo, "for-each command")
-            .map_err(|e| anyhow::anyhow!("Template expansion failed: {e}"))?;
+        let command = expand_template(&command_template, &vars, true, &repo, "for-each command")?;
 
         // Build JSON context for stdin
         let context_json = serde_json::to_string(&context_map)

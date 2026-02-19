@@ -11,13 +11,15 @@
 use std::borrow::Cow;
 
 use color_print::cformat;
-use minijinja::{Environment, UndefinedBehavior, Value};
+use minijinja::{Environment, ErrorKind, UndefinedBehavior, Value};
 use regex::Regex;
 use shell_escape::escape;
 
 use crate::git::Repository;
 use crate::path::to_posix_path;
-use crate::styling::{eprintln, format_with_gutter, info_message, verbosity};
+use crate::styling::{
+    eprintln, error_message, format_with_gutter, hint_message, info_message, verbosity,
+};
 
 /// Known template variables available in hook commands.
 ///
@@ -206,6 +208,93 @@ pub fn redact_credentials(s: &str) -> String {
     CREDENTIAL_URL.with(|re| re.replace(s, "${1}[REDACTED]@").into_owned())
 }
 
+/// Error from template expansion with rich context for diagnostics.
+///
+/// Produced by [`expand_template`] when a template fails to parse or render.
+/// Contains structured data for styled display in `main.rs` (via downcast)
+/// and a `message` field for callers that embed errors in other output.
+#[derive(Debug)]
+pub struct TemplateExpandError {
+    /// Plain-text error summary for callers that embed errors in styled messages.
+    pub message: String,
+    /// The failing template line (if identifiable).
+    pub source_line: Option<String>,
+    /// Variable names available in this template context.
+    pub available_vars: Vec<String>,
+}
+
+impl std::fmt::Display for TemplateExpandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut parts = vec![error_message(&self.message).to_string()];
+        if let Some(ref line) = self.source_line {
+            parts.push(format_with_gutter(line, None));
+        }
+        if !self.available_vars.is_empty() {
+            parts.push(
+                hint_message(cformat!(
+                    "Available variables: <bright-black>{}</>",
+                    self.available_vars.join(", ")
+                ))
+                .to_string(),
+            );
+        }
+        write!(f, "{}", parts.join("\n"))
+    }
+}
+
+impl std::error::Error for TemplateExpandError {}
+
+/// Build a [`TemplateExpandError`] from a minijinja error, the original template
+/// source, the template name (for error messages), and the available variable names.
+///
+/// Message format: `Failed to expand {name}: {kind}[: {detail}] [@ line {n}]`
+///
+/// ```text
+/// Failed to expand {name}: {kind}[: {detail}] [@ line {n}]
+/// │                 │        │       │              │
+/// │                 │        │       │              └─ e.line() from minijinja
+/// │                 │        │       └─ e.detail() from minijinja (None for UndefinedError)
+/// │                 │        └─ e.kind() from minijinja ("undefined value", "syntax error")
+/// │                 └─ `name` param passed by caller
+/// └─ hardcoded prefix
+/// ```
+fn build_template_error(
+    e: &minijinja::Error,
+    template: &str,
+    name: &str,
+    available_vars: Vec<String>,
+) -> TemplateExpandError {
+    let lines: Vec<&str> = template.lines().collect();
+    let line_num = e.line();
+    let source_line =
+        line_num.and_then(|n| lines.get(n.saturating_sub(1)).copied().map(String::from));
+
+    // Build message: "Failed to expand {name}: {kind}[: {detail}] [@ line {n}]"
+    // e.g. "Failed to expand --execute command: undefined value @ line 1"
+    let detail = match e.detail() {
+        Some(detail) => format!("{}: {detail}", e.kind()),
+        None => e.kind().to_string(),
+    };
+    let is_undefined = e.kind() == ErrorKind::UndefinedError;
+
+    // minijinja always provides a line number for syntax and render errors
+    let message = match line_num {
+        Some(n) => format!("Failed to expand {name}: {detail} @ line {n}"),
+        None => format!("Failed to expand {name}: {detail}"),
+    };
+
+    TemplateExpandError {
+        message,
+        source_line,
+        // Only show available vars for undefined errors (actionable hint)
+        available_vars: if is_undefined {
+            available_vars
+        } else {
+            Vec::new()
+        },
+    }
+}
+
 /// Expand a template with variable substitution.
 ///
 /// # Arguments
@@ -231,16 +320,14 @@ pub fn expand_template(
     shell_escape: bool,
     repo: &Repository,
     name: &str,
-) -> Result<String, String> {
-    // Build context map, optionally shell-escaping values
+) -> Result<String, TemplateExpandError> {
+    // Build context map with raw values (shell escaping is applied at output time via formatter)
     let mut context = HashMap::new();
     for (key, value) in vars {
-        let val = if shell_escape {
-            escape(Cow::Borrowed(*value)).to_string()
-        } else {
-            (*value).to_string()
-        };
-        context.insert(key.to_string(), minijinja::Value::from(val));
+        context.insert(
+            key.to_string(),
+            minijinja::Value::from((*value).to_string()),
+        );
     }
 
     // Render template with minijinja
@@ -251,6 +338,20 @@ pub fn expand_template(
     if shell_escape {
         // Preserve trailing newlines in templates (important for multiline shell commands)
         env.set_keep_trailing_newline(true);
+
+        // Shell-escape values at output time, not before template rendering.
+        // This ensures filters (sanitize, sanitize_db, etc.) operate on raw values
+        // and the escaping is applied to the final output, preventing corruption
+        // when filters modify already-escaped strings.
+        env.set_formatter(|out, _state, value| {
+            if value.is_none() {
+                return Ok(());
+            }
+            let s = value.to_string();
+            let escaped = escape(Cow::Borrowed(&s));
+            write!(out, "{escaped}")?;
+            Ok(())
+        });
     }
 
     // Register custom filters
@@ -262,22 +363,16 @@ pub fn expand_template(
     });
     env.add_filter("hash_port", |value: String| string_to_port(&value));
 
-    // Register worktree_path_of_branch function for looking up branch worktree paths
-    // The function returns shell-escaped paths when shell_escape is true, matching
-    // how regular template variables are handled.
+    // Register worktree_path_of_branch function for looking up branch worktree paths.
+    // Returns raw paths — shell escaping is applied by the formatter at output time.
     let repo_clone = repo.clone();
     env.add_function("worktree_path_of_branch", move |branch: String| -> String {
-        let path = repo_clone
+        repo_clone
             .worktree_for_branch(&branch)
             .ok()
             .flatten()
             .map(|p| to_posix_path(&p.to_string_lossy()))
-            .unwrap_or_default();
-        if shell_escape && !path.is_empty() {
-            escape(Cow::Borrowed(&path)).to_string()
-        } else {
-            path
-        }
+            .unwrap_or_default()
     });
 
     // Cache verbosity level for consistent behavior within this call
@@ -300,13 +395,18 @@ pub fn expand_template(
         );
     }
 
+    // Parse errors are always SyntaxError, never UndefinedError — no need for available_vars
     let tmpl = env
         .template_from_named_str(name, template)
-        .map_err(|e| format!("Template syntax error: {}", e))?;
+        .map_err(|e| build_template_error(&e, template, name, Vec::new()))?;
 
     let result = tmpl
         .render(minijinja::Value::from_object(context))
-        .map_err(|e| format!("Template render error: {}", e))?;
+        .map_err(|e| {
+            let mut keys: Vec<String> = vars.keys().map(|k| k.to_string()).collect();
+            keys.sort();
+            build_template_error(&e, template, name, keys)
+        })?;
 
     // -vv: Full debug logging with result
     // Redact credentials from result to prevent leaking tokens in logs
@@ -518,10 +618,12 @@ mod tests {
             "static text"
         );
         // Undefined variables now error in SemiStrict mode
+        let err = expand_template("no {{ variables }} here", &empty, false, &test.repo, "test")
+            .unwrap_err();
         assert!(
-            expand_template("no {{ variables }} here", &empty, false, &test.repo, "test")
-                .unwrap_err()
-                .contains("undefined")
+            err.message.contains("undefined value"),
+            "got: {}",
+            err.message
         );
     }
 
@@ -550,12 +652,45 @@ mod tests {
     fn test_expand_template_errors() {
         let test = test_repo();
         let vars = HashMap::new();
-        assert!(
-            expand_template("{{ unclosed", &vars, false, &test.repo, "test")
-                .unwrap_err()
-                .contains("syntax error")
-        );
+        let err = expand_template("{{ unclosed", &vars, false, &test.repo, "test").unwrap_err();
+        assert!(err.message.contains("syntax error"), "got: {}", err.message);
         assert!(expand_template("{{ 1 + }}", &vars, false, &test.repo, "test").is_err());
+
+        // Display impl renders source line but no available vars hint for syntax errors
+        let display = err.to_string();
+        assert!(display.contains("{{ unclosed"), "should show source line");
+        assert!(
+            !display.contains("Available variables:"),
+            "syntax errors should not show available vars"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_undefined_var_details() {
+        let test = test_repo();
+        let mut vars = HashMap::new();
+        vars.insert("branch", "main");
+        vars.insert("remote", "origin");
+
+        let err =
+            expand_template("echo {{ target }}", &vars, false, &test.repo, "test").unwrap_err();
+        assert!(
+            err.message.contains("undefined value"),
+            "should mention undefined value: {}",
+            err.message
+        );
+        assert!(err.available_vars.contains(&"branch".to_string()));
+        assert!(err.available_vars.contains(&"remote".to_string()));
+        assert_eq!(err.source_line.as_deref(), Some("echo {{ target }}"));
+
+        // Display impl renders source line and available vars hint
+        let display = err.to_string();
+        assert!(
+            display.contains("echo {{ target }}"),
+            "should show source line"
+        );
+        assert!(display.contains("Available variables:"), "should show hint");
+        assert!(display.contains("branch"), "should list available vars");
     }
 
     #[test]
@@ -719,6 +854,32 @@ mod tests {
             expand_template("{{ branch }}", &vars, false, &test.repo, "test").unwrap(),
             "feature/foo"
         );
+
+        // Shell escaping + sanitize: filters operate on raw values, escaping applied at output.
+        // Previously, shell escaping was applied BEFORE filters, corrupting the result
+        // when values contained shell-special characters (quotes, backslashes).
+        vars.insert("branch", "user's/feature");
+        let result =
+            expand_template("{{ branch | sanitize }}", &vars, true, &test.repo, "test").unwrap();
+        // sanitize replaces / with -, producing "user's-feature"
+        // shell_escape wraps it: 'user'\''s-feature' (valid shell for user's-feature)
+        assert_eq!(result, "'user'\\''s-feature'", "sanitize + shell escape");
+
+        // Without the fix, pre-escaping would produce corrupted output because
+        // sanitize would replace the / and \ in the already-escaped value.
+
+        // Shell escaping without filter: raw value with special chars
+        let result = expand_template("{{ branch }}", &vars, true, &test.repo, "test").unwrap();
+        // shell_escape wraps: 'user'\''s/feature' (valid shell for user's/feature)
+        assert_eq!(
+            result, "'user'\\''s/feature'",
+            "shell escape without filter"
+        );
+
+        // Shell-escape formatter handles none values (renders as empty string)
+        let result =
+            expand_template("prefix-{{ none }}-suffix", &vars, true, &test.repo, "test").unwrap();
+        assert_eq!(result, "prefix--suffix", "none renders as empty");
     }
 
     #[test]

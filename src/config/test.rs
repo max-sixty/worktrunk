@@ -162,7 +162,12 @@ fn test_expand_template_missing_variable() {
     let result = expand_template("echo {{ undefined }}", &vars, true, &test.repo, "test");
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("undefined"));
+    let err = result.unwrap_err();
+    assert!(
+        err.message.contains("undefined value"),
+        "got: {}",
+        err.message
+    );
 }
 
 #[test]
@@ -251,8 +256,9 @@ fn test_expand_template_nested_curly_braces() {
     )
     .unwrap();
 
-    // Renders as {main}
-    assert_eq!(result, "echo {main}");
+    // Renders as '{main}' — curly braces are shell metacharacters (brace expansion)
+    // so the formatter correctly escapes the concatenated result
+    assert_eq!(result, "echo '{main}'");
 }
 
 // Snapshot tests for shell escaping behavior

@@ -6,12 +6,12 @@
 use std::collections::HashMap;
 
 use crate::config::HooksConfig;
-use crate::config::expansion::expand_template;
+use crate::config::expansion::{TemplateExpandError, expand_template};
 
 use super::UserConfig;
 use super::merge::{Merge, merge_optional};
 use super::sections::{
-    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, SelectConfig,
+    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, SelectConfig, SwitchPickerConfig,
 };
 
 /// Default worktree path template
@@ -112,7 +112,7 @@ impl UserConfig {
         merge_optional(self.configs.merge.as_ref(), project_config)
     }
 
-    /// Returns the select config for a specific project.
+    /// Returns the select config for a specific project (deprecated path).
     ///
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
@@ -121,6 +121,51 @@ impl UserConfig {
             .and_then(|p| self.projects.get(p))
             .and_then(|c| c.overrides.select.as_ref());
         merge_optional(self.configs.select.as_ref(), project_config)
+    }
+
+    /// Returns the switch picker config for a specific project.
+    ///
+    /// Prefers `[switch.picker]` (new format), falls back to `[select]` (deprecated).
+    /// Merges project-specific settings with global settings, where project
+    /// settings take precedence for fields that are set.
+    pub fn switch_picker(&self, project: Option<&str>) -> SwitchPickerConfig {
+        // Get global config: prefer switch.picker, fall back to select
+        let global = self
+            .configs
+            .switch
+            .as_ref()
+            .and_then(|s| s.picker.as_ref())
+            .cloned()
+            .unwrap_or_else(|| {
+                self.configs
+                    .select
+                    .as_ref()
+                    .map(|sel| SwitchPickerConfig {
+                        pager: sel.pager.clone(),
+                        timeout_ms: None,
+                    })
+                    .unwrap_or_default()
+            });
+
+        // Get project override (also checks both locations)
+        let project_config = project.and_then(|p| self.projects.get(p)).and_then(|c| {
+            c.overrides
+                .switch
+                .as_ref()
+                .and_then(|s| s.picker.as_ref())
+                .cloned()
+                .or_else(|| {
+                    c.overrides.select.as_ref().map(|sel| SwitchPickerConfig {
+                        pager: sel.pager.clone(),
+                        timeout_ms: None,
+                    })
+                })
+        });
+
+        match project_config {
+            Some(pc) => global.merge_with(&pc),
+            None => global,
+        }
     }
 
     /// Returns effective hooks for a specific project.
@@ -162,7 +207,7 @@ impl UserConfig {
         branch: &str,
         repo: &crate::git::Repository,
         project: Option<&str>,
-    ) -> Result<String, String> {
+    ) -> Result<String, TemplateExpandError> {
         let template = match project {
             Some(p) => self.worktree_path_for_project(p),
             None => self.worktree_path(),

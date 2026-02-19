@@ -24,7 +24,10 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use wt_perf::{RepoConfig, create_repo, ensure_rust_repo, invalidate_caches, setup_fake_remote};
+use wt_perf::{
+    RepoConfig, add_history_spread_branches, add_worktrees, clone_rust_repo, create_repo,
+    invalidate_caches_auto, run_git, setup_fake_remote,
+};
 
 /// Benchmark configuration wrapping RepoConfig with cache state.
 #[derive(Clone)]
@@ -60,22 +63,6 @@ impl BenchConfig {
     }
 }
 
-fn run_git(path: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(path)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "Git command failed: {:?}\nstderr: {}\nstdout: {}\npath: {}",
-        args,
-        String::from_utf8_lossy(&output.stderr),
-        String::from_utf8_lossy(&output.stdout),
-        path.display()
-    );
-}
-
 fn get_release_binary() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_wt"))
 }
@@ -100,7 +87,7 @@ fn run_benchmark(
 
     if config.cold_cache {
         b.iter_batched(
-            || invalidate_caches(repo_path, config.repo.worktrees),
+            || invalidate_caches_auto(repo_path),
             |_| {
                 cmd_factory().output().unwrap();
             },
@@ -204,73 +191,15 @@ fn bench_real_repo(c: &mut Criterion) {
                 BenchmarkId::new(label, worktrees),
                 &(worktrees, cold),
                 |b, &(worktrees, cold)| {
-                    let rust_repo = ensure_rust_repo();
+                    let config = RepoConfig::typical(worktrees);
                     let temp = tempfile::tempdir().unwrap();
-                    let workspace_main = temp.path().join("repo");
-
-                    let clone_output = Command::new("git")
-                        .args([
-                            "clone",
-                            "--local",
-                            rust_repo.to_str().unwrap(),
-                            workspace_main.to_str().unwrap(),
-                        ])
-                        .output()
-                        .unwrap();
-                    assert!(
-                        clone_output.status.success(),
-                        "Failed to clone rust repo to workspace"
-                    );
-
-                    run_git(&workspace_main, &["config", "user.name", "Benchmark"]);
-                    run_git(&workspace_main, &["config", "user.email", "bench@test.com"]);
-
-                    // Add worktrees manually (can't use create_repo for external repo)
-                    for wt_num in 1..worktrees {
-                        let branch = format!("feature-wt-{wt_num}");
-                        let wt_path = temp.path().join(format!("wt-{wt_num}"));
-
-                        let head_output = Command::new("git")
-                            .args(["rev-parse", "HEAD"])
-                            .current_dir(&workspace_main)
-                            .output()
-                            .unwrap();
-                        let base_commit = String::from_utf8_lossy(&head_output.stdout)
-                            .trim()
-                            .to_string();
-
-                        run_git(
-                            &workspace_main,
-                            &[
-                                "worktree",
-                                "add",
-                                "-b",
-                                &branch,
-                                wt_path.to_str().unwrap(),
-                                &base_commit,
-                            ],
-                        );
-
-                        for i in 0..10 {
-                            let file_path = wt_path.join(format!("feature_{wt_num}_file_{i}.txt"));
-                            std::fs::write(&file_path, format!("Feature {wt_num} content {i}\n"))
-                                .unwrap();
-                            run_git(&wt_path, &["add", "."]);
-                            run_git(
-                                &wt_path,
-                                &["commit", "-m", &format!("Feature {wt_num} commit {i}")],
-                            );
-                        }
-
-                        for i in 0..3 {
-                            let file_path = wt_path.join(format!("uncommitted_{i}.txt"));
-                            std::fs::write(&file_path, "Uncommitted content\n").unwrap();
-                        }
-                    }
+                    let workspace_main = clone_rust_repo(&temp);
+                    add_worktrees(&config, &workspace_main);
+                    run_git(&workspace_main, &["status"]);
 
                     if cold {
                         b.iter_batched(
-                            || invalidate_caches(&workspace_main, worktrees),
+                            || invalidate_caches_auto(&workspace_main),
                             |_| {
                                 Command::new(binary)
                                     .arg("list")
@@ -281,7 +210,6 @@ fn bench_real_repo(c: &mut Criterion) {
                             criterion::BatchSize::SmallInput,
                         );
                     } else {
-                        run_git(&workspace_main, &["status"]);
                         b.iter(|| {
                             Command::new(binary)
                                 .arg("list")
@@ -351,58 +279,24 @@ fn bench_divergent_branches(c: &mut Criterion) {
     group.finish();
 }
 
-/// Helper to set up rust repo workspace with branches at different history depths.
+/// Set up rust repo workspace with branches at different history depths.
 /// Returns the workspace path (temp dir must outlive usage).
 fn setup_rust_workspace_with_branches(temp: &tempfile::TempDir, num_branches: usize) -> PathBuf {
-    let rust_repo = ensure_rust_repo();
-    let workspace_main = temp.path().join("repo");
-
-    // Clone rust repo locally
-    let clone_output = Command::new("git")
-        .args([
-            "clone",
-            "--local",
-            rust_repo.to_str().unwrap(),
-            workspace_main.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        clone_output.status.success(),
-        "Failed to clone rust repo to workspace"
-    );
-
-    // Get commits spread across history
-    let log_output = Command::new("git")
-        .args(["log", "--oneline", "-n", "5000", "--format=%H"])
-        .current_dir(&workspace_main)
-        .output()
-        .unwrap();
-    let log_str = String::from_utf8_lossy(&log_output.stdout);
-    let step = 5000 / num_branches;
-    let commits: Vec<&str> = log_str.lines().step_by(step).take(num_branches).collect();
-
-    // Create branches pointing to different historical commits
-    for (i, commit) in commits.iter().enumerate() {
-        let branch_name = format!("feature-{i:03}");
-        run_git(&workspace_main, &["branch", &branch_name, commit]);
-    }
-
-    // Warm the cache
+    let workspace_main = clone_rust_repo(temp);
+    add_history_spread_branches(&workspace_main, num_branches);
     run_git(&workspace_main, &["status"]);
-
     workspace_main
 }
 
 /// Benchmark GH #461 scenario: large real repo (rust-lang/rust) with branches at different
 /// historical points.
 ///
-/// This reproduces the `wt select` delay reported in #461. The key factor is NOT commits
-/// per branch, but rather how far back in history branches diverge from each other.
+/// This reproduces the `wt switch` interactive picker delay reported in #461. The key factor
+/// is NOT commits per branch, but rather how far back in history branches diverge from each other.
 ///
 /// Benchmarks three modes:
 /// - `warm`: baseline with all branches, no optimization (~15-18s)
-/// - `warm_optimized`: with skip_expensive_for_stale (what `wt select` uses, ~2-3s)
+/// - `warm_optimized`: with skip_expensive_for_stale (what `wt switch` picker uses, ~2-3s)
 /// - `warm_worktrees_only`: no branch enumeration (~600ms)
 ///
 /// Key insight: `git for-each-ref %(ahead-behind:BASE)` is O(commits), not O(refs).
@@ -450,7 +344,7 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
         });
     });
 
-    // With skip_expensive_for_stale optimization (simulates wt select behavior)
+    // With skip_expensive_for_stale optimization (simulates wt switch picker behavior)
     group.bench_function("warm_optimized", |b| {
         let (_temp, workspace_main) = setup_workspace();
         b.iter(|| {

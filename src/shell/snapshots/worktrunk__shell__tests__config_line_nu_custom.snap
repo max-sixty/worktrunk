@@ -1,0 +1,5 @@
+---
+source: src/shell/mod.rs
+expression: "Shell::Nushell.config_line(\"git-wt\")"
+---
+if (which git-wt | is-not-empty) { git-wt config shell init nu | save --force ($nu.default-config-dir | path join vendor/autoload/git-wt.nu) }

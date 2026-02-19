@@ -8,35 +8,37 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt switch - Switch to a worktree[0m
+wt switch - Switch to a worktree; create if needed
 
-Creates one if needed.[0m
-
-Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m][0m
+Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m][0m
 
 [1m[32mArguments:[0m
-  [36m<BRANCH>[0m
+  [36m[BRANCH][0m
           Branch name or shortcut[0m
           
-          Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)[0m
+          Opens interactive picker if omitted. Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)[0m
 
   [36m[EXECUTE_ARGS]...[0m
           Additional arguments for --execute command (after --)[0m
@@ -44,6 +46,12 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
           Arguments after [1m--[0m are appended to the execute command. Each argument is expanded for templates, then POSIX shell-escaped.[0m
 
 [1m[32mOptions:[0m
+      [1m[36m--branches[0m
+          Include branches without worktrees (interactive picker)
+
+      [1m[36m--remotes[0m
+          Include remote branches (interactive picker)
+
   [1m[36m-c[0m, [1m[36m--create[0m
           Create a new branch
 
@@ -73,6 +81,11 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
 
       [1m[36m--clobber[0m
           Remove stale paths at target
+
+      [1m[36m--no-cd[0m
+          Skip directory change after switching[0m
+          
+          Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or for CI/automation.[0m
 
       [1m[36m--no-verify[0m
           Skip hooks
@@ -140,6 +153,38 @@ When creating a worktree, worktrunk:
   [2mwt switch pr:123                 # PR #123's branch[0m
   [2mwt switch mr:101                 # MR !101's branch[0m
 
+[1m[32mInteractive picker[0m
+
+When called without arguments, [2mwt switch[0m opens an interactive picker to browse and select worktrees with live preview. The picker requires a TTY.
+
+[1mKeybindings:[0m
+
+        Key                  Action             
+   ───────────── ────────────────────────────── 
+   ↑/↓           Navigate worktree list         
+   (type)        Filter worktrees               
+   Enter         Switch to selected worktree    
+   Alt-c         Create new worktree from query 
+   Esc           Cancel                         
+   1–5           Switch preview tab             
+   Alt-p         Toggle preview panel           
+   Ctrl-u/Ctrl-d Scroll preview up/down         
+
+[1mPreview tabs[0m (toggle with number keys):
+
+1. [1mHEAD±[0m — Diff of uncommitted changes
+2. [1mlog[0m — Recent commits; commits already on the default branch have dimmed hashes
+3. [1mmain…±[0m — Diff of changes since the merge-base with the default branch
+4. [1mremote⇅[0m — Diff vs upstream tracking branch (ahead/behind)
+5. [1msummary[0m — LLM-generated branch summary (requires [2m[list] summary = true[0m and [2m[commit.generation][0m)
+
+[1mPager configuration:[0m The preview panel pipes diff output through git's pager. Override in user config:
+
+  [2m[switch.picker][0m
+  [2mpager = "delta --paging=never --width=$COLUMNS"[0m
+
+Available on Unix only (macOS, Linux). On Windows, use [2mwt list[0m or [2mwt switch <branch>[0m directly.
+
 [1m[32mGitHub pull requests (experimental)[0m
 
 The [2mpr:<number>[0m syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches [2mrefs/pull/N/head[0m and configures [2mpushRemote[0m to the fork URL.
@@ -170,7 +215,6 @@ To change which branch a worktree is on, use [2mgit switch[0m inside that work
 
 [1m[32mSee also[0m
 
-- [2mwt select[0m — Interactive worktree selection
 - [2mwt list[0m — View all worktrees
 - [2mwt remove[0m — Delete worktrees when done
 - [2mwt merge[0m — Integrate changes back to the default branch

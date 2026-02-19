@@ -74,7 +74,7 @@ Worktrunk creates files in four categories.
 
 ### 1. Worktree directories
 
-Created by `wt switch <branch>` (or `wt select`) when switching to a branch that doesn't have a worktree. Use `wt switch --create <branch>` to create a new branch. Default location is `../<repo>.<branch>` (sibling to main repo), configurable via `worktree-path` in user config.
+Created by `wt switch <branch>` when switching to a branch that doesn't have a worktree. Use `wt switch --create <branch>` to create a new branch. Default location is `../<repo>.<branch>` (sibling to main repo), configurable via `worktree-path` in user config.
 
 **To remove:** `wt remove <branch>` removes the worktree directory and deletes the branch.
 
@@ -82,7 +82,8 @@ Created by `wt switch <branch>` (or `wt select`) when switching to a branch that
 
 | File | Created by | Purpose |
 |------|------------|---------|
-| `~/.config/worktrunk/config.toml` | `wt config create`, or approving project commands | User preferences, approved commands |
+| `~/.config/worktrunk/config.toml` | `wt config create` | User preferences |
+| `~/.config/worktrunk/approvals.toml` | Approving project commands | Approved hook commands |
 | `.config/wt.toml` | `wt config create --project` | Project hooks (checked into repo) |
 
 User config location: `$XDG_CONFIG_HOME/worktrunk/` (or `~/.config/worktrunk/`) on Linux/macOS, `%APPDATA%\worktrunk\` on Windows.
@@ -96,6 +97,7 @@ Created by `wt config shell install`:
 - **Bash**: adds line to `~/.bashrc`
 - **Zsh**: adds line to `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
 - **Fish**: creates `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish`
+- **Nushell** (experimental): creates `$nu.default-config-dir/vendor/autoload/wt.nu` (typically `~/.config/nushell` on Linux, `~/Library/Application Support/nushell` on macOS)
 - **PowerShell** (Windows): creates both profile files if they don't exist:
   - `Documents/PowerShell/Microsoft.PowerShell_profile.ps1` (PowerShell 7+)
   - `Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1` (Windows PowerShell 5.1)
@@ -113,6 +115,7 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 | `.git/config` keys under `worktrunk.*` | Cached default branch, switch history, branch markers | Various commands |
 | `.git/wt-cache/ci-status/*.json` | CI status cache (~1KB each) | `wt list` when `gh` or `glab` CLI is installed |
 | `.git/wt-logs/*.log` | Background command output | Hooks, background `wt remove` |
+| `.git/wt-logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |
 
 None of this is tracked by git or pushed to remotes.
 
@@ -162,7 +165,7 @@ Worktrunk runs `git` commands internally and optionally runs `gh` (GitHub) or `g
 
 1. **User hooks** (`~/.config/worktrunk/config.toml`) — Personal automation for all repositories
 2. **Project hooks** (`.config/wt.toml`) — Repository-specific automation
-3. **LLM commands** (`~/.config/worktrunk/config.toml`) — Commit message generation
+3. **LLM commands** (`~/.config/worktrunk/config.toml`) — Commit message generation and [picker summaries](@/llm-commits.md#picker-summaries)
 4. **--execute flag** — Explicitly provided commands
 
 User hooks don't require approval (you defined them). Commands from project hooks require approval on first run. Approved commands are saved to user config. If a command changes, Worktrunk requires new approval.
@@ -187,13 +190,29 @@ User hooks don't require approval (you defined them). Commands from project hook
 
 Use `--yes` to bypass prompts (useful for CI/automation).
 
+### Command log
+
+All hook executions and LLM commands are recorded in `.git/wt-logs/commands.jsonl` — one JSON object per line with timestamp, command, exit code, and duration. This provides a debugging trail without requiring `-vv` verbose output. The file rotates to `commands.jsonl.old` at 1MB, bounding storage to ~2MB.
+
+View the log with `wt config state logs get`, or query directly:
+
+```bash
+# Recent commands
+tail -5 .git/wt-logs/commands.jsonl | jq .
+
+# Failed commands
+jq 'select(.exit != 0 and .exit != null)' .git/wt-logs/commands.jsonl
+```
+
+Clear with `wt config state logs clear`.
+
 ## Does Worktrunk work on Windows?
 
 Yes. Core commands, shell integration, and tab completion work in both Git Bash and PowerShell. See [installation](@/worktrunk.md#install) for setup details, including avoiding the Windows Terminal `wt` conflict.
 
 **Git for Windows required** — Hooks use bash syntax and execute via Git Bash, so [Git for Windows](https://gitforwindows.org/) must be installed even when PowerShell is the interactive shell.
 
-**`wt select` unavailable** — Uses [skim](https://github.com/skim-rs/skim), which doesn't support Windows. Use `wt list` and `wt switch <branch>` instead.
+**`wt switch` interactive picker unavailable** — Uses [skim](https://github.com/skim-rs/skim), which doesn't support Windows. Use `wt list` and `wt switch <branch>` instead.
 
 ## How does Worktrunk determine the default branch?
 
@@ -223,7 +242,7 @@ $ cargo test
 
 ### Full integration tests
 
-Shell integration tests require bash, zsh, and fish:
+Shell integration tests require bash, zsh, fish, and nushell:
 
 ```bash
 $ cargo test --test integration --features shell-integration-tests

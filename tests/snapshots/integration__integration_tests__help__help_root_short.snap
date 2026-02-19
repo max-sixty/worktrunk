@@ -7,18 +7,22 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
 ---
 success: true
 exit_code: 0
@@ -30,11 +34,10 @@ wt - Git worktree management for parallel AI agent workflows
 Usage: [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
 [1m[32mCommands:[0m
-  [1m[36mswitch[0m  Switch to a worktree
+  [1m[36mswitch[0m  Switch to a worktree; create if needed
   [1m[36mlist[0m    List worktrees and their status
   [1m[36mremove[0m  Remove worktree; delete branch if merged
   [1m[36mmerge[0m   Merge current branch into target
-  [1m[36mselect[0m  Interactive worktree selector
   [1m[36mstep[0m    Run individual operations
   [1m[36mhook[0m    Run configured hooks
   [1m[36mconfig[0m  Manage user & project configs

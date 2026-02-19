@@ -124,10 +124,10 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     let separator = ifs.as_deref().unwrap_or("\n");
 
     // Shell-specific separator between value and description
-    // zsh uses ":", fish uses "\t", bash doesn't support descriptions
+    // zsh uses ":", fish/nushell use "\t", bash doesn't support descriptions
     let help_sep = match shell_name.as_ref() {
         "zsh" => Some(":"),
-        "fish" => Some("\t"),
+        "fish" | "nu" => Some("\t"),
         _ => None,
     };
 

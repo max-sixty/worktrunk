@@ -26,9 +26,9 @@ exclude = [
     "github\\.com/anthropics/claude-code/issues",
 
     # GitHub immutable resources (occasionally return 502/504 on heavy load)
-    "github\\.com/[^/]+/[^/]+/commit/",
-    "github\\.com/[^/]+/[^/]+/issues/",
-    "github\\.com/[^/]+/[^/]+/pull/",
+    "github\\.com/[^/]+/[^/]+/commit",
+    "github\\.com/[^/]+/[^/]+/issues",
+    "github\\.com/[^/]+/[^/]+/pull",
     "github\\.com/[^/]+/[^/]+/actions",
 
     # Social media (blocks GitHub Actions)
@@ -45,6 +45,7 @@ exclude = [
     "npmjs\\.com",
     "incident\\.io",
     "git-scm\\.com",
+    "api\\.star-history\\.com",
 
     # Package registries and badges (frequently return 429 or block CI)
     "crates\\.io",

@@ -33,6 +33,7 @@ wt step push
 - `squash` — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
 - `rebase` — Rebase onto target branch
 - `push` — Fast-forward target to current branch
+- `diff` — Show all changes since branching (committed, staged, unstaged, untracked)
 - `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
 - `promote` — [experimental] Put a branch into the main worktree
@@ -58,6 +59,7 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>squash</span></b>        Squash commits since branching
   <b><span class=c>push</span></b>          Fast-forward target to current branch
   <b><span class=c>rebase</span></b>        Rebase onto target
+  <b><span class=c>diff</span></b>          Show all changes since branching
   <b><span class=c>copy-ignored</span></b>  Copy gitignored files to another worktree
   <b><span class=c>for-each</span></b>      [experimental] Run command in each worktree
   <b><span class=c>promote</span></b>       [experimental] Put a branch into the main worktree
@@ -272,7 +274,7 @@ All gitignored files are copied by default. Tracked files are never touched.
 
 To limit what gets copied, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
 
-```gitignore
+```text
 # .worktreeinclude
 .env
 node_modules/
@@ -292,7 +294,8 @@ target/
 
 - Uses copy-on-write (reflink) when available for space-efficient copies
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
-- Skips existing files (safe to re-run)
+- Skips existing files by default (safe to re-run)
+- `--force` overwrites existing files in the destination
 - Skips `.git` entries and other worktrees
 
 ### Performance
@@ -357,6 +360,9 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
 
       <b><span class=c>--dry-run</span></b>
           Show what would be copied
+
+      <b><span class=c>--force</span></b>
+          Overwrite existing files in destination
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

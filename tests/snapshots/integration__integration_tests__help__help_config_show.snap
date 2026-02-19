@@ -9,6 +9,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     PSModulePath: ""
@@ -16,11 +17,12 @@ info:
     SHELL: ""
     TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
 ---
 success: true
 exit_code: 0
@@ -33,7 +35,7 @@ Usage: [1m[36mwt config show[0m [36m[OPTIONS][0m
 
 [1m[32mOptions:[0m
       [1m[36m--full[0m
-          Run diagnostic checks (CI tools, commit generation)
+          Run diagnostic checks (CI tools, commit generation, version)
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
@@ -49,7 +51,7 @@ Usage: [1m[36mwt config show[0m [36m[OPTIONS][0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 Shows location and contents of user config ([2m~/.config/worktrunk/config.toml[0m)
-and project config ([2m.config/wt.toml[0m).
+and project config ([2m.config/wt.toml[0m). Also shows system config if present.
 
 If a config file doesn't exist, shows defaults that would be used.
 
@@ -62,3 +64,4 @@ Use [2m--full[0m to run diagnostic checks:
 This tests:
 - [1mCI tool status[0m — Whether [2mgh[0m (GitHub) or [2mglab[0m (GitLab) is installed and authenticated
 - [1mCommit generation[0m — Whether the LLM command can generate commit messages
+- [1mVersion check[0m — Whether a newer version is available on GitHub

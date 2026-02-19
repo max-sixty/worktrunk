@@ -29,10 +29,15 @@ use crate::sync::Semaphore;
 use std::sync::LazyLock;
 static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
 
+/// The null OID returned by git when no commits exist (e.g., `git rev-parse HEAD` on an unborn branch).
+pub const NULL_OID: &str = "0000000000000000000000000000000000000000";
+
 // Re-exports from submodules
 pub(crate) use diff::DiffStats;
 pub use diff::{LineDiff, parse_numstat_line};
 pub use error::{
+    // Structured command failure info
+    FailedCommand,
     // Typed error enum (Display produces styled output)
     GitError,
     // Special-handling error enum (Display produces styled output)
@@ -40,6 +45,8 @@ pub use error::{
     // Platform-specific reference type (PR vs MR)
     RefContext,
     RefType,
+    // CLI context for enriching switch suggestions in error hints
+    SwitchSuggestionCtx,
     WorktrunkError,
     // Error inspection functions
     add_hook_skip_hint,
@@ -319,6 +326,7 @@ pub fn branch_tracks_ref(
 )]
 #[strum(serialize_all = "kebab-case")]
 pub enum HookType {
+    PreSwitch,
     PostCreate,
     PostStart,
     PostSwitch,
@@ -447,6 +455,13 @@ impl WorktreeInfo {
     /// Most iteration over worktrees should skip prunable ones.
     pub fn is_prunable(&self) -> bool {
         self.prunable.is_some()
+    }
+
+    /// Returns true if this worktree points to a real commit (not the null OID).
+    ///
+    /// Unborn branches (no commits yet) have the null OID as their HEAD.
+    pub fn has_commits(&self) -> bool {
+        self.head != NULL_OID
     }
 
     /// Returns the worktree directory name.

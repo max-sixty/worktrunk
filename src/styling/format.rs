@@ -225,9 +225,34 @@ pub fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
 
 #[cfg(feature = "syntax-highlighting")]
 fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) -> String {
+    // Normalize line endings: CRLF to LF, and trim trailing newlines.
+    // Trailing newlines would create spurious blank gutter lines because
+    // style restoration after newlines produces `\n[DIM]` which becomes
+    // its own line when split.
+    let content = content.replace("\r\n", "\n");
+    let content = content.trim_end_matches('\n');
+
+    // Replace Jinja template delimiters with identifier placeholders before parsing.
+    // Tree-sitter can't parse `{{` and `}}` (especially when split across lines),
+    // so we swap them out and restore after highlighting. Placeholders must NOT
+    // contain quote characters — they break quote boundaries when adjacent to
+    // existing quotes (e.g., `"{{ var }}"` → `""WTO" var "WTC""` with double quotes,
+    // or `'text {{ var }}'` → `'text 'WTO'...'WTC''` with single quotes).
+    //
+    // TPL_CLOSE gets a trailing space so tree-sitter doesn't merge it with adjacent
+    // path characters (e.g., `}}/path` → `WTC/path` would be one "function" token,
+    // giving the path the wrong color). The space is stripped during restoration.
+    const TPL_OPEN: &str = "WTO";
+    const TPL_CLOSE: &str = "WTC";
+    let normalized = content
+        .replace("{{", TPL_OPEN)
+        .replace("}}", &format!("{TPL_CLOSE} "));
+    let content = normalized.as_str();
+
     let gutter = super::GUTTER;
     let reset = anstyle::Reset;
     let dim = anstyle::Style::new().dimmed();
+    let string_style = bash_token_style("string").unwrap_or(dim);
 
     // Calculate available width for content
     let term_width = width_override.unwrap_or_else(get_terminal_width);
@@ -248,109 +273,122 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
     let bash_language = tree_sitter_bash::LANGUAGE.into();
     let bash_highlights = tree_sitter_bash::HIGHLIGHT_QUERY;
 
-    let mut config = match HighlightConfiguration::new(
+    let mut config = HighlightConfiguration::new(
         bash_language,
-        "bash", // language name
+        "bash",
         bash_highlights,
         "", // injections query
         "", // locals query
-    ) {
-        Ok(config) => config,
-        Err(_) => {
-            // Fallback: if tree-sitter fails, use plain gutter formatting
-            HighlightConfiguration::new(
-                tree_sitter_bash::LANGUAGE.into(),
-                "bash", // language name
-                "",     // empty query
-                "",
-                "",
-            )
-            .unwrap()
-        }
-    };
-
+    )
+    .expect("tree-sitter-bash HIGHLIGHT_QUERY should be valid");
     config.configure(&highlight_names);
 
     let mut highlighter = Highlighter::new();
+    let highlights = highlighter
+        .highlight(&config, content.as_bytes(), None, |_| None)
+        .expect("highlighting valid UTF-8 should not fail");
 
-    // Build lines without trailing newline - caller is responsible for element separation
-    let mut output_lines: Vec<String> = Vec::new();
+    let content_bytes = content.as_bytes();
 
-    // Process each line separately - this is required because tree-sitter's bash
-    // grammar fails to highlight multi-line commands when `&&` appears at line ends.
-    // Per-line processing gives proper highlighting for each line's content.
-    for line in content.lines() {
-        let mut styled_line = format!("{dim}");
+    // Phase 1: Build styled content with ANSI codes, restoring style after newlines.
+    // Template placeholders are restored here (not in a separate phase) because we
+    // need the active style context to correctly style `{{ }}` as green (string).
+    // A post-hoc replace can't know whether the delimiter was inside a string
+    // (inherits green) or bare (needs green injected).
+    let mut styled = format!("{dim}");
+    let mut pending_highlight: Option<usize> = None;
+    let mut active_style: Option<anstyle::Style> = None;
+    let mut ate_tpl_boundary = false;
+    let close_with_space = format!("{TPL_CLOSE} ");
 
-        let Ok(highlights) = highlighter.highlight(&config, line.as_bytes(), None, |_| None) else {
-            // Fallback: if highlighting fails, use plain dim
-            styled_line.push_str(line);
-            for wrapped in wrap_styled_text(&styled_line, available_width) {
-                output_lines.push(format!("{gutter} {gutter:#} {wrapped}{reset}"));
-            }
-            continue;
-        };
+    for event in highlights {
+        match event.unwrap() {
+            HighlightEvent::Source { start, end } => {
+                if let Ok(text) = std::str::from_utf8(&content_bytes[start..end]) {
+                    // Strip boundary space inserted after TPL_CLOSE for token separation.
+                    // The space may land in a separate Source event from TPL_CLOSE itself.
+                    let text = if ate_tpl_boundary {
+                        ate_tpl_boundary = false;
+                        text.strip_prefix(' ').unwrap_or(text)
+                    } else {
+                        text
+                    };
 
-        let line_bytes = line.as_bytes();
-
-        // Track the current highlight type so we can decide styling when we see the actual text
-        let mut pending_highlight: Option<usize> = None;
-
-        for event in highlights {
-            match event.unwrap() {
-                HighlightEvent::Source { start, end } => {
-                    // Output the text for this source region
-                    if let Ok(text) = std::str::from_utf8(&line_bytes[start..end]) {
-                        // Apply pending highlight style, but skip command styling for template syntax
-                        // (tree-sitter misinterprets `}}` at line start as a command)
-                        if let Some(idx) = pending_highlight.take() {
-                            let is_template_syntax =
-                                text.starts_with("}}") || text.starts_with("{{");
-                            let is_function = highlight_names
-                                .get(idx)
-                                .is_some_and(|name| *name == "function");
-
-                            // Skip command styling for template syntax, apply normal styling otherwise
-                            if !(is_function && is_template_syntax)
-                                && let Some(name) = highlight_names.get(idx)
-                                && let Some(style) = bash_token_style(name)
-                            {
-                                // Reset before applying style to clear the base dim, then apply token style.
-                                // Token styles use dim+color (not bold) because bold (SGR 1) and dim (SGR 2)
-                                // are mutually exclusive in some terminals like Alacritty.
-                                styled_line.push_str(&format!("{reset}{style}"));
-                            }
-                        }
-
-                        styled_line.push_str(text);
+                    // Apply pending highlight style. Skip for pure placeholder tokens —
+                    // tree-sitter sees e.g. `WTC` as a "function" but that's meaningless;
+                    // placeholder restoration handles the styling.
+                    let is_placeholder = text == TPL_CLOSE || text == TPL_OPEN;
+                    if let Some(idx) = pending_highlight.take()
+                        && let Some(name) = highlight_names.get(idx)
+                        && let Some(style) = bash_token_style(name)
+                        && !is_placeholder
+                    {
+                        styled.push_str(&format!("{reset}{style}"));
+                        active_style = Some(style);
                     }
-                }
-                HighlightEvent::HighlightStart(idx) => {
-                    // Remember the highlight type - we'll decide on styling when we see the text
-                    pending_highlight = Some(idx.0);
-                }
-                HighlightEvent::HighlightEnd => {
-                    // End of highlighted region - reset and restore dim for unhighlighted text
-                    pending_highlight = None;
-                    styled_line.push_str(&format!("{reset}{dim}"));
+
+                    // Restore template placeholders with string styling for `{{ }}`.
+                    // When already inside a string (green context), just replace the
+                    // text — no ANSI injection needed since `{{ }}` inherits the style.
+                    // Otherwise, inject string styling and restore the active context.
+                    //
+                    // Replace "WTC " before "WTC" to consume the boundary space when
+                    // both land in the same Source event (e.g., inside a string token).
+                    let has_placeholder = text.contains(TPL_OPEN) || text.contains(TPL_CLOSE);
+                    let ends_with_close = text.ends_with(TPL_CLOSE);
+                    let text = if !has_placeholder {
+                        text.to_string()
+                    } else if active_style == Some(string_style) {
+                        text.replace(TPL_OPEN, "{{")
+                            .replace(&close_with_space, "}}")
+                            .replace(TPL_CLOSE, "}}")
+                    } else {
+                        let restore = format!("{reset}{}", active_style.unwrap_or(dim));
+                        let close_repl = format!("{reset}{string_style}}}}}{restore}");
+                        text.replace(TPL_OPEN, &format!("{reset}{string_style}{{{{{restore}"))
+                            .replace(&close_with_space, &close_repl)
+                            .replace(TPL_CLOSE, &close_repl)
+                    };
+
+                    if ends_with_close {
+                        ate_tpl_boundary = true;
+                    }
+
+                    // Insert style restore after each newline so lines are self-contained
+                    let style_restore = match active_style {
+                        Some(style) => format!("{dim}{reset}{style}"),
+                        None => format!("{dim}"),
+                    };
+                    styled.push_str(&text.replace('\n', &format!("\n{style_restore}")));
                 }
             }
-        }
-
-        // Wrap and collect gutter lines
-        for wrapped in wrap_styled_text(&styled_line, available_width) {
-            output_lines.push(format!("{gutter} {gutter:#} {wrapped}{reset}"));
+            HighlightEvent::HighlightStart(idx) => {
+                pending_highlight = Some(idx.0);
+            }
+            HighlightEvent::HighlightEnd => {
+                pending_highlight = None;
+                active_style = None;
+                styled.push_str(&format!("{reset}{dim}"));
+            }
         }
     }
 
-    output_lines.join("\n")
+    // Phase 3: Split into lines, wrap each, add gutters
+    styled
+        .lines()
+        .flat_map(|line| wrap_styled_text(line, available_width))
+        .map(|wrapped| format!("{gutter} {gutter:#} {wrapped}{reset}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Formats bash/shell commands with syntax highlighting and gutter
 ///
-/// Processes each line separately for highlighting (required for multi-line commands
-/// with `&&` at line ends), then applies template syntax detection to avoid
-/// misinterpreting `}}` as a command when it appears at line start.
+/// Uses unified highlighting (entire command at once) to preserve context across
+/// line breaks. Multi-line strings are correctly highlighted.
+///
+/// Template syntax (`{{ }}`) is detected to avoid misinterpreting Jinja variables
+/// as shell commands.
 ///
 /// # Example
 /// ```
@@ -593,5 +631,141 @@ mod tests {
         assert!(result.contains("npm"));
         assert!(result.contains("cargo"));
         assert!(result.contains("--release"));
+    }
+
+    /// Regression test: tree-sitter 0.26 properly highlights multi-line commands.
+    ///
+    /// With tree-sitter-bash 0.25.1+, unified highlighting (processing the entire
+    /// command at once) correctly identifies `&&` as operators even when they appear
+    /// at line ends. This enables switching from line-by-line to unified highlighting.
+    #[test]
+    #[cfg(feature = "syntax-highlighting")]
+    fn test_unified_multiline_highlighting() {
+        use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
+
+        let cmd = "echo 'line1' &&\necho 'line2' &&\necho 'line3'";
+
+        let highlight_names = vec![
+            "function", "keyword", "string", "operator", "comment", "number", "variable",
+            "constant",
+        ];
+
+        let bash_language = tree_sitter_bash::LANGUAGE.into();
+        let bash_highlights = tree_sitter_bash::HIGHLIGHT_QUERY;
+
+        let mut config =
+            HighlightConfiguration::new(bash_language, "bash", bash_highlights, "", "").unwrap();
+        config.configure(&highlight_names);
+
+        let mut highlighter = Highlighter::new();
+
+        // Collect highlight events as tagged text for verification
+        let mut output = String::new();
+        let highlights = highlighter
+            .highlight(&config, cmd.as_bytes(), None, |_| None)
+            .unwrap();
+        for event in highlights {
+            match event.unwrap() {
+                HighlightEvent::Source { start, end } => {
+                    output.push_str(&cmd[start..end]);
+                }
+                HighlightEvent::HighlightStart(idx) => {
+                    output.push_str(&format!("[{}:", highlight_names[idx.0]));
+                }
+                HighlightEvent::HighlightEnd => {
+                    output.push(']');
+                }
+            }
+        }
+
+        // Unified highlighting should identify && as operators
+        assert!(
+            output.contains("[operator:&&]"),
+            "Should identify && as operator in multi-line command"
+        );
+
+        // Should identify echo as function on each line
+        assert_eq!(
+            output.matches("[function:echo]").count(),
+            3,
+            "Should identify all three echo commands"
+        );
+    }
+
+    /// Regression test: template variables inside quotes are restored correctly.
+    ///
+    /// When `{{ }}` appears inside double quotes (e.g., `"{{ target }}"`), the
+    /// placeholder must not contain quote characters — otherwise tree-sitter
+    /// reinterprets quote boundaries and ANSI codes break the contiguous
+    /// placeholder, making the restore `.replace()` fail silently.
+    #[test]
+    #[cfg(feature = "syntax-highlighting")]
+    fn test_template_vars_inside_quotes_restored() {
+        use ansi_str::AnsiStr;
+
+        let cmd = r#"if [ "{{ target }}" = "main" ]; then git pull && git push; fi"#;
+        let result = format_bash_with_gutter_at_width(cmd, 120);
+
+        let plain = result.ansi_strip();
+
+        // The output must contain {{ and }}, not the placeholders
+        assert!(plain.contains("{{"), "{plain}");
+        assert!(plain.contains("}}"), "{plain}");
+        assert!(!plain.contains("WTO"), "{plain}");
+        assert!(!plain.contains("WTC"), "{plain}");
+    }
+
+    /// Regression test: template syntax ({{ }}) doesn't break highlighting.
+    ///
+    /// Tree-sitter parses around template variables, still identifying commands.
+    #[test]
+    #[cfg(feature = "syntax-highlighting")]
+    fn test_highlighting_with_template_syntax() {
+        use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
+
+        let cmd = "echo {{ branch }} && mkdir {{ path }}";
+
+        let highlight_names = vec!["function", "keyword", "string", "operator", "constant"];
+
+        let bash_language = tree_sitter_bash::LANGUAGE.into();
+        let bash_highlights = tree_sitter_bash::HIGHLIGHT_QUERY;
+
+        let mut config =
+            HighlightConfiguration::new(bash_language, "bash", bash_highlights, "", "").unwrap();
+        config.configure(&highlight_names);
+
+        let mut highlighter = Highlighter::new();
+
+        let mut output = String::new();
+        let highlights = highlighter
+            .highlight(&config, cmd.as_bytes(), None, |_| None)
+            .unwrap();
+        for event in highlights {
+            match event.unwrap() {
+                HighlightEvent::Source { start, end } => {
+                    output.push_str(&cmd[start..end]);
+                }
+                HighlightEvent::HighlightStart(idx) => {
+                    output.push_str(&format!("[{}:", highlight_names[idx.0]));
+                }
+                HighlightEvent::HighlightEnd => {
+                    output.push(']');
+                }
+            }
+        }
+
+        // Commands should still be identified despite template syntax
+        assert!(
+            output.contains("[function:echo]"),
+            "Should identify echo despite template syntax"
+        );
+        assert!(
+            output.contains("[function:mkdir]"),
+            "Should identify mkdir despite template syntax"
+        );
+        assert!(
+            output.contains("[operator:&&]"),
+            "Should identify && operator"
+        );
     }
 }

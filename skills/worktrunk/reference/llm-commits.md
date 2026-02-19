@@ -1,0 +1,159 @@
+# LLM Commit Messages
+
+Worktrunk generates commit messages by building a templated prompt and piping it to an external command. This integrates with `wt merge`, `wt step commit`, and `wt step squash`.
+
+## Setup
+
+Any command that reads a prompt from stdin and outputs a commit message works. Add to `~/.config/worktrunk/config.toml`:
+
+### Claude Code
+
+```toml
+[commit.generation]
+command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+```
+
+`CLAUDECODE=` unsets the nesting guard so `claude -p` works from within a Claude Code session. The other flags disable tools, skills, settings, and system prompt for fast text-only output. See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
+
+### llm
+
+```toml
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
+```
+
+Install with `uv tool install llm llm-anthropic && llm keys set anthropic`. See [llm docs](https://llm.datasette.io/).
+
+### aichat
+
+```toml
+[commit.generation]
+command = "aichat -m claude:claude-haiku-4.5"
+```
+
+See [aichat docs](https://github.com/sigoden/aichat).
+
+### Codex
+
+```toml
+[commit.generation]
+command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+```
+
+Uses the fast mini model with low reasoning effort. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
+
+## How it works
+
+When worktrunk needs a commit message, it builds a prompt from a template and pipes it to the configured command via shell (`sh -c`). Environment variables can be set inline in the command string.
+
+## Usage
+
+These examples assume a feature worktree with changes to commit.
+
+### wt merge
+
+Squashes all changes (uncommitted + existing commits) into one commit with an LLM-generated message, then merges to the default branch:
+
+```bash
+$ wt merge
+◎ Squashing 3 commits into a single commit (5 files, +48)...
+◎ Generating squash commit message...
+   feat(auth): Implement JWT authentication system
+   ...
+```
+
+### wt step commit
+
+Stages and commits with LLM-generated message:
+
+```bash
+$ wt step commit
+```
+
+### wt step squash
+
+Squashes branch commits into one with LLM-generated message:
+
+```bash
+$ wt step squash
+```
+
+See [`wt merge`](https://worktrunk.dev/merge/) and [`wt step`](https://worktrunk.dev/step/) for full documentation.
+
+## Branch summaries (experimental)
+
+With `summary = true` and a `[commit.generation] command` configured, Worktrunk generates LLM branch summaries — one-line descriptions of each branch's changes since the default branch.
+
+Summaries appear in:
+
+- **`wt switch`** [interactive picker](https://worktrunk.dev/switch/#interactive-picker) — preview tab 5
+- **`wt list --full`** — the Summary column (see [`wt list`](https://worktrunk.dev/list/#llm-summaries-experimental))
+
+Enable in user config:
+
+```toml
+[list]
+summary = true
+```
+
+Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. Results are cached until the diff changes.
+
+## Prompt templates
+
+Worktrunk uses [minijinja](https://docs.rs/minijinja/) templates (Jinja2-like syntax) to build prompts. There are sensible defaults, but templates are fully customizable.
+
+### Custom templates
+
+Override the defaults with inline templates:
+
+```toml
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
+
+template = """
+Write a commit message for this diff. One line, under 50 chars.
+
+Branch: {{ branch }}
+Diff:
+{{ git_diff }}
+"""
+
+squash-template = """
+Combine these {{ commits | length }} commits into one message:
+{% for c in commits %}
+- {{ c }}
+{% endfor %}
+
+Diff:
+{{ git_diff }}
+"""
+```
+
+### Template variables
+
+| Variable | Description |
+|----------|-------------|
+| `{{ git_diff }}` | The diff (staged changes or combined diff for squash) |
+| `{{ git_diff_stat }}` | Diff statistics (files changed, insertions, deletions) |
+| `{{ branch }}` | Current branch name |
+| `{{ repo }}` | Repository name |
+| `{{ recent_commits }}` | Recent commit subjects (for style reference) |
+| `{{ commits }}` | Commits being squashed (squash template only) |
+| `{{ target_branch }}` | Merge target branch (squash template only) |
+
+### Template syntax
+
+Templates use [minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/index.html), which supports:
+
+- **Variables**: `{{ branch }}`, `{{ repo | upper }}`
+- **Filters**: `{{ commits | length }}`, `{{ repo | upper }}`
+- **Conditionals**: `{% if recent_commits %}...{% endif %}`
+- **Loops**: `{% for c in commits %}{{ c }}{% endfor %}`
+- **Loop variables**: `{{ loop.index }}`, `{{ loop.length }}`
+- **Whitespace control**: `{%- ... -%}` strips surrounding whitespace
+
+See `wt config create --help` for the full default templates.
+
+## Fallback behavior
+
+When no LLM is configured, worktrunk generates deterministic messages based on changed filenames (e.g., "Changes to auth.rs & config.rs").

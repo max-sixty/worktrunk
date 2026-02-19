@@ -34,7 +34,7 @@ impl SourcedCommand {
 
     /// Announce this command before execution.
     ///
-    /// Format: "Running pre-merge user:foo:" for named, "Running post-create user hook:" for unnamed
+    /// Format: "Running pre-merge user:foo" for named, "Running post-create user hook" for unnamed
     /// When display_path is set, appends "@ path" to show where the command runs.
     fn announce(&self) -> anyhow::Result<()> {
         // Named: "Running post-switch user:foo" with "user:foo" bold
@@ -52,9 +52,9 @@ impl SourcedCommand {
         let message = match &self.display_path {
             Some(path) => {
                 let path_display = format_path_for_display(path);
-                cformat!("{full_label} @ <bold>{path_display}</>:")
+                cformat!("{full_label} @ <bold>{path_display}</>")
             }
-            None => format!("{full_label}:"),
+            None => full_label,
         };
         eprintln!("{}", progress_message(message));
         eprintln!("{}", format_bash_with_gutter(&self.prepared.expanded));
@@ -148,12 +148,12 @@ fn filter_by_name(
 /// Used for post-start and post-switch hooks during normal worktree operations.
 /// Commands are spawned and immediately detached - we don't wait for them.
 ///
-/// By default, shows a single-line summary of all hooks being run.
+/// By default, shows a single-line summary of all hooks being run, with support
+/// for multiple hook types in a single message (e.g., "Running post-switch: user:foo; post-start: project:bar").
 /// With `-v`, shows verbose per-hook output with command details.
-pub fn spawn_hook_commands_background(
+pub fn spawn_background_hooks(
     ctx: &CommandContext,
     commands: Vec<SourcedCommand>,
-    hook_type: HookType,
 ) -> anyhow::Result<()> {
     if commands.is_empty() {
         return Ok(());
@@ -162,29 +162,39 @@ pub fn spawn_hook_commands_background(
     let verbose = verbosity();
 
     if verbose == 0 {
-        // Single-line summary: "Running post-start hooks @ path: user:bg, project"
-        let names: Vec<String> = commands
-            .iter()
-            .map(|c| cformat!("<bold>{}</>", c.summary_name()))
-            .collect();
+        // Group commands by hook type, preserving insertion order
+        let groups = group_commands_by_hook_type(&commands);
         // All commands in a batch share the same display_path (set by prepare_hook_commands)
         let display_path = commands.first().and_then(|c| c.display_path.as_ref());
+
+        // Format: "Running {type}: {names}[; {type}: {names}]... [@ {path}]"
+        let type_segments: Vec<String> = groups
+            .iter()
+            .map(|(hook_type, cmds)| {
+                let names: Vec<String> = cmds
+                    .iter()
+                    .map(|c| cformat!("<bold>{}</>", c.summary_name()))
+                    .collect();
+                format!("{hook_type}: {}", names.join(", "))
+            })
+            .collect();
 
         let message = match display_path {
             Some(path) => {
                 let path_display = format_path_for_display(path);
                 cformat!(
-                    "Running {hook_type} hooks @ <bold>{path_display}</>: {}",
-                    names.join(", ")
+                    "Running {} @ <bold>{path_display}</>",
+                    type_segments.join("; ")
                 )
             }
-            None => format!("Running {hook_type} hooks: {}", names.join(", ")),
+            None => format!("Running {}", type_segments.join("; ")),
         };
         eprintln!("{}", progress_message(message));
     }
 
-    // Track index for unnamed commands to prevent log collisions
-    let mut unnamed_index = 0usize;
+    // Track index for unnamed commands to prevent log collisions (per hook type)
+    // Use a Vec since HookType doesn't implement Hash
+    let mut unnamed_indices: Vec<(HookType, usize)> = Vec::new();
 
     for cmd in &commands {
         if verbose >= 1 {
@@ -194,14 +204,24 @@ pub fn spawn_hook_commands_background(
         let name = match &cmd.prepared.name {
             Some(n) => n.clone(),
             None => {
-                let idx = unnamed_index;
-                unnamed_index += 1;
+                let idx = if let Some((_, count)) = unnamed_indices
+                    .iter_mut()
+                    .find(|(t, _)| *t == cmd.hook_type)
+                {
+                    let result = *count;
+                    *count += 1;
+                    result
+                } else {
+                    unnamed_indices.push((cmd.hook_type, 1));
+                    0
+                };
                 format!("cmd-{idx}")
             }
         };
-        // Use HookLog for consistent log file naming
-        let hook_log = HookLog::hook(cmd.source, hook_type, &name);
+        // Use HookLog with the command's own hook_type for consistent log file naming
+        let hook_log = HookLog::hook(cmd.source, cmd.hook_type, &name);
 
+        let log_label = format!("{} {}", cmd.hook_type, cmd.summary_name());
         if let Err(err) = spawn_detached(
             ctx.repo,
             ctx.worktree_path,
@@ -216,10 +236,32 @@ pub fn spawn_hook_commands_background(
                 None => format!("Failed to spawn command: {err_msg}"),
             };
             eprintln!("{}", warning_message(message));
+        } else {
+            // Background: outcome unknown, log with null exit/duration
+            worktrunk::command_log::log_command(&log_label, &cmd.prepared.expanded, None, None);
         }
     }
 
     Ok(())
+}
+
+/// Group commands by hook type, preserving insertion order.
+///
+/// Returns a vector of (HookType, Vec<&SourcedCommand>) tuples.
+/// This preserves the order in which hook types were first encountered
+/// (e.g., post-switch before post-start).
+fn group_commands_by_hook_type(
+    commands: &[SourcedCommand],
+) -> Vec<(HookType, Vec<&SourcedCommand>)> {
+    let mut groups: Vec<(HookType, Vec<&SourcedCommand>)> = Vec::new();
+    for cmd in commands {
+        if let Some((_, vec)) = groups.iter_mut().find(|(t, _)| *t == cmd.hook_type) {
+            vec.push(cmd);
+        } else {
+            groups.push((cmd.hook_type, vec![cmd]));
+        }
+    }
+    groups
 }
 
 /// Check if a name filter was provided but no commands matched.
@@ -304,10 +346,12 @@ pub fn run_hook_with_filter(
     for cmd in commands {
         cmd.announce()?;
 
+        let log_label = format!("{} {}", cmd.hook_type, cmd.summary_name());
         if let Err(err) = execute_command_in_worktree(
             ctx.worktree_path,
             &cmd.prepared.expanded,
             Some(&cmd.prepared.context_json),
+            Some(&log_label),
         ) {
             // Extract raw message and exit code from error
             let (err_msg, exit_code) = if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {
@@ -404,35 +448,35 @@ pub fn execute_hook(
     .map_err(worktrunk::git::add_hook_skip_hint)
 }
 
-/// Spawn hook commands as background processes with automatic config lookup.
+/// Prepare background hooks with automatic config lookup.
 ///
 /// This is a convenience wrapper that:
 /// 1. Loads project config from the repository
 /// 2. Looks up user hooks from the config
-/// 3. Prepares and spawns background commands
-pub fn spawn_hook_background(
+/// 3. Prepares commands ready for spawning
+///
+/// Use this to collect hooks from multiple types, then call `spawn_background_hooks`
+/// once to spawn them all with a unified message.
+pub(crate) fn prepare_background_hooks(
     ctx: &CommandContext,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
-    name_filter: Option<&str>,
     display_path: Option<&Path>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<SourcedCommand>> {
     let project_config = ctx.repo.load_project_config()?;
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
     let (user_config, proj_config) =
         lookup_hook_configs(&user_hooks, project_config.as_ref(), hook_type);
 
-    let commands = prepare_hook_commands(
+    prepare_hook_commands(
         ctx,
         user_config,
         proj_config,
         hook_type,
         extra_vars,
-        name_filter,
+        None, // no filter for automatic background hooks
         display_path,
-    )?;
-
-    spawn_hook_commands_background(ctx, commands, hook_type)
+    )
 }
 
 #[cfg(test)]

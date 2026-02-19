@@ -48,7 +48,9 @@
 # Persistent flag values for `wt list`. Override on command line as needed.
 #
 # [list]
-# full = false       # Show CI status and main…± diffstat columns (--full)
+# summary = false    # Enable LLM branch summaries (requires [commit.generation])
+#
+# full = false       # Show CI, main…± diffstat, and LLM summaries (--full)
 # branches = false   # Include branches without worktrees (--branches)
 # remotes = false    # Include remote-only branches (--remotes)
 #
@@ -70,15 +72,17 @@
 # remove = true      # Remove worktree after merge (--no-remove to keep)
 # verify = true      # Run project hooks (--no-verify to skip)
 #
-# ### Select
+# ### Switch picker
 #
-# Pager behavior for `wt select` diff previews.
+# Configuration for `wt switch` interactive picker.
 #
-# [select]
-# # Pager command with flags for diff preview (overrides git's core.pager)
-# # Use this to specify pager flags needed for non-TTY contexts
-# # Example:
+# [switch.picker]
+# # Pager command for diff preview (overrides git's core.pager)
 # # pager = "delta --paging=never"
+#
+# # Timeout (ms) for git commands during picker loading (default: 200)
+# # Lower values show the TUI faster; 0 disables timeouts
+# # timeout-ms = 200
 #
 # ### User project-specific settings
 #
@@ -92,12 +96,11 @@
 #
 # #### Approved hook commands
 #
-# When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.
+# When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved to `~/.config/worktrunk/approvals.toml` (separate from user config to allow dotfile management of config.toml).
 #
-# [projects."github.com/user/repo"]
-# approved-commands = ["npm ci", "npm test"]
+# To reset, run `wt hook approvals clear`.
 #
-# To reset, delete the entry or run `wt hook approvals clear`.
+# > **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config show` to generate a migration file that removes stale entries.
 #
 # #### Setting overrides (Experimental)
 #

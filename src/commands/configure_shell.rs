@@ -8,7 +8,7 @@ use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
 use worktrunk::styling::{
     INFO_SYMBOL, SUCCESS_SYMBOL, eprint, eprintln, format_bash_with_gutter, format_toml,
-    format_with_gutter, prompt_message, warning_message,
+    format_with_gutter, hint_message, prompt_message, warning_message,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -324,13 +324,28 @@ fn should_auto_configure_powershell() -> bool {
     }
 }
 
+/// Check if nushell is available on the system.
+///
+/// Nushell's `vendor/autoload` directory may not exist even when nushell is installed,
+/// since it was introduced in nushell v0.96.0 and isn't always created by default.
+/// When `nu` is in PATH, we should auto-configure nushell (creating vendor/autoload/
+/// if needed) rather than silently skipping it.
+fn is_nushell_available() -> bool {
+    // Allow tests to override detection (set via Command::env() in integration tests)
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_NUSHELL_ENV") {
+        return val == "1";
+    }
+
+    which::which("nu").is_ok()
+}
+
 pub fn scan_shell_configs(
     shell_filter: Option<Shell>,
     dry_run: bool,
     cmd: &str,
 ) -> Result<ScanResult, String> {
     // Base shells to check
-    let mut default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
+    let mut default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Nushell];
 
     // Add PowerShell if we detect we're in a PowerShell-compatible environment.
     // - Non-Windows: PSModulePath reliably indicates PowerShell Core
@@ -339,6 +354,10 @@ pub fn scan_shell_configs(
     if in_powershell_env {
         default_shells.push(Shell::PowerShell);
     }
+
+    // Check if nushell is available on the system (nu binary in PATH).
+    // vendor/autoload/ may not exist yet, but we should still install if nu is available.
+    let nushell_available = is_nushell_available();
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
@@ -353,26 +372,20 @@ pub fn scan_shell_configs(
         // Find the first existing config file
         let target_path = paths.iter().find(|p| p.exists());
 
-        // For Fish, also check if the parent directory (functions/) exists
+        // For Fish/Nushell, also check if any candidate's parent directory exists
         // since we create the file there rather than modifying an existing one
-        let has_config_location = if matches!(shell, Shell::Fish) {
-            paths
-                .first()
-                .and_then(|p| p.parent())
-                .map(|p| p.exists())
-                .unwrap_or(false)
-                || target_path.is_some()
+        let has_config_location = if matches!(shell, Shell::Fish | Shell::Nushell) {
+            paths.iter().any(|p| p.parent().is_some_and(|d| d.exists())) || target_path.is_some()
         } else {
             target_path.is_some()
         };
 
-        // Auto-configure PowerShell when user is in a PowerShell-compatible environment,
-        // even if the profile doesn't exist yet (issue #885). PowerShell doesn't create
-        // a profile by default, so most users won't have one until they create it.
-        // Detection:
-        // - Non-Windows: PSModulePath indicates PowerShell Core
-        // - Windows: SHELL not set indicates Windows-native shell (not Git Bash/MSYS2)
-        let in_detected_shell = matches!(shell, Shell::PowerShell) && in_powershell_env;
+        // Auto-configure shells when we detect them on the system, even if their
+        // config directory doesn't exist yet:
+        // - PowerShell: profile may not exist (issue #885)
+        // - Nushell: vendor/autoload/ may not exist (introduced in nushell v0.96.0)
+        let in_detected_shell = (matches!(shell, Shell::PowerShell) && in_powershell_env)
+            || (matches!(shell, Shell::Nushell) && nushell_available);
 
         // Only configure if explicitly targeting this shell OR if config file/location exists
         // OR if we detected we're running in this shell's environment
@@ -397,8 +410,8 @@ pub fn scan_shell_configs(
             }
         } else if shell_filter.is_none() {
             // Track skipped shells (only when not explicitly filtering)
-            // For Fish, we check for functions/ directory; for others, the config file
-            let skipped_path = if matches!(shell, Shell::Fish) {
+            // For Fish/Nushell, we check for parent directory; for others, the config file
+            let skipped_path = if matches!(shell, Shell::Fish | Shell::Nushell) {
                 paths
                     .first()
                     .and_then(|p| p.parent())
@@ -436,22 +449,19 @@ fn configure_shell_file(
     // The line we write to the config file (also used for display)
     let config_line = shell.config_line(cmd);
 
-    // For Fish, we write a minimal wrapper to functions/{cmd}.fish that sources the
-    // full function from the binary. This allows updates to worktrunk to automatically
-    // provide the latest wrapper logic without requiring reinstall.
-    if matches!(shell, Shell::Fish) {
+    // For Fish and Nushell, we write the full wrapper to a file that gets autoloaded.
+    // This allows updates to worktrunk to automatically provide the latest wrapper logic
+    // without requiring reinstall.
+    if matches!(shell, Shell::Fish | Shell::Nushell) {
         let init = shell::ShellInit::with_prefix(shell, cmd.to_string());
-        let fish_wrapper = init
-            .generate_fish_wrapper()
-            .map_err(|e| format!("Failed to generate fish wrapper: {e}"))?;
-        return configure_fish_file(
-            shell,
-            path,
-            &fish_wrapper,
-            dry_run,
-            allow_create,
-            &config_line,
-        );
+        let wrapper = if matches!(shell, Shell::Fish) {
+            init.generate_fish_wrapper()
+                .map_err(|e| format!("Failed to generate fish wrapper: {e}"))?
+        } else {
+            init.generate()
+                .map_err(|e| format!("Failed to generate nushell wrapper: {e}"))?
+        };
+        return configure_wrapper_file(shell, path, &wrapper, dry_run, allow_create, &config_line);
     }
 
     // For other shells, check if file exists
@@ -563,7 +573,19 @@ fn configure_shell_file(
     }
 }
 
-fn configure_fish_file(
+/// Extract non-comment, non-blank lines from fish source for comparison.
+///
+/// This lets us detect existing installations even when comment text has changed
+/// between versions (e.g. updated documentation URLs).
+fn fish_code_lines(source: &str) -> Vec<&str> {
+    source
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect()
+}
+
+fn configure_wrapper_file(
     shell: Shell,
     path: &Path,
     content: &str,
@@ -571,9 +593,9 @@ fn configure_fish_file(
     allow_create: bool,
     config_line: &str,
 ) -> Result<Option<ConfigureResult>, String> {
-    // For Fish, we write a minimal wrapper to functions/{cmd}.fish that sources
-    // the full function from `{cmd} config shell init fish` at runtime.
-    // Fish autoloads these files on first invocation of the command.
+    // For Fish and Nushell, we write the full wrapper to a file that gets autoloaded.
+    // - Fish: functions/{cmd}.fish is autoloaded on first invocation
+    // - Nushell: vendor/autoload/{cmd}.nu is autoloaded automatically at startup
 
     // Check if it already exists and has our integration
     // Use .ok() for read errors - treat as "not configured" rather than failing
@@ -582,9 +604,9 @@ fn configure_fish_file(
         .then(|| fs::read_to_string(path).ok())
         .flatten()
     {
-        // Canonical detection: check if the file matches exactly what we write
-        // Trim both sides to handle trailing newlines consistently across platforms
-        if existing_content.trim() == content.trim() {
+        // Compare only non-comment lines so that comment changes (e.g. updated
+        // URLs) don't cause existing installations to appear unconfigured.
+        if fish_code_lines(&existing_content) == fish_code_lines(content) {
             return Ok(Some(ConfigureResult {
                 shell,
                 path: path.to_path_buf(),
@@ -595,9 +617,9 @@ fn configure_fish_file(
     }
 
     // File doesn't exist or doesn't have our integration
-    // For Fish, create if parent directory exists or if explicitly allowed
-    // This is different from other shells because Fish uses functions/ which may exist
-    // even if the specific wt.fish file doesn't
+    // For Fish/Nushell, create if parent directory exists or if explicitly allowed
+    // This is different from other shells because these use autoload directories
+    // which may exist even if the specific wrapper file doesn't
     if !allow_create && !path.exists() {
         // Check if parent directory exists
         if !path.parent().is_some_and(|p| p.exists()) {
@@ -606,7 +628,7 @@ fn configure_fish_file(
     }
 
     if dry_run {
-        // Fish writes the complete file - use WouldAdd if file exists, WouldCreate if new
+        // Fish/Nushell write the complete file - use WouldAdd if file exists, WouldCreate if new
         let action = if path.exists() {
             ConfigAction::WouldAdd
         } else {
@@ -630,7 +652,7 @@ fn configure_fish_file(
         })?;
     }
 
-    // Write the complete fish function file
+    // Write the complete wrapper file
     fs::write(path, format!("{}\n", content))
         .map_err(|e| format!("Failed to write {}: {e}", format_path_for_display(path)))?;
 
@@ -689,6 +711,11 @@ pub fn show_install_preview(
             result.config_line.clone()
         };
         eprintln!("{}", format_bash_with_gutter(&content));
+
+        if matches!(shell, Shell::Nushell) {
+            eprintln!("{}", hint_message("Nushell support is experimental"));
+        }
+
         eprintln!(); // Blank line after each shell block
     }
 
@@ -799,9 +826,6 @@ fn prompt_yes_no() -> Result<bool, String> {
     io::stdin()
         .read_line(&mut input)
         .map_err(|e| e.to_string())?;
-
-    // End the prompt line on stderr (user's input went to stdin, not stderr)
-    eprintln!();
 
     let response = input.trim().to_lowercase();
     Ok(response == "y" || response == "yes")
@@ -928,13 +952,25 @@ pub fn handle_unconfigure_shell(
     scan_for_uninstall(shell_filter, false, cmd)
 }
 
+/// Remove a config file with a context-rich error message.
+fn remove_config_file(path: &std::path::Path) -> Result<(), String> {
+    fs::remove_file(path)
+        .map_err(|e| format!("Failed to remove {}: {e}", format_path_for_display(path)))
+}
+
 fn scan_for_uninstall(
     shell_filter: Option<Shell>,
     dry_run: bool,
     cmd: &str,
 ) -> Result<UninstallScanResult, String> {
     // For uninstall, always include PowerShell to clean up any existing profiles
-    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
+    let default_shells = vec![
+        Shell::Bash,
+        Shell::Zsh,
+        Shell::Fish,
+        Shell::Nushell,
+        Shell::PowerShell,
+    ];
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
@@ -969,13 +1005,7 @@ fn scan_for_uninstall(
                             superseded_by: None,
                         });
                     } else {
-                        fs::remove_file(fish_path).map_err(|e| {
-                            format!(
-                                "Failed to remove {}: {}",
-                                format_path_for_display(fish_path),
-                                e
-                            )
-                        })?;
+                        remove_config_file(fish_path)?;
                         results.push(UninstallResult {
                             shell,
                             path: fish_path.clone(),
@@ -1006,12 +1036,7 @@ fn scan_for_uninstall(
                             superseded_by: canonical_path.clone(),
                         });
                     } else {
-                        fs::remove_file(&legacy_path).map_err(|e| {
-                            format!(
-                                "Failed to remove {}: {e}",
-                                format_path_for_display(&legacy_path)
-                            )
-                        })?;
+                        remove_config_file(&legacy_path)?;
                         results.push(UninstallResult {
                             shell,
                             path: legacy_path,
@@ -1024,6 +1049,39 @@ fn scan_for_uninstall(
 
             if !found_any && let Some(fish_path) = paths.first() {
                 not_found.push((shell, fish_path.clone()));
+            }
+            continue;
+        }
+
+        // For Nushell, delete config files from all candidate locations.
+        // Installation might have written to a different path than what we'd pick now
+        // (e.g., `nu` was in PATH during install but not during uninstall).
+        if matches!(shell, Shell::Nushell) {
+            let mut found_any = false;
+            for config_path in &paths {
+                if !config_path.exists() {
+                    continue;
+                }
+                found_any = true;
+                if dry_run {
+                    results.push(UninstallResult {
+                        shell,
+                        path: config_path.clone(),
+                        action: UninstallAction::WouldRemove,
+                        superseded_by: None,
+                    });
+                } else {
+                    remove_config_file(config_path)?;
+                    results.push(UninstallResult {
+                        shell,
+                        path: config_path.clone(),
+                        action: UninstallAction::Removed,
+                        superseded_by: None,
+                    });
+                }
+            }
+            if !found_any && let Some(config_path) = paths.first() {
+                not_found.push((shell, config_path.clone()));
             }
             continue;
         }
@@ -1073,13 +1131,7 @@ fn scan_for_uninstall(
                     action: UninstallAction::WouldRemove,
                 });
             } else {
-                fs::remove_file(&completion_path).map_err(|e| {
-                    format!(
-                        "Failed to remove {}: {}",
-                        format_path_for_display(&completion_path),
-                        e
-                    )
-                })?;
+                remove_config_file(&completion_path)?;
                 completion_results.push(CompletionUninstallResult {
                     shell,
                     path: completion_path,
@@ -1264,11 +1316,13 @@ pub fn handle_show_theme() {
 
     eprintln!();
 
-    // Gutter - bash code (syntax highlighted)
+    // Gutter - bash code (short, long wrapping, multi-line string, multi-line command, and template)
     eprintln!("{}", info_message("Gutter formatting (shell code):"));
     eprintln!(
         "{}",
-        format_bash_with_gutter("eval \"$(wt config shell init bash)\"",)
+        format_bash_with_gutter(
+            "eval \"$(wt config shell init bash)\"\necho 'This is a long command that will wrap to the next line when the terminal is narrow enough to require wrapping.'\necho 'hello\nworld'\ncargo build --release &&\ncargo test\ncp {{ repo_root }}/target {{ worktree }}/target"
+        )
     );
 
     eprintln!();
@@ -1374,4 +1428,20 @@ mod tests {
 
     // Note: should_auto_configure_powershell() is tested via WORKTRUNK_TEST_POWERSHELL_ENV
     // override in tests/integration_tests/configure_shell.rs.
+
+    #[test]
+    fn test_fish_code_lines_strips_comments_and_blanks() {
+        let source = "# comment\n\nfunction wt\n    command wt $argv\nend\n";
+        assert_eq!(
+            fish_code_lines(source),
+            vec!["function wt", "command wt $argv", "end"]
+        );
+    }
+
+    #[test]
+    fn test_fish_code_lines_matches_despite_different_comments() {
+        let old = "# Docs: https://worktrunk.dev/docs/shell-integration\nfunction wt\n    command wt $argv\nend";
+        let new = "# Docs: https://worktrunk.dev/config/#shell-integration\nfunction wt\n    command wt $argv\nend";
+        assert_eq!(fish_code_lines(old), fish_code_lines(new));
+    }
 }

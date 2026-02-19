@@ -69,7 +69,7 @@ fn test_switch_create_shows_progress_when_forced(repo: TestRepo) {
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature-progress"], None);
         // Force immediate streaming by setting threshold to 0
-        cmd.env("WT_TEST_DELAYED_STREAM_MS", "0");
+        cmd.env("WORKTRUNK_TEST_DELAYED_STREAM_MS", "0");
         assert_cmd_snapshot!("switch_create_with_progress", cmd);
     });
 }
@@ -84,6 +84,36 @@ fn test_switch_create_existing_branch_error(mut repo: TestRepo) {
         "switch_create_existing_error",
         &repo,
         &["--create", "feature-y"],
+    );
+}
+
+/// When --execute is passed and the branch already exists, the error hint should
+/// include --execute and trailing args in the suggested command.
+#[rstest]
+fn test_switch_create_existing_with_execute(mut repo: TestRepo) {
+    repo.add_worktree("emails");
+
+    snapshot_switch(
+        "switch_create_existing_with_execute",
+        &repo,
+        &[
+            "--create",
+            "--execute=claude",
+            "emails",
+            "--",
+            "Check my emails",
+        ],
+    );
+}
+
+/// When --execute is passed and the branch doesn't exist (without --create),
+/// the "create" suggestion should include --execute and trailing args.
+#[rstest]
+fn test_switch_nonexistent_with_execute(repo: TestRepo) {
+    snapshot_switch(
+        "switch_nonexistent_with_execute",
+        &repo,
+        &["--execute=claude", "nonexistent", "--", "Check my emails"],
     );
 }
 
@@ -117,6 +147,24 @@ fn test_switch_dwim_from_remote(#[from(repo_with_remote)] repo: TestRepo) {
     // Now we have origin/dwim-feature but no local dwim-feature
     // DWIM should create local branch from remote
     snapshot_switch("switch_dwim_from_remote", &repo, &["dwim-feature"]);
+}
+
+/// When a branch exists on multiple remotes, DWIM should fail with an error
+/// since git can't determine which remote to track.
+#[rstest]
+fn test_switch_dwim_ambiguous_remotes(#[from(repo_with_remote)] mut repo: TestRepo) {
+    // Add a second remote
+    repo.setup_custom_remote("upstream", "main");
+
+    // Create a branch on both remotes (no local branch)
+    repo.run_git(&["branch", "shared-feature"]);
+    repo.run_git(&["push", "origin", "shared-feature"]);
+    repo.run_git(&["push", "upstream", "shared-feature"]);
+    repo.run_git(&["branch", "-D", "shared-feature"]);
+
+    // Now shared-feature exists on origin and upstream but not locally
+    // DWIM can't pick — git worktree add should error
+    snapshot_switch("switch_dwim_ambiguous_remotes", &repo, &["shared-feature"]);
 }
 
 /// When creating a new branch from a remote tracking branch (e.g., origin/main),
@@ -261,13 +309,20 @@ fn test_switch_base_without_create_warning(repo: TestRepo) {
 
 #[rstest]
 fn test_switch_create_with_invalid_base(repo: TestRepo) {
-    // Issue #562: Error message should identify the invalid base branch,
+    // Issues #562, #977: Error message should identify the invalid base branch,
     // not the target branch being created
     snapshot_switch(
         "switch_create_invalid_base",
         &repo,
         &["--create", "new-feature", "--base", "nonexistent-base"],
     );
+}
+
+#[rstest]
+fn test_switch_nonexistent_branch(repo: TestRepo) {
+    // Switching to a nonexistent branch (without --create) should give a clear
+    // "branch not found" error, not fall through to a confusing git error.
+    snapshot_switch("switch_nonexistent_branch", &repo, &["nonexistent-branch"]);
 }
 
 #[rstest]
@@ -1052,9 +1107,11 @@ fn test_switch_ping_pong_realistic(repo: TestRepo) {
     );
 }
 
+#[cfg(unix)] // Interactive picker only available on Unix
 #[rstest]
-fn test_switch_missing_argument_shows_hints(repo: TestRepo) {
-    // Run switch with no arguments - should show clap error plus hints
+fn test_switch_no_args_requires_tty(repo: TestRepo) {
+    // Run switch with no arguments in non-TTY - should fail with TTY requirement
+    // (interactive picker requires a terminal)
     snapshot_switch("switch_missing_argument_hints", &repo, &[]);
 }
 
@@ -1297,6 +1354,32 @@ fn test_switch_post_hook_no_path_with_shell_integration(repo: TestRepo) {
     );
 }
 
+/// When both post-switch and post-start hooks are configured, they should be combined
+/// into a single output line with format: "Running post-switch: {names}; post-start: {names} @ path"
+#[rstest]
+fn test_switch_combined_post_switch_and_post_start_hooks(repo: TestRepo) {
+    // Create project config with both post-switch and post-start hooks
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        r#"post-switch = "echo switched"
+post-start = "echo started"
+"#,
+    )
+    .unwrap();
+
+    repo.commit("Add config");
+
+    // Run switch --create (triggers both post-switch and post-start)
+    // Should show a single combined line: "Running post-switch: project; post-start: project @ path"
+    snapshot_switch(
+        "switch_combined_hooks",
+        &repo,
+        &["--create", "combined-hooks-test", "--yes"],
+    );
+}
+
 #[rstest]
 fn test_switch_clobber_path_with_extension(repo: TestRepo) {
     // Calculate where the worktree would be created
@@ -1513,6 +1596,76 @@ fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
         configure_mock_gh_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_same_repo", cmd);
+    });
+}
+
+/// Test same-repo PR with a limited fetch refspec (single-branch clone scenario).
+///
+/// In repos with a limited refspec (e.g., `+refs/heads/main:refs/remotes/origin/main`),
+/// `git fetch origin <branch>` only updates FETCH_HEAD but doesn't create the remote
+/// tracking branch. This caused `wt switch pr:101` to fail with "No branch named X".
+#[rstest]
+fn test_switch_pr_same_repo_limited_refspec(#[from(repo_with_remote)] mut repo: TestRepo) {
+    // Create a feature branch and push it to the remote
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Set origin URL to GitHub-style so find_remote_for_repo() can match owner/test-repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // Redirect github.com URLs to the local bare remote
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // Restrict fetch refspec to only main, simulating a single-branch clone
+    repo.run_git(&[
+        "config",
+        "remote.origin.fetch",
+        "+refs/heads/main:refs/remotes/origin/main",
+    ]);
+
+    let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_same_repo_limited_refspec", cmd);
     });
 }
 
@@ -2386,6 +2539,33 @@ fn test_switch_mr_base_conflict(repo: TestRepo) {
 fn test_switch_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
     // Create a feature branch and push it
     repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Set origin URL to GitLab-style so find_remote_for_repo() can match owner/test-repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    // Redirect gitlab.com URLs to the local bare remote
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
 
     // glab api projects/:id/merge_requests/<number> format
     let glab_response = r#"{
@@ -2406,6 +2586,156 @@ fn test_switch_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
         configure_mock_glab_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_same_repo", cmd);
+    });
+}
+
+/// Test same-repo MR with a limited fetch refspec (single-branch clone scenario).
+///
+/// In repos with a limited refspec (e.g., `+refs/heads/main:refs/remotes/origin/main`),
+/// `git fetch origin <branch>` only updates FETCH_HEAD but doesn't create the remote
+/// tracking branch. This caused `wt switch mr:101` to fail with "No branch named X".
+#[rstest]
+fn test_switch_mr_same_repo_limited_refspec(#[from(repo_with_remote)] mut repo: TestRepo) {
+    // Create a feature branch and push it to the remote
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Set origin URL to GitLab-style so find_remote_for_repo() can match owner/test-repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    // Redirect gitlab.com URLs to the local bare remote
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    // Restrict fetch refspec to only main, simulating a single-branch clone
+    repo.run_git(&[
+        "config",
+        "remote.origin.fetch",
+        "+refs/heads/main:refs/remotes/origin/main",
+    ]);
+
+    let glab_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "author": {"username": "alice"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature-auth",
+        "source_project_id": 123,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/101"
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_same_repo_limited_refspec", cmd);
+    });
+}
+
+/// Test same-repo MR when origin points to a different repo (no remote for MR's repo)
+///
+/// User scenario:
+/// 1. User has origin pointing to their fork (contributor/test-repo)
+/// 2. MR !101 is a same-repo MR on the upstream (owner/test-repo)
+/// 3. No remote exists for owner/test-repo -> error with hint to add upstream
+#[rstest]
+fn test_switch_mr_same_repo_no_remote(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin to point to a DIFFERENT repo than where the MR is
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/contributor/test-repo.git",
+    ]);
+
+    let glab_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "author": {"username": "alice"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature-auth",
+        "source_project_id": 123,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/101"
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_same_repo_no_remote", cmd);
+    });
+}
+
+/// Test same-repo MR with malformed web_url (missing /-/ separator)
+#[rstest]
+fn test_switch_mr_malformed_web_url_no_separator(#[from(repo_with_remote)] repo: TestRepo) {
+    let glab_response = r#"{
+        "title": "Fix bug",
+        "author": {"username": "alice"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature",
+        "source_project_id": 123,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/merge_requests/101"
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_malformed_web_url", cmd);
+    });
+}
+
+/// Test same-repo MR with unparsable project URL (has /-/ but no owner/repo)
+#[rstest]
+fn test_switch_mr_malformed_web_url_no_project(#[from(repo_with_remote)] repo: TestRepo) {
+    let glab_response = r#"{
+        "title": "Fix bug",
+        "author": {"username": "alice"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature",
+        "source_project_id": 123,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/-/merge_requests/101"
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_malformed_web_url_no_project", cmd);
     });
 }
 
@@ -2900,4 +3230,87 @@ fn test_switch_mr_glab_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
         configure_cli_not_installed_env(&mut cmd, &minimal_bin);
         assert_cmd_snapshot!("switch_mr_glab_not_installed", cmd);
     });
+}
+
+/// Bug fix: switching to the current worktree (AlreadyAt) must NOT update switch history.
+///
+/// Previously, `wt switch foo` while already in `foo` would record `foo` as the
+/// previous branch, corrupting `wt switch -` so it pointed to the current branch
+/// instead of the actual previous one.
+#[rstest]
+fn test_switch_already_at_preserves_history(repo: TestRepo) {
+    // Create a feature branch with worktree
+    repo.run_git(&["branch", "hist-feature"]);
+
+    // Step 1: Switch from main to hist-feature (establishes history: previous=main)
+    let feature_path = repo.root_path().parent().unwrap().join(format!(
+        "{}.hist-feature",
+        repo.root_path().file_name().unwrap().to_str().unwrap()
+    ));
+    snapshot_switch_from_dir(
+        "already_at_preserves_history_1_to_feature",
+        &repo,
+        &["hist-feature"],
+        repo.root_path(),
+    );
+
+    // Step 2: Switch to hist-feature again while already there (AlreadyAt)
+    // This should NOT update history
+    snapshot_switch_from_dir(
+        "already_at_preserves_history_2_noop",
+        &repo,
+        &["hist-feature"],
+        &feature_path,
+    );
+
+    // Step 3: `wt switch -` should still go to main (the real previous),
+    // not to hist-feature (which the bug would have recorded)
+    snapshot_switch_from_dir(
+        "already_at_preserves_history_3_dash_to_main",
+        &repo,
+        &["-"],
+        &feature_path,
+    );
+}
+
+/// WORKTRUNK_FIRST_OUTPUT exits after execute_switch, before mismatch computation
+/// and output rendering. Used by time-to-first-output benchmarks.
+#[rstest]
+fn test_switch_first_output_exits_cleanly(mut repo: TestRepo) {
+    repo.add_worktree("feature-bench");
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "feature-bench", "--yes"])
+        .env("WORKTRUNK_FIRST_OUTPUT", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "WORKTRUNK_FIRST_OUTPUT should exit 0: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // No output expected — early exit skips all rendering
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+}
+
+/// Bug fix: `--base` without `--create` should warn, not error.
+///
+/// Previously, `--base -` was resolved (calling resolve_worktree_name) before
+/// checking the `--create` flag. When there was no previous branch in history,
+/// this produced "No previous branch found" instead of the expected
+/// "--base flag is only used with --create, ignoring" warning.
+#[rstest]
+fn test_switch_base_without_create_warns_not_errors(repo: TestRepo) {
+    repo.run_git(&["branch", "base-test"]);
+
+    // No switch history exists, so resolving `-` would fail.
+    // But --base without --create should just warn and ignore the flag.
+    snapshot_switch(
+        "switch_base_without_create_warns",
+        &repo,
+        &["base-test", "--base", "-"],
+    );
 }

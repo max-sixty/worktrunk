@@ -70,8 +70,10 @@ fn test_user_hooks_run_before_project_hooks(repo: TestRepo) {
     repo.write_test_config(
         r#"[post-create]
 log = "echo 'USER_HOOK' >> hook_order.txt"
-
-[projects."../origin"]
+"#,
+    );
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
 approved-commands = ["echo 'PROJECT_HOOK' >> hook_order.txt"]
 "#,
     );
@@ -122,8 +124,10 @@ fn test_no_verify_flag_skips_all_hooks(repo: TestRepo) {
     repo.write_test_config(
         r#"[post-create]
 log = "echo 'USER_HOOK' > user_marker.txt"
-
-[projects."../origin"]
+"#,
+    );
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
 approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
 "#,
     );
@@ -778,11 +782,10 @@ cleanup = "echo 'POST_REMOVE_DURING_MERGE' > ../merge_postremove_marker.txt"
     );
 }
 
-// Note: The `return Ok(())` path in spawn_post_remove_hooks when UserConfig::load()
-// fails (handlers.rs line 556) is defensive code for an extremely rare race condition
-// where config becomes invalid between command startup and hook execution. This is
-// not easily testable without complex timing manipulation and matches the existing
-// pattern in spawn_post_switch_after_remove (line 584).
+// Note: The `return Ok(())` path in spawn_hooks_after_remove when UserConfig::load()
+// fails is defensive code for an extremely rare race condition where config becomes
+// invalid between command startup and hook execution. This is not easily testable
+// without complex timing manipulation.
 
 #[rstest]
 fn test_standalone_hook_post_remove_invalid_template(repo: TestRepo) {
@@ -802,7 +805,7 @@ fn test_standalone_hook_post_remove_invalid_template(repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Failed to expand command template"),
+        stderr.contains("syntax error"),
         "Error should mention template expansion failure, got: {stderr}"
     );
 }
@@ -923,9 +926,113 @@ vars = "echo 'repo={{ repo }} branch={{ branch }}' > template_vars.txt"
     );
 }
 
+#[rstest]
+fn test_hook_template_variables_from_subdirectory(repo: TestRepo) {
+    // Hook that writes template variables and pwd to files so we can verify their values.
+    // This tests that running from a subdirectory still resolves worktree_path to the
+    // worktree root (not "." or the subdirectory) and sets hook CWD to the root.
+    repo.write_project_config(
+        r#"pre-merge = "echo '{{ worktree_path }}' > wt_path.txt && echo '{{ worktree_name }}' > wt_name.txt && pwd > hook_cwd.txt""#,
+    );
+    repo.commit("Add pre-merge hook");
+
+    // Create a subdirectory and run the hook from there
+    let subdir = repo.root_path().join("src").join("components");
+    fs::create_dir_all(&subdir).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-merge", "--yes"])
+        .current_dir(&subdir) // override: run from subdirectory
+        .output()
+        .expect("Failed to run wt hook pre-merge");
+
+    assert!(
+        output.status.success(),
+        "wt hook pre-merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // worktree_path should be the worktree root, not "." or the subdirectory.
+    // On Windows, to_posix_path() converts C:\... to /c/..., so check that the path
+    // is not relative rather than using is_absolute() (which rejects POSIX-style paths).
+    let wt_path = fs::read_to_string(repo.root_path().join("wt_path.txt"))
+        .expect("wt_path.txt should exist (hook should run from worktree root, not subdirectory)");
+    let wt_path = wt_path.trim();
+    assert_ne!(wt_path, ".", "worktree_path should not be relative '.'");
+    assert!(
+        wt_path.ends_with("repo"),
+        "worktree_path should end with repo dir name, got: {wt_path}"
+    );
+
+    // worktree_name should be the directory name, not "unknown"
+    let wt_name =
+        fs::read_to_string(repo.root_path().join("wt_name.txt")).expect("wt_name.txt should exist");
+    assert_eq!(
+        wt_name.trim(),
+        "repo",
+        "worktree_name should be the directory name, not 'unknown'"
+    );
+
+    // Hook CWD should be the worktree root, not the subdirectory
+    let hook_cwd = fs::read_to_string(repo.root_path().join("hook_cwd.txt"))
+        .expect("hook_cwd.txt should exist");
+    let hook_cwd = hook_cwd.trim();
+    assert!(
+        !hook_cwd.contains("src/components"),
+        "Hook should run from worktree root, not subdirectory. CWD was: {hook_cwd}"
+    );
+    assert!(
+        hook_cwd.ends_with("repo"),
+        "Hook CWD should be worktree root, got: {hook_cwd}"
+    );
+}
+
 // ============================================================================
 // Combined User and Project Hooks Tests
 // ============================================================================
+
+/// Test that both user and project unnamed hooks of the same type run and get unique log names.
+/// This exercises the unnamed index tracking when multiple unnamed hooks share the same hook type.
+#[rstest]
+fn test_user_and_project_unnamed_post_start(repo: TestRepo) {
+    // Create project config with unnamed post-start hook
+    repo.write_project_config(r#"post-start = "echo 'PROJECT_POST_START' > project_bg.txt""#);
+    repo.commit("Add project config");
+
+    // Write user config with unnamed hook AND pre-approve project command
+    repo.write_test_config(
+        r#"post-start = "echo 'USER_POST_START' > user_bg.txt"
+"#,
+    );
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
+"#,
+    );
+
+    snapshot_switch(
+        "user_and_project_unnamed_post_start",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+
+    // Wait for both background commands
+    wait_for_file(&worktree_path.join("user_bg.txt"));
+    wait_for_file(&worktree_path.join("project_bg.txt"));
+
+    // Both should have run
+    assert!(
+        worktree_path.join("user_bg.txt").exists(),
+        "User post-start should have run"
+    );
+    assert!(
+        worktree_path.join("project_bg.txt").exists(),
+        "Project post-start should have run"
+    );
+}
 
 #[rstest]
 fn test_user_and_project_post_start_both_run(repo: TestRepo) {
@@ -937,8 +1044,10 @@ fn test_user_and_project_post_start_both_run(repo: TestRepo) {
     repo.write_test_config(
         r#"[post-start]
 bg = "echo 'USER_POST_START' > user_bg.txt"
-
-[projects."../origin"]
+"#,
+    );
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
 approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
 "#,
     );
@@ -1703,5 +1812,105 @@ submodule = "echo '4' >> hook_order.txt"
         lines,
         vec!["1", "2", "3", "4"],
         "Hooks should execute in TOML insertion order (vscode, claude, copy, submodule)"
+    );
+}
+
+// ============================================================================
+// User Pre-Switch Hook Tests
+// ============================================================================
+
+/// Test that a pre-switch hook executes before switching to an existing worktree
+#[rstest]
+fn test_user_pre_switch_hook_executes(mut repo: TestRepo) {
+    // Create a worktree to switch to
+    let _feature_wt = repo.add_worktree("feature");
+
+    // Write user config with pre-switch hook that creates a marker in the current worktree
+    repo.write_test_config(
+        r#"[pre-switch]
+check = "echo 'USER_PRE_SWITCH_RAN' > pre_switch_marker.txt"
+"#,
+    );
+
+    snapshot_switch("user_pre_switch_executes", &repo, &["feature"]);
+
+    // Verify user hook ran in the source worktree (main), not the destination
+    let marker_file = repo.root_path().join("pre_switch_marker.txt");
+    assert!(
+        marker_file.exists(),
+        "User pre-switch hook should have created marker in source worktree"
+    );
+
+    let contents = fs::read_to_string(&marker_file).unwrap();
+    assert!(
+        contents.contains("USER_PRE_SWITCH_RAN"),
+        "Marker file should contain expected content"
+    );
+}
+
+/// Test that a failing pre-switch hook blocks the switch (including --create)
+#[rstest]
+fn test_user_pre_switch_failure_blocks_switch(repo: TestRepo) {
+    // Write user config with failing pre-switch hook
+    repo.write_test_config(
+        r#"[pre-switch]
+block = "exit 1"
+"#,
+    );
+
+    // Failing pre-switch should prevent worktree creation
+    snapshot_switch("user_pre_switch_failure", &repo, &["--create", "feature"]);
+
+    // Worktree should NOT have been created
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    assert!(
+        !worktree_path.exists(),
+        "Worktree should not be created when pre-switch hook fails"
+    );
+}
+
+/// Test that --no-verify skips the pre-switch hook
+#[rstest]
+fn test_user_pre_switch_skipped_with_no_verify(repo: TestRepo) {
+    // Write user config with pre-switch hook that creates a marker
+    repo.write_test_config(
+        r#"[pre-switch]
+check = "echo 'SHOULD_NOT_RUN' > pre_switch_marker.txt"
+"#,
+    );
+
+    snapshot_switch(
+        "user_pre_switch_no_verify",
+        &repo,
+        &["--create", "feature", "--no-verify"],
+    );
+
+    // Pre-switch hook should NOT have run (--no-verify skips all hooks)
+    let marker_file = repo.root_path().join("pre_switch_marker.txt");
+    assert!(
+        !marker_file.exists(),
+        "Pre-switch hook should be skipped with --no-verify"
+    );
+}
+
+/// Test that `wt hook pre-switch` runs pre-switch hooks manually
+#[rstest]
+fn test_user_pre_switch_manual_hook(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[pre-switch]
+check = "echo 'MANUAL_PRE_SWITCH' > pre_switch_marker.txt"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "hook", &["pre-switch"], None);
+        assert_cmd_snapshot!("user_pre_switch_manual", cmd);
+    });
+
+    let marker_file = repo.root_path().join("pre_switch_marker.txt");
+    assert!(
+        marker_file.exists(),
+        "Manual pre-switch hook should have created marker"
     );
 }

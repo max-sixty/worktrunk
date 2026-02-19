@@ -1,6 +1,6 @@
 # Benchmark Guidelines
 
-See `list.rs` header for the authoritative list of benchmark groups and run examples.
+See `list.rs` and `time_to_first_output.rs` headers for benchmark groups and run examples.
 
 ## Quick Start
 
@@ -14,8 +14,12 @@ cargo bench --bench list many_branches
 # GH #461 scenario (200 branches on rust-lang/rust)
 cargo bench --bench list real_repo_many_branches
 
-# All benchmarks (~1 hour)
+# All list benchmarks (~1 hour)
 cargo bench --bench list
+
+# Time-to-first-output benchmarks
+cargo bench --bench time_to_first_output            # all commands
+cargo bench --bench time_to_first_output -- remove  # just remove
 ```
 
 ## Rust Repo Caching
@@ -34,6 +38,14 @@ cargo bench --bench list -- --skip cold --skip real
 cargo bench --bench list scaling    # All scaling benchmarks
 cargo bench --bench list -- --skip cold  # Warm cache only
 ```
+
+## WORKTRUNK_FIRST_OUTPUT
+
+Setting `WORKTRUNK_FIRST_OUTPUT=1` causes commands to exit at the point where first
+user-visible output would appear. Used by `time_to_first_output` benchmarks to measure
+startup latency without output rendering or post-output work (mismatch warnings, hooks).
+
+Supported commands: `switch`, `remove`, `list`.
 
 ## Expected Performance
 
@@ -66,7 +78,7 @@ cargo run -p wt-perf -- setup typical-8 --persist
 #   branches-N      - N branches, 1 commit each
 #   branches-N-M    - N branches, M commits each
 #   divergent       - 200 branches × 20 commits (GH #461 scenario)
-#   select-test     - Config for wt select testing
+#   select-test     - Config for wt switch interactive picker testing
 
 # Invalidate caches for cold run
 cargo run -p wt-perf -- invalidate /tmp/wt-perf-typical-8/main

@@ -154,6 +154,11 @@ pub(crate) enum TaskResult {
         /// Whether the port is listening (None if no URL or couldn't parse port)
         active: Option<bool>,
     },
+    /// LLM-generated branch summary (--full only, requires LLM command configured)
+    SummaryGenerate {
+        item_idx: usize,
+        summary: Option<String>,
+    },
 }
 
 impl TaskResult {
@@ -174,7 +179,8 @@ impl TaskResult {
             | TaskResult::UserMarker { item_idx, .. }
             | TaskResult::Upstream { item_idx, .. }
             | TaskResult::CiStatus { item_idx, .. }
-            | TaskResult::UrlStatus { item_idx, .. } => *item_idx,
+            | TaskResult::UrlStatus { item_idx, .. }
+            | TaskResult::SummaryGenerate { item_idx, .. } => *item_idx,
         }
     }
 }
@@ -184,7 +190,10 @@ impl TaskKind {
     ///
     /// Network tasks are sorted to run last to avoid blocking local tasks.
     pub fn is_network(self) -> bool {
-        matches!(self, TaskKind::CiStatus | TaskKind::UrlStatus)
+        matches!(
+            self,
+            TaskKind::CiStatus | TaskKind::UrlStatus | TaskKind::SummaryGenerate
+        )
     }
 }
 

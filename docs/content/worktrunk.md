@@ -75,13 +75,15 @@ git branch -d feat{% end %}</td>
   </tbody>
 </table>
 
-**Workflow automation:**
-
 > Expand into the more advanced commands as needed
+
+**Workflow automation:**
 
 - **[Hooks](@/hook.md)** — run commands on create, pre-merge, post-merge, etc
 - **[LLM commit messages](@/llm-commits.md)** — generate commit messages from diffs
 - **[Merge workflow](@/merge.md)** — squash, rebase, merge, clean up in one command
+- **[Interactive picker](@/switch.md#interactive-picker)** — browse worktrees with live diff and log previews
+- **[Copy build caches](@/step.md)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
 - ...and **[lots more](#next-steps)**
 
 A demo with some advanced features:
@@ -91,7 +93,7 @@ A demo with some advanced features:
   <source srcset="/assets/docs/dark/wt-zellij-omnibus.gif" media="(prefers-color-scheme: dark)">
   <img src="/assets/docs/light/wt-zellij-omnibus.gif" alt="Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow" width="1600" height="900">
 </picture>
-<figcaption>Multiple Claude agents in parallel with hooks, LLM commits, and merge</figcaption>
+<figcaption>Multiple Claude agents in parallel with interactive picker, hooks, LLM commits, and merge</figcaption>
 </figure>
 
 ## Install
@@ -136,7 +138,7 @@ Create a worktree for a new feature:
 
 <!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__quickstart_switch.snap — edit source to update -->
 
-{% terminal() %}
+{% terminal(cmd="wt switch --create feature-auth") %}
 <span class="cmd">wt switch --create feature-auth</span>
 <span class=g>✓</span> <span class=g>Created branch <b>feature-auth</b> from <b>main</b> and worktree @ <b>repo.feature-auth</b></span>
 {% end %}
@@ -147,7 +149,7 @@ This creates a new branch and worktree, then switches to it. Do your work, then 
 
 <!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__quickstart_list.snap — edit source to update -->
 
-{% terminal() %}
+{% terminal(cmd="wt list") %}
 <span class="cmd">wt list</span>
   <b>Branch</b>        <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
 @ feature-auth  <span class=c>+</span>   <span class=d>–</span>      <span class=g>+53</span>                         <span class=d>0e631add</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
@@ -158,7 +160,7 @@ This creates a new branch and worktree, then switches to it. Do your work, then 
 
 <!-- END AUTO-GENERATED -->
 
-The `@` marks the current worktree. `+` means uncommitted changes, `↕` means unpushed commits.
+The `@` marks the current worktree. `+` means staged changes, `⇡` means unpushed commits.
 
 When done, either:
 
@@ -174,7 +176,7 @@ wt remove                         # after PR is merged
 
 <!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__quickstart_merge.snap — edit source to update -->
 
-{% terminal() %}
+{% terminal(cmd="wt merge main") %}
 <span class="cmd">wt merge main</span>
 <span class=c>◎</span> <span class=c>Generating commit message and committing changes... <span style='color:var(--bright-black,#555)'>(2 files, <span class=g>+53</span></span></span>, no squashing needed<span style='color:var(--bright-black,#555)'>)</span>
 <span style='background:var(--bright-white,#fff)'> </span> <b>Add authentication module</b>
@@ -205,8 +207,8 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
 
 - Learn the core commands: [`wt switch`](@/switch.md), [`wt list`](@/list.md), [`wt merge`](@/merge.md), [`wt remove`](@/remove.md)
 - Set up [project hooks](@/hook.md) for automated setup
-- Explore [LLM commit messages](@/llm-commits.md), [fzf-like
-  selector](@/select.md), [Claude Code integration](@/claude-code.md), [CI
+- Explore [LLM commit messages](@/llm-commits.md), [interactive
+  picker](@/switch.md#interactive-picker), [Claude Code integration](@/claude-code.md), [CI
   status & PR links](@/list.md#ci-status)
 - Run `wt --help` or `wt <command> --help` for quick CLI reference
 

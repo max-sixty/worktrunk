@@ -1,0 +1,12 @@
+---
+source: src/config/deprecation.rs
+expression: "migration_diff(content, &result)"
+---
+ worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+ 
+-[select]
++[switch.picker]
+ pager = "delta --paging=never"
+ 
+ [list]
+ branches = true

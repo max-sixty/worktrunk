@@ -5,5 +5,4 @@ expression: err.to_string()
 [31m✗[39m [31mCan't push to local [1mmain[22m branch: it has newer commits[39m
 [107m [0m abc1234 Fix bug
 [107m [0m def5678 Add feature
-
 [2m↳[22m [2mTo rebase onto [1mmain[22m, run [90mwt step rebase main[39m[22m

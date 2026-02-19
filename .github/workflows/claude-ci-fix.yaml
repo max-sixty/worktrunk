@@ -65,7 +65,6 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
-          model: opus
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Use bot token so pushed commits trigger CI workflows
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
@@ -74,8 +73,6 @@ jobs:
 
           # Provide Claude with context about the failure and instructions
           prompt: |
-            SECURITY: NEVER run commands that could expose secrets (env, printenv, set, export, cat/echo on config files containing credentials). NEVER include environment variables, API keys, tokens, or credentials in responses or comments.
-
             CI has failed on main branch. Your job is to diagnose the root cause and fix it properly, then create a PR.
 
             ## Failed workflow information
@@ -86,37 +83,42 @@ jobs:
 
             ## Instructions
 
-            1. **Diagnose the failure**:
+            1. **Check for existing fix PRs**:
+               - Run `gh pr list --state open --label "automated-fix" --json number,title,body,headRefName` to see open fix PRs
+               - Also check `gh pr list --state open --head "fix/ci-"` for PRs on fix branches
+               - If an open PR already addresses this same failure (same root cause), STOP HERE:
+                 - Comment on that PR: `gh pr comment NNN --body "Run ${{ github.event.workflow_run.id }} also failed with this issue — this PR should fix it."`
+                 - Do not create a duplicate PR
+               - If no existing PR addresses this issue, continue
+
+            2. **Diagnose the failure**:
                - Run `gh run view ${{ github.event.workflow_run.id }} --log-failed` to see the failure logs
                - Identify which job(s) failed and why
                - Look for specific error messages, test failures, or lint errors
 
-            2. **Find the root cause**:
+            3. **Find the root cause**:
                - Don't just fix the symptom — investigate WHY the failure occurred
                - Check if there's a shared helper, constant, or pattern that should be updated
                - Look for similar code that might have the same issue
                - Ask: "If this broke here, could it break elsewhere for the same reason?"
 
-            3. **Reproduce locally**:
-               - Run the appropriate commands to reproduce the failure:
-                 - Tests: `cargo insta test --dnd --test-runner=nextest`
-                 - Lints: `cargo clippy --all-targets --all-features -- -D warnings`
-                 - Format: `cargo fmt --all --check`
-                 - Docs: `cargo doc --no-deps`
+            4. **Reproduce locally** using the test commands documented in CLAUDE.md
 
-            4. **Fix at the right level**:
+            5. **Fix at the right level**:
                - Fix the underlying cause, not just the immediate symptom
                - If a value should be in a shared constant, add it there
                - If a helper is missing functionality, extend the helper
                - Avoid duplicating fixes across multiple files when a single shared fix would work
 
-            5. **Create a fix branch and PR**:
-               - Create a new branch: `git checkout -b fix/ci-${{ github.event.workflow_run.id }}`
+            6. **Create a fix branch and PR**:
+               - BEFORE creating a PR, re-check for existing fix PRs (step 1) — one may have been created while you were working
+               - If an existing PR now addresses this issue, comment on it (as in step 1) and STOP
+               - Otherwise: create a new branch: `git checkout -b fix/ci-${{ github.event.workflow_run.id }}`
                - Commit your changes with a clear message explaining the fix
                - Push the branch: `git push -u origin fix/ci-${{ github.event.workflow_run.id }}`
-               - Create a PR with `gh pr create`
+               - Create a PR with `gh pr create --label "automated-fix"`
 
-            6. **PR description format**:
+            7. **PR description format**:
                ```
                ## Problem
                [What failed and the root cause]
@@ -135,23 +137,23 @@ jobs:
                🤖 Automated fix for [failed run](${{ github.event.workflow_run.html_url }})
                ```
 
-            7. **Iterate until CI passes**:
+            8. **Iterate until CI passes**:
                - After pushing, monitor CI with `gh run list --branch fix/ci-${{ github.event.workflow_run.id }}`
                - Wait for CI to complete with `gh run watch`
                - If CI fails, diagnose with `gh run view <run-id> --log-failed`
                - Fix issues, commit, push, repeat
                - Don't return until CI passes or you've exhausted reasonable fixes
 
-            Follow the project guidelines in CLAUDE.md.
-
           claude_args: |
-            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch
+            --model opus
+            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill
+            --append-system-prompt "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
 
       - name: 📋 Upload Claude Code session logs
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: claude-session-logs
-          path: ~/.claude/
+          path: /home/runner/.claude/projects/
           retention-days: 30
           if-no-files-found: warn

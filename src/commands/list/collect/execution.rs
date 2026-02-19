@@ -14,14 +14,14 @@ use worktrunk::git::{BranchRef, Repository, WorktreeInfo};
 use super::CollectOptions;
 use super::tasks::{
     AheadBehindTask, BranchDiffTask, CiStatusTask, CommitDetailsTask, CommittedTreesMatchTask,
-    GitOperationTask, HasFileChangesTask, IsAncestorTask, MergeTreeConflictsTask, Task,
-    TaskContext, UpstreamTask, UrlStatusTask, UserMarkerTask, WorkingTreeConflictsTask,
-    WorkingTreeDiffTask, WouldMergeAddTask,
+    GitOperationTask, HasFileChangesTask, IsAncestorTask, MergeTreeConflictsTask,
+    SummaryGenerateTask, Task, TaskContext, UpstreamTask, UrlStatusTask, UserMarkerTask,
+    WorkingTreeConflictsTask, WorkingTreeDiffTask, WouldMergeAddTask,
 };
 use super::types::{TaskError, TaskKind, TaskResult};
 
 // Tasks that are expensive because they require merge-base computation or merge simulation.
-// These are skipped for branches that are far behind the default branch (in wt select).
+// These are skipped for branches that are far behind the default branch (in `wt switch` interactive picker).
 // AheadBehind is NOT here - we use batch data for it instead of skipping.
 // CommittedTreesMatch is NOT here - it's a cheap tree comparison that aids integration detection.
 const EXPENSIVE_TASKS: &[TaskKind] = &[
@@ -30,6 +30,21 @@ const EXPENSIVE_TASKS: &[TaskKind] = &[
     TaskKind::WouldMergeAdd,      // git merge-tree simulation
     TaskKind::BranchDiff,         // git diff with three-dot range
     TaskKind::MergeTreeConflicts, // git merge-tree simulation
+];
+
+/// Tasks that require a valid commit SHA. Skipped for unborn branches (no commits yet).
+/// Without this, these tasks would fail on the null OID and show as errors in the table.
+const COMMIT_TASKS: &[TaskKind] = &[
+    TaskKind::CommitDetails,
+    TaskKind::AheadBehind,
+    TaskKind::CommittedTreesMatch,
+    TaskKind::HasFileChanges,
+    TaskKind::IsAncestor,
+    TaskKind::BranchDiff,
+    TaskKind::MergeTreeConflicts,
+    TaskKind::WouldMergeAdd,
+    TaskKind::CiStatus,
+    TaskKind::Upstream,
 ];
 
 // ============================================================================
@@ -76,6 +91,7 @@ fn dispatch_task(kind: TaskKind, ctx: TaskContext) -> Result<TaskResult, TaskErr
         TaskKind::Upstream => UpstreamTask::compute(ctx),
         TaskKind::CiStatus => CiStatusTask::compute(ctx),
         TaskKind::UrlStatus => UrlStatusTask::compute(ctx),
+        TaskKind::SummaryGenerate => SummaryGenerateTask::compute(ctx),
     }
 }
 
@@ -129,6 +145,10 @@ impl ExpectedResults {
 /// worktree. Expected results are registered internally as each work item is added.
 /// The caller is responsible for executing the work items.
 ///
+/// Task preconditions (stale branch, unborn branch, missing llm_command) are
+/// enforced here — not in callers. This function is called from both `collect()`
+/// and `populate_item()`, so guards must live here to cover all entry points.
+///
 /// The `repo` parameter is cloned into each TaskContext, sharing its cache via Arc.
 pub fn work_items_for_worktree(
     repo: &Repository,
@@ -145,18 +165,25 @@ pub fn work_items_for_worktree(
 
     let skip = &options.skip_tasks;
 
-    // Expand URL template for this item
-    let item_url = options.url_template.as_ref().and_then(|template| {
-        wt.branch.as_ref().and_then(|branch| {
-            let mut vars = std::collections::HashMap::new();
-            vars.insert("branch", branch.as_str());
-            worktrunk::config::expand_template(template, &vars, false, repo, "url-template").ok()
+    let include_url = !skip.contains(&TaskKind::UrlStatus);
+
+    // Expand URL template for this item (only if URL status is enabled).
+    let item_url = if include_url {
+        options.url_template.as_ref().and_then(|template| {
+            wt.branch.as_ref().and_then(|branch| {
+                let mut vars = std::collections::HashMap::new();
+                vars.insert("branch", branch.as_str());
+                worktrunk::config::expand_template(template, &vars, false, repo, "url-template")
+                    .ok()
+            })
         })
-    });
+    } else {
+        None
+    };
 
     // Send URL immediately (before health check) so it appears right away.
     // The UrlStatusTask will later update with active status.
-    if let Some(ref url) = item_url {
+    if include_url && let Some(ref url) = item_url {
         expected_results.expect(item_idx, TaskKind::UrlStatus);
         let _ = tx.send(Ok(TaskResult::UrlStatus {
             item_idx,
@@ -170,6 +197,7 @@ pub fn work_items_for_worktree(
         branch_ref: BranchRef::from(wt),
         item_idx,
         item_url,
+        llm_command: options.llm_command.clone(),
     };
 
     // Check if this branch is stale and should skip expensive tasks.
@@ -177,6 +205,8 @@ pub fn work_items_for_worktree(
         .branch
         .as_deref()
         .is_some_and(|b| options.stale_branches.contains(b));
+
+    let has_commits = wt.has_commits();
 
     let mut items = Vec::with_capacity(15);
 
@@ -204,6 +234,7 @@ pub fn work_items_for_worktree(
         TaskKind::MergeTreeConflicts,
         TaskKind::CiStatus,
         TaskKind::WouldMergeAdd,
+        TaskKind::SummaryGenerate,
     ] {
         if skip.contains(&kind) {
             continue;
@@ -212,13 +243,21 @@ pub fn work_items_for_worktree(
         if is_stale && EXPENSIVE_TASKS.contains(&kind) {
             continue;
         }
+        // Skip commit-dependent tasks for unborn branches (no commits yet)
+        if !has_commits && COMMIT_TASKS.contains(&kind) {
+            continue;
+        }
+        // Skip SummaryGenerate when no LLM command is configured
+        if kind == TaskKind::SummaryGenerate && options.llm_command.is_none() {
+            continue;
+        }
         add_item(kind);
     }
     // URL status health check task (if we have a URL).
     // Note: We already registered and sent an immediate UrlStatus above with url + active=None.
     // This work item will send a second UrlStatus with active=Some(bool) after health check.
     // Both results must be registered and expected.
-    if !skip.contains(&TaskKind::UrlStatus) && ctx.item_url.is_some() {
+    if include_url && ctx.item_url.is_some() {
         expected_results.expect(item_idx, TaskKind::UrlStatus);
         items.push(WorkItem {
             ctx: ctx.clone(),
@@ -233,6 +272,8 @@ pub fn work_items_for_worktree(
 ///
 /// Returns a list of work items representing all tasks that should run for this
 /// branch. Branches have fewer tasks than worktrees (no working tree operations).
+///
+/// Task preconditions are enforced here, same as [`work_items_for_worktree`].
 ///
 /// The `repo` parameter is cloned into each TaskContext, sharing its cache via Arc.
 /// The `is_remote` flag indicates whether this is a remote-tracking branch (e.g., "origin/feature")
@@ -259,6 +300,7 @@ pub fn work_items_for_branch(
         branch_ref,
         item_idx,
         item_url: None, // Branches without worktrees don't have URLs
+        llm_command: options.llm_command.clone(),
     };
 
     // Check if this branch is stale and should skip expensive tasks.
@@ -286,6 +328,7 @@ pub fn work_items_for_branch(
         TaskKind::MergeTreeConflicts,
         TaskKind::CiStatus,
         TaskKind::WouldMergeAdd,
+        TaskKind::SummaryGenerate,
     ] {
         if skip.contains(&kind) {
             continue;
@@ -294,8 +337,107 @@ pub fn work_items_for_branch(
         if is_stale && EXPENSIVE_TASKS.contains(&kind) {
             continue;
         }
+        // Skip SummaryGenerate when no LLM command is configured
+        if kind == TaskKind::SummaryGenerate && options.llm_command.is_none() {
+            continue;
+        }
         add_item(kind);
     }
 
     items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use worktrunk::shell_exec::Cmd;
+
+    #[test]
+    fn test_skip_url_status_suppresses_placeholder_and_task() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        Cmd::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .run()
+            .expect("git init");
+
+        let repo = Repository::at(dir.path()).expect("repo");
+        let wt = WorktreeInfo {
+            path: dir.path().to_path_buf(),
+            head: "deadbeef".to_string(),
+            branch: Some("main".to_string()),
+            bare: false,
+            detached: false,
+            locked: None,
+            prunable: None,
+        };
+
+        let skip_tasks: HashSet<TaskKind> = [TaskKind::UrlStatus].into_iter().collect();
+        let options = CollectOptions {
+            skip_tasks,
+            url_template: Some("http://localhost/{{ branch }}".to_string()),
+            llm_command: None,
+            stale_branches: HashSet::new(),
+        };
+
+        let expected_results = Arc::new(ExpectedResults::default());
+        let (tx, rx) = chan::unbounded::<Result<TaskResult, TaskError>>();
+
+        let items = work_items_for_worktree(&repo, &wt, 0, &options, &expected_results, &tx);
+
+        // No placeholder sent
+        assert!(rx.try_recv().is_err());
+        // No UrlStatus work item created
+        assert!(!items.iter().any(|item| item.kind == TaskKind::UrlStatus));
+        // No UrlStatus in expected results
+        assert!(
+            !expected_results
+                .results_for(0)
+                .contains(&TaskKind::UrlStatus)
+        );
+        // item_url is None for all items
+        assert!(items.iter().all(|item| item.ctx.item_url.is_none()));
+    }
+
+    #[test]
+    fn test_no_llm_command_skips_summary_generate() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        Cmd::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .run()
+            .expect("git init");
+
+        let repo = Repository::at(dir.path()).expect("repo");
+        let wt = WorktreeInfo {
+            path: dir.path().to_path_buf(),
+            head: "deadbeef".to_string(),
+            branch: Some("main".to_string()),
+            bare: false,
+            detached: false,
+            locked: None,
+            prunable: None,
+        };
+
+        // No llm_command, no skip_tasks — SummaryGenerate should still be skipped
+        let options = CollectOptions {
+            skip_tasks: HashSet::new(),
+            llm_command: None,
+            stale_branches: HashSet::new(),
+            ..Default::default()
+        };
+
+        let expected_results = Arc::new(ExpectedResults::default());
+        let (tx, _rx) = chan::unbounded::<Result<TaskResult, TaskError>>();
+
+        let items = work_items_for_worktree(&repo, &wt, 0, &options, &expected_results, &tx);
+
+        assert!(
+            !items
+                .iter()
+                .any(|item| item.kind == TaskKind::SummaryGenerate),
+            "SummaryGenerate should be skipped when llm_command is None"
+        );
+    }
 }

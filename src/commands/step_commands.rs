@@ -5,6 +5,7 @@
 //! - `handle_squash` - Squash commits into one
 //! - `step_show_squash_prompt` - Show squash prompt without executing
 //! - `handle_rebase` - Rebase onto target branch
+//! - `step_diff` - Show all changes since branching
 //! - `step_copy_ignored` - Copy gitignored files matching .worktreeinclude
 //! - `handle_promote` - Put a branch into the main worktree
 
@@ -20,7 +21,7 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
-    warning_message,
+    verbosity, warning_message,
 };
 
 use super::command_approval::approve_hooks;
@@ -472,6 +473,70 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     Ok(RebaseResult::Rebased)
 }
 
+/// Handle `wt step diff` command
+///
+/// Shows all changes since branching from the target: committed, staged, unstaged,
+/// and untracked files in a single diff. Uses a temporary index to include untracked
+/// files without modifying the real git index.
+///
+/// TODO: consider adding `--stage` flag (all/tracked/none) like `step commit` to
+/// control which change types are included. `tracked` would skip the temp index,
+/// `none` would diff only committed changes.
+pub fn step_diff(target: Option<&str>, extra_args: &[String]) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+    let wt = repo.current_worktree();
+
+    // Get and validate target ref
+    let integration_target = repo.require_target_ref(target)?;
+
+    // Get merge base
+    let merge_base = repo
+        .merge_base("HEAD", &integration_target)?
+        .context("No common ancestor with target branch")?;
+
+    let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
+
+    // Create an empty temporary index and register all working tree files with
+    // `git add -N .` so untracked files become visible to `git diff`.
+    let worktree_root = wt.root()?;
+
+    let temp_index = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
+    let temp_index_path = temp_index
+        .path()
+        .to_str()
+        .context("Temporary index path is not valid UTF-8")?;
+
+    // Initialize a valid empty index
+    Cmd::new("git")
+        .args(["read-tree", "--empty"])
+        .current_dir(&worktree_root)
+        .context(&current_branch)
+        .env("GIT_INDEX_FILE", temp_index_path)
+        .run()
+        .context("Failed to initialize temporary index")?;
+
+    // Register all working tree files as intent-to-add
+    Cmd::new("git")
+        .args(["add", "--intent-to-add", "."])
+        .current_dir(&worktree_root)
+        .context(&current_branch)
+        .env("GIT_INDEX_FILE", temp_index_path)
+        .run()
+        .context("Failed to register untracked files")?;
+
+    // Stream diff to stdout — git handles pager and coloring
+    let mut diff_args = vec!["diff".to_string(), merge_base];
+    diff_args.extend_from_slice(extra_args);
+    Cmd::new("git")
+        .args(&diff_args)
+        .current_dir(&worktree_root)
+        .context(&current_branch)
+        .env("GIT_INDEX_FILE", temp_index_path)
+        .stream()?;
+
+    Ok(())
+}
+
 /// Handle `wt step copy-ignored` command
 ///
 /// Copies gitignored files from a source worktree to a destination worktree.
@@ -483,6 +548,7 @@ pub fn step_copy_ignored(
     from: Option<&str>,
     to: Option<&str>,
     dry_run: bool,
+    force: bool,
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
 
@@ -578,10 +644,11 @@ pub fn step_copy_ignored(
         return Ok(());
     }
 
+    let verbose = verbosity();
     let mut copied_count = 0;
 
-    // Handle dry-run: show what would be copied in a gutter list
-    if dry_run {
+    // Show entries in verbose or dry-run mode
+    if verbose >= 1 || dry_run {
         let items: Vec<String> = entries_to_copy
             .iter()
             .map(|(src_entry, is_dir)| {
@@ -593,16 +660,19 @@ pub fn step_copy_ignored(
             })
             .collect();
         let entry_word = if items.len() == 1 { "entry" } else { "entries" };
+        let verb = if dry_run { "Would copy" } else { "Copying" };
         eprintln!(
             "{}",
             info_message(format!(
-                "Would copy {} {}:\n{}",
+                "{verb} {} {}:\n{}",
                 items.len(),
                 entry_word,
                 format_with_gutter(&items.join("\n"), None)
             ))
         );
-        return Ok(());
+        if dry_run {
+            return Ok(());
+        }
     }
 
     // Copy entries
@@ -614,17 +684,26 @@ pub fn step_copy_ignored(
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
-            copy_dir_recursive(src_entry, &dest_entry)?;
+            copy_dir_recursive(src_entry, &dest_entry, force)
+                .with_context(|| format!("copying directory {}", relative.display()))?;
             copied_count += 1;
         } else {
             if let Some(parent) = dest_entry.parent() {
-                fs::create_dir_all(parent)?;
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("creating directory for {}", relative.display()))?;
+            }
+            if force {
+                remove_if_exists(&dest_entry)?;
             }
             // Skip existing files for idempotent hook usage
             match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
                 Ok(_) => copied_count += 1,
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    return Err(
+                        anyhow::Error::from(e).context(format!("copying {}", relative.display()))
+                    );
+                }
             }
         }
     }
@@ -640,6 +719,14 @@ pub fn step_copy_ignored(
         success_message(format!("Copied {copied_count} {entry_word}"))
     );
 
+    Ok(())
+}
+
+/// Remove a file, ignoring "not found" errors.
+fn remove_if_exists(path: &Path) -> anyhow::Result<()> {
+    if let Err(e) = fs::remove_file(path) {
+        anyhow::ensure!(e.kind() == ErrorKind::NotFound, e);
+    }
     Ok(())
 }
 
@@ -704,15 +791,15 @@ fn list_ignored_entries(
 ///
 /// Apple recommends `copyfile()` with `COPYFILE_CLONE` for directories, which
 /// internally walks the tree and clones per-file — equivalent to what we do here.
-fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
-    copy_dir_recursive_fallback(src, dest)
+fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
+    copy_dir_recursive_fallback(src, dest, force)
 }
 
 /// File-by-file recursive copy with reflink per file.
 ///
 /// Used as fallback when atomic directory clone isn't available or fails.
-fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
-    fs::create_dir_all(dest)?;
+fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
+    fs::create_dir_all(dest).with_context(|| format!("creating directory {}", dest.display()))?;
 
     for entry in fs::read_dir(src)? {
         let entry = entry?;
@@ -722,29 +809,34 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path) -> anyhow::Result<()> {
 
         if file_type.is_symlink() {
             // Copy symlink (preserves the link, doesn't follow it)
-            if !dest_path.exists() {
-                let target = fs::read_link(&src_path)?;
-                #[cfg(unix)]
-                std::os::unix::fs::symlink(&target, &dest_path)?;
-                #[cfg(windows)]
-                {
-                    // Check source to determine symlink type (target may be relative/broken)
-                    let is_dir = src_path.metadata().map(|m| m.is_dir()).unwrap_or(false);
-                    if is_dir {
-                        std::os::windows::fs::symlink_dir(&target, &dest_path)?;
-                    } else {
-                        std::os::windows::fs::symlink_file(&target, &dest_path)?;
-                    }
-                }
+            if force {
+                remove_if_exists(&dest_path)?;
+            }
+            // Use symlink_metadata to detect broken symlinks (exists() follows symlinks
+            // and returns false for broken ones, causing EEXIST on the next symlink call)
+            if dest_path.symlink_metadata().is_err() {
+                let target = fs::read_link(&src_path)
+                    .with_context(|| format!("reading symlink {}", src_path.display()))?;
+                create_symlink(&target, &src_path, &dest_path)?;
             }
         } else if file_type.is_dir() {
-            copy_dir_recursive_fallback(&src_path, &dest_path)?;
+            copy_dir_recursive_fallback(&src_path, &dest_path, force)?;
+        } else if !file_type.is_file() {
+            // Skip non-regular files (sockets, FIFOs, etc.)
+            log::debug!("skipping non-regular file: {}", src_path.display());
         } else {
+            if force {
+                remove_if_exists(&dest_path)?;
+            }
             // Skip existing files for idempotent hook usage
             match reflink_copy::reflink_or_copy(&src_path, &dest_path) {
                 Ok(_) => {}
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    return Err(
+                        anyhow::Error::from(e).context(format!("copying {}", src_path.display()))
+                    );
+                }
             }
         }
     }
@@ -888,6 +980,37 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     Ok(PromoteResult::Promoted)
 }
 
+/// Create a symlink, handling platform differences.
+///
+/// On Windows, distinguishes between file and directory symlinks by checking the
+/// source path's metadata (the target may be relative or broken, so we use the
+/// source to determine the type).
+fn create_symlink(target: &Path, src_path: &Path, dest_path: &Path) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        let _ = src_path; // Used on Windows to determine symlink type
+        std::os::unix::fs::symlink(target, dest_path)
+            .with_context(|| format!("creating symlink {}", dest_path.display()))?;
+    }
+    #[cfg(windows)]
+    {
+        let is_dir = src_path.metadata().map(|m| m.is_dir()).unwrap_or(false);
+        if is_dir {
+            std::os::windows::fs::symlink_dir(target, dest_path)
+                .with_context(|| format!("creating symlink {}", dest_path.display()))?;
+        } else {
+            std::os::windows::fs::symlink_file(target, dest_path)
+                .with_context(|| format!("creating symlink {}", dest_path.display()))?;
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (target, src_path, dest_path);
+        anyhow::bail!("symlink creation not supported on this platform");
+    }
+    Ok(())
+}
+
 /// Move worktrees to their expected paths based on the `worktree-path` template.
 ///
 /// See `src/commands/relocate.rs` for the implementation details and algorithm.
@@ -1004,5 +1127,18 @@ mod tests {
         } else {
             panic!("Expected UpToDate variant");
         }
+    }
+
+    #[test]
+    fn test_remove_if_exists_nonexistent() {
+        // NotFound is silently ignored
+        assert!(remove_if_exists(Path::new("/nonexistent/file")).is_ok());
+    }
+
+    #[test]
+    fn test_remove_if_exists_not_a_file() {
+        // Trying to remove a directory with remove_file produces a non-NotFound error
+        let dir = std::env::temp_dir();
+        assert!(remove_if_exists(&dir).is_err());
     }
 }

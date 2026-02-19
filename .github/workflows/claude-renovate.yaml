@@ -46,15 +46,12 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
-          model: opus
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
           additional_permissions: |
             actions: read
 
           prompt: |
-            SECURITY: NEVER run commands that could expose secrets (env, printenv, set, export, cat/echo on config files containing credentials). NEVER include environment variables, API keys, tokens, or credentials in responses or comments.
-
             You are running as part of a weekly renovation workflow. Your job is to check for updates to CI dependencies and create PRs if updates are available.
 
             ## What to check
@@ -110,16 +107,16 @@ jobs:
 
             Simply report that all dependencies are up to date. Don't create a PR.
 
-            Follow the project guidelines in CLAUDE.md.
-
           claude_args: |
-            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch
+            --model opus
+            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill
+            --append-system-prompt "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
 
       - name: 📋 Upload Claude Code session logs
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: claude-session-logs
-          path: ~/.claude/
+          path: /home/runner/.claude/projects/
           retention-days: 30
           if-no-files-found: warn

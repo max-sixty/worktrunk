@@ -10,7 +10,8 @@ use std::path::PathBuf;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ProjectConfig, UserConfig, find_unknown_project_keys, find_unknown_user_keys,
+    ProjectConfig, UserConfig, default_system_config_path, find_unknown_project_keys,
+    find_unknown_user_keys, get_system_config_path,
 };
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -34,8 +35,14 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     // Build the complete output as a string
     let mut show_output = String::new();
 
+    // Render system config section (only when a system config file exists)
+    let has_system_config = render_system_config(&mut show_output)?;
+    if has_system_config {
+        show_output.push('\n');
+    }
+
     // Render user config
-    render_user_config(&mut show_output)?;
+    render_user_config(&mut show_output, has_system_config)?;
     show_output.push('\n');
 
     // Render project config if in a git repository
@@ -298,6 +305,9 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
         }
     }
 
+    // Check for newer version on GitHub
+    render_version_check(out)?;
+
     // Test commit generation - use effective config for current project
     let config = UserConfig::load()?;
     let project_id = Repository::current()
@@ -307,38 +317,78 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
 
     if !commit_config.is_configured() {
         writeln!(out, "{}", hint_message("Commit generation not configured"))?;
-        return Ok(());
-    }
+    } else {
+        let command_display = commit_config.command.as_ref().unwrap().clone();
 
-    let command_display = commit_config.command.as_ref().unwrap().clone();
-
-    match test_commit_generation(&commit_config) {
-        Ok(message) => {
-            writeln!(
-                out,
-                "{}",
-                success_message(cformat!(
-                    "Commit generation working (<bold>{command_display}</>)"
-                ))
-            )?;
-            writeln!(out, "{}", format_with_gutter(&message, None))?;
-        }
-        Err(e) => {
-            writeln!(
-                out,
-                "{}",
-                error_message(cformat!(
-                    "Commit generation failed (<bold>{command_display}</>)"
-                ))
-            )?;
-            writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+        match test_commit_generation(&commit_config) {
+            Ok(message) => {
+                writeln!(
+                    out,
+                    "{}",
+                    success_message(cformat!(
+                        "Commit generation working (<bold>{command_display}</>)"
+                    ))
+                )?;
+                writeln!(out, "{}", format_with_gutter(&message, None))?;
+            }
+            Err(e) => {
+                writeln!(
+                    out,
+                    "{}",
+                    error_message(cformat!(
+                        "Commit generation failed (<bold>{command_display}</>)"
+                    ))
+                )?;
+                writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+            }
         }
     }
 
     Ok(())
 }
 
-fn render_user_config(out: &mut String) -> anyhow::Result<()> {
+/// Render the SYSTEM CONFIG section. Returns true if a system config file was found.
+fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
+    let Some(system_path) = get_system_config_path() else {
+        return Ok(false);
+    };
+
+    writeln!(
+        out,
+        "{}",
+        format_heading(
+            "SYSTEM CONFIG",
+            Some(&format_path_for_display(&system_path))
+        )
+    )?;
+
+    // Read and display the file contents
+    let contents =
+        std::fs::read_to_string(&system_path).context("Failed to read system config file")?;
+
+    if contents.trim().is_empty() {
+        writeln!(out, "{}", hint_message("Empty file (no system defaults)"))?;
+        return Ok(true);
+    }
+
+    // Validate config (syntax + schema) and warn if invalid
+    if let Err(e) = toml::from_str::<UserConfig>(&contents) {
+        writeln!(out, "{}", error_message("Invalid config"))?;
+        writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+    } else {
+        // Only check for unknown keys if config is valid
+        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
+            &contents,
+        )));
+    }
+
+    // Display TOML with syntax highlighting
+    writeln!(out, "{}", format_toml(&contents))?;
+
+    Ok(true)
+}
+
+fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Result<()> {
     let config_path = require_user_config_path()?;
 
     writeln!(
@@ -404,6 +454,24 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
     // Display TOML with syntax highlighting (gutter at column 0)
     writeln!(out, "{}", format_toml(&contents))?;
 
+    if !has_system_config {
+        render_system_config_hint(out)?;
+    }
+
+    Ok(())
+}
+
+fn render_system_config_hint(out: &mut String) -> anyhow::Result<()> {
+    if let Some(path) = default_system_config_path() {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Optional system config not found @ <dim>{}</>",
+                format_path_for_display(&path)
+            ))
+        )?;
+    }
     Ok(())
 }
 
@@ -488,8 +556,8 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     }
 
     // Check for deprecations with show_brief_warning=false (silent mode)
-    // Only show in main worktree (where .git is a directory)
-    let is_main_worktree = repo_root.join(".git").is_dir();
+    // Only write migration file in main worktree, not linked worktrees
+    let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
     let has_deprecations = if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
@@ -554,8 +622,13 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         }
 
         // Show $SHELL to help diagnose rc file sourcing issues
-        if let Ok(shell_env) = std::env::var("SHELL") {
+        let shell_env = std::env::var("SHELL").ok().filter(|s| !s.is_empty());
+        if let Some(shell_env) = &shell_env {
             debug_lines.push(cformat!("$SHELL: <bold>{shell_env}</>"));
+        } else if let Some(detected) = worktrunk::shell::current_shell() {
+            debug_lines.push(cformat!(
+                "Detected shell: <bold>{detected}</> (via PSModulePath)"
+            ));
         }
 
         if is_git_subcommand {
@@ -690,6 +763,18 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                         )?;
                     }
                 }
+
+                // When configured but not active, show how to verify the wrapper loaded
+                if !shell_active {
+                    let verify_cmd = match shell {
+                        Shell::PowerShell => format!("Get-Command {cmd}"),
+                        _ => format!("type {cmd}"),
+                    };
+                    let hint = hint_message(cformat!(
+                        "To verify wrapper loaded: <bright-black>{verify_cmd}</>"
+                    ));
+                    writeln!(out, "{hint}")?;
+                }
             }
             ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
                 // For fish, check if we have valid integration at the legacy conf.d location
@@ -720,6 +805,18 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                             "To migrate to <bright-black>{canonical_path}</>, run <bright-black>{cmd} config shell install fish</>"
                         ))
                     )?;
+                } else if matches!(shell, Shell::Fish)
+                    && matches!(result.action, ConfigAction::WouldAdd)
+                {
+                    // Fish file exists but has different content (e.g. outdated version)
+                    any_not_configured = true;
+                    let warning = warning_message(cformat!(
+                        "<bold>{shell}</>: Outdated shell extension @ {path}"
+                    ));
+                    let hint = hint_message(cformat!(
+                        "To update, run <bright-black>{cmd} config shell install fish</>"
+                    ));
+                    writeln!(out, "{warning}\n{hint}")?;
                 } else {
                     any_not_configured = true;
                     writeln!(
@@ -774,7 +871,6 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
 
     // Summary hint when shells need configuration
     if any_not_configured {
-        writeln!(out)?;
         writeln!(
             out,
             "{}",
@@ -938,6 +1034,92 @@ pub(super) fn render_ci_tool_status(
     Ok(())
 }
 
+/// Render version update check (fetches from GitHub)
+fn render_version_check(out: &mut String) -> anyhow::Result<()> {
+    match fetch_latest_version() {
+        Ok(latest) => {
+            let current = crate::cli::version_str();
+            let current_semver = env!("CARGO_PKG_VERSION");
+            if is_newer_version(&latest, current_semver) {
+                writeln!(
+                    out,
+                    "{}",
+                    info_message(cformat!(
+                        "Update available: <bold>{latest}</> (current: {current})"
+                    ))
+                )?;
+            } else {
+                writeln!(
+                    out,
+                    "{}",
+                    success_message(cformat!("Up to date (<bold>{current}</>)"))
+                )?;
+            }
+        }
+        Err(e) => {
+            log::debug!("Version check failed: {e}");
+            writeln!(out, "{}", hint_message("Version check unavailable"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Fetch the latest release version from GitHub
+fn fetch_latest_version() -> anyhow::Result<String> {
+    // Allow tests to inject a version without network access.
+    // Set to "error" to simulate a fetch failure.
+    if let Ok(version) = std::env::var("WORKTRUNK_TEST_LATEST_VERSION") {
+        if version == "error" {
+            anyhow::bail!("simulated fetch failure");
+        }
+        return Ok(version);
+    }
+
+    let user_agent = format!(
+        "worktrunk/{} (https://worktrunk.dev)",
+        env!("CARGO_PKG_VERSION")
+    );
+    let output = Cmd::new("curl")
+        .args([
+            "--silent",
+            "--fail",
+            "--max-time",
+            "5",
+            "--header",
+            &format!("User-Agent: {user_agent}"),
+            "https://api.github.com/repos/max-sixty/worktrunk/releases/latest",
+        ])
+        .run()?;
+
+    if !output.status.success() {
+        anyhow::bail!("GitHub API request failed");
+    }
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let tag = json["tag_name"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing tag_name in response"))?;
+
+    // Strip leading 'v' prefix (e.g., "v0.23.2" -> "0.23.2")
+    Ok(tag.strip_prefix('v').unwrap_or(tag).to_string())
+}
+
+/// Compare two semver version strings (e.g., "0.24.0" > "0.23.2")
+fn is_newer_version(latest: &str, current: &str) -> bool {
+    let parse = |s: &str| -> Option<(u32, u32, u32)> {
+        let mut parts = s.splitn(3, '.');
+        Some((
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+        ))
+    };
+    match (parse(latest), parse(current)) {
+        (Some(l), Some(c)) => l > c,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -951,5 +1133,25 @@ mod tests {
         // Version should look like a semver (e.g., "2.47.1")
         assert!(version.chars().next().unwrap().is_ascii_digit());
         assert!(version.contains('.'));
+    }
+
+    #[test]
+    fn test_is_newer_version() {
+        // Newer versions
+        assert!(is_newer_version("0.24.0", "0.23.2"));
+        assert!(is_newer_version("1.0.0", "0.99.99"));
+        assert!(is_newer_version("0.23.3", "0.23.2"));
+        assert!(is_newer_version("0.23.2", "0.23.1"));
+
+        // Same version
+        assert!(!is_newer_version("0.23.2", "0.23.2"));
+
+        // Older versions
+        assert!(!is_newer_version("0.23.1", "0.23.2"));
+        assert!(!is_newer_version("0.22.0", "0.23.2"));
+
+        // Invalid input
+        assert!(!is_newer_version("invalid", "0.23.2"));
+        assert!(!is_newer_version("0.23.2", "invalid"));
     }
 }

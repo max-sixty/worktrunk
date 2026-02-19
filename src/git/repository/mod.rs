@@ -33,7 +33,7 @@ use anyhow::{Context, bail};
 
 use dunce::canonicalize;
 
-use crate::config::ProjectConfig;
+use crate::config::{ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
 use super::{DefaultBranchName, GitError, LineDiff, WorktreeInfo};
@@ -55,6 +55,30 @@ mod worktrees;
 pub use branch::Branch;
 pub use working_tree::WorkingTree;
 pub(super) use working_tree::path_to_logging_context;
+
+/// Structured error from [`Repository::run_command_delayed_stream`].
+///
+/// Separates command output from command identity so callers can format
+/// each part with appropriate styling (e.g., bold command, gray exit code).
+#[derive(Debug)]
+pub(crate) struct StreamCommandError {
+    /// Lines of output from the command (may be empty)
+    pub output: String,
+    /// The command string, e.g., "git worktree add /path -b fix main"
+    pub command: String,
+    /// Exit information, e.g., "exit code 255" or "killed by signal"
+    pub exit_info: String,
+}
+
+impl std::fmt::Display for StreamCommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Callers use Repository::extract_failed_command() to access fields directly.
+        // This Display impl exists only to satisfy the Error trait bound.
+        write!(f, "{}", self.output)
+    }
+}
+
+impl std::error::Error for StreamCommandError {}
 
 // ============================================================================
 // Repository Cache
@@ -90,6 +114,14 @@ pub(super) struct RepoCache {
     pub(super) project_identifier: OnceCell<String>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
+    /// User config (raw, as loaded from disk).
+    /// Lazily loaded on first access.
+    pub(super) user_config: OnceCell<UserConfig>,
+    /// Resolved user config (global merged with per-project overrides, defaults applied).
+    /// Lazily loaded on first access via `Repository::config()`.
+    pub(super) resolved_config: OnceCell<ResolvedConfig>,
+    /// Sparse checkout paths (empty if not a sparse checkout)
+    pub(super) sparse_checkout_paths: OnceCell<Vec<String>>,
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
     pub(super) merge_base: DashMap<(String, String), Option<String>>,
     /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
@@ -210,6 +242,32 @@ impl Repository {
             discovery_path,
             git_common_dir,
             cache: Arc::new(RepoCache::default()),
+        })
+    }
+
+    /// Resolved user config (global merged with per-project overrides, defaults applied).
+    ///
+    /// Lazily loads `UserConfig` and resolves it using this repository's project identifier.
+    /// Cached for the lifetime of the repository (shared across clones via Arc).
+    ///
+    /// Falls back to default config if loading fails (e.g., no config file).
+    pub fn config(&self) -> &ResolvedConfig {
+        self.cache.resolved_config.get_or_init(|| {
+            let project_id = self.project_identifier().ok();
+            self.user_config().resolved(project_id.as_deref())
+        })
+    }
+
+    /// Raw user config (as loaded from disk, before project-specific resolution).
+    ///
+    /// Prefer [`config()`](Self::config) for behavior settings. This is only needed
+    /// for operations that require the full `UserConfig` (e.g., path template formatting,
+    /// approval state, hook resolution).
+    pub fn user_config(&self) -> &UserConfig {
+        self.cache.user_config.get_or_init(|| {
+            UserConfig::load()
+                .inspect_err(|err| log::warn!("Failed to load user config, using defaults: {err}"))
+                .unwrap_or_default()
         })
     }
 
@@ -403,6 +461,30 @@ impl Repository {
         })
     }
 
+    /// Get the sparse checkout paths for this repository.
+    ///
+    /// Returns the list of paths from `git sparse-checkout list`. For non-sparse
+    /// repos, returns an empty slice (the command exits with code 128).
+    ///
+    /// Assumes cone mode (the git default). Cached using `discovery_path` —
+    /// scoped to the worktree the user is running from, not per-listed-worktree.
+    pub fn sparse_checkout_paths(&self) -> &[String] {
+        self.cache.sparse_checkout_paths.get_or_init(|| {
+            let output = match self.run_command_output(&["sparse-checkout", "list"]) {
+                Ok(out) => out,
+                Err(_) => return Vec::new(),
+            };
+
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout.lines().map(String::from).collect()
+            } else {
+                // Exit 128 = not a sparse checkout (expected, not an error)
+                Vec::new()
+            }
+        })
+    }
+
     /// Check if git's builtin fsmonitor daemon is enabled.
     ///
     /// Returns true only for `core.fsmonitor=true` (the builtin daemon).
@@ -575,7 +657,7 @@ impl Repository {
         progress_message: Option<String>,
     ) -> anyhow::Result<()> {
         // Allow tests to override delay threshold (-1 to disable, 0 for immediate)
-        let delay_ms = std::env::var("WT_TEST_DELAYED_STREAM_MS")
+        let delay_ms = std::env::var("WORKTRUNK_TEST_DELAYED_STREAM_MS")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(delay_ms);
@@ -655,11 +737,12 @@ impl Repository {
                         .code()
                         .map(|c| format!("exit code {c}"))
                         .unwrap_or_else(|| "killed by signal".to_string());
-                    if lines.is_empty() {
-                        bail!("{cmd_str} failed ({exit_info})");
-                    } else {
-                        bail!("{}\n({cmd_str} failed, {exit_info})", lines.join("\n"));
+                    return Err(StreamCommandError {
+                        output: lines.join("\n"),
+                        command: cmd_str,
+                        exit_info,
                     }
+                    .into());
                 }
                 Ok(None) => {
                     // Still running - check if we should switch to streaming (skip if delay_ms < 0)
@@ -695,6 +778,25 @@ impl Repository {
             .context(self.logging_context())
             .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
+    }
+
+    /// Extract structured failure info from a [`Repository::run_command_delayed_stream`] error.
+    ///
+    /// Returns `(output, Some(FailedCommand))` if the error is a `StreamCommandError`,
+    /// or `(error_string, None)` for other error types (e.g., spawn failures).
+    pub fn extract_failed_command(
+        err: &anyhow::Error,
+    ) -> (String, Option<super::error::FailedCommand>) {
+        match err.downcast_ref::<StreamCommandError>() {
+            Some(e) => (
+                e.output.clone(),
+                Some(super::error::FailedCommand {
+                    command: e.command.clone(),
+                    exit_info: e.exit_info.clone(),
+                }),
+            ),
+            None => (err.to_string(), None),
+        }
     }
 }
 

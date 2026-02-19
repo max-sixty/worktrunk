@@ -10,7 +10,7 @@ description: Worktrunk release workflow. Use when user asks to "do a release", "
 1. **Run tests**: `cargo run -- hook pre-merge --yes`
 2. **Check current version**: Read `version` in `Cargo.toml`
 3. **Review commits**: Check commits since last release to understand scope of changes
-4. **Credit contributors**: Check for external contributors with `git log v<last-version>..HEAD --format="%an <%ae>" | sort -u` and credit them in changelog entries (see below)
+4. **Credit contributors**: Check for external PR authors and issue reporters (see "Credit External Contributors" and "Credit Issue Reporters" below)
 5. **Confirm release type with user**: Present changes summary and ask user to confirm patch/minor/major (see below)
 6. **Update CHANGELOG**: Add `## X.Y.Z` section at top with changes (see MANDATORY verification below)
 7. **Bump version**: Update `version` in `Cargo.toml`, run `cargo check` to update `Cargo.lock`
@@ -93,27 +93,32 @@ For fixes that reference issues:
 - **Bug fix**: Description. Fixes [#123](https://github.com/user/repo/issues/123). (thanks @reporter)
 ```
 
-**Finding reporters:**
+**Finding reporters — do ALL three steps:**
 
-1. **Check for explicit references:** Look for "Fixes #N", "Closes #N", or issue links in PR bodies and commit messages.
+Issues may have been filed months before the fix. Bug reports also appear as PR comments, not just issues. These steps are complementary; each catches things the others miss.
 
-2. **Review issues since last release:** List all issues opened or closed since the last release tag:
+1. **Extract every issue/PR reference from every commit** (PRIMARY):
    ```bash
-   # Get last release date
-   git log -1 --format=%cs v<last-version>
-   # List issues closed since then (bugs that got fixed)
-   gh issue list --state closed --search "closed:>=<date>" --json number,title,author
-   # List issues opened since then (new reports that might have been addressed)
-   gh issue list --state all --search "created:>=<date>" --json number,title,author
+   git log v<last-version>..HEAD --format="%B" | grep -oE '#[0-9]+' | sort -un
    ```
-   Scan these for issues that match changes in this release — even if the PR didn't reference them.
+   For **each** referenced number: run `gh issue view N --json title,author,state`. This catches issues filed months ago — the most commonly missed credits.
 
-3. **Look up issue authors:** `gh issue view N --json author`.
+2. **Check PR comments for bug reports** (catches reports that never became issues):
+   For feature PRs referenced in commits, check comment threads for users reporting problems:
+   ```bash
+   gh pr view NNN --json comments --jq '.comments[] | "\(.author.login): \(.body[:150])"'
+   ```
 
-PRs often fix issues without explicit "Fixes #N" — especially when the fix approach differs from the issue's suggested solution, or when the fixer discovered the issue independently.
+3. **Survey every issue opened or closed since last release** (catches unreferenced matches):
+   ```bash
+   git log -1 --format=%cs v<last-version>
+   gh issue list --state all --search "created:>=<date>" --json number,title,author --limit 100
+   gh issue list --state closed --search "closed:>=<date>" --json number,title,author --limit 100
+   ```
+   Cross-reference every title against changes in this release.
 
 **When to credit:**
-- Bug reports with clear reproduction steps
+- Bug reports with clear reproduction steps (in issues OR PR comments)
 - Feature requests that shaped the implementation
 - Performance reports with measurements (like "takes 15s")
 - Users who helped diagnose issues through discussion
@@ -158,7 +163,9 @@ For EACH entry:
 3. Confirm the entry accurately describes the user-facing change
 4. Flag if the entry overstates, understates, or misdescribes the change
 
-Also check: Are there any user-facing changes in the commits that are NOT covered by these entries?
+Also check:
+- Are there user-facing changes NOT covered by these entries?
+- Verify each "thanks @..." attribution (right person, right role — author vs reporter)
 
 Report format:
 - Entry: [entry text]

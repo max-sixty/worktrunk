@@ -71,7 +71,7 @@ pub fn maybe_handle_help_with_pager() -> bool {
                 .to_string()
                 .replace("```text\n", "```\n")
                 .replace("```console\n", "```bash\n");
-            println!("{output}");
+            print!("{output}");
             process::exit(0);
         }
         // Fall through if not a help request
@@ -550,7 +550,7 @@ fn expand_demo_placeholders(text: &str) -> String {
             let filename = parts.next().unwrap_or("");
             let dimensions = parts.next(); // Optional "WIDTHxHEIGHT"
 
-            // Extract command name from filename (e.g., "wt-select.gif" -> "wt select")
+            // Extract command name from filename (e.g., "wt-switch-picker.gif" -> "wt switch picker")
             let alt_text = filename.trim_end_matches(".gif").replace('-', " ");
 
             // Build dimension attributes if provided

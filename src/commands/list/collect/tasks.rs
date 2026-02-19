@@ -1,6 +1,6 @@
 //! Task trait and implementations.
 //!
-//! Contains the `Task` trait interface and all 15 task implementations that
+//! Contains the `Task` trait interface and all 16 task implementations that
 //! compute various git operations for worktrees and branches.
 
 use std::net::{SocketAddr, TcpStream};
@@ -39,6 +39,8 @@ pub struct TaskContext {
     /// Expanded URL for this item (from project config template).
     /// UrlStatusTask uses this to check if the port is listening.
     pub item_url: Option<String>,
+    /// LLM command for summary generation (from commit.generation config).
+    pub llm_command: Option<String>,
 }
 
 impl TaskContext {
@@ -655,9 +657,56 @@ impl Task for UrlStatusTask {
     }
 }
 
+/// Task 14: LLM-generated branch summary (--full only, requires LLM command)
+pub struct SummaryGenerateTask;
+
+impl Task for SummaryGenerateTask {
+    const KIND: TaskKind = TaskKind::SummaryGenerate;
+
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
+        let Some(ref llm_command) = ctx.llm_command else {
+            return Err(ctx.error(
+                Self::KIND,
+                &anyhow::anyhow!("SummaryGenerateTask requires llm_command"),
+            ));
+        };
+
+        let branch = ctx.branch_ref.branch.as_deref().unwrap_or("(detached)");
+        let worktree_path = ctx.branch_ref.worktree_path.as_deref();
+
+        // Acquire semaphore before any LLM call (cache hits return before calling LLM)
+        let _permit = crate::summary::LLM_SEMAPHORE.acquire();
+
+        let summary = crate::summary::generate_summary_core(
+            branch,
+            &ctx.branch_ref.commit_sha,
+            worktree_path,
+            llm_command,
+            &ctx.repo,
+        )
+        .map_err(|e| ctx.error(Self::KIND, &e))?;
+
+        // Extract subject line (first line) for the table column
+        let subject = summary.as_deref().map(first_line);
+
+        Ok(TaskResult::SummaryGenerate {
+            item_idx: ctx.item_idx,
+            summary: subject,
+        })
+    }
+}
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/// Extract the first non-empty line from a string (the subject line of a summary).
+fn first_line(s: &str) -> String {
+    s.lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or(s)
+        .to_string()
+}
 
 /// Detect if a worktree is in the middle of a git operation (rebase/merge).
 pub(crate) fn detect_active_git_operation(
@@ -748,4 +797,29 @@ pub(super) fn parse_working_tree_status(status_output: &str) -> (WorkingTreeStat
     let is_dirty = working_tree_status.is_dirty();
 
     (working_tree_status, is_dirty, has_conflicts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_first_line_simple() {
+        assert_eq!(first_line("Add feature\n\nDetails here"), "Add feature");
+    }
+
+    #[test]
+    fn test_first_line_skips_empty() {
+        assert_eq!(first_line("\n\nAdd feature\nMore"), "Add feature");
+    }
+
+    #[test]
+    fn test_first_line_single_line() {
+        assert_eq!(first_line("Single line"), "Single line");
+    }
+
+    #[test]
+    fn test_first_line_empty_string() {
+        assert_eq!(first_line(""), "");
+    }
 }

@@ -6,41 +6,47 @@ mod items;
 mod log_formatter;
 mod pager;
 mod preview;
+mod summary;
 
-use std::io::{IsTerminal, stderr};
+use std::io::IsTerminal;
 use std::sync::Arc;
 
 use anyhow::Context;
-use crossterm::{execute, terminal};
+use dashmap::DashMap;
 use skim::prelude::*;
-use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 
+use super::handle_switch::{
+    approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
+};
 use super::list::collect;
-use super::worktree::{execute_switch, plan_switch};
+use super::worktree::{
+    SwitchBranchInfo, SwitchResult, execute_switch, get_path_mismatch, plan_switch,
+};
 use crate::output::handle_switch_output;
 
-use items::{HeaderSkimItem, WorktreeSkimItem};
-use preview::{PreviewLayout, PreviewState};
+use items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
+use preview::{PreviewLayout, PreviewMode, PreviewState};
 
-pub fn handle_select(
-    show_branches: bool,
-    show_remotes: bool,
-    config: &UserConfig,
-) -> anyhow::Result<()> {
-    // Select requires an interactive terminal for the TUI
+pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()> {
+    // Interactive picker requires a terminal for the TUI
     if !std::io::stdin().is_terminal() {
-        anyhow::bail!("wt select requires an interactive terminal");
+        anyhow::bail!("Interactive picker requires an interactive terminal");
     }
 
     let repo = Repository::current()?;
+
+    // Merge CLI flags with resolved config
+    let config = repo.config();
+    let show_branches = cli_branches || config.list.branches();
+    let show_remotes = cli_remotes || config.list.remotes();
 
     // Initialize preview mode state file (auto-cleanup on drop)
     let state = PreviewState::new();
 
     // Gather list data using simplified collection (buffered mode)
     // Skip expensive operations not needed for select UI
-    let skip_tasks = [
+    let skip_tasks: std::collections::HashSet<collect::TaskKind> = [
         collect::TaskKind::BranchDiff,
         collect::TaskKind::CiStatus,
         collect::TaskKind::MergeTreeConflicts,
@@ -48,22 +54,21 @@ pub fn handle_select(
     .into_iter()
     .collect();
 
-    // Use 500ms timeout for git commands to show TUI faster on large repos.
-    // Typical slow operations: merge-tree ~400-1800ms, rev-list ~200-600ms.
-    // 500ms allows most operations to complete while cutting off tail latency.
+    // Configurable timeout for git commands to show TUI faster on large repos.
     // Operations that timeout fail silently (data not shown), but TUI stays responsive.
-    let command_timeout = Some(std::time::Duration::from_millis(500));
+    let command_timeout = config.switch_picker.picker_command_timeout();
 
     let Some(list_data) = collect::collect(
         &repo,
-        show_branches,
-        show_remotes,
-        &skip_tasks,
+        collect::ShowConfig::Resolved {
+            show_branches,
+            show_remotes,
+            skip_tasks: skip_tasks.clone(),
+            command_timeout,
+        },
         false, // show_progress (no progress bars)
         false, // render_table (select renders its own UI)
-        config,
-        command_timeout,
-        true, // skip_expensive_for_stale (faster for repos with many stale branches)
+        true,  // skip_expensive_for_stale (faster for repos with many stale branches)
     )?
     else {
         return Ok(());
@@ -80,7 +85,7 @@ pub fn handle_select(
     };
     let layout = super::list::layout::calculate_layout_with_width(
         &list_data.items,
-        &skip_tasks,
+        &list_data.skip_tasks,
         skim_list_width,
         &list_data.main_worktree_path,
         None, // URL column not shown in select
@@ -91,7 +96,12 @@ pub fn handle_select(
     let header_display_text = header_line.render();
     let header_plain_text = header_line.plain_text();
 
+    // Create shared cache for all preview modes (pre-computed in background)
+    let preview_cache: PreviewCache = Arc::new(DashMap::new());
+
     // Convert to skim items using the layout system for rendering
+    // Keep Arc<ListItem> refs for background pre-computation
+    let mut items_for_precompute: Vec<Arc<super::list::model::ListItem>> = Vec::new();
     let mut items: Vec<Arc<dyn SkimItem>> = list_data
         .items
         .into_iter()
@@ -103,11 +113,15 @@ pub fn handle_select(
             let display_text_with_ansi = rendered_line.render();
             let display_text = rendered_line.plain_text();
 
+            let item = Arc::new(item);
+            items_for_precompute.push(Arc::clone(&item));
+
             Arc::new(WorktreeSkimItem {
                 display_text,
                 display_text_with_ansi,
                 branch_name,
-                item: Arc::new(item),
+                item,
+                preview_cache: Arc::clone(&preview_cache),
             }) as Arc<dyn SkimItem>
         })
         .collect();
@@ -123,9 +137,7 @@ pub fn handle_select(
 
     // Get state path for key bindings (shell-escaped for safety)
     let state_path_display = state.path.display().to_string();
-    let state_path_str = shlex::try_quote(&state_path_display)
-        .map(|s| s.into_owned())
-        .unwrap_or(state_path_display);
+    let state_path_str = shell_escape::escape(state_path_display.into()).into_owned();
 
     // Calculate half-page scroll: skim uses 90% of terminal height, half of that = 45%
     let half_page = terminal_size::terminal_size()
@@ -140,6 +152,10 @@ pub fn handle_select(
     // Configure skim options with Rust-based preview and mode switching keybindings
     let options = SkimOptionsBuilder::default()
         .height("90%".to_string())
+        // Workaround for skim-tuikit bug: partial-height mode skips smcup but
+        // cleanup still sends rmcup, leaving artifacts. no_clear_start forces
+        // cursor_goto + erase_down cleanup instead. See skim-rs/skim#880.
+        .no_clear_start(true)
         .layout("reverse".to_string())
         .header_lines(1) // Make first line (header) non-selectable
         .multi(false)
@@ -164,7 +180,7 @@ pub fn handle_select(
                 .to_string(),
         ))
         .bind(vec![
-            // Mode switching (1/2/3/4 keys change preview content)
+            // Mode switching (1/2/3/4/5 keys change preview content)
             format!(
                 "1:execute-silent(echo 1 > {0})+refresh-preview",
                 state_path_str
@@ -181,6 +197,12 @@ pub fn handle_select(
                 "4:execute-silent(echo 4 > {0})+refresh-preview",
                 state_path_str
             ),
+            format!(
+                "5:execute-silent(echo 5 > {0})+refresh-preview",
+                state_path_str
+            ),
+            // Create new worktree with query as branch name (alt-c for "create")
+            "alt-c:accept(create)".to_string(),
             // Preview toggle (alt-p shows/hides preview)
             // Note: skim doesn't support change-preview-window like fzf, only toggle
             "alt-p:toggle-preview".to_string(),
@@ -189,7 +211,6 @@ pub fn handle_select(
             format!("ctrl-d:preview-down({half_page})"),
         ])
         // Legend/controls moved to preview window tabs (render_preview_tabs)
-        .no_clear(true) // Prevent skim from clearing screen, we'll do it manually
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build skim options: {}", e))?;
 
@@ -201,33 +222,136 @@ pub fn handle_select(
     }
     drop(tx);
 
+    // Pre-compute all preview modes for all worktrees in parallel via rayon.
+    // Each (worktree, mode) pair is a separate rayon task, allowing the thread pool
+    // to overlap I/O-bound git commands. Tasks are fire-and-forget — ongoing
+    // git commands are harmless read-only operations even if skim exits early.
+    let (preview_width, preview_height) = state.initial_layout.preview_dimensions(num_items);
+
+    let modes = [
+        PreviewMode::WorkingTree,
+        PreviewMode::Log,
+        PreviewMode::BranchDiff,
+        PreviewMode::UpstreamDiff,
+    ];
+
+    for item in &items_for_precompute {
+        for mode in modes {
+            let cache = Arc::clone(&preview_cache);
+            let item = Arc::clone(item);
+            rayon::spawn(move || {
+                let cache_key = (item.branch_name().to_string(), mode);
+                cache.entry(cache_key).or_insert_with(|| {
+                    WorktreeSkimItem::compute_preview(&item, mode, preview_width, preview_height)
+                });
+            });
+        }
+    }
+
+    // Queue summary generation after tabs 1-4 so git previews get rayon priority.
+    if config.list.summary() && config.commit_generation.is_configured() {
+        let llm_command = config.commit_generation.command.clone().unwrap();
+        for item in &items_for_precompute {
+            let item = Arc::clone(item);
+            let cache = Arc::clone(&preview_cache);
+            let cmd = llm_command.clone();
+            let repo = repo.clone();
+            rayon::spawn(move || {
+                summary::generate_and_cache_summary(&item, &cmd, &cache, &repo);
+            });
+        }
+    } else {
+        // No LLM configured or summaries disabled — insert config hint so the
+        // tab shows a useful message instead of a perpetual "Generating..." placeholder.
+        let hint = if !config.commit_generation.is_configured() {
+            "Configure [commit.generation] command to enable LLM summaries.\n\n\
+             Example in ~/.config/worktrunk/config.toml:\n\n\
+             [commit.generation]\n\
+             command = \"llm -m haiku\"\n\n\
+             [list]\n\
+             summary = true\n"
+        } else {
+            "Enable summaries in ~/.config/worktrunk/config.toml:\n\n\
+             [list]\n\
+             summary = true\n"
+        };
+        for item in &items_for_precompute {
+            let branch = item.branch_name().to_string();
+            preview_cache.insert((branch, PreviewMode::Summary), hint.to_string());
+        }
+    }
+
     // Run skim
     let output = Skim::run_with(&options, Some(rx));
 
     // Handle selection
     if let Some(out) = output
         && !out.is_abort
-        && let Some(selected) = out.selected_items.first()
     {
-        // Get branch name or worktree path from selected item
-        // (output() returns the worktree path for existing worktrees, branch name otherwise)
-        let identifier = selected.output().to_string();
+        // Determine if user wants to create a new worktree (alt-n) or switch to existing (enter)
+        let create_new =
+            matches!(out.final_event, Event::EvActAccept(Some(ref label)) if label == "create");
+
+        // Get branch name: from query if creating new, from selected item if switching
+        let (identifier, should_create) = if create_new {
+            let query = out.query.trim().to_string();
+            if query.is_empty() {
+                anyhow::bail!("Cannot create worktree: no branch name entered");
+            }
+            (query, true)
+        } else {
+            // Enter pressed: skim accept always includes a selection (abort handled above)
+            let selected = out
+                .selected_items
+                .first()
+                .expect("skim accept has selection");
+            (selected.output().to_string(), false)
+        };
 
         // Load config
-        let config = UserConfig::load().context("Failed to load config")?;
         let repo = Repository::current().context("Failed to switch worktree")?;
+        let config = repo.user_config();
 
-        // Switch to the selected worktree (no creation, no approval prompts)
-        let plan = plan_switch(&repo, &identifier, false, None, false, &config)?;
-        let (result, branch_info) = execute_switch(&repo, plan, &config, false, true)?;
+        // Run pre-switch hooks before anything else (before branch validation, planning, etc.)
+        run_pre_switch_hooks(&repo, config, true)?;
 
-        // Clear the terminal screen after skim exits to prevent artifacts
-        // Use stderr for terminal control - stdout is reserved for data output
-        execute!(stderr(), terminal::Clear(terminal::ClearType::All))?;
-        execute!(stderr(), crossterm::cursor::MoveTo(0, 0))?;
+        // Switch to existing worktree or create new one
+        let plan = plan_switch(&repo, &identifier, should_create, None, false, config)?;
+        let skip_hooks = !approve_switch_hooks(&repo, config, &plan, false, true)?;
+        let (result, branch_info) = execute_switch(&repo, plan, config, false, skip_hooks)?;
+
+        // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
+        let branch_info = match &result {
+            SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
+                let expected_path = get_path_mismatch(&repo, &branch_info.branch, path, config);
+                SwitchBranchInfo {
+                    expected_path,
+                    ..branch_info
+                }
+            }
+            _ => branch_info,
+        };
 
         // Show success message; emit cd directive if shell integration is active
-        handle_switch_output(&result, &branch_info)?;
+        // Interactive picker always performs cd (change_dir: true)
+        let cwd = std::env::current_dir().context("Failed to get current directory")?;
+        let source_root = repo.current_worktree().root()?;
+        let hooks_display_path =
+            handle_switch_output(&result, &branch_info, true, Some(&source_root), &cwd)?;
+
+        // Spawn background hooks after success message
+        if !skip_hooks {
+            let extra_vars = switch_extra_vars(&result);
+            spawn_switch_background_hooks(
+                &repo,
+                config,
+                &result,
+                &branch_info.branch,
+                false,
+                &extra_vars,
+                hooks_display_path.as_deref(),
+            )?;
+        }
     }
 
     Ok(())
@@ -255,14 +379,18 @@ pub mod tests {
         let _ = fs::write(&state_path, "4");
         assert_eq!(PreviewStateData::read_mode(), PreviewMode::UpstreamDiff);
 
+        let _ = fs::write(&state_path, "5");
+        assert_eq!(PreviewStateData::read_mode(), PreviewMode::Summary);
+
         // Cleanup
         let _ = fs::remove_file(&state_path);
     }
 
     #[test]
     fn test_preview_layout() {
-        // Right is always 50%
-        assert_eq!(PreviewLayout::Right.to_preview_window_spec(10), "right:50%");
+        // Right uses absolute width derived from terminal size
+        let spec = PreviewLayout::Right.to_preview_window_spec(10);
+        assert!(spec.starts_with("right:"));
 
         // Down calculates based on item count
         let spec = PreviewLayout::Down.to_preview_window_spec(5);

@@ -17,7 +17,7 @@ use worktrunk::styling::{
     warning_message,
 };
 
-use super::resolve::{compute_clobber_backup, compute_worktree_path, paths_match};
+use super::resolve::{compute_clobber_backup, compute_worktree_path};
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::commands::command_executor::CommandContext;
 
@@ -95,7 +95,7 @@ fn resolve_remote_ref(
         return resolve_fork_ref(repo, provider, number, &info);
     }
 
-    // Same-repo ref: for PRs, fetch the branch; for MRs, just use the branch name
+    // Same-repo ref: fetch the branch to ensure remote tracking refs exist
     resolve_same_repo_ref(repo, &info)
 }
 
@@ -274,38 +274,50 @@ fn resolve_same_repo_ref(
 ) -> anyhow::Result<ResolvedTarget> {
     use worktrunk::git::remote_ref::PlatformData;
 
-    // For GitHub PRs, fetch the branch to ensure remote refs are up-to-date
-    if let PlatformData::GitHub {
-        host,
-        base_owner,
-        base_repo,
-        ..
-    } = &info.platform_data
-    {
-        let remote = repo
-            .find_remote_for_repo(Some(host), base_owner, base_repo)
-            .ok_or_else(|| {
-                let suggested_url = worktrunk::git::remote_ref::github::fork_remote_url(
-                    host, base_owner, base_repo,
-                );
-                GitError::NoRemoteForRepo {
+    // Find the remote for the same-repo PR/MR and fetch the branch with an
+    // explicit refspec. This ensures the remote tracking branch is created even
+    // in repos with limited fetch refspecs (single-branch clones, bare repos).
+    let remote = match &info.platform_data {
+        PlatformData::GitHub {
+            host,
+            base_owner,
+            base_repo,
+            ..
+        } => {
+            let suggested_url =
+                worktrunk::git::remote_ref::github::fork_remote_url(host, base_owner, base_repo);
+            repo.find_remote_for_repo(Some(host), base_owner, base_repo)
+                .ok_or_else(|| GitError::NoRemoteForRepo {
                     owner: base_owner.clone(),
                     repo: base_repo.clone(),
                     suggested_url,
-                }
-            })?;
-        let branch = &info.source_branch;
+                })?
+        }
+        PlatformData::GitLab {
+            host,
+            base_owner,
+            base_repo,
+            ..
+        } => repo
+            .find_remote_for_repo(Some(host), base_owner, base_repo)
+            .ok_or_else(|| GitError::NoRemoteForRepo {
+                owner: base_owner.clone(),
+                repo: base_repo.clone(),
+                suggested_url: format!("https://{host}/{base_owner}/{base_repo}.git"),
+            })?,
+    };
 
-        eprintln!(
-            "{}",
-            progress_message(cformat!("Fetching <bold>{branch}</> from {remote}..."))
-        );
-        // Use -- to prevent branch names starting with - from being interpreted as flags
-        repo.run_command(&["fetch", "--", &remote, branch])
-            .with_context(|| format!("Failed to fetch branch '{}' from {}", branch, remote))?;
-    }
-
-    // For GitLab same-repo MRs, we just use the branch name directly
+    let branch = &info.source_branch;
+    eprintln!(
+        "{}",
+        progress_message(cformat!("Fetching <bold>{branch}</> from {remote}..."))
+    );
+    // Explicit refspec creates/updates the remote-tracking ref even when it's outside
+    // the configured fetch refspec (e.g., single-branch clones, bare repos).
+    let refspec = format!("+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
+    // Use -- to prevent branch names starting with - from being interpreted as flags
+    repo.run_command(&["fetch", "--", &remote, &refspec])
+        .with_context(|| format!("Failed to fetch branch '{}' from {}", branch, remote))?;
 
     Ok(ResolvedTarget {
         branch: info.source_branch.clone(),
@@ -345,21 +357,22 @@ fn resolve_switch_target(
         .resolve_worktree_name(branch)
         .context("Failed to resolve branch name")?;
 
-    // Resolve and validate base
+    // Resolve and validate base (only when --create is set)
     let resolved_base = if let Some(base_str) = base {
-        let resolved = repo.resolve_worktree_name(base_str)?;
         if !create {
             eprintln!(
                 "{}",
                 warning_message("--base flag is only used with --create, ignoring")
             );
             None
-        } else if !repo.ref_exists(&resolved)? {
-            return Err(GitError::ReferenceNotFound {
-                reference: resolved,
-            }
-            .into());
         } else {
+            let resolved = repo.resolve_worktree_name(base_str)?;
+            if !repo.ref_exists(&resolved)? {
+                return Err(GitError::ReferenceNotFound {
+                    reference: resolved,
+                }
+                .into());
+            }
             Some(resolved)
         }
     } else {
@@ -430,32 +443,6 @@ fn resolve_switch_target(
             base_branch,
         },
     })
-}
-
-/// Check if branch already has a worktree.
-///
-/// Returns `Some(Existing)` if worktree exists and is valid.
-/// Returns error if worktree record exists but directory is missing.
-/// Returns `None` if no worktree exists for this branch.
-fn check_existing_worktree(
-    repo: &Repository,
-    branch: &str,
-    expected_path: &Path,
-    new_previous: Option<String>,
-) -> anyhow::Result<Option<SwitchPlan>> {
-    match repo.worktree_for_branch(branch)? {
-        Some(existing_path) if existing_path.exists() => Ok(Some(SwitchPlan::Existing {
-            path: canonicalize(&existing_path).unwrap_or(existing_path),
-            branch: branch.to_string(),
-            expected_path: expected_path.to_path_buf(),
-            new_previous,
-        })),
-        Some(_) => Err(GitError::WorktreeMissing {
-            branch: branch.to_string(),
-        }
-        .into()),
-        None => Ok(None),
-    }
 }
 
 /// Validate that we can create a worktree at the given path.
@@ -561,18 +548,15 @@ fn setup_fork_branch(
     // Create worktree (delayed streaming: silent if fast, shows progress if slow)
     // Use -- to prevent branch names starting with - from being interpreted as flags
     let worktree_path_str = worktree_path.to_string_lossy();
+    let git_args = ["worktree", "add", "--", worktree_path_str.as_ref(), branch];
     repo.run_command_delayed_stream(
-        &["worktree", "add", "--", worktree_path_str.as_ref(), branch],
+        &git_args,
         Repository::SLOW_OPERATION_DELAY_MS,
         Some(
             progress_message(cformat!("Creating worktree for <bold>{}</>...", branch)).to_string(),
         ),
     )
-    .map_err(|e| GitError::WorktreeCreationFailed {
-        branch: branch.to_string(),
-        base_branch: None,
-        error: e.to_string(),
-    })?;
+    .map_err(|e| worktree_creation_error(&e, branch.to_string(), None))?;
 
     Ok(())
 }
@@ -599,15 +583,27 @@ pub fn plan_switch(
     // Phase 1: Resolve target (handles pr:, validates --create/--base, may do network)
     let target = resolve_switch_target(repo, branch, create, base)?;
 
-    // Phase 2: Compute expected path
-    let expected_path = compute_worktree_path(repo, &target.branch, config)?;
-
-    // Phase 3: Check if worktree already exists for this branch
-    if let Some(existing) =
-        check_existing_worktree(repo, &target.branch, &expected_path, new_previous.clone())?
-    {
-        return Ok(existing);
+    // Phase 2: Check if worktree already exists for this branch (fast path)
+    // This avoids computing the worktree path template (~7 git commands) for existing switches.
+    match repo.worktree_for_branch(&target.branch)? {
+        Some(existing_path) if existing_path.exists() => {
+            return Ok(SwitchPlan::Existing {
+                path: canonicalize(&existing_path).unwrap_or(existing_path),
+                branch: target.branch,
+                new_previous,
+            });
+        }
+        Some(_) => {
+            return Err(GitError::WorktreeMissing {
+                branch: target.branch,
+            }
+            .into());
+        }
+        None => {}
     }
+
+    // Phase 3: Compute expected path (only needed for create)
+    let expected_path = compute_worktree_path(repo, &target.branch, config)?;
 
     // Phase 4: Validate we can create at this path
     let clobber_backup = validate_worktree_creation(
@@ -631,7 +627,9 @@ pub fn plan_switch(
 /// Execute a validated switch plan.
 ///
 /// Takes a `SwitchPlan` from `plan_switch()` and executes it.
-/// For `SwitchPlan::Existing`, just records history.
+/// For `SwitchPlan::Existing`, just records history. The returned
+/// `SwitchBranchInfo` has `expected_path: None` — callers fill it in after
+/// first output to avoid computing path mismatch on the hot path.
 /// For `SwitchPlan::Create`, creates the worktree and runs hooks.
 pub fn execute_switch(
     repo: &Repository,
@@ -644,11 +642,8 @@ pub fn execute_switch(
         SwitchPlan::Existing {
             path,
             branch,
-            expected_path,
             new_previous,
         } => {
-            let _ = repo.set_switch_previous(new_previous.as_deref());
-
             let current_dir = std::env::current_dir()
                 .ok()
                 .and_then(|p| canonicalize(&p).ok());
@@ -657,11 +652,12 @@ pub fn execute_switch(
                 .map(|cur| cur == &path)
                 .unwrap_or(false);
 
-            let mismatch_path = if !paths_match(&path, &expected_path) {
-                Some(expected_path)
-            } else {
-                None
-            };
+            // Only update switch history when actually switching worktrees.
+            // Updating on AlreadyAt would corrupt `wt switch -` by recording
+            // the current branch as "previous" even though no switch occurred.
+            if !already_at_worktree {
+                let _ = repo.set_switch_previous(new_previous.as_deref());
+            }
 
             let result = if already_at_worktree {
                 SwitchResult::AlreadyAt(path)
@@ -669,11 +665,13 @@ pub fn execute_switch(
                 SwitchResult::Existing { path }
             };
 
+            // Path mismatch is computed lazily by callers after first output,
+            // avoiding ~7 git commands on the hot path for existing switches.
             Ok((
                 result,
                 SwitchBranchInfo {
                     branch,
-                    expected_path: mismatch_path,
+                    expected_path: None,
                 },
             ))
         }
@@ -716,11 +714,30 @@ pub fn execute_switch(
                     let worktree_path_str = worktree_path.to_string_lossy();
                     let mut args = vec!["worktree", "add", worktree_path_str.as_ref()];
 
+                    // For DWIM fallback: when the branch doesn't exist locally,
+                    // git worktree add relies on DWIM to auto-create it from a
+                    // remote tracking branch. DWIM fails in repos without configured
+                    // fetch refspecs (bare repos, single-branch clones). Explicitly
+                    // create from the tracking ref in that case.
+                    let tracking_ref;
+
                     if *create_branch {
                         args.push("-b");
                         args.push(&branch);
                         if let Some(base) = base_branch {
                             args.push(base);
+                        }
+                    } else if !local_branch_existed {
+                        // Explicit -b when there's exactly one remote tracking ref.
+                        // Git's DWIM relies on the fetch refspec including this branch,
+                        // which may not hold in single-branch clones or bare repos.
+                        let remotes = branch_handle.remotes().unwrap_or_default();
+                        if remotes.len() == 1 {
+                            tracking_ref = format!("{}/{}", remotes[0], branch);
+                            args.extend(["-b", &branch, tracking_ref.as_str()]);
+                        } else {
+                            // Multiple or zero remotes: let git's DWIM handle (or error)
+                            args.push(&branch);
                         }
                     } else {
                         args.push(&branch);
@@ -736,11 +753,11 @@ pub fn execute_switch(
                         Repository::SLOW_OPERATION_DELAY_MS,
                         progress_msg,
                     ) {
-                        return Err(GitError::WorktreeCreationFailed {
-                            branch: branch.clone(),
-                            base_branch: base_branch.clone(),
-                            error: e.to_string(),
-                        }
+                        return Err(worktree_creation_error(
+                            &e,
+                            branch.clone(),
+                            base_branch.clone(),
+                        )
                         .into());
                     }
 
@@ -757,7 +774,7 @@ pub fn execute_switch(
                         branch_handle.unset_upstream()?;
                     }
 
-                    // Report tracking info only if git's DWIM created the branch from a remote
+                    // Report tracking info when the branch was auto-created from a remote
                     let from_remote = if !create_branch && !local_branch_existed {
                         branch_handle.upstream()?
                     } else {
@@ -885,5 +902,21 @@ pub fn execute_switch(
                 },
             ))
         }
+    }
+}
+
+/// Resolve the deferred path mismatch for existing worktree switches.
+///
+fn worktree_creation_error(
+    err: &anyhow::Error,
+    branch: String,
+    base_branch: Option<String>,
+) -> GitError {
+    let (output, command) = Repository::extract_failed_command(err);
+    GitError::WorktreeCreationFailed {
+        branch,
+        base_branch,
+        error: output,
+        command,
     }
 }

@@ -1,16 +1,16 @@
 # Debugging Interactive Terminal Commands
 
-When debugging TUI commands like `wt select`, use the `tmux-cli` skill (preferred) or MCP's `node-terminal` tools to test interactively.
+When debugging TUI commands like `wt switch` (interactive picker), use the `tmux-cli` skill (preferred) or MCP's `node-terminal` tools to test interactively.
 
 ## Debugging Workflow
 
 ### 1. Create Test Environment
 
 ```bash
-cargo run --bin setup-select-test
+cargo run -p wt-perf -- setup select-test
 ```
 
-This creates a reproducible test repo at `/tmp/wt-select-test/test-repo`.
+This creates a reproducible test repo at `/tmp/wt-perf-select-test/`.
 
 ### 2. Test Interactively
 
@@ -21,11 +21,11 @@ Load the `tmux-cli` skill, then use the `tmux-cli` tool. Install if needed: `uv 
 ```bash
 # Launch shell in test repo
 pane=$(tmux-cli launch "zsh")
-tmux-cli send "cd /tmp/wt-select-test/test-repo" --pane=$pane
+tmux-cli send "cd /tmp/wt-perf-select-test" --pane=$pane
 tmux-cli wait_idle --pane=$pane
 
 # Run with debug logging
-tmux-cli send "RUST_LOG=worktrunk=debug cargo run --quiet -- select 2> debug.log" --pane=$pane
+tmux-cli send "RUST_LOG=worktrunk=debug cargo run --quiet -- switch 2> debug.log" --pane=$pane
 tmux-cli wait_idle --pane=$pane
 
 # Test interaction (e.g., select option 3)
@@ -43,13 +43,13 @@ MCP terminals use pseudo-TTY, not real terminals. If tests pass in MCP but users
 ```typescript
 // Create terminal and navigate to test repo
 mcp__node-terminal__terminal_create({ sessionId: "test" })
-mcp__node-terminal__terminal_write({ sessionId: "test", input: "cd /tmp/wt-select-test/test-repo" })
+mcp__node-terminal__terminal_write({ sessionId: "test", input: "cd /tmp/wt-perf-select-test" })
 mcp__node-terminal__terminal_send_key({ sessionId: "test", key: "enter" })
 
 // Run with debug logging
 mcp__node-terminal__terminal_write({
   sessionId: "test",
-  input: "RUST_LOG=worktrunk=debug cargo run --quiet -- select 2> debug.log"
+  input: "RUST_LOG=worktrunk=debug cargo run --quiet -- switch 2> debug.log"
 })
 mcp__node-terminal__terminal_send_key({ sessionId: "test", key: "enter" })
 
@@ -71,10 +71,10 @@ tail -100 debug.log | grep -E "error|hang|stuck"
 
 ```bash
 # Testing with cargo run (already uses local source):
-cargo run --quiet -- -C /path/to/repo select
+cargo run --quiet -- -C /path/to/repo switch
 
 # Testing with installed wt:
-wt --source -C /path/to/repo select
+wt --source -C /path/to/repo switch
 ```
 
 ## Shell Completion for CLI Arguments
