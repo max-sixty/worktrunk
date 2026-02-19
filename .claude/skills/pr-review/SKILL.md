@@ -69,7 +69,10 @@ gh api "repos/$REPO/pulls/<number>/reviews" --jq '.[] | select(.body != "") | .b
 ### 2. Read and understand the change
 
 1. Read the PR diff with `gh pr diff <number>`.
-2. Read the changed files in full (not just the diff) to understand context.
+2. Before going deeper, look at the PR as a reader would — not just the code,
+   but the shape: what files are being added/changed, and does anything look
+   off?
+3. Read the changed files in full (not just the diff) to understand context.
 
 ### 3. Review
 
