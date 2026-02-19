@@ -597,8 +597,8 @@ fn test_complete_step_subcommands(repo: TestRepo) {
     assert!(subcommands.contains(&"relocate"), "Missing relocate");
     assert_eq!(
         subcommands.len(),
-        8,
-        "Should have exactly 8 step subcommands"
+        9,
+        "Should have exactly 9 step subcommands"
     );
 }
 
