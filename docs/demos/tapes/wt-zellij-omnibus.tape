@@ -13,15 +13,14 @@ Output "{{OUTPUT_GIF}}"
 # 4. Each Zellij tab shows a distinct workflow
 #
 # Tab structure:
-#   TAB 1: wt list → wt switch api → claude (simple task)
+#   TAB 1: wt switch (picker → api) → claude (simple task)
 #   TAB 2: [NEW TAB] wsl abbreviation (wt switch -x claude --create) → claude
-#   TAB 3: [NEW TAB] wt switch --create → wt step commit → git push
-#   TAB 4: [NEW TAB] wt switch (picker) → wt remove → wt list --full
+#   TAB 3: [NEW TAB] wt switch --create → wt step commit → git push → wt remove → wt list --full
 #   Then back to TAB 1: [NEW PANE] git diff → wt merge (on Claude's completed work)
 #
 # Features demonstrated:
 # - wt list / wt list --full (URLs, CI status, diff stats)
-# - wt switch (simple navigation + interactive picker)
+# - wt switch (interactive picker)
 # - wsl abbreviation (wt switch --execute=claude --create)
 # - wt switch --create (with post-start hooks)
 # - wt step commit (LLM commit message, standalone)
@@ -38,7 +37,7 @@ Env ANTHROPIC_API_KEY "{{ANTHROPIC_API_KEY}}"
 # Pre-install marketplace plugin before recording
 Type "claude plugin marketplace add anthropics/claude-plugins-official"
 Enter
-Sleep 5s
+Sleep 10s
 # Start Zellij before showing
 Type "zellij"
 Enter
@@ -56,28 +55,17 @@ Sleep 500ms
 Show
 Sleep 500ms
 
-# ==== TAB 1: Overview and simple navigation ====
-# Start with wt list to see all worktrees
-Type "wt list"
+# ==== TAB 1: Interactive picker and Claude agent ====
+# wt switch (no args) - opens interactive picker
+Type "wt switch"
 Enter
-Sleep 3s
+Sleep 1.5s
 
-# Simple switch with Tab completion - navigate to existing worktree
-# Inside Zellij, fish completion needs a moment to render after Tab.
-# - "wt switch a" + pause → let fish process input
-# - Tab → triggers completion menu (alpha/api/auth)
-# - 500ms pause → menu renders and viewer reads it
-# - Tab → cycles to api
-# - 300ms → see selection
-# - Enter → accepts (dismisses pager), 50ms, Enter → executes
-Type "wt switch a"
-Sleep 200ms
-Tab
-Sleep 500ms
-Tab
-Sleep 300ms
-Enter
-Sleep 50ms
+# Filter to api branch
+Type "api"
+Sleep 1s
+
+# Select it
 Enter
 Sleep 1.5s
 
@@ -88,8 +76,11 @@ Enter
 Sleep 5.5s
 
 # ==== TAB 2: wsl abbreviation (creates billing, launches Claude) ====
-# [NEW TAB] - Ctrl+t creates new Zellij tab (starts in demo repo via default_cwd)
-Ctrl+t
+# [NEW TAB] via session manager (Ctrl+Space → tab mode → new)
+# Direct Ctrl+t is intercepted by Claude Code's TUI, so use session manager.
+Ctrl+Space
+Sleep 200ms
+Type "tn"
 Sleep 2s
 
 # wsl abbreviation expands to: wt switch --execute=claude --create
@@ -102,10 +93,12 @@ Sleep 500ms
 Enter
 Sleep 6s
 
-# ==== TAB 3: Create, commit, push workflow ====
-# This tab shows wt step commit as a standalone feature
-# [NEW TAB]
-Ctrl+t
+# ==== TAB 3: Create, commit, push, remove workflow ====
+# This tab shows wt step commit as a standalone feature, then cleanup
+# [NEW TAB] via session manager
+Ctrl+Space
+Sleep 200ms
+Type "tn"
 Sleep 2s
 
 # wt switch --create - shows post-start hooks running
@@ -128,30 +121,12 @@ Type "git push -u origin feature"
 Enter
 Sleep 2s
 
-# ==== TAB 4: Interactive picker, list, and cleanup ====
-# [NEW TAB]
-Ctrl+t
-Sleep 2s
-
-# wt switch (no args) - opens interactive picker
-Type "wt switch"
-Enter
-Sleep 1.5s
-
-# Filter to auth branch
-Type "au"
-Sleep 1s
-
-# Select it
-Enter
-Sleep 1.5s
-
-# wt remove - delete current worktree (we're in auth)
+# wt remove - done with feature, clean up
 Type "wt remove"
 Enter
 Sleep 3s
 
-# wt list --full - shows what changed
+# wt list --full - show remaining worktrees
 Type "wt list --full"
 Enter
 Sleep 3.5s
@@ -164,7 +139,11 @@ Type "t1"
 Sleep 2s
 
 # Open new pane for git diff and merge (like original zellij demo)
-Ctrl+n
+# Use session manager (Ctrl+Space → pane mode → new) since Ctrl+n is
+# intercepted by Claude Code's TUI running in the active pane.
+Ctrl+Space
+Sleep 200ms
+Type "on"
 Sleep 1.2s
 
 # Show what Claude changed
@@ -187,19 +166,13 @@ Sleep 200ms
 Type "t2"
 Sleep 1.5s
 
-# TAB 3: feature branch (already pushed)
+# TAB 3: show final state with wt list --full
 Ctrl+Space
 Sleep 200ms
 Type "t3"
-Sleep 1.5s
-
-# TAB 4: show final state with wt list --full
-Ctrl+Space
-Sleep 200ms
-Type "t4"
 Sleep 1s
 
-# Show comprehensive list of all worktrees
+# Show comprehensive list of all worktrees (post-merge state)
 Type "wt list --full"
 Enter
 Sleep 3s

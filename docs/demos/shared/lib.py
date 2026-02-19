@@ -456,6 +456,7 @@ def setup_claude_code_config(
                 },
                 "officialMarketplaceAutoInstalled": True,
                 "effortCalloutDismissed": True,
+                "lspRecommendationDisabled": True,
                 "tipsHistory": {
                     "new-user-warmup": 100,
                     "terminal-setup": 100,
@@ -573,6 +574,7 @@ keybinds clear-defaults=true {{
         bind "Ctrl Space" {{ SwitchToMode "tmux"; }}
     }}
     tmux {{
+        bind "o" {{ SwitchToMode "pane"; }}
         bind "p" {{ SwitchToMode "pane"; }}
         bind "t" {{ SwitchToMode "tab"; }}
         bind "q" {{ Quit; }}
@@ -585,6 +587,9 @@ keybinds clear-defaults=true {{
         bind "2" {{ GoToTab 2; SwitchToMode "Normal"; }}
         bind "3" {{ GoToTab 3; SwitchToMode "Normal"; }}
         bind "4" {{ GoToTab 4; SwitchToMode "Normal"; }}
+    }}
+    pane {{
+        bind "n" {{ NewPane; SwitchToMode "Normal"; }}
     }}
     shared_except "locked" {{
         bind "Ctrl t" {{ NewTab; }}

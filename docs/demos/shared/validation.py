@@ -28,16 +28,14 @@ from pathlib import Path
 # Forbidden patterns must ALL be absent (case-insensitive).
 
 TUI_CHECKPOINTS: dict[str, list[tuple[int, list[str], list[str]]]] = {
-    # Frame numbers calibrated with permissions cache fix (no permission dialog).
-    # At 30fps: frame 100 = ~3.3s, frame 500 = ~16.7s, frame 2060 = ~68.7s
+    # Frame numbers calibrated after removing initial wt list (demo starts with picker).
+    # At 30fps: frame 200 = ~6.7s, frame 1750 = ~58.3s
     "wt-zellij-omnibus": [
-        # Frame 100: After wt list - should see branch table, no permission dialog
-        (100, ["Branch", "Status", "main", "hooks"], ["Allow?", "permission"]),
-        # Frame 300: Claude UI visible on TAB 1 (api) - shows Opus model and task
-        (300, ["Opus", "acme", "Add a test"], ["command not found", "Unknown command"]),
-        # Frame 1980: Near end - wt list --full showing all worktrees
-        # (shifted ~75 frames earlier after removing wt list before wt remove)
-        (1980, ["Branch", "main", "feature", "billing"], ["CONFLICT", "error:", "failed"]),
+        # Frame 200: Claude UI visible on TAB 1 (api) - shows Opus model and task
+        (200, ["Opus", "acme", "Add a test"], ["command not found", "Unknown command"]),
+        # Frame 1750: Near end - wt list --full showing all worktrees
+        # (feature removed by wt remove in TAB 3)
+        (1750, ["Branch", "main", "billing"], ["CONFLICT", "error:", "failed"]),
     ],
 }
 
