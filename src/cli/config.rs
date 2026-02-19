@@ -534,6 +534,15 @@ Operate on a different branch:
 wt config state kv set env production --branch=main
 ```
 
+## Template access
+
+Kv data is available in hook templates as `{{ kv.<key> }}`. Use the `default` filter for keys that may not be set:
+
+```toml
+[post-start]
+dev = "ENV={{ kv.env | default('development') }} npm start -- --port {{ kv.port | default('3000') }}"
+```
+
 ## Storage
 
 Stored in git config as `worktrunk.state.<branch>.kv.<key>`.
