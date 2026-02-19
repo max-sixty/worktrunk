@@ -80,9 +80,14 @@ $ wt step squash
 
 See [`wt merge`](https://worktrunk.dev/merge/) and [`wt step`](https://worktrunk.dev/step/) for full documentation.
 
-## Picker summaries
+## Branch summaries (experimental)
 
-The `wt switch` [interactive picker](https://worktrunk.dev/switch/#interactive-picker) can show AI-generated branch summaries in preview tab 5. Summaries use the same `[commit.generation] command` and describe each branch's changes in a few sentences.
+With `summary = true` and a `[commit.generation] command` configured, Worktrunk generates LLM branch summaries — one-line descriptions of each branch's changes since the default branch.
+
+Summaries appear in:
+
+- **`wt switch`** [interactive picker](https://worktrunk.dev/switch/#interactive-picker) — preview tab 5
+- **`wt list --full`** — the Summary column (see [`wt list`](https://worktrunk.dev/list/#llm-summaries-experimental))
 
 Enable in user config:
 
@@ -91,7 +96,7 @@ Enable in user config:
 summary = true
 ```
 
-Summaries are generated in parallel across all worktrees when the picker opens, cached in `.git/wt-cache/summaries/`, and invalidated when the branch's diff changes.
+Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. Results are cached until the diff changes.
 
 ## Prompt templates
 

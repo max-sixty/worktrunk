@@ -120,10 +120,11 @@ Persistent flag values for `wt list`. Override on command line as needed.
 
 ```toml
 [list]
-full = false       # Show CI status and main…± diffstat columns (--full)
+summary = false    # Enable LLM branch summaries (requires [commit.generation])
+
+full = false       # Show CI, main…± diffstat, and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
-summary = false    # AI branch summaries in picker tab 5 (requires [commit.generation])
 ```
 
 ### Commit

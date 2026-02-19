@@ -85,7 +85,7 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
     };
     let layout = super::list::layout::calculate_layout_with_width(
         &list_data.items,
-        &skip_tasks,
+        &list_data.skip_tasks,
         skim_list_width,
         &list_data.main_worktree_path,
         None, // URL column not shown in select
@@ -264,7 +264,7 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
         // No LLM configured or summaries disabled — insert config hint so the
         // tab shows a useful message instead of a perpetual "Generating..." placeholder.
         let hint = if !config.commit_generation.is_configured() {
-            "Configure [commit.generation] command to enable AI summaries.\n\n\
+            "Configure [commit.generation] command to enable LLM summaries.\n\n\
              Example in ~/.config/worktrunk/config.toml:\n\n\
              [commit.generation]\n\
              command = \"llm -m haiku\"\n\n\

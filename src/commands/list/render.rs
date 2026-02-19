@@ -243,6 +243,7 @@ impl LayoutConfig {
                 &self.status_position_mask,
                 &self.main_worktree_path,
                 self.max_message_len,
+                self.max_summary_len,
             )
         })
     }
@@ -345,6 +346,7 @@ impl ColumnLayout {
         status_mask: &PositionMask,
         main_worktree_path: &Path,
         max_message_len: usize,
+        max_summary_len: usize,
     ) -> StyledLine {
         // Compute derived values inline (avoids separate context struct)
         let worktree_data = item.worktree_data();
@@ -495,6 +497,22 @@ impl ColumnLayout {
                 } else {
                     let short_head = &head[..8.min(head.len())];
                     self.render_text_cell(short_head, Some(Style::new().dimmed()))
+                }
+            }
+            ColumnKind::Summary => {
+                // summary is Option<Option<String>>:
+                // - None = not loaded yet (show spinner)
+                // - Some(None) = no summary (blank)
+                // - Some(Some(text)) = has summary
+                match &item.summary {
+                    None => self.placeholder_cell("⋯"),
+                    Some(None) => StyledLine::new(),
+                    Some(Some(summary)) => {
+                        let mut cell = StyledLine::new();
+                        let msg = truncate_to_width(summary, max_summary_len);
+                        cell.push_styled(msg, Style::new());
+                        cell
+                    }
                 }
             }
             ColumnKind::Message => {
@@ -1274,5 +1292,40 @@ mod tests {
         let arrow_rendered2 = arrow_overflow2.render();
         assert!(arrow_rendered2.contains("50"));
         assert!(arrow_rendered2.contains("↓1") && arrow_rendered2.contains('K'));
+    }
+
+    #[test]
+    fn test_summary_column_rendering() {
+        use super::super::layout::ColumnLayout;
+        use super::super::model::{ListItem, PositionMask};
+        use std::path::PathBuf;
+
+        let summary_col = ColumnLayout {
+            kind: ColumnKind::Summary,
+            header: "Summary",
+            start: 0,
+            width: 40,
+            format: ColumnFormat::Text,
+        };
+
+        let mask = PositionMask::FULL;
+        let main_path = PathBuf::from("/tmp");
+
+        // Case 1: summary = None (not loaded yet → placeholder)
+        let mut item = ListItem::new_branch("abc123".into(), "feat".into());
+        item.summary = None;
+        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40);
+        assert!(cell.render().contains('⋯'));
+
+        // Case 2: summary = Some(None) (loaded, no summary → blank)
+        item.summary = Some(None);
+        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40);
+        assert!(cell.render().is_empty());
+
+        // Case 3: summary = Some(Some(text)) (has summary)
+        item.summary = Some(Some("Add user authentication".into()));
+        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40);
+        let rendered = cell.render();
+        assert!(rendered.contains("Add user authentication"));
     }
 }

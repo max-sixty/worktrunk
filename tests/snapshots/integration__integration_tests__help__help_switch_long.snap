@@ -176,7 +176,7 @@ When called without arguments, [2mwt switch[0m opens an interactive picker to 
 2. [1mlog[0m — Recent commits; commits already on the default branch have dimmed hashes
 3. [1mmain…±[0m — Diff of changes since the merge-base with the default branch
 4. [1mremote⇅[0m — Diff vs upstream tracking branch (ahead/behind)
-5. [1msummary[0m — AI-generated branch summary (requires [2m[list] summary = true[0m and [2m[commit.generation][0m)
+5. [1msummary[0m — LLM-generated branch summary (requires [2m[list] summary = true[0m and [2m[commit.generation][0m)
 
 [1mPager configuration:[0m The preview panel pipes diff output through git's pager. Override in user config:
 

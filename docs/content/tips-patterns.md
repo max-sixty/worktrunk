@@ -143,6 +143,18 @@ wt list --full --branches
 
 Shows PR/CI status for all branches, including those without worktrees. CI indicators are clickable links to the PR page.
 
+## LLM branch summaries
+
+With `summary = true` and [`commit.generation`](@/config.md#commit) configured, `wt list --full` shows an LLM-generated one-line summary for each branch. The same summaries appear in the `wt switch` picker (tab 5).
+
+```toml
+# ~/.config/worktrunk/config.toml
+[list]
+summary = true
+```
+
+Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. See [LLM Commits](@/llm-commits.md#branch-summaries-experimental) for details.
+
 ## JSON API
 
 ```bash

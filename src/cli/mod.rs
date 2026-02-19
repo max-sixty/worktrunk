@@ -330,7 +330,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 2. **log** — Recent commits; commits already on the default branch have dimmed hashes
 3. **main…±** — Diff of changes since the merge-base with the default branch
 4. **remote⇅** — Diff vs upstream tracking branch (ahead/behind)
-5. **summary** — AI-generated branch summary (requires `[list] summary = true` and `[commit.generation]`)
+5. **summary** — LLM-generated branch summary (requires `[list] summary = true` and `[commit.generation]`)
 
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
@@ -463,10 +463,10 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 
     /// List worktrees and their status
     #[command(
-        after_long_help = r#"Shows uncommitted changes, divergence from the default branch and remote, and optional CI status.
+        after_long_help = r#"Shows uncommitted changes, divergence from the default branch and remote, and optional CI status and LLM summaries.
 
 <!-- demo: wt-list.gif 1600x900 -->
-The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
+The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network and LLM summaries are generated — the table displays instantly and columns fill in as results arrive.
 
 ## Examples
 
@@ -477,7 +477,7 @@ List all worktrees:
 $ wt list
 ```
 
-Include CI status and line diffs:
+Include CI status, line diffs, and LLM summaries:
 
 <!-- wt list --full -->
 ```console
@@ -506,10 +506,11 @@ $ wt list --format=json
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
 | main…± | Line diffs since the merge-base with the default branch (`--full`) |
-| Path | Worktree directory |
+| Summary | LLM-generated branch summary (`--full` + `summary = true`, requires [`commit.generation`](@/config.md#commit)) (experimental) |
 | Remote⇅ | Commits ahead/behind tracking branch |
-| URL | Dev server URL from project config (dimmed if port not listening) |
 | CI | Pipeline status (`--full`) |
+| Path | Worktree directory |
+| URL | Dev server URL from project config (dimmed if port not listening) |
 | Commit | Short hash (8 chars) |
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
@@ -531,6 +532,13 @@ The CI column shows GitHub/GitLab pipeline status:
 | (blank) | No upstream or no PR/MR |
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches (visible with `--remotes`) get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
+
+### LLM summaries (experimental)
+
+With `--full`, `summary = true`, and a [`commit.generation`](@/config.md#commit) command configured, the Summary column shows an LLM-generated one-line description of each branch's changes relative to the default branch.
+
+Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. Results are cached until the diff changes.
+<!-- TODO: promote this feature more prominently once it's been tested in the wild -->
 
 ## Status symbols
 
@@ -716,7 +724,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
         #[arg(long)]
         remotes: bool,
 
-        /// Include CI status and diff analysis (slower)
+        /// Show CI, diff analysis, and LLM summaries
         #[arg(long)]
         full: bool,
 
@@ -1581,10 +1589,11 @@ Persistent flag values for `wt list`. Override on command line as needed.
 
 ```toml
 [list]
-full = false       # Show CI status and main…± diffstat columns (--full)
+summary = false    # Enable LLM branch summaries (requires [commit.generation])
+
+full = false       # Show CI, main…± diffstat, and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
-summary = false    # AI branch summaries in picker tab 5 (requires [commit.generation])
 ```
 
 ### Commit
