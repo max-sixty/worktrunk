@@ -1,5 +1,5 @@
 ---
-name: worktrunk-review
+name: pr-review
 description: Reviews a pull request for idiomatic Rust, project conventions, and code quality. Use when asked to review a PR or when running as an automated PR reviewer.
 argument-hint: "[PR number]"
 ---

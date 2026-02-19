@@ -54,7 +54,7 @@ jobs:
           # Bot now puts feedback in review bodies instead of stdout, so this may be a no-op.
           use_sticky_comment: true
           prompt: |
-            Use /worktrunk-review ${{ github.event.pull_request.number }}
+            Use /pr-review ${{ github.event.pull_request.number }}
           claude_args: |
             --model opus
             --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill
