@@ -185,7 +185,7 @@ When called without arguments, [2mwt switch[0m opens an interactive picker to 
 
 Available on Unix only (macOS, Linux). On Windows, use [2mwt list[0m or [2mwt switch <branch>[0m directly.
 
-[1m[32mGitHub pull requests (experimental)[0m
+[1m[32mGitHub pull requests[0m
 
 The [2mpr:<number>[0m syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches [2mrefs/pull/N/head[0m and configures [2mpushRemote[0m to the fork URL.
 
@@ -195,7 +195,7 @@ Requires [2mgh[0m CLI to be installed and authenticated. The [2m--create[0m 
 
 [1mFork PRs:[0m The local branch uses the PR's branch name directly (e.g., [2mfeature-fix[0m), so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
 
-[1m[32mGitLab merge requests (experimental)[0m
+[1m[32mGitLab merge requests[0m
 
 The [2mmr:<number>[0m syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches [2mrefs/merge-requests/N/head[0m and configures [2mpushRemote[0m to the fork URL.
 
