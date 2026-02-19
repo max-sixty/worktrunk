@@ -1125,6 +1125,7 @@ pub fn execute_command_in_worktree(
     worktree_path: &std::path::Path,
     command: &str,
     stdin_content: Option<&str>,
+    command_log_label: Option<&str>,
 ) -> anyhow::Result<()> {
     // Flush stdout before executing command to ensure all our messages appear
     // before the child process output
@@ -1141,6 +1142,10 @@ pub fn execute_command_in_worktree(
         .current_dir(worktree_path)
         .stdout(Stdio::from(std::io::stderr()))
         .forward_signals();
+
+    if let Some(label) = command_log_label {
+        cmd = cmd.external(label);
+    }
 
     if let Some(content) = stdin_content {
         cmd = cmd.stdin_bytes(content);

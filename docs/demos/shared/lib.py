@@ -440,6 +440,10 @@ def setup_claude_code_config(
                 "opus45MigrationComplete": True,
                 "thinkingMigrationComplete": True,
                 "hasShownOpus45Notice": {},
+                "hasShownOpus46Notice": {},
+                "opusProMigrationComplete": True,
+                "opus46FeedSeenCount": 100,
+                "sonnet1m45MigrationComplete": True,
                 "lastReleaseNotesSeen": "99.0.0",
                 "lastOnboardingVersion": "99.0.0",
                 "oauthAccount": {
@@ -451,10 +455,24 @@ def setup_claude_code_config(
                     "rejected": [],
                 },
                 "officialMarketplaceAutoInstalled": True,
+                "effortCalloutDismissed": True,
+                "lspRecommendationDisabled": True,
                 "tipsHistory": {
                     "new-user-warmup": 100,
                     "terminal-setup": 100,
                     "theme-command": 100,
+                    "fast-mode-2026-02-01": 100,
+                    "adaptive-thinking-2026-01-28": 100,
+                    "prompt-caching-scope-2026-01-05": 100,
+                    "plan-mode-for-complex-tasks": 100,
+                    "memory-command": 100,
+                    "todo-list": 100,
+                    "stickers-command": 100,
+                    "status-line": 100,
+                    "custom-commands": 100,
+                    "custom-agents": 100,
+                    "permissions": 100,
+                    "git-worktrees": 100,
                 },
                 "projects": projects_config,
             },
@@ -474,7 +492,7 @@ def setup_claude_code_config(
     claude_dir.mkdir(exist_ok=True)
     settings = {
         "permissions": {"allow": allowed_tools or [], "deny": [], "ask": []},
-        "model": "claude-opus-4-5-20251101",
+        "model": "claude-opus-4-6",
         "statusLine": {
             "type": "command",
             "command": "wt list statusline --format=claude-code",
@@ -556,6 +574,7 @@ keybinds clear-defaults=true {{
         bind "Ctrl Space" {{ SwitchToMode "tmux"; }}
     }}
     tmux {{
+        bind "o" {{ SwitchToMode "pane"; }}
         bind "p" {{ SwitchToMode "pane"; }}
         bind "t" {{ SwitchToMode "tab"; }}
         bind "q" {{ Quit; }}
@@ -568,6 +587,9 @@ keybinds clear-defaults=true {{
         bind "2" {{ GoToTab 2; SwitchToMode "Normal"; }}
         bind "3" {{ GoToTab 3; SwitchToMode "Normal"; }}
         bind "4" {{ GoToTab 4; SwitchToMode "Normal"; }}
+    }}
+    pane {{
+        bind "n" {{ NewPane; SwitchToMode "Normal"; }}
     }}
     shared_except "locked" {{
         bind "Ctrl t" {{ NewTab; }}
@@ -687,14 +709,34 @@ fi
 """)
     flyctl_mock.chmod(0o755)
 
-    # llm mock - simulates LLM commit message generation
+    # llm mock - simulates both commit message and summary generation.
+    # Reads stdin to detect prompt type: summary prompts contain "summary",
+    # commit prompts don't. For summaries, returns branch-appropriate one-liners
+    # based on filenames in the diff.
     llm_mock = bin_dir / "llm"
-    llm_mock.write_text("""#!/bin/bash
-sleep 0.5
-echo "feat(validation): add input validation utilities"
-echo ""
-echo "Add validation module with is_positive and is_non_empty helpers"
-echo "for validating user input. Includes comprehensive test coverage."
+    llm_mock.write_text(r"""#!/bin/bash
+input=$(cat)
+
+if echo "$input" | grep -qi "summary"; then
+    # Summary generation — return branch-appropriate one-liner
+    if echo "$input" | grep -q "utils\.rs"; then
+        echo "Add utility functions module with string and math helpers"
+    elif echo "$input" | grep -q "notes\.txt"; then
+        echo "Add TODO notes for caching improvements"
+    elif echo "$input" | grep -q "multiply\|subtract\|math"; then
+        echo "Add math operations and consolidate tests"
+    elif echo "$input" | grep -q "User settings"; then
+        echo "Add user settings module placeholder"
+    else
+        echo "Expand README with contributing and license sections"
+    fi
+else
+    # Commit message generation
+    sleep 0.5
+    echo "feat: add user settings module"
+    echo ""
+    echo "Add placeholder module for user profile settings."
+fi
 """)
     llm_mock.chmod(0o755)
 
@@ -745,7 +787,10 @@ def prepare_demo_repo(env: DemoEnv, repo_root: Path, hooks_config: str = None):
     if hooks_config is None:
         hooks_config = '[pre-merge]\ntest = "cargo nextest run"\n'
     (env.repo / ".config" / "wt.toml").write_text(hooks_config)
-    git(["-C", str(env.repo), "add", ".config/wt.toml"])
+    claude_md_dir = env.repo / ".claude"
+    claude_md_dir.mkdir(exist_ok=True)
+    (claude_md_dir / "CLAUDE.md").write_text("# Acme App\n\nRust project. Run `cargo test` for tests.\n")
+    git(["-C", str(env.repo), "add", ".config/wt.toml", ".claude/CLAUDE.md"])
     commit_dated(env.repo, "Add project hooks", "5d")
     git(["-C", str(env.repo), "push", "-q"])
 

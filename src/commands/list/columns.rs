@@ -9,10 +9,11 @@ pub enum ColumnKind {
     WorkingDiff,
     AheadBehind,
     BranchDiff,
-    Path,
+    Summary,
     Upstream,
-    Url, // Dev server URL from project config template
     CiStatus,
+    Path,
+    Url, // Dev server URL from project config template
     Commit,
     Time,
     Message,
@@ -33,6 +34,7 @@ impl ColumnKind {
             ColumnKind::Time => "Age",
             ColumnKind::CiStatus => "CI",
             ColumnKind::Commit => "Commit",
+            ColumnKind::Summary => "Summary",
             ColumnKind::Message => "Message",
         }
     }
@@ -90,13 +92,14 @@ pub const COLUMN_SPECS: &[ColumnSpec] = &[
     ColumnSpec::new(ColumnKind::WorkingDiff, 3, None),
     ColumnSpec::new(ColumnKind::AheadBehind, 4, None),
     ColumnSpec::new(ColumnKind::BranchDiff, 6, Some(TaskKind::BranchDiff)),
-    ColumnSpec::new(ColumnKind::Path, 7, None),
+    ColumnSpec::new(ColumnKind::Summary, 10, Some(TaskKind::SummaryGenerate)),
     ColumnSpec::new(ColumnKind::Upstream, 8, None),
-    ColumnSpec::new(ColumnKind::Url, 9, Some(TaskKind::UrlStatus)),
     ColumnSpec::new(ColumnKind::CiStatus, 5, Some(TaskKind::CiStatus)),
-    ColumnSpec::new(ColumnKind::Commit, 10, None),
-    ColumnSpec::new(ColumnKind::Time, 11, None),
-    ColumnSpec::new(ColumnKind::Message, 12, None),
+    ColumnSpec::new(ColumnKind::Path, 7, None),
+    ColumnSpec::new(ColumnKind::Url, 9, Some(TaskKind::UrlStatus)),
+    ColumnSpec::new(ColumnKind::Commit, 11, None),
+    ColumnSpec::new(ColumnKind::Time, 12, None),
+    ColumnSpec::new(ColumnKind::Message, 13, None),
 ];
 
 pub fn column_display_index(kind: ColumnKind) -> usize {
@@ -121,10 +124,11 @@ mod tests {
             ColumnKind::WorkingDiff,
             ColumnKind::AheadBehind,
             ColumnKind::BranchDiff,
-            ColumnKind::Path,
+            ColumnKind::Summary,
             ColumnKind::Upstream,
-            ColumnKind::Url,
             ColumnKind::CiStatus,
+            ColumnKind::Path,
+            ColumnKind::Url,
             ColumnKind::Commit,
             ColumnKind::Time,
             ColumnKind::Message,
@@ -152,11 +156,18 @@ mod tests {
             .unwrap();
         assert_eq!(ci_status.requires_task, Some(TaskKind::CiStatus));
 
+        let summary = COLUMN_SPECS
+            .iter()
+            .find(|c| c.kind == ColumnKind::Summary)
+            .unwrap();
+        assert_eq!(summary.requires_task, Some(TaskKind::SummaryGenerate));
+
         // All other columns should not require a background task to render
         for spec in COLUMN_SPECS {
             if spec.kind != ColumnKind::BranchDiff
                 && spec.kind != ColumnKind::Url
                 && spec.kind != ColumnKind::CiStatus
+                && spec.kind != ColumnKind::Summary
             {
                 assert!(
                     spec.requires_task.is_none(),
@@ -225,6 +236,7 @@ mod tests {
             ColumnKind::CiStatus,
             ColumnKind::Commit,
             ColumnKind::Time,
+            ColumnKind::Summary,
             ColumnKind::Message,
         ];
 

@@ -1,0 +1,48 @@
+---
+source: tests/integration_tests/user_hooks.rs
+info:
+  program: wt
+  args:
+    - switch
+    - "--create"
+    - feature
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    PATH: "[PATH]"
+    PSModulePath: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: false
+exit_code: 1
+----- stdout -----
+
+----- stderr -----
+[36m◎[39m [36mRunning pre-switch [1muser:block[22m[39m
+[107m [0m [2m[0m[2m[34mexit[0m[2m 1
+[0m[31m✗[39m [31mpre-switch command failed: [1mblock[22m: exit status: 1[39m
+[2m↳[22m [2mTo skip pre-switch hooks, re-run with [90m--no-verify[39m[22m

@@ -662,6 +662,35 @@ fn test_repo_path_in_submodule() {
         "git_common_dir should be in parent's .git/modules/ for a submodule, got: {:?}",
         git_common_dir
     );
+
+    // Verify list_worktrees() returns corrected paths for submodule main worktree.
+    // Git's `worktree list` reports the main worktree as .git/modules/sub for submodules,
+    // which is wrong — it should be the actual working directory.
+    let worktrees = repository.list_worktrees().unwrap();
+    assert!(
+        !worktrees.is_empty(),
+        "list_worktrees() should return at least the main worktree"
+    );
+    let main_wt_path = dunce::canonicalize(&worktrees[0].path).unwrap();
+    assert_eq!(
+        main_wt_path, expected,
+        "list_worktrees()[0].path should be the submodule working directory, not .git/modules/sub"
+    );
+
+    // Verify worktree_for_branch() returns the corrected path (this is what `wt switch` uses)
+    let main_branch = worktrees[0]
+        .branch
+        .as_deref()
+        .expect("submodule main worktree should have a branch");
+    let found_path = repository
+        .worktree_for_branch(main_branch)
+        .unwrap()
+        .unwrap();
+    let found_canonical = dunce::canonicalize(&found_path).unwrap();
+    assert_eq!(
+        found_canonical, expected,
+        "worktree_for_branch() should return submodule working directory for default branch"
+    );
 }
 
 // =============================================================================
@@ -762,4 +791,112 @@ fn test_is_dirty_does_not_detect_skip_worktree_changes() {
         !wt.is_dirty().unwrap(),
         "is_dirty() does not detect skip-worktree changes by design"
     );
+}
+
+// =============================================================================
+// sparse_checkout_paths() tests
+// =============================================================================
+
+#[test]
+fn test_sparse_checkout_paths_empty_for_normal_repo() {
+    let repo = TestRepo::new();
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+
+    let paths = repository.sparse_checkout_paths();
+    assert!(
+        paths.is_empty(),
+        "normal repo should have no sparse checkout paths"
+    );
+}
+
+#[test]
+fn test_sparse_checkout_paths_returns_cone_paths() {
+    let repo = TestRepo::new();
+
+    // Create directories with files and commit them
+    let dir1 = repo.root_path().join("dir1");
+    let dir2 = repo.root_path().join("dir2");
+    fs::create_dir_all(&dir1).unwrap();
+    fs::create_dir_all(&dir2).unwrap();
+    fs::write(dir1.join("file.txt"), "content1").unwrap();
+    fs::write(dir2.join("file.txt"), "content2").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "add directories"]);
+
+    // Set up sparse checkout in cone mode
+    repo.run_git(&["sparse-checkout", "init", "--cone"]);
+    repo.run_git(&["sparse-checkout", "set", "dir1", "dir2"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let paths = repository.sparse_checkout_paths();
+
+    assert_eq!(paths, &["dir1".to_string(), "dir2".to_string()]);
+}
+
+#[test]
+fn test_sparse_checkout_paths_cached() {
+    let repo = TestRepo::new();
+
+    let dir1 = repo.root_path().join("dir1");
+    fs::create_dir_all(&dir1).unwrap();
+    fs::write(dir1.join("file.txt"), "content").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "add dir1"]);
+
+    repo.run_git(&["sparse-checkout", "init", "--cone"]);
+    repo.run_git(&["sparse-checkout", "set", "dir1"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+
+    let first = repository.sparse_checkout_paths();
+    let second = repository.sparse_checkout_paths();
+
+    assert_eq!(first, second);
+    assert_eq!(first, &["dir1".to_string()]);
+}
+
+#[test]
+fn test_branch_diff_stats_scoped_to_sparse_checkout() {
+    let repo = TestRepo::new();
+
+    // Create two directories with files on main
+    let inside = repo.root_path().join("inside");
+    let outside = repo.root_path().join("outside");
+    fs::create_dir_all(&inside).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(inside.join("file.txt"), "base content\n").unwrap();
+    fs::write(outside.join("file.txt"), "base content\n").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "add directories"]);
+
+    // Create feature branch and modify files in both directories
+    repo.run_git(&["checkout", "-b", "feature"]);
+    fs::write(inside.join("file.txt"), "modified inside\nadded line\n").unwrap();
+    fs::write(outside.join("file.txt"), "modified outside\nadded line\n").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "modify both dirs"]);
+
+    // Go back to main and set up sparse checkout
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["sparse-checkout", "init", "--cone"]);
+    repo.run_git(&["sparse-checkout", "set", "inside"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let stats = repository.branch_diff_stats("main", "feature").unwrap();
+
+    // Only changes in inside/ should be counted
+    // inside/file.txt: "base content\n" → "modified inside\nadded line\n" = 2 added, 1 deleted
+    assert_eq!(stats.added, 2, "sparse: only inside/ additions");
+    assert_eq!(stats.deleted, 1, "sparse: only inside/ deletions");
+
+    // Disable sparse checkout — full stats include both inside/ and outside/
+    repo.run_git(&["sparse-checkout", "disable"]);
+    let full_repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let full_stats = full_repository
+        .branch_diff_stats("main", "feature")
+        .unwrap();
+
+    // Both files have identical diffs, so full = 2x sparse
+    assert_eq!(full_stats.added, 4, "full: inside/ + outside/ additions");
+    assert_eq!(full_stats.deleted, 2, "full: inside/ + outside/ deletions");
 }

@@ -27,14 +27,16 @@ Claude Code is designed to load the skill automatically when it detects worktrun
 
 The plugin tracks Claude sessions with status markers in `wt list`:
 
+{% terminal(cmd="wt list") %}
 <span class="cmd">wt list</span>
-  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Path</b>                 <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ main             <span class=d>^</span><span class=d>⇡</span>                        .                     <span class=g>⇡1</span>      <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
-+ feature-api      <span class=d>↑</span> 🤖              <span class=g>↑1</span>      ../repo.feature-api           <span class=d>70343f03</span>  <span class=d>1d</span>    <span class=d>Add REST API endpoints</span>
-+ review-ui      <span class=c>?</span> <span class=d>↑</span> 💬              <span class=g>↑1</span>      ../repo.review-ui             <span class=d>a585d6ed</span>  <span class=d>1d</span>    <span class=d>Add dashboard component</span>
-+ wip-docs       <span class=c>?</span> <span class=d>–</span>                         ../repo.wip-docs              <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
+  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Path</b>                 <b>Commit</b>    <b>Age</b>   <b>Message</b>
+@ main             <span class=d>^</span><span class=d>⇡</span>                         <span class=g>⇡1</span>      .                    <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
++ feature-api      <span class=d>↑</span> 🤖              <span class=g>↑1</span>               ../repo.feature-api  <span class=d>70343f03</span>  <span class=d>1d</span>    <span class=d>Add REST API endpoints</span>
++ review-ui      <span class=c>?</span> <span class=d>↑</span> 💬              <span class=g>↑1</span>               ../repo.review-ui    <span class=d>a585d6ed</span>  <span class=d>1d</span>    <span class=d>Add dashboard component</span>
++ wip-docs       <span class=c>?</span> <span class=d>–</span>                                  ../repo.wip-docs     <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead</span>
+{% end %}
 
 - 🤖 — Claude is working
 - 💬 — Claude is waiting for input

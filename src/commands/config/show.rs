@@ -10,7 +10,8 @@ use std::path::PathBuf;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ProjectConfig, UserConfig, find_unknown_project_keys, find_unknown_user_keys,
+    ProjectConfig, UserConfig, default_system_config_path, find_unknown_project_keys,
+    find_unknown_user_keys, get_system_config_path,
 };
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -34,8 +35,14 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     // Build the complete output as a string
     let mut show_output = String::new();
 
+    // Render system config section (only when a system config file exists)
+    let has_system_config = render_system_config(&mut show_output)?;
+    if has_system_config {
+        show_output.push('\n');
+    }
+
     // Render user config
-    render_user_config(&mut show_output)?;
+    render_user_config(&mut show_output, has_system_config)?;
     show_output.push('\n');
 
     // Render project config if in a git repository
@@ -340,7 +347,48 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn render_user_config(out: &mut String) -> anyhow::Result<()> {
+/// Render the SYSTEM CONFIG section. Returns true if a system config file was found.
+fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
+    let Some(system_path) = get_system_config_path() else {
+        return Ok(false);
+    };
+
+    writeln!(
+        out,
+        "{}",
+        format_heading(
+            "SYSTEM CONFIG",
+            Some(&format_path_for_display(&system_path))
+        )
+    )?;
+
+    // Read and display the file contents
+    let contents =
+        std::fs::read_to_string(&system_path).context("Failed to read system config file")?;
+
+    if contents.trim().is_empty() {
+        writeln!(out, "{}", hint_message("Empty file (no system defaults)"))?;
+        return Ok(true);
+    }
+
+    // Validate config (syntax + schema) and warn if invalid
+    if let Err(e) = toml::from_str::<UserConfig>(&contents) {
+        writeln!(out, "{}", error_message("Invalid config"))?;
+        writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+    } else {
+        // Only check for unknown keys if config is valid
+        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
+            &contents,
+        )));
+    }
+
+    // Display TOML with syntax highlighting
+    writeln!(out, "{}", format_toml(&contents))?;
+
+    Ok(true)
+}
+
+fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Result<()> {
     let config_path = require_user_config_path()?;
 
     writeln!(
@@ -406,6 +454,24 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
     // Display TOML with syntax highlighting (gutter at column 0)
     writeln!(out, "{}", format_toml(&contents))?;
 
+    if !has_system_config {
+        render_system_config_hint(out)?;
+    }
+
+    Ok(())
+}
+
+fn render_system_config_hint(out: &mut String) -> anyhow::Result<()> {
+    if let Some(path) = default_system_config_path() {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Optional system config not found @ <dim>{}</>",
+                format_path_for_display(&path)
+            ))
+        )?;
+    }
     Ok(())
 }
 
@@ -490,8 +556,8 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     }
 
     // Check for deprecations with show_brief_warning=false (silent mode)
-    // Only show in main worktree (where .git is a directory)
-    let is_main_worktree = repo_root.join(".git").is_dir();
+    // Only write migration file in main worktree, not linked worktrees
+    let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
     let has_deprecations = if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
         &config_path,
         &contents,

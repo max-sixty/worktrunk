@@ -182,13 +182,14 @@ fn has_init_pattern_with_prefix_check(line: &str, cmd: &str, strict: bool) -> bo
                     continue;
                 }
 
-                // POSIX shells (bash, zsh, fish)
-                let is_posix_shell = line.contains("eval")
+                // POSIX shells (bash, zsh, fish) and nushell
+                let is_shell_exec = line.contains("eval")
                     || line.contains("source")
                     || line.contains(". <(") // POSIX dot command with process substitution
-                    || line.contains(". =("); // zsh dot command with =() substitution
+                    || line.contains(". =(") // zsh dot command with =() substitution
+                    || line.contains("save"); // nushell pipe to save
 
-                if is_posix_shell {
+                if is_shell_exec {
                     return true;
                 }
             }
@@ -457,6 +458,9 @@ pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>,
         // Fish conf.d (legacy location - for detecting existing installs)
         home.join(".config/fish/conf.d").join(format!("{cmd}.fish")),
     ];
+
+    // Add Nushell vendor autoload paths (check all candidate locations)
+    config_files.extend(super::config_paths(super::Shell::Nushell, cmd).unwrap_or_default());
 
     // Add PowerShell profiles
     config_files.extend(powershell_profile_paths(&home));
@@ -930,15 +934,21 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // FALSE NEGATIVE: Nushell (unsupported but users might try)
+    // Nushell detection
     // ------------------------------------------------------------------------
 
     #[test]
-    fn test_nushell_pattern() {
-        // Nushell uses "source" so it might match
+    fn test_nushell_save_pattern() {
+        // Nushell's config_line uses `save --force` (detected via "save" keyword)
+        let line = "if (which wt | is-not-empty) { wt config shell init nu | save --force ($nu.default-config-dir | path join vendor/autoload/wt.nu) }";
+        assert_detects(line, "wt", "nushell save pattern (actual config line)");
+    }
+
+    #[test]
+    fn test_nushell_source_pattern() {
+        // Alternative nushell pattern using source (for manual setups)
         let line = "wt config shell init nu | source";
-        // This actually matches because it contains "source" and "wt config shell init"
-        assert_detects(line, "wt", "nushell pattern (unexpectedly matches)");
+        assert_detects(line, "wt", "nushell source pattern");
     }
 
     // ------------------------------------------------------------------------

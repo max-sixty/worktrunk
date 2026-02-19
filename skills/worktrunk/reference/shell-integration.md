@@ -21,7 +21,7 @@ This allows `wt switch` to change the terminal's directory.
 ## Installation
 
 ```bash
-# Auto-install for all shells (bash, zsh, fish, PowerShell)
+# Auto-install for all shells (bash, zsh, fish, nushell (experimental), PowerShell)
 wt config shell install
 
 # Or manual installation - add to the shell config:
@@ -33,6 +33,9 @@ eval "$(wt config shell init zsh)"
 
 # fish (~/.config/fish/config.fish):
 wt config shell init fish | source
+
+# nushell (experimental) — save to vendor autoload directory:
+wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/autoload/wt.nu)
 
 # PowerShell ($PROFILE):
 Invoke-Expression (& wt config shell init powershell | Out-String)

@@ -74,7 +74,7 @@ cargo test --test integration --features shell-integration-tests  # with shell t
 
 ### Claude Code Web Environment
 
-Run `task setup-web` to install required shells (zsh, fish), `gh`, and other dev tools. Install `task` first if needed:
+Run `task setup-web` to install required shells (zsh, fish, nushell), `gh`, and other dev tools. Install `task` first if needed:
 
 ```bash
 sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin
@@ -331,6 +331,7 @@ if worktree.is_dirty() {
 
 - **Use `bail!`** for business logic errors (dirty worktree, missing branch, invalid state)
 - **Use `.context()`** for wrapping I/O and external command failures
+- **Never `.expect()` or `.unwrap()` in functions returning `Result`** — use `?`, `bail!`, or return an error. Panics in fallible code bypass error handling.
 - **Don't `logger.error` before raising** — include context in the error message itself
 - **Let errors propagate** — don't catch and re-raise without adding information
 

@@ -20,6 +20,7 @@ pub struct CommandEnv {
     /// Current branch name, if on a branch (None in detached HEAD state).
     pub branch: Option<String>,
     pub config: UserConfig,
+    /// Canonical absolute path to the worktree root (via `git rev-parse --show-toplevel`).
     pub worktree_path: PathBuf,
 }
 
@@ -30,7 +31,7 @@ impl CommandEnv {
     /// Used in error messages when the environment can't be loaded.
     pub fn for_action(action: &str, config: UserConfig) -> anyhow::Result<Self> {
         let repo = Repository::current()?;
-        let worktree_path = repo.current_worktree().path().to_path_buf();
+        let worktree_path = repo.current_worktree().root()?;
         let branch = repo.require_current_branch(action)?;
 
         Ok(Self {
@@ -48,7 +49,7 @@ impl CommandEnv {
     pub fn for_action_branchless() -> anyhow::Result<Self> {
         let repo = Repository::current()?;
         let current_wt = repo.current_worktree();
-        let worktree_path = current_wt.path().to_path_buf();
+        let worktree_path = current_wt.root()?;
         // Propagate git errors (broken repo, missing git) but allow None for detached HEAD
         let branch = current_wt
             .branch()

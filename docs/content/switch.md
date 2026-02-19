@@ -8,7 +8,7 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt switch --help-page` — edit cli.rs to update -->
 
-Switch to a worktree. Creates one if needed.
+Switch to a worktree; create if needed.
 
 Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
 
@@ -93,7 +93,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | `Enter` | Switch to selected worktree |
 | `Alt-c` | Create new worktree from query |
 | `Esc` | Cancel |
-| `1`/`2`/`3`/`4` | Switch preview tab |
+| `1`–`5` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
@@ -103,11 +103,12 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 2. **log** — Recent commits; commits already on the default branch have dimmed hashes
 3. **main…±** — Diff of changes since the merge-base with the default branch
 4. **remote⇅** — Diff vs upstream tracking branch (ahead/behind)
+5. **summary** — LLM-generated branch summary (requires `[list] summary = true` and `[commit.generation]`)
 
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
 ```toml
-[select]
+[switch.picker]
 pager = "delta --paging=never --width=$COLUMNS"
 ```
 
@@ -154,9 +155,7 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 ## Command reference
 
 {% terminal() %}
-wt switch - Switch to a worktree
-
-Creates one if needed.
+wt switch - Switch to a worktree; create if needed
 
 Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <span class=c>[BRANCH]</span> <b><span class=c>[--</span></b> <span class=c>&lt;EXECUTE_ARGS&gt;...</span><b><span class=c>]</span></b>
 

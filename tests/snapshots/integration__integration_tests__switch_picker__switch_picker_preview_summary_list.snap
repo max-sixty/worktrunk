@@ -1,0 +1,7 @@
+---
+source: tests/integration_tests/switch_picker.rs
+expression: list
+---
+> [QUERY]
+    Branch   Status        HEAD±    main↕  Remote⇅  Commit
+> + feature      ↑                 ↑1               [HASH]..

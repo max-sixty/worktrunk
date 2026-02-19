@@ -16,12 +16,15 @@ info:
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
 ---
 success: true
 exit_code: 0
@@ -103,7 +106,9 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# Persistent flag values for `wt list`. Override on command line as needed.[0m
   [2m#[0m
   [2m# [list][0m
-  [2m# full = false       # Show CI status and main…± diffstat columns (--full)[0m
+  [2m# summary = false    # Enable LLM branch summaries (requires [commit.generation])[0m
+  [2m#[0m
+  [2m# full = false       # Show CI, main…± diffstat, and LLM summaries (--full)[0m
   [2m# branches = false   # Include branches without worktrees (--branches)[0m
   [2m# remotes = false    # Include remote-only branches (--remotes)[0m
   [2m#[0m
@@ -125,15 +130,17 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# remove = true      # Remove worktree after merge (--no-remove to keep)[0m
   [2m# verify = true      # Run project hooks (--no-verify to skip)[0m
   [2m#[0m
-  [2m# ### Select[0m
+  [2m# ### Switch picker[0m
   [2m#[0m
-  [2m# Pager behavior for `wt switch` interactive picker diff previews.[0m
+  [2m# Configuration for `wt switch` interactive picker.[0m
   [2m#[0m
-  [2m# [select][0m
-  [2m# # Pager command with flags for diff preview (overrides git's core.pager)[0m
-  [2m# # Use this to specify pager flags needed for non-TTY contexts[0m
-  [2m# # Example:[0m
+  [2m# [switch.picker][0m
+  [2m# # Pager command for diff preview (overrides git's core.pager)[0m
   [2m# # pager = "delta --paging=never"[0m
+  [2m#[0m
+  [2m# # Timeout (ms) for git commands during picker loading (default: 200)[0m
+  [2m# # Lower values show the TUI faster; 0 disables timeouts[0m
+  [2m# # timeout-ms = 200[0m
   [2m#[0m
   [2m# ### User project-specific settings[0m
   [2m#[0m
@@ -147,12 +154,11 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# #### Approved hook commands[0m
   [2m#[0m
-  [2m# When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.[0m
+  [2m# When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved to `~/.config/worktrunk/approvals.toml` (separate from user config to allow dotfile management of config.toml).[0m
   [2m#[0m
-  [2m# [projects."github.com/user/repo"][0m
-  [2m# approved-commands = ["npm ci", "npm test"][0m
+  [2m# To reset, run `wt hook approvals clear`.[0m
   [2m#[0m
-  [2m# To reset, delete the entry or run `wt hook approvals clear`.[0m
+  [2m# > **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config show` to generate a migration file that removes stale entries.[0m
   [2m#[0m
   [2m# #### Setting overrides (Experimental)[0m
   [2m#[0m

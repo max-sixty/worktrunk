@@ -21,5 +21,8 @@ expression: "String::from_utf8_lossy(&output.stderr)"
 [36mHINTS[39m
 [107m [0m (none)
 
-[36mLOG FILES[39m  @ <PATH>
+[36mCOMMAND LOG[39m  @ <PATH>
+[107m [0m (none)
+
+[36mHOOK OUTPUT[39m  @ <PATH>
 [107m [0m (none)

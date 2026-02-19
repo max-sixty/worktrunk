@@ -10,7 +10,7 @@ group = "Commands"
 
 List worktrees and their status.
 
-Shows uncommitted changes, divergence from the default branch and remote, and optional CI status.
+Shows uncommitted changes, divergence from the default branch and remote, and optional CI status and LLM summaries.
 
 <figure class="demo">
 <picture>
@@ -19,7 +19,7 @@ Shows uncommitted changes, divergence from the default branch and remote, and op
 </picture>
 </figure>
 
-The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
+The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network and LLM summaries are generated — the table displays instantly and columns fill in as results arrive.
 
 ## Examples
 
@@ -27,8 +27,7 @@ List all worktrees:
 
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_list.snap — edit source to update -->
 
-{% terminal() %}
-<span class="cmd">wt list</span>
+{% terminal(cmd="wt list") %}
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
 @ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>⇡3</span>      <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
 ^ main             <span class=d>^</span><span class=d>⇅</span>                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth: hardened to…</span>
@@ -39,12 +38,11 @@ List all worktrees:
 
 <!-- END AUTO-GENERATED -->
 
-Include CI status and line diffs:
+Include CI status, line diffs, and LLM summaries:
 
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_list_full.snap — edit source to update -->
 
-{% terminal() %}
-<span class="cmd">wt list --full</span>
+{% terminal(cmd="wt list --full") %}
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
 @ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
 ^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
@@ -59,8 +57,7 @@ Include branches that don't have worktrees:
 
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_list_branches.snap — edit source to update -->
 
-{% terminal() %}
-<span class="cmd">wt list --branches --full</span>
+{% terminal(cmd="wt list --branches --full") %}
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
 @ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
 ^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
@@ -88,10 +85,11 @@ $ wt list --format=json
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
 | main…± | Line diffs since the merge-base with the default branch (`--full`) |
-| Path | Worktree directory |
+| Summary | LLM-generated branch summary (`--full` + `summary = true`, requires [`commit.generation`](@/config.md#commit)) (experimental) |
 | Remote⇅ | Commits ahead/behind tracking branch |
-| URL | Dev server URL from project config (dimmed if port not listening) |
 | CI | Pipeline status (`--full`) |
+| Path | Worktree directory |
+| URL | Dev server URL from project config (dimmed if port not listening) |
 | Commit | Short hash (8 chars) |
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
@@ -113,6 +111,13 @@ The CI column shows GitHub/GitLab pipeline status:
 | (blank) | No upstream or no PR/MR |
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches (visible with `--remotes`) get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
+
+### LLM summaries (experimental)
+
+With `--full`, `summary = true`, and a [`commit.generation`](@/config.md#commit) command configured, the Summary column shows an LLM-generated one-line description of each branch's changes relative to the default branch.
+
+Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. Results are cached until the diff changes.
+<!-- TODO: promote this feature more prominently once it's been tested in the wild -->
 
 ## Status symbols
 
@@ -300,7 +305,7 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
           Include remote branches
 
       <b><span class=c>--full</span></b>
-          Include CI status and diff analysis (slower)
+          Show CI, diff analysis, and LLM summaries
 
       <b><span class=c>--progressive</span></b>
           Show fast info immediately, update with slow info

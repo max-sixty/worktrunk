@@ -591,13 +591,14 @@ fn test_complete_step_subcommands(repo: TestRepo) {
         subcommands.contains(&"copy-ignored"),
         "Missing copy-ignored"
     );
+    assert!(subcommands.contains(&"diff"), "Missing diff");
     assert!(subcommands.contains(&"eval"), "Missing eval");
     assert!(subcommands.contains(&"for-each"), "Missing for-each");
     assert!(subcommands.contains(&"relocate"), "Missing relocate");
     assert_eq!(
         subcommands.len(),
-        8,
-        "Should have exactly 8 step subcommands"
+        9,
+        "Should have exactly 9 step subcommands"
     );
 }
 
@@ -615,6 +616,7 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     assert!(subcommands.contains(&"post-create"), "Missing post-create");
     assert!(subcommands.contains(&"post-start"), "Missing post-start");
     assert!(subcommands.contains(&"post-switch"), "Missing post-switch");
+    assert!(subcommands.contains(&"pre-switch"), "Missing pre-switch");
     assert!(subcommands.contains(&"pre-commit"), "Missing pre-commit");
     assert!(subcommands.contains(&"pre-merge"), "Missing pre-merge");
     assert!(subcommands.contains(&"post-merge"), "Missing post-merge");
@@ -623,8 +625,8 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     assert!(subcommands.contains(&"approvals"), "Missing approvals");
     assert_eq!(
         subcommands.len(),
-        10,
-        "Should have exactly 10 hook subcommands"
+        11,
+        "Should have exactly 11 hook subcommands"
     );
 
     // Test 2: Partial input "po" - filters to post-* subcommands
@@ -656,8 +658,9 @@ fn test_complete_init_shell_all_variations(repo: TestRepo) {
     assert!(shells.contains(&"bash"));
     assert!(shells.contains(&"fish"));
     assert!(shells.contains(&"zsh"));
+    assert!(shells.contains(&"nu"));
     assert!(!shells.contains(&"elvish"));
-    assert!(!shells.contains(&"nushell"));
+    assert!(!shells.contains(&"nushell")); // clap name is "nu", not "nushell"
 
     // Test 2: Partial input "fi" - filters to fish
     let output = repo
@@ -1232,7 +1235,7 @@ fn test_complete_excludes_deprecated_args(repo: TestRepo) {
 #[rstest]
 fn test_static_completions_for_all_shells() {
     // Test each supported shell produces valid output
-    for shell in ["bash", "fish", "zsh", "powershell"] {
+    for shell in ["bash", "fish", "nu", "zsh", "powershell"] {
         let output = wt_command()
             .args(["config", "shell", "completions", shell])
             .output()
@@ -1268,6 +1271,13 @@ fn test_static_completions_for_all_shells() {
                 assert!(
                     stdout.contains("#compdef") || stdout.contains("_wt"),
                     "{shell}: should contain zsh completion markers"
+                );
+            }
+            "nu" => {
+                // Nushell uses template-based integration, not clap_complete
+                assert!(
+                    stdout.contains("def --wrapped") || stdout.contains("def --env"),
+                    "{shell}: should contain nushell function markers"
                 );
             }
             "powershell" => {
