@@ -10,12 +10,32 @@ pub enum HookCommand {
     /// Lists user and project hooks. Project hooks show approval status (❓ = needs approval).
     Show {
         /// Hook type to show (default: all)
-        #[arg(value_parser = ["post-create", "post-start", "post-switch", "pre-commit", "pre-merge", "post-merge", "pre-remove", "post-remove"])]
+        #[arg(value_parser = ["pre-switch", "post-create", "post-start", "post-switch", "pre-commit", "pre-merge", "post-merge", "pre-remove", "post-remove"])]
         hook_type: Option<String>,
 
         /// Show expanded commands with current variables
         #[arg(long)]
         expanded: bool,
+    },
+
+    /// Run pre-switch hooks
+    ///
+    /// Blocking — waits for completion before continuing.
+    PreSwitch {
+        /// Filter by command name
+        ///
+        /// Supports `user:name` or `project:name` to filter by source.
+        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
+        /// Skip approval prompts
+        #[arg(short, long)]
+        yes: bool,
+
+        /// Override built-in template variable (KEY=VALUE)
+        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
+        vars: Vec<(String, String)>,
     },
 
     /// Run post-create hooks
@@ -213,7 +233,7 @@ wt hook approvals clear --global
 
 ## How approvals work
 
-Approved commands are saved to user config. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI."#
+Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI."#
     )]
     Approvals {
         #[command(subcommand)]

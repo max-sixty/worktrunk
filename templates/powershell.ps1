@@ -9,12 +9,14 @@
 if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
 
     # wt wrapper function - uses temp file for directives
+    #
+    # IMPORTANT: This function must remain a "simple function" (no [CmdletBinding()] or
+    # [Parameter()] attributes). Advanced functions add common parameters like -Debug,
+    # -Verbose, -ErrorAction, etc. that intercept short flags: e.g., -D is consumed as
+    # -Debug, -V as -Verbose, instead of being passed through to wt.exe. Using $args
+    # (automatic variable for simple functions) ensures all arguments reach the binary
+    # unchanged.
     function {{ cmd }} {
-        param(
-            [Parameter(ValueFromRemainingArguments = $true)]
-            [string[]]$Arguments
-        )
-
         # Use WORKTRUNK_BIN if set (for testing dev builds), otherwise find via Get-Command
         # Select-Object -First 1 handles case where multiple binaries match (e.g., wt.exe from Windows Terminal)
         if ($env:WORKTRUNK_BIN) {
@@ -30,7 +32,7 @@ if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN
             # WORKTRUNK_SHELL tells the binary to use PowerShell-compatible escaping
             $env:WORKTRUNK_DIRECTIVE_FILE = $directiveFile
             $env:WORKTRUNK_SHELL = "powershell"
-            & $wtBin @Arguments
+            & $wtBin @args
             $exitCode = $LASTEXITCODE
         }
         finally {

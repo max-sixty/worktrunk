@@ -7,14 +7,14 @@ build_search_index = true
 title = "Worktrunk"
 
 [markdown]
-highlight_code = true
-highlight_theme = "css"
-highlight_themes_css = [
-    { theme = "inspired-github", filename = "syntax-light.css" },
-    { theme = "base16-ocean-dark", filename = "syntax-dark.css" },
-]
-error_on_missing_highlight = true
 insert_anchor_links = "heading"
+
+[markdown.highlighting]
+style = "class"
+light_theme = "worktrunk-light"
+dark_theme = "base16-ocean-dark"
+extra_themes = ["themes/worktrunk-light.json", "themes/base16-ocean-dark.json"]
+error_on_missing_language = true
 
 [extra]
 logo_name = "Worktrunk"

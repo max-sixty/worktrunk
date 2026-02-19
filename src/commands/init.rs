@@ -1,6 +1,6 @@
 use clap::CommandFactory;
 use clap_complete::generate;
-use std::io;
+use std::io::{self, Write};
 use worktrunk::shell;
 use worktrunk::styling::println;
 
@@ -59,6 +59,15 @@ pub fn handle_completions(shell: shell::Shell) -> anyhow::Result<()> {
         }
         shell::Shell::Zsh => {
             generate(clap_complete::shells::Zsh, &mut cmd, &cmd_name, &mut stdout);
+        }
+        shell::Shell::Nushell => {
+            // Nushell uses template-based integration (shell wrapper + completions in one)
+            // Unlike other shells, it doesn't use clap_complete
+            let init = shell::ShellInit::with_prefix(shell, cmd_name.clone());
+            let code = init
+                .generate()
+                .expect("Failed to generate nushell integration");
+            write!(stdout, "{}", code).expect("Failed to write to stdout");
         }
         shell::Shell::PowerShell => {
             generate(

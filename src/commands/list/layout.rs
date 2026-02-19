@@ -54,22 +54,22 @@
 //! final_priority = base_priority + empty_penalty
 //! ```
 //!
-//! **Base priorities** (1-11) are determined by **user need hierarchy** - what questions users need
+//! **Base priorities** (0-12) are determined by **user need hierarchy** - what questions users need
 //! answered when scanning worktrees:
+//! - 0: Gutter (always present)
 //! - 1: Branch (identity - "what is this?")
-//! - 2: Working diff (critical - "do I need to commit?")
-//! - 3: Ahead/behind (critical - "am I out of sync?")
-//! - 4-10: Context (work volume, states, path, time, CI, etc.)
-//! - 11: Message (nice-to-have, space-hungry)
+//! - 2-4: Critical (status, working diff, ahead/behind)
+//! - 5-11: Context (CI, branch diff, path, upstream, URL, commit, time)
+//! - 12: Message (nice-to-have, space-hungry)
 //!
 //! **Empty penalty**: +10 if column has no data (only header)
-//! - Empty working_diff: 2 + 10 = priority 12
-//! - Empty ahead/behind: 3 + 10 = priority 13
+//! - Empty working_diff: 3 + 10 = priority 13
+//! - Empty ahead/behind: 4 + 10 = priority 14
 //! - etc.
 //!
 //! This creates two effective priority tiers:
-//! - **Tier 1 (priorities 1-11)**: Columns with actual data
-//! - **Tier 2 (priorities 12-21)**: Empty columns (visual consistency)
+//! - **Tier 1 (priorities 0-12)**: Columns with actual data
+//! - **Tier 2 (priorities 12-22)**: Empty columns (visual consistency)
 //!
 //! The empty penalty is large (+10) but not infinite, so empty columns maintain their relative
 //! ordering (empty working_diff still ranks higher than empty ci_status) for visual consistency.
@@ -83,7 +83,7 @@
 //! 2. Show nice-to-have data (message, commit hash) when space allows
 //! 3. Maintain visual consistency - empty columns in predictable positions at wide widths
 //!
-//! **Key decision**: Message sits at the boundary (priority 11). Empty columns (priority 12+)
+//! **Key decision**: Message sits at the boundary (priority 12). Empty columns (priority 12+)
 //! rank below message, so:
 //! - Narrow terminals: Data columns + message (hide empty columns)
 //! - Wide terminals: Data columns + message + empty columns (visual consistency)
@@ -103,21 +103,23 @@
 //!
 //! ## Special Cases
 //!
-//! Three columns have non-standard behavior that extends beyond the basic two-tier model:
+//! Some columns have non-standard behavior that extends beyond the basic two-tier model:
 //!
-//! 1. **BranchDiff** - Visibility gate (`show_full` flag)
-//!    - Hidden by default as too noisy for typical usage
-//!    - Only allocated when `show_full=true` (match guard skips if false)
+//! 1. **BranchDiff** and **CiStatus** - Visibility gate (`show_full` flag)
+//!    - Both require `show_full=true` (hidden by default as too noisy for typical usage)
+//!    - Gated via `skip_tasks`: when `show_full=false`, their `TaskKind` is in `skip_tasks`
+//!      and the column is filtered out entirely (bypasses the tier system)
+//!    - Within the visibility gate, follows normal two-tier priority
+//!      (BranchDiff: 6/16, CiStatus: 5/15)
 //!
-//! 2. **CiStatus** - Visibility gate (`fetch_ci` flag)
-//!    - Only shown when `fetch_ci=true` (when CI data was requested)
-//!    - Bypasses the tier system entirely when `fetch_ci=false`
-//!    - Within the visibility gate, follows normal two-tier priority (priority 9 with data, 19 when empty)
+//! 2. **Summary** - Flexible sizing with post-allocation expansion
+//!    - Allocated at priority 10 with minimum width 10
+//!    - After all columns allocated, expands up to 70 using leftover space
+//!    - Expands BEFORE Message, so Summary gets priority for space
 //!
 //! 3. **Message** - Flexible sizing with post-allocation expansion
-//!    - Allocated at priority 11 with flexible width (min 20, preferred 50)
-//!    - After all columns allocated (including empty ones), expands up to max 100 using leftover space
-//!    - Two-step process ensures critical columns get space before message grows
+//!    - Allocated at priority 13 with minimum width 10
+//!    - After Summary expansion, expands up to max 100 using remaining leftover space
 //!
 //! ## Implementation
 //!
@@ -127,7 +129,7 @@
 //! // Build candidates from centralized COLUMN_SPECS registry
 //! let mut candidates: Vec<ColumnCandidate> = COLUMN_SPECS
 //!     .iter()
-//!     .filter(|spec| /* visibility gates: show_full, fetch_ci */)
+//!     .filter(|spec| /* visibility gate: skip_tasks */)
 //!     .map(|spec| ColumnCandidate {
 //!         spec,
 //!         priority: if spec.kind.has_data(&data_flags) {
@@ -152,7 +154,10 @@
 //!     }
 //! }
 //!
-//! // Message post-allocation expansion (uses truly leftover space)
+//! // Post-allocation expansion: Summary first, then Message with leftovers
+//! if let Some(summary_col) = pending.iter_mut().find(|col| col.spec.kind == ColumnKind::Summary) {
+//!     summary_col.width += remaining.min(MAX_SUMMARY - summary_col.width);
+//! }
 //! if let Some(message_col) = pending.iter_mut().find(|col| col.spec.kind == ColumnKind::Message) {
 //!     message_col.width += remaining.min(MAX_MESSAGE - message_col.width);
 //! }
@@ -242,7 +247,6 @@ pub struct ColumnWidths {
     pub time: usize,
     pub url: usize,
     pub ci_status: usize,
-    pub message: usize,
     pub ahead_behind: DiffWidths,
     pub working_diff: DiffWidths,
     pub branch_diff: DiffWidths,
@@ -412,6 +416,7 @@ impl ColumnKind {
             ColumnKind::Time => true,
             ColumnKind::CiStatus => flags.ci_status,
             ColumnKind::Commit => true,
+            ColumnKind::Summary => true, // Placeholder shown until data arrives
             ColumnKind::Message => true,
         }
     }
@@ -449,6 +454,7 @@ impl ColumnKind {
             ColumnKind::Url => text(widths.url),
             ColumnKind::CiStatus => text(widths.ci_status),
             ColumnKind::Commit => text(commit_width),
+            ColumnKind::Summary => None, // Flexible: handled specially in allocation loop
             ColumnKind::Message => None,
             ColumnKind::WorkingDiff => diff(widths.working_diff),
             ColumnKind::AheadBehind => diff(widths.ahead_behind),
@@ -485,6 +491,7 @@ pub struct LayoutConfig {
     pub columns: Vec<ColumnLayout>,
     pub main_worktree_path: PathBuf,
     pub max_message_len: usize,
+    pub max_summary_len: usize,
     pub hidden_column_count: usize,
     pub status_position_mask: super::model::PositionMask,
 }
@@ -587,7 +594,6 @@ fn build_estimated_widths(
         time: age_estimate,
         url: url_estimate,
         ci_status: ci_estimate,
-        message: 50, // Will be flexible during allocation
         // Commit counts (Arrows): compact notation, 2 digits covers up to 99
         ahead_behind: DiffWidths {
             total: ahead_behind_fixed,
@@ -661,6 +667,8 @@ fn allocate_columns_with_priority(
         .map(|c| (c.spec.kind, c.spec.kind.has_data(&metadata.data_flags)))
         .collect();
 
+    const MIN_SUMMARY: usize = 10;
+    const MAX_SUMMARY: usize = 70;
     const MIN_MESSAGE: usize = 10;
     const MAX_MESSAGE: usize = 100;
 
@@ -682,33 +690,24 @@ fn allocate_columns_with_priority(
     for candidate in candidates {
         let spec = candidate.spec;
 
-        // Special handling for Message column
-        if spec.kind == ColumnKind::Message {
+        // Flexible columns: allocate at minimum, expand post-loop
+        if matches!(spec.kind, ColumnKind::Summary | ColumnKind::Message) {
+            let min_width = match spec.kind {
+                ColumnKind::Summary => MIN_SUMMARY,
+                _ => MIN_MESSAGE,
+            };
             let spacing_cost = if needs_spacing(&pending) { spacing } else { 0 };
-
-            if remaining <= spacing_cost {
-                continue;
+            if remaining > spacing_cost {
+                let available = remaining - spacing_cost;
+                if available >= min_width {
+                    remaining = remaining.saturating_sub(min_width + spacing_cost);
+                    pending.push(PendingColumn {
+                        spec,
+                        width: min_width,
+                        format: ColumnFormat::Text,
+                    });
+                }
             }
-
-            let available = remaining - spacing_cost;
-            let mut message_width = 0;
-
-            // Allocate at minimum width initially. Post-allocation expansion will
-            // bring it up to preferred/max width after empty columns have a chance
-            // to be allocated.
-            if available >= MIN_MESSAGE {
-                message_width = MIN_MESSAGE.min(metadata.widths.message);
-            }
-
-            if message_width > 0 {
-                remaining = remaining.saturating_sub(message_width + spacing_cost);
-                pending.push(PendingColumn {
-                    spec,
-                    width: message_width,
-                    format: ColumnFormat::Text,
-                });
-            }
-
             continue;
         }
 
@@ -731,7 +730,20 @@ fn allocate_columns_with_priority(
         }
     }
 
-    // Expand message column with leftover space
+    // Post-allocation expansion: Summary first, then Message with leftovers.
+    let mut max_summary_len = 0;
+    if let Some(summary_col) = pending
+        .iter_mut()
+        .find(|col| col.spec.kind == ColumnKind::Summary)
+    {
+        if summary_col.width < MAX_SUMMARY && remaining > 0 {
+            let expansion = remaining.min(MAX_SUMMARY - summary_col.width);
+            summary_col.width += expansion;
+            remaining -= expansion;
+        }
+        max_summary_len = summary_col.width;
+    }
+
     let mut max_message_len = 0;
     if let Some(message_col) = pending
         .iter_mut()
@@ -791,6 +803,7 @@ fn allocate_columns_with_priority(
         columns,
         main_worktree_path,
         max_message_len,
+        max_summary_len,
         hidden_column_count,
         status_position_mask: metadata.status_position_mask,
     }
@@ -1016,7 +1029,6 @@ mod tests {
             time: 4,
             url: 0,
             ci_status: 2,
-            message: 50,
             ahead_behind: DiffWidths {
                 total: 7,
                 positive_digits: 2,
@@ -1064,7 +1076,8 @@ mod tests {
         assert_eq!(w, 8);
         assert!(matches!(fmt, ColumnFormat::Text));
 
-        // Message returns None (handled specially)
+        // Flexible columns return None (handled specially in allocation loop)
+        assert!(ColumnKind::Summary.ideal(&widths, 20, 8).is_none());
         assert!(ColumnKind::Message.ideal(&widths, 20, 8).is_none());
 
         // Diff columns return (width, ColumnFormat::Diff(_))
@@ -1083,7 +1096,6 @@ mod tests {
             time: 0,
             url: 0,
             ci_status: 0,
-            message: 0,
             ahead_behind: DiffWidths {
                 total: 0,
                 positive_digits: 0,
@@ -1214,6 +1226,7 @@ mod tests {
             pr_status: None,
             url: None,
             url_active: None,
+            summary: None,
             status_symbols: Some(StatusSymbols::default()),
             display: DisplayFields::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
@@ -1312,6 +1325,7 @@ mod tests {
             pr_status: None,
             url: None,
             url_active: None,
+            summary: None,
             status_symbols: Some(StatusSymbols::default()),
             display: DisplayFields::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
@@ -1400,5 +1414,237 @@ mod tests {
 
         // With hyperlinks: has ":{{" pattern, compact display = 6
         assert_eq!(estimate_url_width(Some(template), true), 6);
+    }
+
+    // --- Flexible column (Summary/Message) allocation tests ---
+
+    /// Helper: create a minimal ListItem for layout tests.
+    fn make_test_item(branch: &str) -> super::super::model::ListItem {
+        use crate::commands::list::model::{
+            ActiveGitOperation, DisplayFields, ItemKind, WorktreeData,
+        };
+        super::super::model::ListItem {
+            head: "abc12345".to_string(),
+            branch: Some(branch.to_string()),
+            commit: None,
+            counts: None,
+            branch_diff: None,
+            committed_trees_match: None,
+            has_file_changes: None,
+            would_merge_add: None,
+            is_ancestor: None,
+            is_orphan: None,
+            upstream: None,
+            pr_status: None,
+            url: None,
+            url_active: None,
+            summary: None,
+            status_symbols: None,
+            display: DisplayFields::default(),
+            kind: ItemKind::Worktree(Box::new(WorktreeData {
+                path: PathBuf::from("/test/wt"),
+                detached: false,
+                locked: None,
+                prunable: None,
+                working_tree_diff: None,
+                git_operation: ActiveGitOperation::None,
+                is_main: false,
+                is_current: false,
+                is_previous: false,
+                branch_worktree_mismatch: false,
+                working_diff_display: None,
+            })),
+        }
+    }
+
+    /// Helper: compute layout with explicit terminal width and skip_tasks.
+    fn layout_at_width(width: usize, skip_tasks: &HashSet<TaskKind>) -> LayoutConfig {
+        let items = vec![make_test_item("feature-branch")];
+        calculate_layout_with_width(&items, skip_tasks, width, Path::new("/test"), None)
+    }
+
+    /// Default skip_tasks for non-full mode (Summary, BranchDiff, CI, WorkingTreeConflicts skipped).
+    fn non_full_skip_tasks() -> HashSet<TaskKind> {
+        [
+            TaskKind::BranchDiff,
+            TaskKind::CiStatus,
+            TaskKind::WorkingTreeConflicts,
+            TaskKind::SummaryGenerate,
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    /// Full mode skip_tasks (nothing skipped).
+    fn full_skip_tasks() -> HashSet<TaskKind> {
+        HashSet::new()
+    }
+
+    fn find_column(layout: &LayoutConfig, kind: ColumnKind) -> Option<&ColumnLayout> {
+        layout.columns.iter().find(|c| c.kind == kind)
+    }
+
+    #[test]
+    fn test_summary_absent_when_skipped() {
+        // Non-full mode: SummaryGenerate in skip_tasks → no Summary column
+        let layout = layout_at_width(200, &non_full_skip_tasks());
+
+        assert!(
+            find_column(&layout, ColumnKind::Summary).is_none(),
+            "Summary should not appear when SummaryGenerate is skipped"
+        );
+        assert_eq!(layout.max_summary_len, 0);
+
+        // Message should still be present and get leftover space
+        assert!(find_column(&layout, ColumnKind::Message).is_some());
+        assert!(layout.max_message_len > 0);
+    }
+
+    #[test]
+    fn test_summary_present_in_full_mode() {
+        let layout = layout_at_width(200, &full_skip_tasks());
+
+        assert!(
+            find_column(&layout, ColumnKind::Summary).is_some(),
+            "Summary should appear in full mode"
+        );
+        assert!(layout.max_summary_len > 0);
+    }
+
+    #[test]
+    fn test_summary_expands_before_message() {
+        // At a moderate width, Summary should expand toward its max (70)
+        // before Message gets leftover space.
+        let layout = layout_at_width(200, &full_skip_tasks());
+
+        let summary = find_column(&layout, ColumnKind::Summary);
+        let message = find_column(&layout, ColumnKind::Message);
+
+        assert!(summary.is_some(), "Summary should be allocated");
+        assert!(message.is_some(), "Message should be allocated");
+
+        let summary_width = summary.unwrap().width;
+        let message_width = message.unwrap().width;
+
+        // Summary should have expanded beyond its minimum of 10
+        assert!(
+            summary_width > 10,
+            "Summary should expand beyond minimum: got {summary_width}"
+        );
+        assert_eq!(layout.max_summary_len, summary_width);
+        assert_eq!(layout.max_message_len, message_width);
+    }
+
+    #[test]
+    fn test_summary_capped_at_max() {
+        // Very wide terminal: Summary should cap at MAX_SUMMARY (70)
+        let layout = layout_at_width(500, &full_skip_tasks());
+
+        let summary = find_column(&layout, ColumnKind::Summary).unwrap();
+        assert_eq!(summary.width, 70, "Summary should cap at MAX_SUMMARY (70)");
+        assert_eq!(layout.max_summary_len, 70);
+    }
+
+    #[test]
+    fn test_message_capped_at_max() {
+        // Very wide terminal: Message should cap at MAX_MESSAGE (100)
+        let layout = layout_at_width(500, &full_skip_tasks());
+
+        let message = find_column(&layout, ColumnKind::Message).unwrap();
+        assert_eq!(
+            message.width, 100,
+            "Message should cap at MAX_MESSAGE (100)"
+        );
+        assert_eq!(layout.max_message_len, 100);
+    }
+
+    #[test]
+    fn test_message_gets_more_space_when_summary_skipped() {
+        // Compare Message width with and without Summary
+        let with_summary = layout_at_width(200, &full_skip_tasks());
+        let without_summary = layout_at_width(200, &non_full_skip_tasks());
+
+        let msg_with = find_column(&with_summary, ColumnKind::Message)
+            .unwrap()
+            .width;
+        let msg_without = find_column(&without_summary, ColumnKind::Message)
+            .unwrap()
+            .width;
+
+        // Without Summary, Message should get more space (or equal if both maxed)
+        assert!(
+            msg_without >= msg_with,
+            "Message should get at least as much space without Summary: \
+             with={msg_with}, without={msg_without}"
+        );
+    }
+
+    #[test]
+    fn test_summary_display_order() {
+        // Summary should appear between BranchDiff and Upstream in display order
+        let layout = layout_at_width(500, &full_skip_tasks());
+
+        let kinds: Vec<ColumnKind> = layout.columns.iter().map(|c| c.kind).collect();
+
+        if let Some(summary_pos) = kinds.iter().position(|k| *k == ColumnKind::Summary) {
+            // Summary should come after BranchDiff (if present) and before Upstream (if present)
+            if let Some(branch_diff_pos) = kinds.iter().position(|k| *k == ColumnKind::BranchDiff) {
+                assert!(
+                    summary_pos > branch_diff_pos,
+                    "Summary should appear after BranchDiff"
+                );
+            }
+            if let Some(upstream_pos) = kinds.iter().position(|k| *k == ColumnKind::Upstream) {
+                assert!(
+                    summary_pos < upstream_pos,
+                    "Summary should appear before Upstream"
+                );
+            }
+        } else {
+            panic!("Summary column should be present at width 500");
+        }
+    }
+
+    #[test]
+    fn test_narrow_terminal_drops_flexible_columns() {
+        // At a very narrow width, neither Summary nor Message should fit
+        // after the critical fixed columns are allocated.
+        let layout = layout_at_width(40, &full_skip_tasks());
+
+        // At 40 chars, only Gutter (2) + Branch (~14) can fit
+        assert!(
+            find_column(&layout, ColumnKind::Summary).is_none(),
+            "Summary should not fit at 40 chars"
+        );
+        assert!(
+            find_column(&layout, ColumnKind::Message).is_none(),
+            "Message should not fit at 40 chars"
+        );
+    }
+
+    #[test]
+    fn test_summary_skipped_preserves_other_full_columns() {
+        // Even with SummaryGenerate skipped, other full-mode columns should still appear
+        let mut skip_only_summary: HashSet<TaskKind> = HashSet::new();
+        skip_only_summary.insert(TaskKind::SummaryGenerate);
+
+        let layout = layout_at_width(300, &skip_only_summary);
+
+        assert!(
+            find_column(&layout, ColumnKind::Summary).is_none(),
+            "Summary should be skipped"
+        );
+        assert!(
+            find_column(&layout, ColumnKind::BranchDiff).is_some(),
+            "BranchDiff should still appear"
+        );
+        assert!(
+            find_column(&layout, ColumnKind::CiStatus).is_some(),
+            "CiStatus should still appear"
+        );
+        assert!(
+            find_column(&layout, ColumnKind::Message).is_some(),
+            "Message should still appear"
+        );
     }
 }

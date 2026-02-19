@@ -84,15 +84,26 @@ impl SymlinkMapping {
     fn compute() -> Option<Self> {
         let logical_cwd = PathBuf::from(std::env::var("PWD").ok()?);
         let canonical_cwd = std::env::current_dir().ok()?;
+        let canonical_of_pwd = dunce::canonicalize(&logical_cwd).ok();
+        Self::from_paths(&logical_cwd, &canonical_cwd, canonical_of_pwd.as_deref())
+    }
 
+    /// Build a symlink mapping from logical and canonical working directories.
+    ///
+    /// `canonical_of_logical` is the result of canonicalizing the logical path,
+    /// used to verify that `$PWD` is fresh (not stale from a previous `cd`).
+    fn from_paths(
+        logical_cwd: &Path,
+        canonical_cwd: &Path,
+        canonical_of_logical: Option<&Path>,
+    ) -> Option<Self> {
         // No symlink: paths are identical
         if logical_cwd == canonical_cwd {
             return None;
         }
 
         // Verify $PWD is fresh — it must canonicalize to the same path as current_dir()
-        let canonical_of_pwd = dunce::canonicalize(&logical_cwd).ok()?;
-        if canonical_of_pwd != canonical_cwd {
+        if canonical_of_logical != Some(canonical_cwd) {
             return None;
         }
 
@@ -649,6 +660,94 @@ mod tests {
 
         let result = mapping.to_logical_path(Path::new("/real/path/workspace/project"));
         assert_eq!(result, Some(PathBuf::from("/link/path/workspace/project")));
+    }
+
+    // ========================================================================
+    // SymlinkMapping::from_paths Tests
+    // ========================================================================
+
+    #[test]
+    fn test_from_paths_no_symlink() {
+        // When logical == canonical, no mapping needed
+        let result = SymlinkMapping::from_paths(
+            Path::new("/workspace/project"),
+            Path::new("/workspace/project"),
+            Some(Path::new("/workspace/project")),
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_from_paths_stale_pwd() {
+        // When canonical_of_logical doesn't match canonical_cwd, PWD is stale
+        let result = SymlinkMapping::from_paths(
+            Path::new("/old/link/project"),
+            Path::new("/real/project"),
+            Some(Path::new("/different/project")),
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_from_paths_canonicalize_failed() {
+        // When canonicalize returns None (path doesn't exist)
+        let result = SymlinkMapping::from_paths(
+            Path::new("/link/project"),
+            Path::new("/real/project"),
+            None,
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_from_paths_no_common_suffix() {
+        // When leaf names differ entirely — can't determine prefix mapping
+        let result = SymlinkMapping::from_paths(
+            Path::new("/link/alpha"),
+            Path::new("/real/beta"),
+            Some(Path::new("/real/beta")),
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_from_paths_wsl_style_symlink() {
+        // WSL: /workspace/project -> /mnt/wsl/workspace/project
+        let result = SymlinkMapping::from_paths(
+            Path::new("/workspace/project"),
+            Path::new("/mnt/wsl/workspace/project"),
+            Some(Path::new("/mnt/wsl/workspace/project")),
+        );
+        let mapping = result.expect("should produce mapping");
+        assert_eq!(mapping.logical_prefix, PathBuf::from("/"));
+        assert_eq!(mapping.canonical_prefix, PathBuf::from("/mnt/wsl"));
+    }
+
+    #[test]
+    fn test_from_paths_macos_private_var() {
+        // macOS: /var/folders/xx/tmp -> /private/var/folders/xx/tmp
+        let result = SymlinkMapping::from_paths(
+            Path::new("/var/folders/xx/tmp"),
+            Path::new("/private/var/folders/xx/tmp"),
+            Some(Path::new("/private/var/folders/xx/tmp")),
+        );
+        let mapping = result.expect("should produce mapping");
+        assert_eq!(mapping.logical_prefix, PathBuf::from("/"));
+        assert_eq!(mapping.canonical_prefix, PathBuf::from("/private"));
+    }
+
+    #[test]
+    fn test_from_paths_equal_depth_prefixes() {
+        // Symlink at the same depth: /link/path/project -> /real/path/project
+        let result = SymlinkMapping::from_paths(
+            Path::new("/link/path/project"),
+            Path::new("/real/path/project"),
+            Some(Path::new("/real/path/project")),
+        );
+        let mapping = result.expect("should produce mapping");
+        assert_eq!(mapping.logical_prefix, PathBuf::from("/link"));
+        assert_eq!(mapping.canonical_prefix, PathBuf::from("/real"));
+        // path/project is the common suffix
     }
 
     #[test]

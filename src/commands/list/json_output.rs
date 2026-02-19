@@ -234,12 +234,13 @@ impl JsonItem {
         let is_current = worktree_data.is_some_and(|d| d.is_current);
         let is_previous = worktree_data.is_some_and(|d| d.is_previous);
 
-        // Commit info
-        let sha = item.head.clone();
-        let short_sha = if sha.len() >= 7 {
-            sha[..7].to_string()
+        // Commit info — empty strings for null OID (unborn branches)
+        let (sha, short_sha) = if item.head == worktrunk::git::NULL_OID {
+            (String::new(), String::new())
         } else {
-            sha.clone()
+            let sha = item.head.clone();
+            let short_sha = sha[..7.min(sha.len())].to_string();
+            (sha, short_sha)
         };
         let commit = JsonCommit {
             sha,

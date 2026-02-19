@@ -42,9 +42,10 @@ static ANSI_LITERAL_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[[0-
 
 /// Regex to find docs snapshot markers (HTML output)
 /// Format: <!-- ⚠️ AUTO-GENERATED-HTML from path.snap — edit source to update -->
+/// Matches both old `{% terminal() %}` and new `{% terminal(cmd="...") %}` forms
 static DOCS_SNAPSHOT_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?s)<!-- ⚠️ AUTO-GENERATED-HTML from ([^\s]+\.snap) — edit source to update -->\n+\{% terminal\(\) %\}\n(.*?)\{% end %\}\n+<!-- END AUTO-GENERATED -->",
+        r#"(?s)<!-- ⚠️ AUTO-GENERATED-HTML from ([^\s]+\.snap) — edit source to update -->\n+\{% terminal\([^)]*\) %\}\n(.*?)\{% end %\}\n+<!-- END AUTO-GENERATED -->"#,
     )
     .unwrap()
 });
@@ -286,9 +287,17 @@ fn replace_placeholders(content: &str) -> String {
 fn format_replacement(id: &str, content: &str, format: &OutputFormat) -> String {
     match format {
         OutputFormat::DocsHtml => {
+            // Extract command from <span class="cmd"> in body to also emit as cmd= parameter
+            // The cmd= parameter enables giallo syntax highlighting in the shortcode
+            // The span is kept in body for stable sync comparisons
+            let cmd_re = Regex::new(r#"^<span class="cmd">([^<]+)</span>"#).unwrap();
+            let cmd_attr = cmd_re
+                .captures(content)
+                .map(|c| format!(r#"cmd="{}""#, c.get(1).unwrap().as_str()))
+                .unwrap_or_default();
             format!(
-                "<!-- ⚠️ AUTO-GENERATED-HTML from {} — edit source to update -->\n\n{{% terminal() %}}\n{}\n{{% end %}}\n\n<!-- END AUTO-GENERATED -->",
-                id, content
+                "<!-- ⚠️ AUTO-GENERATED-HTML from {} — edit source to update -->\n\n{{% terminal({}) %}}\n{}\n{{% end %}}\n\n<!-- END AUTO-GENERATED -->",
+                id, cmd_attr, content
             )
         }
         OutputFormat::Unwrapped => {
@@ -414,11 +423,11 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
         let normalized = trim_lines(&html);
 
         // Build the terminal shortcode with standard template markers
+        // cmd= parameter enables giallo syntax highlighting on the command line
         // Prompt ($) is added via CSS ::before, so not included in HTML
         let replacement = format!(
             "<!-- ⚠️ AUTO-GENERATED from tests/snapshots/{} — edit source to update -->\n\n\
-             {{% terminal() %}}\n\
-             <span class=\"cmd\">{}</span>\n\
+             {{% terminal(cmd=\"{}\") %}}\n\
              {}\n\
              {{% end %}}\n\n\
              <!-- END AUTO-GENERATED -->",
@@ -737,9 +746,10 @@ fn heading_to_anchor(heading: &str) -> String {
 /// Regex to match terminal shortcodes with AUTO-GENERATED-HTML markers
 /// Optionally captures a preceding bash code block (which becomes redundant)
 /// These need to be converted to plain code blocks for README
+/// Matches both `{% terminal() %}` and `{% terminal(cmd="...") %}` forms
 static TERMINAL_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?s)(?:```bash\n[^\n]+\n```\n+)?<!-- ⚠️ AUTO-GENERATED-HTML from [^\n]+ -->\n+\{% terminal\(\) %\}\n(.*?)\{% end %\}\n+<!-- END AUTO-GENERATED -->",
+        r#"(?s)(?:```bash\n[^\n]+\n```\n+)?<!-- ⚠️ AUTO-GENERATED-HTML from [^\n]+ -->\n+\{% terminal\([^)]*\) %\}\n(.*?)\{% end %\}\n+<!-- END AUTO-GENERATED -->"#,
     )
     .unwrap()
 });
@@ -1031,6 +1041,53 @@ fn test_config_source_generates_example_toml() {
         panic!(
             "config.example.toml out of sync with user config section in src/cli/mod.rs. \
              Run tests locally and commit the changes."
+        );
+    }
+}
+
+/// Verify that all config section keys appear in the user config documentation.
+///
+/// When a new config section is added (e.g., `[switch.picker]`), this test ensures
+/// it also appears in the user config docs in `src/cli/mod.rs`. Without this, new
+/// config sections can ship undocumented.
+#[test]
+fn test_config_docs_include_all_sections() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cli_mod_path = project_root.join("src/cli/mod.rs");
+    let cli_mod_content = fs::read_to_string(&cli_mod_path).unwrap();
+    let user_config_content = extract_user_config_from_cli(&cli_mod_content);
+
+    // Config sections that MUST be documented (non-deprecated, non-hook table sections).
+    // When adding a new config section, add it here — the test will fail if it's
+    // missing from the docs.
+    let required_sections = [
+        "list",
+        "commit",
+        "commit.generation",
+        "merge",
+        "switch.picker",
+    ];
+
+    // Deprecated sections — should NOT appear in docs (old users get migration guidance)
+    let deprecated_sections = ["select", "commit-generation"];
+
+    // Check required sections appear as TOML headers in code blocks
+    for section in &required_sections {
+        let header = format!("[{section}]");
+        assert!(
+            user_config_content.contains(&header),
+            "Config section `{header}` is missing from user config docs in src/cli/mod.rs.\n\
+             All config sections must be documented between USER_CONFIG_START/END markers."
+        );
+    }
+
+    // Check deprecated sections do NOT appear as TOML headers
+    for section in &deprecated_sections {
+        let header = format!("[{section}]");
+        assert!(
+            !user_config_content.contains(&header),
+            "Deprecated section `{header}` should not appear in user config docs.\n\
+             Use the new section name instead."
         );
     }
 }

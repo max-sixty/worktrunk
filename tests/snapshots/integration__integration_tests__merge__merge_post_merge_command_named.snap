@@ -14,6 +14,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -27,10 +28,10 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -46,7 +47,7 @@ exit_code: 0
 [36m◎ Removing [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
-[36m◎[39m [36mRunning post-merge [1mproject:notify[22m @ [1m_REPO_[22m:[39m
+[36m◎[39m [36mRunning post-merge [1mproject:notify[22m @ [1m_REPO_[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Merge to main complete'[0m[2m [0m[2m[36m>[0m[2m notify.txt
-[0m[36m◎[39m [36mRunning post-merge [1mproject:deploy[22m @ [1m_REPO_[22m:[39m
+[0m[36m◎[39m [36mRunning post-merge [1mproject:deploy[22m @ [1m_REPO_[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Deploying branch feature'[0m[2m [0m[2m[36m>[0m[2m deploy.txt

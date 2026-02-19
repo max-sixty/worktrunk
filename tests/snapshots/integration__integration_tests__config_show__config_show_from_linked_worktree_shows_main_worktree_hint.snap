@@ -13,6 +13,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -24,12 +25,15 @@ info:
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -42,7 +46,7 @@ exit_code: 0
 
 [36mPROJECT CONFIG[39m  [PROJECT_ID]
 [33m▲[39m [33mProject config uses deprecated template variables: [2mmain_worktree[22m → [1mrepo[22m[39m
-[2m↳[22m [2mTo generate migration file, run [90mwt config show[39m from main worktree[22m
+[2m↳[22m [2mRun [90mwt config update[39m from main worktree to apply[22m
 [2m○[22m Current config:
 [107m [0m post-create = [32m"ln -sf {{ main_worktree }}/node_modules"
 
@@ -53,6 +57,7 @@ exit_code: 0
 [2m○[22m [2mbash: Skipped; ~/.bashrc not found[22m
 [2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
 [2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
+[2m○[22m [2mnu: Skipped; ~/.config/nushell/vendor/autoload not found[22m
 
 [36mCLAUDE CODE[39m
 [2m○[22m [1mclaude[22m CLI not installed

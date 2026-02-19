@@ -280,6 +280,7 @@ fn test_list_config_serde() {
         full: Some(true),
         branches: Some(false),
         remotes: None,
+        summary: None,
         timeout_ms: Some(500),
     };
     let json = serde_json::to_string(&config).unwrap();
@@ -287,6 +288,7 @@ fn test_list_config_serde() {
     assert_eq!(parsed.full, Some(true));
     assert_eq!(parsed.branches, Some(false));
     assert_eq!(parsed.remotes, None);
+    assert_eq!(parsed.summary, None);
     assert_eq!(parsed.timeout_ms, Some(500));
 }
 
@@ -311,102 +313,6 @@ fn test_worktrunk_config_default() {
     assert!(config.configs.merge.is_none());
     assert!(config.commit_generation.is_none());
     assert!(!config.skip_shell_integration_prompt);
-}
-
-#[test]
-fn test_worktrunk_config_is_command_approved_empty() {
-    let config = UserConfig::default();
-    assert!(!config.is_command_approved("some/project", "npm install"));
-}
-
-#[test]
-fn test_worktrunk_config_is_command_approved_with_commands() {
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            approved_commands: vec!["npm install".to_string(), "npm test".to_string()],
-            ..Default::default()
-        },
-    );
-    assert!(config.is_command_approved("github.com/user/repo", "npm install"));
-    assert!(config.is_command_approved("github.com/user/repo", "npm test"));
-    assert!(!config.is_command_approved("github.com/user/repo", "rm -rf /"));
-    assert!(!config.is_command_approved("other/project", "npm install"));
-}
-
-#[test]
-fn test_is_command_approved_normalizes_deprecated_vars() {
-    // Approval saved with deprecated variable should match command with new variable
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            approved_commands: vec![
-                "ln -sf {{ repo_root }}/node_modules".to_string(), // old var
-            ],
-            ..Default::default()
-        },
-    );
-
-    // Should match when checking with new variable name
-    assert!(config.is_command_approved(
-        "github.com/user/repo",
-        "ln -sf {{ repo_path }}/node_modules" // new var
-    ));
-
-    // Should still match exact old name too
-    assert!(config.is_command_approved(
-        "github.com/user/repo",
-        "ln -sf {{ repo_root }}/node_modules" // old var
-    ));
-}
-
-#[test]
-fn test_is_command_approved_normalizes_new_approval_matches_old_command() {
-    // Approval saved with new variable should match command with deprecated variable
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            approved_commands: vec![
-                "cd {{ worktree_path }} && npm install".to_string(), // new var
-            ],
-            ..Default::default()
-        },
-    );
-
-    // Should match when checking with old variable name
-    assert!(config.is_command_approved(
-        "github.com/user/repo",
-        "cd {{ worktree }} && npm install" // old var
-    ));
-}
-
-#[test]
-fn test_is_command_approved_normalizes_multiple_vars() {
-    let mut config = UserConfig::default();
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            approved_commands: vec![
-                "ln -sf {{ repo_root }}/modules {{ worktree }}/modules".to_string(),
-            ],
-            ..Default::default()
-        },
-    );
-
-    // Should match with all new variable names
-    assert!(config.is_command_approved(
-        "github.com/user/repo",
-        "ln -sf {{ repo_path }}/modules {{ worktree_path }}/modules"
-    ));
-
-    // Should match with mixed old/new (both normalize to same canonical form)
-    assert!(config.is_command_approved(
-        "github.com/user/repo",
-        "ln -sf {{ repo_path }}/modules {{ worktree }}/modules"
-    ));
 }
 
 #[test]
@@ -587,12 +493,14 @@ fn test_merge_list_config() {
         full: Some(true),
         branches: Some(false),
         remotes: None,
+        summary: Some(true),
         timeout_ms: Some(1000),
     };
     let override_config = ListConfig {
         full: None,           // Should fall back to base
         branches: Some(true), // Should override
         remotes: Some(true),  // Should override (base was None)
+        summary: None,        // Should fall back to base
         timeout_ms: None,     // Should fall back to base
     };
 
@@ -600,6 +508,7 @@ fn test_merge_list_config() {
     assert_eq!(merged.full, Some(true)); // From base
     assert_eq!(merged.branches, Some(true)); // From override
     assert_eq!(merged.remotes, Some(true)); // From override
+    assert_eq!(merged.summary, Some(true)); // From base
     assert_eq!(merged.timeout_ms, Some(1000)); // From base
 }
 
@@ -936,9 +845,7 @@ fn test_effective_list_project_only() {
             overrides: OverridableConfig {
                 list: Some(ListConfig {
                     full: Some(true),
-                    branches: None,
-                    remotes: None,
-                    timeout_ms: None,
+                    ..Default::default()
                 }),
                 ..Default::default()
             },
@@ -1030,11 +937,13 @@ fn test_list_config_accessor_methods_with_values() {
         full: Some(true),
         branches: Some(true),
         remotes: Some(false),
+        summary: Some(true),
         timeout_ms: Some(5000),
     };
     assert!(config.full());
     assert!(config.branches());
     assert!(!config.remotes());
+    assert!(config.summary());
     assert_eq!(config.timeout_ms(), Some(5000));
 }
 
@@ -1078,18 +987,270 @@ fn test_commit_config_accessor_methods() {
 }
 
 #[test]
-fn test_select_config_accessor_methods() {
+fn test_select_config_fields() {
     let config = SelectConfig::default();
-    assert!(config.pager().is_none());
+    assert!(config.pager.is_none());
 
     let config = SelectConfig {
         pager: Some("delta --paging=never".to_string()),
     };
+    assert_eq!(config.pager.as_deref(), Some("delta --paging=never"));
+}
+
+// =========================================================================
+// SwitchPickerConfig tests
+// =========================================================================
+
+#[test]
+fn test_switch_picker_config_accessor_methods() {
+    use crate::config::user::SwitchPickerConfig;
+
+    let config = SwitchPickerConfig::default();
+    assert!(config.pager().is_none());
+    // Default timeout is 200ms
+    assert_eq!(
+        config.picker_command_timeout(),
+        Some(std::time::Duration::from_millis(200))
+    );
+
+    let config = SwitchPickerConfig {
+        pager: Some("delta --paging=never".to_string()),
+        timeout_ms: Some(500),
+    };
     assert_eq!(config.pager(), Some("delta --paging=never"));
+    assert_eq!(
+        config.picker_command_timeout(),
+        Some(std::time::Duration::from_millis(500))
+    );
+}
+
+#[test]
+fn test_switch_picker_timeout_zero_disables() {
+    use crate::config::user::SwitchPickerConfig;
+
+    let config = SwitchPickerConfig {
+        timeout_ms: Some(0),
+        ..Default::default()
+    };
+    assert!(config.picker_command_timeout().is_none());
+}
+
+#[test]
+fn test_switch_picker_timeout_none_uses_default() {
+    use crate::config::user::SwitchPickerConfig;
+
+    let config = SwitchPickerConfig::default();
+    assert_eq!(
+        config.picker_command_timeout(),
+        Some(std::time::Duration::from_millis(200))
+    );
+}
+
+#[test]
+fn test_switch_picker_config_parse_toml() {
+    let content = r#"
+[switch.picker]
+pager = "delta --paging=never"
+timeout-ms = 300
+"#;
+    let config: UserConfig = toml::from_str(content).unwrap();
+    let picker = config
+        .configs
+        .switch
+        .as_ref()
+        .unwrap()
+        .picker
+        .as_ref()
+        .unwrap();
+    assert_eq!(picker.pager.as_deref(), Some("delta --paging=never"));
+    assert_eq!(picker.timeout_ms, Some(300));
+}
+
+#[test]
+fn test_switch_picker_merge() {
+    use crate::config::user::{Merge, SwitchPickerConfig};
+
+    let base = SwitchPickerConfig {
+        pager: Some("delta".to_string()),
+        timeout_ms: Some(500),
+    };
+    let override_config = SwitchPickerConfig {
+        pager: None,         // Fall back to base
+        timeout_ms: Some(0), // Override: disable timeout
+    };
+
+    let merged = base.merge_with(&override_config);
+    assert_eq!(merged.pager.as_deref(), Some("delta"));
+    assert_eq!(merged.timeout_ms, Some(0));
+}
+
+#[test]
+fn test_switch_config_merge() {
+    use crate::config::user::{Merge, SwitchConfig, SwitchPickerConfig};
+
+    // Both have picker
+    let base = SwitchConfig {
+        picker: Some(SwitchPickerConfig {
+            pager: Some("delta".to_string()),
+            timeout_ms: None,
+        }),
+    };
+    let other = SwitchConfig {
+        picker: Some(SwitchPickerConfig {
+            pager: None,
+            timeout_ms: Some(300),
+        }),
+    };
+    let merged = base.merge_with(&other);
+    assert_eq!(
+        merged.picker.as_ref().unwrap().pager.as_deref(),
+        Some("delta")
+    );
+    assert_eq!(merged.picker.as_ref().unwrap().timeout_ms, Some(300));
+
+    // Base has picker, other doesn't
+    let other_none = SwitchConfig { picker: None };
+    let merged = base.merge_with(&other_none);
+    assert_eq!(
+        merged.picker.as_ref().unwrap().pager.as_deref(),
+        Some("delta")
+    );
+
+    // Neither has picker
+    let base_none = SwitchConfig { picker: None };
+    let merged = base_none.merge_with(&other_none);
+    assert!(merged.picker.is_none());
+}
+
+#[test]
+fn test_switch_picker_fallback_from_select() {
+    // When only [select] is configured, switch_picker() should use its pager
+    let config = UserConfig {
+        configs: OverridableConfig {
+            select: Some(SelectConfig {
+                pager: Some("bat".to_string()),
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let picker = config.switch_picker(None);
+    assert_eq!(picker.pager.as_deref(), Some("bat"));
+    // timeout_ms not available from select, so default applies
+    assert_eq!(picker.timeout_ms, None);
+    assert_eq!(
+        picker.picker_command_timeout(),
+        Some(std::time::Duration::from_millis(200))
+    );
+}
+
+#[test]
+fn test_switch_picker_prefers_new_over_select() {
+    use crate::config::user::{SwitchConfig, SwitchPickerConfig};
+
+    // When both [switch.picker] and [select] are configured, switch.picker wins
+    let config = UserConfig {
+        configs: OverridableConfig {
+            switch: Some(SwitchConfig {
+                picker: Some(SwitchPickerConfig {
+                    pager: Some("delta".to_string()),
+                    timeout_ms: Some(100),
+                }),
+            }),
+            select: Some(SelectConfig {
+                pager: Some("bat".to_string()),
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let picker = config.switch_picker(None);
+    assert_eq!(picker.pager.as_deref(), Some("delta"));
+    assert_eq!(picker.timeout_ms, Some(100));
+}
+
+#[test]
+fn test_switch_picker_project_override() {
+    use crate::config::user::{SwitchConfig, SwitchPickerConfig};
+
+    let mut config = UserConfig {
+        configs: OverridableConfig {
+            switch: Some(SwitchConfig {
+                picker: Some(SwitchPickerConfig {
+                    pager: Some("delta".to_string()),
+                    timeout_ms: Some(200),
+                }),
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    config.projects.insert(
+        "github.com/user/repo".to_string(),
+        UserProjectOverrides {
+            overrides: OverridableConfig {
+                switch: Some(SwitchConfig {
+                    picker: Some(SwitchPickerConfig {
+                        pager: Some("bat".to_string()),
+                        timeout_ms: None, // Fall back to global
+                    }),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let picker = config.switch_picker(Some("github.com/user/repo"));
+    assert_eq!(picker.pager.as_deref(), Some("bat")); // From project
+    assert_eq!(picker.timeout_ms, Some(200)); // From global
+}
+
+#[test]
+fn test_switch_picker_project_fallback_from_select() {
+    // Project has [select], global has [switch.picker]
+    // Project's select pager should be used
+    use crate::config::user::{SwitchConfig, SwitchPickerConfig};
+
+    let mut config = UserConfig {
+        configs: OverridableConfig {
+            switch: Some(SwitchConfig {
+                picker: Some(SwitchPickerConfig {
+                    pager: Some("delta".to_string()),
+                    timeout_ms: Some(300),
+                }),
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    config.projects.insert(
+        "github.com/user/repo".to_string(),
+        UserProjectOverrides {
+            overrides: OverridableConfig {
+                select: Some(SelectConfig {
+                    pager: Some("bat".to_string()),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let picker = config.switch_picker(Some("github.com/user/repo"));
+    assert_eq!(picker.pager.as_deref(), Some("bat")); // Project select fallback
+    assert_eq!(picker.timeout_ms, Some(300)); // From global (select has no timeout)
 }
 
 #[test]
 fn test_resolved_config_for_project() {
+    use crate::config::user::SwitchConfig;
+    use crate::config::user::SwitchPickerConfig;
+
     let config = UserConfig {
         configs: OverridableConfig {
             list: Some(ListConfig {
@@ -1104,8 +1265,11 @@ fn test_resolved_config_for_project() {
                 stage: Some(StageMode::None),
                 ..Default::default()
             }),
-            select: Some(SelectConfig {
-                pager: Some("less".to_string()),
+            switch: Some(SwitchConfig {
+                picker: Some(SwitchPickerConfig {
+                    pager: Some("less".to_string()),
+                    timeout_ms: Some(300),
+                }),
             }),
             ..Default::default()
         },
@@ -1120,7 +1284,8 @@ fn test_resolved_config_for_project() {
     assert!(!resolved.merge.squash()); // Overridden to false
     assert!(resolved.merge.commit()); // Default true
     assert_eq!(resolved.commit.stage(), StageMode::None);
-    assert_eq!(resolved.select.pager(), Some("less"));
+    assert_eq!(resolved.switch_picker.pager(), Some("less"));
+    assert_eq!(resolved.switch_picker.timeout_ms, Some(300));
 }
 
 // =========================================================================
@@ -1829,7 +1994,7 @@ fn test_valid_user_config_keys_all_deserialize() {
             "worktree-path" => {
                 scalar_lines.push(format!("{key} = \"test-value\""));
             }
-            "list" | "commit" | "merge" | "select" | "commit-generation" => {
+            "list" | "commit" | "merge" | "switch" | "select" | "commit-generation" => {
                 // Table sections with minimal content
                 table_lines.push(format!("[{key}]"));
             }
@@ -1964,13 +2129,9 @@ fn test_reload_projects_from_invalid_toml() {
     // Now corrupt it with invalid TOML
     std::fs::write(&config_path, "this is not valid toml [[[").unwrap();
 
-    // Try to reload - should fail with parse error
+    // Try to reload via a mutation — should fail with parse error
     let mut config = UserConfig::default();
-    let result = config.approve_command(
-        "github.com/test/repo".to_string(),
-        "echo test".to_string(),
-        Some(&config_path),
-    );
+    let result = config.set_skip_shell_integration_prompt(Some(&config_path));
 
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -1983,6 +2144,127 @@ fn test_reload_projects_from_invalid_toml() {
         err.contains("config.toml"),
         "Expected path in error, got: {err}"
     );
+}
+
+// =========================================================================
+// System config loading and merge tests
+// =========================================================================
+
+#[test]
+fn test_system_config_merged_with_user_config() {
+    // System config provides base defaults
+    let system_toml = r#"
+[merge]
+squash = false
+rebase = false
+
+[list]
+full = true
+"#;
+
+    // User config overrides some settings
+    let user_toml = r#"
+[merge]
+squash = true
+"#;
+
+    // Parse both configs separately
+    let system_config = UserConfig::load_from_str(system_toml).unwrap();
+    let user_config = UserConfig::load_from_str(user_toml).unwrap();
+
+    // Verify system config values
+    assert_eq!(
+        system_config.configs.merge.as_ref().unwrap().squash,
+        Some(false)
+    );
+    assert_eq!(
+        system_config.configs.merge.as_ref().unwrap().rebase,
+        Some(false)
+    );
+    assert_eq!(
+        system_config.configs.list.as_ref().unwrap().full,
+        Some(true)
+    );
+
+    // Verify user config values
+    assert_eq!(
+        user_config.configs.merge.as_ref().unwrap().squash,
+        Some(true)
+    );
+
+    // Simulate the merge that happens via the config crate's builder:
+    // When both system and user configs define [merge], the config crate
+    // performs a deep merge where user values override system values.
+    // This is tested end-to-end via integration tests; here we verify
+    // the Merge trait works correctly for the layering.
+    let system_merge = system_config.configs.merge.as_ref().unwrap();
+    let user_merge = user_config.configs.merge.as_ref().unwrap();
+    let merged = system_merge.merge_with(user_merge);
+
+    assert_eq!(merged.squash, Some(true)); // User overrides
+    assert_eq!(merged.rebase, Some(false)); // System default preserved
+}
+
+#[test]
+fn test_system_config_worktree_path_overridden_by_user() {
+    let system_toml = r#"worktree-path = "/company/worktrees/{{ repo }}/{{ branch | sanitize }}""#;
+    let user_toml = r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}""#;
+
+    let system_config = UserConfig::load_from_str(system_toml).unwrap();
+    let user_config = UserConfig::load_from_str(user_toml).unwrap();
+
+    assert_eq!(
+        system_config.worktree_path(),
+        "/company/worktrees/{{ repo }}/{{ branch | sanitize }}"
+    );
+    assert_eq!(
+        user_config.worktree_path(),
+        "../{{ repo }}.{{ branch | sanitize }}"
+    );
+}
+
+#[test]
+fn test_system_config_commit_generation_merged() {
+    let system_toml = r#"
+[commit.generation]
+command = "company-llm-tool"
+template = "Company standard template: {{ git_diff }}"
+"#;
+    let user_toml = r#"
+[commit.generation]
+command = "my-preferred-llm"
+"#;
+
+    let system_config = UserConfig::load_from_str(system_toml).unwrap();
+    let user_config = UserConfig::load_from_str(user_toml).unwrap();
+
+    let system_gen = system_config.commit_generation(None);
+    assert_eq!(system_gen.command, Some("company-llm-tool".to_string()));
+    assert_eq!(
+        system_gen.template,
+        Some("Company standard template: {{ git_diff }}".to_string())
+    );
+
+    let user_gen = user_config.commit_generation(None);
+    assert_eq!(user_gen.command, Some("my-preferred-llm".to_string()));
+    // User didn't set template, so in a merged scenario the system template
+    // would be preserved via the config crate's deep merge
+}
+
+#[test]
+fn test_hooks_merge_trait_appends_for_global_project_merge() {
+    // The Merge trait uses append semantics — used for global→per-project merging
+    // (in accessors.rs). NOT used for system→user config merging, which goes
+    // through the config crate's replacement semantics instead.
+    let global_hooks = parse_hooks("pre-merge = \"global-lint\"");
+    let project_hooks = parse_hooks("pre-merge = \"project-lint\"");
+
+    let merged = global_hooks.merge_with(&project_hooks);
+    let pre_merge = merged.pre_merge.unwrap();
+    let commands = pre_merge.commands();
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0].template, "global-lint"); // Global first
+    assert_eq!(commands[1].template, "project-lint"); // Project second
 }
 
 /// Test that reload_projects_from handles permission errors
@@ -2019,13 +2301,9 @@ fn test_reload_projects_from_permission_error() {
         return;
     }
 
-    // Try to reload - should fail with read error
+    // Try to reload via a mutation — should fail with read error
     let mut config = UserConfig::default();
-    let result = config.approve_command(
-        "github.com/test/repo".to_string(),
-        "echo test".to_string(),
-        Some(&config_path),
-    );
+    let result = config.set_skip_shell_integration_prompt(Some(&config_path));
 
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();

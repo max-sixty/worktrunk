@@ -14,6 +14,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -27,10 +28,10 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -50,7 +51,7 @@ exit_code: 0
 [107m [0m - Add JWT encoding/decoding with signature verification
 [107m [0m - Create test suite covering all authentication flows
 [32m✓[39m [32mSquashed @ [HASH][39m
-[36m◎[39m [36mRunning pre-merge [1mproject:test[22m:[39m
+[36m◎[39m [36mRunning pre-merge [1mproject:test[22m[39m
 [107m [0m [2m[0m[2m[34mcargo[0m[2m test
 [0m    Finished test [unoptimized + debuginfo] target(s) in 0.12s
      Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)
@@ -62,7 +63,7 @@ test auth::tests::test_token_refresh ... ok
 test auth::tests::test_token_validation ... ok
 
 test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
-[36m◎[39m [36mRunning pre-merge [1mproject:lint[22m:[39m
+[36m◎[39m [36mRunning pre-merge [1mproject:lint[22m[39m
 [107m [0m [2m[0m[2m[34mcargo[0m[2m clippy
 [0m    Checking worktrunk v0.1.0
     Finished dev [unoptimized + debuginfo] target(s) in 1.23s
@@ -76,7 +77,7 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 [36m◎ Removing [1mfeature-auth[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
-[36m◎[39m [36mRunning post-merge [1mproject:install[22m @ [1m_REPO_[22m:[39m
+[36m◎[39m [36mRunning post-merge [1mproject:install[22m @ [1m_REPO_[22m[39m
 [107m [0m [2m[0m[2m[34mcargo[0m[2m install [0m[2m[36m--path[0m[2m .
 [0m  Installing worktrunk v0.1.0
    Compiling worktrunk v0.1.0

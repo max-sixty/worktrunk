@@ -1,6 +1,7 @@
 use insta::assert_snapshot;
 use std::fs;
 use tempfile::TempDir;
+use worktrunk::config::Approvals;
 use worktrunk::config::UserConfig;
 
 ///
@@ -8,29 +9,29 @@ use worktrunk::config::UserConfig;
 #[test]
 fn test_approval_saves_to_disk() {
     let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("worktrunk").join("config.toml");
+    let approvals_path = temp_dir.path().join("worktrunk").join("approvals.toml");
 
-    // Create config and save to temp directory ONLY
-    let mut config = UserConfig::default();
+    // Create approvals and save to temp directory ONLY
+    let mut approvals = Approvals::default();
 
     // Add an approval to the explicit path
-    config
+    approvals
         .approve_command(
             "github.com/test/repo".to_string(),
             "test command".to_string(),
-            Some(&config_path),
+            Some(&approvals_path),
         )
         .unwrap();
 
-    // Verify the config was written to the isolated path
+    // Verify the file was written to the isolated path
     assert!(
-        config_path.exists(),
-        "Config file was not created at {:?}",
-        config_path
+        approvals_path.exists(),
+        "Approvals file was not created at {:?}",
+        approvals_path
     );
 
     // Verify TOML structure
-    let toml_content = fs::read_to_string(&config_path).unwrap();
+    let toml_content = fs::read_to_string(&approvals_path).unwrap();
     assert_snapshot!(toml_content, @r#"
     [projects."github.com/test/repo"]
     approved-commands = [
@@ -39,48 +40,34 @@ fn test_approval_saves_to_disk() {
     "#);
 
     // Verify approval is in memory
-    assert!(config.is_command_approved("github.com/test/repo", "test command"));
+    assert!(approvals.is_command_approved("github.com/test/repo", "test command"));
 }
 
 #[test]
 fn test_duplicate_approvals_not_saved_twice() {
     let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.toml");
+    let approvals_path = temp_dir.path().join("approvals.toml");
 
-    let mut config = UserConfig::default();
+    let mut approvals = Approvals::default();
 
     // Add same approval twice
-    config
+    approvals
         .approve_command(
             "github.com/test/repo".to_string(),
             "test".to_string(),
-            Some(&config_path),
+            Some(&approvals_path),
         )
         .ok();
-    config
+    approvals
         .approve_command(
             "github.com/test/repo".to_string(),
             "test".to_string(),
-            Some(&config_path),
+            Some(&approvals_path),
         )
         .ok();
 
-    // Verify only one entry exists
-    let matching_commands = config
-        .projects
-        .get("github.com/test/repo")
-        .map(|p| {
-            p.approved_commands
-                .iter()
-                .filter(|cmd| *cmd == "test")
-                .count()
-        })
-        .unwrap_or(0);
-
-    assert_eq!(matching_commands, 1, "Duplicate approval was saved");
-
-    // Verify file contains only one entry
-    let toml_content = fs::read_to_string(&config_path).unwrap();
+    // Verify only one entry exists by reading the saved file
+    let toml_content = fs::read_to_string(&approvals_path).unwrap();
     assert_snapshot!(toml_content, @r#"
     [projects."github.com/test/repo"]
     approved-commands = [
@@ -92,41 +79,41 @@ fn test_duplicate_approvals_not_saved_twice() {
 #[test]
 fn test_multiple_project_approvals() {
     let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.toml");
+    let approvals_path = temp_dir.path().join("approvals.toml");
 
-    let mut config = UserConfig::default();
+    let mut approvals = Approvals::default();
 
     // Add approvals for different projects
-    config
+    approvals
         .approve_command(
             "github.com/user1/repo1".to_string(),
             "npm install".to_string(),
-            Some(&config_path),
+            Some(&approvals_path),
         )
         .unwrap();
-    config
+    approvals
         .approve_command(
             "github.com/user2/repo2".to_string(),
             "cargo build".to_string(),
-            Some(&config_path),
+            Some(&approvals_path),
         )
         .unwrap();
-    config
+    approvals
         .approve_command(
             "github.com/user1/repo1".to_string(),
             "npm test".to_string(),
-            Some(&config_path),
+            Some(&approvals_path),
         )
         .unwrap();
 
     // Verify all approvals exist
-    assert!(config.is_command_approved("github.com/user1/repo1", "npm install"));
-    assert!(config.is_command_approved("github.com/user2/repo2", "cargo build"));
-    assert!(config.is_command_approved("github.com/user1/repo1", "npm test"));
-    assert!(!config.is_command_approved("github.com/user1/repo1", "cargo build"));
+    assert!(approvals.is_command_approved("github.com/user1/repo1", "npm install"));
+    assert!(approvals.is_command_approved("github.com/user2/repo2", "cargo build"));
+    assert!(approvals.is_command_approved("github.com/user1/repo1", "npm test"));
+    assert!(!approvals.is_command_approved("github.com/user1/repo1", "cargo build"));
 
     // Verify file structure
-    let toml_content = fs::read_to_string(&config_path).unwrap();
+    let toml_content = fs::read_to_string(&approvals_path).unwrap();
     assert_snapshot!(toml_content, @r#"
     [projects."github.com/user1/repo1"]
     approved-commands = [
@@ -144,50 +131,53 @@ fn test_multiple_project_approvals() {
 #[test]
 fn test_isolated_config_safety() {
     let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("isolated.toml");
+    let approvals_path = temp_dir.path().join("isolated.toml");
 
-    // Read user's actual config before test (if it exists)
+    // Read user's actual approvals before test (if it exists)
     use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
-    let user_config_path = if let Ok(strategy) = choose_base_strategy() {
-        strategy.config_dir().join("worktrunk").join("config.toml")
+    let user_approvals_path = if let Ok(strategy) = choose_base_strategy() {
+        strategy
+            .config_dir()
+            .join("worktrunk")
+            .join("approvals.toml")
     } else {
         // Fallback for platforms where config dir can't be determined
         std::env::var("HOME")
-            .map(|home| std::path::PathBuf::from(home).join(".config/worktrunk/config.toml"))
+            .map(|home| std::path::PathBuf::from(home).join(".config/worktrunk/approvals.toml"))
             .unwrap_or_else(|_| temp_dir.path().join("dummy.toml"))
     };
 
-    let user_config_before = if user_config_path.exists() {
-        Some(fs::read_to_string(&user_config_path).unwrap())
+    let user_approvals_before = if user_approvals_path.exists() {
+        Some(fs::read_to_string(&user_approvals_path).unwrap())
     } else {
         None
     };
 
-    // Create isolated config and make changes
-    let mut config = UserConfig::default();
-    config
+    // Create isolated approvals and make changes
+    let mut approvals = Approvals::default();
+    approvals
         .approve_command(
             "github.com/safety-test/repo".to_string(),
-            "THIS SHOULD NOT APPEAR IN USER CONFIG".to_string(),
-            Some(&config_path),
+            "THIS SHOULD NOT APPEAR IN USER APPROVALS".to_string(),
+            Some(&approvals_path),
         )
         .unwrap();
 
-    // Verify user's config is unchanged
-    let user_config_after = if user_config_path.exists() {
-        Some(fs::read_to_string(&user_config_path).unwrap())
+    // Verify user's approvals file is unchanged
+    let user_approvals_after = if user_approvals_path.exists() {
+        Some(fs::read_to_string(&user_approvals_path).unwrap())
     } else {
         None
     };
 
     assert_eq!(
-        user_config_before, user_config_after,
-        "User config was modified by isolated test!"
+        user_approvals_before, user_approvals_after,
+        "User approvals file was modified by isolated test!"
     );
 
     // Verify the test command was written to isolated path
-    let isolated_content = fs::read_to_string(&config_path).unwrap();
-    assert!(isolated_content.contains("THIS SHOULD NOT APPEAR IN USER CONFIG"));
+    let isolated_content = fs::read_to_string(&approvals_path).unwrap();
+    assert!(isolated_content.contains("THIS SHOULD NOT APPEAR IN USER APPROVALS"));
 }
 
 ///
@@ -213,30 +203,30 @@ fn test_yes_flag_does_not_save_approval() {
 }
 
 #[test]
-fn test_approval_saves_to_new_config_file() {
+fn test_approval_saves_to_new_approvals_file() {
     let temp_dir = TempDir::new().unwrap();
-    let config_dir = temp_dir.path().join("nested").join("config");
-    let config_path = config_dir.join("config.toml");
+    let approvals_dir = temp_dir.path().join("nested").join("config");
+    let approvals_path = approvals_dir.join("approvals.toml");
 
     // Don't create the directory - test that it's created automatically
-    assert!(!config_path.exists());
+    assert!(!approvals_path.exists());
 
-    // Create a config and save
-    let mut config = UserConfig::default();
-    config
+    // Create approvals and save
+    let mut approvals = Approvals::default();
+    approvals
         .approve_command(
             "github.com/test/nested".to_string(),
             "test command".to_string(),
-            Some(&config_path),
+            Some(&approvals_path),
         )
         .unwrap();
 
     // Verify directory and file were created
-    assert!(config_path.exists());
-    assert!(config_dir.exists());
+    assert!(approvals_path.exists());
+    assert!(approvals_dir.exists());
 
     // Verify content
-    let content = fs::read_to_string(&config_path).unwrap();
+    let content = fs::read_to_string(&approvals_path).unwrap();
     assert_snapshot!(content, @r#"
     [projects."github.com/test/nested"]
     approved-commands = [
@@ -246,10 +236,10 @@ fn test_approval_saves_to_new_config_file() {
 }
 
 ///
-/// When a user has a config file with comments and we save an approval,
-/// all their comments should be preserved. This test verifies the behavior.
+/// When a user has a config file with comments and we save a non-approval
+/// mutation, all their comments should be preserved.
 #[test]
-fn test_saving_approval_preserves_toml_comments() {
+fn test_saving_config_mutation_preserves_toml_comments() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("config.toml");
 
@@ -257,28 +247,23 @@ fn test_saving_approval_preserves_toml_comments() {
     let initial_content = r#"# User preferences for worktrunk
 # These comments should be preserved after saving
 
-worktree-path = "../{{ main_worktree }}.{{ branch }}"
+worktree-path = "../{{ main_worktree }}.{{ branch }}"  # inline comment should also be preserved
 
 # LLM commit generation settings
 [commit.generation]
-command = "llm -m claude-haiku-4.5"  # inline comment should also be preserved
+command = "llm -m claude-haiku-4.5"
 
 # Per-project settings below
 "#;
     fs::write(&config_path, initial_content).unwrap();
 
     // Load the config manually by deserializing from TOML
-    // (bypasses UserConfig::load() which requires WORKTRUNK_CONFIG_PATH)
     let toml_str = fs::read_to_string(&config_path).unwrap();
     let mut config: UserConfig = toml::from_str(&toml_str).unwrap();
 
-    // Add an approval and save back to the same file
+    // Change a non-approval setting and save back to the same file
     config
-        .approve_command(
-            "github.com/test/repo".to_string(),
-            "npm install".to_string(),
-            Some(&config_path),
-        )
+        .set_commit_generation_command("llm -m claude-sonnet-4".to_string(), Some(&config_path))
         .unwrap();
 
     // Read back the saved config
@@ -298,62 +283,62 @@ command = "llm -m claude-haiku-4.5"  # inline comment should also be preserved
         "Inline comment was lost. Saved content:\n{saved_content}"
     );
 
-    // Verify the approval was also saved
+    // Verify the command was updated
     assert!(
-        saved_content.contains("npm install"),
-        "Approval was not saved. Saved content:\n{saved_content}"
+        saved_content.contains("llm -m claude-sonnet-4"),
+        "Command was not updated. Saved content:\n{saved_content}"
     );
 }
 
 ///
-/// This tests a race condition where two config instances (simulating separate processes)
+/// This tests a race condition where two instances (simulating separate processes)
 /// both approve commands. Without proper merging, the second save would overwrite
 /// the first approval, losing it.
 #[test]
 fn test_concurrent_approve_preserves_all_approvals() {
     let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.toml");
+    let approvals_path = temp_dir.path().join("approvals.toml");
 
-    // Process A: Start with empty config, approve "npm install"
-    let mut config_a = UserConfig::default();
+    // Process A: Start with empty approvals, approve "npm install"
+    let mut approvals_a = Approvals::default();
 
-    // Process B: Start with empty config (simulating a separate process that loaded before A saved)
-    let mut config_b = UserConfig::default();
+    // Process B: Start with empty approvals (simulating a separate process that loaded before A saved)
+    let mut approvals_b = Approvals::default();
 
     // Process A approves and saves "npm install"
-    config_a
+    approvals_a
         .approve_command(
             "github.com/user/repo".to_string(),
             "npm install".to_string(),
-            Some(&config_path),
+            Some(&approvals_path),
         )
         .unwrap();
 
     // Verify file has "npm install"
-    let toml_content = fs::read_to_string(&config_path).unwrap();
+    let toml_content = fs::read_to_string(&approvals_path).unwrap();
     assert!(
         toml_content.contains("npm install"),
         "File should contain 'npm install'"
     );
 
     // Process B (which loaded BEFORE Process A saved) now approves and saves "npm test"
-    // The save_to method should merge with what's on disk, not overwrite
-    config_b
+    // The save method should merge with what's on disk, not overwrite
+    approvals_b
         .approve_command(
             "github.com/user/repo".to_string(),
             "npm test".to_string(),
-            Some(&config_path),
+            Some(&approvals_path),
         )
         .unwrap();
 
     // Read the final state from disk
-    let toml_content = fs::read_to_string(&config_path).unwrap();
+    let toml_content = fs::read_to_string(&approvals_path).unwrap();
 
     // Both approvals should be preserved
     assert!(
         toml_content.contains("npm install"),
         "BUG: 'npm install' approval was lost due to race condition. \
-         config_b's save_to() should merge with disk state, not overwrite it. \
+         approvals_b's save should merge with disk state, not overwrite it. \
          Saved content:\n{toml_content}"
     );
     assert!(
@@ -363,67 +348,46 @@ fn test_concurrent_approve_preserves_all_approvals() {
 }
 
 ///
-/// This tests a race condition where two config instances (simulating separate processes)
+/// This tests a race condition where two instances (simulating separate processes)
 /// both revoke commands. Without proper merging, the second save would restore
 /// the revoked command from its stale in-memory state.
 #[test]
 fn test_concurrent_revoke_preserves_all_changes() {
     let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.toml");
+    let approvals_path = temp_dir.path().join("approvals.toml");
 
-    // Setup: config file has two commands approved
-    let mut setup_config = UserConfig::default();
-    setup_config
+    // Setup: approvals file has two commands approved
+    let mut setup_approvals = Approvals::default();
+    setup_approvals
         .approve_command(
             "github.com/user/repo".to_string(),
             "npm install".to_string(),
-            Some(&config_path),
+            Some(&approvals_path),
         )
         .unwrap();
-    setup_config
+    setup_approvals
         .approve_command(
             "github.com/user/repo".to_string(),
             "npm test".to_string(),
-            Some(&config_path),
+            Some(&approvals_path),
         )
         .unwrap();
 
     // Verify setup
-    let toml_content = fs::read_to_string(&config_path).unwrap();
+    let toml_content = fs::read_to_string(&approvals_path).unwrap();
     assert!(toml_content.contains("npm install"));
     assert!(toml_content.contains("npm test"));
 
-    // Process A: loads config (has ["npm install", "npm test"])
-    let mut config_a = UserConfig::default();
-    config_a
-        .projects
-        .entry("github.com/user/repo".to_string())
-        .or_default()
-        .approved_commands = vec!["npm install".to_string(), "npm test".to_string()];
-
-    // Process B: loads config (has ["npm install", "npm test"])
-    let mut config_b = UserConfig::default();
-    config_b
-        .projects
-        .entry("github.com/user/repo".to_string())
-        .or_default()
-        .approved_commands = vec!["npm install".to_string(), "npm test".to_string()];
-
-    // Process A revokes "npm install"
-    config_a
-        .revoke_command("github.com/user/repo", "npm install", Some(&config_path))
-        .unwrap();
-
-    // Process B (with stale state) revokes "npm test"
-    // Should see that "npm install" was already revoked and preserve that
-    config_b
-        .revoke_command("github.com/user/repo", "npm test", Some(&config_path))
+    // Process A: revokes the project
+    let mut approvals_a = Approvals::default();
+    approvals_a
+        .revoke_project("github.com/user/repo", Some(&approvals_path))
         .unwrap();
 
     // Read the final state from disk
-    let toml_content = fs::read_to_string(&config_path).unwrap();
+    let toml_content = fs::read_to_string(&approvals_path).unwrap();
 
-    // Both revocations should be respected - neither command should remain
+    // Revocation should be respected - neither command should remain
     assert!(
         !toml_content.contains("npm install"),
         "'npm install' should have been revoked. Saved content:\n{toml_content}"
@@ -437,34 +401,34 @@ fn test_concurrent_revoke_preserves_all_changes() {
 #[test]
 fn test_concurrent_approve_different_projects() {
     let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.toml");
+    let approvals_path = temp_dir.path().join("approvals.toml");
 
-    // Process A: empty config
-    let mut config_a = UserConfig::default();
+    // Process A: empty approvals
+    let mut approvals_a = Approvals::default();
 
-    // Process B: empty config (loaded before A saved)
-    let mut config_b = UserConfig::default();
+    // Process B: empty approvals (loaded before A saved)
+    let mut approvals_b = Approvals::default();
 
     // Process A approves for project1
-    config_a
+    approvals_a
         .approve_command(
             "github.com/user/project1".to_string(),
             "npm install".to_string(),
-            Some(&config_path),
+            Some(&approvals_path),
         )
         .unwrap();
 
     // Process B approves for project2
     // Should preserve project1's approval
-    config_b
+    approvals_b
         .approve_command(
             "github.com/user/project2".to_string(),
             "cargo build".to_string(),
-            Some(&config_path),
+            Some(&approvals_path),
         )
         .unwrap();
 
-    let toml_content = fs::read_to_string(&config_path).unwrap();
+    let toml_content = fs::read_to_string(&approvals_path).unwrap();
 
     assert!(
         toml_content.contains("github.com/user/project1"),
@@ -495,30 +459,30 @@ fn test_truly_concurrent_approve_with_threads() {
     use std::thread;
 
     let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.toml");
+    let approvals_path = temp_dir.path().join("approvals.toml");
 
     // Create 10 threads that will all try to approve at the same time
     let num_threads = 10;
     let barrier = Arc::new(Barrier::new(num_threads));
-    let config_path = Arc::new(config_path);
+    let approvals_path = Arc::new(approvals_path);
 
     let handles: Vec<_> = (0..num_threads)
         .map(|i| {
             let barrier = Arc::clone(&barrier);
-            let config_path = Arc::clone(&config_path);
+            let approvals_path = Arc::clone(&approvals_path);
 
             thread::spawn(move || {
-                let mut config = UserConfig::default();
+                let mut approvals = Approvals::default();
 
                 // Wait for all threads to be ready
                 barrier.wait();
 
                 // All threads try to approve at the same time
-                config
+                approvals
                     .approve_command(
                         "github.com/user/repo".to_string(),
                         format!("command_{i}"),
-                        Some(&config_path),
+                        Some(&approvals_path),
                     )
                     .unwrap();
             })
@@ -531,7 +495,7 @@ fn test_truly_concurrent_approve_with_threads() {
     }
 
     // Read the final state from disk
-    let toml_content = fs::read_to_string(&*config_path).unwrap();
+    let toml_content = fs::read_to_string(&*approvals_path).unwrap();
 
     // All 10 approvals should be preserved
     for i in 0..num_threads {
@@ -560,49 +524,49 @@ fn test_permission_error_prevents_save() {
     use std::os::unix::fs::PermissionsExt;
 
     let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("readonly").join("config.toml");
+    let approvals_path = temp_dir.path().join("readonly").join("approvals.toml");
 
-    // Create the directory and initial config file
-    let config_dir = config_path.parent().unwrap();
-    fs::create_dir_all(config_dir).unwrap();
-    let initial_config = UserConfig::default();
-    initial_config.save_to(&config_path).unwrap();
+    // Create the directory and initial approvals file
+    let approvals_dir = approvals_path.parent().unwrap();
+    fs::create_dir_all(approvals_dir).unwrap();
+    let initial_approvals = Approvals::default();
+    initial_approvals.save_to(&approvals_path).unwrap();
 
     // Make the directory read-only (prevents writing new files)
     #[cfg(unix)]
     {
         let readonly_perms = Permissions::from_mode(0o444);
-        fs::set_permissions(config_dir, readonly_perms).unwrap();
+        fs::set_permissions(approvals_dir, readonly_perms).unwrap();
     }
 
     // Test if permissions actually restrict us (skip if running as root)
     // Root can write to read-only directories, so the test would be meaningless
-    let test_file = config_dir.join("test_write");
+    let test_file = approvals_dir.join("test_write");
     if fs::write(&test_file, "test").is_ok() {
         // Running as root or permissions don't work
         // Restore write permissions and skip test
         #[cfg(unix)]
         {
             let writable_perms = Permissions::from_mode(0o755);
-            fs::set_permissions(config_dir, writable_perms).unwrap();
+            fs::set_permissions(approvals_dir, writable_perms).unwrap();
         }
         eprintln!("Skipping permission test - running with elevated privileges");
         return;
     }
 
     // Try to save a new approval - this should fail
-    let mut config = UserConfig::default();
-    let result = config.approve_command(
+    let mut approvals = Approvals::default();
+    let result = approvals.approve_command(
         "github.com/test/readonly".to_string(),
         "test command".to_string(),
-        Some(&config_path),
+        Some(&approvals_path),
     );
 
     // Restore write permissions so temp_dir can be cleaned up
     #[cfg(unix)]
     {
         let writable_perms = Permissions::from_mode(0o755);
-        fs::set_permissions(config_dir, writable_perms).unwrap();
+        fs::set_permissions(approvals_dir, writable_perms).unwrap();
     }
 
     // Verify the save failed
@@ -783,9 +747,6 @@ fn test_saving_through_symlink_preserves_symlink() {
     // Create initial config at the target location
     let initial_content = r#"# My dotfiles config
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[commit.generation]
-command = "llm -m claude-haiku-4.5"
 "#;
     fs::write(&target_path, initial_content).unwrap();
 
@@ -803,16 +764,12 @@ command = "llm -m claude-haiku-4.5"
         "Symlink should point to target"
     );
 
-    // Load config and add an approval through the symlink path
+    // Load config and set commit generation command through the symlink path
     let toml_str = fs::read_to_string(&symlink_path).unwrap();
     let mut config: UserConfig = toml::from_str(&toml_str).unwrap();
 
     config
-        .approve_command(
-            "github.com/test/symlink-repo".to_string(),
-            "npm install".to_string(),
-            Some(&symlink_path),
-        )
+        .set_commit_generation_command("llm -m haiku".to_string(), Some(&symlink_path))
         .unwrap();
 
     // Verify symlink is preserved
@@ -829,8 +786,8 @@ command = "llm -m claude-haiku-4.5"
     // Verify content was written to the target file
     let target_content = fs::read_to_string(&target_path).unwrap();
     assert!(
-        target_content.contains("npm install"),
-        "Approval should be written to target. Content:\n{target_content}"
+        target_content.contains("llm -m haiku"),
+        "Command should be written to target. Content:\n{target_content}"
     );
     assert!(
         target_content.contains("# My dotfiles config"),

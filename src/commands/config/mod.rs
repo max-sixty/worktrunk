@@ -6,6 +6,7 @@ mod create;
 mod hints;
 mod show;
 mod state;
+mod update;
 
 // Re-export public functions
 pub use create::handle_config_create;
@@ -16,6 +17,7 @@ pub use state::{
     handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
     handle_state_show,
 };
+pub use update::handle_config_update;
 
 #[cfg(test)]
 mod tests {

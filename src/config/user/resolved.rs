@@ -6,7 +6,7 @@
 
 use super::UserConfig;
 use super::sections::{
-    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, SelectConfig,
+    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, SwitchPickerConfig,
 };
 
 /// All resolved configuration for a specific project context.
@@ -17,10 +17,11 @@ use super::sections::{
 /// # Example
 /// ```ignore
 /// let resolved = config.resolved(project);
-/// let full = resolved.list.full();           // bool, default applied
-/// let squash = resolved.merge.squash();      // bool, default applied
-/// let stage = resolved.commit.stage();       // StageMode, default applied
-/// let pager = resolved.select.pager();       // Option<&str>
+/// let full = resolved.list.full();                          // bool, default applied
+/// let squash = resolved.merge.squash();                     // bool, default applied
+/// let stage = resolved.commit.stage();                      // StageMode, default applied
+/// let pager = resolved.switch_picker.pager();               // Option<&str>
+/// let timeout = resolved.switch_picker.picker_command_timeout(); // Option<Duration>
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedConfig {
@@ -29,7 +30,8 @@ pub struct ResolvedConfig {
     pub commit: CommitConfig,
     /// Resolved commit generation config (handles deprecated `[commit-generation]` fallback)
     pub commit_generation: CommitGenerationConfig,
-    pub select: SelectConfig,
+    /// Resolved switch picker config (handles deprecated `[select]` fallback)
+    pub switch_picker: SwitchPickerConfig,
 }
 
 impl ResolvedConfig {
@@ -40,7 +42,7 @@ impl ResolvedConfig {
             merge: config.merge(project).unwrap_or_default(),
             commit: config.commit(project).unwrap_or_default(),
             commit_generation: config.commit_generation(project),
-            select: config.select(project).unwrap_or_default(),
+            switch_picker: config.switch_picker(project),
         }
     }
 }

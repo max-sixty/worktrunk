@@ -43,6 +43,7 @@ server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/nu
 
 The URL column in `wt list` shows each worktree's dev server:
 
+{% terminal(cmd="wt list") %}
 <span class="cmd">wt list</span>
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>URL</b>                     <b>Commit</b>    <b>Age</b>
 @ main           <span class=c>?</span> <span class=d>^</span><span class=d>⇅</span>                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>http://localhost:12107</span>  <span class=d>41ee0834</span>  <span class=d>4d</span>
@@ -50,6 +51,7 @@ The URL column in `wt list` shows each worktree's dev server:
 + fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>     <span class=d>|</span>     <span class=d>http://localhost:16460</span>  <span class=d>b772e68b</span>  <span class=d>5h</span>
 
 <span class=d>○</span> <span class=d>Showing 3 worktrees, 2 with changes, 2 ahead, 2 columns hidden</span>
+{% end %}
 
 Ports are deterministic — `fix-auth` always gets port 16460, regardless of which machine or when. The URL dims if the server isn't running.
 
@@ -130,6 +132,18 @@ wt list --full --branches
 ```
 
 Shows PR/CI status for all branches, including those without worktrees. CI indicators are clickable links to the PR page.
+
+## LLM branch summaries
+
+With `summary = true` and [`commit.generation`](https://worktrunk.dev/config/#commit) configured, `wt list --full` shows an LLM-generated one-line summary for each branch. The same summaries appear in the `wt switch` picker (tab 5).
+
+```toml
+# ~/.config/worktrunk/config.toml
+[list]
+summary = true
+```
+
+Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. See [LLM Commits](https://worktrunk.dev/llm-commits/#branch-summaries-experimental) for details.
 
 ## JSON API
 

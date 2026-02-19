@@ -453,8 +453,14 @@ fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
     // \A anchors to absolute start of string, matching only the first line.
     settings.add_filter(r"\A> [^\n]*", "> [QUERY]");
 
-    // Skim count indicators (matched/total) at end of lines
-    settings.add_filter(r"(?m)\d+/\d+\s*$", "[N/M]");
+    // Skim count indicators (matched/total) at end of lines.
+    // Normalize leading whitespace too — skim right-aligns the count with padding
+    // that varies based on unicode character width calculations across platforms.
+    // The tab header line may have the count jammed against "summary" (no space)
+    // or even truncate "summary" when skim's width_cjk() treats ambiguous-width
+    // unicode symbols (±, …, ⇅) as double-width, consuming extra columns.
+    settings.add_filter(r"(?m)summary?\w*\s*\d+/\d+\s*$", "summary [N/M]");
+    settings.add_filter(r"(?m)\s+\d+/\d+\s*$", " [N/M]");
 
     // Commit hashes (7-8 hex chars)
     settings.add_filter(r"\b[0-9a-f]{7,8}\b", "[HASH]");
@@ -508,7 +514,8 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
         &["switch"],
         repo.root_path(),
         &env_vars,
-        &[], // No inputs before abort
+        // Wait for items to render before capturing (prevents flakiness on slow CI)
+        &[("", Some("feature-two"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
@@ -542,7 +549,10 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
         &["switch", "--branches"],
         repo.root_path(),
         &env_vars,
-        &[], // No inputs before abort
+        // Wait for branch items to render before capturing. On macOS CI under
+        // heavy load, skim may show the prompt and header before item rows,
+        // causing wait_for_stable to capture too early (just the header).
+        &[("", Some("orphan-branch"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
@@ -767,7 +777,66 @@ fn test_new_feature() {
 }
 
 #[rstest]
+fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so snapshots don't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    let feature_path = repo.add_worktree("feature");
+
+    // Make a commit so there's content to potentially summarize
+    std::fs::write(feature_path.join("new.txt"), "content\n").unwrap();
+    let output = repo
+        .git_command()
+        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "Failed to add file");
+    let output = repo
+        .git_command()
+        .args([
+            "-C",
+            feature_path.to_str().unwrap(),
+            "commit",
+            "-m",
+            "Add new file",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "Failed to commit");
+
+    let env_vars = repo.test_env_vars();
+    // Type "feature" to filter, press 5 for summary panel
+    // Wait for "commit.generation" hint since no LLM is configured
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("feature", None),
+            ("5", Some("│Configure")), // Wait for config hint (│ = border drawn)
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (list, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_preview_summary_list", list);
+        assert_snapshot!("switch_picker_preview_summary_preview", preview);
+    });
+}
+
+#[rstest]
 fn test_switch_picker_respects_list_config(mut repo: TestRepo) {
+    // Use the same reliable setup as test_switch_picker_with_branches:
+    // remove fixture worktrees (which use relative gitdir paths that can fail
+    // to resolve under concurrent operations) and origin (to avoid remote branch noise)
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.add_worktree("active-worktree");
     // Create a branch without a worktree
     let output = repo
@@ -787,14 +856,13 @@ branches = true
     );
 
     let env_vars = repo.test_env_vars();
-    // Wait for orphan-branch to appear before sending Escape
-    // Under CI load, the branch list may take time to render fully
-    let result = exec_in_pty_with_input_expectations(
+    // Capture screen BEFORE sending Escape. Screen must stabilize with orphan-branch visible.
+    let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"], // No --branches flag - config should enable it
         repo.root_path(),
         &env_vars,
-        &[("\x1b", Some("│orphan-branch"))], // Wait for branch to appear (│ = border drawn)
+        &[("", Some("│orphan-branch"))], // Wait for orphan-branch to appear before abort
     );
 
     assert_valid_abort_exit_code(result.exit_code);

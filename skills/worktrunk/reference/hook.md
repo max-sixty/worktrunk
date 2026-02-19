@@ -8,6 +8,7 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 
 | Hook | When | Blocking | Fail-fast |
 |------|------|----------|-----------|
+| `pre-switch` | Before every switch | Yes | Yes |
 | `post-start` | After worktree created | No (background) | No |
 | `post-create` | After worktree created | Yes | No |
 | `post-switch` | After every switch | No (background) | No |
@@ -21,6 +22,23 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 **Fail-fast**: First failure aborts the operation.
 
 Background hooks show a single-line summary by default. Use `-v` to see expanded command details.
+
+The most common starting point is `post-start` — it runs background tasks (dev servers, file copying, builds) when creating a worktree.
+
+### pre-switch
+
+Runs before every `wt switch` — before branch validation or worktree creation. Useful for ensuring the repository is up to date before switching. Template variables reflect the current worktree (where you're switching from), not the destination. Failure aborts the switch.
+
+```toml
+[pre-switch]
+# Fetch if last fetch was more than 6 hours ago
+fetch = """
+FETCH_HEAD="$(git rev-parse --git-common-dir)/FETCH_HEAD"
+if [ "$(find "$FETCH_HEAD" -mmin +360 2>/dev/null)" ] || [ ! -f "$FETCH_HEAD" ]; then
+    git fetch
+fi
+"""
+```
 
 ### post-start
 
@@ -407,6 +425,7 @@ Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span 
 
 <b><span class=g>Commands:</span></b>
   <b><span class=c>show</span></b>         Show configured hooks
+  <b><span class=c>pre-switch</span></b>   Run pre-switch hooks
   <b><span class=c>post-create</span></b>  Run post-create hooks
   <b><span class=c>post-start</span></b>   Run post-start hooks
   <b><span class=c>post-switch</span></b>  Run post-switch hooks
@@ -458,7 +477,7 @@ wt hook approvals clear --global
 
 ### How approvals work
 
-Approved commands are saved to user config. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI.
+Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI.
 
 ### Command reference
 
@@ -467,8 +486,8 @@ wt hook approvals - Manage command approvals
 Usage: <b><span class=c>wt hook approvals</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>add</span></b>    Store approvals in config
-  <b><span class=c>clear</span></b>  Clear approved commands from config
+  <b><span class=c>add</span></b>    Store approvals in approvals.toml
+  <b><span class=c>clear</span></b>  Clear approved commands from approvals.toml
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>

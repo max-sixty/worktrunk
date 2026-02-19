@@ -24,10 +24,10 @@ pub(crate) mod step_commands;
 pub(crate) mod worktree;
 
 pub(crate) use config::{
-    handle_config_create, handle_config_show, handle_hints_clear, handle_hints_get,
-    handle_kv_clear, handle_kv_get, handle_kv_list, handle_kv_set, handle_logs_get,
-    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
-    handle_state_show,
+    handle_config_create, handle_config_show, handle_config_update, handle_hints_clear,
+    handle_hints_get, handle_kv_clear, handle_kv_get, handle_kv_list, handle_kv_set,
+    handle_logs_get, handle_state_clear, handle_state_clear_all, handle_state_get,
+    handle_state_set, handle_state_show,
 };
 pub(crate) use configure_shell::{
     handle_configure_shell, handle_show_theme, handle_unconfigure_shell,
@@ -42,7 +42,7 @@ pub(crate) use merge::{MergeOptions, handle_merge};
 pub(crate) use select::handle_select;
 pub(crate) use step_commands::{
     RebaseResult, SquashResult, handle_rebase, handle_squash, step_commit, step_copy_ignored,
-    step_relocate, step_show_squash_prompt,
+    step_diff, step_relocate, step_show_squash_prompt,
 };
 pub(crate) use worktree::{
     OperationMode, handle_remove, handle_remove_current, is_worktree_at_expected_path,

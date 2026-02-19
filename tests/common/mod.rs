@@ -584,7 +584,7 @@ const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK", "1"),
     // Disable delayed streaming for deterministic output across platforms.
     // Without this, slow CI triggers progress messages that don't appear on faster systems.
-    ("WT_TEST_DELAYED_STREAM_MS", "-1"),
+    ("WORKTRUNK_TEST_DELAYED_STREAM_MS", "-1"),
 ];
 
 // NOTE: TERM is intentionally NOT in STATIC_TEST_ENV_VARS because:
@@ -687,6 +687,14 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // Note: env_remove above may cause insta-cmd to capture empty values in snapshots,
     // but correctness (isolating from host WORKTRUNK_* vars) trumps snapshot aesthetics.
     cmd.env("WORKTRUNK_CONFIG_PATH", "/nonexistent/test/config.toml");
+    cmd.env(
+        "WORKTRUNK_SYSTEM_CONFIG_PATH",
+        "/etc/xdg/worktrunk/config.toml",
+    );
+    cmd.env(
+        "WORKTRUNK_APPROVALS_PATH",
+        "/nonexistent/test/approvals.toml",
+    );
     // Remove $SHELL to avoid platform-dependent diagnostic output (macOS has /bin/zsh,
     // Linux has /bin/bash). Tests that need SHELL should set it explicitly.
     cmd.env_remove("SHELL");
@@ -695,7 +703,9 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env_remove("PSModulePath");
     // Disable auto PowerShell detection (tests that need it should set to "1")
     cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "0");
-    cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
+    // Disable auto nushell detection (tests that need it should set to "1")
+    cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
+    cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
     // Enable warn-level logging so diagnostics show up in test failures
     cmd.env("RUST_LOG", "warn");
     // Treat Claude as not installed by default (tests can override with "1")
@@ -746,7 +756,7 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
     cmd.env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z");
     cmd.env("LC_ALL", "C");
     cmd.env("LANG", "C");
-    cmd.env("WT_TEST_EPOCH", TEST_EPOCH.to_string());
+    cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
     cmd.env("GIT_TERMINAL_PROMPT", "0");
 }
 
@@ -1010,6 +1020,8 @@ pub struct TestRepo {
     remote: Option<PathBuf>, // Path to bare remote repo if created
     /// Isolated config file for this test (prevents pollution of user's config)
     test_config_path: PathBuf,
+    /// Isolated approvals file for this test (prevents pollution of user's approvals)
+    test_approvals_path: PathBuf,
     /// Git config file with test settings (advice disabled, etc.)
     git_config_path: PathBuf,
     /// Path to mock bin directory for gh/glab commands
@@ -1044,6 +1056,7 @@ impl TestRepo {
 
         // Create isolated config path for this test
         let test_config_path = temp_dir.path().join("test-config.toml");
+        let test_approvals_path = temp_dir.path().join("test-approvals.toml");
         let git_config_path = temp_dir.path().join("test-gitconfig");
 
         // Write gitconfig for tests
@@ -1059,6 +1072,7 @@ impl TestRepo {
             worktrees: fixture.worktrees,
             remote: Some(fixture.remote),
             test_config_path,
+            test_approvals_path,
             git_config_path,
             mock_bin_path: None,
             claude_installed: false,
@@ -1082,6 +1096,7 @@ impl TestRepo {
         let root = canonicalize(&root).unwrap();
 
         let test_config_path = temp_dir.path().join("test-config.toml");
+        let test_approvals_path = temp_dir.path().join("test-approvals.toml");
         let git_config_path = temp_dir.path().join("test-gitconfig");
 
         // Write gitconfig
@@ -1103,6 +1118,7 @@ impl TestRepo {
             worktrees,
             remote: None,
             test_config_path,
+            test_approvals_path,
             git_config_path,
             mock_bin_path: None,
             claude_installed: false,
@@ -1163,10 +1179,18 @@ impl TestRepo {
                 "XDG_CONFIG_HOME".to_string(),
                 self.home_path().join(".config").display().to_string(),
             ),
-            ("WT_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
+            ("WORKTRUNK_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
             (
                 "WORKTRUNK_CONFIG_PATH".to_string(),
                 self.test_config_path().display().to_string(),
+            ),
+            (
+                "WORKTRUNK_SYSTEM_CONFIG_PATH".to_string(),
+                "/etc/xdg/worktrunk/config.toml".to_string(),
+            ),
+            (
+                "WORKTRUNK_APPROVALS_PATH".to_string(),
+                self.test_approvals_path().display().to_string(),
             ),
         ]);
 
@@ -1305,6 +1329,11 @@ impl TestRepo {
         configure_cli_command(cmd);
         self.configure_git_cmd(cmd);
         cmd.env("WORKTRUNK_CONFIG_PATH", &self.test_config_path);
+        cmd.env(
+            "WORKTRUNK_SYSTEM_CONFIG_PATH",
+            "/etc/xdg/worktrunk/config.toml",
+        );
+        cmd.env("WORKTRUNK_APPROVALS_PATH", &self.test_approvals_path);
         set_temp_home_env(cmd, self.home_path());
         self.configure_mock_commands(cmd);
     }
@@ -1397,6 +1426,14 @@ impl TestRepo {
         &self.test_config_path
     }
 
+    /// Get the path to the isolated test approvals file
+    ///
+    /// This approvals path is automatically set via WORKTRUNK_APPROVALS_PATH when using
+    /// `configure_wt_cmd()`, ensuring tests don't pollute the user's real approvals.
+    pub fn test_approvals_path(&self) -> &Path {
+        &self.test_approvals_path
+    }
+
     /// Write project-specific config (`.config/wt.toml`) under the repo root.
     pub fn write_project_config(&self, contents: &str) {
         let config_dir = self.root_path().join(".config");
@@ -1411,6 +1448,11 @@ impl TestRepo {
     pub fn write_test_config(&self, contents: &str) {
         let full_contents = format!("skip-commit-generation-prompt = true\n{}", contents);
         std::fs::write(&self.test_config_path, full_contents).unwrap();
+    }
+
+    /// Write approved commands to the isolated WORKTRUNK_APPROVALS_PATH.
+    pub fn write_test_approvals(&self, contents: &str) {
+        std::fs::write(&self.test_approvals_path, contents).unwrap();
     }
 
     /// Get the path to a named worktree
@@ -2114,6 +2156,7 @@ pub struct BareRepoTest {
     temp_dir: tempfile::TempDir,
     bare_repo_path: PathBuf,
     test_config_path: PathBuf,
+    test_approvals_path: PathBuf,
     git_config_path: PathBuf,
 }
 
@@ -2127,6 +2170,7 @@ impl BareRepoTest {
         // Bare repo without .git suffix - worktrees go inside as subdirectories
         let bare_repo_path = temp_dir.path().join("repo");
         let test_config_path = temp_dir.path().join("test-config.toml");
+        let test_approvals_path = temp_dir.path().join("test-approvals.toml");
         let git_config_path = temp_dir.path().join("test-gitconfig");
 
         // Write git config with user settings
@@ -2142,6 +2186,7 @@ impl BareRepoTest {
             temp_dir,
             bare_repo_path,
             test_config_path,
+            test_approvals_path,
             git_config_path,
         };
 
@@ -2218,6 +2263,11 @@ impl BareRepoTest {
     pub fn configure_wt_cmd(&self, cmd: &mut Command) {
         self.configure_git_cmd(cmd);
         cmd.env("WORKTRUNK_CONFIG_PATH", &self.test_config_path)
+            .env(
+                "WORKTRUNK_SYSTEM_CONFIG_PATH",
+                "/etc/xdg/worktrunk/config.toml",
+            )
+            .env("WORKTRUNK_APPROVALS_PATH", &self.test_approvals_path)
             .env_remove("NO_COLOR")
             .env_remove("CLICOLOR_FORCE");
     }
@@ -2243,6 +2293,8 @@ impl TestRepoBase for BareRepoTest {
 pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
     settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
+    settings.add_redaction(".env.WORKTRUNK_SYSTEM_CONFIG_PATH", "[TEST_SYSTEM_CONFIG]");
+    settings.add_redaction(".env.WORKTRUNK_APPROVALS_PATH", "[TEST_APPROVALS]");
     settings.add_redaction(".env.WORKTRUNK_DIRECTIVE_FILE", "[DIRECTIVE_FILE]");
     settings.add_redaction(".env.HOME", "[TEST_HOME]");
     // Windows: the `home` crate uses USERPROFILE for home_dir()
@@ -2468,12 +2520,17 @@ fn setup_snapshot_settings_for_paths_with_home(
         r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-config\.toml'?",
         "[TEST_CONFIG]",
     );
-    // Strip ANSI codes that may wrap [TEST_CONFIG*] placeholders.
+    // Normalize WORKTRUNK_APPROVALS_PATH temp paths in stdout/stderr output
+    settings.add_filter(
+        r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-approvals\.toml'?",
+        "[TEST_APPROVALS]",
+    );
+    // Strip ANSI codes that may wrap [TEST_CONFIG*] or [TEST_APPROVALS] placeholders.
     // On Windows, tree-sitter may add ANSI codes around paths even without quotes.
     // Example: \x1b[0m\x1b[2m[TEST_CONFIG_NEW]\x1b[2m
     // Match: optional ANSI codes + [TEST_CONFIG...] + optional ANSI codes -> just the placeholder
     settings.add_filter(
-        r"(?:\x1b\[\d+m)+(\[TEST_CONFIG(?:_NEW)?\])(?:\x1b\[\d+m)+",
+        r"(?:\x1b\[\d+m)+(\[TEST_(?:CONFIG(?:_NEW)?|APPROVALS)\])(?:\x1b\[\d+m)+",
         "$1",
     );
 
@@ -2606,6 +2663,11 @@ fn setup_snapshot_settings_for_paths_with_home(
     // Note: [^)'\s\x1b]+ stops at ), ', whitespace, or ANSI escape to avoid matching too much
     settings.add_filter(
         r"/private/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s\x1b]+",
+        "[PROJECT_ID]",
+    );
+    // macOS non-canonicalized: /var/folders/.../T/.tmpXXXXXX/path -> [PROJECT_ID]
+    settings.add_filter(
+        r"/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s\x1b]+",
         "[PROJECT_ID]",
     );
     // Linux: /tmp/.tmpXXXXXX/path -> [PROJECT_ID]

@@ -1,20 +1,19 @@
 //! Configuration system for worktrunk
 //!
-//! Worktrunk uses two independent configuration files:
+//! Three configuration sources, loaded in order (later overrides earlier):
 //!
-//! - **User config** (`~/.config/worktrunk/config.toml`) - Personal preferences
-//! - **Project config** (`.config/wt.toml`) - Lifecycle hooks, checked into git
+//! 1. **System config** (`/etc/xdg/worktrunk/config.toml` or platform equivalent) -
+//!    Organization-wide defaults, optional
+//! 2. **User config** (`~/.config/worktrunk/config.toml`) - Personal preferences
+//! 3. **Project config** (`.config/wt.toml`) - Lifecycle hooks, checked into git
 //!
-//! The two configs are **completely independent**:
-//! - No overlap in settings (they configure different things)
-//! - No merging or precedence rules needed
-//! - Loaded separately and used in different contexts
-//!
-//! User config controls "how worktrunk behaves for me", project config controls
-//! "what commands run for this project".
+//! System and user configs share the same schema and are merged by the `config`
+//! crate's builder (user values override system values at the key level).
+//! Project config is independent — different schema, different purpose.
 //!
 //! See `wt config --help` for complete documentation.
 
+pub mod approvals;
 mod commands;
 mod deprecation;
 mod expansion;
@@ -72,6 +71,7 @@ impl WorktrunkConfig for ProjectConfig {
 }
 
 // Re-export public types
+pub use approvals::{Approvals, get_approvals_path};
 pub use commands::{Command, CommandConfig};
 pub use deprecation::DeprecationInfo;
 pub use deprecation::Deprecations;
@@ -79,12 +79,14 @@ pub use deprecation::check_and_migrate;
 pub use deprecation::detect_deprecations;
 pub use deprecation::format_brief_warning;
 pub use deprecation::format_deprecation_details;
+pub use deprecation::format_deprecation_warnings;
+pub use deprecation::format_migration_diff;
 pub use deprecation::normalize_template_vars;
 pub use deprecation::write_migration_file;
 pub use deprecation::{DEPRECATED_SECTION_KEYS, key_belongs_in, warn_unknown_fields};
 pub use expansion::{
-    DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, expand_template, redact_credentials,
-    sanitize_branch_name, sanitize_db, short_hash,
+    DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, TemplateExpandError, expand_template,
+    redact_credentials, sanitize_branch_name, sanitize_db, short_hash,
 };
 pub use hooks::HooksConfig;
 pub use project::{
@@ -93,8 +95,9 @@ pub use project::{
 };
 pub use user::{
     CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig,
-    ResolvedConfig, SelectConfig, StageMode, UserConfig, UserProjectOverrides,
-    find_unknown_keys as find_unknown_user_keys, get_config_path, set_config_path,
+    ResolvedConfig, SelectConfig, StageMode, SwitchConfig, SwitchPickerConfig, UserConfig,
+    UserProjectOverrides, default_system_config_path, find_unknown_keys as find_unknown_user_keys,
+    get_config_path, get_system_config_path, set_config_path,
 };
 
 #[cfg(test)]
@@ -465,211 +468,6 @@ task2 = "echo 'Task 2 running' > task2.txt"
         assert!(serialized.contains("[post-start]"));
         assert!(serialized.contains(r#"server = "npm run dev""#));
         assert!(serialized.contains(r#"watch = "npm run watch""#));
-    }
-
-    #[test]
-    fn test_user_project_config_equality() {
-        let config1 = UserProjectOverrides {
-            approved_commands: vec!["npm install".to_string()],
-            ..Default::default()
-        };
-        let config2 = UserProjectOverrides {
-            approved_commands: vec!["npm install".to_string()],
-            ..Default::default()
-        };
-        let config3 = UserProjectOverrides {
-            approved_commands: vec!["npm test".to_string()],
-            ..Default::default()
-        };
-        assert_eq!(config1, config2);
-        assert_ne!(config1, config3);
-    }
-
-    #[test]
-    fn test_is_command_approved() {
-        let mut config = UserConfig::default();
-        config.projects.insert(
-            "github.com/user/repo".to_string(),
-            UserProjectOverrides {
-                approved_commands: vec!["npm install".to_string()],
-                ..Default::default()
-            },
-        );
-
-        assert!(config.is_command_approved("github.com/user/repo", "npm install"));
-        assert!(!config.is_command_approved("github.com/user/repo", "npm test"));
-        assert!(!config.is_command_approved("github.com/other/repo", "npm install"));
-    }
-
-    #[test]
-    fn test_approve_command() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("test-config.toml");
-        let mut config = UserConfig::default();
-
-        // First approval
-        assert!(!config.is_command_approved("github.com/user/repo", "npm install"));
-        config
-            .approve_command(
-                "github.com/user/repo".to_string(),
-                "npm install".to_string(),
-                Some(&config_path),
-            )
-            .unwrap();
-        assert!(config.is_command_approved("github.com/user/repo", "npm install"));
-
-        // Duplicate approval shouldn't add twice
-        let count_before = config
-            .projects
-            .get("github.com/user/repo")
-            .unwrap()
-            .approved_commands
-            .len();
-        config
-            .approve_command(
-                "github.com/user/repo".to_string(),
-                "npm install".to_string(),
-                Some(&config_path),
-            )
-            .unwrap();
-        assert_eq!(
-            config
-                .projects
-                .get("github.com/user/repo")
-                .unwrap()
-                .approved_commands
-                .len(),
-            count_before
-        );
-    }
-
-    #[test]
-    fn test_revoke_command() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("test-config.toml");
-
-        let mut config = UserConfig::default();
-
-        // Set up two approved commands
-        config
-            .approve_command(
-                "github.com/user/repo".to_string(),
-                "npm install".to_string(),
-                Some(&config_path),
-            )
-            .unwrap();
-        config
-            .approve_command(
-                "github.com/user/repo".to_string(),
-                "npm test".to_string(),
-                Some(&config_path),
-            )
-            .unwrap();
-
-        assert!(config.is_command_approved("github.com/user/repo", "npm install"));
-        assert!(config.is_command_approved("github.com/user/repo", "npm test"));
-
-        // Revoke one command
-        config
-            .revoke_command("github.com/user/repo", "npm install", Some(&config_path))
-            .unwrap();
-        assert!(!config.is_command_approved("github.com/user/repo", "npm install"));
-        assert!(config.is_command_approved("github.com/user/repo", "npm test"));
-
-        // Project entry should still exist
-        assert!(config.projects.contains_key("github.com/user/repo"));
-
-        // Revoke the last command - should remove the project entry
-        config
-            .revoke_command("github.com/user/repo", "npm test", Some(&config_path))
-            .unwrap();
-        assert!(!config.is_command_approved("github.com/user/repo", "npm test"));
-        assert!(!config.projects.contains_key("github.com/user/repo"));
-    }
-
-    #[test]
-    fn test_revoke_command_nonexistent() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("test-config.toml");
-
-        let mut config = UserConfig::default();
-
-        // Revoking from non-existent project is a no-op
-        config
-            .revoke_command("github.com/user/repo", "npm install", Some(&config_path))
-            .unwrap();
-
-        // Set up one command
-        config
-            .approve_command(
-                "github.com/user/repo".to_string(),
-                "npm install".to_string(),
-                Some(&config_path),
-            )
-            .unwrap();
-
-        // Revoking non-existent command is a no-op
-        config
-            .revoke_command("github.com/user/repo", "npm test", Some(&config_path))
-            .unwrap();
-        assert!(config.is_command_approved("github.com/user/repo", "npm install"));
-    }
-
-    #[test]
-    fn test_revoke_project() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("test-config.toml");
-
-        let mut config = UserConfig::default();
-
-        // Set up multiple projects
-        config
-            .approve_command(
-                "github.com/user/repo1".to_string(),
-                "npm install".to_string(),
-                Some(&config_path),
-            )
-            .unwrap();
-        config
-            .approve_command(
-                "github.com/user/repo1".to_string(),
-                "npm test".to_string(),
-                Some(&config_path),
-            )
-            .unwrap();
-        config
-            .approve_command(
-                "github.com/user/repo2".to_string(),
-                "cargo build".to_string(),
-                Some(&config_path),
-            )
-            .unwrap();
-
-        assert!(config.projects.contains_key("github.com/user/repo1"));
-        assert!(config.projects.contains_key("github.com/user/repo2"));
-
-        // Revoke entire project
-        config
-            .revoke_project("github.com/user/repo1", Some(&config_path))
-            .unwrap();
-        assert!(!config.projects.contains_key("github.com/user/repo1"));
-        assert!(config.projects.contains_key("github.com/user/repo2"));
-
-        // Revoking non-existent project is a no-op
-        config
-            .revoke_project("github.com/user/repo1", Some(&config_path))
-            .unwrap();
-        config
-            .revoke_project("github.com/nonexistent/repo", Some(&config_path))
-            .unwrap();
     }
 
     #[test]

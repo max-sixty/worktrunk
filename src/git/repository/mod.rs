@@ -33,7 +33,7 @@ use anyhow::{Context, bail};
 
 use dunce::canonicalize;
 
-use crate::config::ProjectConfig;
+use crate::config::{ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
 use super::{DefaultBranchName, GitError, LineDiff, WorktreeInfo};
@@ -114,6 +114,14 @@ pub(super) struct RepoCache {
     pub(super) project_identifier: OnceCell<String>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
+    /// User config (raw, as loaded from disk).
+    /// Lazily loaded on first access.
+    pub(super) user_config: OnceCell<UserConfig>,
+    /// Resolved user config (global merged with per-project overrides, defaults applied).
+    /// Lazily loaded on first access via `Repository::config()`.
+    pub(super) resolved_config: OnceCell<ResolvedConfig>,
+    /// Sparse checkout paths (empty if not a sparse checkout)
+    pub(super) sparse_checkout_paths: OnceCell<Vec<String>>,
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
     pub(super) merge_base: DashMap<(String, String), Option<String>>,
     /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
@@ -234,6 +242,32 @@ impl Repository {
             discovery_path,
             git_common_dir,
             cache: Arc::new(RepoCache::default()),
+        })
+    }
+
+    /// Resolved user config (global merged with per-project overrides, defaults applied).
+    ///
+    /// Lazily loads `UserConfig` and resolves it using this repository's project identifier.
+    /// Cached for the lifetime of the repository (shared across clones via Arc).
+    ///
+    /// Falls back to default config if loading fails (e.g., no config file).
+    pub fn config(&self) -> &ResolvedConfig {
+        self.cache.resolved_config.get_or_init(|| {
+            let project_id = self.project_identifier().ok();
+            self.user_config().resolved(project_id.as_deref())
+        })
+    }
+
+    /// Raw user config (as loaded from disk, before project-specific resolution).
+    ///
+    /// Prefer [`config()`](Self::config) for behavior settings. This is only needed
+    /// for operations that require the full `UserConfig` (e.g., path template formatting,
+    /// approval state, hook resolution).
+    pub fn user_config(&self) -> &UserConfig {
+        self.cache.user_config.get_or_init(|| {
+            UserConfig::load()
+                .inspect_err(|err| log::warn!("Failed to load user config, using defaults: {err}"))
+                .unwrap_or_default()
         })
     }
 
@@ -427,6 +461,30 @@ impl Repository {
         })
     }
 
+    /// Get the sparse checkout paths for this repository.
+    ///
+    /// Returns the list of paths from `git sparse-checkout list`. For non-sparse
+    /// repos, returns an empty slice (the command exits with code 128).
+    ///
+    /// Assumes cone mode (the git default). Cached using `discovery_path` —
+    /// scoped to the worktree the user is running from, not per-listed-worktree.
+    pub fn sparse_checkout_paths(&self) -> &[String] {
+        self.cache.sparse_checkout_paths.get_or_init(|| {
+            let output = match self.run_command_output(&["sparse-checkout", "list"]) {
+                Ok(out) => out,
+                Err(_) => return Vec::new(),
+            };
+
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout.lines().map(String::from).collect()
+            } else {
+                // Exit 128 = not a sparse checkout (expected, not an error)
+                Vec::new()
+            }
+        })
+    }
+
     /// Check if git's builtin fsmonitor daemon is enabled.
     ///
     /// Returns true only for `core.fsmonitor=true` (the builtin daemon).
@@ -599,7 +657,7 @@ impl Repository {
         progress_message: Option<String>,
     ) -> anyhow::Result<()> {
         // Allow tests to override delay threshold (-1 to disable, 0 for immediate)
-        let delay_ms = std::env::var("WT_TEST_DELAYED_STREAM_MS")
+        let delay_ms = std::env::var("WORKTRUNK_TEST_DELAYED_STREAM_MS")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(delay_ms);

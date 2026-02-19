@@ -247,9 +247,7 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
-    /// Switch to a worktree
-    ///
-    /// Creates one if needed.
+    /// Switch to a worktree; create if needed
     #[command(
         after_long_help = r#"Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
 
@@ -322,7 +320,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | `Enter` | Switch to selected worktree |
 | `Alt-c` | Create new worktree from query |
 | `Esc` | Cancel |
-| `1`/`2`/`3`/`4` | Switch preview tab |
+| `1`–`5` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
@@ -332,11 +330,12 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 2. **log** — Recent commits; commits already on the default branch have dimmed hashes
 3. **main…±** — Diff of changes since the merge-base with the default branch
 4. **remote⇅** — Diff vs upstream tracking branch (ahead/behind)
+5. **summary** — LLM-generated branch summary (requires `[list] summary = true` and `[commit.generation]`)
 
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
 ```toml
-[select]
+[switch.picker]
 pager = "delta --paging=never --width=$COLUMNS"
 ```
 
@@ -464,10 +463,10 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 
     /// List worktrees and their status
     #[command(
-        after_long_help = r#"Shows uncommitted changes, divergence from the default branch and remote, and optional CI status.
+        after_long_help = r#"Shows uncommitted changes, divergence from the default branch and remote, and optional CI status and LLM summaries.
 
 <!-- demo: wt-list.gif 1600x900 -->
-The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
+The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network and LLM summaries are generated — the table displays instantly and columns fill in as results arrive.
 
 ## Examples
 
@@ -478,7 +477,7 @@ List all worktrees:
 $ wt list
 ```
 
-Include CI status and line diffs:
+Include CI status, line diffs, and LLM summaries:
 
 <!-- wt list --full -->
 ```console
@@ -507,10 +506,11 @@ $ wt list --format=json
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
 | main…± | Line diffs since the merge-base with the default branch (`--full`) |
-| Path | Worktree directory |
+| Summary | LLM-generated branch summary (`--full` + `summary = true`, requires [`commit.generation`](@/config.md#commit)) (experimental) |
 | Remote⇅ | Commits ahead/behind tracking branch |
-| URL | Dev server URL from project config (dimmed if port not listening) |
 | CI | Pipeline status (`--full`) |
+| Path | Worktree directory |
+| URL | Dev server URL from project config (dimmed if port not listening) |
 | Commit | Short hash (8 chars) |
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
@@ -532,6 +532,13 @@ The CI column shows GitHub/GitLab pipeline status:
 | (blank) | No upstream or no PR/MR |
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches (visible with `--remotes`) get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
+
+### LLM summaries (experimental)
+
+With `--full`, `summary = true`, and a [`commit.generation`](@/config.md#commit) command configured, the Summary column shows an LLM-generated one-line description of each branch's changes relative to the default branch.
+
+Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. Results are cached until the diff changes.
+<!-- TODO: promote this feature more prominently once it's been tested in the wild -->
 
 ## Status symbols
 
@@ -718,7 +725,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
         #[arg(long)]
         remotes: bool,
 
-        /// Include CI status and diff analysis (slower)
+        /// Show CI, diff analysis, and LLM summaries
         #[arg(long)]
         full: bool,
 
@@ -1018,6 +1025,7 @@ wt step push
 - `squash` — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
 - `rebase` — Rebase onto target branch
 - `push` — Fast-forward target to current branch
+- `diff` — Show all changes since branching (committed, staged, unstaged, untracked)
 - `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
 
@@ -1044,6 +1052,7 @@ wt step push
 
 | Hook | When | Blocking | Fail-fast |
 |------|------|----------|-----------|
+| `pre-switch` | Before every switch | Yes | Yes |
 | `post-start` | After worktree created | No (background) | No |
 | `post-create` | After worktree created | Yes | No |
 | `post-switch` | After every switch | No (background) | No |
@@ -1057,6 +1066,23 @@ wt step push
 **Fail-fast**: First failure aborts the operation.
 
 Background hooks show a single-line summary by default. Use `-v` to see expanded command details.
+
+The most common starting point is `post-start` — it runs background tasks (dev servers, file copying, builds) when creating a worktree.
+
+### pre-switch
+
+Runs before every `wt switch` — before branch validation or worktree creation. Useful for ensuring the repository is up to date before switching. Template variables reflect the current worktree (where you're switching from), not the destination. Failure aborts the switch.
+
+```toml
+[pre-switch]
+# Fetch if last fetch was more than 6 hours ago
+fetch = """
+FETCH_HEAD="$(git rev-parse --git-common-dir)/FETCH_HEAD"
+if [ "$(find "$FETCH_HEAD" -mmin +360 2>/dev/null)" ] || [ ! -f "$FETCH_HEAD" ]; then
+    git fetch
+fi
+"""
+```
 
 ### post-start
 
@@ -1487,6 +1513,8 @@ wt config show
 | **User config** | `~/.config/worktrunk/config.toml` | Worktree path template, LLM commit configs, etc | ✗ |
 | **Project config** | `.config/wt.toml` | Project hooks, dev server URL | ✓ |
 
+Organizations can also deploy a system-wide config file for shared defaults — run `wt config show` for the platform-specific location.
+
 **User config** — personal preferences:
 
 ```toml
@@ -1562,7 +1590,9 @@ Persistent flag values for `wt list`. Override on command line as needed.
 
 ```toml
 [list]
-full = false       # Show CI status and main…± diffstat columns (--full)
+summary = false    # Enable LLM branch summaries (requires [commit.generation])
+
+full = false       # Show CI, main…± diffstat, and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
 ```
@@ -1589,16 +1619,18 @@ remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
 ```
 
-### Select
+### Switch picker
 
-Pager behavior for `wt switch` interactive picker diff previews.
+Configuration for `wt switch` interactive picker.
 
 ```toml
-[select]
-# Pager command with flags for diff preview (overrides git's core.pager)
-# Use this to specify pager flags needed for non-TTY contexts
-# Example:
+[switch.picker]
+# Pager command for diff preview (overrides git's core.pager)
 # pager = "delta --paging=never"
+
+# Timeout (ms) for git commands during picker loading (default: 200)
+# Lower values show the TUI faster; 0 disables timeouts
+# timeout-ms = 200
 ```
 
 ### User project-specific settings
@@ -1613,14 +1645,11 @@ Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
 #### Approved hook commands
 
-When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.
+When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved to `~/.config/worktrunk/approvals.toml` (separate from user config to allow dotfile management of config.toml).
 
-```toml
-[projects."github.com/user/repo"]
-approved-commands = ["npm ci", "npm test"]
-```
+To reset, run `wt hook approvals clear`.
 
-To reset, delete the entry or run `wt hook approvals clear`.
+> **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config show` to generate a migration file that removes stale entries.
 
 #### Setting overrides (Experimental)
 
@@ -1799,6 +1828,8 @@ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 |----------|---------|
 | `WORKTRUNK_BIN` | Override binary path for shell wrappers (useful for testing dev builds) |
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
+| `WORKTRUNK_SYSTEM_CONFIG_PATH` | Override system config file location |
+| `XDG_CONFIG_DIRS` | Colon-separated system config directories (default: `/etc/xdg`) |
 | `WORKTRUNK_DIRECTIVE_FILE` | Internal: set by shell wrappers to enable directory changes |
 | `WORKTRUNK_SHELL` | Internal: set by shell wrappers to indicate shell type (e.g., `powershell`) |
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
