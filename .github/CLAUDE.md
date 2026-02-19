@@ -117,7 +117,7 @@ This is why release secrets must be in a protected environment, not repo-level s
 
 - [x] Create "Merge access" ruleset on `main`: "Restrict updates" rule, bypass actor = Repository Admin with **exempt** mode. This prevents `worktrunk-bot` (write role) from merging while giving `@max-sixty` (admin) a frictionless merge button.
 - [x] Create `release` GitHub Environment with deployment protection (require `@max-sixty` approval). Add deployment branch/tag allowlist restricting to `v*` tags so arbitrary branches can't request the environment. Leave "prevent self-approvals" off (otherwise the tag pusher can't approve their own release).
-- [ ] Move `CARGO_REGISTRY_TOKEN` and `AUR_SSH_PRIVATE_KEY` from repo secrets to the `release` environment. Then update `release.yaml` `publish-cargo` and `publish-aur` jobs to add `environment: release`.
+- [x] Move `CARGO_REGISTRY_TOKEN` and `AUR_SSH_PRIVATE_KEY` from repo secrets to the `release` environment. Update `release.yaml` `publish-cargo` and `publish-aur` jobs to add `environment: release`.
 - [x] Delete `WORKTRUNK_REVIEW_TOKEN` from repo secrets
 
 ### Future hardening
