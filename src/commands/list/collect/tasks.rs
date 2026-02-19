@@ -664,10 +664,12 @@ impl Task for SummaryGenerateTask {
     const KIND: TaskKind = TaskKind::SummaryGenerate;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        let llm_command = ctx
-            .llm_command
-            .as_deref()
-            .expect("SummaryGenerateTask requires llm_command");
+        let Some(ref llm_command) = ctx.llm_command else {
+            return Err(ctx.error(
+                Self::KIND,
+                &anyhow::anyhow!("SummaryGenerateTask requires llm_command"),
+            ));
+        };
 
         let branch = ctx.branch_ref.branch.as_deref().unwrap_or("(detached)");
         let worktree_path = ctx.branch_ref.worktree_path.as_deref();
