@@ -148,17 +148,9 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# - Project config (https://worktrunk.dev/config/#project-configuration) settings are shared with teammates.[0m
   [2m# - User configs generally apply to all projects.[0m
-  [2m# - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.[0m
+  [2m# - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.[0m
   [2m#[0m
   [2m# Entries are keyed by project identifier (e.g., `github.com/user/repo`).[0m
-  [2m#[0m
-  [2m# #### Approved hook commands[0m
-  [2m#[0m
-  [2m# When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved to `~/.config/worktrunk/approvals.toml` (separate from user config to allow dotfile management of config.toml).[0m
-  [2m#[0m
-  [2m# To reset, run `wt hook approvals clear`.[0m
-  [2m#[0m
-  [2m# > **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config show` to generate a migration file that removes stale entries.[0m
   [2m#[0m
   [2m# #### Setting overrides (Experimental)[0m
   [2m#[0m

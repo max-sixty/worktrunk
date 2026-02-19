@@ -1804,3 +1804,298 @@ fn test_remove_pruned_worktree_keep_branch(mut repo: TestRepo) {
         "Branch should still exist"
     );
 }
+
+// ============================================================================
+// Instant Removal Tests (move-then-delete optimization)
+// ============================================================================
+
+/// Background removal should make the original worktree path unavailable immediately.
+///
+/// This tests the move-then-delete optimization: the worktree directory is renamed
+/// to a staging path synchronously, so the original path is gone before wt returns.
+/// The actual deletion (rm -rf) happens in the background.
+#[rstest]
+fn test_remove_background_path_gone_immediately(mut repo: TestRepo) {
+    // Create a worktree
+    let worktree_path = repo.add_worktree("feature-instant");
+
+    // Verify the worktree exists
+    assert!(worktree_path.exists(), "Worktree should exist initially");
+
+    // Remove in background mode (default) - NOT using snapshot since we need to check state after
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-instant"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The original worktree path should be gone IMMEDIATELY (before background rm completes)
+    // This is the key behavior of the move-then-delete optimization
+    assert!(
+        !worktree_path.exists(),
+        "Worktree path should be gone immediately after wt remove returns"
+    );
+
+    // Note: The staging directory (.wt-removing-*) might already be deleted by the
+    // background process, or it might still exist. Both are valid outcomes.
+    // The key assertion above is that the original path is gone immediately.
+}
+
+/// Background removal should prune git worktree metadata synchronously.
+///
+/// After removal, `git worktree list` should NOT show the removed worktree,
+/// even before the background rm -rf completes.
+#[rstest]
+fn test_remove_background_git_metadata_pruned(mut repo: TestRepo) {
+    // Create a worktree
+    let _worktree_path = repo.add_worktree("feature-prune-test");
+
+    // Verify git knows about the worktree
+    let list_before = repo
+        .git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&list_before.stdout).contains("feature-prune-test"),
+        "Git should list the worktree before removal"
+    );
+
+    // Remove in background mode
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-prune-test"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Git worktree metadata should be pruned IMMEDIATELY
+    let list_after = repo
+        .git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&list_after.stdout).contains("feature-prune-test"),
+        "Git should NOT list the worktree after removal (metadata should be pruned)"
+    );
+}
+
+/// Background removal should delete the branch when it's merged.
+///
+/// This verifies that branch deletion works correctly with the instant removal path
+/// (the branch is deleted in the background after the worktree is renamed).
+#[rstest]
+fn test_remove_background_deletes_merged_branch(mut repo: TestRepo) {
+    // Create a worktree with the branch already merged to main (same commit)
+    let _worktree_path = repo.add_worktree("feature-merged");
+
+    // Verify branch exists before removal
+    let branches_before = repo
+        .git_command()
+        .args(["branch", "--list", "feature-merged"])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&branches_before.stdout)
+            .trim()
+            .is_empty(),
+        "Branch should exist before removal"
+    );
+
+    // Remove in background mode (default)
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-merged"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Poll for background branch deletion (happens after rm -rf in background command)
+    crate::common::wait_for("merged branch deleted by background removal", || {
+        let branches = repo
+            .git_command()
+            .args(["branch", "--list", "feature-merged"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&branches.stdout).trim().is_empty()
+    });
+}
+
+/// Test that worktree paths containing special characters are handled correctly.
+///
+/// This tests that the `rm -rf -- <path>` command correctly handles paths
+/// that might be misinterpreted as options.
+#[rstest]
+fn test_remove_worktree_with_special_path_chars(mut repo: TestRepo) {
+    // Create a worktree with special characters in the branch name
+    // (which becomes part of the path)
+    let _worktree_path = repo.add_worktree("feature--double-dash");
+
+    // Verify worktree exists
+    let list_before = repo
+        .git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&list_before.stdout).contains("feature--double-dash"),
+        "Worktree should exist before removal"
+    );
+
+    // Remove the worktree
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature--double-dash"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed for path with special chars: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Poll for background worktree removal
+    crate::common::wait_for("worktree with special chars removed", || {
+        let list = repo
+            .git_command()
+            .args(["worktree", "list", "--porcelain"])
+            .output()
+            .unwrap();
+        !String::from_utf8_lossy(&list.stdout).contains("feature--double-dash")
+    });
+}
+
+/// Test that background removal falls back to legacy git worktree remove
+/// when the instant rename fails.
+///
+/// This tests the fallback path: when std::fs::rename() fails (e.g., cross-filesystem,
+/// permissions, or in this case a blocking file), we fall back to the legacy
+/// `git worktree remove` command which handles cleanup properly.
+#[rstest]
+fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
+    // Create a worktree
+    let worktree_path = repo.add_worktree("feature-fallback");
+
+    // Calculate the expected staged path that the rename would use.
+    // The path is: <worktree>.wt-removing-<TEST_EPOCH>
+    // Since WT_TEST_EPOCH is set by the test harness, the timestamp is deterministic.
+    let staged_path = worktree_path.with_file_name(format!(
+        "{}.wt-removing-{}",
+        worktree_path.file_name().unwrap().to_string_lossy(),
+        crate::common::TEST_EPOCH
+    ));
+
+    // Create a regular file at the staged path to block the rename.
+    // On POSIX systems, you cannot rename a directory to an existing file.
+    std::fs::write(&staged_path, "blocking file").unwrap();
+
+    // Verify worktree exists before removal
+    assert!(
+        worktree_path.exists(),
+        "Worktree should exist before removal"
+    );
+
+    // Remove in background mode - should fall back to legacy removal
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-fallback"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed even when instant rename fails: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Poll for legacy background removal (includes 1-second sleep before git worktree remove)
+    crate::common::wait_for("worktree removed by legacy fallback", || {
+        !worktree_path.exists()
+    });
+
+    // Poll for branch deletion (happens after worktree removal in background command)
+    crate::common::wait_for("branch deleted by legacy fallback", || {
+        let branches = repo
+            .git_command()
+            .args(["branch", "--list", "feature-fallback"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&branches.stdout).trim().is_empty()
+    });
+
+    // Clean up the blocking file
+    let _ = std::fs::remove_file(&staged_path);
+}
+
+/// Stale `.wt-removing-*` directories from crashed removals accumulate on disk.
+///
+/// If `wt remove` is killed after `fs::rename()` succeeds but before the background
+/// `rm -rf` spawns, the staging directory is left behind. When the same worktree is
+/// re-created and removed again, the staging path collides (non-empty directory),
+/// forcing a fallback to legacy removal. The stale directory is never cleaned up.
+#[rstest]
+fn test_remove_stale_staging_dir_from_crashed_removal(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-crash");
+
+    // Calculate the deterministic staging path (TEST_EPOCH is fixed in tests)
+    let staged_path = worktree_path.with_file_name(format!(
+        "{}.wt-removing-{}",
+        worktree_path.file_name().unwrap().to_string_lossy(),
+        crate::common::TEST_EPOCH
+    ));
+
+    // Simulate a crashed removal: rename the worktree to the staging path manually,
+    // then prune git metadata — but never run the background rm -rf.
+    std::fs::rename(&worktree_path, &staged_path).unwrap();
+    repo.run_git(&["worktree", "prune"]);
+
+    // Verify the crash state: original path gone, stale staging dir remains
+    assert!(!worktree_path.exists());
+    assert!(staged_path.exists());
+
+    // Re-create the same worktree (branch was deleted by prune, so create fresh)
+    let _ = repo.add_worktree("feature-crash");
+
+    // Remove it again — staging path collides with stale dir, falls back to legacy
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-crash"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed despite stale staging dir: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Poll for legacy background removal (includes 1-second sleep before git worktree remove)
+    crate::common::wait_for("re-created worktree removed by fallback", || {
+        !worktree_path.exists()
+    });
+
+    // But the stale staging directory from the first crash is STILL there —
+    // nothing cleans it up. This is the accumulation risk.
+    assert!(
+        staged_path.exists(),
+        "Stale staging directory from crashed removal is never cleaned up"
+    );
+}

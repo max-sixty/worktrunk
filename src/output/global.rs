@@ -398,7 +398,11 @@ pub fn compute_hooks_display_path<'a>(
 pub fn pre_hook_display_path(hooks_run_at: &std::path::Path) -> Option<&std::path::Path> {
     let cwd = match std::env::current_dir() {
         Ok(cwd) => cwd,
-        Err(_) => return None, // Can't determine cwd, don't show path
+        Err(_) => {
+            // Can't determine cwd (directory deleted/renamed) - show the path
+            // since we can't know if user is there or not
+            return Some(hooks_run_at);
+        }
     };
     compute_hooks_display_path(hooks_run_at, &cwd)
 }

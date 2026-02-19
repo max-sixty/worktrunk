@@ -119,7 +119,7 @@ Ask: "Does `--help` still describe what the code does?" If not, update `src/cli/
 
 Documentation has three categories:
 
-1. **Command pages** (config, hook, list, merge, remove, select, step, switch):
+1. **Command pages** (config, hook, list, merge, remove, step, switch):
    ```
    src/cli/mod.rs (PRIMARY SOURCE)
        ↓ test_command_pages_and_skill_files_are_in_sync

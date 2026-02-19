@@ -1,6 +1,7 @@
 use crate::common::{
-    BareRepoTest, TestRepo, TestRepoBase, canonicalize, configure_directive_file, directive_file,
-    repo, setup_temp_snapshot_settings, wait_for, wait_for_file_count, wt_command,
+    BareRepoTest, TestRepo, TestRepoBase, canonicalize, configure_directive_file,
+    configure_git_cmd, directive_file, repo, setup_temp_snapshot_settings, wait_for,
+    wait_for_file_count, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -848,4 +849,94 @@ fn test_bare_repo_bootstrap_first_worktree() {
         "Should have bare repo + 1 worktree"
     );
     assert!(stdout.contains("main"), "Should list main worktree");
+}
+
+/// Regression test: `wt list` from a `git clone --bare` repo must not run
+/// `git status` on the bare entry. Before the fix, this produced:
+///   "fatal: this operation must be run in a work tree"
+///
+/// Uses `git clone --bare` (real-world pattern) rather than `git init --bare`
+/// (used by BareRepoTest) to cover the exact reported scenario.
+#[test]
+fn test_clone_bare_repo_list_no_status_errors() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let git_config_path = temp_dir.path().join("test-gitconfig");
+    let test_config_path = temp_dir.path().join("test-config.toml");
+    fs::write(
+        &git_config_path,
+        "[user]\n\tname = Test User\n\temail = test@example.com\n\
+         [init]\n\tdefaultBranch = main\n",
+    )
+    .unwrap();
+    fs::write(&test_config_path, "").unwrap();
+
+    let run_git = |dir: &Path, args: &[&str]| {
+        let mut cmd = Command::new("git");
+        cmd.args(args).current_dir(dir);
+        configure_git_cmd(&mut cmd, &git_config_path);
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    // Create a source repo with a commit (clone --bare needs history)
+    let source = temp_dir.path().join("source");
+    run_git(
+        temp_dir.path(),
+        &["init", "--initial-branch", "main", source.to_str().unwrap()],
+    );
+    fs::write(source.join("file.txt"), "content").unwrap();
+    run_git(&source, &["add", "file.txt"]);
+    run_git(&source, &["commit", "-m", "Initial commit"]);
+
+    // Clone as bare — the exact pattern from the bug report
+    let bare_path = temp_dir.path().join("project.bare");
+    run_git(
+        temp_dir.path(),
+        &[
+            "clone",
+            "--bare",
+            source.to_str().unwrap(),
+            bare_path.to_str().unwrap(),
+        ],
+    );
+
+    // Create linked worktrees (outside the bare dir, matching real usage)
+    let main_wt = temp_dir.path().join("main");
+    let feature_wt = temp_dir.path().join("feature");
+    run_git(
+        &bare_path,
+        &["worktree", "add", main_wt.to_str().unwrap(), "main"],
+    );
+    run_git(&bare_path, &["branch", "feature", "main"]);
+    run_git(
+        &bare_path,
+        &["worktree", "add", feature_wt.to_str().unwrap(), "feature"],
+    );
+
+    // Run wt list from the bare repo directory (the reported scenario)
+    let mut cmd = wt_command();
+    configure_git_cmd(&mut cmd, &git_config_path);
+    cmd.env("WORKTRUNK_CONFIG_PATH", &test_config_path)
+        .arg("list")
+        .current_dir(&bare_path);
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "wt list should succeed.\nstderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("must be run in a work tree"),
+        "Should not get 'must be run in a work tree' error.\nstderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("git operations failed"),
+        "Should not have git operation failures.\nstderr: {stderr}"
+    );
 }

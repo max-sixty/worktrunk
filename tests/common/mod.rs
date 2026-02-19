@@ -2766,7 +2766,7 @@ fn setup_snapshot_settings_for_paths_with_home(
     // wt version can be: v0.8.5, v0.8.5-2-gabcdef, v0.8.5-dirty, or bare git hash (b9ffe83)
     // Format: "○ wt: <bold>VERSION</>" on its own line
     settings.add_filter(
-        r"(wt: \x1b\[1m)(?:v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40})",
+        r"(wt: \x1b\[1m)(?:v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40}(?:-dirty)?)",
         "${1}[VERSION]",
     );
     // git version format: "○ git: <bold>VERSION</>" (e.g., "2.47.1")
@@ -2777,7 +2777,7 @@ fn setup_snapshot_settings_for_paths_with_home(
     // Version check: "Up to date (<bold>VERSION</>)" or "current: VERSION)"
     // version_str() can be: v0.8.5, v0.8.5-2-gabcdef, v0.8.5-dirty, 0.8.5, or bare hash (8465a1f)
     settings.add_filter(
-        r"(current: |Up to date \(\x1b\[1m)(?:v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40})",
+        r"(current: |Up to date \(\x1b\[1m)(?:v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40}(?:-dirty)?)",
         "${1}[VERSION]",
     );
 
