@@ -243,6 +243,11 @@ pub fn work_items_for_worktree(
         if !has_commits && COMMIT_TASKS.contains(&kind) {
             continue;
         }
+        // Skip SummaryGenerate when no LLM command is configured.
+        // (Also skipped via skip_tasks in collect(), but populate_item() bypasses that path.)
+        if kind == TaskKind::SummaryGenerate && options.llm_command.is_none() {
+            continue;
+        }
         add_item(kind);
     }
     // URL status health check task (if we have a URL).
@@ -327,6 +332,11 @@ pub fn work_items_for_branch(
         if is_stale && EXPENSIVE_TASKS.contains(&kind) {
             continue;
         }
+        // Skip SummaryGenerate when no LLM command is configured.
+        // (Also skipped via skip_tasks in collect(), but populate_item() bypasses that path.)
+        if kind == TaskKind::SummaryGenerate && options.llm_command.is_none() {
+            continue;
+        }
         add_item(kind);
     }
 
@@ -384,5 +394,46 @@ mod tests {
         );
         // item_url is None for all items
         assert!(items.iter().all(|item| item.ctx.item_url.is_none()));
+    }
+
+    #[test]
+    fn test_no_llm_command_skips_summary_generate() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        Cmd::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .run()
+            .expect("git init");
+
+        let repo = Repository::at(dir.path()).expect("repo");
+        let wt = WorktreeInfo {
+            path: dir.path().to_path_buf(),
+            head: "deadbeef".to_string(),
+            branch: Some("main".to_string()),
+            bare: false,
+            detached: false,
+            locked: None,
+            prunable: None,
+        };
+
+        // No llm_command, no skip_tasks — SummaryGenerate should still be skipped
+        let options = CollectOptions {
+            skip_tasks: HashSet::new(),
+            llm_command: None,
+            stale_branches: HashSet::new(),
+            ..Default::default()
+        };
+
+        let expected_results = Arc::new(ExpectedResults::default());
+        let (tx, _rx) = chan::unbounded::<Result<TaskResult, TaskError>>();
+
+        let items = work_items_for_worktree(&repo, &wt, 0, &options, &expected_results, &tx);
+
+        assert!(
+            !items
+                .iter()
+                .any(|item| item.kind == TaskKind::SummaryGenerate),
+            "SummaryGenerate should be skipped when llm_command is None"
+        );
     }
 }
