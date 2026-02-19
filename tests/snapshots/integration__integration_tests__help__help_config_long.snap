@@ -203,7 +203,7 @@ When a project hook runs for the first time, Worktrunk asks for approval. Approv
 
 To reset, run [2mwt hook approvals clear[0m.
 
-> [1mMigration note:[0m Approvals were previously stored as [2mapproved-commands[0m in config.toml. Run [2mwt config show[0m to generate a migration file that removes stale entries.
+> [1mMigration note:[0m Approvals were previously stored as [2mapproved-commands[0m in config.toml. Run [2mwt config update[0m to migrate automatically.
 
 [1mSetting overrides (Experimental)[0m
 

@@ -437,6 +437,14 @@ Without a subcommand, runs `get` for the current branch. For `--branch`, use `ge
 
 ## What's logged
 
+Two kinds of logs live in `.git/wt-logs/`:
+
+### Command log (`commands.jsonl`)
+
+All hook executions and LLM commands are recorded automatically — one JSON object per line with timestamp, command, exit code, and duration. Rotates to `commands.jsonl.old` at 1MB (~2MB total).
+
+### Hook output logs
+
 | Operation | Log file |
 |-----------|----------|
 | post-start hooks | `{branch}-{source}-post-start-{name}.log` |
@@ -461,7 +469,12 @@ List all log files:
 wt config state logs get
 ```
 
-View a specific log:
+Query the command log:
+```console
+tail -5 .git/wt-logs/commands.jsonl | jq .
+```
+
+View a specific hook log:
 ```console
 cat "$(git rev-parse --git-dir)/wt-logs/feature-project-post-start-build.log"
 ```

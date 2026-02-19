@@ -158,7 +158,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# To reset, run `wt hook approvals clear`.[0m
   [2m#[0m
-  [2m# > **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config show` to generate a migration file that removes stale entries.[0m
+  [2m# > **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config update` to migrate automatically.[0m
   [2m#[0m
   [2m# #### Setting overrides (Experimental)[0m
   [2m#[0m

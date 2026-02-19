@@ -1648,7 +1648,7 @@ When a project hook runs for the first time, Worktrunk asks for approval. Approv
 
 To reset, run `wt hook approvals clear`.
 
-> **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config show` to generate a migration file that removes stale entries.
+> **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config update` to migrate automatically.
 
 #### Setting overrides (Experimental)
 

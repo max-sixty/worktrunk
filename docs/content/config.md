@@ -179,7 +179,7 @@ When a project hook runs for the first time, Worktrunk asks for approval. Approv
 
 To reset, run `wt hook approvals clear`.
 
-> **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config show` to generate a migration file that removes stale entries.
+> **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config update` to migrate automatically.
 
 #### Setting overrides (Experimental)
 
@@ -702,6 +702,14 @@ View and manage logs from background operations.
 
 ### What's logged
 
+Two kinds of logs live in `.git/wt-logs/`:
+
+#### Command log (`commands.jsonl`)
+
+All hook executions and LLM commands are recorded automatically — one JSON object per line with timestamp, command, exit code, and duration. Rotates to `commands.jsonl.old` at 1MB (~2MB total).
+
+#### Hook output logs
+
 | Operation | Log file |
 |-----------|----------|
 | post-start hooks | `{branch}-{source}-post-start-{name}.log` |
@@ -726,7 +734,12 @@ List all log files:
 wt config state logs get
 ```
 
-View a specific log:
+Query the command log:
+```bash
+tail -5 .git/wt-logs/commands.jsonl | jq .
+```
+
+View a specific hook log:
 ```bash
 cat "$(git rev-parse --git-dir)/wt-logs/feature-project-post-start-build.log"
 ```
