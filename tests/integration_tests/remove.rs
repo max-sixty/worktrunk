@@ -1927,22 +1927,15 @@ fn test_remove_background_deletes_merged_branch(mut repo: TestRepo) {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Wait for background process to complete branch deletion
-    // The branch deletion happens in the background command after rm -rf
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
-    // Branch should be deleted (it was merged - same commit as main)
-    let branches_after = repo
-        .git_command()
-        .args(["branch", "--list", "feature-merged"])
-        .output()
-        .unwrap();
-    assert!(
-        String::from_utf8_lossy(&branches_after.stdout)
-            .trim()
-            .is_empty(),
-        "Merged branch should be deleted by background removal"
-    );
+    // Poll for background branch deletion (happens after rm -rf in background command)
+    crate::common::wait_for("merged branch deleted by background removal", || {
+        let branches = repo
+            .git_command()
+            .args(["branch", "--list", "feature-merged"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&branches.stdout).trim().is_empty()
+    });
 }
 
 /// Test that worktree paths containing special characters are handled correctly.
@@ -1979,19 +1972,15 @@ fn test_remove_worktree_with_special_path_chars(mut repo: TestRepo) {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Wait for background process
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
-    // Worktree and branch should be gone
-    let list_after = repo
-        .git_command()
-        .args(["worktree", "list", "--porcelain"])
-        .output()
-        .unwrap();
-    assert!(
-        !String::from_utf8_lossy(&list_after.stdout).contains("feature--double-dash"),
-        "Worktree should be removed"
-    );
+    // Poll for background worktree removal
+    crate::common::wait_for("worktree with special chars removed", || {
+        let list = repo
+            .git_command()
+            .args(["worktree", "list", "--porcelain"])
+            .output()
+            .unwrap();
+        !String::from_utf8_lossy(&list.stdout).contains("feature--double-dash")
+    });
 }
 
 /// Test that background removal falls back to legacy git worktree remove
@@ -2037,27 +2026,76 @@ fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Wait for background process to complete
-    // Legacy path has a 1-second sleep before `git worktree remove`, so wait longer
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    // Poll for legacy background removal (includes 1-second sleep before git worktree remove)
+    crate::common::wait_for("worktree removed by legacy fallback", || {
+        !worktree_path.exists()
+    });
 
-    // Worktree should be gone (cleaned up by legacy git worktree remove)
-    assert!(
-        !worktree_path.exists(),
-        "Worktree should be removed by fallback path"
-    );
-
-    // Branch should also be deleted (merged at same commit as main)
-    let branches = repo
-        .git_command()
-        .args(["branch", "--list", "feature-fallback"])
-        .output()
-        .unwrap();
-    assert!(
-        String::from_utf8_lossy(&branches.stdout).trim().is_empty(),
-        "Branch should be deleted by fallback removal"
-    );
+    // Poll for branch deletion (happens after worktree removal in background command)
+    crate::common::wait_for("branch deleted by legacy fallback", || {
+        let branches = repo
+            .git_command()
+            .args(["branch", "--list", "feature-fallback"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&branches.stdout).trim().is_empty()
+    });
 
     // Clean up the blocking file
     let _ = std::fs::remove_file(&staged_path);
+}
+
+/// Stale `.wt-removing-*` directories from crashed removals accumulate on disk.
+///
+/// If `wt remove` is killed after `fs::rename()` succeeds but before the background
+/// `rm -rf` spawns, the staging directory is left behind. When the same worktree is
+/// re-created and removed again, the staging path collides (non-empty directory),
+/// forcing a fallback to legacy removal. The stale directory is never cleaned up.
+#[rstest]
+fn test_remove_stale_staging_dir_from_crashed_removal(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-crash");
+
+    // Calculate the deterministic staging path (TEST_EPOCH is fixed in tests)
+    let staged_path = worktree_path.with_file_name(format!(
+        "{}.wt-removing-{}",
+        worktree_path.file_name().unwrap().to_string_lossy(),
+        crate::common::TEST_EPOCH
+    ));
+
+    // Simulate a crashed removal: rename the worktree to the staging path manually,
+    // then prune git metadata — but never run the background rm -rf.
+    std::fs::rename(&worktree_path, &staged_path).unwrap();
+    repo.run_git(&["worktree", "prune"]);
+
+    // Verify the crash state: original path gone, stale staging dir remains
+    assert!(!worktree_path.exists());
+    assert!(staged_path.exists());
+
+    // Re-create the same worktree (branch was deleted by prune, so create fresh)
+    let _ = repo.add_worktree("feature-crash");
+
+    // Remove it again — staging path collides with stale dir, falls back to legacy
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-crash"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed despite stale staging dir: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Poll for legacy background removal (includes 1-second sleep before git worktree remove)
+    crate::common::wait_for("re-created worktree removed by fallback", || {
+        !worktree_path.exists()
+    });
+
+    // But the stale staging directory from the first crash is STILL there —
+    // nothing cleans it up. This is the accumulation risk.
+    assert!(
+        staged_path.exists(),
+        "Stale staging directory from crashed removal is never cleaned up"
+    );
 }
