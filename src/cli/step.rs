@@ -409,6 +409,10 @@ Without an argument, promotes the current branch — or restores the default bra
 
 - Both worktrees must be clean
 - The branch must have an existing worktree
+
+## Gitignored files
+
+Gitignored files are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. See [copy-ignored](/step/#copy-ignored) for filtering with `.worktreeinclude`.
 "#
     )]
     Promote {

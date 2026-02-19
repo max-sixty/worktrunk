@@ -892,8 +892,8 @@ const PROMOTE_STAGING_DIR: &str = "wt-promote-staging";
 
 /// Move gitignored files from both worktrees into a staging directory.
 ///
-/// Called BEFORE the branch exchange so that `git switch` doesn't collide with
-/// ignored files (e.g., a tracked file on the other branch at the same path).
+/// Called BEFORE the branch exchange because `git switch` silently overwrites
+/// ignored files that collide with tracked files on the target branch.
 ///
 /// Returns the staging directory path and the count of entries staged.
 fn stage_ignored(
@@ -904,18 +904,6 @@ fn stage_ignored(
     entries_b: &[(PathBuf, bool)],
 ) -> anyhow::Result<(PathBuf, usize)> {
     let staging_dir = repo.git_common_dir().join(PROMOTE_STAGING_DIR);
-
-    // Bail if a leftover staging dir exists from a previous interrupted run —
-    // it may contain the user's only copy of files from the failed swap.
-    if staging_dir.exists() {
-        anyhow::bail!(
-            "Found leftover staging directory from an interrupted promote.\n\
-             Files may need manual recovery from: {}\n\
-             Remove it to retry: rm -rf \"{}\"",
-            staging_dir.display(),
-            staging_dir.display()
-        );
-    }
     fs::create_dir_all(&staging_dir).context("creating promote staging directory")?;
 
     let staging_a = staging_dir.join("a");
@@ -928,7 +916,7 @@ fn stage_ignored(
             .strip_prefix(path_a)
             .context("entry not under worktree A")?;
         let staging_entry = staging_a.join(relative);
-        if src_entry.exists() {
+        if fs::symlink_metadata(src_entry).is_ok() {
             move_entry(src_entry, &staging_entry, *is_dir)
                 .with_context(|| format!("staging {}", relative.display()))?;
             count += 1;
@@ -941,7 +929,7 @@ fn stage_ignored(
             .strip_prefix(path_b)
             .context("entry not under worktree B")?;
         let staging_entry = staging_b.join(relative);
-        if src_entry.exists() {
+        if fs::symlink_metadata(src_entry).is_ok() {
             move_entry(src_entry, &staging_entry, *is_dir)
                 .with_context(|| format!("staging {}", relative.display()))?;
             count += 1;
@@ -979,7 +967,7 @@ fn distribute_staged(
             .context("entry not under worktree B")?;
         let staging_entry = staging_b.join(relative);
         let dest_entry = path_a.join(relative);
-        if staging_entry.exists() {
+        if fs::symlink_metadata(&staging_entry).is_ok() {
             move_entry(&staging_entry, &dest_entry, *is_dir).with_context(|| {
                 format!(
                     "distributing {} to {}",
@@ -998,7 +986,7 @@ fn distribute_staged(
             .context("entry not under worktree A")?;
         let staging_entry = staging_a.join(relative);
         let dest_entry = path_b.join(relative);
-        if staging_entry.exists() {
+        if fs::symlink_metadata(&staging_entry).is_ok() {
             move_entry(&staging_entry, &dest_entry, *is_dir).with_context(|| {
                 format!(
                     "distributing {} to {}",
@@ -1036,7 +1024,7 @@ fn restore_staged(
             .strip_prefix(path_a)
             .context("entry not under worktree A")?;
         let staging_entry = staging_a.join(relative);
-        if staging_entry.exists() {
+        if fs::symlink_metadata(&staging_entry).is_ok() {
             move_entry(&staging_entry, src_entry, *is_dir)
                 .with_context(|| format!("restoring {}", relative.display()))?;
         }
@@ -1048,7 +1036,7 @@ fn restore_staged(
             .strip_prefix(path_b)
             .context("entry not under worktree B")?;
         let staging_entry = staging_b.join(relative);
-        if staging_entry.exists() {
+        if fs::symlink_metadata(&staging_entry).is_ok() {
             move_entry(&staging_entry, src_entry, *is_dir)
                 .with_context(|| format!("restoring {}", relative.display()))?;
         }
@@ -1150,6 +1138,20 @@ fn exchange_branches(
 /// Handle `wt step promote` command
 ///
 /// Promotes a branch to the main worktree, exchanging it with whatever branch is currently there.
+///
+/// ## Interruption recovery
+///
+/// The swap uses a staging directory at `.git/wt-promote-staging/` and proceeds
+/// in three phases:
+///
+/// 1. **Stage**: move ignored files from both worktrees into staging (`a/`, `b/`)
+/// 2. **Exchange**: detach + `git switch` to swap branches
+/// 3. **Distribute**: move staged files to their new worktrees, then delete staging
+///
+/// A hard kill at any phase leaves files in staging, never deleted. The next run
+/// detects the leftover directory and bails with a recovery path. Branch exchange
+/// has per-step rollback for git errors; a kill during `git switch` may leave a
+/// worktree detached (fix: `git switch <branch>`).
 pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     use worktrunk::git::GitError;
 
@@ -1216,6 +1218,19 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     main_working_tree.ensure_clean("promote", Some(&main_branch), false)?;
     target_working_tree.ensure_clean("promote", Some(&target_branch), false)?;
 
+    // Bail early if a leftover staging dir exists from a previous interrupted promote —
+    // it may contain the user's only copy of files from the failed swap.
+    let staging_path = repo.git_common_dir().join(PROMOTE_STAGING_DIR);
+    if staging_path.exists() {
+        return Err(anyhow::anyhow!(
+            "Files may need manual recovery from: {}\n\
+             Remove it to retry: rm -rf \"{}\"",
+            staging_path.display(),
+            staging_path.display()
+        )
+        .context("Found leftover staging directory from an interrupted promote"));
+    }
+
     // Check if we're restoring canonical state (promoting default branch back to main worktree)
     // Only lookup default_branch if needed for messaging (already resolved if no-arg from main)
     let default_branch = repo.default_branch();
@@ -1249,9 +1264,8 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         list_and_filter_ignored_entries(target_path, &target_branch, &worktree_paths)?;
 
     // Move gitignored files to staging BEFORE branch exchange.
-    // This prevents `git switch` from colliding with ignored files (e.g., when
-    // a tracked file on the other branch occupies the same path as an ignored file).
-    let staging_path = repo.git_common_dir().join(PROMOTE_STAGING_DIR);
+    // `git switch` silently overwrites ignored files that collide with tracked
+    // files on the target branch — staging them first prevents data loss.
     let staged = if !main_entries.is_empty() || !target_entries.is_empty() {
         let (dir, count) = stage_ignored(
             &repo,

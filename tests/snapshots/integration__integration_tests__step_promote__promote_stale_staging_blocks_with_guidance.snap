@@ -42,9 +42,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mPromoting creates mismatched worktree state (shown as ⚑ in wt list)[39m
-[2m↳[22m [2mRun [90mwt step promote main[39m to restore canonical locations[22m
-[31m✗[39m [31mFailed to stage ignored files. Already-staged files may be recoverable from: _REPO_/.git/wt-promote-staging[39m
-[107m [0m Found leftover staging directory from an interrupted promote.
+[31m✗[39m [31mFound leftover staging directory from an interrupted promote[39m
 [107m [0m Files may need manual recovery from: _REPO_/.git/wt-promote-staging
 [107m [0m Remove it to retry: rm -rf "_REPO_/.git/wt-promote-staging"
