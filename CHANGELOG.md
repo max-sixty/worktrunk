@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.26.0
+
+### Improved
+
+- **Summary column in `wt list --full`**: LLM-generated one-line branch descriptions. Opt-in via `[list] summary = true` in config (experimental). Requires `[commit.generation]` config. ([#1100](https://github.com/max-sixty/worktrunk/pull/1100))
+
+- **`wt step diff` command**: Show all uncommitted and untracked changes that `wt merge` would include as a unified diff against the merge base. Pass `-- --stat` for a summary. [Docs](https://worktrunk.dev/step/) Closes [#1043](https://github.com/max-sixty/worktrunk/issues/1043). ([#1074](https://github.com/max-sixty/worktrunk/pull/1074), thanks @davidbeesley for the feature discussion)
+
+- **`pre-switch` hook**: New hook that runs before `wt switch` validation. Use it to fetch-if-stale or run pre-flight checks before switching. Respects `--no-verify`. [Docs](https://worktrunk.dev/hook/) ([#1094](https://github.com/max-sixty/worktrunk/pull/1094), thanks @jdb8 for the use case in [#1085](https://github.com/max-sixty/worktrunk/issues/1085))
+
+- **`wt config update` command**: Automatically apply config migrations — detects deprecated patterns (template variables, `[commit-generation]`, `approved-commands`), shows a diff preview, and applies with confirmation. Use `--yes` to skip the prompt. ([#1083](https://github.com/max-sixty/worktrunk/pull/1083))
+
+- **Configurable picker timeout**: New `[switch.picker] timeout-ms` setting (default: 200ms, `0` to disable). The `[select]` config section is deprecated in favor of `[switch.picker]` — run `wt config update` to migrate. ([#1087](https://github.com/max-sixty/worktrunk/pull/1087))
+
+- **Command audit log**: All hook executions and LLM commands are logged to `.git/wt-logs/commands.jsonl` with timestamps, exit codes, and duration. Auto-rotates at 1MB. View with `wt config state logs get` or query with `jq`. ([#1088](https://github.com/max-sixty/worktrunk/pull/1088))
+
+### Fixed
+
+- **Hook CWD wrong from subdirectories**: Hooks invoked from a subdirectory within a worktree ran with incorrect CWD and `{{ worktree_path }}`/`{{ worktree_name }}` template variables resolved incorrectly. ([#1097](https://github.com/max-sixty/worktrunk/pull/1097))
+
+- **`copy-ignored` verbose output and error handling**: `-v` flag was silently ignored, error messages lacked file paths, and broken symlinks from interrupted copies caused failures. Also skips non-regular files (sockets, FIFOs) instead of failing. Fixes [#1084](https://github.com/max-sixty/worktrunk/issues/1084). ([#1090](https://github.com/max-sixty/worktrunk/pull/1090), thanks @jdb8 for reporting)
+
+- **Nushell `wt list` piping**: `wt list --format json | from json` failed in nushell because the wrapper's stdout capture prevented piping. Fixes [#1062](https://github.com/max-sixty/worktrunk/issues/1062). ([#1081](https://github.com/max-sixty/worktrunk/pull/1081), thanks @omerxx for reporting)
+
+- **Approved-commands lost during config migration**: Running the config migration could silently discard existing approval data. Now copies `approved-commands` entries to `approvals.toml` before migration. ([#1079](https://github.com/max-sixty/worktrunk/pull/1079))
+
+- **Deprecation messages reference `wt config update`**: Deprecation warnings now point to the new `wt config update` command for one-step migration instead of manual `mv` instructions. ([#1089](https://github.com/max-sixty/worktrunk/pull/1089))
+
+### Documentation
+
+- **`wt switch` help text**: Updated description to "Switch to a worktree; create if needed" to surface auto-create behavior. ([#1082](https://github.com/max-sixty/worktrunk/pull/1082))
+
+- **Docs syntax highlighting**: Migrated to giallo engine with a warm theme. ([#1080](https://github.com/max-sixty/worktrunk/pull/1080))
+
+### Internal
+
+- **CI reviewer improvements**: File-based GraphQL queries, centralized shell quoting guidance, artifact upload path fixes. ([#1091](https://github.com/max-sixty/worktrunk/pull/1091), [#1098](https://github.com/max-sixty/worktrunk/pull/1098), [#1099](https://github.com/max-sixty/worktrunk/pull/1099))
+
+- **Issue triage for external contributors**: CI triage workflow now runs for all external contributor issues. ([#1086](https://github.com/max-sixty/worktrunk/pull/1086))
+
 ## 0.25.0
 
 ### Improved
