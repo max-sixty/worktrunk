@@ -17,6 +17,7 @@ info:
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
@@ -81,6 +82,7 @@ Manual merge workflow with review between steps:
 - [2mdiff[0m — Show all changes since branching (committed, staged, unstaged, untracked)
 - [2mcopy-ignored[0m — Copy gitignored files between worktrees
 - [2mfor-each[0m — [experimental] Run a command in every worktree
+- [2mrelocate[0m — [experimental] Move worktrees to expected paths
 
 [1m[32mSee also[0m
 
