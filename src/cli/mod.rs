@@ -1027,6 +1027,7 @@ wt step push
 - `diff` — Show all changes since branching (committed, staged, unstaged, untracked)
 - `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
+- `relocate` — [experimental] Move worktrees to expected paths
 
 ## See also
 
@@ -1035,7 +1036,8 @@ wt step push
 <!-- subdoc: commit -->
 <!-- subdoc: squash -->
 <!-- subdoc: copy-ignored -->
-<!-- subdoc: for-each -->"#
+<!-- subdoc: for-each -->
+<!-- subdoc: relocate -->"#
     )]
     Step {
         #[command(subcommand)]
@@ -1638,17 +1640,9 @@ For context:
 
 - [Project config](@/config.md#project-configuration) settings are shared with teammates.
 - User configs generally apply to all projects.
-- User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.
+- User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.
 
 Entries are keyed by project identifier (e.g., `github.com/user/repo`).
-
-#### Approved hook commands
-
-When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved to `~/.config/worktrunk/approvals.toml` (separate from user config to allow dotfile management of config.toml).
-
-To reset, run `wt hook approvals clear`.
-
-> **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config update` to migrate automatically.
 
 #### Setting overrides (Experimental)
 

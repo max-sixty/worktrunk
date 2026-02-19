@@ -97,8 +97,9 @@ fn test_version() {
     // Formats:
     // - wt v0.4.0-25-gc9bcf6c0 (version with git commit info)
     // - wt 7df940e (just git short hash in CI)
+    // - wt v0.4.0-dirty or wt 7df940e-dirty (uncommitted changes)
     settings.add_filter(
-        r"wt (v\d+\.\d+\.\d+(-[\w.-]+)?|[a-f0-9]{7,40})",
+        r"wt (v\d+\.\d+\.\d+(-[\w.-]+)?|[a-f0-9]{7,40}(?:-dirty)?)",
         "wt [VERSION]",
     );
     settings.bind(|| {
