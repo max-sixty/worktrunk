@@ -193,17 +193,9 @@ For context:
 
 - Project config settings are shared with teammates.
 - User configs generally apply to all projects.
-- User configs _also_ has a [2m[projects][0m table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.
+- User configs _also_ has a [2m[projects][0m table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.
 
 Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m).
-
-[1mApproved hook commands[0m
-
-When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved to [2m~/.config/worktrunk/approvals.toml[0m (separate from user config to allow dotfile management of config.toml).
-
-To reset, run [2mwt hook approvals clear[0m.
-
-> [1mMigration note:[0m Approvals were previously stored as [2mapproved-commands[0m in config.toml. Run [2mwt config show[0m to generate a migration file that removes stale entries.
 
 [1mSetting overrides (Experimental)[0m
 

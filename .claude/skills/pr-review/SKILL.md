@@ -105,6 +105,19 @@ tactical checklist.
 - Are the changes adequately tested?
 - Do the tests follow the project's testing conventions (see tests/CLAUDE.md)?
 
+**Documentation accuracy:**
+
+When a PR changes behavior, check that related documentation still matches.
+This is a common source of staleness — new features get added or behavior
+changes, but help text, config comments, and doc pages aren't updated.
+
+- Does `after_long_help` in `src/cli/mod.rs` and `src/cli/config.rs` still
+  describe what the code does? (These are the primary sources for doc pages.)
+- Do inline TOML comments in config examples match the actual behavior?
+- Are references to CLI commands still valid? (e.g., a migration note
+  referencing `wt config show` when the right command is `wt config update`)
+- If a new feature was added, does the relevant help text mention it?
+
 **Same pattern elsewhere:**
 
 When a PR fixes a bug or changes a pattern, search for the same pattern in

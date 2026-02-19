@@ -341,7 +341,7 @@ pager = "delta --paging=never --width=$COLUMNS"
 
 Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <branch>` directly.
 
-## GitHub pull requests (experimental)
+## GitHub pull requests
 
 The `pr:<number>` syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches `refs/pull/N/head` and configures `pushRemote` to the fork URL.
 
@@ -353,7 +353,7 @@ Requires `gh` CLI to be installed and authenticated. The `--create` flag cannot 
 
 **Fork PRs:** The local branch uses the PR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
-## GitLab merge requests (experimental)
+## GitLab merge requests
 
 The `mr:<number>` syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches `refs/merge-requests/N/head` and configures `pushRemote` to the fork URL.
 
@@ -1028,6 +1028,7 @@ wt step push
 - `copy-ignored` — Copy gitignored files between worktrees
 - `eval` — [experimental] Evaluate a template expression
 - `for-each` — [experimental] Run a command in every worktree
+- `relocate` — [experimental] Move worktrees to expected paths
 
 ## See also
 
@@ -1037,7 +1038,8 @@ wt step push
 <!-- subdoc: squash -->
 <!-- subdoc: copy-ignored -->
 <!-- subdoc: eval -->
-<!-- subdoc: for-each -->"#
+<!-- subdoc: for-each -->
+<!-- subdoc: relocate -->"#
     )]
     Step {
         #[command(subcommand)]
@@ -1640,17 +1642,9 @@ For context:
 
 - [Project config](@/config.md#project-configuration) settings are shared with teammates.
 - User configs generally apply to all projects.
-- User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.
+- User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.
 
 Entries are keyed by project identifier (e.g., `github.com/user/repo`).
-
-#### Approved hook commands
-
-When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved to `~/.config/worktrunk/approvals.toml` (separate from user config to allow dotfile management of config.toml).
-
-To reset, run `wt hook approvals clear`.
-
-> **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config show` to generate a migration file that removes stale entries.
 
 #### Setting overrides (Experimental)
 
