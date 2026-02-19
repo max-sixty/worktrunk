@@ -1,0 +1,162 @@
+name: claude-nightly-cleaner
+# Runner versions pinned; see ci.yaml header comment for rationale.
+
+# Nightly code quality sweep — reviews all commits merged to main in the past
+# 24 hours for bugs, inconsistencies, and improvement opportunities.
+on:
+  schedule:
+    # Run at 6:17 AM UTC daily (off-peak minute, 30 min after review-reviewers)
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+# Consistent with ci.yaml for cache compatibility
+env:
+  CARGO_TERM_COLOR: always
+  CLICOLOR_FORCE: 1
+  RUSTFLAGS: "-C debuginfo=0"
+  RUSTDOCFLAGS: "-Dwarnings"
+
+jobs:
+  cleaner:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+      id-token: write
+    steps:
+      - name: 📂 Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          # Use bot token so pushed commits trigger CI workflows
+          token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
+      - name: 🔧 Configure git for Claude
+        run: |
+          git config --global user.name "Claude Code"
+          git config --global user.email "claude@anthropic.com"
+
+      - name: Install cargo-insta
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-insta
+
+      - name: Install cargo-nextest
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-nextest
+
+      - name: 💰 Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ hashFiles('Cargo.lock') }}
+          save-if: false
+
+      - name: Install shells (zsh, fish)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh fish
+
+      - name: 🤖 Run Claude Code for nightly cleanup
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          additional_permissions: |
+            actions: read
+
+          prompt: |
+            You are running as a nightly code quality sweep. Your job is to review all commits merged to main in the past 24 hours, find mistakes and improvement opportunities, and create issues or PRs.
+
+            ## Step 1: Find recent commits
+
+            ```
+            git log --since='24 hours ago' --oneline main
+            ```
+
+            If no commits were merged in the past 24 hours, report "no changes to review" and exit.
+
+            ## Step 2: Review the aggregate diff
+
+            Get the oldest commit from the past 24 hours and review the full diff:
+
+            ```
+            OLDEST=$(git log --since='24 hours ago' --format='%H' main | tail -1)
+            git diff ${OLDEST}^..HEAD
+            ```
+
+            Also review the individual commit messages to understand intent:
+            ```
+            git log --since='24 hours ago' --format='%h %s' main
+            ```
+
+            ## Step 3: Analyze the changes
+
+            Review the changes for:
+
+            1. **Bugs or logic errors** in new code
+            2. **Inconsistencies** with existing patterns in the codebase
+            3. **Missing or outdated documentation**:
+               - Does `--help` still describe what the code does?
+               - Do CLAUDE.md instructions match current behavior?
+            4. **Missing test coverage** for new code paths
+            5. **Refactoring opportunities**:
+               - Duplicate code that should be shared
+               - Dead code that should be removed
+               - Non-canonical patterns (compatibility layers, parallel implementations)
+            6. **CLAUDE.md or skill files** that need updating based on code changes
+
+            ## Step 4: Check for existing issues
+
+            Before creating any new issues, check for duplicates:
+            ```
+            gh issue list --state open --json number,title
+            ```
+
+            Also check for any open PRs that already address the same files or issues:
+            ```
+            gh pr list --state open --json number,title,headRefName
+            ```
+
+            ## Step 5: Report findings
+
+            For each finding:
+
+            1. **Create a GitHub issue** with label `nightly-cleanup`:
+               - Title: Clear, actionable description
+               - Body: Include the relevant commit(s), code location (file:line), description of the problem, and suggested fix
+               - Use `gh issue create --label "nightly-cleanup"`
+
+            2. **For confident fixes** (clear bugs, obvious missing tests, stale docs):
+               - Create a branch: `git checkout -b nightly/clean-${{ github.run_id }}`
+               - Make the changes
+               - Run tests to verify: use the test commands from CLAUDE.md
+               - Commit and push
+               - Create a PR referencing the issue(s)
+               - Monitor CI with `gh run watch`
+
+            ## Step 6: Summary
+
+            If the codebase looks clean, report a brief summary:
+            - Number of commits reviewed
+            - Files changed
+            - Assessment: clean / minor issues / needs attention
+
+          claude_args: |
+            --model opus
+            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill
+            --append-system-prompt "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
+
+      - name: 📋 Upload Claude Code session logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: claude-session-logs
+          path: /home/runner/.claude/projects/
+          retention-days: 30
+          if-no-files-found: warn

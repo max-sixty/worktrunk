@@ -83,7 +83,8 @@ Shell integration: {{ shell_integration }}
 {{ worktree_list }}
 ```
 </details>
-{% if config_show %}
+{%- if config_show %}
+
 <details>
 <summary>Config</summary>
 
@@ -91,8 +92,9 @@ Shell integration: {{ shell_integration }}
 {{ config_show }}
 ```
 </details>
-{% endif %}
-{% if verbose_log %}
+{%- endif %}
+{%- if verbose_log %}
+
 <details>
 <summary>Verbose log</summary>
 
@@ -100,7 +102,7 @@ Shell integration: {{ shell_integration }}
 {{ verbose_log }}
 ```
 </details>
-{% endif %}
+{%- endif %}
 "#;
 
 /// Collected diagnostic information for issue reporting.

@@ -26,13 +26,11 @@ fn test_shell_integration_post_start_background(#[case] shell: &str, repo: TestR
     repo.commit("Add post-start config");
 
     // Pre-approve the command
-    fs::write(
-        repo.test_config_path(),
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["sleep 0.05 && echo 'Background task done' > bg_marker.txt"]
 "#,
-    )
-    .unwrap();
+    );
 
     let init_code = generate_init_code(&repo, shell);
     let bin_path = wt_bin_dir();
@@ -116,16 +114,14 @@ task2 = "sleep 0.05 && echo 'Task 2' > task2.txt"
     repo.commit("Add multiple post-start commands");
 
     // Pre-approve commands
-    fs::write(
-        repo.test_config_path(),
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = [
     "sleep 0.05 && echo 'Task 1' > task1.txt",
     "sleep 0.05 && echo 'Task 2' > task2.txt",
 ]
 "#,
-    )
-    .unwrap();
+    );
 
     let init_code = generate_init_code(&repo, "bash");
     let bin_path = wt_bin_dir();
@@ -174,13 +170,11 @@ fn test_bash_shell_integration_post_create_blocks(repo: TestRepo) {
     repo.commit("Add post-create command");
 
     // Pre-approve command
-    fs::write(
-        repo.test_config_path(),
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["echo 'Setup done' > setup.txt"]
 "#,
-    )
-    .unwrap();
+    );
 
     let init_code = generate_init_code(&repo, "bash");
     let bin_path = wt_bin_dir();
@@ -242,13 +236,11 @@ fish_bg = "sleep 0.05 && echo 'Fish background done' > fish_bg.txt"
     repo.commit("Add fish background command");
 
     // Pre-approve command
-    fs::write(
-        repo.test_config_path(),
+    repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["sleep 0.05 && echo 'Fish background done' > fish_bg.txt"]
 "#,
-    )
-    .unwrap();
+    );
 
     let init_code = generate_init_code(&repo, "fish");
     let bin_path = wt_bin_dir();

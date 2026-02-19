@@ -346,13 +346,16 @@ naturally come after the action.
 | "Created new worktree for feature"      | "Already on worktree for feature"     |
 | "Commands approved & saved"             | "All commands already approved"       |
 
-**Hint vs Info:** Hints suggest user action. Info acknowledges what happened.
+**Hint vs Info:** Hints suggest user action or provide additional non-essential
+context (supplementary details the user doesn't need but may find useful). Info
+acknowledges state without changing anything.
 
-| Hint ↳                              | Info ○                                |
-| ----------------------------------- | ------------------------------------- |
-| "To continue, run `wt merge`"       | "Already up to date with main"        |
-| "Commit or stash changes first"     | "Skipping hooks (--no-verify)"        |
-| "Branch can be deleted"             | "Worktree preserved (main worktree)"  |
+| Hint ↳                                          | Info ○                                |
+| ------------------------------------------------ | ------------------------------------- |
+| "To continue, run `wt merge`"                    | "Already up to date with main"        |
+| "Commit or stash changes first"                  | "Skipping hooks (--no-verify)"        |
+| "Branch can be deleted"                           | "Worktree preserved (main worktree)"  |
+| "Failed command, exit code 128:"                   |                                       |
 
 **Warning placement:** When something unexpected happens, warn somewhere. Where
 depends on the nature of the issue:
@@ -468,6 +471,20 @@ Specific rules:
 - **One blank between phases** — When a sub-operation completes and a different
   operation begins, add a blank line to visually separate them
 - **Never double blanks** — One blank line maximum between elements
+- **Hints attach to their subject** — Never put a blank line between a hint and
+  the message it elaborates on. Hints (↳) are subordinate — they belong directly
+  below their parent message with no gap.
+
+  ```
+  // GOOD - hint directly follows its subject
+  ↳ fish: Not configured shell extension
+  ↳ To configure, run wt config shell install
+
+  // BAD - blank line detaches hint from subject
+  ↳ fish: Not configured shell extension
+
+  ↳ To configure, run wt config shell install
+  ```
 
 **Prompt spacing:** A blank line before the prompt signals "something different
 is about to happen" and gives the user's eye a natural stopping point before they

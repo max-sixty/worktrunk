@@ -43,6 +43,8 @@ wt config show
 | **User config** | `~/.config/worktrunk/config.toml` | Worktree path template, LLM commit configs, etc | ✗ |
 | **Project config** | `.config/wt.toml` | Project hooks, dev server URL | ✓ |
 
+Organizations can also deploy a system-wide config file for shared defaults — run `wt config show` for the platform-specific location.
+
 **User config** — personal preferences:
 
 ```toml
@@ -118,7 +120,9 @@ Persistent flag values for `wt list`. Override on command line as needed.
 
 ```toml
 [list]
-full = false       # Show CI status and main…± diffstat columns (--full)
+summary = false    # Enable LLM branch summaries (requires [commit.generation])
+
+full = false       # Show CI, main…± diffstat, and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
 ```
@@ -145,16 +149,18 @@ remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
 ```
 
-### Select
+### Switch picker
 
-Pager behavior for `wt switch` interactive picker diff previews.
+Configuration for `wt switch` interactive picker.
 
 ```toml
-[select]
-# Pager command with flags for diff preview (overrides git's core.pager)
-# Use this to specify pager flags needed for non-TTY contexts
-# Example:
+[switch.picker]
+# Pager command for diff preview (overrides git's core.pager)
 # pager = "delta --paging=never"
+
+# Timeout (ms) for git commands during picker loading (default: 200)
+# Lower values show the TUI faster; 0 disables timeouts
+# timeout-ms = 200
 ```
 
 ### User project-specific settings
@@ -169,14 +175,11 @@ Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
 #### Approved hook commands
 
-When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.
+When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved to `~/.config/worktrunk/approvals.toml` (separate from user config to allow dotfile management of config.toml).
 
-```toml
-[projects."github.com/user/repo"]
-approved-commands = ["npm ci", "npm test"]
-```
+To reset, run `wt hook approvals clear`.
 
-To reset, delete the entry or run `wt hook approvals clear`.
+> **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config show` to generate a migration file that removes stale entries.
 
 #### Setting overrides (Experimental)
 
@@ -355,6 +358,8 @@ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 |----------|---------|
 | `WORKTRUNK_BIN` | Override binary path for shell wrappers (useful for testing dev builds) |
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
+| `WORKTRUNK_SYSTEM_CONFIG_PATH` | Override system config file location |
+| `XDG_CONFIG_DIRS` | Colon-separated system config directories (default: `/etc/xdg`) |
 | `WORKTRUNK_DIRECTIVE_FILE` | Internal: set by shell wrappers to enable directory changes |
 | `WORKTRUNK_SHELL` | Internal: set by shell wrappers to indicate shell type (e.g., `powershell`) |
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
@@ -374,6 +379,7 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
   <b><span class=c>shell</span></b>   Shell integration setup
   <b><span class=c>create</span></b>  Create configuration file
   <b><span class=c>show</span></b>    Show configuration files &amp; locations
+  <b><span class=c>update</span></b>  Update deprecated config settings
   <b><span class=c>state</span></b>   Manage internal data and cache
 
 <b><span class=g>Options:</span></b>
@@ -398,7 +404,7 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
 Show configuration files & locations.
 
 Shows location and contents of user config (`~/.config/worktrunk/config.toml`)
-and project config (`.config/wt.toml`).
+and project config (`.config/wt.toml`). Also shows system config if present.
 
 If a config file doesn't exist, shows defaults that would be used.
 
@@ -413,6 +419,7 @@ wt config show --full
 This tests:
 - **CI tool status** — Whether `gh` (GitHub) or `glab` (GitLab) is installed and authenticated
 - **Commit generation** — Whether the LLM command can generate commit messages
+- **Version check** — Whether a newer version is available on GitHub
 
 ### Command reference
 
@@ -423,7 +430,7 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--full</span></b>
-          Run diagnostic checks (CI tools, commit generation)
+          Run diagnostic checks (CI tools, commit generation, version)
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

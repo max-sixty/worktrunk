@@ -195,6 +195,10 @@ pub struct ListItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url_active: Option<bool>,
 
+    /// LLM-generated branch summary: None = not loaded, Some(None) = no summary, Some(Some) = has summary
+    #[serde(skip)]
+    pub summary: Option<Option<String>>,
+
     /// Git status symbols - None until all dependencies are ready.
     /// Note: This field is not serialized directly. JSON output converts to JsonItem first.
     #[serde(skip)]
@@ -215,6 +219,11 @@ pub struct ListData {
     /// Path to the main worktree, used for computing relative paths in display.
     #[cfg_attr(windows, allow(dead_code))] // Used only by select module (unix-only)
     pub main_worktree_path: std::path::PathBuf,
+    /// Tasks that were skipped during collection (includes runtime gating like
+    /// SummaryGenerate disabled when no LLM configured). Callers that recalculate
+    /// layout (e.g., the picker at a different width) should use this set.
+    #[cfg_attr(windows, allow(dead_code))] // Used only by select module (unix-only)
+    pub skip_tasks: std::collections::HashSet<super::super::collect::TaskKind>,
 }
 
 impl ListItem {
@@ -235,6 +244,7 @@ impl ListItem {
             pr_status: None,
             url: None,
             url_active: None,
+            summary: None,
             status_symbols: None,
             display: DisplayFields::default(),
             kind: ItemKind::Branch,

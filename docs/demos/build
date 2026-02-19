@@ -84,22 +84,29 @@ def _add_staged_validation(env: DemoEnv):
 
 
 def _write_user_config(
-    env: DemoEnv, approved_commands: list[str], commit_generation: bool = False
+    env: DemoEnv, approved_commands: list[str], commit_generation: bool = True
 ):
-    """Write worktrunk user config."""
+    """Write worktrunk user config and approvals."""
     config_dir = env.home / ".config" / "worktrunk"
     project_id = str(env.bare_remote).removesuffix(".git")
 
-    content = ""
+    # User config (portable settings only)
+    config_content = ""
     if commit_generation:
-        content += """[commit.generation]
+        config_content += """[commit.generation]
 command = "llm -m claude-haiku-4.5"
 
 """
-    content += f'[projects."{project_id}"]\n'
-    content += f"approved-commands = {approved_commands!r}\n"
+    config_content += """[list]
+summary = true
 
-    (config_dir / "config.toml").write_text(content)
+"""
+    (config_dir / "config.toml").write_text(config_content)
+
+    # Approvals (machine-local trust state, separate from config)
+    approvals_content = f'[projects."{project_id}"]\n'
+    approvals_content += f"approved-commands = {approved_commands!r}\n"
+    (config_dir / "approvals.toml").write_text(approvals_content)
 
 
 # =============================================================================
@@ -224,21 +231,9 @@ url = "http://localhost:{{ branch | hash_port }}"
     # Enable git colors for non-TTY environments (VHS)
     git(["-C", str(env.repo), "config", "color.ui", "always"])
 
-    # Override llm mock with different commit message for this demo
-    llm_mock = env.home / ".local" / "bin" / "llm"
-    llm_mock.write_text("""#!/bin/bash
-sleep 0.5
-echo "feat: add user settings module"
-echo ""
-echo "Add placeholder module for user profile settings."
-""")
-    llm_mock.chmod(0o755)
-
-    # User config with LLM commit generation
     _write_user_config(
         env,
         ["npm run dev -- --port {{ branch | hash_port }}", "cargo nextest run"],
-        commit_generation=True,
     )
 
     # Zellij + Fish configs (with --create in wsl abbreviation)

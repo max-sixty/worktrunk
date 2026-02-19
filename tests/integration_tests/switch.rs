@@ -69,7 +69,7 @@ fn test_switch_create_shows_progress_when_forced(repo: TestRepo) {
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature-progress"], None);
         // Force immediate streaming by setting threshold to 0
-        cmd.env("WT_TEST_DELAYED_STREAM_MS", "0");
+        cmd.env("WORKTRUNK_TEST_DELAYED_STREAM_MS", "0");
         assert_cmd_snapshot!("switch_create_with_progress", cmd);
     });
 }
@@ -84,6 +84,36 @@ fn test_switch_create_existing_branch_error(mut repo: TestRepo) {
         "switch_create_existing_error",
         &repo,
         &["--create", "feature-y"],
+    );
+}
+
+/// When --execute is passed and the branch already exists, the error hint should
+/// include --execute and trailing args in the suggested command.
+#[rstest]
+fn test_switch_create_existing_with_execute(mut repo: TestRepo) {
+    repo.add_worktree("emails");
+
+    snapshot_switch(
+        "switch_create_existing_with_execute",
+        &repo,
+        &[
+            "--create",
+            "--execute=claude",
+            "emails",
+            "--",
+            "Check my emails",
+        ],
+    );
+}
+
+/// When --execute is passed and the branch doesn't exist (without --create),
+/// the "create" suggestion should include --execute and trailing args.
+#[rstest]
+fn test_switch_nonexistent_with_execute(repo: TestRepo) {
+    snapshot_switch(
+        "switch_nonexistent_with_execute",
+        &repo,
+        &["--execute=claude", "nonexistent", "--", "Check my emails"],
     );
 }
 
@@ -3241,6 +3271,29 @@ fn test_switch_already_at_preserves_history(repo: TestRepo) {
         &["-"],
         &feature_path,
     );
+}
+
+/// WORKTRUNK_FIRST_OUTPUT exits after execute_switch, before mismatch computation
+/// and output rendering. Used by time-to-first-output benchmarks.
+#[rstest]
+fn test_switch_first_output_exits_cleanly(mut repo: TestRepo) {
+    repo.add_worktree("feature-bench");
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "feature-bench", "--yes"])
+        .env("WORKTRUNK_FIRST_OUTPUT", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "WORKTRUNK_FIRST_OUTPUT should exit 0: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // No output expected — early exit skips all rendering
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
 }
 
 /// Bug fix: `--base` without `--create` should warn, not error.

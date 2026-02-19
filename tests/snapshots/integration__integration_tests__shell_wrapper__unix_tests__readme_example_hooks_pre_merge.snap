@@ -10,7 +10,7 @@ expression: "&output.combined"
 [107m [0m Implement login and token refresh endpoints with JWT validation.
 [107m [0m Includes comprehensive test coverage and input validation.
 [32m✓[39m [32mSquashed @ [HASH][39m
-[36m◎[39m [36mRunning pre-merge [1mproject:test[22m:[39m
+[36m◎[39m [36mRunning pre-merge [1mproject:test[22m[39m
 [107m [0m [2m[0m[2m[34muv[0m[2m run pytest
 
 ============================= test session starts ==============================
@@ -22,7 +22,7 @@ tests/test_auth.py::test_token_validation PASSED                         [100%]
 
 ============================== 3 passed in 0.8s ===============================
 
-[36m◎[39m [36mRunning pre-merge [1mproject:lint[22m:[39m
+[36m◎[39m [36mRunning pre-merge [1mproject:lint[22m[39m
 [107m [0m [2m[0m[2m[34muv[0m[2m run ruff check
 
 All checks passed!

@@ -40,6 +40,42 @@ Example:
 </details>
 ```
 
+Do not add job links, branch links, or other footers at the bottom of your
+comment. `claude-code-action` automatically adds these to the comment header.
+Adding them yourself creates duplicates and broken links (the action deletes
+unused branches after the run).
+
+## Shell Quoting in `gh` Commands
+
+Claude tends to mangle shell quoting in CI. Two common failure modes:
+
+1. **`$` in GraphQL queries** — `gh api graphql -f query='...$var...'` fails
+   because Claude corrupts the `$` signs. Write queries to a temp file instead:
+
+   ```bash
+   cat > /tmp/query.graphql << 'GRAPHQL'
+   query($owner: String!, $repo: String!, $name: String!) {
+     repository(owner: $owner, name: $name) { ... }
+   }
+   GRAPHQL
+
+   gh api graphql -F query=@/tmp/query.graphql -f owner="$OWNER" -f name="$NAME"
+   ```
+
+2. **`!` in comment/body text** — `gh issue comment N --body "Thanks!"` gets
+   over-escaped to `Thanks\!` because `!` is a bash history expansion character.
+   Use a heredoc:
+
+   ```bash
+   gh issue comment N --body "$(cat <<'EOF'
+   Comment text here — no escaping needed.
+   EOF
+   )"
+   ```
+
+**General rule:** When a `gh` command argument contains `$` or `!`, use either
+a temp file (`-F field=@file`) or a heredoc with a quoted delimiter (`<<'EOF'`).
+
 ## Tone
 
 You are a helpful reviewer raising observations, not a manager assigning work.

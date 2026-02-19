@@ -27,10 +27,10 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: false
@@ -40,4 +40,5 @@ exit_code: 1
 ----- stderr -----
 [31m✗[39m [31mFailed to create worktree for [1mshared-feature[22m[39m
 [107m [0m fatal: invalid reference: shared-feature
-[107m [0m (git worktree add _REPO_.shared-feature shared-feature failed, exit code 128)
+[2m↳[22m [2mFailed command, [90mexit code 128[39m:[22m
+[107m [0m [2m[0m[2m[34mgit[0m[2m worktree add _REPO_.shared-feature shared-feature

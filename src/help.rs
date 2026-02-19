@@ -71,7 +71,7 @@ pub fn maybe_handle_help_with_pager() -> bool {
                 .to_string()
                 .replace("```text\n", "```\n")
                 .replace("```console\n", "```bash\n");
-            println!("{output}");
+            print!("{output}");
             process::exit(0);
         }
         // Fall through if not a help request

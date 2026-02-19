@@ -23,10 +23,10 @@ Any command that reads a prompt from stdin and outputs a commit message works. A
 
 ```toml
 [commit.generation]
-command = "MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 ```
 
-The flags disable tools, skills, settings, and system prompt for fast text-only output. See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
+`CLAUDECODE=` unsets the nesting guard so `claude -p` works from within a Claude Code session. The other flags disable tools, skills, settings, and system prompt for fast text-only output. See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
 
 ### llm
 
@@ -92,6 +92,24 @@ $ wt step squash
 ```
 
 See [`wt merge`](@/merge.md) and [`wt step`](@/step.md) for full documentation.
+
+## Branch summaries (experimental)
+
+With `summary = true` and a `[commit.generation] command` configured, Worktrunk generates LLM branch summaries — one-line descriptions of each branch's changes since the default branch.
+
+Summaries appear in:
+
+- **`wt switch`** [interactive picker](@/switch.md#interactive-picker) — preview tab 5
+- **`wt list --full`** — the Summary column (see [`wt list`](@/list.md#llm-summaries-experimental))
+
+Enable in user config:
+
+```toml
+[list]
+summary = true
+```
+
+Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. Results are cached until the diff changes.
 
 ## Prompt templates
 

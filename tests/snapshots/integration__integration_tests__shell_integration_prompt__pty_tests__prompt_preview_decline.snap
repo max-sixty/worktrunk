@@ -2,16 +2,13 @@
 source: tests/integration_tests/shell_integration_prompt.rs
 expression: "&output"
 ---
-?
-n
-
 [32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 
-[36m❯[39m Install shell integration? [1m[y/N/?][22m 
+[36m❯[39m Install shell integration? [1m[y/N/?][22m ?
 [2m○[22m Will add shell extension & completions for [1mbash[0m @ [1m~/.bashrc
 [107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init bash)"[0m[2m; [0m[2m[35mfi[0m[2m
 
-[36m❯[39m Install shell integration? [1m[y/N/?][22m 
+[36m❯[39m Install shell integration? [1m[y/N/?][22m n
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

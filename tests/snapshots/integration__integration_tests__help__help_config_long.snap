@@ -15,12 +15,15 @@ info:
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
-    WT_TEST_DELAYED_STREAM_MS: "-1"
-    WT_TEST_EPOCH: "1735776000"
 ---
 success: true
 exit_code: 0
@@ -37,6 +40,7 @@ Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36mshell[0m   Shell integration setup
   [1m[36mcreate[0m  Create configuration file
   [1m[36mshow[0m    Show configuration files & locations
+  [1m[36mupdate[0m  Update deprecated config settings
   [1m[36mstate[0m   Manage internal data and cache
 
 [1m[32mOptions:[0m
@@ -77,6 +81,8 @@ Show current configuration and file locations:
    ────────────── ─────────────────────────────── ─────────────────────────────────────────────── ────────────────── 
    User config    ~/.config/worktrunk/config.toml Worktree path template, LLM commit configs, etc ✗                  
    Project config .config/wt.toml                 Project hooks, dev server URL                   ✓                  
+
+Organizations can also deploy a system-wide config file for shared defaults — run [2mwt config show[0m for the platform-specific location.
 
 [1mUser config[0m — personal preferences:
 
@@ -145,7 +151,9 @@ See LLM commits docs for setup and Custom prompt templates for template customiz
 Persistent flag values for [2mwt list[0m. Override on command line as needed.
 
   [2m[list][0m
-  [2mfull = false       # Show CI status and main…± diffstat columns (--full)[0m
+  [2msummary = false    # Enable LLM branch summaries (requires [commit.generation])[0m
+  [2m[0m
+  [2mfull = false       # Show CI, main…± diffstat, and LLM summaries (--full)[0m
   [2mbranches = false   # Include branches without worktrees (--branches)[0m
   [2mremotes = false    # Include remote-only branches (--remotes)[0m
 
@@ -167,15 +175,17 @@ All flags are on by default. Set to false to change default behavior.
   [2mremove = true      # Remove worktree after merge (--no-remove to keep)[0m
   [2mverify = true      # Run project hooks (--no-verify to skip)[0m
 
-[32mSelect[0m
+[32mSwitch picker[0m
 
-Pager behavior for [2mwt switch[0m interactive picker diff previews.
+Configuration for [2mwt switch[0m interactive picker.
 
-  [2m[select][0m
-  [2m# Pager command with flags for diff preview (overrides git's core.pager)[0m
-  [2m# Use this to specify pager flags needed for non-TTY contexts[0m
-  [2m# Example:[0m
+  [2m[switch.picker][0m
+  [2m# Pager command for diff preview (overrides git's core.pager)[0m
   [2m# pager = "delta --paging=never"[0m
+  [2m[0m
+  [2m# Timeout (ms) for git commands during picker loading (default: 200)[0m
+  [2m# Lower values show the TUI faster; 0 disables timeouts[0m
+  [2m# timeout-ms = 200[0m
 
 [32mUser project-specific settings[0m
 
@@ -189,12 +199,11 @@ Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m).
 
 [1mApproved hook commands[0m
 
-When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved here, preventing repeated prompts.
+When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved to [2m~/.config/worktrunk/approvals.toml[0m (separate from user config to allow dotfile management of config.toml).
 
-  [2m[projects."github.com/user/repo"][0m
-  [2mapproved-commands = ["npm ci", "npm test"][0m
+To reset, run [2mwt hook approvals clear[0m.
 
-To reset, delete the entry or run [2mwt hook approvals clear[0m.
+> [1mMigration note:[0m Approvals were previously stored as [2mapproved-commands[0m in config.toml. Run [2mwt config show[0m to generate a migration file that removes stale entries.
 
 [1mSetting overrides (Experimental)[0m
 
@@ -356,6 +365,8 @@ Override the LLM command in CI to use a mock:
    ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────── 
    WORKTRUNK_BIN                     Override binary path for shell wrappers (useful for testing dev builds)           
    WORKTRUNK_CONFIG_PATH             Override user config file location                                                
+   WORKTRUNK_SYSTEM_CONFIG_PATH      Override system config file location                                              
+   XDG_CONFIG_DIRS                   Colon-separated system config directories (default: /etc/xdg)                     
    WORKTRUNK_DIRECTIVE_FILE          Internal: set by shell wrappers to enable directory changes                       
    WORKTRUNK_SHELL                   Internal: set by shell wrappers to indicate shell type (e.g., powershell)         
    WORKTRUNK_MAX_CONCURRENT_COMMANDS Max parallel git commands (default: 32). Lower if hitting file descriptor limits. 

@@ -1,5 +1,166 @@
 # Changelog
 
+## 0.26.1
+
+### Fixed
+
+- **Statusline panic without LLM config**: `wt list statusline` panicked when no LLM command was configured. Now skips summary generation gracefully. ([#1107](https://github.com/max-sixty/worktrunk/pull/1107))
+
+### Internal
+
+- Demo GIFs now show the Summary column in `wt list --full` output. ([#1104](https://github.com/max-sixty/worktrunk/pull/1104), [#1106](https://github.com/max-sixty/worktrunk/pull/1106))
+- CI session log uploads fixed to use correct path. ([#1103](https://github.com/max-sixty/worktrunk/pull/1103))
+
+## 0.26.0
+
+### Improved
+
+- **Summary column in `wt list --full`**: LLM-generated one-line branch descriptions. Opt-in via `[list] summary = true` in config (experimental). Requires `[commit.generation]` config. ([#1100](https://github.com/max-sixty/worktrunk/pull/1100))
+
+- **`wt step diff` command**: Show all uncommitted and untracked changes that `wt merge` would include as a unified diff against the merge base. Pass `-- --stat` for a summary. [Docs](https://worktrunk.dev/step/) Closes [#1043](https://github.com/max-sixty/worktrunk/issues/1043). ([#1074](https://github.com/max-sixty/worktrunk/pull/1074), thanks @davidbeesley for the feature discussion)
+
+- **`pre-switch` hook**: New hook that runs before `wt switch` validation. Use it to fetch-if-stale or run pre-flight checks before switching. Respects `--no-verify`. [Docs](https://worktrunk.dev/hook/) ([#1094](https://github.com/max-sixty/worktrunk/pull/1094), thanks @jdb8 for the use case in [#1085](https://github.com/max-sixty/worktrunk/issues/1085))
+
+- **`wt config update` command**: Automatically apply config migrations — detects deprecated patterns (template variables, `[commit-generation]`, `approved-commands`), shows a diff preview, and applies with confirmation. Use `--yes` to skip the prompt. ([#1083](https://github.com/max-sixty/worktrunk/pull/1083))
+
+- **Configurable picker timeout**: New `[switch.picker] timeout-ms` setting (default: 200ms, `0` to disable). The `[select]` config section is deprecated in favor of `[switch.picker]` — run `wt config update` to migrate. ([#1087](https://github.com/max-sixty/worktrunk/pull/1087))
+
+- **Command audit log**: All hook executions and LLM commands are logged to `.git/wt-logs/commands.jsonl` with timestamps, exit codes, and duration. Auto-rotates at 1MB. View with `wt config state logs get` or query with `jq`. ([#1088](https://github.com/max-sixty/worktrunk/pull/1088))
+
+### Fixed
+
+- **Hook CWD wrong from subdirectories**: Hooks invoked from a subdirectory within a worktree ran with incorrect CWD and `{{ worktree_path }}`/`{{ worktree_name }}` template variables resolved incorrectly. ([#1097](https://github.com/max-sixty/worktrunk/pull/1097))
+
+- **`copy-ignored` verbose output and error handling**: `-v` flag was silently ignored, error messages lacked file paths, and broken symlinks from interrupted copies caused failures. Also skips non-regular files (sockets, FIFOs) instead of failing. Fixes [#1084](https://github.com/max-sixty/worktrunk/issues/1084). ([#1090](https://github.com/max-sixty/worktrunk/pull/1090), thanks @jdb8 for reporting)
+
+- **Nushell `wt list` piping**: `wt list --format json | from json` failed in nushell because the wrapper's stdout capture prevented piping. Fixes [#1062](https://github.com/max-sixty/worktrunk/issues/1062). ([#1081](https://github.com/max-sixty/worktrunk/pull/1081), thanks @omerxx for reporting)
+
+- **Approved-commands lost during config migration**: Running the config migration could silently discard existing approval data. Now copies `approved-commands` entries to `approvals.toml` before migration. ([#1079](https://github.com/max-sixty/worktrunk/pull/1079))
+
+- **Deprecation messages reference `wt config update`**: Deprecation warnings now point to the new `wt config update` command for one-step migration instead of manual `mv` instructions. ([#1089](https://github.com/max-sixty/worktrunk/pull/1089))
+
+### Documentation
+
+- **`wt switch` help text**: Updated description to "Switch to a worktree; create if needed" to surface auto-create behavior. ([#1082](https://github.com/max-sixty/worktrunk/pull/1082))
+
+- **Docs syntax highlighting**: Migrated to giallo engine with a warm theme. ([#1080](https://github.com/max-sixty/worktrunk/pull/1080))
+
+### Internal
+
+- **CI reviewer improvements**: File-based GraphQL queries, centralized shell quoting guidance, artifact upload path fixes. ([#1091](https://github.com/max-sixty/worktrunk/pull/1091), [#1098](https://github.com/max-sixty/worktrunk/pull/1098), [#1099](https://github.com/max-sixty/worktrunk/pull/1099))
+
+- **Issue triage for external contributors**: CI triage workflow now runs for all external contributor issues. ([#1086](https://github.com/max-sixty/worktrunk/pull/1086))
+
+## 0.25.0
+
+### Improved
+
+- **System-wide config file**: Load organization-wide defaults from a system config file (`/etc/xdg/worktrunk/config.toml` on Linux, `/Library/Application Support/worktrunk/config.toml` on macOS) before user config. Override the path with `$WORKTRUNK_SYSTEM_CONFIG_PATH`. Visible in `wt config show`. ([#963](https://github.com/max-sixty/worktrunk/pull/963), thanks @goodtune)
+
+- **AI summary preview in `wt switch`**: New 5th tab shows AI-generated branch summaries using your configured `[commit.generation]` LLM command. Opt-in via `[list] summary = true` in config. Summaries are cached in `.git/wt-cache/summaries/` with hash-based invalidation. [Docs](https://worktrunk.dev/llm-commits/) ([#1049](https://github.com/max-sixty/worktrunk/pull/1049))
+
+- **Approvals stored in dedicated file**: Approved commands moved from `config.toml` to `approvals.toml`, enabling dotfile management of config without exposing machine-local trust state. Existing approvals in `config.toml` are read automatically with a deprecation warning and migration instructions in `wt config show`. ([#1042](https://github.com/max-sixty/worktrunk/pull/1042))
+
+- **Error hints include `--execute` context**: When `wt switch --execute=<cmd>` fails, suggested commands now include the full `--execute` and trailing args so you can copy-paste the fix directly. ([#1064](https://github.com/max-sixty/worktrunk/pull/1064))
+
+- **`wt list` startup performance**: Config resolution moved into the parallel phase, running concurrently with other git commands instead of sequentially on the critical path. ([#1054](https://github.com/max-sixty/worktrunk/pull/1054))
+
+### Fixed
+
+- **Submodule worktree path resolution**: `wt switch` resolved to `.git/modules/` instead of the working directory inside git submodules. Fixes [#1069](https://github.com/max-sixty/worktrunk/issues/1069). ([#1070](https://github.com/max-sixty/worktrunk/pull/1070), thanks @SokiKawashima for reporting)
+
+- **Per-project `[list] timeout` ignored**: The timeout setting from per-project config (`[projects."name".list]`) was not applied — only the global config value was used. ([#1063](https://github.com/max-sixty/worktrunk/pull/1063))
+
+- **Empty repos crash `wt list`**: Repositories with no commits (unborn HEAD) caused errors. Now renders empty cells for commit-dependent fields. ([#1058](https://github.com/max-sixty/worktrunk/pull/1058))
+
+- **Stray blank lines before hints in error output**: Error messages with hints (↳) had an extra blank line separating the hint from its subject. ([#1072](https://github.com/max-sixty/worktrunk/pull/1072))
+
+### Internal
+
+- **Shell escaping consolidation**: Dropped `shlex` crate, consolidated on `shell_escape` across the codebase. ([#1065](https://github.com/max-sixty/worktrunk/pull/1065))
+
+- **CI reviewer improvements**: Resolve review threads, skip trivial re-approvals, default to suggestions. ([#1068](https://github.com/max-sixty/worktrunk/pull/1068))
+
+## 0.24.1
+
+### Improved
+
+- **Template error messages**: Template expansion errors now show what failed, the failing template line, and available variables for undefined variable errors. ([#1041](https://github.com/max-sixty/worktrunk/pull/1041))
+
+- **Interactive picker preview speed**: Preview pre-computation is parallelized via rayon, reducing the chance of a blocking cache miss when switching preview tabs. ([#1048](https://github.com/max-sixty/worktrunk/pull/1048))
+
+- **`wt switch` performance**: Switching to existing worktrees defers path computation, reducing startup latency. ([#1029](https://github.com/max-sixty/worktrunk/pull/1029), [#1030](https://github.com/max-sixty/worktrunk/pull/1030), [#1031](https://github.com/max-sixty/worktrunk/pull/1031))
+
+### Fixed
+
+- **PowerShell wrapper swallows `-D` flag**: The wrapper's `[Parameter(ValueFromRemainingArguments)]` promoted it to an "advanced function", causing PowerShell to consume `-D` as `-Debug` instead of passing it to `wt.exe`. Fixes [#885](https://github.com/max-sixty/worktrunk/issues/885). ([#1057](https://github.com/max-sixty/worktrunk/pull/1057), thanks @DiTo97 for reporting)
+
+- **Nushell shell integration**: Multiple fixes for nushell — auto-detect for install even without vendor/autoload directory ([#1032](https://github.com/max-sixty/worktrunk/pull/1032)), detection checks multiple config paths ([#1038](https://github.com/max-sixty/worktrunk/pull/1038)), uninstall cleans all candidate locations ([#1050](https://github.com/max-sixty/worktrunk/pull/1050)), wrapper hardening and improved diagnostics ([#1059](https://github.com/max-sixty/worktrunk/pull/1059)). (thanks @arnaudlimbourg for [#1032](https://github.com/max-sixty/worktrunk/pull/1032), [#1038](https://github.com/max-sixty/worktrunk/pull/1038), and @omerxx for reporting in [#964](https://github.com/max-sixty/worktrunk/pull/964))
+
+- **Interactive picker leaves screen artifacts**: The picker left visual artifacts after exiting. Fixes [#1027](https://github.com/max-sixty/worktrunk/issues/1027). ([#1028](https://github.com/max-sixty/worktrunk/pull/1028), [#1044](https://github.com/max-sixty/worktrunk/pull/1044), thanks @davidbeesley)
+
+- **Statusline counts files outside sparse checkout cone**: Branch diff statistics in the statusline included files outside the sparse checkout cone, inflating counts. ([#1024](https://github.com/max-sixty/worktrunk/pull/1024), thanks @bendrucker)
+
+- **Template placeholders leak into displayed commands**: `{{ }}` delimiters in hook commands were incorrectly syntax-highlighted, showing ANSI artifacts instead of the template text. ([#1022](https://github.com/max-sixty/worktrunk/pull/1022))
+
+- **Hook announcement trailing colon**: Hook announcements like "Running post-merge project:sync:" had a trailing colon that created visual noise. ([#1025](https://github.com/max-sixty/worktrunk/pull/1025))
+
+- **Blank line after approval prompts**: Approval prompts showed an extra blank line after the user pressed Enter. ([#1040](https://github.com/max-sixty/worktrunk/pull/1040))
+
+### Internal
+
+- **Automated Claude PR review**: Added workflow for automated code review on PRs. ([#1037](https://github.com/max-sixty/worktrunk/pull/1037))
+
+- **Time-to-first-output benchmarks**: Added benchmarks for `remove`, `switch`, and `list` startup latency. ([#1023](https://github.com/max-sixty/worktrunk/pull/1023))
+
+## 0.24.0
+
+### Improved
+
+- **Nushell support (experimental)**: Initial nushell shell integration — shell wrapper, completions, and `wt config shell install` support. This is a proof-of-concept and will need iteration before it's usable; if you're a nushell user feel free to try it and report issues. ([#964](https://github.com/max-sixty/worktrunk/pull/964), thanks @arnaudlimbourg)
+
+- **Version check in `wt config show --full`**: The diagnostics section now queries GitHub for the latest release and shows "Up to date", "Update available", or "Version check unavailable". Gated behind `--full` so normal commands are unaffected. Closes [#1003](https://github.com/max-sixty/worktrunk/issues/1003). ([#1011](https://github.com/max-sixty/worktrunk/pull/1011), thanks @risperdal for requesting)
+
+- **Fish outdated wrapper detection**: `wt config show` now detects when the installed fish shell wrapper has outdated code (e.g., from a previous version) and shows "Outdated shell extension" with a reinstall hint, instead of incorrectly reporting "Not configured". ([#1009](https://github.com/max-sixty/worktrunk/pull/1009))
+
+### Fixed
+
+- **LLM subprocess blocked in Claude Code sessions**: Claude Code sets `CLAUDECODE=1` which blocks nested invocations, breaking `wt step commit` and `wt merge` commit generation. Now strips the env var before spawning the LLM command. ([#1021](https://github.com/max-sixty/worktrunk/pull/1021))
+
+- **Blank line between hint and subject in config show**: The "To configure, run wt config shell install" hint was visually detached from the shell entries it referred to. ([#1007](https://github.com/max-sixty/worktrunk/pull/1007))
+
+### Documentation
+
+- **Status symbol descriptions**: Corrected quick start documentation — `↕` means diverged from default branch (not unpushed commits), `+` means staged changes (not uncommitted changes). ([#1017](https://github.com/max-sixty/worktrunk/pull/1017))
+
+- **Claude Code commit command**: Added `CLAUDECODE` env var unsetting to the Claude Code documentation for commit message generation. ([#1020](https://github.com/max-sixty/worktrunk/pull/1020))
+
+### Internal
+
+- **Environment variable prefix standardization**: Renamed remaining `WT_TEST_*` env vars to `WORKTRUNK_TEST_*`, completing the prefix migration. ([#1016](https://github.com/max-sixty/worktrunk/pull/1016))
+
+- **Plugin metadata**: Aligned plugin description with Cargo.toml tagline ([#1019](https://github.com/max-sixty/worktrunk/pull/1019)), fixed duplicate skills declaration ([#1014](https://github.com/max-sixty/worktrunk/pull/1014), thanks @jacksonblankenship for reporting [#1013](https://github.com/max-sixty/worktrunk/issues/1013)), corrected marketplace source path ([#1012](https://github.com/max-sixty/worktrunk/pull/1012)).
+
+## 0.23.3
+
+### Improved
+
+- **Error display for failed commands**: Failed git commands are now shown in a separate bash-highlighted gutter block instead of inline parenthesized text, making long commands much more readable. ([#1001](https://github.com/max-sixty/worktrunk/pull/1001))
+
+- **PowerShell detection and diagnostics**: Detect PowerShell via `PSModulePath` environment variable so Windows users get "shell requires restart" instead of "not installed". `wt config show` now displays the detected shell and verification hints. Fixes [#885](https://github.com/max-sixty/worktrunk/issues/885). ([#987](https://github.com/max-sixty/worktrunk/pull/987), thanks @DiTo97 for reporting)
+
+### Fixed
+
+- **Fish shell wrapper incompatible with fish < 3.1**: The shell wrapper used `VAR=value command` syntax which requires fish 3.1+. Now uses `env VAR=value ...` for compatibility with all fish versions. Fixes [#999](https://github.com/max-sixty/worktrunk/issues/999). ([#1000](https://github.com/max-sixty/worktrunk/pull/1000), thanks @chrisrickard for reporting)
+
+- **Symlink paths resolved in display messages**: Status messages like "Created worktree @ path" showed canonical paths instead of the user's symlink path. Now consistent with cd directives. Fixes [#968](https://github.com/max-sixty/worktrunk/issues/968). ([#985](https://github.com/max-sixty/worktrunk/pull/985), thanks @brooke-hamilton for reporting)
+
+### Documentation
+
+- **Deduplicated manual shell setup**: Removed duplicated per-shell eval snippets from `wt config --help`, referencing `wt config shell init --help` instead. ([#986](https://github.com/max-sixty/worktrunk/pull/986))
+
+- **PowerShell diagnostic guidance**: Added PowerShell-specific debugging steps to shell integration and troubleshooting references. ([#993](https://github.com/max-sixty/worktrunk/pull/993))
+
 ## 0.23.2
 
 ### Improved

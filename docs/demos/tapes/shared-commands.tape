@@ -2,6 +2,7 @@
 Require wt
 Require git
 
+Env CLAUDECODE ""
 Env GIT_TERMINAL_PROMPT "0"
 Env DEMO_REPO "{{DEMO_REPO}}"
 Env RUSTUP_HOME "{{REAL_HOME}}/.rustup"

@@ -5,9 +5,13 @@
 //! what the user actually sees on screen, enabling meaningful snapshot testing of
 //! the skim-based TUI interface.
 //!
-//! Timing-sensitive output (query line, commit hashes, timestamps, count indicators)
-//! is normalized via insta filters for stable snapshots. Preview tests split the
-//! screen into list and preview panels to avoid the │ border character entirely.
+//! ## Capture-Before-Abort Pattern
+//!
+//! Abort tests snapshot the screen BEFORE sending Escape, not after. Skim's teardown
+//! is asynchronous — sending Escape races with rendering, producing non-deterministic
+//! output (variable border painting, incomplete rows). By capturing the stable pre-abort
+//! state, we eliminate this entire class of flakiness. After capture, Escape is sent and
+//! only the exit code is checked.
 //!
 //! ## Timing Strategy
 //!
@@ -114,18 +118,6 @@ fn assert_valid_abort_exit_code(exit_code: i32) {
         "Unexpected exit code: {} (expected 0, 1, or 130 for skim abort)",
         exit_code
     );
-}
-
-/// Collapse consecutive identical trailing lines into a single copy.
-///
-/// Useful for abort tests where skim's border rendering produces a variable number
-/// of identical `│` rows depending on how far rendering progressed before exit.
-fn collapse_trailing_dupes(s: &str) -> String {
-    let mut lines: Vec<&str> = s.lines().collect();
-    while lines.len() >= 2 && lines[lines.len() - 1] == lines[lines.len() - 2] {
-        lines.pop();
-    }
-    lines.join("\n")
 }
 
 /// Check if skim is ready (shows "> " prompt indicating it's accepting input)
@@ -270,6 +262,130 @@ fn exec_in_pty_with_input_expectations(
     PtyResult { parser, exit_code }
 }
 
+/// Execute a command in a PTY, capture screen state, then abort with Escape.
+///
+/// This is the key fix for flaky abort snapshot tests. The problem: snapshotting
+/// screen state AFTER sending Escape races with skim's teardown, producing
+/// non-deterministic output (variable border painting, incomplete rows, trailing
+/// whitespace). The fix: capture the stable screen BEFORE aborting, then only
+/// check exit code after abort.
+///
+/// `pre_abort_inputs` are sent before capturing (e.g., typing a filter or switching
+/// preview panels). Each input can optionally specify content that must appear before
+/// the screen is considered stable.
+fn exec_in_pty_capture_before_abort(
+    command: &str,
+    args: &[&str],
+    working_dir: &Path,
+    env_vars: &[(String, String)],
+    pre_abort_inputs: &[(&str, Option<&str>)],
+) -> PtyResult {
+    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
+
+    let mut cmd = CommandBuilder::new(command);
+    for arg in args {
+        cmd.arg(arg);
+    }
+    cmd.cwd(working_dir);
+
+    crate::common::configure_pty_command(&mut cmd);
+    cmd.env("CLICOLOR_FORCE", "1");
+    cmd.env("TERM", "xterm-256color");
+
+    for (key, value) in env_vars {
+        cmd.env(key, value);
+    }
+
+    let mut child = pair.slave.spawn_command(cmd).unwrap();
+    drop(pair.slave);
+
+    let mut reader = pair.master.try_clone_reader().unwrap();
+    let mut writer = pair.master.take_writer().unwrap();
+
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut temp_buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut temp_buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if tx.send(temp_buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+
+    let drain_output = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
+        while let Ok(chunk) = rx.try_recv() {
+            parser.process(&chunk);
+        }
+    };
+
+    // Wait for skim to be ready
+    let start = Instant::now();
+    loop {
+        drain_output(&rx, &mut parser);
+
+        let screen_content = parser.screen().contents();
+        if is_skim_ready(&screen_content) {
+            break;
+        }
+
+        if start.elapsed() > READY_TIMEOUT {
+            eprintln!(
+                "Warning: Timed out waiting for skim ready state. Screen content:\n{}",
+                screen_content
+            );
+            break;
+        }
+
+        std::thread::sleep(POLL_INTERVAL);
+    }
+
+    // Wait for initial render to stabilize
+    wait_for_stable(&rx, &mut parser);
+
+    // Send pre-abort inputs (filter text, panel switches, etc.)
+    for (input, expected_content) in pre_abort_inputs {
+        writer.write_all(input.as_bytes()).unwrap();
+        writer.flush().unwrap();
+        wait_for_stable_with_content(&rx, &mut parser, *expected_content);
+    }
+
+    // === CAPTURE: screen state is now stable — snapshot BEFORE aborting ===
+    // The parser retains this state because we stop feeding output to it.
+
+    // Send Escape to abort
+    writer.write_all(b"\x1b").unwrap();
+    writer.flush().unwrap();
+    drop(writer);
+
+    // Drain remaining output WITHOUT feeding to parser — preserves pre-abort screen
+    let start = Instant::now();
+    let timeout = Duration::from_secs(5);
+    loop {
+        while rx.try_recv().is_ok() {} // discard chunks
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let exit_status = child.wait().unwrap();
+    let exit_code = exit_status.exit_code() as i32;
+
+    PtyResult { parser, exit_code }
+}
+
 /// Wait for screen content to stabilize (no changes for STABLE_DURATION)
 fn wait_for_stable(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
     wait_for_stable_with_content(rx, parser, None);
@@ -337,8 +453,14 @@ fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
     // \A anchors to absolute start of string, matching only the first line.
     settings.add_filter(r"\A> [^\n]*", "> [QUERY]");
 
-    // Skim count indicators (matched/total) at end of lines
-    settings.add_filter(r"(?m)\d+/\d+\s*$", "[N/M]");
+    // Skim count indicators (matched/total) at end of lines.
+    // Normalize leading whitespace too — skim right-aligns the count with padding
+    // that varies based on unicode character width calculations across platforms.
+    // The tab header line may have the count jammed against "summary" (no space)
+    // or even truncate "summary" when skim's width_cjk() treats ambiguous-width
+    // unicode symbols (±, …, ⇅) as double-width, consuming extra columns.
+    settings.add_filter(r"(?m)summary?\w*\s*\d+/\d+\s*$", "summary [N/M]");
+    settings.add_filter(r"(?m)\s+\d+/\d+\s*$", " [N/M]");
 
     // Commit hashes (7-8 hex chars)
     settings.add_filter(r"\b[0-9a-f]{7,8}\b", "[HASH]");
@@ -359,23 +481,21 @@ fn test_switch_picker_abort_with_escape(mut repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_with_input(
+    let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
         &env_vars,
-        "\x1b", // Escape key to abort
+        &[], // No inputs before abort
     );
 
     assert_valid_abort_exit_code(result.exit_code);
 
-    // Collapse trailing duplicate lines: skim's border rendering varies on abort
-    // because the escape key kills the process mid-render, producing a variable
-    // number of identical `│` border rows at the bottom.
-    let screen = collapse_trailing_dupes(&result.screen());
+    let (list, preview) = result.panels();
     let settings = switch_picker_settings(&repo);
     settings.bind(|| {
-        assert_snapshot!("switch_picker_abort_escape", screen);
+        assert_snapshot!("switch_picker_abort_escape_list", list);
+        assert_snapshot!("switch_picker_abort_escape_preview", preview);
     });
 }
 
@@ -389,20 +509,22 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
     repo.add_worktree("feature-two");
 
     let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_with_input(
+    let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
         &env_vars,
-        "\x1b", // Escape to abort after viewing
+        // Wait for items to render before capturing (prevents flakiness on slow CI)
+        &[("", Some("feature-two"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = collapse_trailing_dupes(&result.screen());
+    let (list, preview) = result.panels();
     let settings = switch_picker_settings(&repo);
     settings.bind(|| {
-        assert_snapshot!("switch_picker_multiple_worktrees", screen);
+        assert_snapshot!("switch_picker_multiple_worktrees_list", list);
+        assert_snapshot!("switch_picker_multiple_worktrees_preview", preview);
     });
 }
 
@@ -422,20 +544,24 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
     assert!(output.status.success(), "Failed to create branch");
 
     let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_with_input(
+    let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch", "--branches"],
         repo.root_path(),
         &env_vars,
-        "\x1b", // Escape to abort
+        // Wait for branch items to render before capturing. On macOS CI under
+        // heavy load, skim may show the prompt and header before item rows,
+        // causing wait_for_stable to capture too early (just the header).
+        &[("", Some("orphan-branch"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
 
-    let screen = collapse_trailing_dupes(&result.screen());
+    let (list, preview) = result.panels();
     let settings = switch_picker_settings(&repo);
     settings.bind(|| {
-        assert_snapshot!("switch_picker_with_branches", screen);
+        assert_snapshot!("switch_picker_with_branches_list", list);
+        assert_snapshot!("switch_picker_with_branches_preview", preview);
     });
 }
 
@@ -478,7 +604,7 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
     let env_vars = repo.test_env_vars();
     // Type "feature" to filter to just the feature worktree, press 1 for HEAD± panel
     // Wait for "diff --git" to appear after pressing 1 - the async preview can be slow under congestion
-    let result = exec_in_pty_with_input_expectations(
+    let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
@@ -486,7 +612,6 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
         &[
             ("feature", None),
             ("1", Some("│diff --git")), // Wait for diff to load (│ = border drawn)
-            ("\x1b", None),
         ],
     );
 
@@ -538,7 +663,7 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
     let env_vars = repo.test_env_vars();
     // Type "feature" to filter, press 2 for log panel
     // Wait for commit log format "* [hash]" to appear - the async preview can be slow under congestion
-    let result = exec_in_pty_with_input_expectations(
+    let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
@@ -546,7 +671,6 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
         &[
             ("feature", None),
             ("2", Some("│* ")), // Wait for git log output (│ = border drawn)
-            ("\x1b", None),
         ],
     );
 
@@ -631,7 +755,7 @@ fn test_new_feature() {
     let env_vars = repo.test_env_vars();
     // Type "feature" to filter, press 3 for main…± panel
     // Wait for "diff --git" to appear after pressing 3 - the async preview can be slow under congestion
-    let result = exec_in_pty_with_input_expectations(
+    let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
@@ -639,7 +763,6 @@ fn test_new_feature() {
         &[
             ("feature", None),
             ("3", Some("│diff --git")), // Wait for diff to load (│ = border drawn)
-            ("\x1b", None),
         ],
     );
 
@@ -654,7 +777,66 @@ fn test_new_feature() {
 }
 
 #[rstest]
+fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    // Remove origin so snapshots don't show origin/main
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    let feature_path = repo.add_worktree("feature");
+
+    // Make a commit so there's content to potentially summarize
+    std::fs::write(feature_path.join("new.txt"), "content\n").unwrap();
+    let output = repo
+        .git_command()
+        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "Failed to add file");
+    let output = repo
+        .git_command()
+        .args([
+            "-C",
+            feature_path.to_str().unwrap(),
+            "commit",
+            "-m",
+            "Add new file",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "Failed to commit");
+
+    let env_vars = repo.test_env_vars();
+    // Type "feature" to filter, press 5 for summary panel
+    // Wait for "commit.generation" hint since no LLM is configured
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("feature", None),
+            ("5", Some("│Configure")), // Wait for config hint (│ = border drawn)
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (list, preview) = result.panels();
+    let settings = switch_picker_settings(&repo);
+    settings.bind(|| {
+        assert_snapshot!("switch_picker_preview_summary_list", list);
+        assert_snapshot!("switch_picker_preview_summary_preview", preview);
+    });
+}
+
+#[rstest]
 fn test_switch_picker_respects_list_config(mut repo: TestRepo) {
+    // Use the same reliable setup as test_switch_picker_with_branches:
+    // remove fixture worktrees (which use relative gitdir paths that can fail
+    // to resolve under concurrent operations) and origin (to avoid remote branch noise)
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
     repo.add_worktree("active-worktree");
     // Create a branch without a worktree
     let output = repo
@@ -674,14 +856,13 @@ branches = true
     );
 
     let env_vars = repo.test_env_vars();
-    // Wait for orphan-branch to appear before sending Escape
-    // Under CI load, the branch list may take time to render fully
-    let result = exec_in_pty_with_input_expectations(
+    // Capture screen BEFORE sending Escape. Screen must stabilize with orphan-branch visible.
+    let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
         &["switch"], // No --branches flag - config should enable it
         repo.root_path(),
         &env_vars,
-        &[("\x1b", Some("│orphan-branch"))], // Wait for branch to appear (│ = border drawn)
+        &[("", Some("│orphan-branch"))], // Wait for orphan-branch to appear before abort
     );
 
     assert_valid_abort_exit_code(result.exit_code);

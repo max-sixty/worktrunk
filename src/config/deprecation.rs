@@ -2,8 +2,9 @@
 //!
 //! Scans config files for deprecated patterns and generates migration files:
 //! - Deprecated template variables (repo_root → repo_path, etc.)
-//! - Deprecated config sections ([commit-generation] → [commit.generation])
+//! - Deprecated config sections (\[commit-generation\] → \[commit.generation\])
 //! - Deprecated fields (args merged into command)
+//! - Deprecated approved-commands in \[projects\] (moved to approvals.toml)
 //!
 //! Migration file write behavior:
 //! - First time a deprecation is detected: file is written automatically
@@ -28,10 +29,7 @@ use shell_escape::unix::escape;
 
 use crate::config::WorktrunkConfig;
 use crate::shell_exec::Cmd;
-use crate::styling::{
-    eprintln, format_bash_with_gutter, format_with_gutter, hint_message, info_message,
-    warning_message,
-};
+use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
 
 /// Tracks which config paths have already shown deprecation warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
@@ -56,7 +54,7 @@ const DEPRECATED_VARS: &[(&str, &str)] = &[
 
 /// Top-level section keys that are deprecated and handled separately.
 /// Callers should filter these out before calling `warn_unknown_fields` to avoid duplicate warnings.
-pub const DEPRECATED_SECTION_KEYS: &[&str] = &["commit-generation"];
+pub const DEPRECATED_SECTION_KEYS: &[&str] = &["commit-generation", "select"];
 
 /// Normalize a template string by replacing deprecated variables with their canonical names.
 ///
@@ -183,12 +181,19 @@ pub struct Deprecations {
     pub vars: Vec<(&'static str, &'static str)>,
     /// Deprecated commit-generation sections found
     pub commit_gen: CommitGenerationDeprecations,
+    /// Has `approved-commands` in any `[projects."..."]` section (moved to approvals.toml)
+    pub approved_commands: bool,
+    /// Has `[select]` section (moved to `[switch.picker]`)
+    pub select: bool,
 }
 
 impl Deprecations {
     /// Returns true if any deprecations were found
     pub fn is_empty(&self) -> bool {
-        self.vars.is_empty() && self.commit_gen.is_empty()
+        self.vars.is_empty()
+            && self.commit_gen.is_empty()
+            && !self.approved_commands
+            && !self.select
     }
 }
 
@@ -200,7 +205,33 @@ pub fn detect_deprecations(content: &str) -> Deprecations {
     Deprecations {
         vars: find_deprecated_vars(content),
         commit_gen: find_commit_generation_deprecations(content),
+        approved_commands: find_approved_commands_deprecation(content),
+        select: find_select_deprecation(content),
     }
+}
+
+/// Check if any `[projects."..."]` section has a non-empty `approved-commands` array.
+///
+/// These have moved to `approvals.toml` and should be removed from config.toml.
+pub fn find_approved_commands_deprecation(content: &str) -> bool {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+
+    let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) else {
+        return false;
+    };
+
+    for (_project_key, project_value) in projects.iter() {
+        if let Some(project_table) = project_value.as_table()
+            && let Some(approved) = project_table.get("approved-commands")
+            && approved.as_array().is_some_and(|a| !a.is_empty())
+        {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Find deprecated [commit-generation] sections in config
@@ -374,6 +405,169 @@ pub fn migrate_commit_generation_sections(content: &str) -> String {
     }
 }
 
+/// Remove `approved-commands` from all `\[projects."..."\]` sections.
+///
+/// For each project section, removes the `approved-commands` key.
+/// If a project section becomes empty after removal, removes the project entry.
+/// If the `\[projects\]` table becomes empty, removes it.
+pub fn remove_approved_commands_from_config(content: &str) -> String {
+    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return content.to_string();
+    };
+
+    let mut modified = false;
+
+    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+        // Collect project keys that should have approved-commands removed
+        let mut remove_from: Vec<String> = Vec::new();
+        let mut emptied: Vec<String> = Vec::new();
+
+        for (project_key, project_value) in projects.iter() {
+            if let Some(project_table) = project_value.as_table()
+                && project_table.contains_key("approved-commands")
+            {
+                remove_from.push(project_key.to_string());
+                // Will be empty after removal if approved-commands is the only key
+                if project_table.len() == 1 {
+                    emptied.push(project_key.to_string());
+                }
+            }
+        }
+
+        for key in &remove_from {
+            if let Some(project_value) = projects.get_mut(key)
+                && let Some(project_table) = project_value.as_table_mut()
+            {
+                project_table.remove("approved-commands");
+                modified = true;
+            }
+        }
+
+        for key in &emptied {
+            projects.remove(key);
+        }
+    }
+
+    // Remove empty [projects] table
+    if doc
+        .get("projects")
+        .and_then(|p| p.as_table())
+        .is_some_and(|t| t.is_empty())
+    {
+        doc.remove("projects");
+        modified = true;
+    }
+
+    if modified {
+        doc.to_string()
+    } else {
+        content.to_string()
+    }
+}
+
+/// Check if config has a deprecated `[select]` section without a corresponding `[switch.picker]`.
+///
+/// Returns true if `[select]` exists, is non-empty, and `[switch.picker]` does not exist.
+pub fn find_select_deprecation(content: &str) -> bool {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+
+    // Check if new [switch.picker] already exists
+    let has_new_section = doc
+        .get("switch")
+        .and_then(|s| s.as_table())
+        .and_then(|t| t.get("picker"))
+        .is_some_and(|p| p.is_table() || p.is_inline_table());
+
+    if has_new_section {
+        return false;
+    }
+
+    // Check if [select] exists and is non-empty
+    if let Some(section) = doc.get("select") {
+        if let Some(table) = section.as_table() {
+            return !table.is_empty();
+        }
+        if let Some(inline) = section.as_inline_table() {
+            return !inline.is_empty();
+        }
+    }
+
+    false
+}
+
+/// Migrate `[select]` section to `[switch.picker]`.
+///
+/// Renames `[select]` to `[switch.picker]`, preserving all fields.
+/// Skips migration if `[switch.picker]` already exists.
+pub fn migrate_select_to_switch_picker(content: &str) -> String {
+    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return content.to_string();
+    };
+
+    // Check if [switch.picker] already exists
+    let has_new_section = doc
+        .get("switch")
+        .and_then(|s| s.as_table())
+        .and_then(|t| t.get("picker"))
+        .is_some_and(|p| p.is_table() || p.is_inline_table());
+
+    if has_new_section {
+        return content.to_string();
+    }
+
+    // Remove [select] and migrate to [switch.picker]
+    let Some(old_section) = doc.remove("select") else {
+        return content.to_string();
+    };
+
+    let table_opt = match old_section {
+        toml_edit::Item::Table(t) => Some(t),
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => Some(it.into_table()),
+        _ => None,
+    };
+
+    let Some(table) = table_opt else {
+        return content.to_string();
+    };
+
+    // Ensure [switch] section exists (implicit so only [switch.picker] renders)
+    if !doc.contains_key("switch") {
+        let mut switch_table = toml_edit::Table::new();
+        switch_table.set_implicit(true);
+        doc.insert("switch", toml_edit::Item::Table(switch_table));
+    }
+
+    // Move to [switch.picker]
+    if let Some(switch_table) = doc["switch"].as_table_mut() {
+        switch_table.insert("picker", toml_edit::Item::Table(table));
+    }
+
+    doc.to_string()
+}
+
+/// Copy approved-commands from config.toml to approvals.toml.
+///
+/// Called during migration to ensure approved-commands are preserved before
+/// the migration file removes them from config.toml. Without this, applying
+/// `mv config.toml.new config.toml` would lose approval data.
+///
+/// Returns `Some(path)` if approvals.toml was created, `None` if it already
+/// existed or there was nothing to copy.
+fn copy_approved_commands_to_approvals_file(config_path: &Path) -> Option<PathBuf> {
+    let approvals_path = config_path.with_file_name("approvals.toml");
+    if approvals_path.exists() {
+        return None; // Already authoritative, don't overwrite
+    }
+
+    let approvals = super::approvals::Approvals::load_from_config_file(config_path).ok()?;
+    approvals.projects().next()?; // Nothing to copy if empty
+
+    approvals.save_to(&approvals_path).ok()?;
+    Some(approvals_path)
+}
+
 /// Merge args array into command string
 ///
 /// Converts: command = "llm", args = ["-m", "haiku"]
@@ -441,6 +635,8 @@ pub struct DeprecationInfo {
     pub label: String,
     /// True if in a linked worktree (migration file written to main worktree only)
     pub in_linked_worktree: bool,
+    /// Path to approvals.toml if approved-commands were copied there during migration
+    pub approvals_copied_to: Option<PathBuf>,
 }
 
 impl DeprecationInfo {
@@ -456,6 +652,7 @@ impl DeprecationInfo {
 /// - Deprecated template variables (repo_root → repo_path, etc.)
 /// - Deprecated [commit-generation] sections → [commit.generation]
 /// - Deprecated args field (merged into command)
+/// - Deprecated approved-commands in \[projects\] (moved to approvals.toml)
 ///
 /// If deprecations are found and `warn_and_migrate` is true:
 /// 1. Emits warnings listing the deprecated patterns
@@ -519,6 +716,7 @@ pub fn check_and_migrate(
         deprecations,
         label: label.to_string(),
         in_linked_worktree: !warn_and_migrate,
+        approvals_copied_to: None,
     };
 
     // Skip warning entirely if not in main worktree (for project config)
@@ -540,34 +738,34 @@ pub fn check_and_migrate(
         guard.insert(canonical_path.clone());
     }
 
+    // Copy approved-commands to approvals.toml before generating the migration
+    // file that removes them from config.toml. Without this, applying the
+    // migration (`mv config.toml.new config.toml`) would lose approval data.
+    if info.deprecations.approved_commands {
+        info.approvals_copied_to = copy_approved_commands_to_approvals_file(path);
+    }
+
     // For brief warnings (non-config-show commands), just show a pointer
     if show_brief_warning {
         eprintln!("{}", format_brief_warning(label));
 
-        // Still write migration file if needed (first time only)
-        if !should_skip_write
-            && let Some(new_path) = write_migration_file(path, content, &info.deprecations, repo)
-        {
-            // Show apply hint for first-time migration file write
-            let new_filename = new_path
+        if let Some(approvals_path) = &info.approvals_copied_to {
+            let approvals_filename = approvals_path
                 .file_name()
                 .map(|n| n.to_string_lossy())
                 .unwrap_or_default();
-            let new_path_str = escape(new_path.to_slash_lossy());
-            let path_str = escape(path.to_slash_lossy());
-
             eprintln!(
                 "{}",
                 hint_message(cformat!(
-                    "Wrote migrated <bright-black>{new_filename}</>. To apply:"
+                    "Copied approved commands to <bright-black>{approvals_filename}</>"
                 ))
             );
-            eprintln!(
-                "{}",
-                format_bash_with_gutter(&format!("mv -- {} {}", new_path_str, path_str))
-            );
+        }
 
-            info.migration_path = Some(new_path);
+        // Still write migration file if needed (first time only)
+        // The file is needed for `wt config update` / `wt config show` to work
+        if !should_skip_write {
+            info.migration_path = write_migration_file(path, content, &info.deprecations, repo);
         }
 
         std::io::stderr().flush().ok();
@@ -589,7 +787,7 @@ pub fn check_and_migrate(
 /// caller is responsible for output.
 pub fn format_brief_warning(label: &str) -> String {
     warning_message(cformat!(
-        "{} has deprecated settings. To see details, run <bold>wt config show</>",
+        "{} has deprecated settings. Run <bold>wt config show</> for details or <bold>wt config update</> to apply updates",
         label
     ))
     .to_string()
@@ -627,6 +825,12 @@ pub fn write_migration_file(
     if !deprecations.commit_gen.is_empty() {
         new_content = migrate_commit_generation_sections(&new_content);
     }
+    if deprecations.approved_commands {
+        new_content = remove_approved_commands_from_config(&new_content);
+    }
+    if deprecations.select {
+        new_content = migrate_select_to_switch_picker(&new_content);
+    }
 
     if let Err(e) = std::fs::write(&new_path, &new_content) {
         // Log write failure but don't block config loading
@@ -662,17 +866,15 @@ pub fn format_migration_diff(original_path: &Path, new_path: &Path) -> Option<St
     None
 }
 
-/// Format deprecation details for display (for use by wt config show)
+/// Format deprecation warning lines (without apply hints or diff).
 ///
-/// Returns formatted output including:
-/// - Warning message listing deprecated patterns
-/// - Migration hint with apply command
-/// - Inline diff showing the changes
-pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
+/// Lists which deprecated patterns were found: template variables, config sections,
+/// approved-commands. Used by both `format_deprecation_details` (which adds the
+/// `wt config update` hint and diff) and `wt config update` (which applies directly).
+pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
     use std::fmt::Write;
     let mut out = String::new();
 
-    // Warning message listing deprecated patterns
     if !info.deprecations.vars.is_empty() {
         let var_list: Vec<String> = info
             .deprecations
@@ -713,33 +915,65 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
         );
     }
 
-    // Migration hint with apply command
-    if let Some(new_path) = &info.migration_path {
-        let new_filename = new_path
-            .file_name()
-            .map(|n| n.to_string_lossy())
-            .unwrap_or_default();
-        // Shell-escape paths for safe copy/paste
-        let new_path_str = escape(new_path.to_slash_lossy());
-        let path_str = escape(info.config_path.to_slash_lossy());
-
+    if info.deprecations.approved_commands {
         let _ = writeln!(
             out,
             "{}",
-            hint_message(cformat!(
-                "Wrote migrated <bright-black>{new_filename}</>. To apply:"
+            warning_message(format!(
+                "{} has approved-commands in [projects] sections (moved to approvals.toml)",
+                info.label
             ))
         );
+        if let Some(approvals_path) = &info.approvals_copied_to {
+            let approvals_filename = approvals_path
+                .file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_default();
+            let _ = writeln!(
+                out,
+                "{}",
+                hint_message(cformat!(
+                    "Copied approved commands to <bright-black>{approvals_filename}</>"
+                ))
+            );
+        }
+    }
+
+    if info.deprecations.select {
         let _ = writeln!(
             out,
             "{}",
-            format_bash_with_gutter(&format!("mv -- {} {}", new_path_str, path_str))
+            warning_message(format!(
+                "{} uses deprecated config section: [select] → [switch.picker]",
+                info.label
+            ))
+        );
+    }
+
+    out
+}
+
+/// Format deprecation details for display (for use by `wt config show`).
+///
+/// Returns formatted output including:
+/// - Warning message listing deprecated patterns
+/// - Migration hint with apply command
+/// - Inline diff showing the changes
+pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
+    use std::fmt::Write;
+    let mut out = format_deprecation_warnings(info);
+
+    // Migration hint with apply command
+    if let Some(new_path) = &info.migration_path {
+        let _ = writeln!(
+            out,
+            "{}",
+            hint_message(cformat!("Run <bright-black>wt config update</> to apply"))
         );
 
-        // Inline diff with intro
+        // Inline diff — git diff header shows the file paths
         if let Some(diff) = format_migration_diff(&info.config_path, new_path) {
-            let _ = writeln!(out, "{}", info_message("Diff:"));
-            let _ = writeln!(out, "{}", diff);
+            let _ = writeln!(out, "{diff}");
         }
     } else if info.in_linked_worktree {
         // In linked worktree - migration file is written to main worktree
@@ -747,7 +981,7 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
             out,
             "{}",
             hint_message(cformat!(
-                "To generate migration file, run <bright-black>wt config show</> from main worktree",
+                "Run <bright-black>wt config update</> from main worktree to apply",
             ))
         );
     }
@@ -1751,6 +1985,301 @@ branches = true
         insta::assert_snapshot!(migration_diff(content, &result));
     }
 
+    // Tests for approved-commands deprecation detection
+
+    #[test]
+    fn test_find_approved_commands_deprecation_none() {
+        let content = r#"
+[commit.generation]
+command = "llm -m haiku"
+"#;
+        assert!(!find_approved_commands_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_approved_commands_deprecation_present() {
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install", "npm test"]
+"#;
+        assert!(find_approved_commands_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_approved_commands_deprecation_empty_array() {
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = []
+"#;
+        assert!(!find_approved_commands_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_approved_commands_deprecation_no_projects() {
+        let content = r#"
+worktree-path = "../{{ repo }}.{{ branch }}"
+"#;
+        assert!(!find_approved_commands_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_approved_commands_deprecation_project_without_approvals() {
+        let content = r#"
+[projects."github.com/user/repo"]
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+"#;
+        assert!(!find_approved_commands_deprecation(content));
+    }
+
+    // Tests for remove_approved_commands_from_config
+
+    #[test]
+    fn test_remove_approved_commands_simple() {
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install", "npm test"]
+"#;
+        let result = remove_approved_commands_from_config(content);
+        assert!(!result.contains("approved-commands"));
+        // Empty project section and empty projects table should be removed
+        assert!(!result.contains("[projects"));
+    }
+
+    #[test]
+    fn test_remove_approved_commands_preserves_other_fields() {
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install"]
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+"#;
+        let result = remove_approved_commands_from_config(content);
+        assert!(!result.contains("approved-commands"));
+        assert!(result.contains("worktree-path"));
+        assert!(result.contains("projects"));
+    }
+
+    #[test]
+    fn test_remove_approved_commands_multiple_projects() {
+        let content = r#"
+[projects."github.com/user/repo1"]
+approved-commands = ["npm install"]
+
+[projects."github.com/user/repo2"]
+approved-commands = ["cargo test"]
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+"#;
+        let result = remove_approved_commands_from_config(content);
+        assert!(!result.contains("approved-commands"));
+        // repo1 had only approved-commands, so its section should be removed
+        assert!(!result.contains("repo1"));
+        // repo2 has other fields, so its section should remain
+        assert!(result.contains("repo2"));
+        assert!(result.contains("worktree-path"));
+    }
+
+    #[test]
+    fn test_remove_approved_commands_no_change() {
+        let content = r#"
+[projects."github.com/user/repo"]
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+"#;
+        let result = remove_approved_commands_from_config(content);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn snapshot_remove_approved_commands() {
+        let content = r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm install", "npm test"]
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+"#;
+        let result = remove_approved_commands_from_config(content);
+        insta::assert_snapshot!(migration_diff(content, &result));
+    }
+
+    #[test]
+    fn snapshot_remove_approved_commands_entire_section() {
+        let content = r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm install"]
+"#;
+        let result = remove_approved_commands_from_config(content);
+        insta::assert_snapshot!(migration_diff(content, &result));
+    }
+
+    #[test]
+    fn test_detect_deprecations_includes_approved_commands() {
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install"]
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.approved_commands);
+        assert!(!deprecations.is_empty());
+    }
+
+    #[test]
+    fn test_remove_approved_commands_invalid_toml() {
+        let content = "this is { not valid toml";
+        let result = remove_approved_commands_from_config(content);
+        assert_eq!(result, content, "Invalid TOML should be returned unchanged");
+    }
+
+    #[test]
+    fn test_format_deprecation_details_approved_commands() {
+        let info = DeprecationInfo {
+            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
+            migration_path: None,
+            deprecations: Deprecations {
+                vars: vec![],
+                commit_gen: CommitGenerationDeprecations::default(),
+                approved_commands: true,
+                select: false,
+            },
+            label: "User config".to_string(),
+            in_linked_worktree: false,
+            approvals_copied_to: None,
+        };
+        let output = format_deprecation_details(&info);
+        assert!(
+            output.contains("approved-commands"),
+            "Should mention approved-commands in output: {}",
+            output
+        );
+        assert!(
+            output.contains("approvals.toml"),
+            "Should mention approvals.toml: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_format_deprecation_details_approvals_copied() {
+        let info = DeprecationInfo {
+            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
+            migration_path: None,
+            deprecations: Deprecations {
+                vars: vec![],
+                commit_gen: CommitGenerationDeprecations::default(),
+                approved_commands: true,
+                select: false,
+            },
+            label: "User config".to_string(),
+            in_linked_worktree: false,
+            approvals_copied_to: Some(std::path::PathBuf::from("/tmp/approvals.toml")),
+        };
+        let output = format_deprecation_details(&info);
+        assert!(
+            output.contains("Copied approved commands"),
+            "Should mention approvals were copied: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_write_migration_file_with_approved_commands() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let content = r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm install"]
+"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        let deprecations = Deprecations {
+            vars: vec![],
+            commit_gen: CommitGenerationDeprecations::default(),
+            approved_commands: true,
+            select: false,
+        };
+        let result = write_migration_file(&config_path, content, &deprecations, None);
+        assert!(
+            result.is_some(),
+            "Should write migration file for approved-commands"
+        );
+        let migration_path = result.unwrap();
+        let migrated = std::fs::read_to_string(&migration_path).unwrap();
+        assert!(!migrated.contains("approved-commands"));
+    }
+
+    #[test]
+    fn test_copy_approved_commands_creates_approvals_file() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install", "npm test"]
+
+[projects."github.com/other/repo"]
+approved-commands = ["cargo build"]
+"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        let result = copy_approved_commands_to_approvals_file(&config_path);
+        assert!(result.is_some(), "Should create approvals.toml");
+
+        let approvals_path = result.unwrap();
+        assert_eq!(approvals_path, temp_dir.path().join("approvals.toml"));
+
+        let approvals_content = std::fs::read_to_string(&approvals_path).unwrap();
+        assert!(
+            approvals_content.contains("npm install"),
+            "Should contain npm install: {}",
+            approvals_content
+        );
+        assert!(
+            approvals_content.contains("npm test"),
+            "Should contain npm test: {}",
+            approvals_content
+        );
+        assert!(
+            approvals_content.contains("cargo build"),
+            "Should contain cargo build: {}",
+            approvals_content
+        );
+    }
+
+    #[test]
+    fn test_copy_approved_commands_skips_when_approvals_exists() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let approvals_path = temp_dir.path().join("approvals.toml");
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install"]
+"#;
+        std::fs::write(&config_path, content).unwrap();
+        std::fs::write(&approvals_path, "# existing approvals\n").unwrap();
+
+        let result = copy_approved_commands_to_approvals_file(&config_path);
+        assert!(result.is_none(), "Should skip when approvals.toml exists");
+
+        // Verify existing file was not overwritten
+        let existing = std::fs::read_to_string(&approvals_path).unwrap();
+        assert_eq!(existing, "# existing approvals\n");
+    }
+
+    #[test]
+    fn test_copy_approved_commands_skips_when_empty() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let content = r#"
+[projects."github.com/user/repo"]
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        let result = copy_approved_commands_to_approvals_file(&config_path);
+        assert!(
+            result.is_none(),
+            "Should skip when no approved-commands exist"
+        );
+    }
+
     #[test]
     fn test_set_implicit_suppresses_parent_header() {
         // Verifies that set_implicit(true) prevents an empty parent table from
@@ -1775,6 +2304,199 @@ branches = true
         assert!(
             result.contains("[commit.generation]"),
             "Should have [commit.generation] header"
+        );
+    }
+
+    // Tests for [select] → [switch.picker] deprecation
+
+    #[test]
+    fn test_find_select_deprecation_none() {
+        let content = r#"
+[switch.picker]
+pager = "delta --paging=never"
+"#;
+        assert!(!find_select_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_select_deprecation_present() {
+        let content = r#"
+[select]
+pager = "delta --paging=never"
+"#;
+        assert!(find_select_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_select_deprecation_empty_not_flagged() {
+        let content = r#"
+[select]
+"#;
+        assert!(!find_select_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_select_deprecation_skips_when_new_exists() {
+        // When both [select] and [switch.picker] exist, don't flag
+        let content = r#"
+[select]
+pager = "old"
+
+[switch.picker]
+pager = "new"
+"#;
+        assert!(!find_select_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_select_deprecation_inline_table() {
+        let content = r#"
+select = { pager = "delta" }
+"#;
+        assert!(find_select_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_select_deprecation_empty_inline_table() {
+        let content = r#"
+select = {}
+"#;
+        assert!(!find_select_deprecation(content));
+    }
+
+    #[test]
+    fn test_migrate_select_simple() {
+        let content = r#"
+[select]
+pager = "delta --paging=never"
+"#;
+        let result = migrate_select_to_switch_picker(content);
+        assert!(
+            result.contains("[switch.picker]"),
+            "Should have [switch.picker]: {result}"
+        );
+        assert!(
+            result.contains("pager = \"delta --paging=never\""),
+            "Should preserve pager: {result}"
+        );
+        assert!(
+            !result.contains("[select]"),
+            "Should remove [select]: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_select_skips_when_new_exists() {
+        let content = r#"
+[select]
+pager = "old"
+
+[switch.picker]
+pager = "new"
+"#;
+        let result = migrate_select_to_switch_picker(content);
+        assert_eq!(
+            result, content,
+            "Should not migrate when new section exists"
+        );
+    }
+
+    #[test]
+    fn test_migrate_select_invalid_toml() {
+        let content = "this is { not valid toml";
+        let result = migrate_select_to_switch_picker(content);
+        assert_eq!(result, content, "Invalid TOML should be returned unchanged");
+    }
+
+    #[test]
+    fn test_migrate_select_no_select_section() {
+        let content = r#"
+[list]
+full = true
+"#;
+        let result = migrate_select_to_switch_picker(content);
+        assert_eq!(result, content, "No [select] section means no migration");
+    }
+
+    #[test]
+    fn test_detect_deprecations_includes_select() {
+        let content = r#"
+[select]
+pager = "delta"
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.select);
+        assert!(!deprecations.is_empty());
+    }
+
+    #[test]
+    fn snapshot_migrate_select_to_switch_picker() {
+        let content = r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+[select]
+pager = "delta --paging=never"
+
+[list]
+branches = true
+"#;
+        let result = migrate_select_to_switch_picker(content);
+        insta::assert_snapshot!(migration_diff(content, &result));
+    }
+
+    #[test]
+    fn test_format_deprecation_details_select() {
+        let info = DeprecationInfo {
+            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
+            migration_path: None,
+            deprecations: Deprecations {
+                vars: vec![],
+                commit_gen: CommitGenerationDeprecations::default(),
+                approved_commands: false,
+                select: true,
+            },
+            label: "User config".to_string(),
+            in_linked_worktree: false,
+            approvals_copied_to: None,
+        };
+        let output = format_deprecation_details(&info);
+        assert!(
+            output.contains("[select]"),
+            "Should mention [select] in output: {output}"
+        );
+        assert!(
+            output.contains("[switch.picker]"),
+            "Should mention [switch.picker]: {output}"
+        );
+    }
+
+    #[test]
+    fn test_write_migration_file_with_select() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let content = r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+[select]
+pager = "delta --paging=never"
+"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        let deprecations = Deprecations {
+            vars: vec![],
+            commit_gen: CommitGenerationDeprecations::default(),
+            approved_commands: false,
+            select: true,
+        };
+        let result = write_migration_file(&config_path, content, &deprecations, None);
+        assert!(result.is_some(), "Should write migration file for select");
+        let migration_path = result.unwrap();
+        let migrated = std::fs::read_to_string(&migration_path).unwrap();
+        assert!(
+            migrated.contains("[switch.picker]"),
+            "Migrated content should have [switch.picker]: {migrated}"
+        );
+        assert!(
+            !migrated.contains("[select]"),
+            "Migrated content should not have [select]: {migrated}"
         );
     }
 }

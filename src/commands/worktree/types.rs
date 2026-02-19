@@ -97,8 +97,6 @@ pub enum SwitchPlan {
     Existing {
         path: PathBuf,
         branch: String,
-        /// Expected path for mismatch detection
-        expected_path: PathBuf,
         /// Branch to record as "previous" for `wt switch -`
         new_previous: Option<String>,
     },

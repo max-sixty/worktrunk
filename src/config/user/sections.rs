@@ -128,6 +128,11 @@ pub struct ListConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remotes: Option<bool>,
 
+    /// Enable LLM-generated branch summaries (picker tab 5 + list Summary column).
+    /// Requires `[commit.generation] command` to be configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<bool>,
+
     /// (Experimental) Per-task timeout in milliseconds.
     /// When set to a positive value, git operations that exceed this timeout are terminated.
     /// Timed-out tasks show defaults in the table. Set to 0 to explicitly disable timeout
@@ -152,6 +157,11 @@ impl ListConfig {
         self.remotes.unwrap_or(false)
     }
 
+    /// Enable LLM-generated branch summaries (default: false)
+    pub fn summary(&self) -> bool {
+        self.summary.unwrap_or(false)
+    }
+
     /// Per-task timeout in milliseconds (default: None)
     pub fn timeout_ms(&self) -> Option<u64> {
         self.timeout_ms
@@ -164,6 +174,7 @@ impl Merge for ListConfig {
             full: other.full.or(self.full),
             branches: other.branches.or(self.branches),
             remotes: other.remotes.or(self.remotes),
+            summary: other.summary.or(self.summary),
             timeout_ms: other.timeout_ms.or(self.timeout_ms),
         }
     }
@@ -274,10 +285,30 @@ impl Merge for MergeConfig {
     }
 }
 
-/// Configuration for the `wt switch` interactive picker.
-// TODO(#890): Rename to SwitchPickerConfig and [switch.picker] once migration is confirmed
+/// **DEPRECATED**: Use `[switch.picker]` instead.
+///
+/// Configuration for the `wt switch` interactive picker (old format).
+/// Kept for backward-compatible deserialization of `[select]` sections.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct SelectConfig {
+    /// Pager command with flags for diff preview
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pager: Option<String>,
+}
+
+impl Merge for SelectConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            pager: other.pager.clone().or_else(|| self.pager.clone()),
+        }
+    }
+}
+
+/// Configuration for the `wt switch` interactive picker.
+///
+/// New format under `[switch.picker]`. Replaces the deprecated `[select]` section.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct SwitchPickerConfig {
     /// Pager command with flags for diff preview
     ///
     /// Overrides git's core.pager for the interactive picker's preview panel.
@@ -286,19 +317,66 @@ pub struct SelectConfig {
     /// Example: `pager = "delta --paging=never"`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pager: Option<String>,
+
+    /// Picker command timeout in milliseconds.
+    ///
+    /// Controls how long to wait for git commands when populating the picker.
+    /// Commands that exceed this timeout fail silently (data not shown).
+    ///
+    /// - Unset: 200ms default
+    /// - `0`: No timeout
+    /// - Positive value: Custom timeout in milliseconds
+    #[serde(rename = "timeout-ms", skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
 }
 
-impl SelectConfig {
-    /// Pager command with flags for diff preview (default: None, uses git default)
+impl SwitchPickerConfig {
+    /// Pager command for diff preview (default: None, uses git default)
     pub fn pager(&self) -> Option<&str> {
         self.pager.as_deref()
     }
+
+    /// Command timeout for the picker.
+    ///
+    /// Returns `None` when timeout is disabled (timeout_ms = 0),
+    /// the configured timeout, or the 200ms default. The 200ms default
+    /// aggressively cuts tail latency so the TUI appears near-instantly;
+    /// users on large repos can raise it via `timeout-ms`.
+    pub fn picker_command_timeout(&self) -> Option<std::time::Duration> {
+        match self.timeout_ms {
+            Some(0) => None,
+            Some(ms) => Some(std::time::Duration::from_millis(ms)),
+            None => Some(std::time::Duration::from_millis(200)),
+        }
+    }
 }
 
-impl Merge for SelectConfig {
+impl Merge for SwitchPickerConfig {
     fn merge_with(&self, other: &Self) -> Self {
         Self {
             pager: other.pager.clone().or_else(|| self.pager.clone()),
+            timeout_ms: other.timeout_ms.or(self.timeout_ms),
+        }
+    }
+}
+
+/// Configuration for the `wt switch` command
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct SwitchConfig {
+    /// Picker settings for the interactive selector
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picker: Option<SwitchPickerConfig>,
+}
+
+impl Merge for SwitchConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            picker: match (&self.picker, &other.picker) {
+                (None, None) => None,
+                (Some(s), None) => Some(s.clone()),
+                (None, Some(o)) => Some(o.clone()),
+                (Some(s), Some(o)) => Some(s.merge_with(o)),
+            },
         }
     }
 }
@@ -342,7 +420,11 @@ pub struct OverridableConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge: Option<MergeConfig>,
 
-    /// Configuration for the `wt switch` interactive picker
+    /// Configuration for the `wt switch` command
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub switch: Option<SwitchConfig>,
+
+    /// **DEPRECATED**: Use `[switch.picker]` instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub select: Option<SelectConfig>,
 }
@@ -357,6 +439,7 @@ impl OverridableConfig {
             && self.list.is_none()
             && self.commit.is_none()
             && self.merge.is_none()
+            && self.switch.is_none()
             && self.select.is_none()
     }
 }
@@ -374,6 +457,7 @@ impl Merge for OverridableConfig {
             list: merge_optional(self.list.as_ref(), other.list.as_ref()),
             commit: merge_optional(self.commit.as_ref(), other.commit.as_ref()),
             merge: merge_optional(self.merge.as_ref(), other.merge.as_ref()),
+            switch: merge_optional(self.switch.as_ref(), other.switch.as_ref()),
             select: merge_optional(self.select.as_ref(), other.select.as_ref()),
         }
     }
@@ -420,7 +504,7 @@ pub struct UserProjectOverrides {
     )]
     pub commit_generation: Option<CommitGenerationConfig>,
 
-    /// Per-project overrides (worktree-path, list, commit, merge, select)
+    /// Per-project overrides (worktree-path, list, commit, merge, switch, select)
     #[serde(flatten, default)]
     pub overrides: OverridableConfig,
 }
@@ -428,11 +512,9 @@ pub struct UserProjectOverrides {
 impl UserProjectOverrides {
     /// Returns true if all fields are empty/None (no settings configured).
     ///
-    /// Used to determine if a project entry can be removed from config after
-    /// clearing approvals.
+    /// Approvals are stored in `approvals.toml`, so `approved_commands` is only
+    /// kept here for backward-compatible parsing and migration — not checked.
     pub fn is_empty(&self) -> bool {
-        self.approved_commands.is_empty()
-            && self.commit_generation.is_none()
-            && self.overrides.is_empty()
+        self.commit_generation.is_none() && self.overrides.is_empty()
     }
 }
