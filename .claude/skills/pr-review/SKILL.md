@@ -102,6 +102,20 @@ tactical checklist.
 - Are the changes adequately tested?
 - Do the tests follow the project's testing conventions (see tests/CLAUDE.md)?
 
+**Same pattern elsewhere:**
+
+When a PR fixes a bug or changes a pattern, search for the same pattern in
+other files. A fix applied to one location often needs to be applied to sibling
+files. For example, if a PR fixes a broken path in one workflow file, grep for
+the same broken path across all workflow files.
+
+```bash
+# Example: PR fixes `${{ env.HOME }}` in one workflow — check all workflows
+rg 'env\.HOME' .github/workflows/
+```
+
+If the same issue exists elsewhere, flag it in the review.
+
 ### 4. Resolve handled suggestions
 
 After reviewing the code, check if any unresolved review threads from the bot
