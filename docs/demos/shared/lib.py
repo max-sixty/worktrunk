@@ -709,14 +709,33 @@ fi
 """)
     flyctl_mock.chmod(0o755)
 
-    # llm mock - simulates LLM commit message generation
+    # llm mock - simulates both commit message and summary generation.
+    # Reads stdin to detect prompt type: summary prompts contain "summary",
+    # commit prompts don't. For summaries, returns branch-appropriate one-liners
+    # based on filenames in the diff.
     llm_mock = bin_dir / "llm"
-    llm_mock.write_text("""#!/bin/bash
-sleep 0.5
-echo "feat(validation): add input validation utilities"
-echo ""
-echo "Add validation module with is_positive and is_non_empty helpers"
-echo "for validating user input. Includes comprehensive test coverage."
+    llm_mock.write_text(r"""#!/bin/bash
+input=$(cat)
+
+if echo "$input" | grep -qi "summary"; then
+    # Summary generation — return branch-appropriate one-liner
+    if echo "$input" | grep -q "utils\.rs"; then
+        echo "Add utility functions module with string and math helpers"
+    elif echo "$input" | grep -q "notes\.txt"; then
+        echo "Add TODO notes for caching improvements"
+    elif echo "$input" | grep -q "multiply\|subtract\|math"; then
+        echo "Add math operations and consolidate tests"
+    else
+        echo "Expand README with contributing and license sections"
+    fi
+else
+    # Commit message generation
+    sleep 0.5
+    echo "feat(validation): add input validation utilities"
+    echo ""
+    echo "Add validation module with is_positive and is_non_empty helpers"
+    echo "for validating user input. Includes comprehensive test coverage."
+fi
 """)
     llm_mock.chmod(0o755)
 
