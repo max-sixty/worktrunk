@@ -48,9 +48,15 @@ jobs:
           git config --global user.name "Claude Code"
           git config --global user.email "claude@anthropic.com"
 
-      - name: 📌 Check out PR branch
+      - name: 📌 Check out PR branch (conversation comment)
         if: github.event.issue.pull_request
         run: gh pr checkout ${{ github.event.issue.number }}
+        env:
+          GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
+      - name: 📌 Check out PR branch (review comment)
+        if: github.event_name == 'pull_request_review_comment'
+        run: gh pr checkout ${{ github.event.pull_request.number }}
         env:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 

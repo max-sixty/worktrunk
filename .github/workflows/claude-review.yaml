@@ -26,7 +26,7 @@ jobs:
       github.event.pull_request.user.type != 'Bot'
     runs-on: ubuntu-24.04
     permissions:
-      contents: write
+      contents: read # Read-only: review workflow should not push code
       pull-requests: write
       issues: write
       id-token: write
@@ -47,11 +47,12 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.WORKTRUNK_REVIEW_TOKEN }}
+          # BOT_TOKEN so reviews post as worktrunk-bot (not github-actions[bot]).
+          # Merge restriction (ruleset) is the security boundary, not token
+          # scoping. See .github/CLAUDE.md.
+          github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
           additional_permissions: |
             actions: read
-          # TODO: sticky comment stopped appearing after switching to WORKTRUNK_REVIEW_TOKEN PAT.
-          # Bot now puts feedback in review bodies instead of stdout, so this may be a no-op.
           use_sticky_comment: true
           prompt: |
             Use /pr-review ${{ github.event.pull_request.number }}

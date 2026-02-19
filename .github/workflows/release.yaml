@@ -295,6 +295,7 @@ jobs:
       - plan
       - host
     runs-on: ubuntu-24.04
+    environment: release
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     steps:
       - uses: actions/checkout@v6
@@ -360,6 +361,7 @@ jobs:
       - plan
       - host
     runs-on: ubuntu-24.04
+    environment: release
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     steps:
       - uses: actions/checkout@v6
