@@ -333,6 +333,16 @@ fn prompted_pty_interaction(
             std::thread::sleep(poll);
         }
 
+        // Brief drain: give the PTY time to deliver remaining prompt bytes
+        // after the marker. Without this, the echo of our input can interleave
+        // with trailing prompt bytes (ANSI resets, spaces) that were part of
+        // the same write but arrived in a separate read chunk. This race
+        // manifests as non-deterministic output ordering on macOS.
+        std::thread::sleep(Duration::from_millis(50));
+        while let Ok(chunk) = rx.try_recv() {
+            accumulated.extend_from_slice(&chunk);
+        }
+
         writer.write_all(input.as_bytes()).unwrap();
         writer.flush().unwrap();
     }
