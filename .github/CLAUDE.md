@@ -15,7 +15,7 @@ Token scoping (principle of least privilege) is a secondary practice, not a secu
 
 ### Classic branch protection (current)
 
-- **Required reviews**: 1 approval
+- **Required reviews**: none (the ruleset is the merge restriction, not approvals)
 - **Required status checks**: `test (linux)`, `test (macos)`, `test (windows)`
 - **Enforce admins**: off
 
