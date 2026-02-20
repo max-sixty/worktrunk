@@ -968,13 +968,8 @@ fn distribute_staged(
         let staging_entry = staging_b.join(relative);
         let dest_entry = path_a.join(relative);
         if fs::symlink_metadata(&staging_entry).is_ok() {
-            move_entry(&staging_entry, &dest_entry, *is_dir).with_context(|| {
-                format!(
-                    "distributing {} to {}",
-                    relative.display(),
-                    path_a.display()
-                )
-            })?;
+            move_entry(&staging_entry, &dest_entry, *is_dir)
+                .context(format!("distributing {}", relative.display()))?;
             count += 1;
         }
     }
@@ -987,13 +982,8 @@ fn distribute_staged(
         let staging_entry = staging_a.join(relative);
         let dest_entry = path_b.join(relative);
         if fs::symlink_metadata(&staging_entry).is_ok() {
-            move_entry(&staging_entry, &dest_entry, *is_dir).with_context(|| {
-                format!(
-                    "distributing {} to {}",
-                    relative.display(),
-                    path_b.display()
-                )
-            })?;
+            move_entry(&staging_entry, &dest_entry, *is_dir)
+                .context(format!("distributing {}", relative.display()))?;
             count += 1;
         }
     }
@@ -1026,7 +1016,7 @@ fn restore_staged(
         let staging_entry = staging_a.join(relative);
         if fs::symlink_metadata(&staging_entry).is_ok() {
             move_entry(&staging_entry, src_entry, *is_dir)
-                .with_context(|| format!("restoring {}", relative.display()))?;
+                .context(format!("restoring {}", relative.display()))?;
         }
     }
 
@@ -1038,7 +1028,7 @@ fn restore_staged(
         let staging_entry = staging_b.join(relative);
         if fs::symlink_metadata(&staging_entry).is_ok() {
             move_entry(&staging_entry, src_entry, *is_dir)
-                .with_context(|| format!("restoring {}", relative.display()))?;
+                .context(format!("restoring {}", relative.display()))?;
         }
     }
 
@@ -1274,12 +1264,10 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
             target_path,
             &target_entries,
         )
-        .with_context(|| {
-            format!(
-                "Failed to stage ignored files. Already-staged files may be recoverable from: {}",
-                staging_path.display()
-            )
-        })?;
+        .context(format!(
+            "Failed to stage ignored files. Already-staged files may be recoverable from: {}",
+            staging_path.display()
+        ))?;
         if count > 0 { Some((dir, count)) } else { None }
     } else {
         None
@@ -1318,12 +1306,10 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
             target_path,
             &target_entries,
         )
-        .with_context(|| {
-            format!(
-                "Failed to distribute staged files. Staged files may be recoverable from: {}",
-                staging_dir.display()
-            )
-        })?
+        .context(format!(
+            "Failed to distribute staged files. Staged files may be recoverable from: {}",
+            staging_dir.display()
+        ))?
     } else {
         0
     };
@@ -1507,5 +1493,134 @@ mod tests {
         // Trying to remove a directory with remove_file produces a non-NotFound error
         let dir = std::env::temp_dir();
         assert!(remove_if_exists(&dir).is_err());
+    }
+
+    #[test]
+    fn test_restore_staged_moves_files_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let staging = tmp.path().join("staging");
+        let path_a = tmp.path().join("worktree_a");
+        let path_b = tmp.path().join("worktree_b");
+
+        // Create staging directory with files from both worktrees
+        fs::create_dir_all(staging.join("a/build")).unwrap();
+        fs::write(staging.join("a/build/artifact"), "from A").unwrap();
+        fs::write(staging.join("a/app.log"), "A log").unwrap();
+        fs::create_dir_all(staging.join("b")).unwrap();
+        fs::write(staging.join("b/debug.log"), "B log").unwrap();
+
+        // Create destination directories
+        fs::create_dir_all(&path_a).unwrap();
+        fs::create_dir_all(&path_b).unwrap();
+
+        let entries_a = vec![
+            (path_a.join("build"), true),
+            (path_a.join("app.log"), false),
+        ];
+        let entries_b = vec![(path_b.join("debug.log"), false)];
+
+        restore_staged(&staging, &path_a, &entries_a, &path_b, &entries_b).unwrap();
+
+        // A's files restored to A
+        assert_eq!(
+            fs::read_to_string(path_a.join("build/artifact")).unwrap(),
+            "from A"
+        );
+        assert_eq!(fs::read_to_string(path_a.join("app.log")).unwrap(), "A log");
+
+        // B's files restored to B
+        assert_eq!(
+            fs::read_to_string(path_b.join("debug.log")).unwrap(),
+            "B log"
+        );
+
+        // Staging directory cleaned up
+        assert!(!staging.exists());
+    }
+
+    #[test]
+    fn test_restore_staged_skips_missing_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let staging = tmp.path().join("staging");
+        let path_a = tmp.path().join("worktree_a");
+        let path_b = tmp.path().join("worktree_b");
+
+        // Create staging with only some entries
+        fs::create_dir_all(staging.join("a")).unwrap();
+        fs::write(staging.join("a/exists.log"), "data").unwrap();
+        fs::create_dir_all(staging.join("b")).unwrap();
+
+        fs::create_dir_all(&path_a).unwrap();
+        fs::create_dir_all(&path_b).unwrap();
+
+        let entries_a = vec![
+            (path_a.join("exists.log"), false),
+            (path_a.join("missing.log"), false), // not in staging
+        ];
+        let entries_b: Vec<(PathBuf, bool)> = vec![];
+
+        // Should succeed, skipping missing entries
+        restore_staged(&staging, &path_a, &entries_a, &path_b, &entries_b).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(path_a.join("exists.log")).unwrap(),
+            "data"
+        );
+        assert!(!path_a.join("missing.log").exists());
+    }
+
+    #[test]
+    fn test_restore_staged_or_warn_succeeds_silently() {
+        let tmp = tempfile::tempdir().unwrap();
+        let staging = tmp.path().join("staging");
+        let path_a = tmp.path().join("a");
+        let path_b = tmp.path().join("b");
+
+        fs::create_dir_all(staging.join("a")).unwrap();
+        fs::write(staging.join("a/file.txt"), "data").unwrap();
+        fs::create_dir_all(staging.join("b")).unwrap();
+        fs::create_dir_all(&path_a).unwrap();
+        fs::create_dir_all(&path_b).unwrap();
+
+        let entries_a = vec![(path_a.join("file.txt"), false)];
+        let entries_b: Vec<(PathBuf, bool)> = vec![];
+
+        // Should not panic
+        restore_staged_or_warn(&staging, &path_a, &entries_a, &path_b, &entries_b);
+
+        assert_eq!(fs::read_to_string(path_a.join("file.txt")).unwrap(), "data");
+    }
+
+    #[test]
+    fn test_move_entry_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("source.txt");
+        let dest = tmp.path().join("subdir/dest.txt");
+
+        fs::write(&src, "content").unwrap();
+        move_entry(&src, &dest, false).unwrap();
+
+        assert!(!src.exists());
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "content");
+    }
+
+    #[test]
+    fn test_move_entry_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("srcdir");
+        let dest = tmp.path().join("nested/destdir");
+
+        fs::create_dir_all(src.join("inner")).unwrap();
+        fs::write(src.join("inner/file.txt"), "nested").unwrap();
+        fs::write(src.join("root.txt"), "root").unwrap();
+
+        move_entry(&src, &dest, true).unwrap();
+
+        assert!(!src.exists());
+        assert_eq!(
+            fs::read_to_string(dest.join("inner/file.txt")).unwrap(),
+            "nested"
+        );
+        assert_eq!(fs::read_to_string(dest.join("root.txt")).unwrap(), "root");
     }
 }
