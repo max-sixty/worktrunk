@@ -104,11 +104,26 @@ jobs:
             - Look for tool calls, decisions, and outcomes
             - Trace decision chains: what did Claude decide, what evidence did it use, what was the outcome?
 
-            ## Step 4: Identify problems
+            ## Step 4: Cross-check review sessions against PR outcomes
 
-            Compare each session against CLAUDE.md and project conventions. Flag anything where Claude's behavior diverged from the guidelines or produced a poor outcome.
+            For `claude-review` runs, compare what the bot said against what happened next on the PR. Get the PR number from the run's head branch:
 
-            ## Step 5: Check for existing issues
+            ```
+            HEAD_BRANCH=$(gh run view <run-id> --json headBranch --jq '.headBranch')
+            PR_NUMBER=$(gh pr list --head "$HEAD_BRANCH" --state all --json number --jq '.[0].number')
+            ```
+
+            Then check:
+            - **Subsequent commits**: Were files removed, reverted, or fixed after the review? If the author undid something the bot approved without comment, the bot missed it.
+            - **Human review comments**: Did human reviewers flag issues the bot didn't? These are gaps in the review process.
+
+            This is the strongest signal — it shows what the reviewer actually missed, not just whether it followed process.
+
+            ## Step 5: Identify problems
+
+            Compare each session against CLAUDE.md and project conventions. Flag anything where Claude's behavior diverged from the guidelines or produced a poor outcome. Include findings from the cross-check in Step 4.
+
+            ## Step 6: Check for existing issues
 
             Before creating any new issues or PRs, check for duplicates:
             ```
@@ -116,7 +131,7 @@ jobs:
             gh pr list --state open --json number,title,headRefName
             ```
 
-            ## Step 6: Report findings
+            ## Step 7: Report findings
 
             For each problem found:
             1. **Create a GitHub issue** with label `claude-behavior`:
@@ -130,7 +145,7 @@ jobs:
                - Commit and push
                - Create a PR referencing the issue
 
-            ## Step 7: Summary
+            ## Step 8: Summary
 
             If no problems were found, report "all clear" with summary statistics:
             - Number of runs analyzed

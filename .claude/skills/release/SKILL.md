@@ -13,7 +13,7 @@ description: Worktrunk release workflow. Use when user asks to "do a release", "
 4. **Credit contributors**: Check for external PR authors and issue reporters (see "Credit External Contributors" and "Credit Issue Reporters" below)
 5. **Confirm release type with user**: Present changes summary and ask user to confirm patch/minor/major (see below)
 6. **Update CHANGELOG**: Add `## X.Y.Z` section at top with changes (see MANDATORY verification below)
-7. **Bump version**: Update `version` in `Cargo.toml`, run `cargo check` to update `Cargo.lock`
+7. **Bump version**: `cargo release X.Y.Z -p worktrunk -x --no-publish --no-push --no-tag --no-verify --no-confirm && cargo check`
 8. **Commit**: `git add -A && git commit -m "Release vX.Y.Z"`
 9. **Merge to main**: `wt merge --no-remove` (rebases onto main, pushes, keeps worktree)
 10. **Tag and push**: `git tag vX.Y.Z && git push origin vX.Y.Z`
