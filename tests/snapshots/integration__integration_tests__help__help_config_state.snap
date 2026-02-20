@@ -39,6 +39,7 @@ Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36mmarker[0m           Branch markers
   [1m[36mlogs[0m             Background operation logs
   [1m[36mhints[0m            One-time hints shown in this repo
+  [1m[36mkv[0m               [experimental] Arbitrary key-value data per branch
   [1m[36mget[0m              Get all stored state
   [1m[36mclear[0m            Clear all stored state
 
@@ -65,6 +66,7 @@ Use [2mwt config show[0m to view file-based configuration.
 - [1mprevious-branch[0m: Previous branch for [2mwt switch -[0m
 - [1mci-status[0m: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - [1mmarker[0m: Custom status marker for a branch (shown in [2mwt list[0m)
+- [1mkv[0m: [experimental] Arbitrary key-value data per branch
 - [1mlogs[0m: Background operation logs
 
 [1m[32mExamples[0m
@@ -77,6 +79,9 @@ Set the default branch manually:
 
 Set a marker for current branch:
   [2mwt config state marker set "🚧 WIP"[0m
+
+Store arbitrary data:
+  [2mwt config state kv set env staging[0m
 
 Clear all CI status cache:
   [2mwt config state ci-status clear --all[0m

@@ -40,9 +40,11 @@ pub const TEMPLATE_VARS: &[&str] = &[
     "remote",
     "remote_url",
     "upstream",
-    "target",             // Added by merge/rebase hooks via extra_vars
-    "base",               // Added by creation hooks via extra_vars
+    "target", // Added by merge/rebase hooks via extra_vars
+    "base",   // Added by creation hooks via extra_vars
     "base_worktree_path", // Added by creation hooks via extra_vars
+              // Note: `kv` is NOT listed here — it's a structured object injected by expand_template,
+              // not a simple string that --var can override.
 ];
 
 /// Deprecated template variable aliases (still valid for backward compatibility).
@@ -328,6 +330,29 @@ pub fn expand_template(
             key.to_string(),
             minijinja::Value::from((*value).to_string()),
         );
+    }
+
+    // Inject kv data as a nested object: {{ kv.env }}, {{ kv.config.port }}
+    // When branch is present, always inject (even if empty map) so {{ kv.key | default(...) }}
+    // works in SemiStrict mode. Only look up kv data if the template references it (avoids a
+    // git process spawn per expansion). JSON objects/arrays are parsed so dot access works
+    // ({{ kv.config.port }}); plain strings and numbers stay as-is.
+    if template.contains("kv")
+        && let Some(branch) = vars.get("branch")
+    {
+        let entries = repo.kv_entries(branch);
+        let kv_map: std::collections::BTreeMap<String, Value> = entries
+            .into_iter()
+            .map(|(k, v)| {
+                let value = serde_json::from_str::<serde_json::Value>(&v)
+                    .ok()
+                    .filter(|j| j.is_object() || j.is_array())
+                    .map(|j| Value::from_serialize(&j))
+                    .unwrap_or_else(|| Value::from(v));
+                (k, value)
+            })
+            .collect();
+        context.insert("kv".to_string(), Value::from_serialize(&kv_map));
     }
 
     // Render template with minijinja
@@ -1053,6 +1078,200 @@ mod tests {
         assert_eq!(
             redact_credentials("https://token@github.com/owner/repo.git?ref=main"),
             "https://[REDACTED]@github.com/owner/repo.git?ref=main"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_kv_data() {
+        let test = test_repo();
+
+        // Set kv data via git config
+        std::process::Command::new("git")
+            .args(["config", "worktrunk.state.main.kv.env", "staging"])
+            .current_dir(test._dir.path())
+            .status()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "worktrunk.state.main.kv.port", "3000"])
+            .current_dir(test._dir.path())
+            .status()
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        vars.insert("branch", "main");
+
+        // Access kv via dot notation
+        assert_eq!(
+            expand_template("{{ kv.env }}", &vars, false, &test.repo, "test").unwrap(),
+            "staging"
+        );
+        assert_eq!(
+            expand_template("{{ kv.port }}", &vars, false, &test.repo, "test").unwrap(),
+            "3000"
+        );
+
+        // Default filter for missing kv keys
+        assert_eq!(
+            expand_template(
+                "{{ kv.missing | default('fallback') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "fallback"
+        );
+
+        // Conditional on kv
+        assert_eq!(
+            expand_template(
+                "{% if kv.env %}env={{ kv.env }}{% endif %}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "env=staging"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_kv_json_dot_access() {
+        let test = test_repo();
+
+        // Store a JSON object as a kv value
+        std::process::Command::new("git")
+            .args([
+                "config",
+                "worktrunk.state.main.kv.config",
+                r#"{"port": 3000, "debug": true}"#,
+            ])
+            .current_dir(test._dir.path())
+            .status()
+            .unwrap();
+
+        // Store a JSON array
+        std::process::Command::new("git")
+            .args([
+                "config",
+                "worktrunk.state.main.kv.tags",
+                r#"["alpha", "beta"]"#,
+            ])
+            .current_dir(test._dir.path())
+            .status()
+            .unwrap();
+
+        // Store a plain string (not JSON)
+        std::process::Command::new("git")
+            .args(["config", "worktrunk.state.main.kv.env", "staging"])
+            .current_dir(test._dir.path())
+            .status()
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        vars.insert("branch", "main");
+
+        // Dot access into JSON object
+        assert_eq!(
+            expand_template("{{ kv.config.port }}", &vars, false, &test.repo, "test").unwrap(),
+            "3000"
+        );
+        assert_eq!(
+            expand_template("{{ kv.config.debug }}", &vars, false, &test.repo, "test").unwrap(),
+            "true"
+        );
+
+        // Array index access
+        assert_eq!(
+            expand_template("{{ kv.tags[0] }}", &vars, false, &test.repo, "test").unwrap(),
+            "alpha"
+        );
+
+        // Plain string still works
+        assert_eq!(
+            expand_template("{{ kv.env }}", &vars, false, &test.repo, "test").unwrap(),
+            "staging"
+        );
+
+        // Default filter on missing nested key
+        assert_eq!(
+            expand_template(
+                "{{ kv.config.missing | default('fallback') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "fallback"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_kv_json_shell_escape() {
+        let test = test_repo();
+
+        std::process::Command::new("git")
+            .args([
+                "config",
+                "worktrunk.state.main.kv.config",
+                r#"{"name": "my project", "cmd": "echo hello"}"#,
+            ])
+            .current_dir(test._dir.path())
+            .status()
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        vars.insert("branch", "main");
+
+        // Shell escaping should work on JSON-parsed nested values
+        let result =
+            expand_template("{{ kv.config.name }}", &vars, true, &test.repo, "test").unwrap();
+        assert_eq!(result, "'my project'");
+
+        let result =
+            expand_template("{{ kv.config.cmd }}", &vars, true, &test.repo, "test").unwrap();
+        assert_eq!(result, "'echo hello'");
+    }
+
+    #[test]
+    fn test_expand_template_kv_empty_when_no_branch() {
+        let test = test_repo();
+        let vars = HashMap::new(); // No branch var
+
+        // kv should be undefined (no branch to look up)
+        assert_eq!(
+            expand_template(
+                "{{ kv | default('none') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "none"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_kv_empty_when_no_data() {
+        let test = test_repo();
+        let mut vars = HashMap::new();
+        vars.insert("branch", "main");
+
+        // kv not injected when no entries exist — use default filter
+        assert_eq!(
+            expand_template(
+                "{{ kv.env | default('dev') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "dev"
         );
     }
 }

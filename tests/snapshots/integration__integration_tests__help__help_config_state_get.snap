@@ -57,6 +57,7 @@ Shows all stored state including:
 - [1mDefault branch[0m: Cached result of querying remote for default branch
 - [1mPrevious branch[0m: Previous branch for [2mwt switch -[0m
 - [1mBranch markers[0m: User-defined branch notes
+- [1mKV data[0m: Arbitrary key-value data per branch
 - [1mCI status[0m: Cached GitHub/GitLab CI status per branch (30s TTL)
 - [1mHints[0m: One-time hints that have been shown
 - [1mLog files[0m: Background operation logs
