@@ -1018,8 +1018,8 @@ fn exchange_branches(
     target_branch: &str,
 ) -> anyhow::Result<()> {
     let steps: &[(&worktrunk::git::WorkingTree<'_>, &[&str], &str)] = &[
-        (target_wt, &["checkout", "--detach"], "detach target"),
-        (main_wt, &["checkout", "--detach"], "detach main"),
+        (target_wt, &["switch", "--detach"], "detach target"),
+        (main_wt, &["switch", "--detach"], "detach main"),
         (main_wt, &["switch", target_branch], "switch main"),
         (target_wt, &["switch", main_branch], "switch target"),
     ];
@@ -1111,15 +1111,9 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
 
     let target_path = &target_wt.path;
 
-    // Ensure both worktrees are clean
-    let main_working_tree = repo.worktree_at(main_path);
-    let target_working_tree = repo.worktree_at(target_path);
-
-    main_working_tree.ensure_clean("promote", Some(&main_branch), false)?;
-    target_working_tree.ensure_clean("promote", Some(&target_branch), false)?;
-
     // Bail early if a leftover staging dir exists from a previous interrupted promote —
     // it may contain the user's only copy of files from the failed swap.
+    // Check BEFORE ensure_clean so users see the recovery path first.
     let staging_path = repo.git_common_dir().join(PROMOTE_STAGING_DIR);
     if staging_path.exists() {
         return Err(anyhow::anyhow!(
@@ -1130,6 +1124,13 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         )
         .context("Found leftover staging directory from an interrupted promote"));
     }
+
+    // Ensure both worktrees are clean
+    let main_working_tree = repo.worktree_at(main_path);
+    let target_working_tree = repo.worktree_at(target_path);
+
+    main_working_tree.ensure_clean("promote", Some(&main_branch), false)?;
+    target_working_tree.ensure_clean("promote", Some(&target_branch), false)?;
 
     // Check if we're restoring canonical state (promoting default branch back to main worktree)
     // Only lookup default_branch if needed for messaging (already resolved if no-arg from main)
