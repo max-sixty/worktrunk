@@ -995,72 +995,6 @@ fn distribute_staged(
     Ok(count)
 }
 
-/// Restore staged files to their original worktrees (undo staging on failure).
-///
-/// Unlike `distribute_staged` which crosses entries (A→B, B→A), this puts each
-/// side's entries back where they came from (staging-a→A, staging-b→B).
-fn restore_staged(
-    staging_dir: &Path,
-    path_a: &Path,
-    entries_a: &[(PathBuf, bool)],
-    path_b: &Path,
-    entries_b: &[(PathBuf, bool)],
-) -> anyhow::Result<()> {
-    let staging_a = staging_dir.join("a");
-    let staging_b = staging_dir.join("b");
-
-    // Move staging-a entries back to A
-    for (src_entry, is_dir) in entries_a {
-        let relative = src_entry
-            .strip_prefix(path_a)
-            .context("entry not under worktree A")?;
-        let staging_entry = staging_a.join(relative);
-        if fs::symlink_metadata(&staging_entry).is_ok() {
-            move_entry(&staging_entry, src_entry, *is_dir)
-                .context(format!("restoring {}", relative.display()))?;
-        }
-    }
-
-    // Move staging-b entries back to B
-    for (src_entry, is_dir) in entries_b {
-        let relative = src_entry
-            .strip_prefix(path_b)
-            .context("entry not under worktree B")?;
-        let staging_entry = staging_b.join(relative);
-        if fs::symlink_metadata(&staging_entry).is_ok() {
-            move_entry(&staging_entry, src_entry, *is_dir)
-                .context(format!("restoring {}", relative.display()))?;
-        }
-    }
-
-    // Clean up staging directory
-    if staging_dir.exists() {
-        fs::remove_dir_all(staging_dir).context("cleaning up promote staging directory")?;
-    }
-
-    Ok(())
-}
-
-/// Best-effort restore with user-visible warning on failure.
-fn restore_staged_or_warn(
-    staging_dir: &Path,
-    path_a: &Path,
-    entries_a: &[(PathBuf, bool)],
-    path_b: &Path,
-    entries_b: &[(PathBuf, bool)],
-) {
-    if let Err(restore_err) = restore_staged(staging_dir, path_a, entries_a, path_b, entries_b) {
-        eprintln!(
-            "{}",
-            warning_message(format!(
-                "Failed to restore staged files: {restore_err:#}. \
-                 Files may need manual recovery from: {}",
-                staging_dir.display()
-            ))
-        );
-    }
-}
-
 /// Result of a promote operation
 pub enum PromoteResult {
     /// Branch was promoted successfully
@@ -1114,9 +1048,8 @@ fn exchange_branches(
 /// 3. **Distribute**: move staged files to their new worktrees, then delete staging
 ///
 /// A hard kill at any phase leaves files in staging, never deleted. The next run
-/// detects the leftover directory and bails with a recovery path. Branch exchange
-/// has per-step rollback for git errors; a kill during `git switch` may leave a
-/// worktree detached (fix: `git switch <branch>`).
+/// detects the leftover directory and bails with a recovery path. A kill during
+/// `git switch` may leave a worktree detached (fix: `git switch <branch>`).
 pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     use worktrunk::git::GitError;
 
@@ -1248,29 +1181,15 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         None
     };
 
-    // Perform the branch exchange with rollback on failure:
-    // 1. Detach both worktrees (releases branch locks)
-    // 2. Switch to exchanged branches
-    //
-    // Detach target first so if it fails, main worktree is unchanged.
-    if let Err(e) = exchange_branches(
+    // Exchange branches (detach both, then switch to swapped branches).
+    // Failure is near-impossible (both worktrees verified clean, branches exist).
+    // If it somehow fails, stale staging detection recovers on next run.
+    exchange_branches(
         &main_working_tree,
         &main_branch,
         &target_working_tree,
         &target_branch,
-    ) {
-        // Branch exchange failed — restore staged files to their original worktrees.
-        if let Some((ref staging_dir, _)) = staged {
-            restore_staged_or_warn(
-                staging_dir,
-                main_path,
-                &main_entries,
-                target_path,
-                &target_entries,
-            );
-        }
-        return Err(e);
-    }
+    )?;
 
     // Distribute staged files to their new worktrees (after branch exchange)
     let swapped = if let Some((ref staging_dir, _)) = staged {
@@ -1471,102 +1390,6 @@ mod tests {
     }
 
     #[test]
-    fn test_restore_staged_moves_files_back() {
-        let tmp = tempfile::tempdir().unwrap();
-        let staging = tmp.path().join("staging");
-        let path_a = tmp.path().join("worktree_a");
-        let path_b = tmp.path().join("worktree_b");
-
-        // Create staging directory with files from both worktrees
-        fs::create_dir_all(staging.join("a/build")).unwrap();
-        fs::write(staging.join("a/build/artifact"), "from A").unwrap();
-        fs::write(staging.join("a/app.log"), "A log").unwrap();
-        fs::create_dir_all(staging.join("b")).unwrap();
-        fs::write(staging.join("b/debug.log"), "B log").unwrap();
-
-        // Create destination directories
-        fs::create_dir_all(&path_a).unwrap();
-        fs::create_dir_all(&path_b).unwrap();
-
-        let entries_a = vec![
-            (path_a.join("build"), true),
-            (path_a.join("app.log"), false),
-        ];
-        let entries_b = vec![(path_b.join("debug.log"), false)];
-
-        restore_staged(&staging, &path_a, &entries_a, &path_b, &entries_b).unwrap();
-
-        // A's files restored to A
-        assert_eq!(
-            fs::read_to_string(path_a.join("build/artifact")).unwrap(),
-            "from A"
-        );
-        assert_eq!(fs::read_to_string(path_a.join("app.log")).unwrap(), "A log");
-
-        // B's files restored to B
-        assert_eq!(
-            fs::read_to_string(path_b.join("debug.log")).unwrap(),
-            "B log"
-        );
-
-        // Staging directory cleaned up
-        assert!(!staging.exists());
-    }
-
-    #[test]
-    fn test_restore_staged_skips_missing_entries() {
-        let tmp = tempfile::tempdir().unwrap();
-        let staging = tmp.path().join("staging");
-        let path_a = tmp.path().join("worktree_a");
-        let path_b = tmp.path().join("worktree_b");
-
-        // Create staging with only some entries
-        fs::create_dir_all(staging.join("a")).unwrap();
-        fs::write(staging.join("a/exists.log"), "data").unwrap();
-        fs::create_dir_all(staging.join("b")).unwrap();
-
-        fs::create_dir_all(&path_a).unwrap();
-        fs::create_dir_all(&path_b).unwrap();
-
-        let entries_a = vec![
-            (path_a.join("exists.log"), false),
-            (path_a.join("missing.log"), false), // not in staging
-        ];
-        let entries_b: Vec<(PathBuf, bool)> = vec![];
-
-        // Should succeed, skipping missing entries
-        restore_staged(&staging, &path_a, &entries_a, &path_b, &entries_b).unwrap();
-
-        assert_eq!(
-            fs::read_to_string(path_a.join("exists.log")).unwrap(),
-            "data"
-        );
-        assert!(!path_a.join("missing.log").exists());
-    }
-
-    #[test]
-    fn test_restore_staged_or_warn_succeeds_silently() {
-        let tmp = tempfile::tempdir().unwrap();
-        let staging = tmp.path().join("staging");
-        let path_a = tmp.path().join("a");
-        let path_b = tmp.path().join("b");
-
-        fs::create_dir_all(staging.join("a")).unwrap();
-        fs::write(staging.join("a/file.txt"), "data").unwrap();
-        fs::create_dir_all(staging.join("b")).unwrap();
-        fs::create_dir_all(&path_a).unwrap();
-        fs::create_dir_all(&path_b).unwrap();
-
-        let entries_a = vec![(path_a.join("file.txt"), false)];
-        let entries_b: Vec<(PathBuf, bool)> = vec![];
-
-        // Should not panic
-        restore_staged_or_warn(&staging, &path_a, &entries_a, &path_b, &entries_b);
-
-        assert_eq!(fs::read_to_string(path_a.join("file.txt")).unwrap(), "data");
-    }
-
-    #[test]
     fn test_move_entry_file() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("source.txt");
@@ -1632,25 +1455,4 @@ mod tests {
         assert_eq!(fs::read_to_string(dest.join("root.txt")).unwrap(), "root");
     }
 
-    #[test]
-    fn test_restore_staged_or_warn_handles_bad_entries() {
-        let tmp = tempfile::tempdir().unwrap();
-        let staging = tmp.path().join("staging");
-        // Entries reference paths outside the "worktree" prefix, causing strip_prefix to fail
-        let path_a = tmp.path().join("a");
-        let path_b = tmp.path().join("b");
-        fs::create_dir_all(staging.join("a")).unwrap();
-        fs::create_dir_all(staging.join("b")).unwrap();
-        fs::create_dir_all(&path_a).unwrap();
-        fs::create_dir_all(&path_b).unwrap();
-
-        // Entries with wrong prefix — strip_prefix will fail, causing restore_staged to error
-        let entries_a = vec![(PathBuf::from("/wrong/prefix/file.txt"), false)];
-        let entries_b: Vec<(PathBuf, bool)> = vec![];
-
-        // Should not panic, just warn
-        restore_staged_or_warn(&staging, &path_a, &entries_a, &path_b, &entries_b);
-
-        // Staging directory may still exist since restore failed
-    }
 }
