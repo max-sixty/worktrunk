@@ -866,26 +866,27 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
 
     match fs::rename(src, dest) {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == ErrorKind::CrossesDevices => {
-            // Cross-device: copy then delete
-            if is_dir {
-                copy_dir_recursive(src, dest, true)?;
-                fs::remove_dir_all(src)
-                    .with_context(|| format!("removing source directory {}", src.display()))?;
-            } else {
-                reflink_copy::reflink_or_copy(src, dest)
-                    .with_context(|| format!("copying {} to {}", src.display(), dest.display()))?;
-                fs::remove_file(src)
-                    .with_context(|| format!("removing source file {}", src.display()))?;
-            }
-            Ok(())
-        }
+        Err(e) if e.kind() == ErrorKind::CrossesDevices => copy_and_remove(src, dest, is_dir),
         Err(e) => Err(anyhow::Error::from(e).context(format!(
             "moving {} to {}",
             src.display(),
             dest.display()
         ))),
     }
+}
+
+/// Copy then delete — fallback when `rename` fails with EXDEV (cross-device).
+fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
+    if is_dir {
+        copy_dir_recursive(src, dest, true)?;
+        fs::remove_dir_all(src)
+            .with_context(|| format!("removing source directory {}", src.display()))?;
+    } else {
+        reflink_copy::reflink_or_copy(src, dest)
+            .with_context(|| format!("copying {} to {}", src.display(), dest.display()))?;
+        fs::remove_file(src).with_context(|| format!("removing source file {}", src.display()))?;
+    }
+    Ok(())
 }
 
 const PROMOTE_STAGING_DIR: &str = "wt-promote-staging";
@@ -1622,5 +1623,60 @@ mod tests {
             "nested"
         );
         assert_eq!(fs::read_to_string(dest.join("root.txt")).unwrap(), "root");
+    }
+
+    #[test]
+    fn test_copy_and_remove_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("source.txt");
+        let dest = tmp.path().join("dest.txt");
+
+        fs::write(&src, "content").unwrap();
+        copy_and_remove(&src, &dest, false).unwrap();
+
+        assert!(!src.exists());
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "content");
+    }
+
+    #[test]
+    fn test_copy_and_remove_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("srcdir");
+        let dest = tmp.path().join("destdir");
+
+        fs::create_dir_all(src.join("sub")).unwrap();
+        fs::write(src.join("sub/file.txt"), "nested").unwrap();
+        fs::write(src.join("root.txt"), "root").unwrap();
+
+        copy_and_remove(&src, &dest, true).unwrap();
+
+        assert!(!src.exists());
+        assert_eq!(
+            fs::read_to_string(dest.join("sub/file.txt")).unwrap(),
+            "nested"
+        );
+        assert_eq!(fs::read_to_string(dest.join("root.txt")).unwrap(), "root");
+    }
+
+    #[test]
+    fn test_restore_staged_or_warn_handles_bad_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let staging = tmp.path().join("staging");
+        // Entries reference paths outside the "worktree" prefix, causing strip_prefix to fail
+        let path_a = tmp.path().join("a");
+        let path_b = tmp.path().join("b");
+        fs::create_dir_all(staging.join("a")).unwrap();
+        fs::create_dir_all(staging.join("b")).unwrap();
+        fs::create_dir_all(&path_a).unwrap();
+        fs::create_dir_all(&path_b).unwrap();
+
+        // Entries with wrong prefix — strip_prefix will fail, causing restore_staged to error
+        let entries_a = vec![(PathBuf::from("/wrong/prefix/file.txt"), false)];
+        let entries_b: Vec<(PathBuf, bool)> = vec![];
+
+        // Should not panic, just warn
+        restore_staged_or_warn(&staging, &path_a, &entries_a, &path_b, &entries_b);
+
+        // Staging directory may still exist since restore failed
     }
 }
