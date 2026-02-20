@@ -32,8 +32,7 @@ use crate::help_pager::show_help_in_pager;
 /// CLI or env var overrides are set. This ensures `config create` and
 /// `config show` point to the same location that config loading uses.
 pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
-    default_config_path()
-        .ok_or_else(|| anyhow::anyhow!("Cannot determine config directory"))
+    default_config_path().ok_or_else(|| anyhow::anyhow!("Cannot determine config directory"))
 }
 
 // ==================== Log Management ====================
