@@ -1069,58 +1069,32 @@ pub enum PromoteResult {
     AlreadyInMain(String),
 }
 
-/// Exchange branches between two worktrees with rollback on failure.
+/// Exchange branches between two worktrees.
 ///
 /// Steps: detach target → detach main → switch main → switch target.
-/// On failure at any step, attempts to restore both worktrees to their original branches.
+/// Both worktrees must be clean (verified by caller). On failure, attempts
+/// best-effort rollback — but failure here is near-impossible given the
+/// preconditions (`ensure_clean` passed, branches exist, detach released locks).
 fn exchange_branches(
     main_wt: &worktrunk::git::WorkingTree<'_>,
     main_branch: &str,
     target_wt: &worktrunk::git::WorkingTree<'_>,
     target_branch: &str,
 ) -> anyhow::Result<()> {
-    // Step 1: Detach target (if this fails, nothing has changed)
-    target_wt
-        .run_command(&["checkout", "--detach"])
-        .context("Failed to detach HEAD in target worktree")?;
+    let steps: &[(&worktrunk::git::WorkingTree<'_>, &[&str], &str)] = &[
+        (target_wt, &["checkout", "--detach"], "detach target"),
+        (main_wt, &["checkout", "--detach"], "detach main"),
+        (main_wt, &["switch", target_branch], "switch main"),
+        (target_wt, &["switch", main_branch], "switch target"),
+    ];
 
-    // Step 2: Detach main (if this fails, re-attach target)
-    if let Err(e) = main_wt
-        .run_command(&["checkout", "--detach"])
-        .context("Failed to detach HEAD in main worktree")
-    {
-        if let Err(rb) = target_wt.run_command(&["switch", target_branch]) {
-            log::warn!("Rollback failed re-attaching target: {rb}");
+    for (wt, args, label) in steps {
+        if let Err(e) = wt.run_command(args) {
+            // Best-effort rollback: try to re-attach both branches.
+            let _ = main_wt.run_command(&["switch", main_branch]);
+            let _ = target_wt.run_command(&["switch", target_branch]);
+            return Err(e.context(format!("branch exchange failed at: {label}")));
         }
-        return Err(e);
-    }
-
-    // Step 3: Switch main to target_branch (if this fails, re-attach both)
-    if let Err(e) = main_wt
-        .run_command(&["switch", target_branch])
-        .context("Failed to switch to branch in main worktree")
-    {
-        if let Err(rb) = main_wt.run_command(&["switch", main_branch]) {
-            log::warn!("Rollback failed re-attaching main: {rb}");
-        }
-        if let Err(rb) = target_wt.run_command(&["switch", target_branch]) {
-            log::warn!("Rollback failed re-attaching target: {rb}");
-        }
-        return Err(e);
-    }
-
-    // Step 4: Switch target to main_branch (if this fails, reverse step 3)
-    if let Err(e) = target_wt
-        .run_command(&["switch", main_branch])
-        .context("Failed to switch to branch in target worktree")
-    {
-        if let Err(rb) = main_wt.run_command(&["switch", main_branch]) {
-            log::warn!("Rollback failed re-attaching main: {rb}");
-        }
-        if let Err(rb) = target_wt.run_command(&["switch", target_branch]) {
-            log::warn!("Rollback failed re-attaching target: {rb}");
-        }
-        return Err(e);
     }
 
     Ok(())
