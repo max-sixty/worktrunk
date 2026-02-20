@@ -249,6 +249,30 @@ fixed line content here
   direct suggestion.
 - Multi-line suggestions: set `start_line` and `line` to define the range.
 
+### 6. Request fixes on bot PRs
+
+The review workflow is read-only (`contents: read`) and cannot push fixes. For
+bot PRs (Dependabot, renovate, etc.), request fixes via the `@claude` mention
+workflow, which has write access and can push commits to the PR branch.
+
+**When to use:** The review found concrete, fixable issues (CI failures, missing
+test updates, small code problems) on a bot-authored PR. Don't use this for
+human PRs — leave suggestions for the author instead.
+
+After submitting the review, post a separate comment:
+
+```bash
+gh pr comment <number> --body "@claude The review found issues on this Dependabot PR. Please fix:
+
+- [specific issue 1]
+- [specific issue 2]
+
+See the review comments for details."
+```
+
+This triggers the `claude-mention` workflow, which checks out the PR branch,
+applies fixes, and pushes. CI reruns automatically.
+
 ## How to provide feedback
 
 - Use inline review comments for specific code issues. Prefer suggestion format
