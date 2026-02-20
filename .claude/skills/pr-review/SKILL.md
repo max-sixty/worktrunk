@@ -10,14 +10,6 @@ Review a pull request to worktrunk, a Rust CLI tool for managing git worktrees.
 
 **PR to review:** $ARGUMENTS
 
-## Setup
-
-Load these skills first:
-
-1. `/reviewing-code` — systematic review checklist (design review, universal
-   principles, completeness)
-2. `/developing-rust` — Rust idioms and patterns
-
 ## Workflow
 
 Follow these steps in order.
@@ -63,7 +55,7 @@ Then check existing review comments to avoid repeating prior feedback:
 ```bash
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 gh api "repos/$REPO/pulls/<number>/comments" --paginate --jq '.[].body'
-gh api "repos/$REPO/pulls/<number>/reviews" --jq '.[] | select(.body != "") | .body'
+gh api "repos/$REPO/pulls/<number>/reviews" --jq '.[] | select(.body | length > 0) | .body'
 ```
 
 ### 2. Read and understand the change
@@ -76,8 +68,7 @@ gh api "repos/$REPO/pulls/<number>/reviews" --jq '.[] | select(.body != "") | .b
 
 ### 3. Review
 
-Follow the `reviewing-code` skill's structure: design review first, then
-tactical checklist.
+Review design first, then tactical checklist.
 
 **Idiomatic Rust and project conventions:**
 
