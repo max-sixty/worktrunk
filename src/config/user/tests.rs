@@ -26,6 +26,19 @@ fn test_repo() -> TestRepo {
 }
 
 #[test]
+fn test_default_config_path_returns_platform_path() {
+    // default_config_path() is the shared path used by both config creation
+    // and config loading. Verify it returns a valid platform-specific path.
+    let path = default_config_path();
+    assert!(path.is_some(), "default_config_path should return Some");
+    let path = path.unwrap();
+    assert!(
+        path.ends_with("worktrunk/config.toml") || path.ends_with("worktrunk\\config.toml"),
+        "Expected path ending in worktrunk/config.toml, got: {path:?}"
+    );
+}
+
+#[test]
 fn test_find_unknown_keys_empty() {
     // Valid config with no unknown keys
     let content = r#"
