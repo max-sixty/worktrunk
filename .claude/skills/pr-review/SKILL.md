@@ -10,14 +10,6 @@ Review a pull request to worktrunk, a Rust CLI tool for managing git worktrees.
 
 **PR to review:** $ARGUMENTS
 
-## Setup
-
-Load these skills first:
-
-1. `/reviewing-code` — systematic review checklist (design review, universal
-   principles, completeness)
-2. `/developing-rust` — Rust idioms and patterns
-
 ## Workflow
 
 Follow these steps in order.
@@ -84,8 +76,7 @@ respond in the review body rather than silently approving.
 
 ### 3. Review
 
-Follow the `reviewing-code` skill's structure: design review first, then
-tactical checklist.
+Review design first, then tactical checklist.
 
 **Idiomatic Rust and project conventions:**
 

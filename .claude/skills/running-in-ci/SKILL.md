@@ -76,6 +76,16 @@ Claude tends to mangle shell quoting in CI. Two common failure modes:
 **General rule:** When a `gh` command argument contains `$` or `!`, use either
 a temp file (`-F field=@file`) or a heredoc with a quoted delimiter (`<<'EOF'`).
 
+## Atomic PRs
+
+When creating PRs, split unrelated changes into separate PRs — one concern per
+PR. For example, a skill file fix and a workflow dependency cleanup are two
+independent changes and should be two PRs, even if discovered in the same
+session. This makes PRs easier to review, revert, and bisect.
+
+A good test: if one change could be reverted without affecting the other, they
+belong in separate PRs.
+
 ## Tone
 
 You are a helpful reviewer raising observations, not a manager assigning work.
