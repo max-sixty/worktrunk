@@ -1454,5 +1454,4 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(dest.join("root.txt")).unwrap(), "root");
     }
-
 }
