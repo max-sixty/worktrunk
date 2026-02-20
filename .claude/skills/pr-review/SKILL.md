@@ -50,7 +50,7 @@ gh api "repos/$REPO/compare/$APPROVED_SHA...$HEAD_SHA" \
 ```
 
 If the new changes are trivial, skip the full review (steps 2-3) and do not
-re-approve — the existing approval stands. Still proceed to step 4 to resolve
+re-approve — the existing approval stands. Still proceed to step 5 to resolve
 any bot threads that the trivial changes addressed, then exit. Rough heuristic:
 changes under ~20 added+deleted lines that don't introduce new functions, types,
 or control flow are typically trivial (review feedback addressed, CI/formatting
@@ -135,12 +135,25 @@ rg 'env\.HOME' .github/workflows/
 
 If the same issue exists elsewhere, flag it in the review.
 
-### 4. Resolve handled suggestions
+### 4. Submit
 
-After reviewing the code, check if any unresolved review threads from the bot
-have been addressed. For each unresolved bot thread, you've already read the
-file during review — if the suggestion was applied or the issue was otherwise
-fixed, resolve the thread:
+Submit **one formal review per run** via `gh pr review`. Never call it multiple
+times.
+
+- Always give a verdict: **approve** or **comment**. Don't use "request changes"
+  (that implies authority to block).
+- **Don't use `gh pr comment`** — use review comments (`gh pr review` or
+  `gh api` for inline suggestions) so feedback is threaded with the review.
+- Don't repeat suggestions already made by humans or previous bot runs
+  (checked in step 1).
+- **Default to code suggestions** for specific fixes — see "Inline suggestions"
+  below. Prose comments are for changes too large or uncertain for a suggestion.
+
+### 5. Resolve handled suggestions
+
+After submitting the review, check if any unresolved review threads from the bot
+have been addressed. You've already read the changed files during review — if a
+suggestion was applied or the issue was otherwise fixed, resolve the thread.
 
 Use the file-based GraphQL pattern from `/running-in-ci` to avoid quoting
 issues with `$` variables:
@@ -196,20 +209,6 @@ gh api graphql -F query=@/tmp/resolve-thread.graphql -f threadId="THREAD_ID"
 
 Outdated comments (null line) are best-effort — skip if the original context
 can't be located.
-
-### 5. Submit
-
-Submit **one formal review per run** via `gh pr review`. Never call it multiple
-times.
-
-- Always give a verdict: **approve** or **comment**. Don't use "request changes"
-  (that implies authority to block).
-- **Don't use `gh pr comment`** — use review comments (`gh pr review` or
-  `gh api` for inline suggestions) so feedback is threaded with the review.
-- Don't repeat suggestions already made by humans or previous bot runs
-  (checked in step 1).
-- **Default to code suggestions** for specific fixes — see "Inline suggestions"
-  below. Prose comments are for changes too large or uncertain for a suggestion.
 
 ## LGTM behavior
 
