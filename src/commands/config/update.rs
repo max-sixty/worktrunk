@@ -10,7 +10,9 @@ use worktrunk::config::{
     DeprecationInfo, format_deprecation_warnings, format_migration_diff, get_config_path,
 };
 use worktrunk::git::Repository;
-use worktrunk::styling::{eprintln, info_message, success_message};
+use worktrunk::styling::{
+    eprintln, format_bash_with_gutter, hint_message, info_message, success_message,
+};
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
@@ -152,22 +154,14 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
         return Ok(None);
     }
 
-    // Only update from main worktree (linked worktrees share the config)
     let is_linked = repo.current_worktree().is_linked().unwrap_or(true);
-    if is_linked {
-        eprintln!(
-            "{}",
-            info_message("Project config update must run from main worktree")
-        );
-        return Ok(None);
-    }
 
     let content = std::fs::read_to_string(&config_path).context("Failed to read project config")?;
 
     let info = match worktrunk::config::check_and_migrate(
         &config_path,
         &content,
-        true, // warn_and_migrate
+        !is_linked, // only write .new file from main worktree
         "Project config",
         Some(&repo),
         false, // silent mode
@@ -175,6 +169,17 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
         Some(info) if info.has_deprecations() => info,
         _ => return Ok(None),
     };
+
+    // Linked worktrees can't apply the update — suggest -C to main worktree
+    if is_linked {
+        let display_path = worktrunk::path::format_path_for_display(repo.repo_path());
+        eprintln!("{}", hint_message("To update project config:"));
+        eprintln!(
+            "{}",
+            format_bash_with_gutter(&format!("wt -C {display_path} config update"))
+        );
+        return Ok(None);
+    }
 
     let new_path = match &info.migration_path {
         Some(path) => path.clone(),
