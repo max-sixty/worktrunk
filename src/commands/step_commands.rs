@@ -879,11 +879,13 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
 fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
     if is_dir {
         copy_dir_recursive(src, dest, true)?;
-        fs::remove_dir_all(src)
-            .context(format!("removing source directory {}", src.display()))?;
+        fs::remove_dir_all(src).context(format!("removing source directory {}", src.display()))?;
     } else {
-        reflink_copy::reflink_or_copy(src, dest)
-            .context(format!("copying {} to {}", src.display(), dest.display()))?;
+        reflink_copy::reflink_or_copy(src, dest).context(format!(
+            "copying {} to {}",
+            src.display(),
+            dest.display()
+        ))?;
         fs::remove_file(src).context(format!("removing source file {}", src.display()))?;
     }
     Ok(())
