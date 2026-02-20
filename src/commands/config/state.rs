@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use color_print::cformat;
-use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
+use worktrunk::config::default_config_path;
 use worktrunk::git::Repository;
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
 use worktrunk::styling::{
@@ -25,49 +25,15 @@ use crate::help_pager::show_help_in_pager;
 
 // ==================== Path Helpers ====================
 
-/// Core logic for determining user config path from env var values
-pub(super) fn resolve_user_config_path(
-    xdg_config_home: Option<&str>,
-    home: Option<&str>,
-) -> Option<PathBuf> {
-    // Respect XDG_CONFIG_HOME environment variable (Linux)
-    if let Some(xdg_config) = xdg_config_home {
-        let config_path = PathBuf::from(xdg_config);
-        return Some(config_path.join("worktrunk").join("config.toml"));
-    }
-
-    // Respect HOME environment variable (fallback)
-    if let Some(home) = home {
-        let home_path = PathBuf::from(home);
-        return Some(
-            home_path
-                .join(".config")
-                .join("worktrunk")
-                .join("config.toml"),
-        );
-    }
-
-    None
-}
-
-pub(super) fn get_user_config_path() -> Option<PathBuf> {
-    // Try env vars first, then fall back to etcetera
-    resolve_user_config_path(
-        std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
-        std::env::var("HOME").ok().as_deref(),
-    )
-    .or_else(|| {
-        let strategy = choose_base_strategy().ok()?;
-        Some(strategy.config_dir().join("worktrunk").join("config.toml"))
-    })
-}
-
+/// Get the user config path, or error if it cannot be determined.
+///
+/// Uses the platform-default config path from `default_config_path()`,
+/// which is the same path that `get_config_path()` resolves to when no
+/// CLI or env var overrides are set. This ensures `config create` and
+/// `config show` point to the same location that config loading uses.
 pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
-    get_user_config_path().ok_or_else(|| {
-        anyhow::anyhow!(
-            "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME environment variable"
-        )
-    })
+    default_config_path()
+        .ok_or_else(|| anyhow::anyhow!("Cannot determine config directory"))
 }
 
 // ==================== Log Management ====================

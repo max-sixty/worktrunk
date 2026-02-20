@@ -30,7 +30,7 @@ pub fn is_config_path_explicit() -> bool {
 /// Priority:
 /// 1. CLI --config flag (set via `set_config_path`)
 /// 2. WORKTRUNK_CONFIG_PATH environment variable
-/// 3. Platform-specific default location
+/// 3. Platform-specific default location (via `default_config_path`)
 pub fn get_config_path() -> Option<PathBuf> {
     // Priority 1: CLI --config flag
     if let Some(path) = CONFIG_PATH.get() {
@@ -43,6 +43,20 @@ pub fn get_config_path() -> Option<PathBuf> {
     }
 
     // Priority 3: Platform-specific default location
+    default_config_path()
+}
+
+/// Platform-specific default config path, without CLI or env var overrides.
+///
+/// Used by `config create` and `config show` to determine the "real" config
+/// location. These commands should write to / display the platform default,
+/// not test isolation paths (WORKTRUNK_CONFIG_PATH).
+///
+/// Uses the `etcetera` crate which returns:
+/// - Linux: `$XDG_CONFIG_HOME/worktrunk/config.toml` (default `~/.config/...`)
+/// - macOS: `~/Library/Application Support/worktrunk/config.toml`
+/// - Windows: `%APPDATA%\worktrunk\config.toml`
+pub fn default_config_path() -> Option<PathBuf> {
     let strategy = choose_base_strategy().ok()?;
     Some(strategy.config_dir().join("worktrunk").join("config.toml"))
 }
