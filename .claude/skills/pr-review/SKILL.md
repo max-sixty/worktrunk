@@ -58,13 +58,21 @@ fixes, small corrections). Only proceed with a full review and potential
 re-approval for non-trivial changes (new logic, architectural changes,
 significant additions).
 
-Then check existing review comments to avoid repeating prior feedback:
+Then check existing review comments and conversation to avoid repeating prior
+feedback and to catch questions directed at the bot:
 
 ```bash
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+BOT_LOGIN=$(gh api user --jq '.login')
 gh api "repos/$REPO/pulls/<number>/comments" --paginate --jq '.[].body'
 gh api "repos/$REPO/pulls/<number>/reviews" --jq '.[] | select(.body != "") | .body'
+gh api "repos/$REPO/issues/<number>/comments" --paginate \
+  --jq '.[] | {author: .user.login, body: .body}'
 ```
+
+If any conversation comment asks the bot a question (mentions `$BOT_LOGIN`,
+replies to a bot comment, or asks a question clearly directed at the reviewer),
+respond in the review body rather than silently approving.
 
 ### 2. Read and understand the change
 
@@ -102,6 +110,11 @@ tactical checklist.
 - Does new code use `.expect()` or `.unwrap()` in functions returning `Result`?
   These should use `?` or `bail!` instead — panics in fallible code bypass error
   handling.
+- **Trace failure paths, don't just note error handling exists.** For code that
+  modifies state through multiple fallible steps, walk through what happens when
+  each `?` fires. What has already been mutated? Is the system left in a
+  recoverable state? Describing the author's approach ("ordered for safety") is
+  not the same as verifying it.
 
 **Testing:**
 
