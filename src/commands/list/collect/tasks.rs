@@ -368,7 +368,7 @@ impl Task for WorkingTreeDiffTask {
         let wt = ctx
             .branch_ref
             .working_tree(&ctx.repo)
-            .expect("WorkingTreeDiffTask requires a worktree");
+            .ok_or_else(|| ctx.error(Self::KIND, &anyhow::anyhow!("requires a worktree")))?;
 
         // Use --no-optional-locks to avoid index lock contention with WorkingTreeConflictsTask's
         // `git stash create` which needs the index lock.
@@ -445,7 +445,7 @@ impl Task for WorkingTreeConflictsTask {
         let wt = ctx
             .branch_ref
             .working_tree(&ctx.repo)
-            .expect("WorkingTreeConflictsTask requires a worktree");
+            .ok_or_else(|| ctx.error(Self::KIND, &anyhow::anyhow!("requires a worktree")))?;
 
         // Use --no-optional-locks to avoid index lock contention with WorkingTreeDiffTask.
         // Both tasks run in parallel, and `git stash create` below needs the index lock.
@@ -516,7 +516,7 @@ impl Task for GitOperationTask {
         let wt = ctx
             .branch_ref
             .working_tree(&ctx.repo)
-            .expect("GitOperationTask requires a worktree");
+            .ok_or_else(|| ctx.error(Self::KIND, &anyhow::anyhow!("requires a worktree")))?;
         let git_operation = detect_active_git_operation(&wt);
         Ok(TaskResult::GitOperation {
             item_idx: ctx.item_idx,

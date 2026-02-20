@@ -904,18 +904,19 @@ impl RemovalDisplayInfo {
             return Ok(());
         }
 
-        if deletion_mode.should_keep() && self.branch_was_integrated {
-            // User kept an integrated branch - show integration info
-            let reason = pre_computed_integration.as_ref().unwrap();
-            let target = self.integration_target.as_deref().unwrap_or("target");
-            let desc = reason.description();
-            let symbol = reason.symbol();
-            eprintln!(
-                "{}",
-                hint_message(cformat!(
-                    "Branch integrated ({desc} <bold>{target}</>, <dim>{symbol}</>); retained with <bright-black>--no-delete-branch</>"
-                ))
-            );
+        if deletion_mode.should_keep() {
+            if let Some(reason) = pre_computed_integration.as_ref() {
+                // User kept an integrated branch - show integration info
+                let target = self.integration_target.as_deref().unwrap_or("target");
+                let desc = reason.description();
+                let symbol = reason.symbol();
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "Branch integrated ({desc} <bold>{target}</>, <dim>{symbol}</>); retained with <bright-black>--no-delete-branch</>"
+                    ))
+                );
+            }
         } else if self.show_unmerged_hint
             || (!deletion_mode.should_keep() && !self.branch_was_integrated)
         {
