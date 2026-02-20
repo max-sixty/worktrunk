@@ -6,8 +6,8 @@ Five Claude-powered workflows automate issue triage, PR review, CI fixes, depend
 
 Two layers protect the repository, in order of importance:
 
-1. **Merge restriction** (implemented) — only the repo admin (`@max-sixty`) can merge to `main`, enforced by a ruleset. The bot has `write` role (not admin) and cannot merge regardless of review status.
-2. **Environment protection** (planned) — release secrets will require deployment approval, preventing exfiltration via modified workflows. Currently these are repo-level secrets — see TODO.
+1. **Merge restriction** — only the repo admin (`@max-sixty`) can merge to `main`, enforced by a ruleset. The bot has `write` role (not admin) and cannot merge regardless of review status.
+2. **Environment protection** — release secrets (`CARGO_REGISTRY_TOKEN`, `AUR_SSH_PRIVATE_KEY`) are in a protected GitHub Environment (`release`) requiring deployment approval from `@max-sixty`, preventing exfiltration via modified workflows.
 
 Token scoping (principle of least privilege) is a secondary practice, not a security boundary.
 
@@ -32,9 +32,9 @@ The "exempt" bypass mode (added September 2025) silently skips the rule for the 
 
 **Why not "Restrict who can push" (classic branch protection)?** That feature is only available for organization-owned repositories. This is a personal repo (`max-sixty/worktrunk`).
 
-## Environment protection for release secrets (planned)
+## Environment protection for release secrets
 
-`CARGO_REGISTRY_TOKEN` and `AUR_SSH_PRIVATE_KEY` should be stored in a protected GitHub Environment (`release`) requiring deployment approval from `@max-sixty`. **These are currently repo-level secrets** — see TODO.
+`CARGO_REGISTRY_TOKEN` and `AUR_SSH_PRIVATE_KEY` are stored in a protected GitHub Environment (`release`) requiring deployment approval from `@max-sixty`. The environment has a deployment branch policy restricting to `v*` tags.
 
 **Why this matters:** If BOT_TOKEN leaks, an attacker can push a branch with a modified workflow that references `${{ secrets.CARGO_REGISTRY_TOKEN }}`. For same-repo PRs (not forks), all repo-level secrets are available to workflows. The modified workflow runs from the PR branch at CI time — before any merge. Branch protection doesn't prevent this because the secret leaks during CI, not at merge time.
 
@@ -71,14 +71,14 @@ BOT_TOKEN is equally safe in any workflow: the merge restriction (ruleset) caps 
 
 | Token | Lifetime | If leaked, attacker can... | ...but cannot |
 |-------|----------|---------------------------|---------------|
-| `BOT_TOKEN` | Long-lived PAT | Push to unprotected branches, create PRs, approve non-own PRs, impersonate `worktrunk-bot` — **indefinitely** | Merge PRs (ruleset restricts updates to admin), push to `main`. Once environment protection is implemented: access release secrets. |
+| `BOT_TOKEN` | Long-lived PAT | Push to unprotected branches, create PRs, approve non-own PRs, impersonate `worktrunk-bot` — **indefinitely** | Merge PRs (ruleset restricts updates to admin), push to `main`, access release secrets (environment-protected). |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Long-lived | Run Claude sessions billed to the account | Access GitHub |
 
 `GITHUB_TOKEN` is ephemeral (single job) and automatically scoped by each workflow's `permissions:` block. Not a meaningful leak target.
 
 **BOT_TOKEN is the high-value target.** Mitigations:
 - "Restrict updates" ruleset blocks merging by non-admins
-- Environment protection will block exfiltration of release secrets (once implemented — see TODO)
+- Environment protection blocks exfiltration of release secrets
 - Rotate `BOT_TOKEN` periodically
 
 ### How tokens interact with `permissions:` and `actions/checkout`
