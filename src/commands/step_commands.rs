@@ -861,7 +861,7 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
     // Ensure parent directory exists
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)
-            .with_context(|| format!("creating parent directory for {}", dest.display()))?;
+            .context(format!("creating parent directory for {}", dest.display()))?;
     }
 
     match fs::rename(src, dest) {
@@ -880,11 +880,11 @@ fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> 
     if is_dir {
         copy_dir_recursive(src, dest, true)?;
         fs::remove_dir_all(src)
-            .with_context(|| format!("removing source directory {}", src.display()))?;
+            .context(format!("removing source directory {}", src.display()))?;
     } else {
         reflink_copy::reflink_or_copy(src, dest)
-            .with_context(|| format!("copying {} to {}", src.display(), dest.display()))?;
-        fs::remove_file(src).with_context(|| format!("removing source file {}", src.display()))?;
+            .context(format!("copying {} to {}", src.display(), dest.display()))?;
+        fs::remove_file(src).context(format!("removing source file {}", src.display()))?;
     }
     Ok(())
 }
@@ -919,7 +919,7 @@ fn stage_ignored(
         let staging_entry = staging_a.join(relative);
         if fs::symlink_metadata(src_entry).is_ok() {
             move_entry(src_entry, &staging_entry, *is_dir)
-                .with_context(|| format!("staging {}", relative.display()))?;
+                .context(format!("staging {}", relative.display()))?;
             count += 1;
         }
     }
@@ -932,7 +932,7 @@ fn stage_ignored(
         let staging_entry = staging_b.join(relative);
         if fs::symlink_metadata(src_entry).is_ok() {
             move_entry(src_entry, &staging_entry, *is_dir)
-                .with_context(|| format!("staging {}", relative.display()))?;
+                .context(format!("staging {}", relative.display()))?;
             count += 1;
         }
     }
