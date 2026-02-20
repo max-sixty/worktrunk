@@ -12,6 +12,12 @@ NEVER run commands that could expose secrets (`env`, `printenv`, `set`,
 environment variables, API keys, tokens, or credentials in responses or
 comments.
 
+## PR Creation
+
+When the triggering comment asks for a PR (e.g., "make a new PR", "open a PR",
+"create a PR"), create it directly with `gh pr create`. The comment is the
+user's explicit request — don't downgrade it to a compare link.
+
 ## CI Monitoring
 
 After pushing changes to a PR branch, monitor CI until all checks pass:
