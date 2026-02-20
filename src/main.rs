@@ -77,7 +77,7 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
         if let Some(suggestion) = cli::suggest_nested_subcommand(&cmd, &unknown.to_string()) {
             ceprintln!(
                 "{}
-  <yellow>tip:</>  did you mean <cyan,bold>{suggestion}</cyan,bold>?",
+  <yellow>tip:</>  perhaps <cyan,bold>{suggestion}</cyan,bold>?",
                 err.render().ansi()
             );
             process::exit(2);

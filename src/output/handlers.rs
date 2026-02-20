@@ -913,7 +913,7 @@ impl RemovalDisplayInfo {
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "Branch integrated ({desc} <bold>{target}</>, <dim>{symbol}</>); retained with <bright-black>--no-delete-branch</>"
+                        "Branch integrated ({desc} <bright-black>{target}</>, <dim>{symbol}</>); retained with <bright-black>--no-delete-branch</>"
                     ))
                 );
             }

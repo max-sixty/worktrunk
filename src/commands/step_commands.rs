@@ -18,6 +18,7 @@ use ignore::gitignore::GitignoreBuilder;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
+use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
     verbosity,
@@ -655,7 +656,7 @@ pub fn step_copy_ignored(
                     .strip_prefix(&source_path)
                     .unwrap_or(src_entry.as_path());
                 let entry_type = if *is_dir { "dir" } else { "file" };
-                format!("{} ({})", relative.display(), entry_type)
+                format!("{} ({})", format_path_for_display(relative), entry_type)
             })
             .collect();
         let entry_word = if items.len() == 1 { "entry" } else { "entries" };
@@ -683,13 +684,18 @@ pub fn step_copy_ignored(
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
-            copy_dir_recursive(src_entry, &dest_entry, force)
-                .with_context(|| format!("copying directory {}", relative.display()))?;
+            copy_dir_recursive(src_entry, &dest_entry, force).with_context(|| {
+                format!("copying directory {}", format_path_for_display(relative))
+            })?;
             copied_count += 1;
         } else {
             if let Some(parent) = dest_entry.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("creating directory for {}", relative.display()))?;
+                fs::create_dir_all(parent).with_context(|| {
+                    format!(
+                        "creating directory for {}",
+                        format_path_for_display(relative)
+                    )
+                })?;
             }
             if force {
                 remove_if_exists(&dest_entry)?;
@@ -699,9 +705,8 @@ pub fn step_copy_ignored(
                 Ok(_) => copied_count += 1,
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
                 Err(e) => {
-                    return Err(
-                        anyhow::Error::from(e).context(format!("copying {}", relative.display()))
-                    );
+                    return Err(anyhow::Error::from(e)
+                        .context(format!("copying {}", format_path_for_display(relative))));
                 }
             }
         }
