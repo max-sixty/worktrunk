@@ -23,21 +23,31 @@ combine commands.
 ```bash
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 BOT_LOGIN=$(gh api user --jq '.login')
+HEAD_SHA=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
 
 # Check if bot already approved this exact revision
 APPROVED_SHA=$(gh pr view <number> --json reviews \
   --jq "[.reviews[] | select(.state == \"APPROVED\" and .author.login == \"$BOT_LOGIN\") | .commit.oid] | last")
-HEAD_SHA=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
+
+# Check if bot already commented on this exact revision (e.g., on self-authored
+# PRs where the bot cannot approve)
+COMMENTED_SHA=$(gh pr view <number> --json reviews \
+  --jq "[.reviews[] | select(.state == \"COMMENTED\" and .author.login == \"$BOT_LOGIN\") | .commit.oid] | last")
 ```
 
 If `APPROVED_SHA == HEAD_SHA`, exit silently — this revision is already approved.
 
-If the bot approved a previous revision (`APPROVED_SHA` exists but differs from
-`HEAD_SHA`), check the incremental changes since the last approval:
+If `COMMENTED_SHA == HEAD_SHA`, exit silently — this revision has already been
+reviewed (the bot likely cannot approve because it authored the PR).
+
+If the bot reviewed a previous revision (`APPROVED_SHA` or `COMMENTED_SHA`
+exists but differs from `HEAD_SHA`), check the incremental changes since the
+last review:
 
 ```bash
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
-gh api "repos/$REPO/compare/$APPROVED_SHA...$HEAD_SHA" \
+LAST_REVIEWED_SHA="${APPROVED_SHA:-$COMMENTED_SHA}"
+gh api "repos/$REPO/compare/$LAST_REVIEWED_SHA...$HEAD_SHA" \
   --jq '{total: ([.files[] | .additions + .deletions] | add), files: [.files[] | "\(.filename)\t+\(.additions)/-\(.deletions)"]}'
 ```
 
