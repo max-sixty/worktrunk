@@ -184,7 +184,7 @@ impl UserConfig {
                 "{}",
                 crate::styling::warning_message(format!(
                     "Config file not found: {}",
-                    config_path.display()
+                    crate::path::format_path_for_display(config_path)
                 ))
             );
         }

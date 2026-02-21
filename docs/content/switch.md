@@ -33,7 +33,7 @@ wt switch pr:123                 # Switch to PR #123's branch
 
 The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist.
 
-**Upstream tracking:** Branches created with `--create` have no upstream tracking configured. This prevents accidental pushes to the wrong branch — for example, `--base origin/main` would otherwise make `git push` target `main`. Use `git push -u origin <branch>` to set up tracking when you're ready.
+**Upstream tracking:** Branches created with `--create` have no upstream tracking configured. This prevents accidental pushes to the wrong branch — for example, `--base origin/main` would otherwise make `git push` target `main`. Use `git push -u origin <branch>` to set up tracking as needed.
 
 Without `--create`, switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local branch tracking the remote — this is the standard git behavior and is preserved.
 
