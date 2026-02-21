@@ -20,10 +20,9 @@ jobs:
   claude:
     # Two triggers:
     # 1. @claude mentions — explicit requests on any issue/PR.
-    # 2. Bot-authored PRs — comments on PRs opened by worktrunk-bot
-    #    (the bot should respond to feedback on its own PRs without @claude).
-    #    Formal review submissions (pull_request_review) are handled by
-    #    claude-review's respond job.
+    # 2. Bot-authored PRs — conversation replies, inline comments, and review
+    #    comments on PRs opened by worktrunk-bot (no @claude needed). Formal
+    #    review submissions (pull_request_review) go to claude-review instead.
     #
     # Note: secrets cannot be used in job-level `if:` (actions/runner#520) —
     # doing so causes GitHub to fail the workflow on push validation. For review
