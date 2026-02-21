@@ -45,14 +45,14 @@ Environment protection prevents this: secrets in a protected environment are onl
 | Capability | Triage | Mention | Review | CI Fix | Renovate |
 |------------|:---:|:---:|:---:|:---:|:---:|
 | Read issues/PRs | Yes | Yes | Yes | Yes | — |
-| Comment on issues | Yes | Yes | — | — | — |
-| Create branches | Yes | Yes | — | Yes | Yes |
-| Push commits | Yes | Yes | — | Yes | Yes |
+| Comment on issues | Yes | Yes | Yes | — | — |
+| Create branches | Yes | Yes | Yes | Yes | Yes |
+| Push commits | Yes | Yes | Yes | Yes | Yes |
 | Create PRs | Yes | Yes | — | Yes | Yes |
 | Post PR reviews | — | — | Yes | — | — |
 | Resolve review threads | — | — | Yes | — | — |
-| Monitor CI | Yes | Yes | — | Yes | Yes |
-| **Pushes must trigger CI** | **Yes** | **Yes** | — | **Yes** | **Yes** |
+| Monitor CI | Yes | Yes | Yes | Yes | Yes |
+| **Pushes must trigger CI** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
 
 The last row matters for CI: `GITHUB_TOKEN` pushes don't trigger downstream workflows (GitHub prevents infinite loops). Workflows that push code and need CI to run **must** use a PAT. All Claude workflows use `WORKTRUNK_BOT_TOKEN` for consistent identity.
 
@@ -88,15 +88,15 @@ Two independent authentication paths exist in every workflow:
 1. **Git CLI** (`git push`): authenticates with the token from `actions/checkout`. When no explicit token is passed, this defaults to `GITHUB_TOKEN` scoped by the `permissions:` block. When an explicit token is passed (e.g. `token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}`), the PAT's scopes apply instead.
 2. **GitHub API** (`gh pr create`, `gh api`): `claude-code-action` overwrites the `GITHUB_TOKEN` env var with its `github_token` input (BOT_TOKEN for all Claude workflows).
 
-The review workflow is the only one where these paths diverge: checkout uses the default `GITHUB_TOKEN` (`contents: read`), so git CLI is read-only, while API calls use BOT_TOKEN. All other workflows pass BOT_TOKEN to both paths.
+All workflows pass BOT_TOKEN to both paths.
 
 ## Prompt injection threat model
 
 | Workflow | Injection surface | Attacker control | Mitigations |
 |----------|-------------------|-------------------|-------------|
-| **review** | PR diff content | Full (any external PR) | Fixed prompt, merge restriction, `contents: read` on checkout |
+| **review** | PR diff content (initial review), review body on bot PRs (respond) | Full (any external PR) / Medium (anyone who can review bot PRs) | Fixed prompt, merge restriction |
 | **triage** | Issue body | Partial (structured skill) | Fixed prompt, merge restriction, environment protection |
-| **mention** | Comment body | Full | Restricted to write-access users |
+| **mention** | Comment body on any issue/PR, inline/conversation comments on bot PRs | Full | `@claude` restricted to write-access users; bot-PR comments open to anyone who can comment |
 | **ci-fix** | Failed CI logs | Minimal (must break CI on main) | Fixed prompt, automatic trigger |
 | **renovate** | None | None | Fixed prompt, scheduled trigger |
 
@@ -134,6 +134,13 @@ These two workflows explicitly exclude each other to avoid double-processing:
 
 Consequence: external users (no write access) who open issues with `@claude` get **neither** triage nor a mention response. This is the accepted trade-off — `@claude` is a maintainer tool.
 
+## Bot-PR auto-response
+
+Bot-authored PRs get automatic responses to feedback without requiring `@claude`, split across two workflows by event type:
+
+- **Formal reviews** (`pull_request_review`) → `claude-review`. Same workflow as initial review, different mode selected by event type. Skips empty approvals and bot's own reviews.
+- **Inline comments** (`pull_request_review_comment`) and **conversation comments** (`issue_comment`) → `claude-mention`. Each event type's `if:` clause combines `@claude` and bot-PR conditions with `||`. The `!contains(@claude)` in the bot-PR sub-condition prevents the same event from matching both sub-conditions (though this is cosmetic — both would trigger the same job).
+
 ## GitHub API: issue_comment vs pull_request_review_comment
 
 GitHub treats PRs as a superset of issues. Comments on a PR arrive via two different event types depending on where they're posted:
@@ -142,6 +149,14 @@ GitHub treats PRs as a superset of issues. Comments on a PR arrive via two diffe
 - **Files changed (inline)** → `pull_request_review_comment` event. The PR is at `github.event.pull_request`. There is no `github.event.issue`.
 
 The `claude-mention` workflow handles both with separate checkout steps.
+
+### pull_request_review
+
+A third event type fires when a reviewer submits a formal review (approve, comment, or request changes):
+
+- **Review submission** → `pull_request_review` event (type: `submitted`). The review is at `github.event.review` (includes `.body`, `.state`, `.user`). The PR is at `github.event.pull_request`.
+
+Individual inline comments from a review also fire as separate `pull_request_review_comment` events. The `claude-review` workflow handles `pull_request_review` for bot-authored PRs; inline comments go through `claude-mention`.
 
 ## Rules for modifying workflows
 

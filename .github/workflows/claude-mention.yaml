@@ -18,15 +18,28 @@ env:
 
 jobs:
   claude:
-    # Only run when body/comment contains @claude.
+    # Two triggers:
+    # 1. @claude mentions — explicit requests on any issue/PR.
+    # 2. Bot-authored PRs — comments on PRs opened by worktrunk-bot
+    #    (the bot should respond to feedback on its own PRs without @claude).
+    #    Formal review submissions (pull_request_review) are handled by
+    #    claude-review's respond job.
+    #
     # Note: secrets cannot be used in job-level `if:` (actions/runner#520) —
     # doing so causes GitHub to fail the workflow on push validation. For review
     # comments on fork PRs (which don't receive secrets), we detect forks via
     # github.event context instead. Use a Conversation tab comment for fork PRs.
     if: |
-      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude')) ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && github.event.pull_request.head.repo.full_name == github.repository)
+      (github.event_name == 'issues' &&
+        contains(github.event.issue.body, '@claude')) ||
+      (github.event_name == 'issue_comment' && (
+        contains(github.event.comment.body, '@claude') ||
+        (github.event.issue.pull_request && github.event.issue.user.login == 'worktrunk-bot' && github.event.comment.user.login != 'worktrunk-bot' && !contains(github.event.comment.body, '@claude'))
+      )) ||
+      (github.event_name == 'pull_request_review_comment' && (
+        (contains(github.event.comment.body, '@claude') && github.event.pull_request.head.repo.full_name == github.repository) ||
+        (github.event.pull_request.user.login == 'worktrunk-bot' && github.event.comment.user.login != 'worktrunk-bot' && !contains(github.event.comment.body, '@claude'))
+      ))
     runs-on: ubuntu-24.04
     permissions:
       contents: write # Allow pushing commits
