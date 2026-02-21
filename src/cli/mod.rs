@@ -1026,6 +1026,7 @@ wt step push
 - `push` — Fast-forward target to current branch
 - `diff` — Show all changes since branching (committed, staged, unstaged, untracked)
 - `copy-ignored` — Copy gitignored files between worktrees
+- `eval` — [experimental] Evaluate a template expression
 - `for-each` — [experimental] Run a command in every worktree
 - `relocate` — [experimental] Move worktrees to expected paths
 
@@ -1036,6 +1037,7 @@ wt step push
 <!-- subdoc: commit -->
 <!-- subdoc: squash -->
 <!-- subdoc: copy-ignored -->
+<!-- subdoc: eval -->
 <!-- subdoc: for-each -->
 <!-- subdoc: relocate -->"#
     )]
