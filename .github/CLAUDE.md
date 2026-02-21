@@ -96,7 +96,7 @@ All workflows pass BOT_TOKEN to both paths.
 |----------|-------------------|-------------------|-------------|
 | **review** | PR diff content (initial review), review body on bot PRs (respond) | Full (any external PR) / Medium (anyone who can review bot PRs) | Fixed prompt, merge restriction |
 | **triage** | Issue body | Partial (structured skill) | Fixed prompt, merge restriction, environment protection |
-| **mention** | Comment body on any issue/PR, inline/conversation comments on bot PRs | Full | `@claude` restricted to write-access users; bot-PR comments open to anyone who can comment |
+| **mention** | Comment body on any issue/PR, inline/conversation comments on bot-engaged PRs | Full | `@claude` restricted to write-access users; non-@claude triggers verified against bot engagement via API |
 | **ci-fix** | Failed CI logs | Minimal (must break CI on main) | Fixed prompt, automatic trigger |
 | **renovate** | None | None | Fixed prompt, scheduled trigger |
 
@@ -134,12 +134,12 @@ These two workflows explicitly exclude each other to avoid double-processing:
 
 Consequence: external users (no write access) who open issues with `@claude` get **neither** triage nor a mention response. This is the accepted trade-off — `@claude` is a maintainer tool.
 
-## Bot-PR auto-response
+## Bot-engaged auto-response
 
-Bot-authored PRs get automatic responses to feedback without requiring `@claude`, split across two workflows by event type:
+The bot responds to comments on any PR it has engaged with (authored or reviewed), without requiring `@claude`:
 
-- **Formal reviews** (`pull_request_review`) → `claude-review`. Same workflow as initial review, different mode selected by event type. Skips empty approvals and bot's own reviews.
-- **Inline comments** (`pull_request_review_comment`) and **conversation comments** (`issue_comment`) → `claude-mention`. Each event type's `if:` clause combines `@claude` and bot-PR conditions with `||`. The `!contains(@claude)` in the bot-PR sub-condition prevents the same event from matching both sub-conditions (though this is cosmetic — both would trigger the same job).
+- **Formal reviews** (`pull_request_review`) → `claude-review`. Scoped to bot-authored PRs only. Skips empty approvals and bot's own reviews.
+- **Inline comments** (`pull_request_review_comment`) and **conversation comments** (`issue_comment`) → `claude-mention`. The `if:` triggers broadly (any non-bot comment on any same-repo PR), then a verify step checks bot engagement via the GitHub API before proceeding. This covers replies to the bot's review comments on other people's PRs.
 
 ## GitHub API: issue_comment vs pull_request_review_comment
 

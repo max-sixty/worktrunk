@@ -20,9 +20,10 @@ jobs:
   claude:
     # Two triggers:
     # 1. @claude mentions — explicit requests on any issue/PR.
-    # 2. Bot-authored PRs — conversation replies, inline comments, and review
-    #    comments on PRs opened by worktrunk-bot (no @claude needed). Formal
-    #    review submissions (pull_request_review) go to claude-review instead.
+    # 2. Bot-engaged PRs — any non-bot comment on a PR where the bot has
+    #    authored or reviewed. The verify step checks engagement via API and
+    #    skips the job if the bot hasn't participated. Formal review submissions
+    #    (pull_request_review) go to claude-review instead.
     #
     # Note: secrets cannot be used in job-level `if:` (actions/runner#520) —
     # doing so causes GitHub to fail the workflow on push validation. For review
@@ -33,12 +34,11 @@ jobs:
         contains(github.event.issue.body, '@claude')) ||
       (github.event_name == 'issue_comment' && (
         contains(github.event.comment.body, '@claude') ||
-        (github.event.issue.pull_request && github.event.issue.user.login == 'worktrunk-bot' && github.event.comment.user.login != 'worktrunk-bot' && !contains(github.event.comment.body, '@claude'))
+        (github.event.issue.pull_request && github.event.comment.user.login != 'worktrunk-bot')
       )) ||
-      (github.event_name == 'pull_request_review_comment' && (
-        (contains(github.event.comment.body, '@claude') && github.event.pull_request.head.repo.full_name == github.repository) ||
-        (github.event.pull_request.user.login == 'worktrunk-bot' && github.event.comment.user.login != 'worktrunk-bot' && !contains(github.event.comment.body, '@claude'))
-      ))
+      (github.event_name == 'pull_request_review_comment' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.comment.user.login != 'worktrunk-bot')
     runs-on: ubuntu-24.04
     permissions:
       contents: write # Allow pushing commits
@@ -47,7 +47,35 @@ jobs:
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
     steps:
+      - name: 🔍 Verify bot engagement
+        id: verify
+        continue-on-error: true
+        if: "!contains(github.event.comment.body || '', '@claude')"
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "issue_comment" ]; then
+            PR_NUMBER="${{ github.event.issue.number }}"
+          else
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+          fi
+
+          PR_AUTHOR=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')
+          if [ "$PR_AUTHOR" = "worktrunk-bot" ]; then
+            exit 0
+          fi
+
+          BOT_REVIEWS=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+            --jq '[.[] | select(.user.login == "worktrunk-bot")] | length')
+          if [ "$BOT_REVIEWS" -gt "0" ]; then
+            exit 0
+          fi
+
+          echo "::notice::Bot has not engaged with PR #$PR_NUMBER — skipping"
+          exit 1
+        env:
+          GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
       - name: 📂 Checkout code
+        if: steps.verify.outcome != 'failure'
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -56,12 +84,13 @@ jobs:
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: 🔧 Configure git for Claude
+        if: steps.verify.outcome != 'failure'
         run: |
           git config --global user.name "Claude Code"
           git config --global user.email "claude@anthropic.com"
 
       - name: 📌 Check out PR branch (conversation comment)
-        if: github.event.issue.pull_request
+        if: steps.verify.outcome != 'failure' && github.event.issue.pull_request
         run: |
           PR_STATE=$(gh pr view ${{ github.event.issue.number }} --json state --jq '.state')
           if [ "$PR_STATE" = "OPEN" ]; then
@@ -73,7 +102,7 @@ jobs:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: 📌 Check out PR branch (review comment)
-        if: github.event_name == 'pull_request_review_comment'
+        if: steps.verify.outcome != 'failure' && github.event_name == 'pull_request_review_comment'
         run: |
           PR_STATE=$(gh pr view ${{ github.event.pull_request.number }} --json state --jq '.state')
           if [ "$PR_STATE" = "OPEN" ]; then
@@ -85,27 +114,32 @@ jobs:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: Install cargo-insta
+        if: steps.verify.outcome != 'failure'
         uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-insta
 
       - name: Install cargo-nextest
+        if: steps.verify.outcome != 'failure'
         uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-nextest
 
       - name: 💰 Cache
+        if: steps.verify.outcome != 'failure'
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: ${{ hashFiles('Cargo.lock') }}
           save-if: false
 
       - name: Install shells (zsh, fish)
+        if: steps.verify.outcome != 'failure'
         run: |
           sudo apt-get update
           sudo apt-get install -y zsh fish
 
       - name: 🤖 Run Claude Code
+        if: steps.verify.outcome != 'failure'
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
