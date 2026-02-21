@@ -7,7 +7,9 @@ use clap::error::ErrorKind as ClapErrorKind;
 use color_print::{ceprintln, cformat};
 use std::process;
 use worktrunk::config::{UserConfig, set_config_path};
-use worktrunk::git::{Repository, ResolvedWorktree, exit_code, set_base_path};
+use worktrunk::git::{
+    Repository, ResolvedWorktree, exit_code, recover_from_deleted_cwd, set_base_path,
+};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::extract_filename_from_path;
 use worktrunk::styling::{
@@ -690,7 +692,19 @@ fn main() {
                 commands::statusline::run(effective_format)
             }
             None => (|| {
-                let repo = Repository::current()?;
+                let repo = match Repository::current() {
+                    Ok(repo) => repo,
+                    Err(err) => match recover_from_deleted_cwd() {
+                        Some(recovered) => {
+                            eprintln!(
+                                "{}",
+                                info_message("Current worktree was removed, recovering...")
+                            );
+                            recovered.repo
+                        }
+                        None => return Err(err),
+                    },
+                };
 
                 let progressive_opt = match (progressive, no_progressive) {
                     (true, _) => Some(true),
@@ -1002,11 +1016,16 @@ fn main() {
     };
 
     if let Err(e) = result {
-        // GitError, WorktrunkError, and HookErrorWithHint produce styled output via Display
+        // GitError, WorktrunkError, and HookErrorWithHint produce styled output via Display.
+        // Some variants (AlreadyDisplayed, CommandNotApproved) have empty Display impls —
+        // skip eprintln! for those to avoid phantom blank lines.
         if let Some(err) = e.downcast_ref::<worktrunk::git::GitError>() {
             eprintln!("{}", err);
         } else if let Some(err) = e.downcast_ref::<worktrunk::git::WorktrunkError>() {
-            eprintln!("{}", err);
+            let display = err.to_string();
+            if !display.is_empty() {
+                eprintln!("{display}");
+            }
         } else if let Some(err) = e.downcast_ref::<worktrunk::git::HookErrorWithHint>() {
             eprintln!("{}", err);
         } else if let Some(err) = e.downcast_ref::<worktrunk::config::TemplateExpandError>() {
@@ -1039,6 +1058,14 @@ fn main() {
                     eprintln!("{}", error_message(&msg));
                 }
             }
+        }
+
+        // If the CWD has been deleted, hint the user to use `wt switch ^`
+        if std::env::current_dir().is_err() {
+            eprintln!(
+                "{}",
+                hint_message("Current directory was removed. Try: wt switch ^")
+            );
         }
 
         // Preserve exit code from child processes (especially for signals like SIGINT)

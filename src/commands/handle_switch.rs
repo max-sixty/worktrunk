@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::Context;
 use worktrunk::HookType;
 use worktrunk::config::{UserConfig, expand_template};
-use worktrunk::git::{GitError, Repository, SwitchSuggestionCtx};
+use worktrunk::git::{GitError, Repository, SwitchSuggestionCtx, recover_from_deleted_cwd};
 use worktrunk::styling::{eprintln, info_message};
 
 use super::command_approval::approve_hooks;
@@ -175,10 +175,23 @@ pub fn handle_switch(
         verify,
     } = opts;
 
-    let repo = Repository::current().context("Failed to switch worktree")?;
+    let (repo, is_recovered) = match Repository::current() {
+        Ok(repo) => (repo, false),
+        Err(err) => match recover_from_deleted_cwd() {
+            Some(recovered) => {
+                eprintln!(
+                    "{}",
+                    info_message("Current worktree was removed, recovering...")
+                );
+                (recovered.repo, true)
+            }
+            None => return Err(err.context("Failed to switch worktree")),
+        },
+    };
 
     // Run pre-switch hooks before anything else (before branch validation, planning, etc.)
-    if verify {
+    // Skip when recovered — the source worktree is gone, nothing to run hooks against.
+    if verify && !is_recovered {
         run_pre_switch_hooks(&repo, config, yes)?;
     }
 
@@ -236,8 +249,15 @@ pub fn handle_switch(
     // Show success message (temporal locality: immediately after worktree operation)
     // Returns path to display in hooks when user's shell won't be in the worktree
     // Also shows worktree-path hint on first --create (before shell integration warning)
-    let cwd = std::env::current_dir().context("Failed to get current directory")?;
-    let source_root = repo.current_worktree().root()?;
+    //
+    // When recovered from a deleted worktree, current_dir() and current_worktree().root()
+    // both fail — fall back to repo_path() (the main worktree root).
+    let fallback_path = repo.repo_path().to_path_buf();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| fallback_path.clone());
+    let source_root = repo
+        .current_worktree()
+        .root()
+        .unwrap_or_else(|_| fallback_path.clone());
     let hooks_display_path =
         handle_switch_output(&result, &branch_info, change_dir, Some(&source_root), &cwd)?;
 

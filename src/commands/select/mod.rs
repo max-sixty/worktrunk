@@ -14,7 +14,8 @@ use std::sync::Arc;
 use anyhow::Context;
 use dashmap::DashMap;
 use skim::prelude::*;
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, recover_from_deleted_cwd};
+use worktrunk::styling::{eprintln, info_message};
 
 use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
@@ -34,7 +35,19 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
         anyhow::bail!("Interactive picker requires an interactive terminal");
     }
 
-    let repo = Repository::current()?;
+    let (repo, is_recovered) = match Repository::current() {
+        Ok(repo) => (repo, false),
+        Err(err) => match recover_from_deleted_cwd() {
+            Some(recovered) => {
+                eprintln!(
+                    "{}",
+                    info_message("Current worktree was removed, recovering...")
+                );
+                (recovered.repo, true)
+            }
+            None => return Err(err),
+        },
+    };
 
     // Merge CLI flags with resolved config
     let config = repo.config();
@@ -308,12 +321,19 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
             (selected.output().to_string(), false)
         };
 
-        // Load config
-        let repo = Repository::current().context("Failed to switch worktree")?;
+        // Load config — reuse recovered repo if we recovered earlier
+        let repo = if is_recovered {
+            repo.clone()
+        } else {
+            Repository::current().context("Failed to switch worktree")?
+        };
         let config = repo.user_config();
 
         // Run pre-switch hooks before anything else (before branch validation, planning, etc.)
-        run_pre_switch_hooks(&repo, config, true)?;
+        // Skip when recovered — the source worktree is gone, nothing to run hooks against.
+        if !is_recovered {
+            run_pre_switch_hooks(&repo, config, true)?;
+        }
 
         // Switch to existing worktree or create new one
         let plan = plan_switch(&repo, &identifier, should_create, None, false, config)?;
@@ -334,8 +354,13 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
 
         // Show success message; emit cd directive if shell integration is active
         // Interactive picker always performs cd (change_dir: true)
-        let cwd = std::env::current_dir().context("Failed to get current directory")?;
-        let source_root = repo.current_worktree().root()?;
+        // When recovered from a deleted worktree, fall back to repo_path().
+        let fallback_path = repo.repo_path().to_path_buf();
+        let cwd = std::env::current_dir().unwrap_or_else(|_| fallback_path.clone());
+        let source_root = repo
+            .current_worktree()
+            .root()
+            .unwrap_or_else(|_| fallback_path.clone());
         let hooks_display_path =
             handle_switch_output(&result, &branch_info, true, Some(&source_root), &cwd)?;
 
