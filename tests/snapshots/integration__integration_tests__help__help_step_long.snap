@@ -44,6 +44,7 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36mdiff[0m          Show all changes since branching
   [1m[36mcopy-ignored[0m  Copy gitignored files to another worktree
   [1m[36mfor-each[0m      [experimental] Run command in each worktree
+  [1m[36mpromote[0m       [experimental] Put a branch into the main worktree
   [1m[36mrelocate[0m      [experimental] Move worktrees to expected paths
 
 [1m[32mOptions:[0m
@@ -82,6 +83,7 @@ Manual merge workflow with review between steps:
 - [2mdiff[0m — Show all changes since branching (committed, staged, unstaged, untracked)
 - [2mcopy-ignored[0m — Copy gitignored files between worktrees
 - [2mfor-each[0m — [experimental] Run a command in every worktree
+- [2mpromote[0m — [experimental] Put a branch into the main worktree
 - [2mrelocate[0m — [experimental] Move worktrees to expected paths
 
 [1m[32mSee also[0m
