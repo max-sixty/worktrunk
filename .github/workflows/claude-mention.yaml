@@ -50,13 +50,25 @@ jobs:
 
       - name: 📌 Check out PR branch (conversation comment)
         if: github.event.issue.pull_request
-        run: gh pr checkout ${{ github.event.issue.number }}
+        run: |
+          PR_STATE=$(gh pr view ${{ github.event.issue.number }} --json state --jq '.state')
+          if [ "$PR_STATE" = "OPEN" ]; then
+            gh pr checkout ${{ github.event.issue.number }}
+          else
+            echo "::warning::PR is $PR_STATE — staying on default branch"
+          fi
         env:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: 📌 Check out PR branch (review comment)
         if: github.event_name == 'pull_request_review_comment'
-        run: gh pr checkout ${{ github.event.pull_request.number }}
+        run: |
+          PR_STATE=$(gh pr view ${{ github.event.pull_request.number }} --json state --jq '.state')
+          if [ "$PR_STATE" = "OPEN" ]; then
+            gh pr checkout ${{ github.event.pull_request.number }}
+          else
+            echo "::warning::PR is $PR_STATE — staying on default branch"
+          fi
         env:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
