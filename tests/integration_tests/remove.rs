@@ -6,6 +6,7 @@ use crate::common::{
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
 use rstest::rstest;
+use std::path::Path;
 use std::time::Duration; // For absence checks (SLEEP_FOR_ABSENCE_CHECK pattern)
 
 #[rstest]
@@ -2098,4 +2099,132 @@ fn test_remove_stale_staging_dir_from_crashed_removal(mut repo: TestRepo) {
         staged_path.exists(),
         "Stale staging directory from crashed removal is never cleaned up"
     );
+}
+
+/// Tests that foreground removal shows remaining directory entries when
+/// `git worktree remove` fails because a directory can't be deleted.
+///
+/// Uses Unix permissions (non-writable directory) to prevent deletion of
+/// a gitignored directory, triggering the `WorktreeRemovalFailed` error path
+/// that lists remaining entries.
+#[rstest]
+#[cfg(unix)]
+fn test_remove_foreground_failure_shows_remaining_entries(mut repo: TestRepo) {
+    use std::fs::{self, Permissions};
+    use std::os::unix::fs::PermissionsExt;
+
+    let worktree_path = repo.add_worktree("feature-stuck");
+
+    // Add .gitignore so the stuck directory passes the clean check
+    fs::write(worktree_path.join(".gitignore"), "stuck/\n").unwrap();
+    repo.run_git_in(&worktree_path, &["add", ".gitignore"]);
+    repo.run_git_in(&worktree_path, &["commit", "-m", "Add gitignore"]);
+
+    // Create gitignored directory with a file inside
+    let stuck_dir = worktree_path.join("stuck");
+    fs::create_dir_all(&stuck_dir).unwrap();
+    fs::write(stuck_dir.join("file.txt"), "content").unwrap();
+
+    // Make directory non-writable so git can't unlink the file inside
+    fs::set_permissions(&stuck_dir, Permissions::from_mode(0o555)).unwrap();
+
+    // Check if permissions actually restrict us (skip if running as root)
+    let test_file = stuck_dir.join("test_write");
+    if fs::write(&test_file, "test").is_ok() {
+        let _ = fs::remove_file(&test_file);
+        fs::set_permissions(&stuck_dir, Permissions::from_mode(0o755)).unwrap();
+        eprintln!("Skipping - running with elevated privileges");
+        return;
+    }
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "feature-stuck"])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Restore permissions before assertions so TempDir cleanup works
+    restore_dir_permissions(&stuck_dir);
+
+    assert!(
+        !output.status.success(),
+        "Remove should have failed, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Remaining in directory:"),
+        "Error should show remaining entries, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("stuck/"),
+        "Error should list the stuck directory, got: {stderr}"
+    );
+}
+
+/// Same as above but for the detached HEAD code path.
+#[rstest]
+#[cfg(unix)]
+fn test_remove_foreground_failure_shows_remaining_entries_detached(mut repo: TestRepo) {
+    use std::fs::{self, Permissions};
+    use std::os::unix::fs::PermissionsExt;
+
+    let worktree_path = repo.add_worktree("feature-stuck-detached");
+
+    // Commit .gitignore, then detach HEAD
+    fs::write(worktree_path.join(".gitignore"), "stuck/\n").unwrap();
+    repo.run_git_in(&worktree_path, &["add", ".gitignore"]);
+    repo.run_git_in(&worktree_path, &["commit", "-m", "Add gitignore"]);
+    repo.detach_head_in_worktree("feature-stuck-detached");
+
+    // Create gitignored directory with a file inside
+    let stuck_dir = worktree_path.join("stuck");
+    fs::create_dir_all(&stuck_dir).unwrap();
+    fs::write(stuck_dir.join("file.txt"), "content").unwrap();
+    fs::set_permissions(&stuck_dir, Permissions::from_mode(0o555)).unwrap();
+
+    // Skip if running as root
+    let test_file = stuck_dir.join("test_write");
+    if fs::write(&test_file, "test").is_ok() {
+        let _ = fs::remove_file(&test_file);
+        fs::set_permissions(&stuck_dir, Permissions::from_mode(0o755)).unwrap();
+        eprintln!("Skipping - running with elevated privileges");
+        return;
+    }
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    restore_dir_permissions(&stuck_dir);
+
+    assert!(
+        !output.status.success(),
+        "Remove should have failed, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Remaining in directory:"),
+        "Error should show remaining entries, got: {stderr}"
+    );
+}
+
+/// Restore write permissions recursively so TempDir cleanup succeeds.
+#[cfg(unix)]
+fn restore_dir_permissions(dir: &Path) {
+    use std::fs::{self, Permissions};
+    use std::os::unix::fs::PermissionsExt;
+
+    let _ = fs::set_permissions(dir, Permissions::from_mode(0o755));
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                restore_dir_permissions(&entry.path());
+            }
+        }
+    }
 }
