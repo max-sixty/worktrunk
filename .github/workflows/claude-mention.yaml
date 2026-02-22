@@ -19,7 +19,7 @@ env:
 jobs:
   claude:
     # Two triggers:
-    # 1. @claude mentions — explicit requests on any issue/PR.
+    # 1. @worktrunk-bot mentions — explicit requests on any issue/PR.
     # 2. Bot-engaged PRs — any non-bot comment on a PR where the bot has
     #    authored or reviewed. The verify step checks engagement via API and
     #    skips the job if the bot hasn't participated. Formal review submissions
@@ -34,7 +34,7 @@ jobs:
     # github.event context instead. Use a Conversation tab comment for fork PRs.
     if: |
       (github.event_name == 'issues' &&
-        contains(github.event.issue.body, '@claude')) ||
+        contains(github.event.issue.body, '@worktrunk-bot')) ||
       (github.event_name == 'issue_comment' &&
         github.event.comment.user.login != 'worktrunk-bot') ||
       (github.event_name == 'pull_request_review_comment' &&
@@ -51,7 +51,7 @@ jobs:
       - name: 🔍 Verify bot engagement
         id: verify
         continue-on-error: true
-        if: "!contains(github.event.comment.body || '', '@claude')"
+        if: "!contains(github.event.comment.body || '', '@worktrunk-bot')"
         run: |
           if [ "$GITHUB_EVENT_NAME" = "issue_comment" ]; then
             if [ -z "${{ github.event.issue.pull_request.url }}" ]; then

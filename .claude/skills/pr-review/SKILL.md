@@ -316,7 +316,7 @@ fixed line content here
 ### 6. Request fixes on bot PRs
 
 The review workflow is read-only (`contents: read`) and cannot push fixes. For
-bot PRs (Dependabot, renovate, etc.), request fixes via the `@claude` mention
+bot PRs (Dependabot, renovate, etc.), request fixes via the `@worktrunk-bot` mention
 workflow, which has write access and can push commits to the PR branch.
 
 **When to use:** The review found concrete, fixable issues (CI failures, missing
@@ -326,7 +326,7 @@ human PRs — leave suggestions for the author instead.
 After submitting the review, post a separate comment:
 
 ```bash
-gh pr comment <number> --body "@claude The review found issues on this Dependabot PR. Please fix:
+gh pr comment <number> --body "@worktrunk-bot The review found issues on this Dependabot PR. Please fix:
 
 - [specific issue 1]
 - [specific issue 2]
