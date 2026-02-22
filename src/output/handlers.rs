@@ -990,6 +990,9 @@ fn handle_removed_worktree_output(
     if changed_directory {
         super::change_directory(main_path)?;
         stderr().flush()?; // Force flush to ensure shell processes the cd
+        // Mark that the CWD worktree is being removed, so the error handler
+        // can show a hint if a subsequent command (e.g., post-merge hook) fails.
+        super::mark_cwd_removed();
     }
 
     // Handle detached HEAD case (no branch known)

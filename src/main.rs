@@ -1075,13 +1075,10 @@ fn main() {
         }
 
         // If the CWD has been deleted, hint the user to use `wt switch ^`.
-        // On Unix, current_dir() fails immediately when the directory is gone.
-        // On Windows, current_dir() may still succeed (handle remains valid),
-        // so we also check if the path actually exists on disk.
-        let cwd_gone = match std::env::current_dir() {
-            Err(_) => true,
-            Ok(p) => !p.exists(),
-        };
+        // Check both: (1) explicit flag set by merge/remove when it knows the CWD
+        // worktree was removed (reliable on all platforms), and (2) OS-level detection
+        // for cases not covered by the flag (e.g., external worktree removal).
+        let cwd_gone = output::was_cwd_removed() || std::env::current_dir().is_err();
         if cwd_gone {
             eprintln!(
                 "{}",

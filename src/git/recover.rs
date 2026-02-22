@@ -28,7 +28,7 @@ pub struct RecoveredRepo {
 pub fn recover_from_deleted_cwd() -> Option<RecoveredRepo> {
     // If current_dir succeeds and the directory exists, nothing to recover from.
     // On Windows, current_dir() may succeed even after the directory is removed
-    // (the process handle keeps it alive), so also check existence.
+    // (the process handle keeps it alive), so also check existence on disk.
     match std::env::current_dir() {
         Ok(p) if p.exists() => return None,
         _ => {}
