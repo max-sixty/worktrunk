@@ -134,14 +134,13 @@ The mention workflow runs for any user who includes `@worktrunk-bot` — the mer
 - Formal review submitted on a `worktrunk-bot`-authored PR, with body or non-approval → `claude-review` responds
 - `@worktrunk-bot` mentioned in an issue body → `claude-mention` responds
 - `@worktrunk-bot` mentioned in any comment (issue or PR) → `claude-mention` responds
-- Any comment on a PR that `worktrunk-bot` has authored or reviewed → `claude-mention` responds (verify step confirms engagement via API)
+- Any comment on a PR or issue that `worktrunk-bot` has engaged with (authored, reviewed, or commented on) → `claude-mention` responds (verify step confirms engagement via API)
 - Editing a comment or issue body re-triggers the same response
 
 **Does not trigger:**
 - `worktrunk-bot`'s own comments or reviews (loop prevention)
 - Empty approvals on `worktrunk-bot` PRs (approved with no body)
-- Comments on issues where `@worktrunk-bot` is not mentioned
-- Comments on PRs where `worktrunk-bot` hasn't engaged and no `@worktrunk-bot` mention
+- Comments on issues or PRs where `worktrunk-bot` hasn't engaged and no `@worktrunk-bot` mention
 - Inline review comments on fork PRs (secrets unavailable)
 - Draft PRs
 

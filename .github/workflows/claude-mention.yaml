@@ -54,11 +54,20 @@ jobs:
         if: "github.event.comment && !contains(github.event.comment.body || '', '@worktrunk-bot')"
         run: |
           if [ "$GITHUB_EVENT_NAME" = "issue_comment" ]; then
+            ISSUE_NUMBER="${{ github.event.issue.number }}"
+
             if [ -z "${{ github.event.issue.pull_request.url }}" ]; then
-              echo "::notice::Not a PR comment — skipping"
+              # Plain issue — check if bot has commented
+              BOT_COMMENTS=$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+                --jq '[.[] | select(.user.login == "worktrunk-bot")] | length')
+              if [ "$BOT_COMMENTS" -gt "0" ]; then
+                exit 0
+              fi
+              echo "::notice::Bot has not engaged with issue #$ISSUE_NUMBER — skipping"
               exit 1
             fi
-            PR_NUMBER="${{ github.event.issue.number }}"
+
+            PR_NUMBER="$ISSUE_NUMBER"
           else
             PR_NUMBER="${{ github.event.pull_request.number }}"
           fi
