@@ -22,6 +22,10 @@ exclude = [
     # Zola internal links use @/ syntax (validated by `zola check`, not lychee)
     "/@/",
 
+    # Project's own site — transient outages shouldn't fail CI; docs structure
+    # is validated by the build itself
+    "worktrunk\\.dev",
+
     # Private or authenticated GitHub resources
     "github\\.com/anthropics/claude-code/issues",
 
