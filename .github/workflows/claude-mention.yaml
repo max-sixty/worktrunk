@@ -158,6 +158,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Use bot token so pushed commits trigger CI workflows
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          allowed_non_write_users: '*'
 
           additional_permissions: |
             actions: read
