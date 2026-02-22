@@ -51,12 +51,25 @@ After pushing changes to a PR branch, monitor CI until all checks pass:
 5. Do not return until CI is green — local tests alone are not sufficient (CI
    runs on Linux, Windows, macOS)
 
-## PR Comment Formatting
+## Comment Formatting
 
-Keep PR comments concise. Put detailed analysis (file-by-file breakdowns, code
+Keep comments concise. Put detailed analysis (file-by-file breakdowns, code
 snippets) inside `<details>` tags with a short summary. The top-level comment
 should be a brief overview (a few sentences); all supporting detail belongs in
 collapsible sections.
+
+### Use Links
+
+When referencing files, issues, PRs, or docs, always use markdown links so
+readers can click through — never leave them as plain text.
+
+- **Repository files** — link to the file on GitHub:
+  [`docs/content/hook.md`](https://github.com/max-sixty/worktrunk/blob/main/docs/content/hook.md),
+  not just `docs/content/hook.md`
+- **Issues and PRs** — use `#123` shorthand (GitHub auto-links these)
+- **Specific lines** — link with a line fragment:
+  [`src/cli/mod.rs#L42`](https://github.com/max-sixty/worktrunk/blob/main/src/cli/mod.rs#L42)
+- **External resources** — always use `[text](url)` format
 
 Example:
 
