@@ -1637,54 +1637,25 @@ mod tests {
     }
 
     #[test]
-    fn test_message_hidden_when_summary_below_threshold() {
-        // When Summary can't reach 40 chars, Message should be dropped
-        // so Summary gets all flexible space.
-        //
-        // Probe widths to find cases where Summary is present but below 40,
-        // then verify Message is absent and Summary got the reclaimed space.
-        let mut found_below_threshold = false;
+    fn test_message_gated_on_summary_threshold() {
+        // Probe widths: when Summary is present but < 40, Message must be absent.
+        // At wide widths where Summary >= 40, Message can appear.
+        let mut found_below = false;
         for width in 80..200 {
-            let layout = layout_at_width(width, &full_skip_tasks());
-            let summary = find_column(&layout, ColumnKind::Summary);
-            let message = find_column(&layout, ColumnKind::Message);
-
-            if let Some(s) = summary
-                && s.width < 40
-            {
-                found_below_threshold = true;
-                // Below threshold: Message must be absent
-                assert!(
-                    message.is_none(),
-                    "Message should be hidden when Summary is {} chars (width={width})",
-                    s.width,
-                );
+            let l = layout_at_width(width, &full_skip_tasks());
+            if let Some(s) = find_column(&l, ColumnKind::Summary) {
+                if s.width < 40 {
+                    found_below = true;
+                    assert!(find_column(&l, ColumnKind::Message).is_none());
+                }
             }
         }
-        assert!(
-            found_below_threshold,
-            "Expected at least one width where Summary < 40"
-        );
-    }
+        assert!(found_below, "no width produced Summary < 40");
 
-    #[test]
-    fn test_message_shown_when_summary_reaches_threshold() {
-        // At a wide enough terminal, Summary reaches 40+ and Message appears.
-        let layout = layout_at_width(200, &full_skip_tasks());
-
-        let summary = find_column(&layout, ColumnKind::Summary);
-        let message = find_column(&layout, ColumnKind::Message);
-
-        assert!(summary.is_some(), "Summary should be present at width 200");
-        assert!(
-            summary.unwrap().width >= 40,
-            "Summary should reach threshold at width 200: got {}",
-            summary.unwrap().width,
-        );
-        assert!(
-            message.is_some(),
-            "Message should appear when Summary >= 40"
-        );
+        // At 200, Summary is well above threshold and Message appears.
+        let l = layout_at_width(200, &full_skip_tasks());
+        assert!(find_column(&l, ColumnKind::Summary).unwrap().width >= 40);
+        assert!(find_column(&l, ColumnKind::Message).is_some());
     }
 
     #[test]
