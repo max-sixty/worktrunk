@@ -328,30 +328,19 @@ fixed line content here
   direct suggestion.
 - Multi-line suggestions: set `start_line` and `line` to define the range.
 
-### 6. Request fixes on bot PRs
+### 6. Request fixes when the author won't respond
 
-The review workflow has write access but the initial review mode uses the
-read-only `/pr-review` skill. For bot PRs (Dependabot, renovate, etc.), request
-fixes via a `@worktrunk-bot` comment, which triggers the mention workflow and can
-push commits to the PR branch.
-
-**When to use:** The review found concrete, fixable issues (CI failures, missing
-test updates, small code problems) on a bot-authored PR. Don't use this for
-human PRs — leave suggestions for the author instead.
-
-After submitting the review, post a separate comment:
+If the review found concrete, fixable issues on a PR where the author won't act
+on feedback (Dependabot, renovate, etc.), post a `@worktrunk-bot` comment:
 
 ```bash
-gh pr comment <number> --body "@worktrunk-bot The review found issues on this Dependabot PR. Please fix:
+gh pr comment <number> --body "@worktrunk-bot Please fix the issues from the review:
 
 - [specific issue 1]
-- [specific issue 2]
-
-See the review comments for details."
+- [specific issue 2]"
 ```
 
-This triggers the `claude-mention` workflow, which checks out the PR branch,
-applies fixes, and pushes. CI reruns automatically.
+For human PRs, leave suggestions for the author instead.
 
 ## What makes good review feedback
 
