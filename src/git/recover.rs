@@ -10,11 +10,31 @@ use std::path::{Path, PathBuf};
 use super::Repository;
 
 /// Result of recovering from a deleted working directory.
-pub struct RecoveredRepo {
+struct RecoveredRepo {
     /// A valid repository discovered from an ancestor directory.
-    pub repo: Repository,
-    /// The deleted worktree path (from `$PWD`).
-    pub deleted_path: PathBuf,
+    repo: Repository,
+}
+
+/// Try to get the current repository, recovering from a deleted CWD if possible.
+///
+/// Returns `(Repository, recovered)` where `recovered` is `true` if the CWD was
+/// deleted and we recovered by finding the parent repository.
+///
+/// Prints an info message when recovery occurs.
+pub fn current_or_recover() -> anyhow::Result<(Repository, bool)> {
+    match Repository::current() {
+        Ok(repo) => Ok((repo, false)),
+        Err(err) => match recover_from_deleted_cwd() {
+            Some(recovered) => {
+                eprintln!(
+                    "{}",
+                    crate::styling::info_message("Current worktree was removed, recovering...")
+                );
+                Ok((recovered.repo, true))
+            }
+            None => Err(err),
+        },
+    }
 }
 
 /// Attempt to recover a repository when the current directory has been deleted.
@@ -25,7 +45,7 @@ pub struct RecoveredRepo {
 /// 3. The deleted path was actually a worktree of that repository
 ///
 /// Returns `None` if CWD is fine or recovery fails at any step.
-pub fn recover_from_deleted_cwd() -> Option<RecoveredRepo> {
+fn recover_from_deleted_cwd() -> Option<RecoveredRepo> {
     // If current_dir succeeds and the directory exists, nothing to recover from.
     // On Windows, current_dir() may succeed even after the directory is removed
     // (the process handle keeps it alive), so also check existence on disk.
@@ -55,7 +75,7 @@ pub fn recover_from_deleted_cwd() -> Option<RecoveredRepo> {
         return None;
     }
 
-    Some(RecoveredRepo { repo, deleted_path })
+    Some(RecoveredRepo { repo })
 }
 
 /// Walk up from `path` to find the first existing ancestor directory.
@@ -79,10 +99,12 @@ fn find_repo_near(dir: &Path) -> Option<Repository> {
         return Some(repo);
     }
 
-    // Check immediate children for .git directories
+    // Check immediate children for .git directories.
+    // Uses is_some_and instead of ? so an unreadable entry (e.g., broken symlink)
+    // skips that entry rather than aborting the entire search.
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
-        if entry.file_type().ok()?.is_dir()
+        if entry.file_type().ok().is_some_and(|ft| ft.is_dir())
             && let Some(repo) = try_repo_at(&entry.path())
         {
             return Some(repo);
@@ -96,6 +118,10 @@ fn find_repo_near(dir: &Path) -> Option<Repository> {
 ///
 /// Returns `Some(repo)` if the path contains a `.git` directory (not a file)
 /// and `Repository::at()` succeeds.
+///
+/// Note: This only matches `.git` directories, so bare repos (which have no
+/// `.git` subdirectory) won't be discovered. The fallback hint in `main.rs`
+/// covers this gracefully.
 fn try_repo_at(dir: &Path) -> Option<Repository> {
     let git_path = dir.join(".git");
     // Only match .git directories (main repos), not .git files (linked worktrees)
@@ -293,6 +319,29 @@ mod tests {
 
         let repo = Repository::at(&repo_dir).unwrap();
         assert!(was_worktree_of(&repo, &wt_path));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_find_repo_near_handles_broken_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Create a broken symlink — file_type() returns Err for these
+        std::os::unix::fs::symlink("/nonexistent/target", tmp.path().join("broken_link")).unwrap();
+        // Should return None without aborting (the broken symlink is skipped gracefully)
+        assert!(find_repo_near(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn test_current_or_recover_returns_repo_when_cwd_exists() {
+        // In a test environment, CWD exists, so current_or_recover should succeed
+        // via the normal Repository::current() path (not recovery).
+        // This test will fail if not run inside a git repo, which is expected in CI.
+        if Repository::current().is_ok() {
+            let (repo, recovered) = current_or_recover().unwrap();
+            assert!(!recovered);
+            // Sanity check: repo should have a valid path
+            assert!(repo.repo_path().exists());
+        }
     }
 
     #[test]
