@@ -287,6 +287,27 @@ fn test_project_identifier_ssh_protocol_with_port() {
 }
 
 #[test]
+fn test_project_identifier_ssh_protocol_no_port() {
+    let mut repo = TestRepo::new();
+    repo.setup_remote("main");
+    // ssh:// URL without port and single path segment (doesn't fit host/owner/repo)
+    repo.git_command()
+        .args([
+            "remote",
+            "set-url",
+            "origin",
+            "ssh://git@internal-host/repo.git",
+        ])
+        .output()
+        .unwrap();
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let id = repository.project_identifier().unwrap();
+    // Falls through to SSH handler; no colon, so returns ssh_part as-is
+    assert_eq!(id, "internal-host/repo");
+}
+
+#[test]
 fn test_project_identifier_no_remote_fallback() {
     let repo = TestRepo::new();
     // Remove origin (fixture has it) for this no-remote test

@@ -79,7 +79,7 @@ fn execute_instant_removal_or_fallback(
 
 /// List top-level entries remaining in a directory after a failed removal.
 ///
-/// Returns None if the directory doesn't exist or can't be read.
+/// Returns None if the directory doesn't exist, can't be read, or is empty.
 /// Entries are sorted, with directories suffixed with `/`.
 fn list_remaining_entries(path: &Path) -> Option<Vec<String>> {
     let mut entries: Vec<String> = std::fs::read_dir(path)
@@ -94,13 +94,8 @@ fn list_remaining_entries(path: &Path) -> Option<Vec<String>> {
             }
         })
         .collect();
-
-    if entries.is_empty() {
-        None
-    } else {
-        entries.sort();
-        Some(entries)
-    }
+    entries.sort();
+    (!entries.is_empty()).then_some(entries)
 }
 
 // ============================================================================
