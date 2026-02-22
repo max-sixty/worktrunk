@@ -6,7 +6,6 @@ use crate::common::{
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
 use rstest::rstest;
-use std::path::Path;
 use std::time::Duration; // For absence checks (SLEEP_FOR_ABSENCE_CHECK pattern)
 
 #[rstest]
@@ -2215,7 +2214,7 @@ fn test_remove_foreground_failure_shows_remaining_entries_detached(mut repo: Tes
 
 /// Restore write permissions recursively so TempDir cleanup succeeds.
 #[cfg(unix)]
-fn restore_dir_permissions(dir: &Path) {
+fn restore_dir_permissions(dir: &std::path::Path) {
     use std::fs::{self, Permissions};
     use std::os::unix::fs::PermissionsExt;
 
