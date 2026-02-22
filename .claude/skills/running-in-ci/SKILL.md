@@ -5,6 +5,28 @@ description: CI environment rules for GitHub Actions workflows. Use when operati
 
 # Running in CI
 
+## First Steps — Read Context
+
+When triggered by a comment or issue, read the full context before responding.
+The prompt provides a URL — extract the PR/issue number from it.
+
+For PRs:
+
+```bash
+gh pr view <number> --json title,body,comments,reviews,state,statusCheckRollup
+gh pr diff <number>
+gh pr checks <number>
+```
+
+For issues:
+
+```bash
+gh issue view <number> --json title,body,comments,state
+```
+
+Read the triggering comment, the PR/issue description, the diff (for PRs), and
+recent comments to understand the full conversation before taking action.
+
 ## Security
 
 NEVER run commands that could expose secrets (`env`, `printenv`, `set`,
