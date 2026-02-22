@@ -528,6 +528,15 @@ mod tests {
     }
 
     #[test]
+    fn test_cwd_removed_flag() {
+        // was_cwd_removed() returns the flag set by mark_cwd_removed().
+        // Note: global state persists across tests, so we only test mark + read,
+        // not the default (which another test may have already changed).
+        mark_cwd_removed();
+        assert!(was_cwd_removed());
+    }
+
+    #[test]
     fn test_spawned_thread_uses_correct_state() {
         use std::sync::mpsc;
 

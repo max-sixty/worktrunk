@@ -337,13 +337,10 @@ mod tests {
     fn test_current_or_recover_returns_repo_when_cwd_exists() {
         // In a test environment, CWD exists, so current_or_recover should succeed
         // via the normal Repository::current() path (not recovery).
-        // This test will fail if not run inside a git repo, which is expected in CI.
-        if Repository::current().is_ok() {
-            let (repo, recovered) = current_or_recover().unwrap();
-            assert!(!recovered);
-            // Sanity check: repo should have a valid path
-            assert!(repo.repo_path().exists());
-        }
+        // Tests run inside a git repo in CI, so Repository::current() succeeds.
+        let (repo, recovered) = current_or_recover().unwrap();
+        assert!(!recovered);
+        assert!(repo.repo_path().exists());
     }
 
     #[test]
@@ -392,11 +389,7 @@ mod tests {
         std::fs::remove_dir_all(&wt_path).unwrap();
 
         // recover_from_path should find the parent repo
-        let recovered = recover_from_path(&wt_path);
-        assert!(
-            recovered.is_some(),
-            "should recover repo from deleted worktree path"
-        );
+        assert!(recover_from_path(&wt_path).is_some());
     }
 
     #[test]
@@ -414,10 +407,15 @@ mod tests {
 
         // Try to recover from a path that was never a worktree
         let unrelated = base.join("not-a-worktree");
-        let recovered = recover_from_path(&unrelated);
-        assert!(
-            recovered.is_none(),
-            "should not recover from unrelated path"
-        );
+        assert!(recover_from_path(&unrelated).is_none());
+    }
+
+    #[test]
+    fn test_find_repo_near_finds_repo_at_dir_itself() {
+        let tmp = tempfile::tempdir().unwrap();
+        git_init(tmp.path());
+        // When the directory itself is a git repo, find_repo_near should return it
+        // (covers the early-return path before scanning children)
+        assert!(find_repo_near(tmp.path()).is_some());
     }
 }
