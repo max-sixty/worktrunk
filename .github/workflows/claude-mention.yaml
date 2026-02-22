@@ -89,7 +89,6 @@ jobs:
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: 🔧 Configure git for Claude
-        if: steps.verify.outcome != 'failure'
         run: |
           git config --global user.name "Claude Code"
           git config --global user.email "claude@anthropic.com"
@@ -107,7 +106,7 @@ jobs:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: 📌 Check out PR branch (conversation comment)
-        if: steps.verify.outcome != 'failure' && github.event.issue.pull_request
+        if: github.event.issue.pull_request
         run: |
           PR_STATE=$(gh pr view ${{ github.event.issue.number }} --json state --jq '.state')
           if [ "$PR_STATE" = "OPEN" ]; then
@@ -119,7 +118,7 @@ jobs:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: 📌 Check out PR branch (review comment)
-        if: steps.verify.outcome != 'failure' && github.event_name == 'pull_request_review_comment'
+        if: github.event_name == 'pull_request_review_comment'
         run: |
           PR_STATE=$(gh pr view ${{ github.event.pull_request.number }} --json state --jq '.state')
           if [ "$PR_STATE" = "OPEN" ]; then
@@ -131,26 +130,22 @@ jobs:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: Install cargo-insta
-        if: steps.verify.outcome != 'failure'
         uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-insta
 
       - name: Install cargo-nextest
-        if: steps.verify.outcome != 'failure'
         uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-nextest
 
       - name: 💰 Cache
-        if: steps.verify.outcome != 'failure'
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: ${{ hashFiles('Cargo.lock') }}
           save-if: false
 
       - name: Install shells (zsh, fish)
-        if: steps.verify.outcome != 'failure'
         run: |
           sudo apt-get update
           sudo apt-get install -y zsh fish
