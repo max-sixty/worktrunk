@@ -147,6 +147,54 @@ fn test_help_list_narrow_terminal() {
     });
 }
 
+/// Tests --help-description outputs the meta description for docs frontmatter.
+#[rstest]
+#[case("switch", "Switch to a worktree; create if needed.")]
+#[case("merge", "Merge current branch into target. Squash & rebase")]
+#[case("hook", "Run configured hooks.")]
+fn test_help_description(#[case] cmd: &str, #[case] expected_prefix: &str) {
+    let output = wt_command()
+        .args([cmd, "--help-description"])
+        .output()
+        .expect("failed to run wt --help-description");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.starts_with(expected_prefix),
+        "Expected description for '{cmd}' to start with '{expected_prefix}', got: {stdout}"
+    );
+}
+
+#[test]
+fn test_help_description_no_subcommand() {
+    let output = wt_command()
+        .args(["--help-description"])
+        .output()
+        .expect("failed to run wt --help-description");
+
+    // Exits 0 (eprintln + return, not process::exit(1))
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Usage:"),
+        "Expected usage hint, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_help_description_unknown_command() {
+    let output = wt_command()
+        .args(["nonexistent", "--help-description"])
+        .output()
+        .expect("failed to run wt --help-description");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Unknown command"),
+        "Expected unknown command error, got: {stderr}"
+    );
+}
+
 /// Tests that using a nested subcommand at the top level suggests the correct command.
 ///
 /// When users type `wt squash` instead of `wt step squash`, or `wt pre-merge` instead
