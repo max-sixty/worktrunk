@@ -1,6 +1,6 @@
 ---
 name: running-in-ci
-description: CI environment rules for GitHub Actions workflows. Use when operating in CI — covers security, CI monitoring, and PR comment formatting.
+description: CI environment rules for GitHub Actions workflows. Use when operating in CI — covers security, CI monitoring, and comment formatting.
 ---
 
 # Running in CI
@@ -63,12 +63,19 @@ collapsible sections.
 When referencing files, issues, PRs, or docs, always use markdown links so
 readers can click through — never leave them as plain text.
 
-- **Repository files** — link to the file on GitHub:
-  [`docs/content/hook.md`](https://github.com/max-sixty/worktrunk/blob/main/docs/content/hook.md),
+Prefer **permalinks** (URLs with a commit SHA) over branch-based links
+(`blob/main/...`). Permalinks stay valid even when files move or lines shift.
+This is especially important for line references — a `blob/main/...#L42` link
+breaks as soon as the line numbers change. On GitHub, pressing `y` on any file
+view copies the permalink.
+
+- **Repository files** — link to the file on GitHub, preferably with a commit
+  SHA: [`docs/content/hook.md`](https://github.com/max-sixty/worktrunk/blob/ab1c2d3/docs/content/hook.md),
   not just `docs/content/hook.md`
 - **Issues and PRs** — use `#123` shorthand (GitHub auto-links these)
-- **Specific lines** — link with a line fragment:
-  [`src/cli/mod.rs#L42`](https://github.com/max-sixty/worktrunk/blob/main/src/cli/mod.rs#L42)
+- **Specific lines** — always use a permalink (commit SHA) so the link remains
+  accurate:
+  [`src/cli/mod.rs#L42`](https://github.com/max-sixty/worktrunk/blob/ab1c2d3/src/cli/mod.rs#L42)
 - **External resources** — always use `[text](url)` format
 
 Example:
