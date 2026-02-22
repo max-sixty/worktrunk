@@ -65,22 +65,26 @@ jobs:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: Install cargo-insta
+        if: github.event_name == 'pull_request_review'
         uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-insta
 
       - name: Install cargo-nextest
+        if: github.event_name == 'pull_request_review'
         uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-nextest
 
       - name: 💰 Cache
+        if: github.event_name == 'pull_request_review'
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: ${{ hashFiles('Cargo.lock') }}
           save-if: false
 
       - name: Install shells (zsh, fish)
+        if: github.event_name == 'pull_request_review'
         run: |
           sudo apt-get update
           sudo apt-get install -y zsh fish

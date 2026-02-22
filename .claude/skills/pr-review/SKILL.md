@@ -330,9 +330,10 @@ fixed line content here
 
 ### 6. Request fixes on bot PRs
 
-The review workflow is read-only (`contents: read`) and cannot push fixes. For
-bot PRs (Dependabot, renovate, etc.), request fixes via the `@worktrunk-bot` mention
-workflow, which has write access and can push commits to the PR branch.
+The review workflow has write access but the initial review mode uses the
+read-only `/pr-review` skill. For bot PRs (Dependabot, renovate, etc.), request
+fixes via a `@worktrunk-bot` comment, which triggers the mention workflow and can
+push commits to the PR branch.
 
 **When to use:** The review found concrete, fixable issues (CI failures, missing
 test updates, small code problems) on a bot-authored PR. Don't use this for
