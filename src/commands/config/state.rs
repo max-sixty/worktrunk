@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use color_print::cformat;
-use worktrunk::config::default_config_path;
+use worktrunk::config::get_config_path;
 use worktrunk::git::Repository;
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
 use worktrunk::styling::{
@@ -28,12 +28,11 @@ use crate::help_pager::show_help_in_pager;
 
 /// Get the user config path, or error if it cannot be determined.
 ///
-/// Uses the platform-default config path from `default_config_path()`,
-/// which is the same path that `get_config_path()` resolves to when no
-/// CLI or env var overrides are set. This ensures `config create` and
-/// `config show` point to the same location that config loading uses.
+/// Delegates to `get_config_path()` so that `config create` and `config show`
+/// resolve the same path that config loading uses — including any CLI
+/// (`--config`) or environment variable (`WORKTRUNK_CONFIG_PATH`) overrides.
 pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
-    default_config_path().context("Cannot determine config directory")
+    get_config_path().context("Cannot determine config directory")
 }
 
 // ==================== Log Management ====================

@@ -238,17 +238,16 @@ mod tests {
     }
 
     #[test]
-    fn test_require_user_config_path_matches_default_config_path() {
-        // Verify that config create/show path matches config loading's
-        // platform-default path. This was the root cause of #1134: the two
-        // paths diverged on Windows when XDG_CONFIG_HOME was set because
-        // config create had its own XDG/HOME resolution that differed from
-        // the etcetera-based resolution used by config loading.
+    fn test_require_user_config_path_matches_get_config_path() {
+        // Verify that config create/show path matches config loading path.
+        // This was the root cause of #1134: the two paths diverged on Windows
+        // when XDG_CONFIG_HOME was set because config create had its own
+        // XDG/HOME resolution that differed from config loading.
         let create_path = require_user_config_path().unwrap();
-        let default_path = worktrunk::config::default_config_path().unwrap();
+        let load_path = worktrunk::config::get_config_path().unwrap();
         assert_eq!(
-            create_path, default_path,
-            "config create path and platform default path must be identical"
+            create_path, load_path,
+            "config create path and config loading path must be identical"
         );
     }
 }
