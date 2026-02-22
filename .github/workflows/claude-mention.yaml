@@ -18,11 +18,15 @@ env:
 
 jobs:
   claude:
-    # Run for:
-    # 1. @worktrunk-bot mentions in issues/PRs/comments
-    # 2. Any comment on worktrunk-bot PRs (loop prevention: exclude bot's own comments)
+    # Two triggers:
+    # 1. @worktrunk-bot mentions — explicit requests on any issue/PR.
+    # 2. Bot-engaged PRs/issues — any non-bot comment on a PR or issue
+    #    where the bot has authored, reviewed, or commented. The verify step
+    #    checks engagement via API and skips the job if the bot has not
+    #    participated. Formal review submissions
+    #    (pull_request_review) go to claude-review instead.
     #
-    # Always runs in agent mode (prompt). The prompt tells Claude what happened
+    # Runs in agent mode (prompt). The prompt tells Claude what happened
     # and where to look; Claude reads the full context itself via gh/skills.
     #
     # Note: secrets cannot be used in job-level `if:` (actions/runner#520) —
@@ -30,11 +34,13 @@ jobs:
     # comments on fork PRs (which don't receive secrets), we detect forks via
     # github.event context instead. Use a Conversation tab comment for fork PRs.
     if: |
-      (github.event_name == 'issues' && contains(github.event.issue.body, '@worktrunk-bot')) ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@worktrunk-bot')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@worktrunk-bot') && github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.issue.user.login == 'worktrunk-bot' && github.event.comment.user.login != 'worktrunk-bot') ||
-      (github.event_name == 'pull_request_review_comment' && github.event.pull_request.user.login == 'worktrunk-bot' && github.event.comment.user.login != 'worktrunk-bot' && github.event.pull_request.head.repo.full_name == github.repository)
+      (github.event_name == 'issues' &&
+        contains(github.event.issue.body, '@worktrunk-bot')) ||
+      (github.event_name == 'issue_comment' &&
+        github.event.comment.user.login != 'worktrunk-bot') ||
+      (github.event_name == 'pull_request_review_comment' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.comment.user.login != 'worktrunk-bot')
     runs-on: ubuntu-24.04
     permissions:
       contents: write # Allow pushing commits
@@ -43,7 +49,54 @@ jobs:
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
     steps:
+      - name: 🔍 Verify bot engagement
+        id: verify
+        continue-on-error: true
+        if: "github.event.comment && !contains(github.event.comment.body || '', '@worktrunk-bot')"
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "issue_comment" ]; then
+            ISSUE_NUMBER="${{ github.event.issue.number }}"
+
+            if [ -z "${{ github.event.issue.pull_request.url }}" ]; then
+              # Plain issue — check if bot has commented
+              BOT_COMMENTS=$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+                --jq '[.[] | select(.user.login == "worktrunk-bot")] | length')
+              if [ "$BOT_COMMENTS" -gt "0" ]; then
+                exit 0
+              fi
+              echo "::notice::Bot has not engaged with issue #$ISSUE_NUMBER — skipping"
+              exit 1
+            fi
+
+            PR_NUMBER="$ISSUE_NUMBER"
+          else
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+          fi
+
+          PR_AUTHOR=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')
+          if [ "$PR_AUTHOR" = "worktrunk-bot" ]; then
+            exit 0
+          fi
+
+          BOT_REVIEWS=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+            --jq '[.[] | select(.user.login == "worktrunk-bot")] | length')
+          if [ "$BOT_REVIEWS" -gt "0" ]; then
+            exit 0
+          fi
+
+          BOT_COMMENTS=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq '[.[] | select(.user.login == "worktrunk-bot")] | length')
+          if [ "$BOT_COMMENTS" -gt "0" ]; then
+            exit 0
+          fi
+
+          echo "::notice::Bot has not engaged with PR #$PR_NUMBER — skipping"
+          exit 1
+        env:
+          GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
       - name: 📂 Checkout code
+        if: steps.verify.outcome != 'failure'
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -57,7 +110,7 @@ jobs:
           git config --global user.email "claude@anthropic.com"
 
       - name: 👀 React to comment
-        if: github.event.comment
+        if: steps.verify.outcome != 'failure' && github.event.comment
         run: |
           # Try issue comment endpoint first, then review comment endpoint.
           # One will match depending on the comment type.
@@ -69,7 +122,7 @@ jobs:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: 📌 Check out PR branch (conversation comment)
-        if: github.event.issue.pull_request
+        if: steps.verify.outcome != 'failure' && github.event.issue.pull_request
         run: |
           PR_STATE=$(gh pr view ${{ github.event.issue.number }} --json state --jq '.state')
           if [ "$PR_STATE" = "OPEN" ]; then
@@ -81,7 +134,7 @@ jobs:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: 📌 Check out PR branch (review comment)
-        if: github.event_name == 'pull_request_review_comment'
+        if: steps.verify.outcome != 'failure' && github.event_name == 'pull_request_review_comment'
         run: |
           PR_STATE=$(gh pr view ${{ github.event.pull_request.number }} --json state --jq '.state')
           if [ "$PR_STATE" = "OPEN" ]; then
@@ -114,6 +167,7 @@ jobs:
           sudo apt-get install -y zsh fish
 
       - name: 🤖 Run Claude Code
+        if: steps.verify.outcome != 'failure'
         id: claude
         uses: anthropics/claude-code-action@v1
         with:

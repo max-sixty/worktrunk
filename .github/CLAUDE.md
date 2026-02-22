@@ -45,14 +45,14 @@ Environment protection prevents this: secrets in a protected environment are onl
 | Capability | Triage | Mention | Review | CI Fix | Renovate |
 |------------|:---:|:---:|:---:|:---:|:---:|
 | Read issues/PRs | Yes | Yes | Yes | Yes | — |
-| Comment on issues | Yes | Yes | — | — | — |
-| Create branches | Yes | Yes | — | Yes | Yes |
-| Push commits | Yes | Yes | — | Yes | Yes |
+| Comment on issues | Yes | Yes | Yes | — | — |
+| Create branches | Yes | Yes | Yes | Yes | Yes |
+| Push commits | Yes | Yes | Yes | Yes | Yes |
 | Create PRs | Yes | Yes | — | Yes | Yes |
 | Post PR reviews | — | — | Yes | — | — |
 | Resolve review threads | — | — | Yes | — | — |
-| Monitor CI | Yes | Yes | — | Yes | Yes |
-| **Pushes must trigger CI** | **Yes** | **Yes** | — | **Yes** | **Yes** |
+| Monitor CI | Yes | Yes | Yes | Yes | Yes |
+| **Pushes must trigger CI** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
 
 The last row matters for CI: `GITHUB_TOKEN` pushes don't trigger downstream workflows (GitHub prevents infinite loops). Workflows that push code and need CI to run **must** use a PAT. All Claude workflows use `WORKTRUNK_BOT_TOKEN` for consistent identity.
 
@@ -88,15 +88,15 @@ Two independent authentication paths exist in every workflow:
 1. **Git CLI** (`git push`): authenticates with the token from `actions/checkout`. When no explicit token is passed, this defaults to `GITHUB_TOKEN` scoped by the `permissions:` block. When an explicit token is passed (e.g. `token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}`), the PAT's scopes apply instead.
 2. **GitHub API** (`gh pr create`, `gh api`): `claude-code-action` overwrites the `GITHUB_TOKEN` env var with its `github_token` input (BOT_TOKEN for all Claude workflows).
 
-The review workflow is the only one where these paths diverge: checkout uses the default `GITHUB_TOKEN` (`contents: read`), so git CLI is read-only, while API calls use BOT_TOKEN. All other workflows pass BOT_TOKEN to both paths.
+All workflows pass BOT_TOKEN to both paths.
 
 ## Prompt injection threat model
 
 | Workflow | Injection surface | Attacker control | Mitigations |
 |----------|-------------------|-------------------|-------------|
-| **review** | PR diff content | Full (any external PR) | Fixed prompt, merge restriction, `contents: read` on checkout |
+| **review** | PR diff content (initial review), review body on bot PRs (respond) | Full (any external PR) / Medium (anyone who can review bot PRs) | Fixed prompt, merge restriction |
 | **triage** | Issue body | Partial (structured skill) | Fixed prompt, merge restriction, environment protection |
-| **mention** | Comment body | Full | Fixed prompt, merge restriction, fork check on inline review comments |
+| **mention** | Comment body on any issue/PR, inline/conversation comments on bot-engaged PRs | Full | Fixed prompt, merge restriction, fork check on inline review comments, non-mention triggers verified against bot engagement via API |
 | **ci-fix** | Failed CI logs | Minimal (must break CI on main) | Fixed prompt, automatic trigger |
 | **renovate** | None | None | Fixed prompt, scheduled trigger |
 
@@ -111,20 +111,11 @@ The most dangerous attack from a leaked BOT_TOKEN is not merging malicious code 
 
 This is why release secrets must be in a protected environment, not repo-level secrets.
 
-## TODO
+## Future hardening
 
-### Immediate
-
-- [x] Create "Merge access" ruleset on `main`: "Restrict updates" rule, bypass actor = Repository Admin with **exempt** mode. This prevents `worktrunk-bot` (write role) from merging while giving `@max-sixty` (admin) a frictionless merge button.
-- [x] Create `release` GitHub Environment with deployment protection (require `@max-sixty` approval). Add deployment branch/tag allowlist restricting to `v*` tags so arbitrary branches can't request the environment. Leave "prevent self-approvals" off (otherwise the tag pusher can't approve their own release).
-- [x] Move `CARGO_REGISTRY_TOKEN` and `AUR_SSH_PRIVATE_KEY` from repo secrets to the `release` environment. Update `release.yaml` `publish-cargo` and `publish-aur` jobs to add `environment: release`.
-- [x] Delete `WORKTRUNK_REVIEW_TOKEN` from repo secrets
-
-### Future hardening
-
-- [ ] Consider migrating from PAT to GitHub App for ephemeral tokens (~1 hour lifetime vs indefinite PAT)
-- [ ] Consider workflow dispatch isolation: split triage/mention into analysis (GITHUB_TOKEN) + push (separate workflow with BOT_TOKEN) so the token never touches untrusted input
-- [ ] Consider disabling "Allow GitHub Actions to create and approve pull requests" in repo settings to prevent GITHUB_TOKEN from ever approving PRs
+- Migrate from PAT to GitHub App for ephemeral tokens (~1 hour lifetime vs indefinite PAT)
+- Workflow dispatch isolation: split triage/mention into analysis (GITHUB_TOKEN) + push (separate workflow with BOT_TOKEN) so the token never touches untrusted input
+- Disable "Allow GitHub Actions to create and approve pull requests" in repo settings to prevent GITHUB_TOKEN from ever approving PRs
 
 ## Triage ↔ mention handoff
 
@@ -134,6 +125,27 @@ These two workflows explicitly exclude each other to avoid double-processing:
 
 The mention workflow runs for any user who includes `@worktrunk-bot` — the merge restriction (ruleset) is the safety boundary, not access control on the workflow itself.
 
+## Bot-engaged auto-response
+
+`worktrunk-bot` is a regular GitHub user account (PAT-based), not a GitHub App. The workflows check `user.login == 'worktrunk-bot'` directly.
+
+**Triggers a response:**
+- Non-draft PR opened or updated → automatic code review (`claude-review`)
+- Formal review submitted on a `worktrunk-bot`-authored PR, with body or non-approval → `claude-review` responds
+- `@worktrunk-bot` mentioned in an issue body → `claude-mention` responds
+- `@worktrunk-bot` mentioned in any comment (issue or PR) → `claude-mention` responds
+- Any comment on a PR or issue that `worktrunk-bot` has engaged with (authored, reviewed, or commented on) → `claude-mention` responds (verify step confirms engagement via API)
+- Editing a comment or issue body re-triggers the same response
+
+**Does not trigger:**
+- `worktrunk-bot`'s own comments or reviews (loop prevention)
+- Empty approvals on `worktrunk-bot` PRs (approved with no body)
+- Comments on issues or PRs where `worktrunk-bot` hasn't engaged and no `@worktrunk-bot` mention
+- Inline review comments on fork PRs (secrets unavailable)
+- Draft PRs
+
+**Routing:** Formal reviews (`pull_request_review`) → `claude-review`. Inline comments (`pull_request_review_comment`) and conversation comments (`issue_comment`) → `claude-mention`.
+
 ## GitHub API: issue_comment vs pull_request_review_comment
 
 GitHub treats PRs as a superset of issues. Comments on a PR arrive via two different event types depending on where they're posted:
@@ -142,6 +154,14 @@ GitHub treats PRs as a superset of issues. Comments on a PR arrive via two diffe
 - **Files changed (inline)** → `pull_request_review_comment` event. The PR is at `github.event.pull_request`. There is no `github.event.issue`.
 
 The `claude-mention` workflow handles both with separate checkout steps.
+
+### pull_request_review
+
+A third event type fires when a reviewer submits a formal review (approve, comment, or request changes):
+
+- **Review submission** → `pull_request_review` event (type: `submitted`). The review is at `github.event.review` (includes `.body`, `.state`, `.user`). The PR is at `github.event.pull_request`.
+
+Individual inline comments from a review also fire as separate `pull_request_review_comment` events. The `claude-review` workflow handles `pull_request_review` for bot-authored PRs; inline comments go through `claude-mention`.
 
 ## Rules for modifying workflows
 
