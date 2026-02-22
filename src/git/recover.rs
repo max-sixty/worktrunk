@@ -20,15 +20,18 @@ pub struct RecoveredRepo {
 /// Attempt to recover a repository when the current directory has been deleted.
 ///
 /// Returns `Some(RecoveredRepo)` if:
-/// 1. `std::env::current_dir()` fails (CWD is gone)
+/// 1. `std::env::current_dir()` fails or returns a non-existent path (CWD is gone)
 /// 2. `$PWD` points to a path whose ancestor contains a git repository
 /// 3. The deleted path was actually a worktree of that repository
 ///
 /// Returns `None` if CWD is fine or recovery fails at any step.
 pub fn recover_from_deleted_cwd() -> Option<RecoveredRepo> {
-    // If current_dir succeeds, nothing to recover from
-    if std::env::current_dir().is_ok() {
-        return None;
+    // If current_dir succeeds and the directory exists, nothing to recover from.
+    // On Windows, current_dir() may succeed even after the directory is removed
+    // (the process handle keeps it alive), so also check existence.
+    match std::env::current_dir() {
+        Ok(p) if p.exists() => return None,
+        _ => {}
     }
 
     // Shells preserve the logical path in $PWD even after the directory is deleted
@@ -208,5 +211,102 @@ mod tests {
     fn test_recover_returns_none_when_cwd_exists() {
         // current_dir() succeeds in test environment, so recovery should return None
         assert!(recover_from_deleted_cwd().is_none());
+    }
+
+    #[test]
+    fn test_find_repo_near_returns_none_when_no_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No .git directory anywhere — should return None
+        assert!(find_repo_near(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn test_find_repo_near_skips_non_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Create a file (not a directory) as child — should be skipped
+        std::fs::write(tmp.path().join("not_a_dir"), "data").unwrap();
+        assert!(find_repo_near(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn test_paths_match_identical_paths() {
+        let p = PathBuf::from("/some/path/feature");
+        assert!(paths_match(&p, &p));
+    }
+
+    #[test]
+    fn test_paths_match_different_names() {
+        let a = PathBuf::from("/repos/feature-a");
+        let b = PathBuf::from("/repos/feature-b");
+        assert!(!paths_match(&a, &b));
+    }
+
+    #[test]
+    fn test_paths_match_same_name_same_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Both paths share the same existing parent and same name
+        let a = tmp.path().join("feature");
+        let b = tmp.path().join("feature");
+        assert!(paths_match(&a, &b));
+    }
+
+    #[test]
+    fn test_paths_match_different_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir_a = tmp.path().join("a");
+        let dir_b = tmp.path().join("b");
+        std::fs::create_dir(&dir_a).unwrap();
+        std::fs::create_dir(&dir_b).unwrap();
+        let a = dir_a.join("feature");
+        let b = dir_b.join("feature");
+        assert!(!paths_match(&a, &b));
+    }
+
+    #[test]
+    fn test_was_worktree_of_finds_existing_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Canonicalize to handle symlinks (e.g., /tmp -> /private/tmp on macOS)
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let repo_dir = base.join("repo");
+        std::fs::create_dir(&repo_dir).unwrap();
+        git_init(&repo_dir);
+        // Create an initial commit so worktree add works
+        Cmd::new("git")
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(&repo_dir)
+            .run()
+            .unwrap();
+
+        // Add a linked worktree
+        let wt_path = base.join("feature-wt");
+        Cmd::new("git")
+            .args([
+                "worktree",
+                "add",
+                &wt_path.to_string_lossy(),
+                "-b",
+                "feature",
+            ])
+            .current_dir(&repo_dir)
+            .run()
+            .unwrap();
+
+        let repo = Repository::at(&repo_dir).unwrap();
+        assert!(was_worktree_of(&repo, &wt_path));
+    }
+
+    #[test]
+    fn test_was_worktree_of_rejects_unknown_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        git_init(tmp.path());
+        Cmd::new("git")
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(tmp.path())
+            .run()
+            .unwrap();
+
+        let repo = Repository::at(tmp.path()).unwrap();
+        let unknown = PathBuf::from("/nonexistent/unknown");
+        assert!(!was_worktree_of(&repo, &unknown));
     }
 }
