@@ -77,6 +77,27 @@ fn execute_instant_removal_or_fallback(
     }
 }
 
+/// List top-level entries remaining in a directory after a failed removal.
+///
+/// Returns None if the directory doesn't exist, can't be read, or is empty.
+/// Entries are sorted, with directories suffixed with `/`.
+fn list_remaining_entries(path: &Path) -> Option<Vec<String>> {
+    let mut entries: Vec<String> = std::fs::read_dir(path)
+        .ok()?
+        .filter_map(|e| {
+            let e = e.ok()?;
+            let name = e.file_name().to_string_lossy().into_owned();
+            if e.file_type().ok()?.is_dir() {
+                Some(format!("{name}/"))
+            } else {
+                Some(name)
+            }
+        })
+        .collect();
+    entries.sort();
+    (!entries.is_empty()).then_some(entries)
+}
+
 // ============================================================================
 // Switch Output Handlers
 // ============================================================================
@@ -990,6 +1011,9 @@ fn handle_removed_worktree_output(
     if changed_directory {
         super::change_directory(main_path)?;
         stderr().flush()?; // Force flush to ensure shell processes the cd
+        // Mark that the CWD worktree is being removed, so the error handler
+        // can show a hint if a subsequent command (e.g., post-merge hook) fails.
+        super::mark_cwd_removed();
     }
 
     // Handle detached HEAD case (no branch known)
@@ -1032,6 +1056,7 @@ fn handle_removed_worktree_output(
                 return Err(GitError::WorktreeRemovalFailed {
                     branch: path_dir_name(worktree_path).to_string(),
                     path: worktree_path.to_path_buf(),
+                    remaining_entries: list_remaining_entries(worktree_path),
                     error: err.to_string(),
                 }
                 .into());
@@ -1129,6 +1154,7 @@ fn handle_removed_worktree_output(
             return Err(GitError::WorktreeRemovalFailed {
                 branch: branch_name.into(),
                 path: worktree_path.to_path_buf(),
+                remaining_entries: list_remaining_entries(worktree_path),
                 error: err.to_string(),
             }
             .into());

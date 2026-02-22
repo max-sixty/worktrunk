@@ -26,9 +26,11 @@ BOT_LOGIN=$(gh api user --jq '.login')
 HEAD_SHA=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
 
 
-# Find the bot's most recent substantive review (any state)
+# Find the bot's most recent substantive review (any state).
+# Include reviews with a non-empty body OR approvals (LGTM uses --approve -b "").
+# Uses "| length > 0" instead of "!= \"\"" to avoid bash ! history expansion.
 LAST_REVIEW_SHA=$(gh pr view <number> --json reviews \
-  --jq "[.reviews[] | select(.author.login == \"$BOT_LOGIN\" and .body != \"\")] | last | .commit.oid // empty")
+  --jq "[.reviews[] | select(.author.login == \"$BOT_LOGIN\" and (.body | length > 0 or .state == \"APPROVED\"))] | last | .commit.oid // empty")
 ```
 
 If `LAST_REVIEW_SHA == HEAD_SHA`, this commit has already been reviewed — exit
@@ -58,7 +60,7 @@ REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 BOT_LOGIN=$(gh api user --jq '.login')
 # Previous review bodies
 gh api "repos/$REPO/pulls/<number>/reviews" \
-  --jq ".[] | select(.user.login == \"$BOT_LOGIN\" and .body != \"\") | {state, body}"
+  --jq ".[] | select(.user.login == \"$BOT_LOGIN\" and (.body | length > 0)) | {state, body}"
 # Inline review comments
 gh api "repos/$REPO/pulls/<number>/comments" --paginate \
   --jq ".[] | select(.user.login == \"$BOT_LOGIN\") | {path, line, body}"
@@ -185,9 +187,13 @@ If nothing is actionable, use the LGTM behavior (approve with empty body).
 After reviewing, check CI status and decide:
 
 ```bash
+PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
 gh pr view <number> --json statusCheckRollup \
   --jq '.statusCheckRollup[] | {name: .name, status: .status, conclusion: .conclusion}'
 ```
+
+**Self-authored PRs:** If `PR_AUTHOR == BOT_LOGIN`, you cannot approve — GitHub
+rejects self-approvals. Skip directly to submitting as COMMENT.
 
 - **Confident** (small, mechanical, well-tested): Approve immediately.
 - **Moderately confident** (non-trivial but looks correct): Approve if CI is
@@ -196,6 +202,13 @@ gh pr view <number> --json statusCheckRollup \
   (`cargo run -- hook pre-merge --yes`) if the toolchain is available. Otherwise
   submit as COMMENT noting specific concerns.
 
+**Never promise follow-up actions.** This workflow runs once per push and does
+not re-trigger when CI completes. Don't say "Will approve once CI finishes" or
+"Will approve once CI is green" — that implies a follow-up that won't happen.
+Instead, state the review outcome and the current CI status as facts:
+- Good: "No issues found. CI is still running — submitting as comment, not approval."
+- Bad: "Will approve once CI finishes." (promises action the bot can't take)
+
 Factors: small diffs, existing test coverage, and mechanical changes increase
 confidence. New algorithms, concurrency, error handling changes, and untested
 paths decrease it.
@@ -203,7 +216,9 @@ paths decrease it.
 #### Posting
 
 Submit **one formal review per run** via `gh pr review`. Never call it multiple
-times.
+times. Note that `--comment` requires a non-empty body (`-b ""`
+fails) — if you have nothing to say, use LGTM behavior (`--approve -b ""`)
+instead. Never fall back from a failed `--comment` to `--approve`.
 
 - Always give a verdict: **approve** or **comment**. Don't use "request changes"
   (that implies authority to block).
