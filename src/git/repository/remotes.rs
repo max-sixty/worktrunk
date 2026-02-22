@@ -171,17 +171,8 @@ impl Repository {
                     if let Some(parsed) = GitRemoteUrl::parse(url.trim()) {
                         return Ok(parsed.project_identifier());
                     }
-                    // Fallback for URLs that don't fit host/owner/repo model (e.g., with ports)
+                    // Fallback for URLs that don't fit host/owner/repo model
                     let url = url.strip_suffix(".git").unwrap_or(url.as_str());
-                    // Handle ssh:// format with port: ssh://git@host:port/path -> host/port/path
-                    if let Some(ssh_part) = url.strip_prefix("ssh://") {
-                        let ssh_part = ssh_part.strip_prefix("git@").unwrap_or(ssh_part);
-                        if let Some(colon_pos) = ssh_part.find(':') {
-                            let (host, rest) = ssh_part.split_at(colon_pos);
-                            return Ok(format!("{}{}", host, rest.replacen(':', "/", 1)));
-                        }
-                        return Ok(ssh_part.to_string());
-                    }
                     return Ok(url.to_string());
                 }
 
