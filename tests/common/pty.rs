@@ -333,14 +333,26 @@ fn prompted_pty_interaction(
             std::thread::sleep(poll);
         }
 
-        // Brief drain: give the PTY time to deliver remaining prompt bytes
-        // after the marker. Without this, the echo of our input can interleave
-        // with trailing prompt bytes (ANSI resets, spaces) that were part of
-        // the same write but arrived in a separate read chunk. This race
-        // manifests as non-deterministic output ordering on macOS.
-        std::thread::sleep(Duration::from_millis(50));
-        while let Ok(chunk) = rx.try_recv() {
-            accumulated.extend_from_slice(&chunk);
+        // Quiescence drain: after detecting the marker, wait until the PTY
+        // goes quiet before sending input. Without this, trailing prompt bytes
+        // (ANSI resets, spaces) that arrive in a separate read chunk interleave
+        // with the echo of our input, producing non-deterministic output on macOS.
+        let quiescence = Duration::from_millis(20);
+        let drain_ceiling = Duration::from_millis(500);
+        let drain_start = Instant::now();
+        let mut last_data = Instant::now();
+        loop {
+            while let Ok(chunk) = rx.try_recv() {
+                accumulated.extend_from_slice(&chunk);
+                last_data = Instant::now();
+            }
+            if last_data.elapsed() >= quiescence {
+                break;
+            }
+            if drain_start.elapsed() >= drain_ceiling {
+                break;
+            }
+            std::thread::sleep(poll);
         }
 
         writer.write_all(input.as_bytes()).unwrap();
