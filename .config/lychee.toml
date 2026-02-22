@@ -66,7 +66,4 @@ exclude = [
     # Local dev server URLs (not running during CI)
     "127\\.0\\.0\\.1",
     "localhost",
-
-    # Fake commit SHA used in instructional examples (skills/running-in-ci)
-    "blob/ab1c2d3",
 ]
