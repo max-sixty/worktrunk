@@ -35,10 +35,8 @@ jobs:
     if: |
       (github.event_name == 'issues' &&
         contains(github.event.issue.body, '@claude')) ||
-      (github.event_name == 'issue_comment' && (
-        contains(github.event.comment.body, '@claude') ||
-        (github.event.issue.pull_request && github.event.comment.user.login != 'worktrunk-bot')
-      )) ||
+      (github.event_name == 'issue_comment' &&
+        github.event.comment.user.login != 'worktrunk-bot') ||
       (github.event_name == 'pull_request_review_comment' &&
         github.event.pull_request.head.repo.full_name == github.repository &&
         github.event.comment.user.login != 'worktrunk-bot')
@@ -56,6 +54,10 @@ jobs:
         if: "!contains(github.event.comment.body || '', '@claude')"
         run: |
           if [ "$GITHUB_EVENT_NAME" = "issue_comment" ]; then
+            if [ -z "${{ github.event.issue.pull_request.url }}" ]; then
+              echo "::notice::Not a PR comment — skipping"
+              exit 1
+            fi
             PR_NUMBER="${{ github.event.issue.number }}"
           else
             PR_NUMBER="${{ github.event.pull_request.number }}"
