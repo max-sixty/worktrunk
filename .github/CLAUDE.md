@@ -127,10 +127,25 @@ The mention workflow runs for any user who includes `@worktrunk-bot` — the mer
 
 ## Bot-engaged auto-response
 
-The bot responds to comments on any PR it has engaged with (authored or reviewed), without requiring `@worktrunk-bot`:
+`worktrunk-bot` is a regular GitHub user account (PAT-based), not a GitHub App. The workflows check `user.login == 'worktrunk-bot'` directly.
 
-- **Formal reviews** (`pull_request_review`) → `claude-review`. Scoped to bot-authored PRs only. Skips empty approvals and bot's own reviews.
-- **Inline comments** (`pull_request_review_comment`) and **conversation comments** (`issue_comment`) → `claude-mention`. The `if:` triggers broadly (any non-bot comment on any same-repo PR), then a verify step checks bot engagement via the GitHub API before proceeding. This covers replies to the bot's review comments on other people's PRs.
+**Triggers a response:**
+- Non-draft PR opened or updated → automatic code review (`claude-review`)
+- Formal review submitted on a `worktrunk-bot`-authored PR, with body or non-approval → `claude-review` responds
+- `@worktrunk-bot` mentioned in an issue body → `claude-mention` responds
+- `@worktrunk-bot` mentioned in any comment (issue or PR) → `claude-mention` responds
+- Any comment on a PR that `worktrunk-bot` has authored or reviewed → `claude-mention` responds (verify step confirms engagement via API)
+- Editing a comment or issue body re-triggers the same response
+
+**Does not trigger:**
+- `worktrunk-bot`'s own comments or reviews (loop prevention)
+- Empty approvals on `worktrunk-bot` PRs (approved with no body)
+- Comments on issues where `@worktrunk-bot` is not mentioned
+- Comments on PRs where `worktrunk-bot` hasn't engaged and no `@worktrunk-bot` mention
+- Inline review comments on fork PRs (secrets unavailable)
+- Draft PRs
+
+**Routing:** Formal reviews (`pull_request_review`) → `claude-review`. Inline comments (`pull_request_review_comment`) and conversation comments (`issue_comment`) → `claude-mention`.
 
 ## GitHub API: issue_comment vs pull_request_review_comment
 
