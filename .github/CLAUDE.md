@@ -1,6 +1,6 @@
 # CI Automation Security Model
 
-Five Claude-powered workflows automate issue triage, PR review, CI fixes, dependency updates, and `@claude` mentions.
+Five Claude-powered workflows automate issue triage, PR review, CI fixes, dependency updates, and `@worktrunk-bot` mentions.
 
 ## Security layers
 
@@ -129,10 +129,10 @@ This is why release secrets must be in a protected environment, not repo-level s
 ## Triage ↔ mention handoff
 
 These two workflows explicitly exclude each other to avoid double-processing:
-- Issue body contains `@claude` → triage skips, mention handles it
-- Issue body does not contain `@claude` → triage handles it, mention ignores it
+- Issue body contains `@worktrunk-bot` → triage skips, mention handles it
+- Issue body does not contain `@worktrunk-bot` → triage handles it, mention ignores it
 
-The mention workflow runs for any user who includes `@claude` — the merge restriction (ruleset) is the safety boundary, not access control on the workflow itself.
+The mention workflow runs for any user who includes `@worktrunk-bot` — the merge restriction (ruleset) is the safety boundary, not access control on the workflow itself.
 
 ## GitHub API: issue_comment vs pull_request_review_comment
 
@@ -145,7 +145,7 @@ The `claude-mention` workflow handles both with separate checkout steps.
 
 ## Rules for modifying workflows
 
-- **No role-based gating**: Workflows should not check `author_association` (OWNER, MEMBER, etc.) to decide whether to run. The merge restriction (ruleset) is the security boundary — Claude cannot merge regardless of who triggers it. Use technical criteria instead: fork detection, loop prevention (exclude the bot's own comments), `@claude` trigger phrase.
+- **No role-based gating**: Workflows should not check `author_association` (OWNER, MEMBER, etc.) to decide whether to run. The merge restriction (ruleset) is the security boundary — Claude cannot merge regardless of who triggers it. Use technical criteria instead: fork detection, loop prevention (exclude the bot's own comments), `@worktrunk-bot` trigger phrase.
 - **Adding `allowed_non_write_users`** to a workflow with user-controlled prompts requires security review.
 - **All Claude workflows** must include `--append-system-prompt "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."`.
 - **Token choice**: All Claude workflows use `BOT_TOKEN` for consistent identity. The merge restriction (ruleset) is the security boundary.
