@@ -96,7 +96,7 @@ All workflows pass BOT_TOKEN to both paths.
 |----------|-------------------|-------------------|-------------|
 | **review** | PR diff content (initial review), review body on bot PRs (respond) | Full (any external PR) / Medium (anyone who can review bot PRs) | Fixed prompt, merge restriction |
 | **triage** | Issue body | Partial (structured skill) | Fixed prompt, merge restriction, environment protection |
-| **mention** | Comment body on any issue/PR, inline/conversation comments on bot-engaged PRs | Full | Fixed prompt, merge restriction, fork check on inline review comments, non-@claude triggers verified against bot engagement via API |
+| **mention** | Comment body on any issue/PR, inline/conversation comments on bot-engaged PRs | Full | Fixed prompt, merge restriction, fork check on inline review comments, non-mention triggers verified against bot engagement via API |
 | **ci-fix** | Failed CI logs | Minimal (must break CI on main) | Fixed prompt, automatic trigger |
 | **renovate** | None | None | Fixed prompt, scheduled trigger |
 
@@ -111,20 +111,11 @@ The most dangerous attack from a leaked BOT_TOKEN is not merging malicious code 
 
 This is why release secrets must be in a protected environment, not repo-level secrets.
 
-## TODO
+## Future hardening
 
-### Immediate
-
-- [x] Create "Merge access" ruleset on `main`: "Restrict updates" rule, bypass actor = Repository Admin with **exempt** mode. This prevents `worktrunk-bot` (write role) from merging while giving `@max-sixty` (admin) a frictionless merge button.
-- [x] Create `release` GitHub Environment with deployment protection (require `@max-sixty` approval). Add deployment branch/tag allowlist restricting to `v*` tags so arbitrary branches can't request the environment. Leave "prevent self-approvals" off (otherwise the tag pusher can't approve their own release).
-- [x] Move `CARGO_REGISTRY_TOKEN` and `AUR_SSH_PRIVATE_KEY` from repo secrets to the `release` environment. Update `release.yaml` `publish-cargo` and `publish-aur` jobs to add `environment: release`.
-- [x] Delete `WORKTRUNK_REVIEW_TOKEN` from repo secrets
-
-### Future hardening
-
-- [ ] Consider migrating from PAT to GitHub App for ephemeral tokens (~1 hour lifetime vs indefinite PAT)
-- [ ] Consider workflow dispatch isolation: split triage/mention into analysis (GITHUB_TOKEN) + push (separate workflow with BOT_TOKEN) so the token never touches untrusted input
-- [ ] Consider disabling "Allow GitHub Actions to create and approve pull requests" in repo settings to prevent GITHUB_TOKEN from ever approving PRs
+- Migrate from PAT to GitHub App for ephemeral tokens (~1 hour lifetime vs indefinite PAT)
+- Workflow dispatch isolation: split triage/mention into analysis (GITHUB_TOKEN) + push (separate workflow with BOT_TOKEN) so the token never touches untrusted input
+- Disable "Allow GitHub Actions to create and approve pull requests" in repo settings to prevent GITHUB_TOKEN from ever approving PRs
 
 ## Triage ↔ mention handoff
 
@@ -136,7 +127,7 @@ The mention workflow runs for any user who includes `@worktrunk-bot` — the mer
 
 ## Bot-engaged auto-response
 
-The bot responds to comments on any PR it has engaged with (authored or reviewed), without requiring `@claude`:
+The bot responds to comments on any PR it has engaged with (authored or reviewed), without requiring `@worktrunk-bot`:
 
 - **Formal reviews** (`pull_request_review`) → `claude-review`. Scoped to bot-authored PRs only. Skips empty approvals and bot's own reviews.
 - **Inline comments** (`pull_request_review_comment`) and **conversation comments** (`issue_comment`) → `claude-mention`. The `if:` triggers broadly (any non-bot comment on any same-repo PR), then a verify step checks bot engagement via the GitHub API before proceeding. This covers replies to the bot's review comments on other people's PRs.
