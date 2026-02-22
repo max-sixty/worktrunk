@@ -1146,8 +1146,6 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
-        // Override WORKTRUNK_CONFIG_PATH to point to our test config
-        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
         // Inject current version for deterministic version check output
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.arg("config")
@@ -1155,6 +1153,7 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
             .arg("--full")
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1184,8 +1183,6 @@ command = "nonexistent-llm-command-12345 -m test-model"
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
-        // Override WORKTRUNK_CONFIG_PATH to point to our test config
-        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
         // Inject current version for deterministic version check output
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.arg("config")
@@ -1193,6 +1190,7 @@ command = "nonexistent-llm-command-12345 -m test-model"
             .arg("--full")
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1218,7 +1216,6 @@ fn test_config_show_full_update_available(mut repo: TestRepo, temp_home: TempDir
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
-        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
         // Inject a higher version to trigger update-available message
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", "99.0.0");
         cmd.arg("config")
@@ -1226,6 +1223,7 @@ fn test_config_show_full_update_available(mut repo: TestRepo, temp_home: TempDir
             .arg("--full")
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1249,7 +1247,6 @@ fn test_config_show_full_version_check_unavailable(mut repo: TestRepo, temp_home
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
-        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
         // Simulate a fetch failure
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", "error");
         cmd.arg("config")
@@ -1257,6 +1254,7 @@ fn test_config_show_full_version_check_unavailable(mut repo: TestRepo, temp_home
             .arg("--full")
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
