@@ -175,8 +175,7 @@ pub fn handle_switch(
         verify,
     } = opts;
 
-    let (repo, is_recovered) =
-        current_or_recover().context("Failed to switch worktree")?;
+    let (repo, is_recovered) = current_or_recover().context("Failed to switch worktree")?;
 
     // Run pre-switch hooks before anything else (before branch validation, planning, etc.)
     // Skip when recovered — the source worktree is gone, nothing to run hooks against.

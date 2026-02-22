@@ -7,9 +7,7 @@ use clap::error::ErrorKind as ClapErrorKind;
 use color_print::{ceprintln, cformat};
 use std::process;
 use worktrunk::config::{UserConfig, set_config_path};
-use worktrunk::git::{
-    Repository, ResolvedWorktree, current_or_recover, exit_code, set_base_path,
-};
+use worktrunk::git::{Repository, ResolvedWorktree, current_or_recover, exit_code, set_base_path};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::extract_filename_from_path;
 use worktrunk::styling::{
