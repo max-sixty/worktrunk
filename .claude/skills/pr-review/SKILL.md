@@ -202,6 +202,13 @@ rejects self-approvals. Skip directly to submitting as COMMENT.
   (`cargo run -- hook pre-merge --yes`) if the toolchain is available. Otherwise
   submit as COMMENT noting specific concerns.
 
+**Never promise follow-up actions.** This workflow runs once per push and does
+not re-trigger when CI completes. Don't say "Will approve once CI finishes" or
+"Will approve once CI is green" — that implies a follow-up that won't happen.
+Instead, state the review outcome and the current CI status as facts:
+- Good: "No issues found. CI is still running — approve is pending CI results."
+- Bad: "Will approve once CI finishes." (promises action the bot can't take)
+
 Factors: small diffs, existing test coverage, and mechanical changes increase
 confidence. New algorithms, concurrency, error handling changes, and untested
 paths decrease it.
