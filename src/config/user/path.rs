@@ -48,9 +48,9 @@ pub fn get_config_path() -> Option<PathBuf> {
 
 /// Platform-specific default config path, without CLI or env var overrides.
 ///
-/// Used by `config create` and `config show` to determine the "real" config
-/// location. These commands should write to / display the platform default,
-/// not test isolation paths (WORKTRUNK_CONFIG_PATH).
+/// Returns the etcetera-based platform default. Called by `get_config_path()`
+/// as the final fallback when no CLI or env var override is set.
+///
 ///
 /// Uses the `etcetera` crate which returns:
 /// - Linux: `$XDG_CONFIG_HOME/worktrunk/config.toml` (default `~/.config/...`)
