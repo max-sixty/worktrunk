@@ -12,9 +12,16 @@ description: Worktrunk release workflow. Use when user asks to "do a release", "
 3. **Review commits**: Check commits since last release to understand scope of changes
 4. **Credit contributors**: Check for external PR authors and issue reporters (see "Credit External Contributors" and "Credit Issue Reporters" below)
 5. **Confirm release type with user**: Present changes summary and ask user to confirm patch/minor/major (see below)
-6. **Update CHANGELOG**: Add `## X.Y.Z` section at top with changes (see MANDATORY verification below)
-7. **Bump version**: `cargo release X.Y.Z -p worktrunk -x --no-publish --no-push --no-tag --no-verify --no-confirm && cargo check`
-8. **Commit**: `git add -A && git commit -m "Release vX.Y.Z"`
+6. **Bump version** (must run on a clean tree — before editing CHANGELOG):
+   ```bash
+   cargo release X.Y.Z -p worktrunk -x --no-publish --no-push --no-tag --no-verify --no-confirm && cargo check
+   ```
+   This bumps `Cargo.toml`, `Cargo.lock`, and applies `pre-release-replacements` (e.g., SKILL.md), then auto-commits. We'll reset this commit in step 8 to fold in the CHANGELOG.
+7. **Update CHANGELOG**: Add `## X.Y.Z` section at top with changes (see MANDATORY verification below)
+8. **Commit**: Reset the auto-commit from step 6, stage everything, and create the final release commit:
+   ```bash
+   git reset --soft HEAD~1 && git add -A && git commit -m "Release vX.Y.Z"
+   ```
 9. **Merge to main**: `wt merge --no-remove` (rebases onto main, pushes, keeps worktree)
 10. **Tag and push**: `git tag vX.Y.Z && git push origin vX.Y.Z`
 11. **Wait for release workflow**: `gh run watch <run-id> --exit-status`
