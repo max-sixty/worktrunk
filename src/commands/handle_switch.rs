@@ -241,11 +241,11 @@ pub fn handle_switch(
     // When recovered from a deleted worktree, current_dir() and current_worktree().root()
     // both fail — fall back to repo_path() (the main worktree root).
     let fallback_path = repo.repo_path().to_path_buf();
-    let cwd = std::env::current_dir().unwrap_or_else(|_| fallback_path.clone());
+    let cwd = std::env::current_dir().unwrap_or(fallback_path.clone());
     let source_root = repo
         .current_worktree()
         .root()
-        .unwrap_or_else(|_| fallback_path.clone());
+        .unwrap_or(fallback_path);
     let hooks_display_path =
         handle_switch_output(&result, &branch_info, change_dir, Some(&source_root), &cwd)?;
 
