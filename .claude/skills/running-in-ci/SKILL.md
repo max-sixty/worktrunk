@@ -69,14 +69,18 @@ This is especially important for line references — a `blob/main/...#L42` link
 breaks as soon as the line numbers change. On GitHub, pressing `y` on any file
 view copies the permalink.
 
-- **Repository files** — link to the file on GitHub, preferably with a commit
-  SHA: [`docs/content/hook.md`](https://github.com/max-sixty/worktrunk/blob/ab1c2d3/docs/content/hook.md),
+- **Repository files** — link to the file on GitHub:
+  [`docs/content/hook.md`](https://github.com/max-sixty/worktrunk/blob/main/docs/content/hook.md),
   not just `docs/content/hook.md`
 - **Issues and PRs** — use `#123` shorthand (GitHub auto-links these)
-- **Specific lines** — always use a permalink (commit SHA) so the link remains
-  accurate:
-  [`src/cli/mod.rs#L42`](https://github.com/max-sixty/worktrunk/blob/ab1c2d3/src/cli/mod.rs#L42)
+- **Specific lines** — link with a line fragment:
+  [`src/cli/mod.rs#L42`](https://github.com/max-sixty/worktrunk/blob/main/src/cli/mod.rs#L42)
 - **External resources** — always use `[text](url)` format
+
+For file-level links, `blob/main/...` is acceptable since file paths are stable.
+For **line references**, always use a permalink with a commit SHA
+(`blob/<sha>/...#L42`) — line numbers shift frequently and branch-based line
+links go stale fast.
 
 Example:
 
