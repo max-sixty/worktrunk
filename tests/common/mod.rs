@@ -1000,9 +1000,7 @@ pub fn set_xdg_config_path(cmd: &mut Command, home: &Path) {
     let home = canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
     cmd.env(
         "WORKTRUNK_CONFIG_PATH",
-        home.join(".config")
-            .join("worktrunk")
-            .join("config.toml"),
+        home.join(".config").join("worktrunk").join("config.toml"),
     );
 }
 
