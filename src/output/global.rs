@@ -59,6 +59,11 @@ struct OutputState {
     /// Mapping from canonical path prefix to logical (symlink) prefix.
     /// Computed once at init from `$PWD` vs `std::env::current_dir()`.
     symlink_mapping: Option<SymlinkMapping>,
+    /// Set when a command removes the CWD's worktree (e.g., `wt merge`).
+    /// Used by the error handler to show a "directory was removed" hint.
+    /// This explicit flag avoids unreliable CWD detection on Windows where
+    /// deleted directories remain accessible to the process that held them.
+    cwd_removed: bool,
 }
 
 /// Maps canonical path prefixes to logical (symlink-preserved) prefixes.
@@ -181,6 +186,7 @@ fn get_state() -> &'static Mutex<OutputState> {
             directive_file,
             target_dir: None,
             symlink_mapping,
+            cwd_removed: false,
         })
     })
 }
@@ -244,6 +250,26 @@ pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+/// Mark that the current working directory's worktree has been removed.
+///
+/// Called by the removal handler (e.g., during `wt merge`) when it knows the
+/// process CWD was part of the worktree being removed. The error handler in
+/// `main.rs` checks this to show a "directory was removed" hint.
+pub fn mark_cwd_removed() {
+    get_state()
+        .lock()
+        .expect("OUTPUT_STATE lock poisoned")
+        .cwd_removed = true;
+}
+
+/// Check whether the CWD worktree was removed during this command.
+pub fn was_cwd_removed() -> bool {
+    get_state()
+        .lock()
+        .expect("OUTPUT_STATE lock poisoned")
+        .cwd_removed
 }
 
 /// Request command execution
@@ -499,6 +525,15 @@ mod tests {
         // Verify lazy initialization doesn't panic.
         // State is lazily initialized on first access.
         let _ = has_directive_file();
+    }
+
+    #[test]
+    fn test_cwd_removed_flag() {
+        // was_cwd_removed() returns the flag set by mark_cwd_removed().
+        // Note: global state persists across tests, so we only test mark + read,
+        // not the default (which another test may have already changed).
+        mark_cwd_removed();
+        assert!(was_cwd_removed());
     }
 
     #[test]
