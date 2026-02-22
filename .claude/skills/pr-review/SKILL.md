@@ -206,7 +206,7 @@ rejects self-approvals. Skip directly to submitting as COMMENT.
 not re-trigger when CI completes. Don't say "Will approve once CI finishes" or
 "Will approve once CI is green" — that implies a follow-up that won't happen.
 Instead, state the review outcome and the current CI status as facts:
-- Good: "No issues found. CI is still running — approve is pending CI results."
+- Good: "No issues found. CI is still running — submitting as comment, not approval."
 - Bad: "Will approve once CI finishes." (promises action the bot can't take)
 
 Factors: small diffs, existing test coverage, and mechanical changes increase
