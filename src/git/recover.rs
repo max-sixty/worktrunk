@@ -9,12 +9,6 @@ use std::path::{Path, PathBuf};
 
 use super::Repository;
 
-/// Result of recovering from a deleted working directory.
-struct RecoveredRepo {
-    /// A valid repository discovered from an ancestor directory.
-    repo: Repository,
-}
-
 /// Try to get the current repository, recovering from a deleted CWD if possible.
 ///
 /// Returns `(Repository, recovered)` where `recovered` is `true` if the CWD was
@@ -25,12 +19,12 @@ pub fn current_or_recover() -> anyhow::Result<(Repository, bool)> {
     match Repository::current() {
         Ok(repo) => Ok((repo, false)),
         Err(err) => match recover_from_deleted_cwd() {
-            Some(recovered) => {
+            Some(repo) => {
                 eprintln!(
                     "{}",
                     crate::styling::info_message("Current worktree was removed, recovering...")
                 );
-                Ok((recovered.repo, true))
+                Ok((repo, true))
             }
             None => Err(err),
         },
@@ -39,13 +33,13 @@ pub fn current_or_recover() -> anyhow::Result<(Repository, bool)> {
 
 /// Attempt to recover a repository when the current directory has been deleted.
 ///
-/// Returns `Some(RecoveredRepo)` if:
+/// Returns `Some(Repository)` if:
 /// 1. `std::env::current_dir()` fails or returns a non-existent path (CWD is gone)
 /// 2. `$PWD` points to a path whose ancestor contains a git repository
 /// 3. The deleted path was actually a worktree of that repository
 ///
 /// Returns `None` if CWD is fine or recovery fails at any step.
-fn recover_from_deleted_cwd() -> Option<RecoveredRepo> {
+fn recover_from_deleted_cwd() -> Option<Repository> {
     // If current_dir succeeds and the directory exists, nothing to recover from.
     // On Windows, current_dir() may succeed even after the directory is removed
     // (the process handle keeps it alive), so also check existence on disk.
@@ -58,10 +52,18 @@ fn recover_from_deleted_cwd() -> Option<RecoveredRepo> {
     let pwd = std::env::var_os("PWD")?;
     let deleted_path = PathBuf::from(pwd);
 
-    // Walk up from $PWD to find the first existing ancestor
-    let ancestor = first_existing_ancestor(&deleted_path)?;
+    recover_from_path(&deleted_path)
+}
+
+/// Core recovery logic: given a deleted worktree path, find the parent repository.
+///
+/// Walks up from `deleted_path` to find the first existing ancestor, looks for a
+/// git repository there or in its immediate children, and verifies the deleted path
+/// was actually a worktree of that repository.
+fn recover_from_path(deleted_path: &Path) -> Option<Repository> {
+    let ancestor = first_existing_ancestor(deleted_path)?;
     log::debug!(
-        "Deleted CWD recovery: $PWD={}, ancestor={}",
+        "Deleted CWD recovery: path={}, ancestor={}",
         deleted_path.display(),
         ancestor.display()
     );
@@ -75,7 +77,7 @@ fn recover_from_deleted_cwd() -> Option<RecoveredRepo> {
         return None;
     }
 
-    Some(RecoveredRepo { repo })
+    Some(repo)
 }
 
 /// Walk up from `path` to find the first existing ancestor directory.
@@ -357,5 +359,65 @@ mod tests {
         let repo = Repository::at(tmp.path()).unwrap();
         let unknown = PathBuf::from("/nonexistent/unknown");
         assert!(!was_worktree_of(&repo, &unknown));
+    }
+
+    #[test]
+    fn test_recover_from_path_finds_deleted_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let repo_dir = base.join("repo");
+        std::fs::create_dir(&repo_dir).unwrap();
+        git_init(&repo_dir);
+        Cmd::new("git")
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(&repo_dir)
+            .run()
+            .unwrap();
+
+        // Add a linked worktree
+        let wt_path = base.join("feature-wt");
+        Cmd::new("git")
+            .args([
+                "worktree",
+                "add",
+                &wt_path.to_string_lossy(),
+                "-b",
+                "feature",
+            ])
+            .current_dir(&repo_dir)
+            .run()
+            .unwrap();
+
+        // Delete the worktree directory (simulating external removal)
+        std::fs::remove_dir_all(&wt_path).unwrap();
+
+        // recover_from_path should find the parent repo
+        let recovered = recover_from_path(&wt_path);
+        assert!(
+            recovered.is_some(),
+            "should recover repo from deleted worktree path"
+        );
+    }
+
+    #[test]
+    fn test_recover_from_path_returns_none_for_unrelated_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let repo_dir = base.join("repo");
+        std::fs::create_dir(&repo_dir).unwrap();
+        git_init(&repo_dir);
+        Cmd::new("git")
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(&repo_dir)
+            .run()
+            .unwrap();
+
+        // Try to recover from a path that was never a worktree
+        let unrelated = base.join("not-a-worktree");
+        let recovered = recover_from_path(&unrelated);
+        assert!(
+            recovered.is_none(),
+            "should not recover from unrelated path"
+        );
     }
 }
