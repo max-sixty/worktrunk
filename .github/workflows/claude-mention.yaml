@@ -18,15 +18,23 @@ env:
 
 jobs:
   claude:
-    # Only run when body/comment contains @claude.
+    # Run for:
+    # 1. @worktrunk-bot mentions in issues/PRs/comments
+    # 2. Any comment on worktrunk-bot PRs (loop prevention: exclude bot's own comments)
+    #
+    # Always runs in agent mode (prompt). The prompt tells Claude what happened
+    # and where to look; Claude reads the full context itself via gh/skills.
+    #
     # Note: secrets cannot be used in job-level `if:` (actions/runner#520) —
     # doing so causes GitHub to fail the workflow on push validation. For review
     # comments on fork PRs (which don't receive secrets), we detect forks via
     # github.event context instead. Use a Conversation tab comment for fork PRs.
     if: |
-      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude')) ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && github.event.pull_request.head.repo.full_name == github.repository)
+      (github.event_name == 'issues' && contains(github.event.issue.body, '@worktrunk-bot')) ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@worktrunk-bot')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@worktrunk-bot') && github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.issue.user.login == 'worktrunk-bot' && github.event.comment.user.login != 'worktrunk-bot') ||
+      (github.event_name == 'pull_request_review_comment' && github.event.pull_request.user.login == 'worktrunk-bot' && github.event.comment.user.login != 'worktrunk-bot' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     permissions:
       contents: write # Allow pushing commits
@@ -48,15 +56,39 @@ jobs:
           git config --global user.name "Claude Code"
           git config --global user.email "claude@anthropic.com"
 
+      - name: 👀 React to comment
+        if: github.event.comment
+        run: |
+          # Try issue comment endpoint first, then review comment endpoint.
+          # One will match depending on the comment type.
+          gh api "repos/$REPO/issues/comments/$COMMENT_ID/reactions" -f content=eyes 2>/dev/null || \
+          gh api "repos/$REPO/pulls/comments/$COMMENT_ID/reactions" -f content=eyes 2>/dev/null || true
+        env:
+          REPO: ${{ github.repository }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
       - name: 📌 Check out PR branch (conversation comment)
         if: github.event.issue.pull_request
-        run: gh pr checkout ${{ github.event.issue.number }}
+        run: |
+          PR_STATE=$(gh pr view ${{ github.event.issue.number }} --json state --jq '.state')
+          if [ "$PR_STATE" = "OPEN" ]; then
+            gh pr checkout ${{ github.event.issue.number }}
+          else
+            echo "::warning::PR is $PR_STATE — staying on default branch"
+          fi
         env:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: 📌 Check out PR branch (review comment)
         if: github.event_name == 'pull_request_review_comment'
-        run: gh pr checkout ${{ github.event.pull_request.number }}
+        run: |
+          PR_STATE=$(gh pr view ${{ github.event.pull_request.number }} --json state --jq '.state')
+          if [ "$PR_STATE" = "OPEN" ]; then
+            gh pr checkout ${{ github.event.pull_request.number }}
+          else
+            echo "::warning::PR is $PR_STATE — staying on default branch"
+          fi
         env:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
@@ -89,9 +121,21 @@ jobs:
           # Use bot token so pushed commits trigger CI workflows
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
-          # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |
             actions: read
+
+          # Always agent mode. The prompt tells Claude what happened; the
+          # /running-in-ci skill instructs it to read full context via gh.
+          prompt: >-
+            ${{ github.event.comment.html_url
+              && format(
+                'A user commented ({0}). Read the full issue or PR (description, diff, recent comments, CI status) and respond to their feedback. If they''re requesting changes, make the changes, commit, and push. If they''re asking a question, answer it.',
+                github.event.comment.html_url
+              )
+              || format(
+                'An issue was opened or updated ({0}). Read it and respond.',
+                github.event.issue.html_url
+              ) }}
 
           claude_args: |
             --model opus

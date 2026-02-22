@@ -28,6 +28,7 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
@@ -43,4 +44,4 @@ exit_code: 1
 ----- stderr -----
 [31m✗[39m [31mCan't push to local [1mmain[22m branch: it has newer commits[39m
 [107m [0m * [33m[HASH][m Main commit
-[2m↳[22m [2mTo rebase onto [1mmain[22m, run [90mwt step rebase main[39m[22m
+[2m↳[22m [2mTo rebase onto [90mmain[39m, run [90mwt step rebase main[39m[22m

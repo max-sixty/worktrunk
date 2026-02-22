@@ -1,7 +1,7 @@
 name: claude-review
 # Runner versions pinned; see ci.yaml header comment for rationale.
 
-# Automatic code review on PRs from external contributors.
+# Automatic code review on non-draft PRs.
 # Uses pull_request_target so secrets are available for fork PRs.
 on:
   pull_request_target:
@@ -17,13 +17,12 @@ env:
 
 jobs:
   review:
-    # Skip draft PRs and bot PRs (e.g. Dependabot)
+    # Skip draft PRs.
     # To skip PRs from repo members, uncomment the author_association conditions:
     # github.event.pull_request.author_association != 'OWNER' &&
     # github.event.pull_request.author_association != 'MEMBER' &&
     if: >-
-      github.event.pull_request.draft == false &&
-      github.event.pull_request.user.type != 'Bot'
+      github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     permissions:
       contents: read # Read-only: review workflow should not push code

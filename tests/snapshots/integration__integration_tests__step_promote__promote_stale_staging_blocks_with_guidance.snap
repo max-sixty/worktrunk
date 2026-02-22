@@ -1,10 +1,11 @@
 ---
-source: tests/integration_tests/step_relocate.rs
+source: tests/integration_tests/step_promote.rs
 info:
   program: wt
   args:
     - step
-    - relocate
+    - promote
+    - feature
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -36,12 +37,11 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mSkipping [1mfeature[22m (target blocked: _REPO_.feature)[39m
-[2m↳[22m [2mTo backup blocking paths, use [90m--clobber[39m[22m
-
-[2m○[22m Relocated 0 worktrees, skipped 1 worktree
+[31m✗[39m [31mFound leftover staging directory from an interrupted promote[39m
+[107m [0m Files may need manual recovery from: _REPO_/.git/wt-promote-staging
+[107m [0m Remove it to retry: rm -rf "_REPO_/.git/wt-promote-staging"

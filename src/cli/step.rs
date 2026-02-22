@@ -372,6 +372,57 @@ Note: This command is experimental and may change in future versions.
         args: Vec<String>,
     },
 
+    /// \[experimental\] Put a branch into the main worktree
+    ///
+    /// The displaced branch moves to the promoted branch's worktree.
+    #[command(
+        after_long_help = r#"**Experimental.** Use promote for temporary testing when the main worktree has special significance (Docker Compose, IDE configs, heavy build artifacts anchored to project root), and hooks & tools aren't yet set up to run on arbitrary worktrees. The idiomatic Worktrunk workflow does not use `promote`; instead each worktree has a full environment. `promote` is the only Worktrunk command which changes a branch in an existing worktree.
+
+## Example
+
+```console
+# from ~/project (main worktree)
+$ wt step promote feature
+```
+
+Before:
+
+```
+  Branch   Path
+@ main     ~/project
++ feature  ~/project.feature
+```
+
+After:
+
+```
+  Branch   Path
+@ feature  ~/project
++ main     ~/project.feature
+```
+
+To restore: `wt step promote main` from anywhere, or just `wt step promote` from the main worktree.
+
+Without an argument, promotes the current branch — or restores the default branch if run from the main worktree.
+
+## Requirements
+
+- Both worktrees must be clean
+- The branch must have an existing worktree
+
+## Gitignored files
+
+Gitignored files are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. See [copy-ignored](/step/#copy-ignored) for filtering with `.worktreeinclude`.
+"#
+    )]
+    Promote {
+        /// Branch to promote to main worktree
+        ///
+        /// Defaults to current branch, or default branch from main worktree.
+        #[arg(add = crate::completion::worktree_only_completer())]
+        branch: Option<String>,
+    },
+
     /// \[experimental\] Move worktrees to expected paths
     ///
     /// Relocates worktrees whose path doesn't match the `worktree-path` template.

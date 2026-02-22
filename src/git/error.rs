@@ -644,7 +644,7 @@ impl GitError {
                         f,
                         "\n{}",
                         hint_message(cformat!(
-                            "To rebase onto <bold>{target_branch}</>, run <bright-black>{rebase_cmd}</>"
+                            "To rebase onto <bright-black>{target_branch}</>, run <bright-black>{rebase_cmd}</>"
                         ))
                     )
                 }
@@ -759,7 +759,9 @@ impl GitError {
                     f,
                     "{}\n{}",
                     error_message("No project configuration found"),
-                    hint_message(cformat!("Create a config file at: <bold>{path_display}</>"))
+                    hint_message(cformat!(
+                        "Create a config file at: <bright-black>{path_display}</>"
+                    ))
                 )
             }
 

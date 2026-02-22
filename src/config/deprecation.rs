@@ -29,7 +29,9 @@ use shell_escape::unix::escape;
 
 use crate::config::WorktrunkConfig;
 use crate::shell_exec::Cmd;
-use crate::styling::{eprintln, format_with_gutter, hint_message, warning_message};
+use crate::styling::{
+    eprintln, format_bash_with_gutter, format_with_gutter, hint_message, warning_message,
+};
 
 /// Tracks which config paths have already shown deprecation warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
@@ -633,8 +635,8 @@ pub struct DeprecationInfo {
     pub deprecations: Deprecations,
     /// Label for this config (e.g., "User config", "Project config")
     pub label: String,
-    /// True if in a linked worktree (migration file written to main worktree only)
-    pub in_linked_worktree: bool,
+    /// Main worktree path when viewing from a linked worktree (for `-C` in hints)
+    pub main_worktree_path: Option<PathBuf>,
     /// Path to approvals.toml if approved-commands were copied there during migration
     pub approvals_copied_to: Option<PathBuf>,
 }
@@ -715,7 +717,11 @@ pub fn check_and_migrate(
         migration_path: None,
         deprecations,
         label: label.to_string(),
-        in_linked_worktree: !warn_and_migrate,
+        main_worktree_path: if !warn_and_migrate {
+            repo.map(|r| r.repo_path().to_path_buf())
+        } else {
+            None
+        },
         approvals_copied_to: None,
     };
 
@@ -965,24 +971,21 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
 
     // Migration hint with apply command
     if let Some(new_path) = &info.migration_path {
-        let _ = writeln!(
-            out,
-            "{}",
-            hint_message(cformat!("Run <bright-black>wt config update</> to apply"))
-        );
+        let _ = writeln!(out, "{}", hint_message("To apply:"));
+        let _ = writeln!(out, "{}", format_bash_with_gutter("wt config update"));
 
         // Inline diff — git diff header shows the file paths
         if let Some(diff) = format_migration_diff(&info.config_path, new_path) {
             let _ = writeln!(out, "{diff}");
         }
-    } else if info.in_linked_worktree {
-        // In linked worktree - migration file is written to main worktree
+    } else if let Some(main_path) = &info.main_worktree_path {
+        // In linked worktree — include -C so the command works from here
+        let display_path = crate::path::format_path_for_display(main_path);
+        let _ = writeln!(out, "{}", hint_message("To apply:"));
         let _ = writeln!(
             out,
             "{}",
-            hint_message(cformat!(
-                "Run <bright-black>wt config update</> from main worktree to apply",
-            ))
+            format_bash_with_gutter(&format!("wt -C {display_path} config update"))
         );
     }
 
@@ -2140,7 +2143,7 @@ approved-commands = ["npm install"]
                 select: false,
             },
             label: "User config".to_string(),
-            in_linked_worktree: false,
+            main_worktree_path: None,
             approvals_copied_to: None,
         };
         let output = format_deprecation_details(&info);
@@ -2168,7 +2171,7 @@ approved-commands = ["npm install"]
                 select: false,
             },
             label: "User config".to_string(),
-            in_linked_worktree: false,
+            main_worktree_path: None,
             approvals_copied_to: Some(std::path::PathBuf::from("/tmp/approvals.toml")),
         };
         let output = format_deprecation_details(&info);
@@ -2455,7 +2458,7 @@ branches = true
                 select: true,
             },
             label: "User config".to_string(),
-            in_linked_worktree: false,
+            main_worktree_path: None,
             approvals_copied_to: None,
         };
         let output = format_deprecation_details(&info);

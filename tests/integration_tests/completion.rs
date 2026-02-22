@@ -593,11 +593,12 @@ fn test_complete_step_subcommands(repo: TestRepo) {
     );
     assert!(subcommands.contains(&"diff"), "Missing diff");
     assert!(subcommands.contains(&"for-each"), "Missing for-each");
+    assert!(subcommands.contains(&"promote"), "Missing promote");
     assert!(subcommands.contains(&"relocate"), "Missing relocate");
     assert_eq!(
         subcommands.len(),
-        8,
-        "Should have exactly 8 step subcommands"
+        9,
+        "Should have exactly 9 step subcommands"
     );
 }
 

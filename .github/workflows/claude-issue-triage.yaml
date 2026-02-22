@@ -19,7 +19,7 @@ env:
 
 jobs:
   triage:
-    # Skip bot-created issues, @claude mentions (handled by claude-mention.yaml),
+    # Skip bot-created issues, @worktrunk-bot mentions (handled by claude-mention.yaml),
     # and issues from worktrunk-bot (nightly workflows, ci-fix, etc.). Nightly
     # workflows handle their own remediation because they have richer context
     # (session logs, aggregate diffs) that would be lost if the triager
@@ -27,8 +27,8 @@ jobs:
     if: >-
       github.event.issue.user.type != 'Bot' &&
       github.event.issue.user.login != 'worktrunk-bot' &&
-      !contains(github.event.issue.body, '@claude') &&
-      !contains(github.event.issue.title, '@claude')
+      !contains(github.event.issue.body, '@worktrunk-bot') &&
+      !contains(github.event.issue.title, '@worktrunk-bot')
     runs-on: ubuntu-24.04
     permissions:
       contents: write

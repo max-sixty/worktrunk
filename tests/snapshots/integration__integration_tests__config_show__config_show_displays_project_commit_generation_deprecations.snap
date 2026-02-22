@@ -43,7 +43,8 @@ exit_code: 0
 ----- stderr -----
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [33m▲[39m [33mUser config uses deprecated config sections: [projects."github.com/example/repo".commit-generation] → [projects."github.com/example/repo".commit.generation][39m
-[2m↳[22m [2mRun [90mwt config update[39m to apply[22m
+[2m↳[22m [2mTo apply:[22m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config update
 [107m [0m [1mdiff --git a[TEMP_HOME]/.config/worktrunk/config.toml b[TEMP_HOME]/.config/worktrunk/config.toml.new
 [107m [0m [1mindex de80729..131a2fd 100644[m
 [107m [0m [1m--- a[TEMP_HOME]/.config/worktrunk/config.toml

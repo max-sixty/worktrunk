@@ -5,12 +5,40 @@ description: CI environment rules for GitHub Actions workflows. Use when operati
 
 # Running in CI
 
+## First Steps — Read Context
+
+When triggered by a comment or issue, read the full context before responding.
+The prompt provides a URL — extract the PR/issue number from it.
+
+For PRs:
+
+```bash
+gh pr view <number> --json title,body,comments,reviews,state,statusCheckRollup
+gh pr diff <number>
+gh pr checks <number>
+```
+
+For issues:
+
+```bash
+gh issue view <number> --json title,body,comments,state
+```
+
+Read the triggering comment, the PR/issue description, the diff (for PRs), and
+recent comments to understand the full conversation before taking action.
+
 ## Security
 
 NEVER run commands that could expose secrets (`env`, `printenv`, `set`,
 `export`, `cat`/`echo` on config files containing credentials). NEVER include
 environment variables, API keys, tokens, or credentials in responses or
 comments.
+
+## PR Creation
+
+When the triggering comment asks for a PR (e.g., "make a new PR", "open a PR",
+"create a PR"), create it directly with `gh pr create`. The comment is the
+user's explicit request — don't downgrade it to a compare link.
 
 ## CI Monitoring
 
@@ -75,6 +103,16 @@ Claude tends to mangle shell quoting in CI. Two common failure modes:
 
 **General rule:** When a `gh` command argument contains `$` or `!`, use either
 a temp file (`-F field=@file`) or a heredoc with a quoted delimiter (`<<'EOF'`).
+
+## Atomic PRs
+
+When creating PRs, split unrelated changes into separate PRs — one concern per
+PR. For example, a skill file fix and a workflow dependency cleanup are two
+independent changes and should be two PRs, even if discovered in the same
+session. This makes PRs easier to review, revert, and bisect.
+
+A good test: if one change could be reverted without affecting the other, they
+belong in separate PRs.
 
 ## Tone
 

@@ -10,14 +10,6 @@ Review a pull request to worktrunk, a Rust CLI tool for managing git worktrees.
 
 **PR to review:** $ARGUMENTS
 
-## Setup
-
-Load these skills first:
-
-1. `/reviewing-code` — systematic review checklist (design review, universal
-   principles, completeness)
-2. `/developing-rust` — Rust idioms and patterns
-
 ## Workflow
 
 Follow these steps in order.
@@ -31,40 +23,56 @@ combine commands.
 ```bash
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 BOT_LOGIN=$(gh api user --jq '.login')
-
-# Check if bot already approved this exact revision
-APPROVED_SHA=$(gh pr view <number> --json reviews \
-  --jq "[.reviews[] | select(.state == \"APPROVED\" and .author.login == \"$BOT_LOGIN\") | .commit.oid] | last")
 HEAD_SHA=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
+
+
+# Find the bot's most recent substantive review (any state)
+LAST_REVIEW_SHA=$(gh pr view <number> --json reviews \
+  --jq "[.reviews[] | select(.author.login == \"$BOT_LOGIN\" and .body != \"\")] | last | .commit.oid // empty")
 ```
 
-If `APPROVED_SHA == HEAD_SHA`, exit silently — this revision is already approved.
+If `LAST_REVIEW_SHA == HEAD_SHA`, this commit has already been reviewed — exit
+silently. The only exception: a conversation comment asks the bot a question
+(checked below).
 
-If the bot approved a previous revision (`APPROVED_SHA` exists but differs from
-`HEAD_SHA`), check the incremental changes since the last approval:
+If the bot reviewed a previous commit (`LAST_REVIEW_SHA` exists but differs from
+`HEAD_SHA`), check the incremental changes:
 
 ```bash
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
-gh api "repos/$REPO/compare/$APPROVED_SHA...$HEAD_SHA" \
+gh api "repos/$REPO/compare/$LAST_REVIEW_SHA...$HEAD_SHA" \
   --jq '{total: ([.files[] | .additions + .deletions] | add), files: [.files[] | "\(.filename)\t+\(.additions)/-\(.deletions)"]}'
 ```
 
-If the new changes are trivial, skip the full review (steps 2-3) and do not
-re-approve — the existing approval stands. Still proceed to step 4 to resolve
-any bot threads that the trivial changes addressed, then exit. Rough heuristic:
-changes under ~20 added+deleted lines that don't introduce new functions, types,
-or control flow are typically trivial (review feedback addressed, CI/formatting
-fixes, small corrections). Only proceed with a full review and potential
-re-approval for non-trivial changes (new logic, architectural changes,
-significant additions).
+If the incremental changes are trivial, skip the full review (steps 2-3) — the
+existing review stands. Still proceed to step 5 to resolve any bot threads
+addressed by the new changes, then exit. Rough heuristic: changes under ~20
+added+deleted lines that don't introduce new functions, types, or control flow
+are typically trivial (review feedback addressed, CI/formatting fixes, small
+corrections). Only proceed with a full review for non-trivial changes.
 
-Then check existing review comments to avoid repeating prior feedback:
+Then read all previous bot feedback and conversation:
 
 ```bash
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
-gh api "repos/$REPO/pulls/<number>/comments" --paginate --jq '.[].body'
-gh api "repos/$REPO/pulls/<number>/reviews" --jq '.[] | select(.body != "") | .body'
+BOT_LOGIN=$(gh api user --jq '.login')
+# Previous review bodies
+gh api "repos/$REPO/pulls/<number>/reviews" \
+  --jq ".[] | select(.user.login == \"$BOT_LOGIN\" and .body != \"\") | {state, body}"
+# Inline review comments
+gh api "repos/$REPO/pulls/<number>/comments" --paginate \
+  --jq ".[] | select(.user.login == \"$BOT_LOGIN\") | {path, line, body}"
+# Conversation (catch questions directed at the bot)
+gh api "repos/$REPO/issues/<number>/comments" --paginate \
+  --jq '.[] | {author: .user.login, body: .body}'
 ```
+
+**Do not repeat any point from previous reviews.** If a previous review already
+noted an issue, don't raise it again.
+
+If a conversation comment asks the bot a question (mentions `$BOT_LOGIN`,
+replies to a bot comment, or is clearly directed at the reviewer), address it in
+the review body.
 
 ### 2. Read and understand the change
 
@@ -76,8 +84,7 @@ gh api "repos/$REPO/pulls/<number>/reviews" --jq '.[] | select(.body != "") | .b
 
 ### 3. Review
 
-Follow the `reviewing-code` skill's structure: design review first, then
-tactical checklist.
+Review design first, then tactical checklist.
 
 **Idiomatic Rust and project conventions:**
 
@@ -102,6 +109,11 @@ tactical checklist.
 - Does new code use `.expect()` or `.unwrap()` in functions returning `Result`?
   These should use `?` or `bail!` instead — panics in fallible code bypass error
   handling.
+- **Trace failure paths, don't just note error handling exists.** For code that
+  modifies state through multiple fallible steps, walk through what happens when
+  each `?` fires. What has already been mutated? Is the system left in a
+  recoverable state? Describing the author's approach ("ordered for safety") is
+  not the same as verifying it.
 
 **Testing:**
 
@@ -135,12 +147,78 @@ rg 'env\.HOME' .github/workflows/
 
 If the same issue exists elsewhere, flag it in the review.
 
-### 4. Resolve handled suggestions
+### 4. Submit
 
-After reviewing the code, check if any unresolved review threads from the bot
-have been addressed. For each unresolved bot thread, you've already read the
-file during review — if the suggestion was applied or the issue was otherwise
-fixed, resolve the thread:
+#### Staleness check
+
+Before posting, verify the PR hasn't received new commits since you started:
+
+```bash
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+# HEAD_SHA was captured in pre-flight (step 1)
+CURRENT_HEAD=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
+if [ "$CURRENT_HEAD" != "$HEAD_SHA" ]; then
+  echo "HEAD moved — newer commit will trigger a fresh review"
+  exit 0
+fi
+```
+
+If HEAD moved, skip posting. A newer workflow run will review the latest code.
+
+#### Content filter
+
+Separate internal analysis from postable feedback. The review exists to help the
+author improve the code — not to demonstrate understanding.
+
+- **Post**: Problems found, improvements suggested, questions about intent. Each
+  must be something the author can act on.
+- **Don't post**: Explanations of what the code does, confirmation that the
+  approach is correct, summaries of the change. This is internal analysis.
+
+If the code lacks explanation for future readers, suggest a docstring or
+comment — as a code suggestion, not prose.
+
+If nothing is actionable, use the LGTM behavior (approve with empty body).
+
+#### Confidence-based verdict
+
+After reviewing, check CI status and decide:
+
+```bash
+gh pr view <number> --json statusCheckRollup \
+  --jq '.statusCheckRollup[] | {name: .name, status: .status, conclusion: .conclusion}'
+```
+
+- **Confident** (small, mechanical, well-tested): Approve immediately.
+- **Moderately confident** (non-trivial but looks correct): Approve if CI is
+  green. If CI is pending, submit as COMMENT — don't approve unverified changes.
+- **Unsure** (complex logic, edge cases, untested paths): Run tests locally
+  (`cargo run -- hook pre-merge --yes`) if the toolchain is available. Otherwise
+  submit as COMMENT noting specific concerns.
+
+Factors: small diffs, existing test coverage, and mechanical changes increase
+confidence. New algorithms, concurrency, error handling changes, and untested
+paths decrease it.
+
+#### Posting
+
+Submit **one formal review per run** via `gh pr review`. Never call it multiple
+times.
+
+- Always give a verdict: **approve** or **comment**. Don't use "request changes"
+  (that implies authority to block).
+- **Don't use `gh pr comment`** — use review comments (`gh pr review` or
+  `gh api` for inline suggestions) so feedback is threaded with the review.
+- Don't repeat suggestions already made by humans or previous bot runs
+  (checked in step 1).
+- **Default to code suggestions** for specific fixes — see "Inline suggestions"
+  below. Prose comments are for changes too large or uncertain for a suggestion.
+
+### 5. Resolve handled suggestions
+
+After submitting the review, check if any unresolved review threads from the bot
+have been addressed. You've already read the changed files during review — if a
+suggestion was applied or the issue was otherwise fixed, resolve the thread.
 
 Use the file-based GraphQL pattern from `/running-in-ci` to avoid quoting
 issues with `$` variables:
@@ -197,20 +275,6 @@ gh api graphql -F query=@/tmp/resolve-thread.graphql -f threadId="THREAD_ID"
 Outdated comments (null line) are best-effort — skip if the original context
 can't be located.
 
-### 5. Submit
-
-Submit **one formal review per run** via `gh pr review`. Never call it multiple
-times.
-
-- Always give a verdict: **approve** or **comment**. Don't use "request changes"
-  (that implies authority to block).
-- **Don't use `gh pr comment`** — use review comments (`gh pr review` or
-  `gh api` for inline suggestions) so feedback is threaded with the review.
-- Don't repeat suggestions already made by humans or previous bot runs
-  (checked in step 1).
-- **Default to code suggestions** for specific fixes — see "Inline suggestions"
-  below. Prose comments are for changes too large or uncertain for a suggestion.
-
 ## LGTM behavior
 
 When the PR has no issues worth raising:
@@ -249,10 +313,48 @@ fixed line content here
   direct suggestion.
 - Multi-line suggestions: set `start_line` and `line` to define the range.
 
-## How to provide feedback
+### 6. Request fixes on bot PRs
 
-- Use inline review comments for specific code issues. Prefer suggestion format
-  (see above) for narrow fixes.
-- Be constructive and explain *why* something should change, not just *what*.
-- Distinguish between suggestions (nice to have) and issues (should fix).
-- Don't nitpick formatting — that's what linters are for.
+The review workflow is read-only (`contents: read`) and cannot push fixes. For
+bot PRs (Dependabot, renovate, etc.), request fixes via the `@worktrunk-bot` mention
+workflow, which has write access and can push commits to the PR branch.
+
+**When to use:** The review found concrete, fixable issues (CI failures, missing
+test updates, small code problems) on a bot-authored PR. Don't use this for
+human PRs — leave suggestions for the author instead.
+
+After submitting the review, post a separate comment:
+
+```bash
+gh pr comment <number> --body "@worktrunk-bot The review found issues on this Dependabot PR. Please fix:
+
+- [specific issue 1]
+- [specific issue 2]
+
+See the review comments for details."
+```
+
+This triggers the `claude-mention` workflow, which checks out the PR branch,
+applies fixes, and pushes. CI reruns automatically.
+
+## What makes good review feedback
+
+Every comment must be **actionable** — the author can do something with it.
+Apply this filter before posting:
+
+- **Actionable**: "These error messages reference `$XDG_CONFIG_HOME` but the
+  code uses `etcetera` now — the hints are stale" → author can fix this
+- **Actionable**: A code suggestion fixing the stale hint → one-click apply
+- **Not actionable**: "The fix correctly eliminates the duplicate path
+  resolution by delegating to `default_config_path()`" → the author knows this
+
+**Rules:**
+
+- **Don't explain what the code does.** The author wrote it. Explanations add
+  noise, not value.
+- **If the code needs explanation for future readers**, suggest a docstring or
+  inline comment — as a code suggestion.
+- **Use code suggestions** for anything expressible as replacement lines.
+- **Explain *why*** something should change, not just *what*.
+- **Distinguish severity** — "should fix" vs. "nice to have".
+- **Don't nitpick formatting** — that's what linters are for.

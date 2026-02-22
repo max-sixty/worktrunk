@@ -1,6 +1,6 @@
 # CI Automation Security Model
 
-Five Claude-powered workflows automate issue triage, PR review, CI fixes, dependency updates, and `@claude` mentions.
+Five Claude-powered workflows automate issue triage, PR review, CI fixes, dependency updates, and `@worktrunk-bot` mentions.
 
 ## Security layers
 
@@ -96,7 +96,7 @@ The review workflow is the only one where these paths diverge: checkout uses the
 |----------|-------------------|-------------------|-------------|
 | **review** | PR diff content | Full (any external PR) | Fixed prompt, merge restriction, `contents: read` on checkout |
 | **triage** | Issue body | Partial (structured skill) | Fixed prompt, merge restriction, environment protection |
-| **mention** | Comment body | Full | Restricted to write-access users |
+| **mention** | Comment body | Full | Fixed prompt, merge restriction, fork check on inline review comments |
 | **ci-fix** | Failed CI logs | Minimal (must break CI on main) | Fixed prompt, automatic trigger |
 | **renovate** | None | None | Fixed prompt, scheduled trigger |
 
@@ -129,10 +129,10 @@ This is why release secrets must be in a protected environment, not repo-level s
 ## Triage ↔ mention handoff
 
 These two workflows explicitly exclude each other to avoid double-processing:
-- Issue body contains `@claude` → triage skips, mention handles it
-- Issue body does not contain `@claude` → triage handles it, mention ignores it
+- Issue body contains `@worktrunk-bot` → triage skips, mention handles it
+- Issue body does not contain `@worktrunk-bot` → triage handles it, mention ignores it
 
-Consequence: external users (no write access) who open issues with `@claude` get **neither** triage nor a mention response. This is the accepted trade-off — `@claude` is a maintainer tool.
+The mention workflow runs for any user who includes `@worktrunk-bot` — the merge restriction (ruleset) is the safety boundary, not access control on the workflow itself.
 
 ## GitHub API: issue_comment vs pull_request_review_comment
 
@@ -145,6 +145,7 @@ The `claude-mention` workflow handles both with separate checkout steps.
 
 ## Rules for modifying workflows
 
+- **No role-based gating**: Workflows should not check `author_association` (OWNER, MEMBER, etc.) to decide whether to run. The merge restriction (ruleset) is the security boundary — Claude cannot merge regardless of who triggers it. Use technical criteria instead: fork detection, loop prevention (exclude the bot's own comments), `@worktrunk-bot` trigger phrase.
 - **Adding `allowed_non_write_users`** to a workflow with user-controlled prompts requires security review.
 - **All Claude workflows** must include `--append-system-prompt "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."`.
 - **Token choice**: All Claude workflows use `BOT_TOKEN` for consistent identity. The merge restriction (ruleset) is the security boundary.
