@@ -344,10 +344,7 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
         // When recovered from a deleted worktree, fall back to repo_path().
         let fallback_path = repo.repo_path().to_path_buf();
         let cwd = std::env::current_dir().unwrap_or(fallback_path.clone());
-        let source_root = repo
-            .current_worktree()
-            .root()
-            .unwrap_or(fallback_path);
+        let source_root = repo.current_worktree().root().unwrap_or(fallback_path);
         let hooks_display_path =
             handle_switch_output(&result, &branch_info, true, Some(&source_root), &cwd)?;
 
