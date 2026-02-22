@@ -993,6 +993,19 @@ pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
     cmd.env("APPDATA", home.join(".config"));
 }
 
+/// Override `WORKTRUNK_CONFIG_PATH` to point to the XDG-derived user config path
+/// under `home`. Use this after `set_temp_home_env` in tests that write user
+/// config at the XDG path and need `config create`/`config show` to find it.
+pub fn set_xdg_config_path(cmd: &mut Command, home: &Path) {
+    let home = canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    cmd.env(
+        "WORKTRUNK_CONFIG_PATH",
+        home.join(".config")
+            .join("worktrunk")
+            .join("config.toml"),
+    );
+}
+
 /// Check that a git command succeeded, panicking with diagnostics if not.
 ///
 /// Use this after `git_command().output()` to ensure the command succeeded.
