@@ -12,9 +12,59 @@ fn display_worktree_removal_failed() {
         branch: "feature-x".into(),
         path: PathBuf::from("/tmp/repo.feature-x"),
         error: "fatal: worktree is dirty\nerror: could not remove worktree".into(),
+        remaining_entries: None,
     };
 
     assert_snapshot!("worktree_removal_failed", err.to_string());
+}
+
+#[test]
+fn display_worktree_removal_failed_directory_not_empty() {
+    let err = GitError::WorktreeRemovalFailed {
+        branch: "feature-x".into(),
+        path: PathBuf::from("/tmp/repo.feature-x"),
+        error: "error: failed to delete '/tmp/repo.feature-x': Directory not empty".into(),
+        remaining_entries: Some(vec![
+            ".vite/".into(),
+            "node_modules/".into(),
+            "target/".into(),
+        ]),
+    };
+
+    assert_snapshot!(
+        "worktree_removal_failed_directory_not_empty",
+        err.to_string()
+    );
+}
+
+#[test]
+fn display_worktree_removal_failed_with_remaining_entries() {
+    let err = GitError::WorktreeRemovalFailed {
+        branch: "feature-x".into(),
+        path: PathBuf::from("/tmp/repo.feature-x"),
+        error: "error: failed to remove '/tmp/repo.feature-x/target': Permission denied".into(),
+        remaining_entries: Some(vec!["target/".into()]),
+    };
+
+    assert_snapshot!(
+        "worktree_removal_failed_with_remaining_entries",
+        err.to_string()
+    );
+}
+
+#[test]
+fn display_worktree_removal_failed_many_remaining_entries() {
+    let err = GitError::WorktreeRemovalFailed {
+        branch: "feature-x".into(),
+        path: PathBuf::from("/tmp/repo.feature-x"),
+        error: "error: failed to delete '/tmp/repo.feature-x': Directory not empty".into(),
+        remaining_entries: Some((0..15).map(|i| format!("dir-{i:02}/")).collect()),
+    };
+
+    assert_snapshot!(
+        "worktree_removal_failed_many_remaining_entries",
+        err.to_string()
+    );
 }
 
 #[test]
