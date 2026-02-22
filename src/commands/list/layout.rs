@@ -1643,11 +1643,11 @@ mod tests {
         let mut found_below = false;
         for width in 80..200 {
             let l = layout_at_width(width, &full_skip_tasks());
-            if let Some(s) = find_column(&l, ColumnKind::Summary) {
-                if s.width < 40 {
-                    found_below = true;
-                    assert!(find_column(&l, ColumnKind::Message).is_none());
-                }
+            if let Some(s) = find_column(&l, ColumnKind::Summary)
+                && s.width < 40
+            {
+                found_below = true;
+                assert!(find_column(&l, ColumnKind::Message).is_none());
             }
         }
         assert!(found_below, "no width produced Summary < 40");
