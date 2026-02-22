@@ -72,7 +72,7 @@ fn recover_from_path(deleted_path: &Path) -> Option<Repository> {
     let repo = find_repo_near(&ancestor)?;
 
     // Verify the deleted path was actually a worktree of this repo
-    if !was_worktree_of(&repo, &deleted_path) {
+    if !was_worktree_of(&repo, deleted_path) {
         log::debug!("Deleted CWD recovery: path was not a worktree of discovered repo");
         return None;
     }
