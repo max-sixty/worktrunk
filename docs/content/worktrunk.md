@@ -1,5 +1,6 @@
 +++
 title = "Worktrunk"
+description = "Git worktree management for parallel AI agents. Core commands, install guide, and quick start."
 weight = 1
 +++
 

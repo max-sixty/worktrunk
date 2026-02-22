@@ -1,5 +1,6 @@
 +++
 title = "wt step"
+description = "Run individual operations. The building blocks of wt merge — commit, squash, rebase, push — plus standalone utilities."
 weight = 16
 
 [extra]

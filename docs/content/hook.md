@@ -1,5 +1,6 @@
 +++
 title = "wt hook"
+description = "Run configured hooks."
 weight = 17
 
 [extra]

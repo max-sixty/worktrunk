@@ -1,5 +1,6 @@
 +++
 title = "wt remove"
+description = "Remove worktree; delete branch if merged. Defaults to the current worktree."
 weight = 12
 
 [extra]

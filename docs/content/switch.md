@@ -1,5 +1,6 @@
 +++
 title = "wt switch"
+description = "Switch to a worktree; create if needed."
 weight = 10
 
 [extra]
