@@ -51,7 +51,7 @@ jobs:
       - name: 🔍 Verify bot engagement
         id: verify
         continue-on-error: true
-        if: "!contains(github.event.comment.body || '', '@worktrunk-bot')"
+        if: "github.event.comment && !contains(github.event.comment.body || '', '@worktrunk-bot')"
         run: |
           if [ "$GITHUB_EVENT_NAME" = "issue_comment" ]; then
             if [ -z "${{ github.event.issue.pull_request.url }}" ]; then
@@ -106,7 +106,7 @@ jobs:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: 📌 Check out PR branch (conversation comment)
-        if: github.event.issue.pull_request
+        if: steps.verify.outcome != 'failure' && github.event.issue.pull_request
         run: |
           PR_STATE=$(gh pr view ${{ github.event.issue.number }} --json state --jq '.state')
           if [ "$PR_STATE" = "OPEN" ]; then
@@ -118,7 +118,7 @@ jobs:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: 📌 Check out PR branch (review comment)
-        if: github.event_name == 'pull_request_review_comment'
+        if: steps.verify.outcome != 'failure' && github.event_name == 'pull_request_review_comment'
         run: |
           PR_STATE=$(gh pr view ${{ github.event.pull_request.number }} --json state --jq '.state')
           if [ "$PR_STATE" = "OPEN" ]; then
