@@ -1,5 +1,6 @@
 use crate::common::{
-    TestRepo, repo, set_temp_home_env, setup_home_snapshot_settings, temp_home, wt_command,
+    TestRepo, repo, set_temp_home_env, set_xdg_config_path, setup_home_snapshot_settings,
+    temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -545,6 +546,7 @@ fn test_config_show_detects_fish_legacy_conf_d(mut repo: TestRepo, temp_home: Te
     settings.bind(|| {
         let mut cmd = repo.wt_command();
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/fish");
         cmd.arg("config").arg("show").current_dir(repo.root_path());
 
@@ -578,6 +580,7 @@ fn test_config_show_fish_legacy_with_functions_dir(mut repo: TestRepo, temp_home
     settings.bind(|| {
         let mut cmd = repo.wt_command();
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/fish");
         cmd.arg("config").arg("show").current_dir(repo.root_path());
 

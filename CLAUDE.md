@@ -283,7 +283,7 @@ Use `wt list --format=json` for structured data access. See `wt list --help` for
 
 - Worktrees are **addressed by branch name**, not by filesystem path.
 - Each worktree should map to **exactly one branch**.
-- We **never retarget an existing worktree** to a different branch; instead create/switch/remove worktrees.
+- We **never retarget an existing worktree** to a different branch; instead create/switch/remove worktrees. (The sole exception is `wt step promote`, which exchanges branches between two worktrees as an experimental escape hatch.)
 
 ## Code Quality
 

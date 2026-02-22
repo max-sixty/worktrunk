@@ -9,23 +9,37 @@ use std::path::{Path, PathBuf};
 
 use super::Repository;
 
-/// Result of recovering from a deleted working directory.
-pub struct RecoveredRepo {
-    /// A valid repository discovered from an ancestor directory.
-    pub repo: Repository,
-    /// The deleted worktree path (from `$PWD`).
-    pub deleted_path: PathBuf,
+/// Try to get the current repository, recovering from a deleted CWD if possible.
+///
+/// Returns `(Repository, recovered)` where `recovered` is `true` if the CWD was
+/// deleted and we recovered by finding the parent repository.
+///
+/// Prints an info message when recovery occurs.
+pub fn current_or_recover() -> anyhow::Result<(Repository, bool)> {
+    match Repository::current() {
+        Ok(repo) => Ok((repo, false)),
+        Err(err) => match recover_from_deleted_cwd() {
+            Some(repo) => {
+                eprintln!(
+                    "{}",
+                    crate::styling::info_message("Current worktree was removed, recovering...")
+                );
+                Ok((repo, true))
+            }
+            None => Err(err),
+        },
+    }
 }
 
 /// Attempt to recover a repository when the current directory has been deleted.
 ///
-/// Returns `Some(RecoveredRepo)` if:
+/// Returns `Some(Repository)` if:
 /// 1. `std::env::current_dir()` fails or returns a non-existent path (CWD is gone)
 /// 2. `$PWD` points to a path whose ancestor contains a git repository
 /// 3. The deleted path was actually a worktree of that repository
 ///
 /// Returns `None` if CWD is fine or recovery fails at any step.
-pub fn recover_from_deleted_cwd() -> Option<RecoveredRepo> {
+fn recover_from_deleted_cwd() -> Option<Repository> {
     // If current_dir succeeds and the directory exists, nothing to recover from.
     // On Windows, current_dir() may succeed even after the directory is removed
     // (the process handle keeps it alive), so also check existence on disk.
@@ -38,10 +52,18 @@ pub fn recover_from_deleted_cwd() -> Option<RecoveredRepo> {
     let pwd = std::env::var_os("PWD")?;
     let deleted_path = PathBuf::from(pwd);
 
-    // Walk up from $PWD to find the first existing ancestor
-    let ancestor = first_existing_ancestor(&deleted_path)?;
+    recover_from_path(&deleted_path)
+}
+
+/// Core recovery logic: given a deleted worktree path, find the parent repository.
+///
+/// Walks up from `deleted_path` to find the first existing ancestor, looks for a
+/// git repository there or in its immediate children, and verifies the deleted path
+/// was actually a worktree of that repository.
+fn recover_from_path(deleted_path: &Path) -> Option<Repository> {
+    let ancestor = first_existing_ancestor(deleted_path)?;
     log::debug!(
-        "Deleted CWD recovery: $PWD={}, ancestor={}",
+        "Deleted CWD recovery: path={}, ancestor={}",
         deleted_path.display(),
         ancestor.display()
     );
@@ -50,12 +72,12 @@ pub fn recover_from_deleted_cwd() -> Option<RecoveredRepo> {
     let repo = find_repo_near(&ancestor)?;
 
     // Verify the deleted path was actually a worktree of this repo
-    if !was_worktree_of(&repo, &deleted_path) {
+    if !was_worktree_of(&repo, deleted_path) {
         log::debug!("Deleted CWD recovery: path was not a worktree of discovered repo");
         return None;
     }
 
-    Some(RecoveredRepo { repo, deleted_path })
+    Some(repo)
 }
 
 /// Walk up from `path` to find the first existing ancestor directory.
@@ -79,10 +101,12 @@ fn find_repo_near(dir: &Path) -> Option<Repository> {
         return Some(repo);
     }
 
-    // Check immediate children for .git directories
+    // Check immediate children for .git directories.
+    // Uses is_some_and instead of ? so an unreadable entry (e.g., broken symlink)
+    // skips that entry rather than aborting the entire search.
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
-        if entry.file_type().ok()?.is_dir()
+        if entry.file_type().ok().is_some_and(|ft| ft.is_dir())
             && let Some(repo) = try_repo_at(&entry.path())
         {
             return Some(repo);
@@ -96,6 +120,10 @@ fn find_repo_near(dir: &Path) -> Option<Repository> {
 ///
 /// Returns `Some(repo)` if the path contains a `.git` directory (not a file)
 /// and `Repository::at()` succeeds.
+///
+/// Note: This only matches `.git` directories, so bare repos (which have no
+/// `.git` subdirectory) won't be discovered. The fallback hint in `main.rs`
+/// covers this gracefully.
 fn try_repo_at(dir: &Path) -> Option<Repository> {
     let git_path = dir.join(".git");
     // Only match .git directories (main repos), not .git files (linked worktrees)
@@ -295,6 +323,26 @@ mod tests {
         assert!(was_worktree_of(&repo, &wt_path));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn test_find_repo_near_handles_broken_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Create a broken symlink — file_type() returns Err for these
+        std::os::unix::fs::symlink("/nonexistent/target", tmp.path().join("broken_link")).unwrap();
+        // Should return None without aborting (the broken symlink is skipped gracefully)
+        assert!(find_repo_near(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn test_current_or_recover_returns_repo_when_cwd_exists() {
+        // In a test environment, CWD exists, so current_or_recover should succeed
+        // via the normal Repository::current() path (not recovery).
+        // Tests run inside a git repo in CI, so Repository::current() succeeds.
+        let (repo, recovered) = current_or_recover().unwrap();
+        assert!(!recovered);
+        assert!(repo.repo_path().exists());
+    }
+
     #[test]
     fn test_was_worktree_of_rejects_unknown_path() {
         let tmp = tempfile::tempdir().unwrap();
@@ -308,5 +356,66 @@ mod tests {
         let repo = Repository::at(tmp.path()).unwrap();
         let unknown = PathBuf::from("/nonexistent/unknown");
         assert!(!was_worktree_of(&repo, &unknown));
+    }
+
+    #[test]
+    fn test_recover_from_path_finds_deleted_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let repo_dir = base.join("repo");
+        std::fs::create_dir(&repo_dir).unwrap();
+        git_init(&repo_dir);
+        Cmd::new("git")
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(&repo_dir)
+            .run()
+            .unwrap();
+
+        // Add a linked worktree
+        let wt_path = base.join("feature-wt");
+        Cmd::new("git")
+            .args([
+                "worktree",
+                "add",
+                &wt_path.to_string_lossy(),
+                "-b",
+                "feature",
+            ])
+            .current_dir(&repo_dir)
+            .run()
+            .unwrap();
+
+        // Delete the worktree directory (simulating external removal)
+        std::fs::remove_dir_all(&wt_path).unwrap();
+
+        // recover_from_path should find the parent repo
+        assert!(recover_from_path(&wt_path).is_some());
+    }
+
+    #[test]
+    fn test_recover_from_path_returns_none_for_unrelated_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let repo_dir = base.join("repo");
+        std::fs::create_dir(&repo_dir).unwrap();
+        git_init(&repo_dir);
+        Cmd::new("git")
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(&repo_dir)
+            .run()
+            .unwrap();
+
+        // Try to recover from a path that was never a worktree
+        let unrelated = base.join("not-a-worktree");
+        assert!(recover_from_path(&unrelated).is_none());
+    }
+
+    #[test]
+    fn test_find_repo_near_finds_repo_at_dir_itself() {
+        let tmp = tempfile::tempdir().unwrap();
+        git_init(tmp.path());
+        // When the directory itself is a git repo, find_repo_near should return it
+        // (covers the early-return path before scanning children)
+        assert!(find_repo_near(tmp.path()).is_some());
     }
 }

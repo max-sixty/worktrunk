@@ -14,8 +14,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use dashmap::DashMap;
 use skim::prelude::*;
-use worktrunk::git::{Repository, recover_from_deleted_cwd};
-use worktrunk::styling::{eprintln, info_message};
+use worktrunk::git::{Repository, current_or_recover};
 
 use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
@@ -35,19 +34,7 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
         anyhow::bail!("Interactive picker requires an interactive terminal");
     }
 
-    let (repo, is_recovered) = match Repository::current() {
-        Ok(repo) => (repo, false),
-        Err(err) => match recover_from_deleted_cwd() {
-            Some(recovered) => {
-                eprintln!(
-                    "{}",
-                    info_message("Current worktree was removed, recovering...")
-                );
-                (recovered.repo, true)
-            }
-            None => return Err(err),
-        },
-    };
+    let (repo, is_recovered) = current_or_recover()?;
 
     // Merge CLI flags with resolved config
     let config = repo.config();
@@ -356,11 +343,8 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
         // Interactive picker always performs cd (change_dir: true)
         // When recovered from a deleted worktree, fall back to repo_path().
         let fallback_path = repo.repo_path().to_path_buf();
-        let cwd = std::env::current_dir().unwrap_or_else(|_| fallback_path.clone());
-        let source_root = repo
-            .current_worktree()
-            .root()
-            .unwrap_or_else(|_| fallback_path.clone());
+        let cwd = std::env::current_dir().unwrap_or(fallback_path.clone());
+        let source_root = repo.current_worktree().root().unwrap_or(fallback_path);
         let hooks_display_path =
             handle_switch_output(&result, &branch_info, true, Some(&source_root), &cwd)?;
 

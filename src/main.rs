@@ -7,9 +7,7 @@ use clap::error::ErrorKind as ClapErrorKind;
 use color_print::{ceprintln, cformat};
 use std::process;
 use worktrunk::config::{UserConfig, set_config_path};
-use worktrunk::git::{
-    Repository, ResolvedWorktree, exit_code, recover_from_deleted_cwd, set_base_path,
-};
+use worktrunk::git::{Repository, ResolvedWorktree, current_or_recover, exit_code, set_base_path};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::extract_filename_from_path;
 use worktrunk::styling::{
@@ -706,19 +704,7 @@ fn main() {
                 commands::statusline::run(effective_format)
             }
             None => (|| {
-                let repo = match Repository::current() {
-                    Ok(repo) => repo,
-                    Err(err) => match recover_from_deleted_cwd() {
-                        Some(recovered) => {
-                            eprintln!(
-                                "{}",
-                                info_message("Current worktree was removed, recovering...")
-                            );
-                            recovered.repo
-                        }
-                        None => return Err(err),
-                    },
-                };
+                let (repo, _recovered) = current_or_recover()?;
 
                 let progressive_opt = match (progressive, no_progressive) {
                     (true, _) => Some(true),
