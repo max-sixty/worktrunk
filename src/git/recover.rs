@@ -7,6 +7,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::styling::eprintln;
+
 use super::Repository;
 
 /// Try to get the current repository, recovering from a deleted CWD if possible.
