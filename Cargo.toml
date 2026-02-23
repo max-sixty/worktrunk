@@ -80,7 +80,7 @@ indexmap = { version = "2.13", features = ["serde"] }
 etcetera = "0.11"
 log = "0.4"
 # Only enable needed features - saves ~200KB by excluding debug, macros, multi_template
-minijinja = { version = "2.15", default-features = false, features = ["builtins", "serde", "std_collections"] }
+minijinja = { version = "2.16", default-features = false, features = ["builtins", "serde", "std_collections"] }
 rayon = "1.11"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
