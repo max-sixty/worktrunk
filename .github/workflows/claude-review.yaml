@@ -69,6 +69,7 @@ jobs:
         uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-insta
+          version: "=1.46.3"
 
       - name: Install cargo-nextest
         if: github.event_name == 'pull_request_review'
