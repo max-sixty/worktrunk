@@ -110,7 +110,13 @@ jobs:
           git config --global user.email "claude@anthropic.com"
 
       - name: 👀 React to comment
-        if: steps.verify.outcome != 'failure' && github.event.comment
+        # Only react when explicitly mentioned. For bot-engaged conversations
+        # without a mention, the bot may exit silently — adding 👀 would
+        # create a false expectation of a response.
+        if: >-
+          steps.verify.outcome != 'failure'
+          && github.event.comment
+          && contains(github.event.comment.body, '@worktrunk-bot')
         run: |
           # Try issue comment endpoint first, then review comment endpoint.
           # One will match depending on the comment type.
