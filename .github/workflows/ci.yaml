@@ -143,7 +143,7 @@ jobs:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: target/nextest/default/junit.xml
 
-  # Check if Cargo files changed (for conditional jobs below)
+  # Check if Cargo/CI files changed (for conditional jobs below)
   changes:
     runs-on: ubuntu-24.04
     permissions:
@@ -162,6 +162,7 @@ jobs:
             - 'Cargo.toml'
             - 'Cargo.lock'
             - 'rust-toolchain.toml'
+            - '.github/workflows/ci.yaml'
 
   msrv:
     runs-on: ubuntu-24.04
