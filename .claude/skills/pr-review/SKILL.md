@@ -175,50 +175,58 @@ author improve the code — not to demonstrate understanding.
 - **Post**: Problems found, improvements suggested, questions about intent. Each
   must be something the author can act on.
 - **Don't post**: Explanations of what the code does, confirmation that the
-  approach is correct, summaries of the change. This is internal analysis.
+  approach is correct, summaries of the change, reasoning about why the code
+  works. This is internal analysis — valuable for your review process, but noise
+  in the review body.
 
 If the code lacks explanation for future readers, suggest a docstring or
 comment — as a code suggestion, not prose.
 
-If nothing is actionable, use the LGTM behavior (approve with empty body).
+**Never post a comment with nothing useful to contribute.** If there are no
+issues, the author doesn't need to hear that. Use the LGTM behavior (approve
+with empty body) or stay silent — never post a comment just to report status.
 
 #### Confidence-based verdict
 
-After reviewing, check CI status and decide:
+Decide how confident you are in the change:
 
 ```bash
 PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
-gh pr view <number> --json statusCheckRollup \
-  --jq '.statusCheckRollup[] | {name: .name, status: .status, conclusion: .conclusion}'
 ```
 
 **Self-authored PRs:** If `PR_AUTHOR == BOT_LOGIN`, you cannot approve — GitHub
-rejects self-approvals. Skip directly to submitting as COMMENT.
+rejects self-approvals. Stay silent if there are no issues.
 
 - **Confident** (small, mechanical, well-tested): Approve immediately.
-- **Moderately confident** (non-trivial but looks correct): Approve if CI is
-  green. If CI is pending, submit as COMMENT — don't approve unverified changes.
+- **Moderately confident** (non-trivial but looks correct): Approve.
 - **Unsure** (complex logic, edge cases, untested paths): Run tests locally
   (`cargo run -- hook pre-merge --yes`) if the toolchain is available. Otherwise
   submit as COMMENT noting specific concerns.
-
-**Never promise follow-up actions.** This workflow runs once per push and does
-not re-trigger when CI completes. Don't say "Will approve once CI finishes" or
-"Will approve once CI is green" — that implies a follow-up that won't happen.
-Instead, state the review outcome and the current CI status as facts:
-- Good: "No issues found. CI is still running — submitting as comment, not approval."
-- Bad: "Will approve once CI finishes." (promises action the bot can't take)
 
 Factors: small diffs, existing test coverage, and mechanical changes increase
 confidence. New algorithms, concurrency, error handling changes, and untested
 paths decrease it.
 
+#### CI monitoring
+
+After approving, check whether CI has finished:
+
+```bash
+gh pr view <number> --json statusCheckRollup \
+  --jq '.statusCheckRollup[] | {name: .name, status: .status, conclusion: .conclusion}'
+```
+
+- **All checks passed** → done, no further action.
+- **Checks still running** → poll until complete (sleep 30–60s between checks).
+- **A check failed** → investigate the failure. If the failure is related to the
+  PR changes, dismiss your approval and post findings. If it's a flaky test or
+  unrelated infrastructure failure, note that in a comment.
+
 #### Posting
 
-Submit **one formal review per run** via `gh pr review`. Never call it multiple
-times. Note that `--comment` requires a non-empty body (`-b ""`
-fails) — if you have nothing to say, use LGTM behavior (`--approve -b ""`)
-instead. Never fall back from a failed `--comment` to `--approve`.
+Submit **one formal review per run** via `gh pr review`. Note that `--comment`
+requires a non-empty body (`-b ""` fails) — if you have nothing to say, use
+LGTM behavior (`--approve -b ""`) instead.
 
 - Always give a verdict: **approve** or **comment**. Don't use "request changes"
   (that implies authority to block).
@@ -347,11 +355,11 @@ For human PRs, leave suggestions for the author instead.
 Every comment must be **actionable** — the author can do something with it.
 Apply this filter before posting:
 
-- **Actionable**: "These error messages reference `$XDG_CONFIG_HOME` but the
-  code uses `etcetera` now — the hints are stale" → author can fix this
-- **Actionable**: A code suggestion fixing the stale hint → one-click apply
-- **Not actionable**: "The fix correctly eliminates the duplicate path
-  resolution by delegating to `default_config_path()`" → the author knows this
+| Don't post (internal analysis) | Post (actionable) |
+|---|---|
+| "The fix correctly delegates to `default_config_path()`" | "The error hints still reference `$XDG_CONFIG_HOME` but the code uses `etcetera` now" |
+| "The threshold logic is correct — spacing reclaim matches allocation" | _(nothing — silence means correct)_ |
+| "Good use of `Iterator::scan` here" | "This `.collect::<Vec<_>>()` is only iterated once — can stay as an iterator" |
 
 **Rules:**
 
