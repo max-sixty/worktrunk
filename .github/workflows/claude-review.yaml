@@ -75,6 +75,8 @@ jobs:
         uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-nextest
+          # Pin: 0.9.129 requires rustc 1.91, we use 1.90 (rust-toolchain.toml).
+          version: "=0.9.128"
 
       - name: 💰 Cache
         if: github.event_name == 'pull_request_review'
