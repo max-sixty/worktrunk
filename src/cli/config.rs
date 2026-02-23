@@ -136,7 +136,8 @@ Detects various forms of the integration pattern regardless of:
 
 - Progress, success, error, warning, hint, info
 - Gutter formatting for quoted content
-- Prompts for user input"#
+- Prompts for user input
+- Color palette showing each color rendered in itself"#
     )]
     ShowTheme,
 

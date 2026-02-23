@@ -1330,6 +1330,66 @@ pub fn handle_show_theme() {
     // Prompt
     eprintln!("{}", info_message("Prompt formatting:"));
     eprintln!("{} ", prompt_message("Proceed? [y/N]"));
+
+    eprintln!();
+
+    // Color palette — each color rendered in itself
+    eprintln!("{}", info_message("Color palette:"));
+    use anstyle::{AnsiColor, Color};
+    let fg = |c: AnsiColor| Some(Color::Ansi(c));
+    let palette: &[(&str, Style)] = &[
+        ("red", Style::new().fg_color(fg(AnsiColor::Red))),
+        ("green", Style::new().fg_color(fg(AnsiColor::Green))),
+        ("yellow", Style::new().fg_color(fg(AnsiColor::Yellow))),
+        ("blue", Style::new().fg_color(fg(AnsiColor::Blue))),
+        ("cyan", Style::new().fg_color(fg(AnsiColor::Cyan))),
+        ("bold", Style::new().bold()),
+        ("dim", Style::new().dimmed()),
+        ("bold red", Style::new().fg_color(fg(AnsiColor::Red)).bold()),
+        (
+            "bold green",
+            Style::new().fg_color(fg(AnsiColor::Green)).bold(),
+        ),
+        (
+            "bold yellow",
+            Style::new().fg_color(fg(AnsiColor::Yellow)).bold(),
+        ),
+        (
+            "bold cyan",
+            Style::new().fg_color(fg(AnsiColor::Cyan)).bold(),
+        ),
+        (
+            "dim bright-black",
+            Style::new().fg_color(fg(AnsiColor::BrightBlack)).dimmed(),
+        ),
+        (
+            "dim blue",
+            Style::new().fg_color(fg(AnsiColor::Blue)).dimmed(),
+        ),
+        (
+            "dim green",
+            Style::new().fg_color(fg(AnsiColor::Green)).dimmed(),
+        ),
+        (
+            "dim cyan",
+            Style::new().fg_color(fg(AnsiColor::Cyan)).dimmed(),
+        ),
+        (
+            "dim magenta",
+            Style::new().fg_color(fg(AnsiColor::Magenta)).dimmed(),
+        ),
+        (
+            "dim yellow",
+            Style::new().fg_color(fg(AnsiColor::Yellow)).dimmed(),
+        ),
+    ];
+
+    let palette_text: String = palette
+        .iter()
+        .map(|(name, style)| format!("{style}{name}{style:#}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    eprintln!("{}", format_with_gutter(&palette_text, None));
 }
 
 #[cfg(test)]
