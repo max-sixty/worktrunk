@@ -47,7 +47,7 @@ gh api "repos/$REPO/compare/$LAST_REVIEW_SHA...$HEAD_SHA" \
 ```
 
 If the incremental changes are trivial, skip the full review (steps 2-3) — the
-existing review stands. Still proceed to step 5 to resolve any bot threads
+existing review stands. Still proceed to step 6 to resolve any bot threads
 addressed by the new changes, then exit. Rough heuristic: changes under ~20
 added+deleted lines that don't introduce new functions, types, or control flow
 are typically trivial (review feedback addressed, CI/formatting fixes, small
@@ -167,47 +167,57 @@ fi
 
 If HEAD moved, skip posting. A newer workflow run will review the latest code.
 
-#### Content filter
+#### What to post
 
 Separate internal analysis from postable feedback. The review exists to help the
 author improve the code — not to demonstrate understanding.
 
-- **Post**: Problems found, improvements suggested, questions about intent. Each
-  must be something the author can act on.
-- **Don't post**: Explanations of what the code does, confirmation that the
-  approach is correct, summaries of the change. This is internal analysis.
+Every comment must be **actionable** — the author can do something with it:
 
-If the code lacks explanation for future readers, suggest a docstring or
-comment — as a code suggestion, not prose.
+| Don't post (internal analysis) | Post (actionable) |
+|---|---|
+| "The fix correctly delegates to `default_config_path()`" | "The error hints still reference `$XDG_CONFIG_HOME` but the code uses `etcetera` now" |
+| "The threshold logic is correct — spacing reclaim matches allocation" | _(nothing — silence means correct)_ |
+| "Good use of `Iterator::scan` here" | "This `.collect::<Vec<_>>()` is only iterated once — can stay as an iterator" |
 
-If nothing is actionable, use the LGTM behavior (approve with empty body).
+**Rules:**
 
-#### Confidence-based verdict
+- **Don't explain what the code does.** The author wrote it.
+- **If the code needs explanation for future readers**, suggest a docstring or
+  inline comment — as a code suggestion, not prose.
+- **Use code suggestions** for anything expressible as replacement lines.
+- **Explain *why*** something should change, not just *what*.
+- **Distinguish severity** — "should fix" vs. "nice to have".
+- **Don't nitpick formatting** — that's what linters are for.
 
-After reviewing, check CI status and decide:
+**Never post a comment with nothing useful to contribute.** If there are no
+issues, the author doesn't need to hear that. Use the LGTM verdict (approve
+with empty body) or stay silent.
+
+#### Verdict
+
+Decide how confident you are in the change:
 
 ```bash
 PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
-gh pr view <number> --json statusCheckRollup \
-  --jq '.statusCheckRollup[] | {name: .name, status: .status, conclusion: .conclusion}'
 ```
 
 **Self-authored PRs:** If `PR_AUTHOR == BOT_LOGIN`, you cannot approve — GitHub
-rejects self-approvals. Skip directly to submitting as COMMENT.
+rejects self-approvals. Stay silent if there are no issues.
 
-- **Confident** (small, mechanical, well-tested): Approve immediately.
-- **Moderately confident** (non-trivial but looks correct): Approve if CI is
-  green. If CI is pending, submit as COMMENT — don't approve unverified changes.
+- **Confident** (small, mechanical, well-tested): Approve.
+- **Moderately confident** (non-trivial but looks correct): Approve.
+
+When approving with no issues, approve with an empty body and react:
+
+```bash
+gh pr review <number> --approve -b ""
+gh api "repos/$REPO/issues/<number>/reactions" -f content="+1"
+```
+
 - **Unsure** (complex logic, edge cases, untested paths): Run tests locally
   (`cargo run -- hook pre-merge --yes`) if the toolchain is available. Otherwise
   submit as COMMENT noting specific concerns.
-
-**Never promise follow-up actions.** This workflow runs once per push and does
-not re-trigger when CI completes. Don't say "Will approve once CI finishes" or
-"Will approve once CI is green" — that implies a follow-up that won't happen.
-Instead, state the review outcome and the current CI status as facts:
-- Good: "No issues found. CI is still running — submitting as comment, not approval."
-- Bad: "Will approve once CI finishes." (promises action the bot can't take)
 
 Factors: small diffs, existing test coverage, and mechanical changes increase
 confidence. New algorithms, concurrency, error handling changes, and untested
@@ -215,10 +225,9 @@ paths decrease it.
 
 #### Posting
 
-Submit **one formal review per run** via `gh pr review`. Never call it multiple
-times. Note that `--comment` requires a non-empty body (`-b ""`
-fails) — if you have nothing to say, use LGTM behavior (`--approve -b ""`)
-instead. Never fall back from a failed `--comment` to `--approve`.
+Submit **one formal review per run** via `gh pr review`. Note that `--comment`
+requires a non-empty body (`-b ""` fails) — if there's nothing to say, use the
+approve-with-empty-body pattern instead.
 
 - Always give a verdict: **approve** or **comment**. Don't use "request changes"
   (that implies authority to block).
@@ -226,10 +235,44 @@ instead. Never fall back from a failed `--comment` to `--approve`.
   `gh api` for inline suggestions) so feedback is threaded with the review.
 - Don't repeat suggestions already made by humans or previous bot runs
   (checked in step 1).
-- **Default to code suggestions** for specific fixes — see "Inline suggestions"
-  below. Prose comments are for changes too large or uncertain for a suggestion.
 
-### 5. Resolve handled suggestions
+**Code suggestions are the default format for specific fixes.** Whenever there's
+a concrete fix (typos, doc updates, naming, missing imports, minor refactors,
+any change expressible as replacement lines), use GitHub's suggestion format so
+the author can apply it with one click:
+
+`````bash
+gh api "repos/$REPO/pulls/<number>/reviews" \
+  --method POST \
+  -f event=COMMENT \
+  -f body="Summary of suggestions" \
+  -f 'comments[0][path]=src/foo.rs' \
+  -f 'comments[0][line]=42' \
+  -f 'comments[0][body]=```suggestion
+fixed line content here
+```'
+`````
+
+- Use suggestions for any small fix — no limit on count.
+- Prose comments are for changes too large or uncertain for a direct suggestion.
+- Multi-line suggestions: set `start_line` and `line` to define the range.
+
+### 5. Monitor CI
+
+After approving, check whether CI has finished:
+
+```bash
+gh pr view <number> --json statusCheckRollup \
+  --jq '.statusCheckRollup[] | {name: .name, status: .status, conclusion: .conclusion}'
+```
+
+- **All checks passed** → done, no further action.
+- **Checks still running** → poll until complete (sleep 30–60s between checks).
+- **A check failed** → investigate the failure. If the failure is related to the
+  PR changes, dismiss your approval and post findings. If it's a flaky test or
+  unrelated infrastructure failure, note that in a comment.
+
+### 6. Resolve handled suggestions
 
 After submitting the review, check if any unresolved review threads from the bot
 have been addressed. You've already read the changed files during review — if a
@@ -290,45 +333,8 @@ gh api graphql -F query=@/tmp/resolve-thread.graphql -f threadId="THREAD_ID"
 Outdated comments (null line) are best-effort — skip if the original context
 can't be located.
 
-## LGTM behavior
-
-When the PR has no issues worth raising:
-
-1. Approve with an empty body (no fluff — silence is the best compliment):
-   ```bash
-   gh pr review <number> --approve -b ""
-   ```
-2. Add a thumbs-up reaction:
-   ```bash
-   gh api "repos/$REPO/issues/<number>/reactions" -f content="+1"
-   ```
-
-## Inline suggestions
-
-**Code suggestions are the default format for specific fixes.** Whenever you
-have a concrete fix (typos, doc updates, naming, missing imports, minor
-refactors, any change you can express as replacement lines), use GitHub's
-suggestion format so the author can apply it with one click:
-
-`````bash
-gh api "repos/$REPO/pulls/<number>/reviews" \
-  --method POST \
-  -f event=COMMENT \
-  -f body="Summary of suggestions" \
-  -f 'comments[0][path]=src/foo.rs' \
-  -f 'comments[0][line]=42' \
-  -f 'comments[0][body]=```suggestion
-fixed line content here
-```'
-`````
-
-**Rules:**
-- Use suggestions for any small fix you're confident about — no limit on count.
-- Only use prose comments for changes that are too large or uncertain for a
-  direct suggestion.
-- Multi-line suggestions: set `start_line` and `line` to define the range.
-
-### 6. Request fixes when the author won't respond
+<!-- TODO: change this step to make the fixes directly instead of requesting them -->
+### 7. Request fixes when the author won't respond
 
 If the review found concrete, fixable issues on a PR where the author won't act
 on feedback (Dependabot, renovate, etc.), post a `@worktrunk-bot` comment:
@@ -341,25 +347,3 @@ gh pr comment <number> --body "@worktrunk-bot Please fix the issues from the rev
 ```
 
 For human PRs, leave suggestions for the author instead.
-
-## What makes good review feedback
-
-Every comment must be **actionable** — the author can do something with it.
-Apply this filter before posting:
-
-- **Actionable**: "These error messages reference `$XDG_CONFIG_HOME` but the
-  code uses `etcetera` now — the hints are stale" → author can fix this
-- **Actionable**: A code suggestion fixing the stale hint → one-click apply
-- **Not actionable**: "The fix correctly eliminates the duplicate path
-  resolution by delegating to `default_config_path()`" → the author knows this
-
-**Rules:**
-
-- **Don't explain what the code does.** The author wrote it. Explanations add
-  noise, not value.
-- **If the code needs explanation for future readers**, suggest a docstring or
-  inline comment — as a code suggestion.
-- **Use code suggestions** for anything expressible as replacement lines.
-- **Explain *why*** something should change, not just *what*.
-- **Distinguish severity** — "should fix" vs. "nice to have".
-- **Don't nitpick formatting** — that's what linters are for.
