@@ -134,7 +134,7 @@ The mention workflow runs for any user who includes `@worktrunk-bot` — the mer
 - Formal review submitted on a `worktrunk-bot`-authored PR, with body or non-approval → `claude-review` responds
 - `@worktrunk-bot` mentioned in an issue body → `claude-mention` responds
 - `@worktrunk-bot` mentioned in any comment (issue or PR) → `claude-mention` responds
-- Any comment on a PR or issue that `worktrunk-bot` has engaged with (authored, reviewed, or commented on) → `claude-mention` responds (verify step confirms engagement via API)
+- Any comment on a PR or issue that `worktrunk-bot` has engaged with (authored, reviewed, or commented on) → `claude-mention` runs (verify step confirms engagement via API), but the prompt instructs Claude to only respond if the comment needs bot input — otherwise exit silently
 - Editing a comment or issue body re-triggers the same response
 
 **Does not trigger:**
