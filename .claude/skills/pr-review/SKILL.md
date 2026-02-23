@@ -336,6 +336,7 @@ etc.) where there's no human author to act on feedback, commit and push the fix
 directly to the PR branch.
 
 ```bash
+gh pr checkout <number>
 git add <files>
 git commit -m "fix: <description>
 
