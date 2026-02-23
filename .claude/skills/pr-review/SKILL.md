@@ -147,7 +147,8 @@ the same broken path across all workflow files.
 rg 'env\.HOME' .github/workflows/
 ```
 
-If the same issue exists elsewhere, flag it in the review.
+If the same issue exists elsewhere, add inline suggestions fixing each
+occurrence.
 
 ### 4. Submit
 
@@ -328,19 +329,22 @@ fixed line content here
   direct suggestion.
 - Multi-line suggestions: set `start_line` and `line` to define the range.
 
-### 6. Request fixes when the author won't respond
+### 6. Push mechanical fixes on bot PRs
 
-If the review found concrete, fixable issues on a PR where the author won't act
-on feedback (Dependabot, renovate, etc.), post a `@worktrunk-bot` comment:
+If the review found concrete, fixable issues on a bot PR (Dependabot, renovate,
+etc.) where there's no human author to act on feedback, commit and push the fix
+directly to the PR branch.
 
 ```bash
-gh pr comment <number> --body "@worktrunk-bot Please fix the issues from the review:
+git add <files>
+git commit -m "fix: <description>
 
-- [specific issue 1]
-- [specific issue 2]"
+Co-Authored-By: Claude <noreply@anthropic.com>"
+git push
 ```
 
-For human PRs, leave suggestions for the author instead.
+Only do this for mechanical changes where correctness is obvious. For human PRs,
+leave inline suggestions for the author instead.
 
 ## What makes good review feedback
 
