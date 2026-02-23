@@ -30,7 +30,8 @@ use shell_escape::unix::escape;
 use crate::config::WorktrunkConfig;
 use crate::shell_exec::Cmd;
 use crate::styling::{
-    eprintln, format_bash_with_gutter, format_with_gutter, hint_message, warning_message,
+    eprintln, format_bash_with_gutter, format_with_gutter, hint_message, suggest_command_in_dir,
+    warning_message,
 };
 
 /// Tracks which config paths have already shown deprecation warnings this process.
@@ -980,13 +981,9 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
         }
     } else if let Some(main_path) = &info.main_worktree_path {
         // In linked worktree — include -C so the command works from here
-        let display_path = crate::path::format_path_for_display(main_path);
+        let cmd = suggest_command_in_dir(main_path, "config", &["update"], &[]);
         let _ = writeln!(out, "{}", hint_message("To apply:"));
-        let _ = writeln!(
-            out,
-            "{}",
-            format_bash_with_gutter(&format!("wt -C {display_path} config update"))
-        );
+        let _ = writeln!(out, "{}", format_bash_with_gutter(&cmd));
     }
 
     out

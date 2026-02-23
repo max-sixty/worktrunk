@@ -12,6 +12,7 @@ use worktrunk::config::{
 use worktrunk::git::Repository;
 use worktrunk::styling::{
     eprintln, format_bash_with_gutter, hint_message, info_message, success_message,
+    suggest_command_in_dir,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -172,12 +173,9 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
 
     // Linked worktrees can't apply the update — suggest -C to main worktree
     if is_linked {
-        let display_path = worktrunk::path::format_path_for_display(repo.repo_path());
+        let cmd = suggest_command_in_dir(repo.repo_path(), "config", &["update"], &[]);
         eprintln!("{}", hint_message("To update project config:"));
-        eprintln!(
-            "{}",
-            format_bash_with_gutter(&format!("wt -C {display_path} config update"))
-        );
+        eprintln!("{}", format_bash_with_gutter(&cmd));
         return Ok(None);
     }
 
