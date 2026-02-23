@@ -204,7 +204,8 @@ PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
 ```
 
 **Self-authored PRs:** If `PR_AUTHOR == BOT_LOGIN`, you cannot approve — GitHub
-rejects self-approvals. Stay silent if there are no issues.
+rejects self-approvals. Submit as COMMENT when there are concerns, or stay
+silent if there are none.
 
 - **Confident** (small, mechanical, well-tested): Approve.
 - **Moderately confident** (non-trivial but looks correct): Approve.
@@ -220,9 +221,24 @@ gh api "repos/$REPO/issues/<number>/reactions" -f content="+1"
   (`cargo run -- hook pre-merge --yes`) if the toolchain is available. Otherwise
   submit as COMMENT noting specific concerns.
 
-Factors: small diffs, existing test coverage, and mechanical changes increase
-confidence. New algorithms, concurrency, error handling changes, and untested
-paths decrease it.
+**Confidence factors:**
+
+Increases confidence: small diffs, existing test coverage, mechanical changes,
+author has deep familiarity with the affected code.
+
+Decreases confidence: new algorithms, concurrency, error handling changes,
+untested paths, author hasn't
+contributed to the affected module before, LLM-generated code (may duplicate
+existing APIs or miss design intent).
+
+**When confidence is low**, go beyond checking the implementation — question the
+approach:
+
+- "Does this bypass or duplicate an existing API?"
+- "What does this change *not* handle?"
+- Check that the fix doesn't introduce a different class of bug (e.g., ignoring
+  config overrides, using fixed sleeps instead of polling).
+- If the design involves a judgment call, flag it for human review as a COMMENT.
 
 #### Posting
 
