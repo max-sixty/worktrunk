@@ -276,6 +276,9 @@ fixed line content here
 
 ### 5. Monitor CI
 
+**Skip this step for self-authored PRs** — you cannot approve your own PRs, so
+there is no approval to dismiss on failure.
+
 After approving, check whether CI has finished:
 
 ```bash
@@ -284,7 +287,8 @@ gh pr view <number> --json statusCheckRollup \
 ```
 
 - **All checks passed** → done, no further action.
-- **Checks still running** → poll until complete (sleep 30–60s between checks).
+- **Checks still running** → poll up to 5 times (sleep 60s between checks). If
+  still running after 5 polls, exit — CI results will be visible on the PR.
 - **A check failed** → investigate the failure. If the failure is related to the
   PR changes, dismiss your approval and post findings. If it's a flaky test or
   unrelated infrastructure failure, note that in a comment.
