@@ -454,7 +454,7 @@ wt step prune
 
 - Skips the main worktree, detached HEADs, and locked worktrees
 - Uses the same integration detection as `wt list` status symbols
-- Removes the current worktree last (triggers cd to home worktree)
+- Removes the current worktree last (triggers cd to primary worktree)
 - Runs pre-remove / post-remove hooks for each removal
 "#
     )]

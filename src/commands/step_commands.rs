@@ -1293,6 +1293,8 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
     let current_root = dunce::canonicalize(&current_root).unwrap_or(current_root);
     let now_secs = worktrunk::utils::get_now();
 
+    let default_branch = repo.default_branch();
+
     // Gather candidates: linked worktrees with branches, old enough, integrated
     struct Candidate {
         branch: String,
@@ -1304,7 +1306,16 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
     let mut skipped_young = 0u32;
 
     for wt in &worktrees {
-        // Skip detached HEAD
+        // Skip prunable entries (directory already gone)
+        if wt.is_prunable() {
+            continue;
+        }
+
+        // Skip detached HEAD (including rebase-in-progress)
+        if wt.detached {
+            continue;
+        }
+
         let branch = match &wt.branch {
             Some(b) => b,
             None => continue,
@@ -1315,7 +1326,13 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
             continue;
         }
 
-        // Skip main worktree by checking if it's linked
+        // Never prune the default branch
+        if default_branch.as_deref() == Some(branch.as_str()) {
+            continue;
+        }
+
+        // Skip main worktree (non-linked); in bare repos all are linked,
+        // so the default-branch check above is the primary guard.
         let wt_tree = repo.worktree_at(&wt.path);
         if !wt_tree.is_linked()? {
             continue;
