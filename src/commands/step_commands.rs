@@ -10,10 +10,12 @@
 //! Standalone:
 //! - `step_copy_ignored` - Copy gitignored files matching .worktreeinclude
 //! - `handle_promote` - Put a branch into the main worktree
+//! - `step_prune` - Remove worktrees merged into the default branch
 
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::Context;
 use color_print::cformat;
@@ -31,7 +33,9 @@ use super::command_approval::approve_hooks;
 use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, run_hook_with_filter};
-use super::repository_ext::RepositoryCliExt;
+use super::repository_ext::{RemoveTarget, RepositoryCliExt};
+use super::worktree::BranchDeletionMode;
+use crate::output::handle_remove_output;
 use worktrunk::shell_exec::Cmd;
 
 /// Handle `wt step commit` command
@@ -1263,6 +1267,204 @@ fn create_symlink(target: &Path, src_path: &Path, dest_path: &Path) -> anyhow::R
         let _ = (target, src_path, dest_path);
         anyhow::bail!("symlink creation not supported on this platform");
     }
+    Ok(())
+}
+
+/// Remove linked worktrees whose branches are integrated into the default branch.
+///
+/// Skips the main worktree, detached HEADs, locked worktrees, and worktrees younger
+/// than `min_age`. Removes the current worktree last to trigger cd to home worktree.
+pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()> {
+    let min_age_duration =
+        humantime::parse_duration(min_age).context("Invalid --min-age duration")?;
+
+    let repo = Repository::current()?;
+    let config = UserConfig::load()?;
+
+    let integration_target = match repo.integration_target() {
+        Some(target) => target,
+        None => {
+            anyhow::bail!("cannot determine default branch");
+        }
+    };
+
+    let worktrees = repo.list_worktrees()?;
+    let current_root = repo.current_worktree().root()?.to_path_buf();
+    let current_root = dunce::canonicalize(&current_root).unwrap_or(current_root);
+    let now_secs = worktrunk::utils::get_now();
+
+    // Gather candidates: linked worktrees with branches, old enough, integrated
+    struct Candidate {
+        branch: String,
+        is_current: bool,
+        reason_desc: String,
+    }
+
+    let mut candidates: Vec<Candidate> = Vec::new();
+    let mut skipped_young = 0u32;
+
+    for wt in &worktrees {
+        // Skip detached HEAD
+        let branch = match &wt.branch {
+            Some(b) => b,
+            None => continue,
+        };
+
+        // Skip locked worktrees
+        if wt.locked.is_some() {
+            continue;
+        }
+
+        // Skip main worktree by checking if it's linked
+        let wt_tree = repo.worktree_at(&wt.path);
+        if !wt_tree.is_linked()? {
+            continue;
+        }
+
+        // Check age: use git dir metadata
+        if min_age_duration > Duration::ZERO {
+            let git_dir = wt_tree.git_dir()?;
+            let metadata = fs::metadata(&git_dir).context("Failed to read worktree git dir")?;
+            let created = metadata.created().or_else(|_| {
+                // Fallback: mtime of the `commondir` file (write-once by git worktree add)
+                fs::metadata(git_dir.join("commondir")).and_then(|m| m.modified())
+            });
+            if let Ok(created) = created
+                && let Ok(created_epoch) = created.duration_since(std::time::UNIX_EPOCH)
+            {
+                let age = Duration::from_secs(now_secs.saturating_sub(created_epoch.as_secs()));
+                if age < min_age_duration {
+                    skipped_young += 1;
+                    continue;
+                }
+            }
+        }
+
+        // Check integration
+        let (effective_target, reason) = repo.integration_reason(branch, &integration_target)?;
+        if let Some(reason) = reason {
+            let wt_path = dunce::canonicalize(&wt.path).unwrap_or(wt.path.clone());
+            let is_current = wt_path == current_root;
+            candidates.push(Candidate {
+                branch: branch.clone(),
+                is_current,
+                reason_desc: format!("{} {}", reason.description(), effective_target),
+            });
+        }
+    }
+
+    if candidates.is_empty() {
+        let msg = if skipped_young > 0 {
+            format!(
+                "No merged worktrees to remove ({skipped_young} skipped, younger than {min_age})"
+            )
+        } else {
+            "No merged worktrees to remove".to_string()
+        };
+        eprintln!("{}", info_message(msg));
+        return Ok(());
+    }
+
+    // Print what will be removed
+    for c in &candidates {
+        eprintln!(
+            "{}",
+            info_message(cformat!("<bold>{}</> — {}", c.branch, c.reason_desc,))
+        );
+    }
+    if skipped_young > 0 {
+        eprintln!(
+            "{}",
+            info_message(format!(
+                "{skipped_young} worktree(s) skipped (younger than {min_age})"
+            ))
+        );
+    }
+
+    if dry_run {
+        eprintln!(
+            "{}",
+            hint_message(format!(
+                "{} worktree(s) would be removed (dry run)",
+                candidates.len()
+            ))
+        );
+        return Ok(());
+    }
+
+    // Approve hooks
+    let env = CommandEnv::for_action_branchless()?;
+    let ctx = env.context(yes);
+    let run_hooks = approve_hooks(
+        &ctx,
+        &[
+            HookType::PreRemove,
+            HookType::PostRemove,
+            HookType::PostSwitch,
+        ],
+    )?;
+    if !run_hooks {
+        eprintln!("{}", info_message("Commands declined, continuing removal"));
+    }
+
+    // Prepare removal plans: partition into current vs others
+    let mut plans_others: Vec<super::worktree::RemoveResult> = Vec::new();
+    let mut plan_current: Option<super::worktree::RemoveResult> = None;
+    let mut errors: Vec<anyhow::Error> = Vec::new();
+
+    for c in &candidates {
+        let target = if c.is_current {
+            RemoveTarget::Current
+        } else {
+            RemoveTarget::Branch(&c.branch)
+        };
+        match repo.prepare_worktree_removal(target, BranchDeletionMode::SafeDelete, false, &config)
+        {
+            Ok(result) => {
+                if c.is_current {
+                    plan_current = Some(result);
+                } else {
+                    plans_others.push(result);
+                }
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                errors.push(e);
+            }
+        }
+    }
+
+    // Execute: others first, current last
+    let mut removed = 0usize;
+    for result in &plans_others {
+        match handle_remove_output(result, false, run_hooks) {
+            Ok(()) => removed += 1,
+            Err(e) => {
+                eprintln!("{e}");
+                errors.push(e);
+            }
+        }
+    }
+    if let Some(ref result) = plan_current {
+        match handle_remove_output(result, false, run_hooks) {
+            Ok(()) => removed += 1,
+            Err(e) => {
+                eprintln!("{e}");
+                errors.push(e);
+            }
+        }
+    }
+
+    if removed > 0 {
+        eprintln!(
+            "{}",
+            success_message(format!("Pruned {removed} worktree(s)"))
+        );
+    }
+    if !errors.is_empty() {
+        anyhow::bail!("failed to prune {} worktree(s)", errors.len());
+    }
+
     Ok(())
 }
 

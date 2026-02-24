@@ -423,6 +423,55 @@ Gitignored files are swapped along with the branches so each worktree keeps the 
         branch: Option<String>,
     },
 
+    /// Remove worktrees merged into the default branch
+    #[command(
+        after_long_help = r#"Bulk-removes linked worktrees whose branches are already integrated into the default branch. Always prints what would be removed before acting.
+
+## Min-age guard
+
+Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
+
+```console
+wt step prune --min-age=0s     # no age guard
+wt step prune --min-age=2d     # skip worktrees younger than 2 days
+```
+
+## Examples
+
+Preview what would be removed:
+
+```console
+wt step prune --dry-run
+```
+
+Remove all merged worktrees:
+
+```console
+wt step prune
+```
+
+## Behavior
+
+- Skips the main worktree, detached HEADs, and locked worktrees
+- Uses the same integration detection as `wt list` status symbols
+- Removes the current worktree last (triggers cd to home worktree)
+- Runs pre-remove / post-remove hooks for each removal
+"#
+    )]
+    Prune {
+        /// Show what would be removed
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Skip approval prompts
+        #[arg(short, long)]
+        yes: bool,
+
+        /// Minimum worktree age to consider (default: 1h)
+        #[arg(long, default_value = "1h")]
+        min_age: String,
+    },
+
     /// \[experimental\] Move worktrees to expected paths
     ///
     /// Relocates worktrees whose path doesn't match the `worktree-path` template.

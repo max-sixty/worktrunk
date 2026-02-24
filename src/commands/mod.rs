@@ -41,7 +41,7 @@ pub(crate) use merge::{MergeOptions, handle_merge};
 pub(crate) use select::handle_select;
 pub(crate) use step_commands::{
     PromoteResult, RebaseResult, SquashResult, handle_promote, handle_rebase, handle_squash,
-    step_commit, step_copy_ignored, step_diff, step_relocate, step_show_squash_prompt,
+    step_commit, step_copy_ignored, step_diff, step_prune, step_relocate, step_show_squash_prompt,
 };
 pub(crate) use worktree::{
     OperationMode, handle_remove, handle_remove_current, is_worktree_at_expected_path,
