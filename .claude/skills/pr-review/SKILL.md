@@ -285,6 +285,10 @@ gh pr view <number> --json statusCheckRollup \
 
 - **All checks passed** → done, no further action.
 - **Checks still running** → poll until complete (sleep 30–60s between checks).
+  Polling is intentionally unbounded — CI compute is cheap and catching failures
+  before the author looks at the PR is more valuable than saving a few minutes
+  of polling. The results are always visible on the PR regardless, so the worst
+  case of a long poll is wasted compute, not missed information.
 - **A check failed** → investigate the failure. If the failure is related to the
   PR changes, dismiss your approval and post findings. If it's a flaky test or
   unrelated infrastructure failure, note that in a comment.
