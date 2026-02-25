@@ -24,7 +24,8 @@ jobs:
   claude:
     if: |
       (github.event_name == 'pull_request_target' &&
-        github.event.pull_request.draft == false) ||
+        github.event.pull_request.draft == false &&
+        github.event.pull_request.user.type != 'Bot') ||
       (github.event_name == 'pull_request_review' &&
         github.event.pull_request.user.login == 'worktrunk-bot' &&
         github.event.review.user.login != 'worktrunk-bot' &&
