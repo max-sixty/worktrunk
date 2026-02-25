@@ -85,6 +85,7 @@ Manual merge workflow with review between steps:
 - [2mcopy-ignored[0m — Copy gitignored files between worktrees
 - [2mfor-each[0m — [experimental] Run a command in every worktree
 - [2mpromote[0m — [experimental] Put a branch into the main worktree
+- [2mprune[0m — Remove worktrees and branches merged into the default branch
 - [2mrelocate[0m — [experimental] Move worktrees to expected paths
 
 [1m[32mSee also[0m

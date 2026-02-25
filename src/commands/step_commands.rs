@@ -1316,17 +1316,18 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
     let mut seen_branches = std::collections::HashSet::new();
 
     for wt in &worktrees {
-        // Skip detached HEAD (including rebase-in-progress)
-        if wt.detached {
-            continue;
-        }
-
         let branch = match &wt.branch {
             Some(b) => b,
             None => continue,
         };
 
+        // Always track the branch so the orphan scan doesn't re-discover it
         seen_branches.insert(branch.clone());
+
+        // Skip detached HEAD (including rebase-in-progress)
+        if wt.detached {
+            continue;
+        }
 
         // Skip locked worktrees
         if wt.locked.is_some() {

@@ -145,3 +145,131 @@ fn test_prune_multiple(mut repo: TestRepo) {
     assert!(!parent.join("repo.merged-b").exists());
     assert!(!parent.join("repo.merged-c").exists());
 }
+
+/// Prune skips detached HEAD worktrees
+#[rstest]
+fn test_prune_skips_detached(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Merged worktree — should be pruned
+    repo.add_worktree("merged-branch");
+
+    // Unmerged worktree with detached HEAD — should be skipped entirely
+    // (branch has a unique commit so won't be picked up by orphan scan either)
+    repo.add_worktree_with_commit("detached-branch", "d.txt", "data", "detached commit");
+    repo.detach_head_in_worktree("detached-branch");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--dry-run", "--min-age=0s"],
+        None
+    ));
+
+    // Both worktrees still exist (dry run)
+    let parent = repo.root_path().parent().unwrap();
+    assert!(parent.join("repo.merged-branch").exists());
+    assert!(parent.join("repo.detached-branch").exists());
+}
+
+/// Prune skips locked worktrees
+#[rstest]
+fn test_prune_skips_locked(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Merged worktree — should be pruned
+    repo.add_worktree("merged-branch");
+
+    // Locked worktree at same commit — should be skipped
+    repo.add_worktree("locked-branch");
+    repo.lock_worktree("locked-branch", Some("in use"));
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--yes", "--min-age=0s"],
+        None
+    ));
+
+    // Merged removed, locked remains
+    let parent = repo.root_path().parent().unwrap();
+    assert!(!parent.join("repo.merged-branch").exists());
+    assert!(
+        parent.join("repo.locked-branch").exists(),
+        "Locked worktree should be skipped"
+    );
+}
+
+/// Prune deletes orphan branches (integrated branches without worktrees)
+#[rstest]
+fn test_prune_orphan_branches(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create a branch at HEAD (integrated) without a worktree
+    repo.create_branch("orphan-integrated");
+
+    // Create an unmerged branch (has a unique commit via worktree, then remove worktree)
+    repo.add_worktree_with_commit("unmerged-orphan", "u.txt", "data", "unique commit");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--yes", "--min-age=0s"],
+        None
+    ));
+}
+
+/// Prune from a merged worktree removes it last (CandidateKind::Current)
+#[rstest]
+fn test_prune_current_worktree(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create a worktree at same commit as main
+    let wt_path = repo.add_worktree("current-merged");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--yes", "--min-age=0s"],
+        Some(&wt_path)
+    ));
+
+    // Current worktree was removed
+    assert!(
+        !wt_path.exists(),
+        "Current merged worktree should be removed"
+    );
+}
+
+/// Prune handles stale/prunable worktrees (directory deleted but git metadata remains)
+#[rstest]
+fn test_prune_stale_worktree(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create a worktree at same commit (integrated), then delete its directory
+    let wt_path = repo.add_worktree("stale-branch");
+    std::fs::remove_dir_all(&wt_path).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--yes", "--min-age=0s"],
+        None
+    ));
+}
+
+/// Multiple merged worktrees shown in dry-run mode
+#[rstest]
+fn test_prune_mixed_dry_run(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.add_worktree("merged-one");
+    repo.add_worktree("merged-two");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--dry-run", "--min-age=0s"],
+        None
+    ));
+}

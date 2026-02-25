@@ -1028,6 +1028,7 @@ wt step push
 - `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
 - `promote` — [experimental] Put a branch into the main worktree
+- `prune` — Remove worktrees and branches merged into the default branch
 - `relocate` — [experimental] Move worktrees to expected paths
 
 ## See also
@@ -1038,6 +1039,7 @@ wt step push
 <!-- subdoc: squash -->
 <!-- subdoc: copy-ignored -->
 <!-- subdoc: for-each -->
+<!-- subdoc: prune -->
 <!-- subdoc: relocate -->"#
     )]
     Step {

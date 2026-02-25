@@ -29,6 +29,7 @@ wt step push
 - `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
 - `promote` — [experimental] Put a branch into the main worktree
+- `prune` — Remove worktrees and branches merged into the default branch
 - `relocate` — [experimental] Move worktrees to expected paths
 
 ## Command reference
@@ -411,6 +412,74 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
           Command template (see --help for all variables)
 
 <b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+## wt step prune
+
+Remove worktrees merged into the default branch.
+
+Bulk-removes linked worktrees whose branches are already integrated into the default branch. Always prints what would be removed before acting.
+
+### Min-age guard
+
+Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
+
+```bash
+wt step prune --min-age=0s     # no age guard
+wt step prune --min-age=2d     # skip worktrees younger than 2 days
+```
+
+### Examples
+
+Preview what would be removed:
+
+```bash
+wt step prune --dry-run
+```
+
+Remove all merged worktrees:
+
+```bash
+wt step prune
+```
+
+### Behavior
+
+- Skips the main worktree, detached HEADs, and locked worktrees
+- Uses the same integration detection as `wt list` status symbols
+- Removes the current worktree last (triggers cd to primary worktree)
+- Runs pre-remove / post-remove hooks for each removal
+- Also deletes local branches (without worktrees) that are integrated into the default branch
+
+### Command reference
+
+wt step prune - Remove worktrees merged into the default branch
+
+Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
+
+<b><span class=g>Options:</span></b>
+      <b><span class=c>--dry-run</span></b>
+          Show what would be removed
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+
+      <b><span class=c>--min-age</span></b><span class=c> &lt;MIN_AGE&gt;</span>
+          Minimum worktree age to consider (default: 1h)
+
+          [default: 1h]
+
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 

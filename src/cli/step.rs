@@ -456,6 +456,7 @@ wt step prune
 - Uses the same integration detection as `wt list` status symbols
 - Removes the current worktree last (triggers cd to primary worktree)
 - Runs pre-remove / post-remove hooks for each removal
+- Also deletes local branches (without worktrees) that are integrated into the default branch
 "#
     )]
     Prune {
