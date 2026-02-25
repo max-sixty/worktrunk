@@ -137,14 +137,11 @@ fn try_repo_at(dir: &Path) -> Option<Repository> {
 /// Also matches when `deleted_path` is a subdirectory of a worktree (the shell
 /// may have been deeper than the worktree root when it was removed).
 fn was_worktree_of(repo: &Repository, deleted_path: &Path) -> bool {
-    let worktrees = match repo.list_worktrees() {
-        Ok(wt) => wt,
-        Err(_) => return false,
-    };
-
-    worktrees.iter().any(|wt| {
-        deleted_path.starts_with(&wt.path)
-            || (wt.is_prunable() && paths_match(&wt.path, deleted_path))
+    repo.list_worktrees().is_ok_and(|worktrees| {
+        worktrees.iter().any(|wt| {
+            deleted_path.starts_with(&wt.path)
+                || (wt.is_prunable() && paths_match(&wt.path, deleted_path))
+        })
     })
 }
 
@@ -306,6 +303,9 @@ mod tests {
 
     #[test]
     fn test_recover_from_path_finds_deleted_worktree() {
+        // Enable debug logging so log::debug! format args are evaluated for coverage
+        log::set_max_level(log::LevelFilter::Debug);
+
         let tmp = tempfile::tempdir().unwrap();
         let base = dunce::canonicalize(tmp.path()).unwrap();
         let repo_dir = base.join("repo");
