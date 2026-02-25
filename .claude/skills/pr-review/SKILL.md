@@ -307,8 +307,9 @@ gh pr view <number> --json statusCheckRollup \
   of polling. The results are always visible on the PR regardless, so the worst
   case of a long poll is wasted compute, not missed information.
 - **A check failed** → investigate the failure. If the failure is related to the
-  PR changes, dismiss your approval and post findings. If it's a flaky test or
-  unrelated infrastructure failure, note that in a comment.
+  PR changes, dismiss your approval silently (no review body or comment — the CI
+  status is already visible on the PR). If it's a flaky test or unrelated
+  infrastructure failure, no action needed.
 
 ### 6. Resolve handled suggestions
 
