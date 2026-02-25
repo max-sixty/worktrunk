@@ -153,7 +153,11 @@ impl Repository {
 
         match self.run_command(&args) {
             Ok(_) => Ok(()),
-            Err(e) if !force && e.to_string().contains("submodules cannot be moved or removed") => {
+            Err(e)
+                if !force
+                    && e.to_string()
+                        .contains("submodules cannot be moved or removed") =>
+            {
                 // Git refuses to remove worktrees with initialized submodules without --force.
                 // This is safe to retry because the caller already validated cleanliness.
                 log::debug!("Retrying worktree removal with --force due to submodules");
