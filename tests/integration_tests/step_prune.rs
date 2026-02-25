@@ -258,18 +258,20 @@ fn test_prune_stale_worktree(mut repo: TestRepo) {
     ));
 }
 
-/// Multiple merged worktrees shown in dry-run mode
+/// Min-age check passes when worktrees are old enough.
+///
+/// Uses a far-future epoch (2030) so real worktrees (created Feb 2026) appear
+/// ~4 years old, passing the default 1h min-age. This exercises the age
+/// fall-through path that `--min-age=0s` bypasses entirely.
 #[rstest]
-fn test_prune_mixed_dry_run(mut repo: TestRepo) {
+fn test_prune_min_age_passes(mut repo: TestRepo) {
     repo.commit("initial");
 
-    repo.add_worktree("merged-one");
-    repo.add_worktree("merged-two");
+    repo.add_worktree("old-merged");
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["prune", "--dry-run", "--min-age=0s"],
-        None
-    ));
+    // Far-future epoch: worktrees appear ~4 years old
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--dry-run"], None);
+    cmd.env("WORKTRUNK_TEST_EPOCH", "1893456000"); // 2030-01-01
+
+    assert_cmd_snapshot!(cmd);
 }
