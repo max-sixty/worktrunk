@@ -1312,8 +1312,11 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
 
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut skipped_young = 0u32;
-    // Track branches seen via worktree entries so we don't double-count
-    let mut seen_branches = std::collections::HashSet::new();
+    // Track branches seen via worktree entries so we don't double-count.
+    // Pre-seed with the default branch to prevent it from being pruned
+    // (it's trivially "integrated" into itself).
+    let mut seen_branches: std::collections::HashSet<String> =
+        default_branch.iter().cloned().collect();
 
     for wt in &worktrees {
         let branch = match &wt.branch {
@@ -1401,9 +1404,6 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
         if seen_branches.contains(&branch) {
             continue;
         }
-        if default_branch.as_deref() == Some(branch.as_str()) {
-            continue;
-        }
         let (effective_target, reason) = repo.integration_reason(&branch, &integration_target)?;
         if let Some(reason) = reason {
             candidates.push(Candidate {
@@ -1473,44 +1473,25 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
 
     // Prepare removal plans
     let mut plans: Vec<super::worktree::RemoveResult> = Vec::new();
-    let mut errors: Vec<anyhow::Error> = Vec::new();
-
     for c in &candidates {
         let target = match c.kind {
             CandidateKind::Current => RemoveTarget::Current,
             CandidateKind::Other | CandidateKind::BranchOnly => RemoveTarget::Branch(&c.branch),
         };
-        match repo.prepare_worktree_removal(target, BranchDeletionMode::SafeDelete, false, &config)
-        {
-            Ok(result) => plans.push(result),
-            Err(e) => {
-                eprintln!("{e}");
-                errors.push(e);
-            }
-        }
+        let plan =
+            repo.prepare_worktree_removal(target, BranchDeletionMode::SafeDelete, false, &config)?;
+        plans.push(plan);
     }
 
     // Execute removals (current worktree is last due to sort above)
-    let mut removed = 0usize;
     for result in &plans {
-        match handle_remove_output(result, false, run_hooks) {
-            Ok(()) => removed += 1,
-            Err(e) => {
-                eprintln!("{e}");
-                errors.push(e);
-            }
-        }
+        handle_remove_output(result, false, run_hooks)?;
     }
 
-    if removed > 0 {
-        eprintln!(
-            "{}",
-            success_message(format!("Pruned {removed} worktree(s)"))
-        );
-    }
-    if !errors.is_empty() {
-        anyhow::bail!("failed to prune {} worktree(s)", errors.len());
-    }
+    eprintln!(
+        "{}",
+        success_message(format!("Pruned {} worktree(s)", plans.len()))
+    );
 
     Ok(())
 }
