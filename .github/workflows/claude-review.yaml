@@ -98,6 +98,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          allowed_bots: "*"
           additional_permissions: |
             actions: read
           use_sticky_comment: ${{ github.event_name == 'pull_request_target' }}
