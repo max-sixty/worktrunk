@@ -453,7 +453,9 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
 
 Remove worktrees merged into the default branch.
 
-Bulk-removes linked worktrees whose branches are already integrated into the default branch. Always prints what would be removed before acting.
+Removes worktrees and branches that are merged into the default branch — those showing `_` (same commit) or `⊂` (content integrated) in `wt list`. Also cleans up stale entries (`⊟`) and merged local branches that have no worktree. See `wt list --help` for status symbols.
+
+Locked worktrees (`⊞`) and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal.
 
 ### Min-age guard
 
@@ -478,21 +480,6 @@ Remove all merged worktrees:
 wt step prune
 ```
 
-### What gets pruned
-
-Removes worktrees whose `wt list` status shows `_` (same commit) or `⊂` (content integrated) relative to the default branch. Also handles:
-
-- Stale worktree entries (`⊟` prunable — directory deleted but git metadata remains)
-- Orphan branches (`/` branch without worktree) that are integrated
-
-### What gets skipped
-
-- The main worktree and the default branch
-- Detached HEADs (no branch to delete)
-- Locked worktrees (`⊞`)
-- The current worktree is removed last (triggers cd to primary worktree)
-- Runs pre-remove / post-remove hooks for each removal
-
 ### Command reference
 
 {% terminal() %}
@@ -508,7 +495,7 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
           Skip approval prompts
 
       <b><span class=c>--min-age</span></b><span class=c> &lt;MIN_AGE&gt;</span>
-          Minimum worktree age to consider (default: 1h)
+          Skip worktrees younger than this
 
           [default: 1h]
 

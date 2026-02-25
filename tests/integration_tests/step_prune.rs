@@ -146,16 +146,15 @@ fn test_prune_multiple(mut repo: TestRepo) {
     assert!(!parent.join("repo.merged-c").exists());
 }
 
-/// Prune skips detached HEAD worktrees
+/// Prune skips unmerged detached HEAD worktrees
 #[rstest]
-fn test_prune_skips_detached(mut repo: TestRepo) {
+fn test_prune_skips_unmerged_detached(mut repo: TestRepo) {
     repo.commit("initial");
 
     // Merged worktree — should be pruned
     repo.add_worktree("merged-branch");
 
-    // Unmerged worktree with detached HEAD — should be skipped entirely
-    // (branch has a unique commit so won't be picked up by orphan scan either)
+    // Unmerged worktree with detached HEAD — should be skipped (not integrated)
     repo.add_worktree_with_commit("detached-branch", "d.txt", "data", "detached commit");
     repo.detach_head_in_worktree("detached-branch");
 
@@ -170,6 +169,30 @@ fn test_prune_skips_detached(mut repo: TestRepo) {
     let parent = repo.root_path().parent().unwrap();
     assert!(parent.join("repo.merged-branch").exists());
     assert!(parent.join("repo.detached-branch").exists());
+}
+
+/// Prune removes integrated detached HEAD worktrees
+#[rstest]
+fn test_prune_removes_integrated_detached(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Worktree at same commit as main, then detach — integrated and detached
+    repo.add_worktree("detached-integrated");
+    repo.detach_head_in_worktree("detached-integrated");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--yes", "--min-age=0s"],
+        None
+    ));
+
+    // Worktree was removed
+    let parent = repo.root_path().parent().unwrap();
+    assert!(
+        !parent.join("repo.detached-integrated").exists(),
+        "Integrated detached worktree should be removed"
+    );
 }
 
 /// Prune skips locked worktrees

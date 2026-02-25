@@ -1272,10 +1272,11 @@ fn create_symlink(target: &Path, src_path: &Path, dest_path: &Path) -> anyhow::R
 
 /// Remove worktrees and branches integrated into the default branch.
 ///
-/// Handles three cases: live worktrees (removed), stale worktree entries (pruned +
-/// branch deleted), and orphan branches without worktrees (deleted).
-/// Skips the main/primary worktree, detached HEADs, locked worktrees, and worktrees
-/// younger than `min_age`. Removes the current worktree last to trigger cd to primary.
+/// Handles four cases: live worktrees with branches (removed + branch deleted),
+/// detached HEAD worktrees (directory removed, no branch to delete), stale worktree
+/// entries (pruned + branch deleted), and orphan branches without worktrees (deleted).
+/// Skips the main/primary worktree, locked worktrees, and worktrees younger than
+/// `min_age`. Removes the current worktree last to trigger cd to primary.
 pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()> {
     let min_age_duration =
         humantime::parse_duration(min_age).context("Invalid --min-age duration")?;
@@ -1299,7 +1300,12 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
 
     // Gather candidates: integrated worktrees + integrated branch-only refs
     struct Candidate {
-        branch: String,
+        /// Branch name (None for detached HEAD worktrees)
+        branch: Option<String>,
+        /// Display label: branch name or abbreviated commit SHA
+        label: String,
+        /// Worktree path (for Path-based removal of detached worktrees)
+        path: Option<PathBuf>,
         /// Current worktree, other worktree, or branch-only (no worktree)
         kind: CandidateKind,
         reason_desc: String,
@@ -1319,17 +1325,9 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
         default_branch.iter().cloned().collect();
 
     for wt in &worktrees {
-        let branch = match &wt.branch {
-            Some(b) => b,
-            None => continue,
-        };
-
-        // Always track the branch so the orphan scan doesn't re-discover it
-        seen_branches.insert(branch.clone());
-
-        // Skip detached HEAD (including rebase-in-progress)
-        if wt.detached {
-            continue;
+        // Track branches so the orphan scan doesn't re-discover them
+        if let Some(branch) = &wt.branch {
+            seen_branches.insert(branch.clone());
         }
 
         // Skip locked worktrees
@@ -1338,20 +1336,26 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
         }
 
         // Never prune the default branch
-        if default_branch.as_deref() == Some(branch.as_str()) {
+        if let Some(branch) = &wt.branch
+            && default_branch.as_deref() == Some(branch.as_str())
+        {
             continue;
         }
 
         // Prunable entries (directory gone): check integration, include as branch-only
         if wt.is_prunable() {
-            let (effective_target, reason) =
-                repo.integration_reason(branch, &integration_target)?;
-            if let Some(reason) = reason {
-                candidates.push(Candidate {
-                    branch: branch.clone(),
-                    kind: CandidateKind::BranchOnly,
-                    reason_desc: format!("{} {}", reason.description(), effective_target),
-                });
+            if let Some(branch) = &wt.branch {
+                let (effective_target, reason) =
+                    repo.integration_reason(branch, &integration_target)?;
+                if let Some(reason) = reason {
+                    candidates.push(Candidate {
+                        label: branch.clone(),
+                        branch: Some(branch.clone()),
+                        path: None,
+                        kind: CandidateKind::BranchOnly,
+                        reason_desc: format!("{} {}", reason.description(), effective_target),
+                    });
+                }
             }
             continue;
         }
@@ -1363,8 +1367,15 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
             continue;
         }
 
+        // For integration check: use branch name, or commit SHA for detached
+        let integration_ref = match &wt.branch {
+            Some(b) if !wt.detached => b.as_str(),
+            _ => &wt.head,
+        };
+
         // Check integration first — only apply age guard to integrated worktrees
-        let (effective_target, reason) = repo.integration_reason(branch, &integration_target)?;
+        let (effective_target, reason) =
+            repo.integration_reason(integration_ref, &integration_target)?;
         let Some(reason) = reason else {
             continue;
         };
@@ -1391,8 +1402,14 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
 
         let wt_path = dunce::canonicalize(&wt.path).unwrap_or(wt.path.clone());
         let is_current = wt_path == current_root;
+        let label = wt
+            .branch
+            .clone()
+            .unwrap_or_else(|| format!("(detached {})", &wt.head[..7.min(wt.head.len())]));
         candidates.push(Candidate {
-            branch: branch.clone(),
+            branch: if wt.detached { None } else { wt.branch.clone() },
+            label,
+            path: Some(wt_path.clone()),
             kind: if is_current {
                 CandidateKind::Current
             } else {
@@ -1410,7 +1427,9 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
         let (effective_target, reason) = repo.integration_reason(&branch, &integration_target)?;
         if let Some(reason) = reason {
             candidates.push(Candidate {
-                branch,
+                label: branch.clone(),
+                branch: Some(branch),
+                path: None,
                 kind: CandidateKind::BranchOnly,
                 reason_desc: format!("{} {}", reason.description(), effective_target),
             });
@@ -1433,7 +1452,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
     for c in &candidates {
         eprintln!(
             "{}",
-            info_message(cformat!("<bold>{}</> — {}", c.branch, c.reason_desc,))
+            info_message(cformat!("<bold>{}</> — {}", c.label, c.reason_desc,))
         );
     }
     if skipped_young > 0 {
@@ -1479,7 +1498,13 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
     for c in &candidates {
         let target = match c.kind {
             CandidateKind::Current => RemoveTarget::Current,
-            CandidateKind::Other | CandidateKind::BranchOnly => RemoveTarget::Branch(&c.branch),
+            CandidateKind::BranchOnly => {
+                RemoveTarget::Branch(c.branch.as_ref().expect("BranchOnly has branch"))
+            }
+            CandidateKind::Other => match &c.branch {
+                Some(branch) => RemoveTarget::Branch(branch),
+                None => RemoveTarget::Path(c.path.as_ref().expect("detached has path")),
+            },
         };
         let plan =
             repo.prepare_worktree_removal(target, BranchDeletionMode::SafeDelete, false, &config)?;

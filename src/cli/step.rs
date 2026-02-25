@@ -425,7 +425,9 @@ Gitignored files are swapped along with the branches so each worktree keeps the 
 
     /// Remove worktrees merged into the default branch
     #[command(
-        after_long_help = r#"Bulk-removes linked worktrees whose branches are already integrated into the default branch. Always prints what would be removed before acting.
+        after_long_help = r#"Removes worktrees and branches that are merged into the default branch — those showing `_` (same commit) or `⊂` (content integrated) in `wt list`. Also cleans up stale entries (`⊟`) and merged local branches that have no worktree. See `wt list --help` for status symbols.
+
+Locked worktrees (`⊞`) and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal.
 
 ## Min-age guard
 
@@ -449,21 +451,6 @@ Remove all merged worktrees:
 ```console
 wt step prune
 ```
-
-## What gets pruned
-
-Removes worktrees whose `wt list` status shows `_` (same commit) or `⊂` (content integrated) relative to the default branch. Also handles:
-
-- Stale worktree entries (`⊟` prunable — directory deleted but git metadata remains)
-- Orphan branches (`/` branch without worktree) that are integrated
-
-## What gets skipped
-
-- The main worktree and the default branch
-- Detached HEADs (no branch to delete)
-- Locked worktrees (`⊞`)
-- The current worktree is removed last (triggers cd to primary worktree)
-- Runs pre-remove / post-remove hooks for each removal
 "#
     )]
     Prune {
@@ -475,7 +462,7 @@ Removes worktrees whose `wt list` status shows `_` (same commit) or `⊂` (conte
         #[arg(short, long)]
         yes: bool,
 
-        /// Minimum worktree age to consider (default: 1h)
+        /// Skip worktrees younger than this
         #[arg(long, default_value = "1h")]
         min_age: String,
     },
