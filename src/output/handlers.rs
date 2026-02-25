@@ -72,7 +72,11 @@ fn execute_instant_removal_or_fallback(
             // Fallback: cross-filesystem, permissions, Windows file locking, etc.
             // Use legacy git worktree remove which handles these cases.
             log::debug!("Instant removal unavailable, using legacy: {}", e);
-            build_remove_command(worktree_path, branch_to_delete, force_worktree)
+            // Force removal when submodules are present — git refuses to remove worktrees
+            // with initialized submodules without --force. This is safe because the caller
+            // already validated worktree cleanliness via ensure_clean().
+            let force = force_worktree || worktree_path.join(".gitmodules").exists();
+            build_remove_command(worktree_path, branch_to_delete, force)
         }
     }
 }

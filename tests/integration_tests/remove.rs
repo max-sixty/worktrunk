@@ -2212,6 +2212,87 @@ fn test_remove_foreground_failure_shows_remaining_entries_detached(mut repo: Tes
     );
 }
 
+/// Worktrees with initialized git submodules should be removable.
+///
+/// Git refuses `git worktree remove` when submodules are initialized,
+/// requiring `--force`. This test verifies that `wt remove --foreground`
+/// handles this automatically (retries with `--force`).
+///
+/// Regression test for <https://github.com/max-sixty/worktrunk/issues/1194>.
+#[rstest]
+fn test_remove_foreground_with_submodules(mut repo: TestRepo) {
+    // Create a local repo to use as a submodule source
+    let sub_source = repo.root_path().parent().unwrap().join("sub-source");
+    std::fs::create_dir_all(&sub_source).unwrap();
+    repo.run_git_in(&sub_source, &["init"]);
+    std::fs::write(sub_source.join("sub.txt"), "submodule content").unwrap();
+    repo.run_git_in(&sub_source, &["add", "sub.txt"]);
+    repo.run_git_in(&sub_source, &["commit", "-m", "sub init"]);
+
+    // Add submodule to the main repo (requires protocol.file.allow=always)
+    let output = repo
+        .git_command()
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_source.to_str().unwrap(),
+            "submod",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to add submodule: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    repo.run_git(&["commit", "-m", "add submodule"]);
+
+    // Create a worktree and initialize submodules in it
+    let worktree_path = repo.add_worktree("feature-submod");
+    let output = repo
+        .git_command()
+        .current_dir(&worktree_path)
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to init submodule: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify the submodule is actually initialized
+    assert!(
+        worktree_path.join("submod").join("sub.txt").exists(),
+        "Submodule should be initialized"
+    );
+
+    // Remove the worktree in foreground mode — should succeed despite submodules
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "feature-submod"])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "Remove should succeed with submodules, got: {stderr}"
+    );
+    assert!(
+        !worktree_path.exists(),
+        "Worktree directory should be removed"
+    );
+}
+
 /// Restore write permissions recursively so TempDir cleanup succeeds.
 #[cfg(unix)]
 fn restore_dir_permissions(dir: &std::path::Path) {

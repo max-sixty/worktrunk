@@ -131,6 +131,11 @@ impl Repository {
     /// When `force` is true, passes `--force` to `git worktree remove`,
     /// allowing removal even when the worktree contains untracked files
     /// (like build artifacts such as `.vite/` or `node_modules/`).
+    ///
+    /// When the worktree contains initialized submodules, git refuses removal
+    /// even for clean worktrees. This method detects that case and automatically
+    /// retries with `--force`, which is safe because the caller has already
+    /// validated worktree cleanliness via `ensure_clean()`.
     pub fn remove_worktree(&self, path: &std::path::Path, force: bool) -> anyhow::Result<()> {
         let path_str = path.to_str().ok_or_else(|| {
             anyhow::Error::from(GitError::Other {
@@ -145,8 +150,18 @@ impl Repository {
             args.push("--force");
         }
         args.push(path_str);
-        self.run_command(&args)?;
-        Ok(())
+
+        match self.run_command(&args) {
+            Ok(_) => Ok(()),
+            Err(e) if !force && e.to_string().contains("submodules cannot be moved or removed") => {
+                // Git refuses to remove worktrees with initialized submodules without --force.
+                // This is safe to retry because the caller already validated cleanliness.
+                log::debug!("Retrying worktree removal with --force due to submodules");
+                self.run_command(&["worktree", "remove", "--force", path_str])?;
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Resolve a worktree name, expanding "@" to current, "-" to previous, and "^" to main.
