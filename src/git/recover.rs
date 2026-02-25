@@ -303,9 +303,6 @@ mod tests {
 
     #[test]
     fn test_recover_from_path_finds_deleted_worktree() {
-        // Enable debug logging so log::debug! format args are evaluated for coverage
-        log::set_max_level(log::LevelFilter::Debug);
-
         let tmp = tempfile::tempdir().unwrap();
         let base = dunce::canonicalize(tmp.path()).unwrap();
         let repo_dir = base.join("repo");

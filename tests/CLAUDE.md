@@ -256,6 +256,35 @@ cmd.env("HOME", ...);
 crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
 ```
 
+## No Global State Mutations in Tests
+
+**Never mutate process-global state in tests.** Rust's test runner executes tests in parallel within the same process, so global mutations leak across tests and cause non-deterministic behavior.
+
+Forbidden patterns:
+- `log::set_max_level()` — affects all concurrent and subsequent tests
+- `std::env::set_var()` — process-wide, races with other tests
+- Setting global `static` variables without synchronization
+
+If coverage tools flag uncovered `log::debug!()` format args, accept the gap — it's not meaningful coverage and not worth global side effects.
+
+```rust
+// ❌ BAD: Global mutation leaks across parallel tests
+#[test]
+fn test_something() {
+    log::set_max_level(log::LevelFilter::Debug);
+    // ...
+}
+
+// ❌ BAD: Environment variable race condition
+#[test]
+fn test_config_loading() {
+    std::env::set_var("MY_CONFIG", "test_value");
+    // ...
+}
+```
+
+For environment-dependent tests, use `Command::new()` with `.env()` to set variables in a subprocess, or use the test isolation helpers (`repo.wt_command()`, `wt_command()`).
+
 ## Deterministic Time in Tests
 
 Tests use `TEST_EPOCH` (2025-01-01) for reproducible timestamps. The constant is defined in `tests/common/mod.rs` and automatically set as `WORKTRUNK_TEST_EPOCH` in the test environment.
