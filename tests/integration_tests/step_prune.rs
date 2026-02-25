@@ -275,3 +275,30 @@ fn test_prune_min_age_passes(mut repo: TestRepo) {
 
     assert_cmd_snapshot!(cmd);
 }
+
+/// Stale candidate + young worktrees: shows both the candidate and skipped count.
+///
+/// A stale worktree (directory deleted) bypasses the age check because it goes
+/// through the `is_prunable()` path. A regular merged worktree with the default
+/// epoch appears young and is skipped. This exercises the "N skipped" message
+/// alongside candidates (lines that require both skipped_young > 0 and
+/// non-empty candidates).
+#[rstest]
+fn test_prune_stale_plus_young(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Stale worktree: directory deleted, but git metadata remains → candidate
+    let wt_path = repo.add_worktree("stale-branch");
+    std::fs::remove_dir_all(&wt_path).unwrap();
+
+    // Regular merged worktree: with default epoch it appears "young"
+    repo.add_worktree("young-branch");
+
+    // Default min-age (1h) — young-branch is skipped, stale-branch is a candidate
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--dry-run"],
+        None
+    ));
+}

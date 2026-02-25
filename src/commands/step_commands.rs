@@ -1468,9 +1468,11 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
         eprintln!("{}", info_message("Commands declined, continuing removal"));
     }
 
-    // Prepare removal plans: partition into current, others, and branch-only
-    let mut plans_others: Vec<super::worktree::RemoveResult> = Vec::new();
-    let mut plan_current: Option<super::worktree::RemoveResult> = None;
+    // Sort: current worktree last so cd-to-primary happens after other removals
+    candidates.sort_by_key(|c| matches!(c.kind, CandidateKind::Current));
+
+    // Prepare removal plans
+    let mut plans: Vec<super::worktree::RemoveResult> = Vec::new();
     let mut errors: Vec<anyhow::Error> = Vec::new();
 
     for c in &candidates {
@@ -1480,10 +1482,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
         };
         match repo.prepare_worktree_removal(target, BranchDeletionMode::SafeDelete, false, &config)
         {
-            Ok(result) => match c.kind {
-                CandidateKind::Current => plan_current = Some(result),
-                _ => plans_others.push(result),
-            },
+            Ok(result) => plans.push(result),
             Err(e) => {
                 eprintln!("{e}");
                 errors.push(e);
@@ -1491,18 +1490,9 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
         }
     }
 
-    // Execute: others first, current last
+    // Execute removals (current worktree is last due to sort above)
     let mut removed = 0usize;
-    for result in &plans_others {
-        match handle_remove_output(result, false, run_hooks) {
-            Ok(()) => removed += 1,
-            Err(e) => {
-                eprintln!("{e}");
-                errors.push(e);
-            }
-        }
-    }
-    if let Some(ref result) = plan_current {
+    for result in &plans {
         match handle_remove_output(result, false, run_hooks) {
             Ok(()) => removed += 1,
             Err(e) => {
