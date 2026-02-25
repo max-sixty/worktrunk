@@ -24,8 +24,7 @@ jobs:
   claude:
     if: |
       (github.event_name == 'pull_request_target' &&
-        github.event.pull_request.draft == false &&
-        github.event.pull_request.user.type != 'Bot') ||
+        github.event.pull_request.draft == false) ||
       (github.event_name == 'pull_request_review' &&
         github.event.pull_request.user.login == 'worktrunk-bot' &&
         github.event.review.user.login != 'worktrunk-bot' &&
@@ -99,6 +98,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          allowed_bots: "*"
           additional_permissions: |
             actions: read
           use_sticky_comment: ${{ github.event_name == 'pull_request_target' }}
