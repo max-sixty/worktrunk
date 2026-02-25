@@ -219,8 +219,12 @@ fn test_prune_orphan_branches(mut repo: TestRepo) {
     ));
 }
 
-/// Prune from a merged worktree removes it last (CandidateKind::Current)
+/// Prune from a merged worktree removes it last (CandidateKind::Current).
+///
+/// Skipped on Windows: Windows locks the current working directory, preventing
+/// `git worktree remove` from deleting it.
 #[rstest]
+#[cfg(not(target_os = "windows"))]
 fn test_prune_current_worktree(mut repo: TestRepo) {
     repo.commit("initial");
 
