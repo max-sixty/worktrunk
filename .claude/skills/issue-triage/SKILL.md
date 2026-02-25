@@ -111,7 +111,7 @@ note what you tried and skip to step 6.
    [How the fix was verified — mention the reproduction test]
 
    ---
-   Automated triage for #<issue-number>"
+   Closes #<issue-number> — automated triage"
    ```
 5. Monitor CI until green:
    ```bash
