@@ -1363,7 +1363,14 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
             continue;
         }
 
-        // Check age: use git dir metadata
+        // Check integration first — only apply age guard to integrated worktrees
+        let (effective_target, reason) = repo.integration_reason(branch, &integration_target)?;
+        let Some(reason) = reason else {
+            continue;
+        };
+
+        // Check age: skip recently-created worktrees that look "merged" because
+        // they were just created from the default branch
         if min_age_duration > Duration::ZERO {
             let git_dir = wt_tree.git_dir()?;
             let metadata = fs::metadata(&git_dir).context("Failed to read worktree git dir")?;
@@ -1382,21 +1389,17 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
             }
         }
 
-        // Check integration
-        let (effective_target, reason) = repo.integration_reason(branch, &integration_target)?;
-        if let Some(reason) = reason {
-            let wt_path = dunce::canonicalize(&wt.path).unwrap_or(wt.path.clone());
-            let is_current = wt_path == current_root;
-            candidates.push(Candidate {
-                branch: branch.clone(),
-                kind: if is_current {
-                    CandidateKind::Current
-                } else {
-                    CandidateKind::Other
-                },
-                reason_desc: format!("{} {}", reason.description(), effective_target),
-            });
-        }
+        let wt_path = dunce::canonicalize(&wt.path).unwrap_or(wt.path.clone());
+        let is_current = wt_path == current_root;
+        candidates.push(Candidate {
+            branch: branch.clone(),
+            kind: if is_current {
+                CandidateKind::Current
+            } else {
+                CandidateKind::Other
+            },
+            reason_desc: format!("{} {}", reason.description(), effective_target),
+        });
     }
 
     // Also scan local branches that don't have a worktree entry

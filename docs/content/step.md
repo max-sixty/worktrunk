@@ -478,13 +478,20 @@ Remove all merged worktrees:
 wt step prune
 ```
 
-### Behavior
+### What gets pruned
 
-- Skips the main worktree, detached HEADs, and locked worktrees
-- Uses the same integration detection as `wt list` status symbols
-- Removes the current worktree last (triggers cd to primary worktree)
+Removes worktrees whose `wt list` status shows `_` (same commit) or `⊂` (content integrated) relative to the default branch. Also handles:
+
+- Stale worktree entries (`⊟` prunable — directory deleted but git metadata remains)
+- Orphan branches (`/` branch without worktree) that are integrated
+
+### What gets skipped
+
+- The main worktree and the default branch
+- Detached HEADs (no branch to delete)
+- Locked worktrees (`⊞`)
+- The current worktree is removed last (triggers cd to primary worktree)
 - Runs pre-remove / post-remove hooks for each removal
-- Also deletes local branches (without worktrees) that are integrated into the default branch
 
 ### Command reference
 
