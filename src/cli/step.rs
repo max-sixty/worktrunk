@@ -467,6 +467,10 @@ wt step prune
         /// Skip worktrees younger than this
         #[arg(long, default_value = "1h")]
         min_age: String,
+
+        /// Run removal in foreground (block until complete)
+        #[arg(long)]
+        foreground: bool,
     },
 
     /// \[experimental\] Move worktrees to expected paths

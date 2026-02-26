@@ -568,7 +568,8 @@ fn main() {
                 dry_run,
                 yes,
                 min_age,
-            } => step_prune(dry_run, yes, &min_age),
+                foreground,
+            } => step_prune(dry_run, yes, &min_age, foreground),
             StepCommand::Relocate {
                 branches,
                 dry_run,

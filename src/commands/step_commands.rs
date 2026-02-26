@@ -1277,7 +1277,7 @@ fn create_symlink(target: &Path, src_path: &Path, dest_path: &Path) -> anyhow::R
 /// entries (pruned + branch deleted), and orphan branches without worktrees (deleted).
 /// Skips the main/primary worktree, locked worktrees, and worktrees younger than
 /// `min_age`. Removes the current worktree last to trigger cd to primary.
-pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()> {
+pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> anyhow::Result<()> {
     let min_age_duration =
         humantime::parse_duration(min_age).context("Invalid --min-age duration")?;
 
@@ -1513,7 +1513,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str) -> anyhow::Result<()>
 
     // Execute removals (current worktree is last due to sort above)
     for result in &plans {
-        handle_remove_output(result, false, run_hooks)?;
+        handle_remove_output(result, !foreground, run_hooks)?;
     }
 
     eprintln!(
