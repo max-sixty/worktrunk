@@ -1410,7 +1410,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         candidates.push(Candidate {
             branch: if wt.detached { None } else { wt.branch.clone() },
             label,
-            path: Some(wt_path.clone()),
+            path: Some(wt.path.clone()),
             kind: if is_current {
                 CandidateKind::Current
             } else {
@@ -1427,6 +1427,28 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         }
         let (effective_target, reason) = repo.integration_reason(&branch, &integration_target)?;
         if let Some(reason) = reason {
+            // Apply min-age guard: check reflog creation timestamp
+            if min_age_duration > Duration::ZERO {
+                let ref_name = format!("refs/heads/{branch}");
+                if let Ok(stdout) =
+                    repo.run_command(&["reflog", "show", "--format=%ct", &ref_name])
+                {
+                    // Last reflog entry is the branch creation event
+                    if let Some(created_epoch) = stdout
+                        .trim()
+                        .lines()
+                        .last()
+                        .and_then(|s| s.parse::<u64>().ok())
+                    {
+                        let age =
+                            Duration::from_secs(now_secs.saturating_sub(created_epoch));
+                        if age < min_age_duration {
+                            skipped_young.push(branch.clone());
+                            continue;
+                        }
+                    }
+                }
+            }
             candidates.push(Candidate {
                 label: branch.clone(),
                 branch: Some(branch),
