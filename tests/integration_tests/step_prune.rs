@@ -242,6 +242,25 @@ fn test_prune_orphan_branches(mut repo: TestRepo) {
     ));
 }
 
+/// Orphan branches (no worktree) respect the min-age guard via reflog timestamps.
+///
+/// GIT_COMMITTER_DATE=2025-01-01T00:00:00Z makes the branch reflog timestamp
+/// epoch 1735689600. Setting TEST_EPOCH to 30 minutes later (1735691400) means
+/// the branch appears 30 minutes old, which is younger than the default 1h.
+#[rstest]
+fn test_prune_orphan_branch_min_age(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create a branch at HEAD (integrated) without a worktree
+    repo.create_branch("orphan-integrated");
+
+    // Epoch 30 minutes after GIT_COMMITTER_DATE → branch appears 30min old, < 1h
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes"], None);
+    cmd.env("WORKTRUNK_TEST_EPOCH", "1735691400"); // 2025-01-01T00:30:00Z
+
+    assert_cmd_snapshot!(cmd);
+}
+
 /// Prune from a merged worktree removes it last (CandidateKind::Current).
 ///
 /// Skipped on Windows: Windows locks the current working directory, preventing
