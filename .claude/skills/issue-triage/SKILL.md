@@ -83,6 +83,12 @@ note what you tried and skip to step 6.
 - Fix is localized (1-3 files changed)
 - Confident the fix is correct
 
+**Prefer the smallest change that fixes the bug.** Address only the reported
+problem — don't restructure, reorder, or rename surrounding code even if it
+would be "cleaner." If a larger refactoring seems beneficial, propose it in the
+issue comment for the maintainer to decide. Triage fixes should be easy to
+review and low-risk to merge.
+
 ### If fixing
 
 1. Fix the root cause (not just the symptom)
