@@ -43,9 +43,10 @@ use super::shell_integration::{
 /// Execute instant worktree removal via rename-then-prune, returning the background command.
 ///
 /// This function has side effects: it renames the worktree directory and prunes git metadata.
-/// If successful, returns a simple `rm -rf` command for the staged directory.
+/// On the fast path, the branch is also deleted synchronously (since after prune, the branch
+/// is no longer checked out in any worktree), and the background command is just `rm -rf`.
 /// If rename fails (cross-filesystem, permissions, Windows file locking), returns the legacy
-/// `git worktree remove` command instead.
+/// `git worktree remove` command with branch deletion deferred to the background.
 ///
 /// The caller is responsible for spawning the returned command in the background.
 fn execute_instant_removal_or_fallback(
@@ -66,11 +67,22 @@ fn execute_instant_removal_or_fallback(
             if let Err(e) = repo.prune_worktrees() {
                 log::debug!("Failed to prune worktrees after rename: {}", e);
             }
-            build_remove_command_staged(&staged_path, branch_to_delete)
+            // Delete branch synchronously now that prune has removed the worktree metadata.
+            // The branch is no longer checked out, so `git branch -D` will succeed.
+            // This avoids a race where the user creates a new worktree with the same branch
+            // name before the background `rm -rf` completes.
+            if let Some(branch) = branch_to_delete
+                && let Err(e) = repo.run_command(&["branch", "-D", branch])
+            {
+                log::debug!("Failed to delete branch {} synchronously: {}", branch, e);
+            }
+            build_remove_command_staged(&staged_path)
         }
         Err(e) => {
             // Fallback: cross-filesystem, permissions, Windows file locking, etc.
             // Use legacy git worktree remove which handles these cases.
+            // Branch deletion stays in the background command since the worktree
+            // still references the branch until `git worktree remove` runs.
             log::debug!("Instant removal unavailable, using legacy: {}", e);
             // Git refuses to remove worktrees with initialized submodules without
             // --force. We preemptively set --force when .gitmodules exists — broader

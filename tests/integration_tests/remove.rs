@@ -1934,10 +1934,12 @@ fn test_remove_background_git_metadata_pruned(mut repo: TestRepo) {
     );
 }
 
-/// Background removal should delete the branch when it's merged.
+/// Background removal should delete the branch synchronously when it's merged.
 ///
-/// This verifies that branch deletion works correctly with the instant removal path
-/// (the branch is deleted in the background after the worktree is renamed).
+/// On the fast path (rename-then-prune), the branch is deleted synchronously
+/// after pruning git metadata, before the background `rm -rf` runs.
+/// This prevents races where the user creates a new worktree with the same
+/// branch name before the background process completes.
 #[rstest]
 fn test_remove_background_deletes_merged_branch(mut repo: TestRepo) {
     // Create a worktree with the branch already merged to main (same commit)
@@ -1969,15 +1971,18 @@ fn test_remove_background_deletes_merged_branch(mut repo: TestRepo) {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Poll for background branch deletion (happens after rm -rf in background command)
-    crate::common::wait_for("merged branch deleted by background removal", || {
-        let branches = repo
-            .git_command()
-            .args(["branch", "--list", "feature-merged"])
-            .output()
-            .unwrap();
-        String::from_utf8_lossy(&branches.stdout).trim().is_empty()
-    });
+    // Branch should be deleted IMMEDIATELY (synchronously, not in background)
+    let branches_after = repo
+        .git_command()
+        .args(["branch", "--list", "feature-merged"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&branches_after.stdout)
+            .trim()
+            .is_empty(),
+        "Branch should be deleted synchronously after wt remove returns"
+    );
 }
 
 /// Test that worktree paths containing special characters are handled correctly.

@@ -388,33 +388,21 @@ pub fn generate_removing_path(worktree_path: &Path) -> PathBuf {
 
 /// Build shell command for background removal of a staged (renamed) worktree.
 ///
-/// This is used after the worktree has been renamed to a staging path and
-/// git metadata has been pruned. The command just does `rm -rf` on the
-/// staged directory, optionally followed by branch deletion.
+/// This is used after the worktree has been renamed to a staging path,
+/// git metadata has been pruned, and the branch has been deleted synchronously.
+/// The command just does `rm -rf` on the staged directory.
 ///
 /// No sleep is needed because:
 /// 1. The shell cd happens before the rename (directive file is written first)
 /// 2. The original worktree path no longer exists immediately after rename
-pub fn build_remove_command_staged(
-    staged_path: &std::path::Path,
-    branch_to_delete: Option<&str>,
-) -> String {
+pub fn build_remove_command_staged(staged_path: &std::path::Path) -> String {
     use shell_escape::escape;
 
     let staged_path_str = staged_path.to_string_lossy();
     let staged_escaped = escape(staged_path_str.as_ref().into());
 
-    // Use -- to prevent option parsing for paths/branches starting with -
-    match branch_to_delete {
-        Some(branch_name) => {
-            let branch_escaped = escape(branch_name.into());
-            format!(
-                "rm -rf -- {} && git branch -D -- {}",
-                staged_escaped, branch_escaped
-            )
-        }
-        None => format!("rm -rf -- {}", staged_escaped),
-    }
+    // Use -- to prevent option parsing for paths starting with -
+    format!("rm -rf -- {}", staged_escaped)
 }
 
 /// Build shell command for background worktree removal (legacy path).
@@ -606,22 +594,15 @@ mod tests {
     fn test_build_remove_command_staged() {
         let staged_path = PathBuf::from("/tmp/my-project.feature.wt-removing-1234567890");
 
-        // Without branch deletion
-        let cmd = build_remove_command_staged(&staged_path, None);
+        let cmd = build_remove_command_staged(&staged_path);
         assert!(cmd.starts_with("rm -rf -- ")); // -- prevents option parsing
         assert!(cmd.contains("wt-removing-1234567890"));
-        assert!(!cmd.contains("branch -D"));
+        assert!(!cmd.contains("branch -D")); // Branch deleted synchronously, not in background
         assert!(!cmd.contains("sleep")); // No sleep in staged removal
-
-        // With branch deletion
-        let cmd = build_remove_command_staged(&staged_path, Some("feature-branch"));
-        assert!(cmd.contains("rm -rf -- ")); // -- prevents option parsing
-        assert!(cmd.contains("git branch -D -- ")); // -- prevents option parsing
-        assert!(cmd.contains("feature-branch"));
 
         // Shell escaping for special characters
         let special_path = PathBuf::from("/tmp/test worktree.wt-removing-123");
-        let cmd = build_remove_command_staged(&special_path, Some("feature/branch"));
+        let cmd = build_remove_command_staged(&special_path);
         assert!(cmd.contains("rm -rf "));
         // Verify the path is escaped (single-quoted for shell safety)
         assert!(
