@@ -1430,8 +1430,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             // Apply min-age guard: check reflog creation timestamp
             if min_age_duration > Duration::ZERO {
                 let ref_name = format!("refs/heads/{branch}");
-                if let Ok(stdout) =
-                    repo.run_command(&["reflog", "show", "--format=%ct", &ref_name])
+                if let Ok(stdout) = repo.run_command(&["reflog", "show", "--format=%ct", &ref_name])
                 {
                     // Last reflog entry is the branch creation event
                     if let Some(created_epoch) = stdout
@@ -1440,8 +1439,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                         .last()
                         .and_then(|s| s.parse::<u64>().ok())
                     {
-                        let age =
-                            Duration::from_secs(now_secs.saturating_sub(created_epoch));
+                        let age = Duration::from_secs(now_secs.saturating_sub(created_epoch));
                         if age < min_age_duration {
                             skipped_young.push(branch.clone());
                             continue;
