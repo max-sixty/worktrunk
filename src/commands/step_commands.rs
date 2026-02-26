@@ -1317,7 +1317,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     }
 
     let mut candidates: Vec<Candidate> = Vec::new();
-    let mut skipped_young = 0u32;
+    let mut skipped_young: Vec<String> = Vec::new();
     // Track branches seen via worktree entries so we don't double-count.
     // Pre-seed with the default branch to prevent it from being pruned
     // (it's trivially "integrated" into itself).
@@ -1380,6 +1380,11 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             continue;
         };
 
+        let label = wt
+            .branch
+            .clone()
+            .unwrap_or_else(|| format!("(detached {})", &wt.head[..7.min(wt.head.len())]));
+
         // Check age: skip recently-created worktrees that look "merged" because
         // they were just created from the default branch
         if min_age_duration > Duration::ZERO {
@@ -1394,7 +1399,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             {
                 let age = Duration::from_secs(now_secs.saturating_sub(created_epoch.as_secs()));
                 if age < min_age_duration {
-                    skipped_young += 1;
+                    skipped_young.push(label);
                     continue;
                 }
             }
@@ -1402,10 +1407,6 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
 
         let wt_path = dunce::canonicalize(&wt.path).unwrap_or(wt.path.clone());
         let is_current = wt_path == current_root;
-        let label = wt
-            .branch
-            .clone()
-            .unwrap_or_else(|| format!("(detached {})", &wt.head[..7.min(wt.head.len())]));
         candidates.push(Candidate {
             branch: if wt.detached { None } else { wt.branch.clone() },
             label,
@@ -1437,38 +1438,40 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     }
 
     if candidates.is_empty() {
-        let msg = if skipped_young > 0 {
-            format!(
-                "No merged worktrees to remove ({skipped_young} skipped, younger than {min_age})"
-            )
-        } else {
+        let msg = if skipped_young.is_empty() {
             "No merged worktrees to remove".to_string()
+        } else {
+            let names = skipped_young.join(", ");
+            format!("No merged worktrees to remove (skipped {names}, younger than {min_age})")
         };
         eprintln!("{}", info_message(msg));
         return Ok(());
     }
 
-    // Print what will be removed
-    for c in &candidates {
+    if !skipped_young.is_empty() {
+        let names = skipped_young.join(", ");
         eprintln!(
             "{}",
-            info_message(cformat!("<bold>{}</> — {}", c.label, c.reason_desc,))
-        );
-    }
-    if skipped_young > 0 {
-        eprintln!(
-            "{}",
-            info_message(format!(
-                "{skipped_young} worktree(s) skipped (younger than {min_age})"
-            ))
+            info_message(format!("Skipped {names} (younger than {min_age})"))
         );
     }
 
     if dry_run {
+        for c in &candidates {
+            eprintln!(
+                "{}",
+                info_message(cformat!("<bold>{}</> — {}", c.label, c.reason_desc,))
+            );
+        }
+        let noun = if candidates.len() == 1 {
+            "worktree"
+        } else {
+            "worktrees"
+        };
         eprintln!(
             "{}",
             hint_message(format!(
-                "{} worktree(s) would be removed (dry run)",
+                "{} {noun} would be removed (dry run)",
                 candidates.len()
             ))
         );
@@ -1516,9 +1519,31 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         handle_remove_output(result, !foreground, run_hooks)?;
     }
 
+    let worktree_count = candidates
+        .iter()
+        .filter(|c| !matches!(c.kind, CandidateKind::BranchOnly))
+        .count();
+    let branch_count = candidates.len() - worktree_count;
+    let mut parts = Vec::new();
+    if worktree_count > 0 {
+        let noun = if worktree_count == 1 {
+            "worktree"
+        } else {
+            "worktrees"
+        };
+        parts.push(format!("{worktree_count} {noun}"));
+    }
+    if branch_count > 0 {
+        let noun = if branch_count == 1 {
+            "branch"
+        } else {
+            "branches"
+        };
+        parts.push(format!("{branch_count} {noun}"));
+    }
     eprintln!(
         "{}",
-        success_message(format!("Pruned {} worktree(s)", plans.len()))
+        success_message(format!("Pruned {}", parts.join(", ")))
     );
 
     Ok(())

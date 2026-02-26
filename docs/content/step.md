@@ -501,6 +501,9 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
 
           [default: 1h]
 
+      <b><span class=c>--foreground</span></b>
+          Run removal in foreground (block until complete)
+
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 

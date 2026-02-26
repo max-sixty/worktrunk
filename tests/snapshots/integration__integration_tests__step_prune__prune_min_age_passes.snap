@@ -43,4 +43,4 @@ exit_code: 0
 
 ----- stderr -----
 [2m○[22m [1mold-merged[22m — same commit as main
-[2m↳[22m [2m1 worktree(s) would be removed (dry run)[22m
+[2m↳[22m [2m1 worktree would be removed (dry run)[22m
