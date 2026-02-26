@@ -186,7 +186,10 @@ Every comment must be **actionable** — the author can do something with it:
 - **Don't explain what the code does.** The author wrote it.
 - **If the code needs explanation for future readers**, suggest a docstring or
   inline comment — as a code suggestion, not prose.
-- **Use code suggestions** for anything expressible as replacement lines.
+- **Always use inline suggestions** for concrete fixes — never put replacement
+  code as a fenced code block in the review body. If you can name the file,
+  line, and new text, it must be a `suggestion` block on that line via the
+  review API. The review body is only for summary text.
 - **Explain *why*** something should change, not just *what*.
 - **Distinguish severity** — "should fix" vs. "nice to have".
 - **Don't nitpick formatting** — that's what linters are for.
@@ -253,25 +256,39 @@ approve-with-empty-body pattern instead.
 - Don't repeat suggestions already made by humans or previous bot runs
   (checked in step 1).
 
-**Code suggestions are the default format for specific fixes.** Whenever there's
-a concrete fix (typos, doc updates, naming, missing imports, minor refactors,
-any change expressible as replacement lines), use GitHub's suggestion format so
-the author can apply it with one click:
+**Inline suggestions are mandatory for specific fixes.** Whenever there's a
+concrete fix (typos, doc updates, naming, missing imports, minor refactors, any
+change expressible as replacement lines), post it as an inline suggestion on the
+exact line — never as a code block in the review body. Inline suggestions let
+the author apply with one click; code blocks in the body force them to find the
+line and copy-paste manually.
+
+**Anti-pattern — code block in review body:**
+
+> The description on line 3 should be updated:
+> ```
+> description: new text here
+> ```
+
+**Correct — inline suggestion on the line:**
 
 `````bash
 gh api "repos/$REPO/pulls/<number>/reviews" \
   --method POST \
   -f event=COMMENT \
   -f body="Summary of suggestions" \
-  -f 'comments[0][path]=src/foo.rs' \
-  -f 'comments[0][line]=42' \
+  -f 'comments[0][path]=.claude/skills/example/SKILL.md' \
+  -f 'comments[0][line]=3' \
   -f 'comments[0][body]=```suggestion
-fixed line content here
+description: new text here
 ```'
 `````
 
 - Use suggestions for any small fix — no limit on count.
-- Prose comments are for changes too large or uncertain for a direct suggestion.
+- If a review has both suggestions and prose observations, put the suggestions
+  as inline comments and the prose in the review body.
+- Prose-only comments are for changes too large or uncertain for a direct
+  suggestion.
 - Multi-line suggestions: set `start_line` and `line` to define the range.
 
 ### 5. Monitor CI
@@ -285,9 +302,17 @@ gh pr view <number> --json statusCheckRollup \
 
 - **All checks passed** → done, no further action.
 - **Checks still running** → poll until complete (sleep 30–60s between checks).
-- **A check failed** → investigate the failure. If the failure is related to the
-  PR changes, dismiss your approval and post findings. If it's a flaky test or
-  unrelated infrastructure failure, note that in a comment.
+  Polling is intentionally unbounded — CI compute is cheap and catching failures
+  before the author looks at the PR is more valuable than saving a few minutes
+  of polling. The results are always visible on the PR regardless, so the worst
+  case of a long poll is wasted compute, not missed information.
+- **A check failed** → if it's a flaky test or unrelated infrastructure
+  failure, no action needed. If the failure is related to the PR changes:
+  1. Dismiss the bot's approval if one exists (empty dismiss message). Skip
+     if already dismissed — redundant dismissals create timeline noise.
+  2. Investigate the failure and post a follow-up review (COMMENT) with
+     analysis, inline suggestions, and an offer to fix. Same rules as
+     step 4 — no repeated points from previous reviews.
 
 ### 6. Resolve handled suggestions
 
