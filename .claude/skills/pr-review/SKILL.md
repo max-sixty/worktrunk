@@ -293,11 +293,17 @@ description: new text here
 
 ### 5. Monitor CI
 
-After approving, check whether CI has finished:
+After approving, check whether CI has finished. Exclude the current workflow's
+own check to avoid a circular wait (Claude polling itself):
 
 ```bash
+# $GITHUB_WORKFLOW is set in CI; when unset, no checks are excluded.
 gh pr view <number> --json statusCheckRollup \
-  --jq '.statusCheckRollup[] | {name: .name, status: .status, conclusion: .conclusion}'
+  --jq '[.statusCheckRollup[]
+    | select(env.GITHUB_WORKFLOW == null
+             or (.workflowName == env.GITHUB_WORKFLOW | not))]
+    | .[]
+    | {name, status, conclusion}'
 ```
 
 - **All checks passed** → done, no further action.
