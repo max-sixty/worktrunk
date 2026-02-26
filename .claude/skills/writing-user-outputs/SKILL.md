@@ -130,9 +130,9 @@ values) by reflecting those choices in the message text.
 ```rust
 // User runs: wt switch --create feature --base=main
 // GOOD - acknowledges the base branch
-"Created new worktree for feature from main at /path/to/worktree"
+"Created new worktree for feature from main @ /path/to/worktree"
 // BAD - ignores the base argument
-"Created new worktree for feature at /path/to/worktree"
+"Created new worktree for feature @ /path/to/worktree"
 ```
 
 **Avoid "you/your" pronouns:** Messages should refer to things directly, not
@@ -834,12 +834,28 @@ regular users.
 `worktrunk::path`. This function replaces home directory prefixes with `~` for
 readability (e.g., `/Users/alex/projects/repo` → `~/projects/repo`).
 
+**Use `@` (not "at") before paths in status messages.** This is the codebase
+convention for associating an entity with a location:
+
+```rust
+// GOOD - @ before path
+"Created worktree for feature @ ~/code/repo.feature"
+"Squashed @ a1b2c3d"
+"Worktree for feature @ ~/repo.feature, but cannot change directory..."
+
+// BAD - "at" before path
+"Created worktree for feature at ~/code/repo.feature"
+```
+
+**Exception:** Prose contexts (error descriptions, doc comments, help text) use
+"at" — `@` is for terse status messages only.
+
 ```rust
 use worktrunk::path::format_path_for_display;
 
 // GOOD - uses format_path_for_display
 eprintln!("{}", success_message(cformat!(
-    "Created worktree at {}",
+    "Created worktree @ {}",
     format_path_for_display(&worktree_path)
 )));
 
@@ -848,7 +864,7 @@ eprintln!("{}", success_message(cformat!(
 
 // BAD - raw path.display()
 eprintln!("{}", success_message(format!(
-    "Created worktree at {}",
+    "Created worktree @ {}",
     worktree_path.display()  // Shows /Users/alex/... instead of ~/...
 )));
 ```

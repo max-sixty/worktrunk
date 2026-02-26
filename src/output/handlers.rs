@@ -1020,11 +1020,12 @@ fn handle_removed_worktree_output(
     let Some(branch_name) = branch_name else {
         // No branch associated - just remove the worktree
         if background {
+            let path_display = format_path_for_display(worktree_path);
             eprintln!(
                 "{}",
-                progress_message(
-                    "Removing worktree in background (detached HEAD, no branch to delete)",
-                )
+                progress_message(cformat!(
+                    "Removing worktree @ <bold>{path_display}</> in background (detached HEAD, no branch to delete)"
+                ))
             );
 
             // Stop fsmonitor daemon BEFORE rename (must happen while path still exists)
@@ -1047,7 +1048,10 @@ fn handle_removed_worktree_output(
             // Progress message after pre-remove hooks, before actual removal
             eprintln!(
                 "{}",
-                progress_message("Removing worktree (detached HEAD, no branch to delete)...",)
+                progress_message(cformat!(
+                    "Removing worktree @ <bold>{}</>... (detached HEAD, no branch to delete)",
+                    format_path_for_display(worktree_path)
+                ))
             );
             let _ = repo
                 .worktree_at(worktree_path)
@@ -1063,7 +1067,10 @@ fn handle_removed_worktree_output(
             }
             eprintln!(
                 "{}",
-                success_message("Removed worktree (detached HEAD, no branch to delete)",)
+                success_message(cformat!(
+                    "Removed worktree @ <bold>{}</> (detached HEAD, no branch to delete)",
+                    format_path_for_display(worktree_path)
+                ))
             );
         }
         // Post-remove hooks for detached HEAD use "HEAD" as the branch identifier
