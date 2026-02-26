@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/step_prune.rs
+assertion_line: 346
 info:
   program: wt
   args:
