@@ -223,7 +223,10 @@ fn test_prune_skips_locked(mut repo: TestRepo) {
     );
 }
 
-/// Prune deletes orphan branches (integrated branches without worktrees)
+/// Prune deletes orphan branches (integrated branches without worktrees).
+///
+/// Uses a far-future epoch so branches pass the reflog age guard through the
+/// normal age-check path (rather than bypassing with --min-age=0s).
 #[rstest]
 fn test_prune_orphan_branches(mut repo: TestRepo) {
     repo.commit("initial");
@@ -234,12 +237,11 @@ fn test_prune_orphan_branches(mut repo: TestRepo) {
     // Create an unmerged branch (has a unique commit via worktree, then remove worktree)
     repo.add_worktree_with_commit("unmerged-orphan", "u.txt", "data", "unique commit");
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["prune", "--yes", "--min-age=0s"],
-        None
-    ));
+    // Far-future epoch: branches appear ~5 years old, passing the default 1h guard
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes"], None);
+    cmd.env("WORKTRUNK_TEST_EPOCH", "1893456000"); // 2030-01-01
+
+    assert_cmd_snapshot!(cmd);
 }
 
 /// Orphan branches (no worktree) respect the min-age guard via reflog timestamps.
