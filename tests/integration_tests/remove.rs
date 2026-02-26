@@ -1740,7 +1740,6 @@ fn test_remove_pruned_worktree_directory_missing(mut repo: TestRepo) {
     );
 
     // `wt remove feature-pruned` should prune the stale metadata and delete the branch
-    // The info message should say "Worktree directory missing for feature-pruned; pruned stale metadata"
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "remove",
@@ -1802,6 +1801,49 @@ fn test_remove_pruned_worktree_keep_branch(mut repo: TestRepo) {
             .trim()
             .is_empty(),
         "Branch should still exist"
+    );
+}
+
+/// Test pruning a stale worktree with an unmerged branch: should prune metadata,
+/// retain branch, and show hint to force-delete
+#[rstest]
+fn test_remove_pruned_worktree_unmerged_branch(mut repo: TestRepo) {
+    // Create a worktree with a real change (unmerged with main)
+    let worktree_path = repo.add_worktree("feature-pruned-unmerged");
+    std::fs::write(worktree_path.join("unmerged.txt"), "unmerged work\n").unwrap();
+    repo.git_command()
+        .args(["add", "unmerged.txt"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "unmerged work"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+
+    // Delete the worktree directory externally (simulating user running `rm -rf`)
+    std::fs::remove_dir_all(&worktree_path).expect("Failed to remove worktree directory");
+
+    // Remove: should prune stale metadata but retain the unmerged branch
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-pruned-unmerged"],
+        None
+    ));
+
+    // Verify the branch still exists (retained because unmerged)
+    let branch_exists = repo
+        .git_command()
+        .args(["branch", "--list", "feature-pruned-unmerged"])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&branch_exists.stdout)
+            .trim()
+            .is_empty(),
+        "Unmerged branch should be retained"
     );
 }
 

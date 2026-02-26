@@ -30,6 +30,7 @@ jobs:
         github.event.review.user.login != 'worktrunk-bot' &&
         (github.event.review.state != 'approved' || github.event.review.body))
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     permissions:
       contents: write
       pull-requests: write
