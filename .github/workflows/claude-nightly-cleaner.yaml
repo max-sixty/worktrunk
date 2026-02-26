@@ -2,7 +2,8 @@ name: claude-nightly-cleaner
 # Runner versions pinned; see ci.yaml header comment for rationale.
 
 # Nightly code quality sweep — reviews all commits merged to main in the past
-# 24 hours for bugs, inconsistencies, and improvement opportunities.
+# 24 hours for bugs, inconsistencies, and improvement opportunities. Also closes
+# open issues that have been resolved by recent (or earlier unlinked) merges.
 on:
   schedule:
     # Run at 6:17 AM UTC daily (off-peak minute, 30 min after review-reviewers)
@@ -126,7 +127,19 @@ jobs:
             gh pr list --state open --json number,title,headRefName
             ```
 
-            ## Step 5: Report findings
+            ## Step 5: Close resolved issues
+
+            For each open issue found in Step 4, check whether the recent commits (or earlier
+            unlinked merges) already resolve it. An issue is resolved when the code change it
+            describes has landed on main — look at the diff, linked PRs, and commit messages.
+
+            For each resolved issue:
+            - Comment briefly explaining which commit or PR resolved it
+            - Close the issue with `gh issue close <number>`
+
+            Skip issues that are feature requests, discussions, or still partially unresolved.
+
+            ## Step 6: Report findings
 
             For each finding:
 
@@ -143,7 +156,7 @@ jobs:
                - Create a PR referencing the issue(s)
                - Monitor CI with `gh run watch`
 
-            ## Step 6: Summary
+            ## Step 7: Summary
 
             If the codebase looks clean, report a brief summary:
             - Number of commits reviewed
