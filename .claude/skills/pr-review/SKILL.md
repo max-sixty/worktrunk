@@ -306,10 +306,13 @@ gh pr view <number> --json statusCheckRollup \
   before the author looks at the PR is more valuable than saving a few minutes
   of polling. The results are always visible on the PR regardless, so the worst
   case of a long poll is wasted compute, not missed information.
-- **A check failed** → investigate the failure. If the failure is related to the
-  PR changes, dismiss your approval silently (no review body or comment — the CI
-  status is already visible on the PR). If it's a flaky test or unrelated
-  infrastructure failure, no action needed.
+- **A check failed** → if it's a flaky test or unrelated infrastructure
+  failure, no action needed. If the failure is related to the PR changes:
+  1. Dismiss the bot's approval if one exists (empty dismiss message). Skip
+     if already dismissed — redundant dismissals create timeline noise.
+  2. Investigate the failure and post a follow-up review (COMMENT) with
+     analysis, inline suggestions, and an offer to fix. Same rules as
+     step 4 — no repeated points from previous reviews.
 
 ### 6. Resolve handled suggestions
 
