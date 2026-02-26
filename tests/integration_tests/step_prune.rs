@@ -225,14 +225,16 @@ fn test_prune_skips_locked(mut repo: TestRepo) {
 
 /// Prune deletes orphan branches (integrated branches without worktrees).
 ///
+/// Two orphan branches exercise the "N branches" plural path in the summary.
 /// Uses a far-future epoch so branches pass the reflog age guard through the
 /// normal age-check path (rather than bypassing with --min-age=0s).
 #[rstest]
 fn test_prune_orphan_branches(mut repo: TestRepo) {
     repo.commit("initial");
 
-    // Create a branch at HEAD (integrated) without a worktree
-    repo.create_branch("orphan-integrated");
+    // Create two branches at HEAD (integrated) without worktrees
+    repo.create_branch("orphan-a");
+    repo.create_branch("orphan-b");
 
     // Create an unmerged branch (has a unique commit via worktree, then remove worktree)
     repo.add_worktree_with_commit("unmerged-orphan", "u.txt", "data", "unique commit");

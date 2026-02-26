@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/step_prune.rs
+assertion_line: 246
 info:
   program: wt
   args:
@@ -42,6 +43,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m No worktree found for branch [1morphan-integrated[22m
-[32m✓ Removed branch [1morphan-integrated[22m (same commit as [1mmain[22m,[39m [2m_[22m[32m)[39m
-[32m✓[39m [32mPruned 1 branch[39m
+[2m○[22m No worktree found for branch [1morphan-a[22m
+[32m✓ Removed branch [1morphan-a[22m (same commit as [1mmain[22m,[39m [2m_[22m[32m)[39m
+[2m○[22m No worktree found for branch [1morphan-b[22m
+[32m✓ Removed branch [1morphan-b[22m (same commit as [1mmain[22m,[39m [2m_[22m[32m)[39m
+[32m✓[39m [32mPruned 2 branches[39m
