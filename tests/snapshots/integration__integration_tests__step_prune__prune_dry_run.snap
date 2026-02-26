@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/step_prune.rs
+assertion_line: 34
 info:
   program: wt
   args:
@@ -43,5 +44,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m [1mmerged-branch[22m — same commit as main
-[2m↳[22m [2m1 worktree would be removed (dry run)[22m
+[2m○[22m [1mmerged-a[22m — same commit as main
+[2m○[22m [1mmerged-b[22m — same commit as main
+[2m↳[22m [2m2 worktrees would be removed (dry run)[22m

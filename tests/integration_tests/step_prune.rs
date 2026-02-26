@@ -20,13 +20,16 @@ fn test_prune_no_merged(mut repo: TestRepo) {
     ));
 }
 
-/// Prune dry-run shows merged worktrees
+/// Prune dry-run shows merged worktrees.
+///
+/// Two worktrees exercise the "N worktrees" plural path in the dry-run hint.
 #[rstest]
 fn test_prune_dry_run(mut repo: TestRepo) {
     repo.commit("initial");
 
-    // Create a worktree at same commit as main (looks merged)
-    repo.add_worktree("merged-branch");
+    // Create worktrees at same commit as main (look merged)
+    repo.add_worktree("merged-a");
+    repo.add_worktree("merged-b");
 
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
@@ -35,15 +38,15 @@ fn test_prune_dry_run(mut repo: TestRepo) {
         None
     ));
 
-    // Verify worktree still exists (dry run)
-    let worktree_path = repo
-        .root_path()
-        .parent()
-        .unwrap()
-        .join("repo.merged-branch");
+    // Verify worktrees still exist (dry run)
+    let parent = repo.root_path().parent().unwrap();
     assert!(
-        worktree_path.exists(),
-        "Worktree should still exist after dry run"
+        parent.join("repo.merged-a").exists(),
+        "Dry run should not remove worktrees"
+    );
+    assert!(
+        parent.join("repo.merged-b").exists(),
+        "Dry run should not remove worktrees"
     );
 }
 
