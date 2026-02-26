@@ -653,28 +653,15 @@ fn handle_branch_only_output(
     deletion_mode: BranchDeletionMode,
     pruned: bool,
 ) -> anyhow::Result<()> {
-    // Different message depending on whether we pruned a stale worktree
-    if pruned {
-        // Worktree was pruned - informational, not a warning
-        eprintln!(
-            "{}",
-            info_message(cformat!(
-                "Worktree directory missing for <bold>{branch_name}</>; pruned"
-            ))
-        );
+    let branch_info = if pruned {
+        cformat!("Worktree directory missing for <bold>{branch_name}</>; pruned")
     } else {
-        // No worktree at all, but branch exists - informational since branch removal will proceed
-        eprintln!(
-            "{}",
-            info_message(cformat!(
-                "No worktree found for branch <bold>{branch_name}</>"
-            ))
-        );
-    }
+        cformat!("No worktree found for branch <bold>{branch_name}</>")
+    };
 
-    // Attempt branch deletion (unless --no-delete-branch was specified)
+    // If we won't delete the branch, show info and return early
     if deletion_mode.should_keep() {
-        // User explicitly requested no branch deletion - nothing more to do
+        eprintln!("{}", info_message(&branch_info));
         stderr().flush()?;
         return Ok(());
     }
@@ -687,9 +674,28 @@ fn handle_branch_only_output(
     let check_target = default_branch.as_deref().unwrap_or("HEAD");
 
     let result = delete_branch_if_safe(&repo, branch_name, check_target, deletion_mode.is_force());
-    let (deletion, _) = handle_branch_deletion_result(result, branch_name, false)?;
+    // Defer "retained" output so we control message ordering (info before retained)
+    let (deletion, deferred) = handle_branch_deletion_result(result, branch_name, true)?;
 
-    if !matches!(deletion.outcome, BranchDeletionOutcome::NotDeleted) {
+    if matches!(deletion.outcome, BranchDeletionOutcome::NotDeleted) {
+        // Print info first, then deferred "retained" + hint
+        eprintln!("{}", info_message(&branch_info));
+        if deferred {
+            eprintln!(
+                "{}",
+                info_message(cformat!(
+                    "Branch <bold>{branch_name}</> retained; has unmerged changes"
+                ))
+            );
+            let cmd = suggest_command("remove", &[branch_name], &["-D"]);
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "To delete the unmerged branch, run <bright-black>{cmd}</>"
+                ))
+            );
+        }
+    } else {
         let flag_note = get_flag_note(
             deletion_mode,
             &deletion.outcome,
@@ -697,12 +703,24 @@ fn handle_branch_only_output(
         );
         let flag_text = &flag_note.text;
         let flag_after = flag_note.after_green();
-        eprintln!(
-            "{}",
-            FormattedMessage::new(cformat!(
-                "<green>✓ Removed branch <bold>{branch_name}</>{flag_text}</>{flag_after}"
-            ))
-        );
+
+        if pruned {
+            // Combined: pruned stale metadata & deleted branch in one line
+            eprintln!(
+                "{}",
+                FormattedMessage::new(cformat!(
+                    "<green>✓ Pruned stale worktree & removed branch <bold>{branch_name}</>{flag_text}</>{flag_after}"
+                ))
+            );
+        } else {
+            eprintln!("{}", info_message(&branch_info));
+            eprintln!(
+                "{}",
+                FormattedMessage::new(cformat!(
+                    "<green>✓ Removed branch <bold>{branch_name}</>{flag_text}</>{flag_after}"
+                ))
+            );
+        }
     }
 
     stderr().flush()?;
