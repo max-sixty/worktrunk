@@ -72,9 +72,11 @@ fn execute_instant_removal_or_fallback(
             // Fallback: cross-filesystem, permissions, Windows file locking, etc.
             // Use legacy git worktree remove which handles these cases.
             log::debug!("Instant removal unavailable, using legacy: {}", e);
-            // Force removal when submodules are present — git refuses to remove worktrees
-            // with initialized submodules without --force. This is safe because the caller
-            // already validated worktree cleanliness via ensure_clean().
+            // Git refuses to remove worktrees with initialized submodules without
+            // --force. We preemptively set --force when .gitmodules exists — broader
+            // than checking initialization, but harmless for clean worktrees.
+            // See remove_worktree() doc comment for why --force is safe here and
+            // the TOCTOU nuance around git's error ordering.
             let force = force_worktree || worktree_path.join(".gitmodules").exists();
             build_remove_command(worktree_path, branch_to_delete, force)
         }
