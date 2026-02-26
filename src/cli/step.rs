@@ -425,9 +425,11 @@ Gitignored files are swapped along with the branches so each worktree keeps the 
 
     /// Remove worktrees merged into the default branch
     #[command(
-        after_long_help = r#"Removes worktrees and branches that are merged into the default branch — those showing `_` (same commit) or `⊂` (content integrated) in `wt list`. Also cleans up stale entries (`⊟`) and merged local branches that have no worktree. See `wt list --help` for status symbols.
+        after_long_help = r#"Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
 
-Locked worktrees (`⊞`) and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal.
+In `wt list`, candidates show `_` (same commit) or `⊂` (content integrated). Run `--dry-run` to preview. See `wt remove --help` for the full integration criteria.
+
+Locked worktrees and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal.
 
 ## Min-age guard
 
