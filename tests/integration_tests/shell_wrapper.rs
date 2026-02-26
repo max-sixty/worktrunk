@@ -1236,19 +1236,19 @@ approved-commands = [
             fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        // Create project config with pre-merge commands that output to both stdout and stderr
+        // Create project config with pre-merge commands that output to both stdout and stderr.
+        // Use relative path (./mixed-output.sh) instead of absolute temp path to avoid flaky
+        // snapshot matching on macOS where _REPO_ filter can intermittently fail to match
+        // absolute paths inside syntax-highlighted format_bash_with_gutter output, causing
+        // the broader [PROJECT_ID] catch-all to consume the entire path.
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             config_dir.join("wt.toml"),
-            format!(
-                r#"[pre-merge]
-check1 = "{} check1 3"
-check2 = "{} check2 3"
+            r#"[pre-merge]
+check1 = "./mixed-output.sh check1 3"
+check2 = "./mixed-output.sh check2 3"
 "#,
-                script_path.display(),
-                script_path.display()
-            ),
         )
         .unwrap();
 
@@ -1258,16 +1258,14 @@ check2 = "{} check2 3"
         repo.write_test_config(r#"worktree-path = "../{{ repo }}.{{ branch }}""#);
 
         // Pre-approve commands
-        repo.write_test_approvals(&format!(
+        repo.write_test_approvals(
             r#"[projects."../origin"]
 approved-commands = [
-    "{} check1 3",
-    "{} check2 3",
+    "./mixed-output.sh check1 3",
+    "./mixed-output.sh check2 3",
 ]
 "#,
-            script_path.display(),
-            script_path.display()
-        ));
+        );
 
         // Run merge from the feature worktree
         let output =
