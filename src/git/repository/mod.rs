@@ -438,7 +438,8 @@ impl Repository {
             // 2. Normal repos from inside .git → parent is the repo
             match self.is_bare() {
                 Ok(true) | Err(_) => self.git_common_dir.clone(),
-                Ok(false) => self.git_common_dir
+                Ok(false) => self
+                    .git_common_dir
                     .parent()
                     .expect("Git directory has no parent")
                     .to_path_buf(),
