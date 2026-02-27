@@ -412,13 +412,16 @@ impl Repository {
     ///
     /// So we try `--show-toplevel` first (handles submodules), fall back to `parent()` (handles
     /// normal repos). This avoids fragile path-based detection of submodules.
+    ///
+    /// # Error handling
+    ///
+    /// If `is_bare()` fails (e.g., git timeout), we treat the repo as bare and return
+    /// `git_common_dir`. This avoids returning `parent()` for bare repos, which would give
+    /// a nonsensical path. For normal repos this gives `.git` instead of the repo root, but
+    /// transient git failures will affect subsequent commands too, so the wrong cached path
+    /// is the least of the problems.
     pub fn repo_path(&self) -> &Path {
         self.cache.repo_path.get_or_init(|| {
-            // Bare repos have no worktree — the git directory IS the repo
-            if self.is_bare().unwrap_or(false) {
-                return self.git_common_dir.clone();
-            }
-
             // Submodules: --show-toplevel succeeds (git has explicit core.worktree config)
             if let Ok(out) = Cmd::new("git")
                 .args(["rev-parse", "--show-toplevel"])
@@ -430,11 +433,16 @@ impl Repository {
                 return PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
             }
 
-            // Normal repos: --show-toplevel fails from inside .git, use implicit relationship
-            self.git_common_dir
-                .parent()
-                .expect("Git directory has no parent")
-                .to_path_buf()
+            // --show-toplevel failed:
+            // 1. Bare repos (no working tree) → git_common_dir IS the repo
+            // 2. Normal repos from inside .git → parent is the repo
+            match self.is_bare() {
+                Ok(true) | Err(_) => self.git_common_dir.clone(),
+                Ok(false) => self.git_common_dir
+                    .parent()
+                    .expect("Git directory has no parent")
+                    .to_path_buf(),
+            }
         })
     }
 
