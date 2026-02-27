@@ -177,4 +177,3 @@ def --env --wrapped {{ cmd }} [...args: string@{{ cmd }}-completer] {
         }
     }
 }
-
