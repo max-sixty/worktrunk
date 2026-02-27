@@ -1316,6 +1316,33 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         BranchOnly,
     }
 
+    /// Build a human-readable count like "2 worktrees, 1 branch".
+    fn count_summary(candidates: &[Candidate]) -> String {
+        let worktree_count = candidates
+            .iter()
+            .filter(|c| !matches!(c.kind, CandidateKind::BranchOnly))
+            .count();
+        let branch_count = candidates.len() - worktree_count;
+        let mut parts = Vec::new();
+        if worktree_count > 0 {
+            let noun = if worktree_count == 1 {
+                "worktree"
+            } else {
+                "worktrees"
+            };
+            parts.push(format!("{worktree_count} {noun}"));
+        }
+        if branch_count > 0 {
+            let noun = if branch_count == 1 {
+                "branch"
+            } else {
+                "branches"
+            };
+            parts.push(format!("{branch_count} {noun}"));
+        }
+        parts.join(", ")
+    }
+
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut skipped_young: Vec<String> = Vec::new();
     // Track branches seen via worktree entries so we don't double-count.
@@ -1483,17 +1510,10 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                 info_message(cformat!("<bold>{}</> — {}", c.label, c.reason_desc,))
             );
         }
-        let noun = if candidates.len() == 1 {
-            "worktree"
-        } else {
-            "worktrees"
-        };
+        let summary = count_summary(&candidates);
         eprintln!(
             "{}",
-            hint_message(format!(
-                "{} {noun} would be removed (dry run)",
-                candidates.len()
-            ))
+            hint_message(format!("{summary} would be removed (dry run)"))
         );
         return Ok(());
     }
@@ -1539,32 +1559,8 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         handle_remove_output(result, !foreground, run_hooks)?;
     }
 
-    let worktree_count = candidates
-        .iter()
-        .filter(|c| !matches!(c.kind, CandidateKind::BranchOnly))
-        .count();
-    let branch_count = candidates.len() - worktree_count;
-    let mut parts = Vec::new();
-    if worktree_count > 0 {
-        let noun = if worktree_count == 1 {
-            "worktree"
-        } else {
-            "worktrees"
-        };
-        parts.push(format!("{worktree_count} {noun}"));
-    }
-    if branch_count > 0 {
-        let noun = if branch_count == 1 {
-            "branch"
-        } else {
-            "branches"
-        };
-        parts.push(format!("{branch_count} {noun}"));
-    }
-    eprintln!(
-        "{}",
-        success_message(format!("Pruned {}", parts.join(", ")))
-    );
+    let summary = count_summary(&candidates);
+    eprintln!("{}", success_message(format!("Pruned {summary}")));
 
     Ok(())
 }
