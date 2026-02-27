@@ -1,5 +1,71 @@
 # worktrunk shell integration for nushell
 
+# Custom completer for {{ cmd }} - calls the binary with COMPLETE=nu to get completions.
+# Attached to the wt function via @completer annotation on the rest parameter.
+#
+# Nushell passes the command line typed so far as a context string (e.g., "wt switch feat").
+# We parse it into words and call the binary with clap's COMPLETE=nu protocol.
+def {{ cmd }}-completer [context: string, position?: int] {
+    # Find the binary path
+    let bin = if ($env.WORKTRUNK_BIN? | is-not-empty) {
+        $env.WORKTRUNK_BIN
+    } else {
+        let external = (which -a {{ cmd }} | where type == "external")
+        if ($external | is-empty) {
+            return []
+        }
+        $external | get 0.path
+    }
+
+    # Parse context string into words
+    # context = "{{ cmd }} switch feat" when completing "{{ cmd }} switch feat<TAB>"
+    let spans = ($context | split row " " | where { |s| $s != "" })
+
+    # If no spans or just "{{ cmd }}", add empty string to get subcommand completions
+    let spans = if ($spans | length) <= 1 {
+        ["{{ cmd }}", ""]
+    } else {
+        # Add empty string if context ends with space (completing new word)
+        if ($context | str ends-with " ") {
+            $spans | append ""
+        } else {
+            $spans
+        }
+    }
+
+    # clap expects _CLAP_COMPLETE_INDEX = position of word being completed (0-indexed)
+    # Index is last position since that's what user is typing
+    let index = (($spans | length) - 1)
+
+    # Call the binary with COMPLETE=nu to get tab-separated completions
+    let result = (
+        do -i {
+            with-env { COMPLETE: "nu", _CLAP_COMPLETE_INDEX: ($index | into string) } {
+                ^$bin -- ...$spans
+            }
+        } | complete
+    )
+
+    if $result.exit_code != 0 { return [] }
+
+    # Parse tab-separated output: "value\tdescription" per line
+    $result.stdout
+    | lines
+    | where { |line| $line != "" }
+    | each { |line|
+        let parts = ($line | split column "\t" value description)
+        if ($parts | is-empty) {
+            { value: $line, description: "" }
+        } else {
+            let row = ($parts | get 0)
+            {
+                value: ($row.value? | default $line),
+                description: ($row.description? | default "")
+            }
+        }
+    }
+}
+
 # Override {{ cmd }} command with file-based directive passing.
 # Creates a temp file, passes path via WORKTRUNK_DIRECTIVE_FILE, executes directives after.
 # WORKTRUNK_BIN can override the binary path (for testing dev builds).
@@ -30,7 +96,7 @@
 #   Stderr flows to the terminal in real-time. The binary sees non-TTY stdout
 #   and uses buffered mode, but commands other than `list` don't benefit from
 #   progressive rendering anyway.
-def --env --wrapped {{ cmd }} [...args: string] {
+def --env --wrapped {{ cmd }} [...args: string@{{ cmd }}-completer] {
     let worktrunk_bin = if ($env.WORKTRUNK_BIN? | is-not-empty) {
         $env.WORKTRUNK_BIN
     } else {
