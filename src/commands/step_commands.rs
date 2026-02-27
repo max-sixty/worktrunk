@@ -1073,7 +1073,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
 
     // For normal repos, worktrees[0] is the main worktree
     // For bare repos, there's no main worktree - we don't support promote there
-    if repo.is_bare() {
+    if repo.is_bare()? {
         anyhow::bail!("wt step promote is not supported in bare repositories");
     }
 
