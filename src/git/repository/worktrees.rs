@@ -88,7 +88,7 @@ impl Repository {
     /// Used as the default source for `copy-ignored` and the `{{ primary_worktree_path }}` template.
     /// Returns `None` for bare repos when no worktree has the default branch.
     pub fn primary_worktree(&self) -> anyhow::Result<Option<PathBuf>> {
-        if self.is_bare() {
+        if self.is_bare()? {
             let Some(branch) = self.default_branch() else {
                 return Ok(None);
             };
