@@ -653,9 +653,10 @@ pub fn configure_completion_invocation_for_shell(cmd: &mut Command, words: &[&st
             let index = words.len().saturating_sub(1);
             cmd.env("_CLAP_COMPLETE_INDEX", index.to_string());
         }
-        "fish" => {
-            // Fish doesn't set _CLAP_COMPLETE_INDEX - it appends the current token
-            // as the last argument, so the completion handler uses args.len() - 1
+        "fish" | "nu" => {
+            // Fish and Nushell don't set _CLAP_COMPLETE_INDEX - they append the
+            // current token as the last argument, so the completion handler uses
+            // args.len() - 1
         }
         _ => {}
     }
