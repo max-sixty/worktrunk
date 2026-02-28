@@ -49,4 +49,4 @@ exit_code: 0
 [36m◎ Removing [1mmerged-a[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
 [36m◎ Removing [1mmerged-b[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
 [36m◎ Removing [1mmerged-c[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
-[32m✓[39m [32mPruned 3 worktrees[39m
+[32m✓[39m [32mPruned 3 worktrees (with branches)[39m

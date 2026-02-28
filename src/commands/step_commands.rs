@@ -483,8 +483,9 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 /// Handle `wt step diff` command
 ///
 /// Shows all changes since branching from the target: committed, staged, unstaged,
-/// and untracked files in a single diff. Uses a temporary index to include untracked
-/// files without modifying the real git index.
+/// and untracked files in a single diff. Copies the real index to preserve git's stat
+/// cache (avoiding re-reads of unchanged files), then registers untracked files with
+/// `git add -N` so they appear in the diff.
 ///
 /// TODO: consider adding `--stage` flag (all/tracked/none) like `step commit` to
 /// control which change types are included. `tracked` would skip the temp index,
@@ -503,26 +504,21 @@ pub fn step_diff(target: Option<&str>, extra_args: &[String]) -> anyhow::Result<
 
     let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
 
-    // Create an empty temporary index and register all working tree files with
-    // `git add -N .` so untracked files become visible to `git diff`.
+    // Copy the real index so git's stat cache is warm for tracked files, then
+    // register untracked files with `git add -N .` so they appear in the diff.
+    // This avoids re-reading and hashing every tracked file during `git diff`.
     let worktree_root = wt.root()?;
 
+    let real_index = wt.git_dir()?.join("index");
     let temp_index = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
     let temp_index_path = temp_index
         .path()
         .to_str()
         .context("Temporary index path is not valid UTF-8")?;
 
-    // Initialize a valid empty index
-    Cmd::new("git")
-        .args(["read-tree", "--empty"])
-        .current_dir(&worktree_root)
-        .context(&current_branch)
-        .env("GIT_INDEX_FILE", temp_index_path)
-        .run()
-        .context("Failed to initialize temporary index")?;
+    std::fs::copy(&real_index, temp_index.path()).context("Failed to copy index file")?;
 
-    // Register all working tree files as intent-to-add
+    // Register untracked files as intent-to-add (tracked files already have entries)
     Cmd::new("git")
         .args(["add", "--intent-to-add", "."])
         .current_dir(&worktree_root)
@@ -1315,29 +1311,47 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         BranchOnly,
     }
 
-    /// Build a human-readable count like "2 worktrees, 1 branch".
-    fn count_summary(candidates: &[Candidate]) -> String {
-        let worktree_count = candidates
-            .iter()
-            .filter(|c| !matches!(c.kind, CandidateKind::BranchOnly))
-            .count();
-        let branch_count = candidates.len() - worktree_count;
-        let mut parts = Vec::new();
-        if worktree_count > 0 {
-            let noun = if worktree_count == 1 {
-                "worktree"
-            } else {
-                "worktrees"
-            };
-            parts.push(format!("{worktree_count} {noun}"));
+    /// Build a human-readable count like "2 worktrees (with branches), 1 branch".
+    fn prune_summary<C: std::borrow::Borrow<Candidate>>(candidates: &[C]) -> String {
+        let mut worktree_with_branch = 0;
+        let mut branch_only = 0;
+        let mut detached_worktree = 0;
+        for c in candidates {
+            let c = c.borrow();
+            match (&c.kind, &c.branch) {
+                (CandidateKind::BranchOnly, _) => branch_only += 1,
+                (CandidateKind::Current | CandidateKind::Other, Some(_)) => {
+                    worktree_with_branch += 1;
+                }
+                (CandidateKind::Current | CandidateKind::Other, None) => {
+                    detached_worktree += 1;
+                }
+            }
         }
-        if branch_count > 0 {
-            let noun = if branch_count == 1 {
+        let mut parts = Vec::new();
+        if worktree_with_branch > 0 {
+            let noun = if worktree_with_branch == 1 {
+                "worktree (with branch)"
+            } else {
+                "worktrees (with branches)"
+            };
+            parts.push(format!("{worktree_with_branch} {noun}"));
+        }
+        if branch_only > 0 {
+            let noun = if branch_only == 1 {
                 "branch"
             } else {
                 "branches"
             };
-            parts.push(format!("{branch_count} {noun}"));
+            parts.push(format!("{branch_only} {noun}"));
+        }
+        if detached_worktree > 0 {
+            let noun = if detached_worktree == 1 {
+                "detached worktree"
+            } else {
+                "detached worktrees"
+            };
+            parts.push(format!("{detached_worktree} {noun}"));
         }
         parts.join(", ")
     }
@@ -1524,10 +1538,12 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     }
 
     if dry_run {
-        let summary = count_summary(&candidates);
         eprintln!(
             "{}",
-            hint_message(format!("{summary} would be removed (dry run)"))
+            hint_message(format!(
+                "{} would be removed (dry run)",
+                prune_summary(&candidates)
+            ))
         );
         return Ok(());
     }
@@ -1553,17 +1569,20 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     // Prepare and execute each removal sequentially.
     // Preparation errors (dirty worktree, locked, etc.) are warned and skipped;
     // execution errors propagate (unexpected, don't continue blindly).
-    let mut worktree_count = 0usize;
-    let mut branch_count = 0usize;
+    let mut removed: Vec<&Candidate> = Vec::new();
     for c in &candidates {
         let target = match c.kind {
             CandidateKind::Current => RemoveTarget::Current,
-            CandidateKind::BranchOnly => {
-                RemoveTarget::Branch(c.branch.as_ref().expect("BranchOnly has branch"))
-            }
+            CandidateKind::BranchOnly => RemoveTarget::Branch(
+                c.branch
+                    .as_ref()
+                    .context("BranchOnly candidate missing branch")?,
+            ),
             CandidateKind::Other => match &c.branch {
                 Some(branch) => RemoveTarget::Branch(branch),
-                None => RemoveTarget::Path(c.path.as_ref().expect("detached has path")),
+                None => {
+                    RemoveTarget::Path(c.path.as_ref().context("detached candidate missing path")?)
+                }
             },
         };
         let plan = match repo.prepare_worktree_removal(
@@ -1582,33 +1601,13 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             }
         };
         handle_remove_output(&plan, !foreground, run_hooks)?;
-        match c.kind {
-            CandidateKind::BranchOnly => branch_count += 1,
-            _ => worktree_count += 1,
-        }
+        removed.push(c);
     }
 
-    let mut parts = Vec::new();
-    if worktree_count > 0 {
-        let noun = if worktree_count == 1 {
-            "worktree"
-        } else {
-            "worktrees"
-        };
-        parts.push(format!("{worktree_count} {noun}"));
-    }
-    if branch_count > 0 {
-        let noun = if branch_count == 1 {
-            "branch"
-        } else {
-            "branches"
-        };
-        parts.push(format!("{branch_count} {noun}"));
-    }
-    if !parts.is_empty() {
+    if !removed.is_empty() {
         eprintln!(
             "{}",
-            success_message(format!("Pruned {}", parts.join(", ")))
+            success_message(format!("Pruned {}", prune_summary(&removed)))
         );
     }
 

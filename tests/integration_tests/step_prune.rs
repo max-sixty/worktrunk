@@ -359,6 +359,29 @@ fn test_prune_skips_dirty(mut repo: TestRepo) {
     );
 }
 
+/// Dry-run with mixed worktrees + orphan branches shows both counts.
+///
+/// Exercises the "N worktrees, M branches would be removed (dry run)" path
+/// where the summary must distinguish worktree candidates from branch-only
+/// candidates.
+#[rstest]
+fn test_prune_dry_run_mixed_worktrees_and_branches(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Two worktrees at same commit as main (integrated)
+    repo.add_worktree("merged-a");
+    repo.add_worktree("merged-b");
+
+    // One orphan branch (integrated, no worktree)
+    repo.create_branch("orphan-integrated");
+
+    // Far-future epoch so everything passes the age guard
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--dry-run"], None);
+    cmd.env("WORKTRUNK_TEST_EPOCH", "1893456000"); // 2030-01-01
+
+    assert_cmd_snapshot!(cmd);
+}
+
 /// Stale candidate + young worktrees: shows both the candidate and skipped count.
 ///
 /// A stale worktree (directory deleted) bypasses the age check because it goes
