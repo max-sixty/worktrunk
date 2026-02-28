@@ -141,11 +141,11 @@ When creating a worktree, worktrunk:
 
    Shortcut            Meaning            
    ──────── ───────────────────────────── 
-   ^        Default branch (main/master)  
-   @        Current branch/worktree       
-   -        Previous worktree (like cd -) 
-   pr:{N}   GitHub PR #N's branch         
-   mr:{N}   GitLab MR !N's branch         
+   [2m^[0m        Default branch ([2mmain[0m/[2mmaster[0m)  
+   [2m@[0m        Current branch/worktree       
+   [2m-[0m        Previous worktree (like [2mcd -[0m) 
+   [2mpr:{N}[0m   GitHub PR #N's branch         
+   [2mmr:{N}[0m   GitLab MR !N's branch         
 
   [2mwt switch -                      # Back to previous[0m
   [2mwt switch ^                      # Default branch worktree[0m
@@ -161,14 +161,14 @@ When called without arguments, [2mwt switch[0m opens an interactive picker to 
 
         Key                  Action             
    ───────────── ────────────────────────────── 
-   ↑/↓           Navigate worktree list         
+   [2m↑[0m/[2m↓[0m           Navigate worktree list         
    (type)        Filter worktrees               
-   Enter         Switch to selected worktree    
-   Alt-c         Create new worktree from query 
-   Esc           Cancel                         
-   1–5           Switch preview tab             
-   Alt-p         Toggle preview panel           
-   Ctrl-u/Ctrl-d Scroll preview up/down         
+   [2mEnter[0m         Switch to selected worktree    
+   [2mAlt-c[0m         Create new worktree from query 
+   [2mEsc[0m           Cancel                         
+   [2m1[0m–[2m5[0m           Switch preview tab             
+   [2mAlt-p[0m         Toggle preview panel           
+   [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down         
 
 [1mPreview tabs[0m (toggle with number keys):
 

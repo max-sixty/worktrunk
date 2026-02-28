@@ -79,8 +79,8 @@ Show current configuration and file locations:
 
         File                 Location                                Contains                     Committed & shared 
    ────────────── ─────────────────────────────── ─────────────────────────────────────────────── ────────────────── 
-   User config    ~/.config/worktrunk/config.toml Worktree path template, LLM commit configs, etc ✗                  
-   Project config .config/wt.toml                 Project hooks, dev server URL                   ✓                  
+   User config    [2m~/.config/worktrunk/config.toml[0m Worktree path template, LLM commit configs, etc ✗                  
+   Project config [2m.config/wt.toml[0m                 Project hooks, dev server URL                   ✓                  
 
 Organizations can also deploy a system-wide config file for shared defaults — run [2mwt config show[0m for the platform-specific location.
 
@@ -339,9 +339,9 @@ For nested config sections, use double underscores to separate levels:
 
             Config                   Environment Variable          
    ───────────────────────── ───────────────────────────────────── 
-   worktree-path             WORKTRUNK_WORKTREE_PATH               
-   commit.generation.command WORKTRUNK_COMMIT__GENERATION__COMMAND 
-   commit.stage              WORKTRUNK_COMMIT__STAGE               
+   [2mworktree-path[0m             [2mWORKTRUNK_WORKTREE_PATH[0m               
+   [2mcommit.generation.command[0m [2mWORKTRUNK_COMMIT__GENERATION__COMMAND[0m 
+   [2mcommit.stage[0m              [2mWORKTRUNK_COMMIT__STAGE[0m               
 
 Note the single underscore after [2mWORKTRUNK[0m and double underscores between nested keys.
 
@@ -355,12 +355,12 @@ Override the LLM command in CI to use a mock:
 
                Variable                                                   Purpose                                      
    ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────── 
-   WORKTRUNK_BIN                     Override binary path for shell wrappers (useful for testing dev builds)           
-   WORKTRUNK_CONFIG_PATH             Override user config file location                                                
-   WORKTRUNK_SYSTEM_CONFIG_PATH      Override system config file location                                              
-   XDG_CONFIG_DIRS                   Colon-separated system config directories (default: /etc/xdg)                     
-   WORKTRUNK_DIRECTIVE_FILE          Internal: set by shell wrappers to enable directory changes                       
-   WORKTRUNK_SHELL                   Internal: set by shell wrappers to indicate shell type (e.g., powershell)         
-   WORKTRUNK_MAX_CONCURRENT_COMMANDS Max parallel git commands (default: 32). Lower if hitting file descriptor limits. 
-   NO_COLOR                          Disable colored output (standard)                                                 
-   CLICOLOR_FORCE                    Force colored output even when not a TTY
+   [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers (useful for testing dev builds)           
+   [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                
+   [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                              
+   [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                     
+   [2mWORKTRUNK_DIRECTIVE_FILE[0m          Internal: set by shell wrappers to enable directory changes                       
+   [2mWORKTRUNK_SHELL[0m                   Internal: set by shell wrappers to indicate shell type (e.g., [2mpowershell[0m)         
+   [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits. 
+   [2mNO_COLOR[0m                          Disable colored output (standard)                                                 
+   [2mCLICOLOR_FORCE[0m                    Force colored output even when not a TTY
