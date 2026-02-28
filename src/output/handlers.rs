@@ -686,9 +686,7 @@ fn handle_branch_only_output(
 
     // If we won't delete the branch, show info and return early
     if deletion_mode.should_keep() {
-        if !quiet {
-            eprintln!("{}", info_message(&branch_info));
-        }
+        eprintln!("{}", info_message(&branch_info));
         stderr().flush()?;
         return Ok(());
     }
@@ -706,9 +704,7 @@ fn handle_branch_only_output(
 
     if matches!(deletion.outcome, BranchDeletionOutcome::NotDeleted) {
         // Print info first, then deferred "retained" + hint
-        if !quiet {
-            eprintln!("{}", info_message(&branch_info));
-        }
+        eprintln!("{}", info_message(&branch_info));
         if deferred {
             eprintln!(
                 "{}",
