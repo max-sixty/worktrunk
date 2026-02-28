@@ -9,6 +9,10 @@ on:
   pull_request_review_comment:
     types: [created, edited]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: true
+
 # Consistent with ci.yaml for cache compatibility
 env:
   CARGO_TERM_COLOR: always
