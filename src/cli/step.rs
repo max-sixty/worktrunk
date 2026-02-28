@@ -423,7 +423,7 @@ Gitignored files are swapped along with the branches so each worktree keeps the 
         branch: Option<String>,
     },
 
-    /// Remove worktrees merged into the default branch
+    /// \[experimental\] Remove worktrees merged into the default branch
     #[command(
         after_long_help = r#"Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
 

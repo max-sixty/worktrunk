@@ -1304,7 +1304,6 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         path: Option<PathBuf>,
         /// Current worktree, other worktree, or branch-only (no worktree)
         kind: CandidateKind,
-        reason_desc: String,
     }
     enum CandidateKind {
         Current,
@@ -1356,13 +1355,81 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         parts.join(", ")
     }
 
-    let mut candidates: Vec<Candidate> = Vec::new();
+    // For non-dry-run, approve hooks upfront so we can remove inline.
+    let run_hooks = if dry_run {
+        false // unused in dry-run path
+    } else {
+        let env = CommandEnv::for_action_branchless()?;
+        let ctx = env.context(yes);
+        let approved = approve_hooks(
+            &ctx,
+            &[
+                HookType::PreRemove,
+                HookType::PostRemove,
+                HookType::PostSwitch,
+            ],
+        )?;
+        if !approved {
+            eprintln!("{}", info_message("Commands declined, continuing removal"));
+        }
+        approved
+    };
+
+    let mut candidates: Vec<Candidate> = Vec::new(); // dry-run collects here
+    let mut removed: Vec<Candidate> = Vec::new(); // non-dry-run tracks removals
+    let mut deferred_current: Option<Candidate> = None; // current worktree removed last
     let mut skipped_young: Vec<String> = Vec::new();
     // Track branches seen via worktree entries so we don't double-count.
     // Pre-seed with the default branch to prevent it from being pruned
     // (it's trivially "integrated" into itself).
     let mut seen_branches: std::collections::HashSet<String> =
         default_branch.iter().cloned().collect();
+
+    /// Try to remove a candidate immediately. Returns Ok(true) if removed,
+    /// Ok(false) if skipped (preparation error), Err on execution error.
+    fn try_remove(
+        candidate: &Candidate,
+        repo: &Repository,
+        config: &UserConfig,
+        foreground: bool,
+        run_hooks: bool,
+    ) -> anyhow::Result<bool> {
+        let target = match candidate.kind {
+            CandidateKind::Current => RemoveTarget::Current,
+            CandidateKind::BranchOnly => RemoveTarget::Branch(
+                candidate
+                    .branch
+                    .as_ref()
+                    .context("BranchOnly candidate missing branch")?,
+            ),
+            CandidateKind::Other => match &candidate.branch {
+                Some(branch) => RemoveTarget::Branch(branch),
+                None => RemoveTarget::Path(
+                    candidate
+                        .path
+                        .as_ref()
+                        .context("detached candidate missing path")?,
+                ),
+            },
+        };
+        let plan = match repo.prepare_worktree_removal(
+            target,
+            BranchDeletionMode::SafeDelete,
+            false,
+            config,
+        ) {
+            Ok(plan) => plan,
+            Err(e) => {
+                eprintln!(
+                    "{}",
+                    warning_message(format!("Skipping {}: {e:#}", candidate.label))
+                );
+                return Ok(false);
+            }
+        };
+        handle_remove_output(&plan, !foreground, run_hooks)?;
+        Ok(true)
+    }
 
     for wt in &worktrees {
         // Track branches so the orphan scan doesn't re-discover them
@@ -1388,13 +1455,26 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                 let (effective_target, reason) =
                     repo.integration_reason(branch, &integration_target)?;
                 if let Some(reason) = reason {
-                    candidates.push(Candidate {
+                    let candidate = Candidate {
                         label: branch.clone(),
                         branch: Some(branch.clone()),
                         path: None,
                         kind: CandidateKind::BranchOnly,
-                        reason_desc: format!("{} {}", reason.description(), effective_target),
-                    });
+                    };
+                    if dry_run {
+                        eprintln!(
+                            "{}",
+                            info_message(cformat!(
+                                "<bold>{}</> (stale) — {} {}",
+                                branch,
+                                reason.description(),
+                                effective_target
+                            ))
+                        );
+                        candidates.push(candidate);
+                    } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
+                        removed.push(candidate);
+                    }
                 }
             }
             continue;
@@ -1447,7 +1527,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
 
         let wt_path = dunce::canonicalize(&wt.path).unwrap_or(wt.path.clone());
         let is_current = wt_path == current_root;
-        candidates.push(Candidate {
+        let candidate = Candidate {
             branch: if wt.detached { None } else { wt.branch.clone() },
             label,
             path: Some(wt.path.clone()),
@@ -1456,8 +1536,23 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             } else {
                 CandidateKind::Other
             },
-            reason_desc: format!("{} {}", reason.description(), effective_target),
-        });
+        };
+        if dry_run {
+            eprintln!(
+                "{}",
+                info_message(cformat!(
+                    "<bold>{}</> — {} {}",
+                    candidate.label,
+                    reason.description(),
+                    effective_target
+                ))
+            );
+            candidates.push(candidate);
+        } else if is_current {
+            deferred_current = Some(candidate);
+        } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
+            removed.push(candidate);
+        }
     }
 
     // Also scan local branches that don't have a worktree entry
@@ -1487,27 +1582,30 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                     }
                 }
             }
-            candidates.push(Candidate {
+            let candidate = Candidate {
                 label: branch.clone(),
                 branch: Some(branch),
                 path: None,
                 kind: CandidateKind::BranchOnly,
-                reason_desc: format!("{} {}", reason.description(), effective_target),
-            });
+            };
+            if dry_run {
+                eprintln!(
+                    "{}",
+                    info_message(cformat!(
+                        "<bold>{}</> (branch only) — {} {}",
+                        candidate.label,
+                        reason.description(),
+                        effective_target
+                    ))
+                );
+                candidates.push(candidate);
+            } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
+                removed.push(candidate);
+            }
         }
     }
 
-    if candidates.is_empty() {
-        let msg = if skipped_young.is_empty() {
-            "No merged worktrees to remove".to_string()
-        } else {
-            let names = skipped_young.join(", ");
-            format!("No merged worktrees to remove (skipped {names}, younger than {min_age})")
-        };
-        eprintln!("{}", info_message(msg));
-        return Ok(());
-    }
-
+    // Report skipped worktrees
     if !skipped_young.is_empty() {
         let names = skipped_young.join(", ");
         eprintln!(
@@ -1517,11 +1615,11 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     }
 
     if dry_run {
-        for c in &candidates {
-            eprintln!(
-                "{}",
-                info_message(cformat!("<bold>{}</> — {}", c.label, c.reason_desc,))
-            );
+        if candidates.is_empty() {
+            if skipped_young.is_empty() {
+                eprintln!("{}", info_message("No merged worktrees to remove"));
+            }
+            return Ok(());
         }
         eprintln!(
             "{}",
@@ -1533,55 +1631,23 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         return Ok(());
     }
 
-    // Approve hooks
-    let env = CommandEnv::for_action_branchless()?;
-    let ctx = env.context(yes);
-    let run_hooks = approve_hooks(
-        &ctx,
-        &[
-            HookType::PreRemove,
-            HookType::PostRemove,
-            HookType::PostSwitch,
-        ],
-    )?;
-    if !run_hooks {
-        eprintln!("{}", info_message("Commands declined, continuing removal"));
+    // Remove deferred current worktree last (cd-to-primary happens here)
+    if let Some(current) = deferred_current
+        && try_remove(&current, &repo, &config, foreground, run_hooks)?
+    {
+        removed.push(current);
     }
 
-    // Sort: current worktree last so cd-to-primary happens after other removals
-    candidates.sort_by_key(|c| matches!(c.kind, CandidateKind::Current));
-
-    // Prepare removal plans
-    let mut plans: Vec<super::worktree::RemoveResult> = Vec::new();
-    for c in &candidates {
-        let target = match c.kind {
-            CandidateKind::Current => RemoveTarget::Current,
-            CandidateKind::BranchOnly => RemoveTarget::Branch(
-                c.branch
-                    .as_ref()
-                    .context("BranchOnly candidate missing branch")?,
-            ),
-            CandidateKind::Other => match &c.branch {
-                Some(branch) => RemoveTarget::Branch(branch),
-                None => {
-                    RemoveTarget::Path(c.path.as_ref().context("detached candidate missing path")?)
-                }
-            },
-        };
-        let plan =
-            repo.prepare_worktree_removal(target, BranchDeletionMode::SafeDelete, false, &config)?;
-        plans.push(plan);
+    if removed.is_empty() {
+        if skipped_young.is_empty() {
+            eprintln!("{}", info_message("No merged worktrees to remove"));
+        }
+    } else {
+        eprintln!(
+            "{}",
+            success_message(format!("Pruned {}", prune_summary(&removed)))
+        );
     }
-
-    // Execute removals (current worktree is last due to sort above)
-    for result in &plans {
-        handle_remove_output(result, !foreground, run_hooks)?;
-    }
-
-    eprintln!(
-        "{}",
-        success_message(format!("Pruned {}", prune_summary(&candidates)))
-    );
 
     Ok(())
 }

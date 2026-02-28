@@ -42,4 +42,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m No merged worktrees to remove (skipped orphan-integrated, younger than 1h)
+[2m○[22m Skipped orphan-integrated (younger than 1h)

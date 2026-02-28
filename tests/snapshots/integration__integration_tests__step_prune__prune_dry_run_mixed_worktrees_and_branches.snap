@@ -44,5 +44,5 @@ exit_code: 0
 ----- stderr -----
 [2m○[22m [1mmerged-a[22m — same commit as main
 [2m○[22m [1mmerged-b[22m — same commit as main
-[2m○[22m [1morphan-integrated[22m — same commit as main
+[2m○[22m [1morphan-integrated[22m (branch only) — same commit as main
 [2m↳[22m [2m2 worktrees (with branches), 1 branch would be removed (dry run)[22m

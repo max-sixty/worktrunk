@@ -329,6 +329,36 @@ fn test_prune_min_age_passes(mut repo: TestRepo) {
     assert_cmd_snapshot!(cmd);
 }
 
+/// Prune skips worktrees with uncommitted changes
+#[rstest]
+fn test_prune_skips_dirty(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Merged worktree with uncommitted changes — should be skipped
+    let wt_path = repo.add_worktree("dirty-merged");
+    std::fs::write(wt_path.join("scratch.txt"), "wip").unwrap();
+
+    // Clean merged worktree — should be pruned
+    repo.add_worktree("clean-merged");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--yes", "--min-age=0s"],
+        None
+    ));
+
+    // Dirty worktree still exists
+    assert!(wt_path.exists(), "Dirty worktree should be skipped");
+
+    // Clean worktree removed
+    let clean_path = repo.root_path().parent().unwrap().join("repo.clean-merged");
+    assert!(
+        !clean_path.exists(),
+        "Clean merged worktree should be removed"
+    );
+}
+
 /// Dry-run with mixed worktrees + orphan branches shows both counts.
 ///
 /// Exercises the "N worktrees, M branches would be removed (dry run)" path
