@@ -769,6 +769,37 @@ fn test_config_show_fish_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir
     });
 }
 
+/// Test that config show displays "Outdated" when nushell wrapper exists but has different code
+#[rstest]
+fn test_config_show_nushell_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    // Create nushell vendor/autoload directory with an outdated wt.nu
+    let autoload = temp_home.path().join(".config/nushell/vendor/autoload");
+    fs::create_dir_all(&autoload).unwrap();
+    fs::write(
+        autoload.join("wt.nu"),
+        "# worktrunk shell integration for nushell\ndef --wrapped wt [...args] {\n    command wt-old ...$args\n}\n",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[rstest]
 fn test_config_show_zsh_compinit_correct_order(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
