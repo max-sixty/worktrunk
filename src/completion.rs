@@ -56,7 +56,7 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
 
     // Determine the index of the word being completed.
     // - Bash/Zsh: Pass `_CLAP_COMPLETE_INDEX` env var with the cursor position
-    // - Fish: Appends the current token as the last argument, so index = len - 1
+    // - Fish/Nushell: Append the current token as the last argument, so index = len - 1
     let index: usize = std::env::var("_CLAP_COMPLETE_INDEX")
         .ok()
         .and_then(|i| i.parse().ok())

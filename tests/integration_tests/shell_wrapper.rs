@@ -3112,6 +3112,29 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
         assert_snapshot!(completions);
     }
 
+    /// Black-box test: nushell completion produces correct subcommands.
+    ///
+    /// Nushell completions call binary with COMPLETE=nu (same protocol as fish).
+    #[test]
+    fn test_nushell_completion_subcommands() {
+        let wt_bin = wt_bin();
+
+        let output = std::process::Command::new(&wt_bin)
+            .args(["--", "wt", ""])
+            .env("COMPLETE", "nu")
+            .output()
+            .unwrap();
+
+        // Nushell format is "value\tdescription" - extract just values
+        let completions: String = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| line.split('\t').next().unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_snapshot!(completions);
+    }
+
     // ========================================================================
     // Stderr/Stdout Redirection Tests
     // ========================================================================

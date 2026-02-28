@@ -1073,7 +1073,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
 
     // For normal repos, worktrees[0] is the main worktree
     // For bare repos, there's no main worktree - we don't support promote there
-    if repo.is_bare() {
+    if repo.is_bare()? {
         anyhow::bail!("wt step promote is not supported in bare repositories");
     }
 
@@ -1316,6 +1316,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         BranchOnly,
     }
 
+    /// Build a human-readable count like "2 worktrees (with branches), 1 branch".
     fn prune_summary(candidates: &[Candidate]) -> String {
         let mut worktree_with_branch = 0;
         let mut branch_only = 0;

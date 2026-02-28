@@ -68,8 +68,8 @@ All hook executions and LLM commands are recorded automatically — one JSON obj
 
        Operation                     Log file                 
    ────────────────── ─────────────────────────────────────── 
-   post-start hooks   {branch}-{source}-post-start-{name}.log 
-   Background removal {branch}-remove.log                     
+   post-start hooks   [2m{branch}-{source}-post-start-{name}.log[0m 
+   Background removal [2m{branch}-remove.log[0m                     
 
 Source is [2muser[0m or [2mproject[0m depending on where the hook is defined.
 
