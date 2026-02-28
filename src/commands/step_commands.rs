@@ -1308,7 +1308,6 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         path: Option<PathBuf>,
         /// Current worktree, other worktree, or branch-only (no worktree)
         kind: CandidateKind,
-        reason_desc: String,
     }
     enum CandidateKind {
         Current,
@@ -1375,12 +1374,20 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                 let (effective_target, reason) =
                     repo.integration_reason(branch, &integration_target)?;
                 if let Some(reason) = reason {
+                    eprintln!(
+                        "{}",
+                        info_message(cformat!(
+                            "<bold>{}</> (stale) — {} {}",
+                            branch,
+                            reason.description(),
+                            effective_target
+                        ))
+                    );
                     candidates.push(Candidate {
                         label: branch.clone(),
                         branch: Some(branch.clone()),
                         path: None,
                         kind: CandidateKind::BranchOnly,
-                        reason_desc: format!("{} {}", reason.description(), effective_target),
                     });
                 }
             }
@@ -1434,6 +1441,15 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
 
         let wt_path = dunce::canonicalize(&wt.path).unwrap_or(wt.path.clone());
         let is_current = wt_path == current_root;
+        eprintln!(
+            "{}",
+            info_message(cformat!(
+                "<bold>{}</> — {} {}",
+                label,
+                reason.description(),
+                effective_target
+            ))
+        );
         candidates.push(Candidate {
             branch: if wt.detached { None } else { wt.branch.clone() },
             label,
@@ -1443,7 +1459,6 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             } else {
                 CandidateKind::Other
             },
-            reason_desc: format!("{} {}", reason.description(), effective_target),
         });
     }
 
@@ -1474,27 +1489,25 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                     }
                 }
             }
+            eprintln!(
+                "{}",
+                info_message(cformat!(
+                    "<bold>{}</> (branch only) — {} {}",
+                    branch,
+                    reason.description(),
+                    effective_target
+                ))
+            );
             candidates.push(Candidate {
                 label: branch.clone(),
                 branch: Some(branch),
                 path: None,
                 kind: CandidateKind::BranchOnly,
-                reason_desc: format!("{} {}", reason.description(), effective_target),
             });
         }
     }
 
-    if candidates.is_empty() {
-        let msg = if skipped_young.is_empty() {
-            "No merged worktrees to remove".to_string()
-        } else {
-            let names = skipped_young.join(", ");
-            format!("No merged worktrees to remove (skipped {names}, younger than {min_age})")
-        };
-        eprintln!("{}", info_message(msg));
-        return Ok(());
-    }
-
+    // Report skipped worktrees
     if !skipped_young.is_empty() {
         let names = skipped_young.join(", ");
         eprintln!(
@@ -1503,13 +1516,14 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         );
     }
 
-    if dry_run {
-        for c in &candidates {
-            eprintln!(
-                "{}",
-                info_message(cformat!("<bold>{}</> — {}", c.label, c.reason_desc,))
-            );
+    if candidates.is_empty() {
+        if skipped_young.is_empty() {
+            eprintln!("{}", info_message("No merged worktrees to remove"));
         }
+        return Ok(());
+    }
+
+    if dry_run {
         let summary = count_summary(&candidates);
         eprintln!(
             "{}",
@@ -1536,8 +1550,11 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     // Sort: current worktree last so cd-to-primary happens after other removals
     candidates.sort_by_key(|c| matches!(c.kind, CandidateKind::Current));
 
-    // Prepare removal plans
-    let mut plans: Vec<super::worktree::RemoveResult> = Vec::new();
+    // Prepare and execute each removal sequentially.
+    // Preparation errors (dirty worktree, locked, etc.) are warned and skipped;
+    // execution errors propagate (unexpected, don't continue blindly).
+    let mut worktree_count = 0usize;
+    let mut branch_count = 0usize;
     for c in &candidates {
         let target = match c.kind {
             CandidateKind::Current => RemoveTarget::Current,
@@ -1549,18 +1566,51 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                 None => RemoveTarget::Path(c.path.as_ref().expect("detached has path")),
             },
         };
-        let plan =
-            repo.prepare_worktree_removal(target, BranchDeletionMode::SafeDelete, false, &config)?;
-        plans.push(plan);
+        let plan = match repo.prepare_worktree_removal(
+            target,
+            BranchDeletionMode::SafeDelete,
+            false,
+            &config,
+        ) {
+            Ok(plan) => plan,
+            Err(e) => {
+                eprintln!(
+                    "{}",
+                    warning_message(format!("Skipping {}: {e:#}", c.label))
+                );
+                continue;
+            }
+        };
+        handle_remove_output(&plan, !foreground, run_hooks)?;
+        match c.kind {
+            CandidateKind::BranchOnly => branch_count += 1,
+            _ => worktree_count += 1,
+        }
     }
 
-    // Execute removals (current worktree is last due to sort above)
-    for result in &plans {
-        handle_remove_output(result, !foreground, run_hooks)?;
+    let mut parts = Vec::new();
+    if worktree_count > 0 {
+        let noun = if worktree_count == 1 {
+            "worktree"
+        } else {
+            "worktrees"
+        };
+        parts.push(format!("{worktree_count} {noun}"));
     }
-
-    let summary = count_summary(&candidates);
-    eprintln!("{}", success_message(format!("Pruned {summary}")));
+    if branch_count > 0 {
+        let noun = if branch_count == 1 {
+            "branch"
+        } else {
+            "branches"
+        };
+        parts.push(format!("{branch_count} {noun}"));
+    }
+    if !parts.is_empty() {
+        eprintln!(
+            "{}",
+            success_message(format!("Pruned {}", parts.join(", ")))
+        );
+    }
 
     Ok(())
 }

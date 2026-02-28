@@ -50,7 +50,7 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>copy-ignored</span></b>  Copy gitignored files to another worktree
   <b><span class=c>for-each</span></b>      [experimental] Run command in each worktree
   <b><span class=c>promote</span></b>       [experimental] Put a branch into the main worktree
-  <b><span class=c>prune</span></b>         Remove worktrees merged into the default branch
+  <b><span class=c>prune</span></b>         [experimental] Remove worktrees merged into the default branch
   <b><span class=c>relocate</span></b>      [experimental] Move worktrees to expected paths
 
 <b><span class=g>Options:</span></b>
@@ -427,9 +427,9 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
 
 ## wt step prune
 
-Remove worktrees merged into the default branch.
+[experimental] Remove worktrees merged into the default branch.
 
-Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
+Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too. Worktrees with uncommitted changes are skipped.
 
 In `wt list`, candidates show `_` (same commit) or `⊂` (content integrated). Run `--dry-run` to preview. See `wt remove --help` for the full integration criteria.
 
@@ -458,9 +458,11 @@ Remove all merged worktrees:
 wt step prune
 ```
 
+Note: This command is experimental and may change in future versions.
+
 ### Command reference
 
-wt step prune - Remove worktrees merged into the default branch
+wt step prune - [experimental] Remove worktrees merged into the default branch
 
 Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
 
