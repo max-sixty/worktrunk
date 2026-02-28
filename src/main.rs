@@ -842,7 +842,7 @@ fn main() {
                     // "Approve at the Gate": approval happens AFTER validation passes
                     let run_hooks = verify && approve_remove(yes)?;
 
-                    handle_remove_output(&result, background, run_hooks)
+                    handle_remove_output(&result, background, run_hooks, false)
                 } else {
                     // Multi-worktree removal: validate ALL first, then approve, then execute
                     // This supports partial success - some may fail validation while others succeed.
@@ -961,17 +961,17 @@ fn main() {
                     // Phase 3: Execute all validated plans
                     // Remove other worktrees first
                     for result in plans_others {
-                        handle_remove_output(&result, background, run_hooks)?;
+                        handle_remove_output(&result, background, run_hooks, false)?;
                     }
 
                     // Handle branch-only cases
                     for result in plans_branch_only {
-                        handle_remove_output(&result, background, run_hooks)?;
+                        handle_remove_output(&result, background, run_hooks, false)?;
                     }
 
                     // Remove current worktree last (if it was in the list)
                     if let Some(result) = plan_current {
-                        handle_remove_output(&result, background, run_hooks)?;
+                        handle_remove_output(&result, background, run_hooks, false)?;
                     }
 
                     // Exit with failure if any validation errors occurred
