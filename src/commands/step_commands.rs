@@ -483,8 +483,9 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 /// Handle `wt step diff` command
 ///
 /// Shows all changes since branching from the target: committed, staged, unstaged,
-/// and untracked files in a single diff. Uses a temporary index to include untracked
-/// files without modifying the real git index.
+/// and untracked files in a single diff. Copies the real index to preserve git's stat
+/// cache (avoiding re-reads of unchanged files), then registers untracked files with
+/// `git add -N` so they appear in the diff.
 ///
 /// TODO: consider adding `--stage` flag (all/tracked/none) like `step commit` to
 /// control which change types are included. `tracked` would skip the temp index,
@@ -503,26 +504,21 @@ pub fn step_diff(target: Option<&str>, extra_args: &[String]) -> anyhow::Result<
 
     let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
 
-    // Create an empty temporary index and register all working tree files with
-    // `git add -N .` so untracked files become visible to `git diff`.
+    // Copy the real index so git's stat cache is warm for tracked files, then
+    // register untracked files with `git add -N .` so they appear in the diff.
+    // This avoids re-reading and hashing every tracked file during `git diff`.
     let worktree_root = wt.root()?;
 
+    let real_index = wt.git_dir()?.join("index");
     let temp_index = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
     let temp_index_path = temp_index
         .path()
         .to_str()
         .context("Temporary index path is not valid UTF-8")?;
 
-    // Initialize a valid empty index
-    Cmd::new("git")
-        .args(["read-tree", "--empty"])
-        .current_dir(&worktree_root)
-        .context(&current_branch)
-        .env("GIT_INDEX_FILE", temp_index_path)
-        .run()
-        .context("Failed to initialize temporary index")?;
+    std::fs::copy(&real_index, temp_index.path()).context("Failed to copy index file")?;
 
-    // Register all working tree files as intent-to-add
+    // Register untracked files as intent-to-add (tracked files already have entries)
     Cmd::new("git")
         .args(["add", "--intent-to-add", "."])
         .current_dir(&worktree_root)
