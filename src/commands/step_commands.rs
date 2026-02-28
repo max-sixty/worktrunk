@@ -1312,12 +1312,11 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     }
 
     /// Build a human-readable count like "2 worktrees (with branches), 1 branch".
-    fn prune_summary<C: std::borrow::Borrow<Candidate>>(candidates: &[C]) -> String {
+    fn prune_summary(candidates: &[Candidate]) -> String {
         let mut worktree_with_branch = 0;
         let mut branch_only = 0;
         let mut detached_worktree = 0;
         for c in candidates {
-            let c = c.borrow();
             match (&c.kind, &c.branch) {
                 (CandidateKind::BranchOnly, _) => branch_only += 1,
                 (CandidateKind::Current | CandidateKind::Other, Some(_)) => {
