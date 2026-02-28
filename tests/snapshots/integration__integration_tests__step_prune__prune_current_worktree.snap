@@ -46,4 +46,4 @@ exit_code: 0
 [36m◎ Removing [1mcurrent-merged[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
-[32m✓[39m [32mPruned 1 worktree[39m
+[32m✓[39m [32mPruned 1 worktree (with branch)[39m

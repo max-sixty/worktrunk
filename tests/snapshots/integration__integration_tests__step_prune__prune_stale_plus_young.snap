@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/step_prune.rs
-assertion_line: 346
 info:
   program: wt
   args:
@@ -45,4 +44,4 @@ exit_code: 0
 ----- stderr -----
 [2m○[22m Skipped young-branch (younger than 1h)
 [2m○[22m [1mstale-branch[22m — same commit as main
-[2m↳[22m [2m1 worktree would be removed (dry run)[22m
+[2m↳[22m [2m1 branch would be removed (dry run)[22m
