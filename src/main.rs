@@ -1074,7 +1074,11 @@ fn main() {
         // for cases not covered by the flag (e.g., external worktree removal).
         let cwd_gone = output::was_cwd_removed() || std::env::current_dir().is_err();
         if cwd_gone {
-            eprintln!("{}", hint_message(cwd_removed_hint()));
+            if let Some(hint) = cwd_removed_hint() {
+                eprintln!("{}", hint_message(hint));
+            } else {
+                eprintln!("{}", info_message("Current directory was removed"));
+            }
         }
 
         // Preserve exit code from child processes (especially for signals like SIGINT)
