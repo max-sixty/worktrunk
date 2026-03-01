@@ -5,7 +5,7 @@ mod step;
 
 pub(crate) use config::{
     ApprovalsCommand, CiStatusAction, ConfigCommand, ConfigShellCommand, DefaultBranchAction,
-    HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand,
+    HintsAction, KvAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand,
 };
 pub(crate) use hook::HookCommand;
 pub(crate) use list::ListSubcommand;
@@ -627,6 +627,7 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `url_active` | boolean | Whether the URL's port is listening (absent when not configured) |
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
+| `kv` | object | Per-branch key-value data from `wt config state kv` (absent when empty) |
 
 ### Commit object
 
@@ -1256,13 +1257,21 @@ Hooks can use template variables that expand at runtime:
 | `{{ target }}` | Target branch (merge hooks only) |
 | `{{ base }}` | Base branch (creation hooks only) |
 | `{{ base_worktree_path }}` | Base branch worktree (creation hooks only) |
+| `{{ kv.<key> }}` | Per-branch kv data from `wt config state kv` |
 
-Some variables may not be defined: `upstream` is only set when the branch tracks a remote; `target`, `base`, and `base_worktree_path` are hook-specific. Using an undefined variable directly errors — use conditionals for optional behavior:
+Some variables may not be defined: `upstream` is only set when the branch tracks a remote; `target`, `base`, and `base_worktree_path` are hook-specific; `kv` keys may not exist. Using an undefined variable directly errors — use conditionals or defaults for optional behavior:
 
 ```toml
 [post-create]
 # Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature origin/feature)
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
+```
+
+Kv data uses dot access and the `default` filter for missing keys. JSON object/array values are parsed automatically, so `{{ kv.config.port }}` works when the value is `{"port": 3000}`:
+
+```toml
+[post-start]
+dev = "ENV={{ kv.env | default('development') }} npm start -- --port {{ kv.config.port | default('3000') }}"
 ```
 
 ### Worktrunk filters

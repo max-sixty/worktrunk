@@ -47,6 +47,27 @@ impl Repository {
         branch.and_then(|branch| self.branch_marker(branch))
     }
 
+    /// Get all kv entries for a branch, sorted by key name.
+    ///
+    /// Returns a `BTreeMap` so it serializes to a minijinja object for template access
+    /// via `{{ kv.key }}`.
+    pub fn kv_entries(&self, branch: &str) -> std::collections::BTreeMap<String, String> {
+        let pattern = format!(r"^worktrunk\.state\.{branch}\.kv\.");
+        let output = self
+            .run_command(&["config", "--get-regexp", &pattern])
+            .unwrap_or_default();
+
+        let prefix = format!("worktrunk.state.{branch}.kv.");
+        output
+            .lines()
+            .filter_map(|line| {
+                let (config_key, value) = line.split_once(' ')?;
+                let key = config_key.strip_prefix(&prefix)?;
+                Some((key.to_string(), value.to_string()))
+            })
+            .collect()
+    }
+
     /// Set the previous branch in worktrunk.history for `wt switch -` support.
     ///
     /// Stores the branch we're switching FROM, so `wt switch -` can return to it.

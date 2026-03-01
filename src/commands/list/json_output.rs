@@ -15,11 +15,12 @@
 //! - `remote`: relationship to tracking branch
 //! - `worktree`: worktree-specific state (locked, prunable, etc.)
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use worktrunk::git::LineDiff;
+use worktrunk::git::{LineDiff, Repository};
 
 use super::ci_status::{CiSource, PrStatus};
 use super::model::{ItemKind, ListItem, UpstreamStatus};
@@ -98,6 +99,10 @@ pub struct JsonItem {
     /// Raw status symbols without ANSI colors (e.g., "+! ✖ ↑")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbols: Option<String>,
+
+    /// Arbitrary key-value data stored via `wt config state kv`
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub kv: BTreeMap<String, String>,
 }
 
 /// Commit information
@@ -219,7 +224,7 @@ pub struct JsonCi {
 
 impl JsonItem {
     /// Convert a ListItem to the new JSON structure
-    pub fn from_list_item(item: &ListItem) -> Self {
+    pub fn from_list_item(item: &ListItem, repo: &Repository) -> Self {
         let (kind_str, worktree_data) = match &item.kind {
             ItemKind::Worktree(data) => ("worktree", Some(data.as_ref())),
             ItemKind::Branch => ("branch", None),
@@ -325,6 +330,13 @@ impl JsonItem {
             .map(format_raw_symbols)
             .filter(|s| !s.is_empty());
 
+        // Per-branch kv data from git config
+        let kv = item
+            .branch
+            .as_deref()
+            .map(|b| repo.kv_entries(b))
+            .unwrap_or_default();
+
         JsonItem {
             branch: item.branch.clone(),
             path,
@@ -345,6 +357,7 @@ impl JsonItem {
             url_active: item.url_active,
             statusline,
             symbols,
+            kv,
         }
     }
 }
@@ -448,8 +461,11 @@ fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
 }
 
 /// Convert a list of ListItems to JSON output
-pub fn to_json_items(items: &[ListItem]) -> Vec<JsonItem> {
-    items.iter().map(JsonItem::from_list_item).collect()
+pub fn to_json_items(items: &[ListItem], repo: &Repository) -> Vec<JsonItem> {
+    items
+        .iter()
+        .map(|item| JsonItem::from_list_item(item, repo))
+        .collect()
 }
 
 #[cfg(test)]

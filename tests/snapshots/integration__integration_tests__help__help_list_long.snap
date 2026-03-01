@@ -199,27 +199,28 @@ Query structured data with [2m--format=json[0m:
 
 [1mFields:[0m
 
-         Field           Type                                 Description                             
-   ────────────────── ─────────── ─────────────────────────────────────────────────────────────────── 
-   [2mbranch[0m             string/null Branch name (null for detached HEAD)                                
-   [2mpath[0m               string      Worktree path (absent for branches without worktrees)               
-   [2mkind[0m               string      [2m"worktree"[0m or [2m"branch"[0m                                              
-   [2mcommit[0m             object      Commit info (see below)                                             
-   [2mworking_tree[0m       object      Working tree state (see below)                                      
-   [2mmain_state[0m         string      Relation to the default branch (see below)                          
-   [2mintegration_reason[0m string      Why branch is integrated (see below)                                
-   [2moperation_state[0m    string      [2m"conflicts"[0m, [2m"rebase"[0m, or [2m"merge"[0m (absent when clean)               
-   [2mmain[0m               object      Relationship to the default branch (see below, absent when is_main) 
-   [2mremote[0m             object      Tracking branch info (see below, absent when no tracking)           
-   [2mworktree[0m           object      Worktree metadata (see below)                                       
-   [2mis_main[0m            boolean     Is the main worktree                                                
-   [2mis_current[0m         boolean     Is the current worktree                                             
-   [2mis_previous[0m        boolean     Previous worktree from wt switch                                    
-   [2mci[0m                 object      CI status (see below, absent when no CI)                            
-   [2murl[0m                string      Dev server URL from project config (absent when not configured)     
-   [2murl_active[0m         boolean     Whether the URL's port is listening (absent when not configured)    
-   [2mstatusline[0m         string      Pre-formatted status with ANSI colors                               
-   [2msymbols[0m            string      Raw status symbols without colors (e.g., [2m"!?↓"[0m)                     
+         Field           Type                                  Description                              
+   ────────────────── ─────────── ───────────────────────────────────────────────────────────────────── 
+   [2mbranch[0m             string/null Branch name (null for detached HEAD)                                  
+   [2mpath[0m               string      Worktree path (absent for branches without worktrees)                 
+   [2mkind[0m               string      [2m"worktree"[0m or [2m"branch"[0m                                                
+   [2mcommit[0m             object      Commit info (see below)                                               
+   [2mworking_tree[0m       object      Working tree state (see below)                                        
+   [2mmain_state[0m         string      Relation to the default branch (see below)                            
+   [2mintegration_reason[0m string      Why branch is integrated (see below)                                  
+   [2moperation_state[0m    string      [2m"conflicts"[0m, [2m"rebase"[0m, or [2m"merge"[0m (absent when clean)                 
+   [2mmain[0m               object      Relationship to the default branch (see below, absent when is_main)   
+   [2mremote[0m             object      Tracking branch info (see below, absent when no tracking)             
+   [2mworktree[0m           object      Worktree metadata (see below)                                         
+   [2mis_main[0m            boolean     Is the main worktree                                                  
+   [2mis_current[0m         boolean     Is the current worktree                                               
+   [2mis_previous[0m        boolean     Previous worktree from wt switch                                      
+   [2mci[0m                 object      CI status (see below, absent when no CI)                              
+   [2murl[0m                string      Dev server URL from project config (absent when not configured)       
+   [2murl_active[0m         boolean     Whether the URL's port is listening (absent when not configured)      
+   [2mstatusline[0m         string      Pre-formatted status with ANSI colors                                 
+   [2msymbols[0m            string      Raw status symbols without colors (e.g., [2m"!?↓"[0m)                       
+   [2mkv[0m                 object      Per-branch key-value data from [2mwt config state kv[0m (absent when empty) 
 
 [32mCommit object[0m
 
