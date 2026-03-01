@@ -1,7 +1,8 @@
 //! Minimal markdown rendering for CLI help text.
 
 use anstyle::{AnsiColor, Color, Color as AnsiStyleColor, Style};
-use termimad::{MadSkin, TableBorderChars};
+use crossterm::style::Attribute;
+use termimad::{CompoundStyle, MadSkin, TableBorderChars};
 use unicode_width::UnicodeWidthStr;
 
 use worktrunk::styling::{DEFAULT_HELP_WIDTH, wrap_styled_text};
@@ -27,6 +28,10 @@ static HELP_TABLE_BORDERS: TableBorderChars = TableBorderChars {
 fn help_table_skin() -> MadSkin {
     let mut skin = MadSkin::no_style();
     skin.table_border_chars = &HELP_TABLE_BORDERS;
+    // Render backtick-enclosed text as dimmed, matching render_inline_formatting().
+    // This is needed for colorize_status_symbols() to find and recolor symbols
+    // like `●` that appear in table cells.
+    skin.inline_code = CompoundStyle::with_attr(Attribute::Dim);
     skin
 }
 

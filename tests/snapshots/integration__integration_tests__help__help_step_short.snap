@@ -17,6 +17,7 @@ info:
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
@@ -42,6 +43,8 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36mcopy-ignored[0m  Copy gitignored files to another worktree
   [1m[36meval[0m          [experimental] Evaluate a template expression
   [1m[36mfor-each[0m      [experimental] Run command in each worktree
+  [1m[36mpromote[0m       [experimental] Put a branch into the main worktree
+  [1m[36mprune[0m         [experimental] Remove worktrees merged into the default branch
   [1m[36mrelocate[0m      [experimental] Move worktrees to expected paths
 
 [1m[32mOptions:[0m

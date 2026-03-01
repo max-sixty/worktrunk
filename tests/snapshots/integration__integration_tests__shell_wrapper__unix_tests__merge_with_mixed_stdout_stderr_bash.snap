@@ -4,7 +4,7 @@ expression: "&output.combined"
 ---
 
 [36m◎[39m [36mRunning pre-merge [1mproject:check1[22m[39m
-[107m [0m [2m[0m[2m[34m_REPO_/mixed-output.sh[0m[2m check1 3
+[107m [0m [2m[0m[2m[34m./mixed-output.sh[0m[2m check1 3
 [check1] stdout line 1
 [check1] stderr line 1
 [check1] stdout line 2
@@ -14,7 +14,7 @@ expression: "&output.combined"
 [check1] stdout complete
 [check1] stderr complete
 [36m◎[39m [36mRunning pre-merge [1mproject:check2[22m[39m
-[107m [0m [2m[0m[2m[34m_REPO_/mixed-output.sh[0m[2m check2 3
+[107m [0m [2m[0m[2m[34m./mixed-output.sh[0m[2m check2 3
 [check2] stdout line 1
 [check2] stderr line 1
 [check2] stdout line 2

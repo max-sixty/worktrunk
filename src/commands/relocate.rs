@@ -244,7 +244,7 @@ pub fn validate_candidates(
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "Use <bright-black>--commit</> to auto-commit changes before relocating"
+                        "To auto-commit changes before relocating, use <bright-black>--commit</>"
                     ))
                 );
                 skipped += 1;
@@ -343,8 +343,12 @@ impl RelocationExecutor {
                     "{}",
                     progress_message(cformat!("Backing up {src} → {dest}"))
                 );
-                std::fs::rename(expected_path, &backup_path)
-                    .with_context(|| format!("Failed to backup {}", expected_path.display()))?;
+                std::fs::rename(expected_path, &backup_path).with_context(|| {
+                    format!(
+                        "Failed to backup {}",
+                        format_path_for_display(expected_path)
+                    )
+                })?;
             } else {
                 let blocked_path = format_path_for_display(expected_path);
                 let msg = cformat!("Skipping <bold>{branch}</> (target blocked: {blocked_path})");
@@ -352,7 +356,7 @@ impl RelocationExecutor {
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "Use <bright-black>--clobber</> to backup blocking paths"
+                        "To backup blocking paths, use <bright-black>--clobber</>"
                     ))
                 );
                 blocked.insert(i);

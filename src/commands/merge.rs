@@ -269,7 +269,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         };
         // Run hooks during merge removal (pass through verify flag)
         // Approval was handled at the gate (collect_merge_commands)
-        crate::output::handle_remove_output(&remove_result, true, verify)?;
+        crate::output::handle_remove_output(&remove_result, true, verify, false)?;
     } else {
         // Worktree preserved - show reason (priority: main worktree > on target > --no-remove flag)
         let message = if in_main {

@@ -15,10 +15,13 @@ info:
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -112,8 +115,8 @@ Worktrunk has two force flags for different situations:
 
           Flag          Scope                          When to use                         
    ─────────────────── ──────── ────────────────────────────────────────────────────────── 
-   --force (-f)        Worktree Worktree has untracked files (build artifacts, IDE config) 
-   --force-delete (-D) Branch   Branch has unmerged commits                                
+   [2m--force[0m ([2m-f[0m)        Worktree Worktree has untracked files (build artifacts, IDE config) 
+   [2m--force-delete[0m ([2m-D[0m) Branch   Branch has unmerged commits                                
 
   [2mwt remove feature --force       # Remove worktree with untracked files[0m
   [2mwt remove feature -D            # Delete unmerged branch[0m

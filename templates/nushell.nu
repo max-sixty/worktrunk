@@ -1,5 +1,40 @@
 # worktrunk shell integration for nushell
 
+# Tab completions: calls binary with COMPLETE=nu to get candidates.
+# Note: nushell's completion engine bypasses custom completers when the current
+# token starts with `-`, so flag completions (e.g. `wt switch --<TAB>`) don't
+# appear. Subcommand and value completions work. (nushell/nushell#14504)
+def "nu-complete {{ cmd }}" [context: string] {
+    let worktrunk_bin = if ($env.WORKTRUNK_BIN? | is-not-empty) {
+        $env.WORKTRUNK_BIN
+    } else {
+        let external = (which -a {{ cmd }} | where type == "external")
+        if ($external | is-empty) { return [] }
+        ($external | get 0.path)
+    }
+
+    let tokens = ($context | split row " " | where {|t| $t != "" })
+    let tokens = if ($context | str ends-with " ") {
+        $tokens | append ""
+    } else {
+        $tokens
+    }
+
+    let result = (do {
+        with-env { COMPLETE: nu } { ^$worktrunk_bin -- ...$tokens }
+    } | complete)
+    if $result.exit_code != 0 { return [] }
+
+    $result.stdout | lines | each {|line|
+        let parts = ($line | split row "\t")
+        if ($parts | length) >= 2 {
+            { value: ($parts | get 0), description: ($parts | get 1) }
+        } else {
+            { value: ($parts | get 0) }
+        }
+    }
+}
+
 # Override {{ cmd }} command with file-based directive passing.
 # Creates a temp file, passes path via WORKTRUNK_DIRECTIVE_FILE, executes directives after.
 # WORKTRUNK_BIN can override the binary path (for testing dev builds).
@@ -30,7 +65,7 @@
 #   Stderr flows to the terminal in real-time. The binary sees non-TTY stdout
 #   and uses buffered mode, but commands other than `list` don't benefit from
 #   progressive rendering anyway.
-def --env --wrapped {{ cmd }} [...args: string] {
+def --env --wrapped {{ cmd }} [...args: string@"nu-complete {{ cmd }}"] {
     let worktrunk_bin = if ($env.WORKTRUNK_BIN? | is-not-empty) {
         $env.WORKTRUNK_BIN
     } else {

@@ -47,7 +47,8 @@ exit_code: 0
 
 [36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
 [33m▲[39m [33mProject config uses deprecated config sections: [commit-generation] → [commit.generation][39m
-[2m↳[22m [2mRun [90mwt config update[39m to apply[22m
+[2m↳[22m [2mTo apply:[22m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config update
 [107m [0m [1mdiff --git a_REPO_/.config/wt.toml b_REPO_/.config/wt.toml.new[m
 [107m [0m [1mindex 074c30f..bcaf404 100644[m
 [107m [0m [1m--- a_REPO_/.config/wt.toml[m

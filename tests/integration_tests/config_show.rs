@@ -1,6 +1,6 @@
 use crate::common::{
-    TestRepo, repo, set_temp_home_env, setup_snapshot_settings, setup_snapshot_settings_with_home,
-    temp_home, wt_command,
+    TestRepo, repo, set_temp_home_env, set_xdg_config_path, setup_snapshot_settings,
+    setup_snapshot_settings_with_home, temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -49,6 +49,7 @@ server = "npm run dev"
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -76,6 +77,7 @@ fn test_config_show_no_project_config(mut repo: TestRepo, temp_home: TempDir) {
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -120,6 +122,7 @@ command = "company-llm-tool"
         cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -374,6 +377,7 @@ fn test_config_show_system_config_hint_under_user_config(repo: TestRepo, temp_ho
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
     set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
     cmd.env_remove("WORKTRUNK_SYSTEM_CONFIG_PATH");
     cmd.arg("config").arg("show").current_dir(repo.root_path());
 
@@ -489,6 +493,7 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
         cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -517,6 +522,7 @@ fn test_config_show_invalid_system_config(mut repo: TestRepo, temp_home: TempDir
         cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -575,6 +581,7 @@ fn test_config_show_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(temp_dir.path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -608,6 +615,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         cmd.env("WORKTRUNK_TEST_COMPINIT_MISSING", "1");
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -648,6 +656,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
         cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1"); // Bypass zsh subprocess check
 
         assert_cmd_snapshot!(cmd);
@@ -687,6 +696,7 @@ fn test_config_show_fish_with_completions(mut repo: TestRepo, temp_home: TempDir
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -722,6 +732,7 @@ fn test_config_show_fish_without_completions(mut repo: TestRepo, temp_home: Temp
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -752,6 +763,38 @@ fn test_config_show_fish_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test that config show displays "Outdated" when nushell wrapper exists but has different code
+#[rstest]
+fn test_config_show_nushell_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    // Create nushell vendor/autoload directory with an outdated wt.nu
+    let autoload = temp_home.path().join(".config/nushell/vendor/autoload");
+    fs::create_dir_all(&autoload).unwrap();
+    fs::write(
+        autoload.join("wt.nu"),
+        "# worktrunk shell integration for nushell\ndef --wrapped wt [...args] {\n    command wt-old ...$args\n}\n",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -786,6 +829,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
         cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1"); // Bypass zsh subprocess check (unreliable on CI)
 
         assert_cmd_snapshot!(cmd);
@@ -832,6 +876,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         );
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         let output = cmd.output().unwrap();
         assert!(output.status.success());
@@ -880,6 +925,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         );
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         let output = cmd.output().unwrap();
         assert!(output.status.success());
@@ -921,6 +967,7 @@ fn test_config_show_warns_unknown_project_keys(mut repo: TestRepo, temp_home: Te
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -947,6 +994,7 @@ fn test_config_show_warns_unknown_user_keys(mut repo: TestRepo, temp_home: TempD
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1018,6 +1066,7 @@ fn test_config_show_suggests_user_config_for_commit_generation(
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1045,6 +1094,7 @@ fn test_config_show_suggests_project_config_for_ci(mut repo: TestRepo, temp_home
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1070,6 +1120,7 @@ fn test_config_show_invalid_user_toml(mut repo: TestRepo, temp_home: TempDir) {
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1100,6 +1151,7 @@ fn test_config_show_invalid_project_toml(mut repo: TestRepo, temp_home: TempDir)
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1125,8 +1177,6 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
-        // Override WORKTRUNK_CONFIG_PATH to point to our test config
-        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
         // Inject current version for deterministic version check output
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.arg("config")
@@ -1134,6 +1184,7 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
             .arg("--full")
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1163,8 +1214,6 @@ command = "nonexistent-llm-command-12345 -m test-model"
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
-        // Override WORKTRUNK_CONFIG_PATH to point to our test config
-        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
         // Inject current version for deterministic version check output
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.arg("config")
@@ -1172,6 +1221,7 @@ command = "nonexistent-llm-command-12345 -m test-model"
             .arg("--full")
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1197,7 +1247,6 @@ fn test_config_show_full_update_available(mut repo: TestRepo, temp_home: TempDir
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
-        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
         // Inject a higher version to trigger update-available message
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", "99.0.0");
         cmd.arg("config")
@@ -1205,6 +1254,7 @@ fn test_config_show_full_update_available(mut repo: TestRepo, temp_home: TempDir
             .arg("--full")
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1228,7 +1278,6 @@ fn test_config_show_full_version_check_unavailable(mut repo: TestRepo, temp_home
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
-        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
         // Simulate a fetch failure
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", "error");
         cmd.arg("config")
@@ -1236,6 +1285,7 @@ fn test_config_show_full_version_check_unavailable(mut repo: TestRepo, temp_home
             .arg("--full")
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1274,6 +1324,7 @@ fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1312,6 +1363,7 @@ fn test_config_show_gitlab_remote(mut repo: TestRepo, temp_home: TempDir) {
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1344,6 +1396,7 @@ fn test_config_show_empty_project_config(mut repo: TestRepo, temp_home: TempDir)
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1376,6 +1429,7 @@ fn test_config_show_whitespace_only_project_config(mut repo: TestRepo, temp_home
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1397,6 +1451,7 @@ fn test_config_show_no_user_config(mut repo: TestRepo, temp_home: TempDir) {
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1433,6 +1488,7 @@ alias wt="git worktree"
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
         cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
 
         assert_cmd_snapshot!(cmd);
@@ -1465,6 +1521,7 @@ post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
         repo.configure_wt_cmd(&mut cmd);
         cmd.arg("list").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_CONFIG_PATH", config_path);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1513,6 +1570,7 @@ post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
         repo.configure_wt_cmd(&mut cmd);
         cmd.args(["-v", "list"]).current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_CONFIG_PATH", config_path);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1860,6 +1918,7 @@ fn test_user_config_deprecated_variables_deduplication(repo: TestRepo, temp_home
         let mut cmd = repo.wt_command();
         cmd.arg("list").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_CONFIG_PATH", &user_config_path);
         let output = cmd.output().unwrap();
         assert!(
             output.status.success(),
@@ -1880,6 +1939,7 @@ fn test_user_config_deprecated_variables_deduplication(repo: TestRepo, temp_home
         let mut cmd = repo.wt_command();
         cmd.arg("list").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_CONFIG_PATH", &user_config_path);
         let output = cmd.output().unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -1928,6 +1988,7 @@ fn test_config_show_shell_integration_active(mut repo: TestRepo, temp_home: Temp
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
         // Set WORKTRUNK_DIRECTIVE_FILE to simulate shell integration being active
         cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
 
@@ -1960,6 +2021,7 @@ fn test_config_show_plugin_installed(mut repo: TestRepo, temp_home: TempDir) {
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -1989,6 +2051,7 @@ fn test_config_show_claude_available_plugin_not_installed(mut repo: TestRepo, te
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2020,6 +2083,7 @@ fn test_config_show_statusline_configured(mut repo: TestRepo, temp_home: TempDir
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2069,6 +2133,7 @@ fn test_config_show_powershell_detected_via_psmodulepath(mut repo: TestRepo, tem
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
         // Enable PowerShell scanning so the profile above is detected
         cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "1");
         // Ensure SHELL is NOT set (already removed by configure_cli_command)
@@ -2106,6 +2171,7 @@ args = ["-m", "haiku"]
         repo.configure_wt_cmd(&mut cmd);
         cmd.arg("list").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_CONFIG_PATH", config_path);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2163,6 +2229,7 @@ command = "llm -m gpt-4"
         repo.configure_wt_cmd(&mut cmd);
         cmd.arg("list").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_CONFIG_PATH", config_path);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2206,6 +2273,7 @@ post-create = "ln -sf {{ repo_root }}/node_modules"
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2266,6 +2334,7 @@ fn test_config_show_always_regenerates_migration_file(mut repo: TestRepo, temp_h
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2325,6 +2394,7 @@ fn test_config_show_from_linked_worktree_shows_main_worktree_hint(
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(&feature_path);
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2359,6 +2429,7 @@ command = "llm -m gpt-4"
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2394,6 +2465,7 @@ approved-commands = ["npm install", "npm test"]
         repo.configure_wt_cmd(&mut cmd);
         cmd.arg("list").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_CONFIG_PATH", config_path);
 
         assert_cmd_snapshot!(cmd);
     });

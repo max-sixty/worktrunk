@@ -196,12 +196,12 @@ wt step diff | delta
 Equivalent to:
 
 ```console
-GIT_INDEX_FILE=/tmp/idx git read-tree --empty
+cp "$(git rev-parse --git-dir)/index" /tmp/idx
 GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
 GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
 ```
 
-`git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a temporary empty index so the real one is never modified.
+`git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a copy of the real index so the original is never modified.
 "#
     )]
     Diff {
@@ -415,6 +415,107 @@ Note: This command is experimental and may change in future versions.
         /// Command template (see --help for all variables)
         #[arg(required = true, last = true, num_args = 1..)]
         args: Vec<String>,
+    },
+
+    /// \[experimental\] Put a branch into the main worktree
+    ///
+    /// The displaced branch moves to the promoted branch's worktree.
+    #[command(
+        after_long_help = r#"**Experimental.** Use promote for temporary testing when the main worktree has special significance (Docker Compose, IDE configs, heavy build artifacts anchored to project root), and hooks & tools aren't yet set up to run on arbitrary worktrees. The idiomatic Worktrunk workflow does not use `promote`; instead each worktree has a full environment. `promote` is the only Worktrunk command which changes a branch in an existing worktree.
+
+## Example
+
+```console
+# from ~/project (main worktree)
+$ wt step promote feature
+```
+
+Before:
+
+```
+  Branch   Path
+@ main     ~/project
++ feature  ~/project.feature
+```
+
+After:
+
+```
+  Branch   Path
+@ feature  ~/project
++ main     ~/project.feature
+```
+
+To restore: `wt step promote main` from anywhere, or just `wt step promote` from the main worktree.
+
+Without an argument, promotes the current branch — or restores the default branch if run from the main worktree.
+
+## Requirements
+
+- Both worktrees must be clean
+- The branch must have an existing worktree
+
+## Gitignored files
+
+Gitignored files are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. See [copy-ignored](/step/#copy-ignored) for filtering with `.worktreeinclude`.
+"#
+    )]
+    Promote {
+        /// Branch to promote to main worktree
+        ///
+        /// Defaults to current branch, or default branch from main worktree.
+        #[arg(add = crate::completion::worktree_only_completer())]
+        branch: Option<String>,
+    },
+
+    /// \[experimental\] Remove worktrees merged into the default branch
+    #[command(
+        after_long_help = r#"Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
+
+In `wt list`, candidates show `_` (same commit) or `⊂` (content integrated). Run `--dry-run` to preview. See `wt remove --help` for the full integration criteria.
+
+Locked worktrees and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal.
+
+## Min-age guard
+
+Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
+
+```console
+wt step prune --min-age=0s     # no age guard
+wt step prune --min-age=2d     # skip worktrees younger than 2 days
+```
+
+## Examples
+
+Preview what would be removed:
+
+```console
+wt step prune --dry-run
+```
+
+Remove all merged worktrees:
+
+```console
+wt step prune
+```
+"#
+    )]
+    Prune {
+        /// Show what would be removed
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Skip approval prompts
+        #[arg(short, long)]
+        yes: bool,
+
+        /// Skip worktrees younger than this
+        #[arg(long, default_value = "1h")]
+        min_age: String,
+
+        /// Run removal in foreground (block until complete)
+        #[arg(long)]
+        foreground: bool,
     },
 
     /// \[experimental\] Move worktrees to expected paths

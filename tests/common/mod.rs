@@ -653,9 +653,10 @@ pub fn configure_completion_invocation_for_shell(cmd: &mut Command, words: &[&st
             let index = words.len().saturating_sub(1);
             cmd.env("_CLAP_COMPLETE_INDEX", index.to_string());
         }
-        "fish" => {
-            // Fish doesn't set _CLAP_COMPLETE_INDEX - it appends the current token
-            // as the last argument, so the completion handler uses args.len() - 1
+        "fish" | "nu" => {
+            // Fish and Nushell don't set _CLAP_COMPLETE_INDEX - they append the
+            // current token as the last argument, so the completion handler uses
+            // args.len() - 1
         }
         _ => {}
     }
@@ -991,6 +992,17 @@ pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
     // Windows: etcetera uses APPDATA for config_dir() (AppData\Roaming)
     // Map it to .config to match Unix XDG_CONFIG_HOME behavior
     cmd.env("APPDATA", home.join(".config"));
+}
+
+/// Override `WORKTRUNK_CONFIG_PATH` to point to the XDG-derived user config path
+/// under `home`. Use this after `set_temp_home_env` in tests that write user
+/// config at the XDG path and need `config create`/`config show` to find it.
+pub fn set_xdg_config_path(cmd: &mut Command, home: &Path) {
+    let home = canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    cmd.env(
+        "WORKTRUNK_CONFIG_PATH",
+        home.join(".config").join("worktrunk").join("config.toml"),
+    );
 }
 
 /// Check that a git command succeeded, panicking with diagnostics if not.

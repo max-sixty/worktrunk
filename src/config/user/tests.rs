@@ -26,6 +26,32 @@ fn test_repo() -> TestRepo {
 }
 
 #[test]
+fn test_default_config_path_returns_platform_path() {
+    // default_config_path() returns the platform-specific path without
+    // CLI or env var overrides. Verify it returns a valid path.
+    let path = default_config_path();
+    assert!(path.is_some(), "default_config_path should return Some");
+    let path = path.unwrap();
+    assert!(
+        path.ends_with("worktrunk/config.toml") || path.ends_with("worktrunk\\config.toml"),
+        "Expected path ending in worktrunk/config.toml, got: {path:?}"
+    );
+}
+
+#[test]
+fn test_get_config_path_falls_through_to_default() {
+    // When no CLI override or WORKTRUNK_CONFIG_PATH env var is set,
+    // get_config_path() should fall through to default_config_path().
+    // This also verifies both functions return the same path.
+    let default = default_config_path().unwrap();
+    let resolved = get_config_path().unwrap();
+    assert_eq!(
+        resolved, default,
+        "get_config_path() should match default_config_path() when no overrides are set"
+    );
+}
+
+#[test]
 fn test_find_unknown_keys_empty() {
     // Valid config with no unknown keys
     let content = r#"

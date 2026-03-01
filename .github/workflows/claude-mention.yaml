@@ -9,6 +9,10 @@ on:
   pull_request_review_comment:
     types: [created, edited]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: true
+
 # Consistent with ci.yaml for cache compatibility
 env:
   CARGO_TERM_COLOR: always
@@ -18,15 +22,29 @@ env:
 
 jobs:
   claude:
-    # Only run when body/comment contains @claude.
+    # Two triggers:
+    # 1. @worktrunk-bot mentions — explicit requests on any issue/PR.
+    # 2. Bot-engaged PRs/issues — any non-bot comment on a PR or issue
+    #    where the bot has authored, reviewed, or commented. The verify step
+    #    checks engagement via API and skips the job if the bot has not
+    #    participated. Formal review submissions
+    #    (pull_request_review) go to claude-review instead.
+    #
+    # Runs in agent mode (prompt). The prompt tells Claude what happened
+    # and where to look; Claude reads the full context itself via gh/skills.
+    #
     # Note: secrets cannot be used in job-level `if:` (actions/runner#520) —
     # doing so causes GitHub to fail the workflow on push validation. For review
     # comments on fork PRs (which don't receive secrets), we detect forks via
     # github.event context instead. Use a Conversation tab comment for fork PRs.
     if: |
-      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude')) ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && github.event.pull_request.head.repo.full_name == github.repository)
+      (github.event_name == 'issues' &&
+        contains(github.event.issue.body, '@worktrunk-bot')) ||
+      (github.event_name == 'issue_comment' &&
+        github.event.comment.user.login != 'worktrunk-bot') ||
+      (github.event_name == 'pull_request_review_comment' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.comment.user.login != 'worktrunk-bot')
     runs-on: ubuntu-24.04
     permissions:
       contents: write # Allow pushing commits
@@ -35,7 +53,54 @@ jobs:
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
     steps:
+      - name: 🔍 Verify bot engagement
+        id: verify
+        continue-on-error: true
+        if: "github.event.comment && !contains(github.event.comment.body || '', '@worktrunk-bot')"
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "issue_comment" ]; then
+            ISSUE_NUMBER="${{ github.event.issue.number }}"
+
+            if [ -z "${{ github.event.issue.pull_request.url }}" ]; then
+              # Plain issue — check if bot has commented
+              BOT_COMMENTS=$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+                --jq '[.[] | select(.user.login == "worktrunk-bot")] | length')
+              if [ "$BOT_COMMENTS" -gt "0" ]; then
+                exit 0
+              fi
+              echo "::notice::Bot has not engaged with issue #$ISSUE_NUMBER — skipping"
+              exit 1
+            fi
+
+            PR_NUMBER="$ISSUE_NUMBER"
+          else
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+          fi
+
+          PR_AUTHOR=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')
+          if [ "$PR_AUTHOR" = "worktrunk-bot" ]; then
+            exit 0
+          fi
+
+          BOT_REVIEWS=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+            --jq '[.[] | select(.user.login == "worktrunk-bot")] | length')
+          if [ "$BOT_REVIEWS" -gt "0" ]; then
+            exit 0
+          fi
+
+          BOT_COMMENTS=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq '[.[] | select(.user.login == "worktrunk-bot")] | length')
+          if [ "$BOT_COMMENTS" -gt "0" ]; then
+            exit 0
+          fi
+
+          echo "::notice::Bot has not engaged with PR #$PR_NUMBER — skipping"
+          exit 1
+        env:
+          GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
       - name: 📂 Checkout code
+        if: steps.verify.outcome != 'failure'
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -48,9 +113,45 @@ jobs:
           git config --global user.name "Claude Code"
           git config --global user.email "claude@anthropic.com"
 
-      - name: 📌 Check out PR branch
-        if: github.event.issue.pull_request
-        run: gh pr checkout ${{ github.event.issue.number }}
+      - name: 👀 React to comment
+        # Only react when explicitly mentioned. For bot-engaged conversations
+        # without a mention, the bot may exit silently — adding 👀 would
+        # create a false expectation of a response.
+        if: >-
+          steps.verify.outcome != 'failure'
+          && github.event.comment
+          && contains(github.event.comment.body, '@worktrunk-bot')
+        run: |
+          # Try issue comment endpoint first, then review comment endpoint.
+          # One will match depending on the comment type.
+          gh api "repos/$REPO/issues/comments/$COMMENT_ID/reactions" -f content=eyes 2>/dev/null || \
+          gh api "repos/$REPO/pulls/comments/$COMMENT_ID/reactions" -f content=eyes 2>/dev/null || true
+        env:
+          REPO: ${{ github.repository }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
+      - name: 📌 Check out PR branch (conversation comment)
+        if: steps.verify.outcome != 'failure' && github.event.issue.pull_request
+        run: |
+          PR_STATE=$(gh pr view ${{ github.event.issue.number }} --json state --jq '.state')
+          if [ "$PR_STATE" = "OPEN" ]; then
+            gh pr checkout ${{ github.event.issue.number }}
+          else
+            echo "::warning::PR is $PR_STATE — staying on default branch"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
+      - name: 📌 Check out PR branch (review comment)
+        if: steps.verify.outcome != 'failure' && github.event_name == 'pull_request_review_comment'
+        run: |
+          PR_STATE=$(gh pr view ${{ github.event.pull_request.number }} --json state --jq '.state')
+          if [ "$PR_STATE" = "OPEN" ]; then
+            gh pr checkout ${{ github.event.pull_request.number }}
+          else
+            echo "::warning::PR is $PR_STATE — staying on default branch"
+          fi
         env:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
@@ -58,11 +159,14 @@ jobs:
         uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-insta
+          version: "=1.46.3"
 
       - name: Install cargo-nextest
         uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-nextest
+          # Pin: 0.9.129 requires rustc 1.91, we use 1.90 (rust-toolchain.toml).
+          version: "=0.9.128"
 
       - name: 💰 Cache
         uses: Swatinem/rust-cache@v2
@@ -76,16 +180,40 @@ jobs:
           sudo apt-get install -y zsh fish
 
       - name: 🤖 Run Claude Code
+        if: steps.verify.outcome != 'failure'
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Use bot token so pushed commits trigger CI workflows
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          allowed_non_write_users: '*'
 
-          # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |
             actions: read
+
+          # Always agent mode. The prompt tells Claude what happened; the
+          # /running-in-ci skill instructs it to read full context via gh.
+          #
+          # Three prompt paths:
+          # 1. Explicit @worktrunk-bot mention in a comment → always respond
+          # 2. Comment on bot-engaged issue/PR (no mention) → only if helpful
+          # 3. Issue opened/edited with @worktrunk-bot mention → always respond
+          prompt: >-
+            ${{ github.event.comment.html_url
+              && (contains(github.event.comment.body, '@worktrunk-bot')
+                && format(
+                  'You were mentioned in a comment ({0}). Read the full issue or PR (description, diff, recent comments, CI status) and respond. If they''re requesting changes, make the changes, commit, and push. If they''re asking a question, answer it.',
+                  github.event.comment.html_url
+                )
+                || format(
+                  'A user commented on an issue/PR where you previously participated ({0}). Read the full context (description, recent comments, CI status). Only respond if the comment is directed at you, asks a question you can help with, or requests changes you can make. If the conversation is between humans and doesn''t need your input, exit silently without commenting. Note: if you are the author of the PR or issue, commenters are probably expecting the author to engage — lean toward responding.',
+                  github.event.comment.html_url
+                ))
+              || format(
+                'An issue was opened or updated with a mention of you ({0}). Read it and respond.',
+                github.event.issue.html_url
+              ) }}
 
           claude_args: |
             --model opus
@@ -94,7 +222,7 @@ jobs:
 
       - name: 📋 Upload Claude Code session logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-session-logs
           path: /home/runner/.claude/projects/

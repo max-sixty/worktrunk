@@ -1359,6 +1359,41 @@ fn test_docs_quickstart_examples_are_in_sync() {
     }
 }
 
+/// Update or insert the `description` field in TOML frontmatter.
+///
+/// Handles three cases:
+/// - Description field exists → update it
+/// - No description field → insert after title line
+/// - No frontmatter → return content unchanged
+fn sync_frontmatter_description(content: &str, description: &str) -> String {
+    static DESC_PATTERN: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"(?m)^description\s*=\s*"[^"]*""#).unwrap());
+
+    let new_field = format!("description = \"{}\"", description.replace('"', "\\\""));
+
+    // Check if we're in a TOML frontmatter block
+    if !content.starts_with("+++\n") {
+        return content.to_string();
+    }
+
+    if DESC_PATTERN.is_match(content) {
+        // Replace existing description
+        DESC_PATTERN
+            .replace(content, new_field.as_str())
+            .to_string()
+    } else {
+        // Insert after title line
+        static TITLE_PATTERN: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r#"(?m)^(title\s*=\s*"[^"]*")\n"#).unwrap());
+
+        TITLE_PATTERN
+            .replace(content, |caps: &regex::Captures| {
+                format!("{}\n{}\n", &caps[1], new_field)
+            })
+            .to_string()
+    }
+}
+
 /// Command pages generated via `wt <cmd> --help-page`
 /// Each page preserves its frontmatter and replaces the AUTO-GENERATED marker region.
 /// Note: `select` is excluded because it's a deprecated hidden alias for `wt switch`.
@@ -1436,8 +1471,25 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
             }
         };
 
+        // Get meta description from --help-description
+        let desc_output = wt_command()
+            .args([cmd, "--help-description"])
+            .current_dir(project_root)
+            .output()
+            .expect("Failed to run wt --help-description");
+        let description = String::from_utf8_lossy(&desc_output.stdout)
+            .trim()
+            .to_string();
+
         let current = fs::read_to_string(&doc_path)
             .unwrap_or_else(|e| panic!("Failed to read {}: {}", doc_path.display(), e));
+
+        // Update frontmatter description field
+        let new_content = if !description.is_empty() {
+            sync_frontmatter_description(&current, &description)
+        } else {
+            current.clone()
+        };
 
         // Find the help-page marker region using mirrored END tag
         // Pattern: <!-- ⚠️ AUTO-GENERATED from `wt cmd --help-page` ... --> ... <!-- END AUTO-GENERATED from `wt cmd --help-page` -->
@@ -1446,9 +1498,9 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
             cmd, cmd
         )).unwrap();
 
-        let new_content = if let Some(m) = marker_pattern.find(&current) {
-            let before = &current[..m.start()];
-            let after = &current[m.end()..];
+        let new_content = if let Some(m) = marker_pattern.find(&new_content) {
+            let before = &new_content[..m.start()];
+            let after = &new_content[m.end()..];
             format!("{}{}{}", before, generated.trim(), after)
         } else {
             errors.push(format!(

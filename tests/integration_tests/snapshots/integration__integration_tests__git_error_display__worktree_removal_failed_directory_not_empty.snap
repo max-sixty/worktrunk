@@ -1,0 +1,8 @@
+---
+source: tests/integration_tests/git_error_display.rs
+expression: err.to_string()
+---
+[31m✗[39m [31mFailed to remove worktree for [1mfeature-x[22m @ [1m/tmp/repo.feature-x[22m[39m
+[107m [0m error: failed to delete '/tmp/repo.feature-x': Directory not empty
+[2m↳[22m [2mRemaining in directory: [90m.vite/, node_modules/, target/[39m[22m
+[2m↳[22m [2mA background process may be writing files; try [90mwt remove[39m (without --foreground)[22m

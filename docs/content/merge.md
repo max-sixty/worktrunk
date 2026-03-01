@@ -1,5 +1,6 @@
 +++
 title = "wt merge"
+description = "Merge current branch into target. Squash & rebase, fast-forward target, remove the worktree."
 weight = 13
 
 [extra]

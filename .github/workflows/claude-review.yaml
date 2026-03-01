@@ -1,30 +1,36 @@
 name: claude-review
 # Runner versions pinned; see ci.yaml header comment for rationale.
 
-# Automatic code review on PRs from external contributors.
-# Uses pull_request_target so secrets are available for fork PRs.
+# Two modes in one job:
+# - pull_request_target: automatic code review on non-draft PRs.
+# - pull_request_review: respond to formal reviews on bot-authored PRs.
 on:
   pull_request_target:
     types: [opened, synchronize, ready_for_review, reopened]
+  pull_request_review:
+    types: [submitted]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
   CLICOLOR_FORCE: 1
+  RUSTFLAGS: "-C debuginfo=0"
+  RUSTDOCFLAGS: "-Dwarnings"
 
 jobs:
-  review:
-    # Skip draft PRs and bot PRs (e.g. Dependabot)
-    # To skip PRs from repo members, uncomment the author_association conditions:
-    # github.event.pull_request.author_association != 'OWNER' &&
-    # github.event.pull_request.author_association != 'MEMBER' &&
-    if: >-
-      github.event.pull_request.draft == false &&
-      github.event.pull_request.user.type != 'Bot'
+  claude:
+    if: |
+      (github.event_name == 'pull_request_target' &&
+        github.event.pull_request.draft == false) ||
+      (github.event_name == 'pull_request_review' &&
+        github.event.pull_request.user.login == 'worktrunk-bot' &&
+        github.event.review.user.login != 'worktrunk-bot' &&
+        (github.event.review.state != 'approved' || github.event.review.body))
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     permissions:
       contents: write
       pull-requests: write
@@ -32,29 +38,73 @@ jobs:
       id-token: write
       actions: read
     steps:
-      - name: 📂 Checkout code
+      - name: 📂 Checkout merge commit (initial review)
+        if: github.event_name == 'pull_request_target'
         uses: actions/checkout@v6
         with:
           ref: refs/pull/${{ github.event.pull_request.number }}/merge
           fetch-depth: 0
+          token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
+      - name: 📂 Checkout code (review response)
+        if: github.event_name == 'pull_request_review'
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: 🔧 Configure git for Claude
         run: |
           git config --global user.name "Claude Code"
           git config --global user.email "claude@anthropic.com"
 
-      - name: 🤖 Review PR with Claude
+      - name: 📌 Check out PR branch
+        if: github.event_name == 'pull_request_review'
+        run: gh pr checkout ${{ github.event.pull_request.number }}
+        env:
+          GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
+      - name: Install cargo-insta
+        if: github.event_name == 'pull_request_review'
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-insta
+          version: "=1.46.3"
+
+      - name: Install cargo-nextest
+        if: github.event_name == 'pull_request_review'
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-nextest
+          # Pin: 0.9.129 requires rustc 1.91, we use 1.90 (rust-toolchain.toml).
+          version: "=0.9.128"
+
+      - name: 💰 Cache
+        if: github.event_name == 'pull_request_review'
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ hashFiles('Cargo.lock') }}
+          save-if: false
+
+      - name: Install shells (zsh, fish)
+        if: github.event_name == 'pull_request_review'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh fish
+
+      - name: 🤖 Run Claude Code
+        id: claude
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.WORKTRUNK_REVIEW_TOKEN }}
+          github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          allowed_bots: "*"
+          allowed_non_write_users: "*"
           additional_permissions: |
             actions: read
-          # TODO: sticky comment stopped appearing after switching to WORKTRUNK_REVIEW_TOKEN PAT.
-          # Bot now puts feedback in review bodies instead of stdout, so this may be a no-op.
-          use_sticky_comment: true
-          prompt: |
-            Use /pr-review ${{ github.event.pull_request.number }}
+          use_sticky_comment: ${{ github.event_name == 'pull_request_target' }}
+          prompt: ${{ github.event_name == 'pull_request_target' && format('Use /pr-review {0}', github.event.pull_request.number) || '' }}
           claude_args: |
             --model opus
             --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill
@@ -62,7 +112,7 @@ jobs:
 
       - name: 📋 Upload Claude Code session logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-session-logs
           path: /home/runner/.claude/projects/

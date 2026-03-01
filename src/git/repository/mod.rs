@@ -415,7 +415,7 @@ impl Repository {
     pub fn repo_path(&self) -> &Path {
         self.cache.repo_path.get_or_init(|| {
             // Bare repos have no worktree — the git directory IS the repo
-            if self.is_bare() {
+            if self.is_bare().unwrap_or(false) {
                 return self.git_common_dir.clone();
             }
 
@@ -446,19 +446,23 @@ impl Repository {
     /// Result is cached in the repository's shared cache (same for all clones).
     /// Runs `git rev-parse --is-bare-repository` from git_common_dir to correctly
     /// detect bare repos even when called from a linked worktree.
-    pub fn is_bare(&self) -> bool {
-        *self.cache.is_bare.get_or_init(|| {
-            // Run from git_common_dir, not discovery_path. This is important for
-            // worktrees of bare repos: running from the worktree returns false,
-            // but running from the bare repo returns true.
-            let output = Cmd::new("git")
-                .args(["rev-parse", "--is-bare-repository"])
-                .current_dir(&self.git_common_dir)
-                .context(path_to_logging_context(&self.git_common_dir))
-                .run()
-                .expect("git rev-parse failed on valid repo");
-            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
-        })
+    pub fn is_bare(&self) -> anyhow::Result<bool> {
+        self.cache
+            .is_bare
+            .get_or_try_init(|| {
+                // Run from git_common_dir, not discovery_path. This is important for
+                // worktrees of bare repos: running from the worktree returns false,
+                // but running from the bare repo returns true.
+                let output = Cmd::new("git")
+                    .args(["rev-parse", "--is-bare-repository"])
+                    .current_dir(&self.git_common_dir)
+                    .context(path_to_logging_context(&self.git_common_dir))
+                    .run()
+                    .context("failed to check if repository is bare")?;
+                Ok(output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).trim() == "true")
+            })
+            .copied()
     }
 
     /// Get the sparse checkout paths for this repository.

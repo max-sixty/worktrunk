@@ -25,9 +25,21 @@
 //! let cmd = suggest_command("remove", &["my feature"], &[]);
 //! assert_eq!(cmd, "wt remove 'my feature'");
 //! ```
+//!
+//! For commands targeting a specific worktree directory, use
+//! [`suggest_command_in_dir`]:
+//!
+//! ```
+//! use std::path::Path;
+//! use worktrunk::styling::suggest_command_in_dir;
+//!
+//! let cmd = suggest_command_in_dir(Path::new("/tmp/repo"), "config", &["update"], &[]);
+//! assert_eq!(cmd, "wt -C /tmp/repo config update");
+//! ```
 
 use shell_escape::escape;
 use std::borrow::Cow;
+use std::path::Path;
 
 /// Build a suggested command string for hints.
 ///
@@ -48,17 +60,38 @@ use std::borrow::Cow;
 ///
 /// If any positional argument starts with `-`, a `--` separator is inserted
 /// before it to prevent shell/clap from interpreting it as a flag.
-///
-/// # Design note: Global flags
-///
-/// Intentionally excludes global flags like `-C` (working directory).
-/// Suggestions show the operation, not the invocation context.
-/// Users may have changed directory since the error occurred.
-///
-/// If we later find users frequently need `-C` in suggestions (e.g., scripting
-/// contexts), we could add an optional `global_flags` parameter.
 pub fn suggest_command(subcommand: &str, args: &[&str], flags: &[&str]) -> String {
-    let mut parts = vec!["wt".to_string(), subcommand.to_string()];
+    format_command(None, subcommand, args, flags)
+}
+
+/// Like [`suggest_command`], but prepends `-C <path>` for commands targeting a
+/// specific worktree directory.
+///
+/// The path is formatted with tilde shortening when safe (no escaping needed)
+/// and falls back to a quoted absolute path otherwise.
+pub fn suggest_command_in_dir(
+    working_dir: &Path,
+    subcommand: &str,
+    args: &[&str],
+    flags: &[&str],
+) -> String {
+    format_command(Some(working_dir), subcommand, args, flags)
+}
+
+fn format_command(
+    working_dir: Option<&Path>,
+    subcommand: &str,
+    args: &[&str],
+    flags: &[&str],
+) -> String {
+    let mut parts = vec!["wt".to_string()];
+
+    if let Some(dir) = working_dir {
+        parts.push("-C".to_string());
+        parts.push(crate::path::format_path_for_display(dir));
+    }
+
+    parts.push(subcommand.to_string());
 
     // Flags go before positional args (and before any -- separator)
     // so they're always parsed as flags, not positional arguments.
@@ -182,5 +215,29 @@ mod tests {
     #[test]
     fn test_flag_only() {
         assert_eq!(suggest_command("list", &[], &["--full"]), "wt list --full");
+    }
+
+    #[test]
+    fn test_in_dir_simple_path() {
+        assert_eq!(
+            suggest_command_in_dir(Path::new("/tmp/repo"), "config", &["update"], &[]),
+            "wt -C /tmp/repo config update"
+        );
+    }
+
+    #[test]
+    fn test_in_dir_path_with_spaces() {
+        assert_eq!(
+            suggest_command_in_dir(Path::new("/tmp/my repo"), "config", &["update"], &[]),
+            "wt -C '/tmp/my repo' config update"
+        );
+    }
+
+    #[test]
+    fn test_in_dir_with_flags_and_args() {
+        assert_eq!(
+            suggest_command_in_dir(Path::new("/tmp/repo"), "remove", &["feature"], &["--force"]),
+            "wt -C /tmp/repo remove --force feature"
+        );
     }
 }

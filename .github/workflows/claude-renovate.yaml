@@ -73,6 +73,13 @@ jobs:
                - We pin a specific nightly for cargo-udeps (check the actual version in ci.yaml)
                - Periodically update to a recent nightly that works with cargo-udeps
 
+            4. **Pinned cargo tool versions**:
+               - All cargo tools are pinned with `version: "=X.Y.Z"` in workflow files to prevent surprise breakage from MSRV bumps
+               - Check if newer versions are available for: cargo-nextest, cargo-insta, lychee, worktrunk, cargo-msrv, cargo-udeps, cargo-llvm-cov
+               - To check: look up the tool's MSRV on crates.io or its repo and compare against the channel in `rust-toolchain.toml`
+               - Only update the pin if the new version is compatible with our rustc
+               - Update pins in ALL workflow files that use the tool (ci.yaml and claude-*.yaml)
+
             ## How to check
 
             - Use `gh api` and web searches to find current versions
@@ -114,7 +121,7 @@ jobs:
 
       - name: 📋 Upload Claude Code session logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-session-logs
           path: /home/runner/.claude/projects/

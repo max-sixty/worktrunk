@@ -1,5 +1,6 @@
 +++
 title = "wt config"
+description = "Manage user & project configs. Includes shell integration, hooks, and saved state."
 weight = 15
 
 [extra]

@@ -1,5 +1,6 @@
 +++
 title = "Tips & Patterns"
+description = "Practical recipes for Worktrunk workflows: aliases, shell integration, Zellij layouts, and parallel agent patterns."
 weight = 24
 
 [extra]

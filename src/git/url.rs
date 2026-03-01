@@ -12,7 +12,9 @@
 /// - `git://<host>/<namespace>/<repo>.git`
 /// - `git@<host>:<namespace>/<repo>.git`
 /// - `ssh://git@<host>/<namespace>/<repo>.git`
+/// - `ssh://git@<host>:<port>/<namespace>/<repo>.git`
 /// - `ssh://<host>/<namespace>/<repo>.git`
+/// - `ssh://<host>:<port>/<namespace>/<repo>.git`
 ///
 /// # Nested groups (GitLab subgroups)
 ///
@@ -89,15 +91,11 @@ impl GitRemoteUrl {
             (host, namespace, repo)
         } else if let Some(rest) = url.strip_prefix("ssh://") {
             // ssh://git@github.com/owner/repo.git or ssh://github.com/owner/repo.git
-            // Note: URLs with ports (ssh://host:2222/...) are not supported here
-            // as they don't fit the host/owner/repo model. They should be handled
-            // as raw strings (project_identifier fallback).
+            // ssh://git@host:port/owner/repo.git (port is stripped — irrelevant to project identity)
             let without_user = rest.split('@').next_back()?;
-            let (host, path) = without_user.split_once('/')?;
-            // If host contains a colon (port), this URL doesn't fit our model
-            if host.contains(':') {
-                return None;
-            }
+            let (host_with_port, path) = without_user.split_once('/')?;
+            // Strip port from host (e.g., "gitlab.internal:2222" → "gitlab.internal")
+            let host = host_with_port.split(':').next().unwrap_or(host_with_port);
             let (namespace, repo) = split_namespace_repo(path)?;
             (host, namespace, repo)
         } else if let Some(rest) = url.strip_prefix("git@") {
@@ -248,6 +246,42 @@ mod tests {
         let url = GitRemoteUrl::parse("ssh://github.com/owner/repo.git").unwrap();
         assert!(url.project_identifier().starts_with("github.com/"));
         assert_eq!(url.owner(), "owner");
+    }
+
+    #[test]
+    fn test_ssh_urls_with_ports() {
+        // Standard SSH with port
+        let url = GitRemoteUrl::parse("ssh://git@host:22/owner/repo.git").unwrap();
+        assert_eq!(url.host(), "host");
+        assert_eq!(url.owner(), "owner");
+        assert_eq!(url.repo(), "repo");
+        assert_eq!(url.project_identifier(), "host/owner/repo");
+
+        // Without user
+        let url = GitRemoteUrl::parse("ssh://host:2222/owner/repo.git").unwrap();
+        assert_eq!(url.host(), "host");
+        assert_eq!(url.owner(), "owner");
+        assert_eq!(url.repo(), "repo");
+
+        // Nested groups with port
+        let url =
+            GitRemoteUrl::parse("ssh://git@gitlab.internal:2222/group/subgroup/repo.git").unwrap();
+        assert_eq!(url.host(), "gitlab.internal");
+        assert_eq!(url.owner(), "group/subgroup");
+        assert_eq!(url.repo(), "repo");
+        assert_eq!(
+            url.project_identifier(),
+            "gitlab.internal/group/subgroup/repo"
+        );
+
+        // Port is stripped — same project identity as without port
+        let with_port = GitRemoteUrl::parse("ssh://git@host:2222/owner/repo.git").unwrap();
+        let without_port = GitRemoteUrl::parse("ssh://git@host/owner/repo.git").unwrap();
+        assert_eq!(
+            with_port.project_identifier(),
+            without_port.project_identifier(),
+            "Port is a transport detail — same project identity"
+        );
     }
 
     #[test]

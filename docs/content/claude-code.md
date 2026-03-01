@@ -1,5 +1,6 @@
 +++
 title = "Claude Code Integration"
+description = "Worktrunk plugin for Claude Code: configuration skill for setup help and activity tracking for wt list."
 weight = 23
 
 [extra]

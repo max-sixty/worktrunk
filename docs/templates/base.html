@@ -74,13 +74,15 @@
     })();
     </script>
     <meta name="view-transition" content="same-origin">
-    <meta name="description" content="{{ config.extra.site_description }}">
+    {% set page_description = page.description | default(value=config.extra.site_description) %}
+    <meta name="description" content="{{ page_description }}">
+    <link rel="canonical" href="{{ current_url | default(value=config.base_url) }}">
 
     <!-- OpenGraph -->
     <meta property="og:type" content="website">
     <meta property="og:url" content="{{ current_url | default(value=config.base_url) }}">
     <meta property="og:title" content="{% if page.title %}{{ page.title }} | {{ config.title }}{% else %}{{ config.title }}{% endif %}">
-    <meta property="og:description" content="{{ config.extra.site_description }}">
+    <meta property="og:description" content="{{ page_description }}">
     <meta property="og:image" content="{{ config.base_url }}assets/social/social-card.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
@@ -88,8 +90,39 @@
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="{% if page.title %}{{ page.title }} | {{ config.title }}{% else %}{{ config.title }}{% endif %}">
-    <meta name="twitter:description" content="{{ config.extra.site_description }}">
+    <meta name="twitter:description" content="{{ page_description }}">
     <meta name="twitter:image" content="{{ config.base_url }}assets/social/social-card.png">
+
+    <!-- Structured data -->
+    {% if not page.title %}
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "Worktrunk",
+      "url": "https://worktrunk.dev/",
+      "description": "{{ config.extra.site_description }}"
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Worktrunk",
+      "url": "https://worktrunk.dev/",
+      "description": "{{ config.extra.site_description }}",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Linux, Windows",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "codeRepository": "https://github.com/max-sixty/worktrunk",
+      "license": "https://opensource.org/licenses/Apache-2.0"
+    }
+    </script>
+    {% endif %}
 
     <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-6YY8BDJ4QH"></script>

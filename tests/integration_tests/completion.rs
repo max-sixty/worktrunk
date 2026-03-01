@@ -594,11 +594,13 @@ fn test_complete_step_subcommands(repo: TestRepo) {
     assert!(subcommands.contains(&"diff"), "Missing diff");
     assert!(subcommands.contains(&"eval"), "Missing eval");
     assert!(subcommands.contains(&"for-each"), "Missing for-each");
+    assert!(subcommands.contains(&"promote"), "Missing promote");
+    assert!(subcommands.contains(&"prune"), "Missing prune");
     assert!(subcommands.contains(&"relocate"), "Missing relocate");
     assert_eq!(
         subcommands.len(),
-        9,
-        "Should have exactly 9 step subcommands"
+        11,
+        "Should have exactly 11 step subcommands"
     );
 }
 
@@ -1052,7 +1054,7 @@ fn test_complete_switch_single_dash_shows_options_not_branches(repo: TestRepo) {
 fn test_complete_help_flag_all_shells(repo: TestRepo) {
     repo.commit("initial");
 
-    for shell in ["bash", "zsh", "fish"] {
+    for shell in ["bash", "zsh", "fish", "nu"] {
         // Test: wt --help<cursor> - should complete --help
         let output = repo
             .completion_cmd_for_shell(&["wt", "--help"], shell)
@@ -1084,7 +1086,7 @@ fn test_complete_help_flag_all_shells(repo: TestRepo) {
 fn test_complete_version_flag_all_shells(repo: TestRepo) {
     repo.commit("initial");
 
-    for shell in ["bash", "zsh", "fish"] {
+    for shell in ["bash", "zsh", "fish", "nu"] {
         // Test: wt --version<cursor> - should complete --version
         let output = repo
             .completion_cmd_for_shell(&["wt", "--version"], shell)
@@ -1107,7 +1109,7 @@ fn test_complete_version_flag_all_shells(repo: TestRepo) {
 fn test_complete_single_dash_shows_both_short_and_long_flags(repo: TestRepo) {
     repo.commit("initial");
 
-    for shell in ["bash", "zsh", "fish"] {
+    for shell in ["bash", "zsh", "fish", "nu"] {
         // Test: wt -<cursor> - should show both -h and --help
         let output = repo
             .completion_cmd_for_shell(&["wt", "-"], shell)
@@ -1162,7 +1164,7 @@ fn test_complete_excludes_deprecated_args(repo: TestRepo) {
     // Deprecated args that should never appear
     let deprecated = ["--no-background"];
 
-    for shell in ["bash", "zsh", "fish"] {
+    for shell in ["bash", "zsh", "fish", "nu"] {
         // Test: wt remove --<cursor> - should NOT show --no-background
         let output = repo
             .completion_cmd_for_shell(&["wt", "remove", "--"], shell)
@@ -1278,6 +1280,10 @@ fn test_static_completions_for_all_shells() {
                 assert!(
                     stdout.contains("def --wrapped") || stdout.contains("def --env"),
                     "{shell}: should contain nushell function markers"
+                );
+                assert!(
+                    stdout.contains("nu-complete wt"),
+                    "{shell}: should contain nushell completer function"
                 );
             }
             "powershell" => {

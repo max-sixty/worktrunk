@@ -1,5 +1,6 @@
 +++
 title = "wt step"
+description = "Run individual operations. The building blocks of wt merge — commit, squash, rebase, push — plus standalone utilities."
 weight = 16
 
 [extra]
@@ -37,6 +38,8 @@ wt step push
 - `copy-ignored` — Copy gitignored files between worktrees
 - `eval` — [experimental] Evaluate a template expression
 - `for-each` — [experimental] Run a command in every worktree
+- `promote` — [experimental] Put a branch into the main worktree
+- `prune` — Remove worktrees and branches merged into the default branch
 - `relocate` — [experimental] Move worktrees to expected paths
 
 ## See also
@@ -63,6 +66,8 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>copy-ignored</span></b>  Copy gitignored files to another worktree
   <b><span class=c>eval</span></b>          [experimental] Evaluate a template expression
   <b><span class=c>for-each</span></b>      [experimental] Run command in each worktree
+  <b><span class=c>promote</span></b>       [experimental] Put a branch into the main worktree
+  <b><span class=c>prune</span></b>         [experimental] Remove worktrees merged into the default branch
   <b><span class=c>relocate</span></b>      [experimental] Move worktrees to expected paths
 
 <b><span class=g>Options:</span></b>
@@ -499,6 +504,75 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
           Command template (see --help for all variables)
 
 <b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: hooks, templates; -vv: debug report)
+{% end %}
+
+## wt step prune
+
+[experimental] Remove worktrees merged into the default branch.
+
+Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
+
+In `wt list`, candidates show `_` (same commit) or `⊂` (content integrated). Run `--dry-run` to preview. See `wt remove --help` for the full integration criteria.
+
+Locked worktrees and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal.
+
+### Min-age guard
+
+Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
+
+```bash
+wt step prune --min-age=0s     # no age guard
+wt step prune --min-age=2d     # skip worktrees younger than 2 days
+```
+
+### Examples
+
+Preview what would be removed:
+
+```bash
+wt step prune --dry-run
+```
+
+Remove all merged worktrees:
+
+```bash
+wt step prune
+```
+
+### Command reference
+
+{% terminal() %}
+wt step prune - [experimental] Remove worktrees merged into the default branch
+
+Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
+
+<b><span class=g>Options:</span></b>
+      <b><span class=c>--dry-run</span></b>
+          Show what would be removed
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+
+      <b><span class=c>--min-age</span></b><span class=c> &lt;MIN_AGE&gt;</span>
+          Skip worktrees younger than this
+
+          [default: 1h]
+
+      <b><span class=c>--foreground</span></b>
+          Run removal in foreground (block until complete)
+
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 

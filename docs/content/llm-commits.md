@@ -1,5 +1,6 @@
 +++
 title = "LLM Commit Messages"
+description = "Generate commit messages from diffs using any LLM. Integrates with wt merge, wt step commit, and wt step squash."
 weight = 22
 
 [extra]
