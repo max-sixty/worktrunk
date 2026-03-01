@@ -99,7 +99,7 @@ unused branches after the run).
 
 ## Shell Quoting in `gh` Commands
 
-Claude tends to mangle shell quoting in CI. Two common failure modes:
+Claude tends to mangle shell quoting in CI. Three common failure modes:
 
 1. **`$` in GraphQL queries** — `gh api graphql -f query='...$var...'` fails
    because Claude corrupts the `$` signs. Write queries to a temp file instead:
@@ -126,16 +126,18 @@ Claude tends to mangle shell quoting in CI. Two common failure modes:
    ```
 
 3. **`!=` in jq expressions** — `jq 'select(.x != "y")'` breaks because `!`
-   triggers bash history expansion even inside single quotes when the outer
-   command uses double quotes. Store the filter in a variable instead:
+   gets escaped to `\!`. Use a heredoc to build the filter:
 
    ```bash
-   # BAD — history expansion corrupts the expression
+   # BAD — ! gets escaped
    gh api ... --jq 'select(.status != "COMPLETED")'
 
-   # GOOD — single-quoted assignment is safe from expansion
-   filter='select(.status != "COMPLETED")'
-   gh api ... --jq "$filter"
+   # GOOD — heredoc preserves != literally
+   jq_filter=$(cat <<'EOF'
+   select(.status != "COMPLETED")
+   EOF
+   )
+   gh api ... --jq "$jq_filter"
    ```
 
 **General rule:** When a `gh` command argument contains `$` or `!`, use either
