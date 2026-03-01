@@ -314,11 +314,13 @@ gh pr view <number> --json statusCheckRollup \
   case of a long poll is wasted compute, not missed information.
 - **A check failed** → if it's a flaky test or unrelated infrastructure
   failure, no action needed. If the failure is related to the PR changes:
-  1. Dismiss the bot's approval if one exists (empty dismiss message). Skip
-     if already dismissed — redundant dismissals create timeline noise.
-  2. Investigate the failure and post a follow-up review (COMMENT) with
+  1. Investigate the failure and post a follow-up review (COMMENT) with
      analysis, inline suggestions, and an offer to fix. Same rules as
-     step 4 — no repeated points from previous reviews.
+     step 4 — no repeated points from previous reviews. **Post the analysis
+     first** — if the session times out before dismissing, a stale approval
+     (contradicted by red CI) is better than a bare dismissal with no context.
+  2. Dismiss the bot's approval if one exists (empty dismiss message). Skip
+     if already dismissed — redundant dismissals create timeline noise.
 
 ### 6. Resolve handled suggestions
 
