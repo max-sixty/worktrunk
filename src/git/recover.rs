@@ -7,6 +7,8 @@
 
 use std::path::{Path, PathBuf};
 
+use color_print::cformat;
+
 use crate::styling::eprintln;
 
 use super::Repository;
@@ -31,6 +33,32 @@ pub fn current_or_recover() -> anyhow::Result<(Repository, bool)> {
             None => Err(err),
         },
     }
+}
+
+/// Determine the hint to show when the user's CWD has been removed.
+///
+/// Tries to find the parent repository and checks if `wt switch ^` would work
+/// (i.e., the default branch has an existing worktree). Falls back to
+/// progressively less specific hints when recovery or resolution fails.
+pub fn cwd_removed_hint() -> String {
+    let Some(repo) = Repository::current().ok().or_else(recover_from_deleted_cwd) else {
+        return "Current directory was removed.".to_string();
+    };
+    hint_for_repo(&repo)
+}
+
+fn hint_for_repo(repo: &Repository) -> String {
+    if let Some(branch) = repo.default_branch()
+        && repo
+            .worktree_for_branch(&branch)
+            .ok()
+            .flatten()
+            .is_some_and(|p| p.exists())
+    {
+        return cformat!("Current directory was removed. Try: <bright-black>wt switch ^</>");
+    }
+
+    cformat!("Current directory was removed. Run <bright-black>wt list</> to see worktrees.")
 }
 
 /// Attempt to recover a repository when the current directory has been deleted.
@@ -179,6 +207,7 @@ fn paths_match(worktree_path: &Path, deleted_path: &Path) -> bool {
 mod tests {
     use super::*;
     use crate::shell_exec::Cmd;
+    use ansi_str::AnsiStr;
 
     fn git_init(path: &Path) {
         Cmd::new("git")
@@ -464,5 +493,28 @@ mod tests {
         // (simulates $PWD being in a subdirectory when the worktree was removed)
         let deep_path = wt_path.join("src").join("lib.rs");
         assert!(recover_from_path(&deep_path).is_some());
+    }
+
+    #[test]
+    fn test_cwd_removed_hint_suggests_switch() {
+        // Tests run inside a git repo with a default branch worktree,
+        // so cwd_removed_hint should suggest `wt switch ^`.
+        let hint = cwd_removed_hint();
+        insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed. Try: wt switch ^");
+    }
+
+    #[test]
+    fn test_hint_for_repo_fallback_to_list() {
+        // A bare repo with no worktrees has no default branch worktree,
+        // so it should suggest `wt list` instead of `wt switch ^`.
+        let tmp = tempfile::tempdir().unwrap();
+        Cmd::new("git")
+            .args(["init", "--bare", "--quiet"])
+            .current_dir(tmp.path())
+            .run()
+            .unwrap();
+        let repo = Repository::at(tmp.path()).unwrap();
+        let hint = hint_for_repo(&repo);
+        insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed. Run wt list to see worktrees.");
     }
 }

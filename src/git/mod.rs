@@ -54,7 +54,7 @@ pub use error::{
     exit_code,
 };
 pub use parse::{parse_porcelain_z, parse_untracked_files};
-pub use recover::current_or_recover;
+pub use recover::{current_or_recover, cwd_removed_hint};
 pub use repository::{Branch, Repository, ResolvedWorktree, WorkingTree, set_base_path};
 pub use url::GitRemoteUrl;
 pub use url::{parse_owner_repo, parse_remote_owner};

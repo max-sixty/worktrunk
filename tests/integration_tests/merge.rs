@@ -724,6 +724,51 @@ fn test_merge_post_merge_command_failure(mut repo: TestRepo) {
     ));
 }
 
+/// When the CWD is removed but the default branch can't be resolved,
+/// the hint should suggest `wt list` instead of `wt switch ^`.
+#[rstest]
+fn test_merge_cwd_removed_hint_fallback_to_list(mut repo: TestRepo) {
+    // Create project config with failing post-merge command
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(config_dir.join("wt.toml"), r#"post-merge = "exit 1""#).unwrap();
+
+    repo.commit("Add config");
+
+    // Set default branch to a nonexistent branch so `wt switch ^` won't resolve
+    repo.run_git(&["config", "worktrunk.default-branch", "nonexistent"]);
+
+    let feature_wt = repo.add_feature();
+
+    // Set PWD to repo root so recovery finds the test repo after CWD deletion.
+    // (Without this, $PWD is inherited from the test runner and recovery finds
+    // the dev repo instead.)
+    let mut cmd = make_snapshot_cmd(&repo, "merge", &["main", "--yes"], Some(&feature_wt));
+    cmd.env("PWD", repo.root_path());
+    assert_cmd_snapshot!(cmd);
+}
+
+/// When the CWD is removed and recovery can't find any repo,
+/// the hint should show just the message with no command suggestion.
+#[rstest]
+fn test_merge_cwd_removed_hint_no_recovery(mut repo: TestRepo) {
+    // Create project config with failing post-merge command
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(config_dir.join("wt.toml"), r#"post-merge = "exit 1""#).unwrap();
+
+    repo.commit("Add config");
+
+    let feature_wt = repo.add_feature();
+
+    // Set PWD to the feature worktree. After merge removes it, recovery walks up
+    // from the deleted path but can't associate it with the repo (worktree was
+    // properly cleaned up), so recovery fails.
+    let mut cmd = make_snapshot_cmd(&repo, "merge", &["main", "--yes"], Some(&feature_wt));
+    cmd.env("PWD", &feature_wt);
+    assert_cmd_snapshot!(cmd);
+}
+
 #[rstest]
 fn test_merge_post_merge_command_named(mut repo: TestRepo) {
     // Create project config with named post-merge commands

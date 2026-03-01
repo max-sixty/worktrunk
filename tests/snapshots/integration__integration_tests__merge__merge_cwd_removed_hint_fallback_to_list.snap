@@ -22,6 +22,7 @@ info:
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     PATH: "[PATH]"
     PSModulePath: ""
+    PWD: /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp4hdWnb/repo
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
@@ -53,4 +54,4 @@ exit_code: 1
 [36m◎[39m [36mRunning post-merge project hook @ [1m_REPO_[22m[39m
 [107m [0m [2m[0m[2m[34mexit[0m[2m 1
 [0m[31m✗[39m [31mCommand failed: exit status: 1[39m
-[2m↳[22m [2mCurrent directory was removed. Try: [90mwt switch ^[39m[22m
+[2m↳[22m [2mCurrent directory was removed. Run [90mwt list[39m to see worktrees.[22m
